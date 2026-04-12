@@ -37,6 +37,7 @@ import {
 } from "@/components/event-stream";
 import { JsonViewer } from "@/components/json-viewer";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { useModels } from "@/lib/model-context";
 import Link from "next/link";
 
@@ -153,6 +154,8 @@ function prettyPrintJson(str: string): string {
 // ---------------------------------------------------------------------------
 
 export default function PlaygroundPage() {
+  // Auth context -- check if in demo mode
+  const { isDemoMode } = useAuth();
   // Model context -- configured providers and available models
   const { availableModels, isConfigured, loading: modelsLoading } = useModels();
 
@@ -312,6 +315,14 @@ export default function PlaygroundPage() {
         : "Hello, please help me.";
 
     messages.push({ role: "user", content: userContent });
+
+    // In demo mode, always use simulation (no real API token)
+    if (isDemoMode) {
+      setDemoMode(true);
+      setDemoEvents(sampleRunEvents);
+      resetDemo();
+      return;
+    }
 
     try {
       let response: Response;
