@@ -1074,7 +1074,7 @@ function Architecture() {
 
             {/* Control Plane */}
             <div className="max-w-sm mx-auto mb-3">
-              <ArchServiceBox label="Control Plane" sublabel="Scheduling \u00B7 Routing \u00B7 Workflows \u00B7 Dashboard" color="blue" delay={0.45} />
+              <ArchServiceBox label="Control Plane" sublabel="Scheduling · Routing · Workflows · Dashboard" color="blue" delay={0.45} />
             </div>
 
             {/* gRPC tunnel */}
@@ -1085,7 +1085,7 @@ function Architecture() {
                 viewport={{ once: true }}
                 transition={{ duration: 0.4, delay: 0.5 }}
                 className="w-px relative overflow-hidden"
-                style={{ background: "repeating-linear-gradient(to bottom, rgba(245,158,11,0.4) 0px, rgba(245,158,11,0.4) 4px, transparent 4px, transparent 8px)" }}
+                style={{ background: "repeating-linear-gradient(to bottom, rgba(124,109,248,0.4) 0px, rgba(124,109,248,0.4) 4px, transparent 4px, transparent 8px)" }}
               />
             </div>
             <div className="text-center mb-3">
