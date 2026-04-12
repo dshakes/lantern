@@ -168,11 +168,11 @@ export function Sidebar() {
           {!collapsed && (
             <>
               <div className="flex flex-1 flex-col items-start">
-                <span className="text-xs font-medium text-zinc-300">
-                  {user?.name ?? "Acme Corp"}
+                <span className="text-xs font-medium text-zinc-300 truncate max-w-[120px]">
+                  {user?.name ?? "User"}
                 </span>
-                <span className="text-[11px] text-zinc-500">
-                  {user?.tenantId ?? "t_acme"}
+                <span className="text-[11px] text-zinc-500 truncate max-w-[120px]">
+                  {user?.email ?? "user@lantern.dev"}
                 </span>
               </div>
               <ChevronsUpDown className="h-3.5 w-3.5 text-zinc-500" />
