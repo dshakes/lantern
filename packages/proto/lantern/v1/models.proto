@@ -1,0 +1,177 @@
+syntax = "proto3";
+
+package lantern.v1;
+
+option go_package = "github.com/dshakes/lantern/gen/go/lantern/v1;lanternv1";
+
+import "google/protobuf/struct.proto";
+
+// ---------------------------------------------------------------------------
+// Model Router (The Spectrum)
+// ---------------------------------------------------------------------------
+
+service ModelService {
+  rpc Complete(CompleteRequest) returns (CompleteResponse);
+  rpc CompleteStream(CompleteRequest) returns (stream CompleteChunk);
+  rpc Embed(EmbedRequest) returns (EmbedResponse);
+  rpc Tokenize(TokenizeRequest) returns (TokenizeResponse);
+}
+
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_REASONING_FRONTIER = 1;
+  CAPABILITY_REASONING_LARGE = 2;
+  CAPABILITY_REASONING_SMALL = 3;
+  CAPABILITY_CHAT_LARGE = 4;
+  CAPABILITY_CHAT_SMALL = 5;
+  CAPABILITY_CHAT_EDGE = 6;
+  CAPABILITY_VISION_LARGE = 7;
+  CAPABILITY_VISION_SMALL = 8;
+  CAPABILITY_CODE_LARGE = 9;
+  CAPABILITY_CODE_SMALL = 10;
+  CAPABILITY_EMBED_LARGE = 11;
+  CAPABILITY_EMBED_SMALL = 12;
+  CAPABILITY_RERANK = 13;
+  CAPABILITY_TRANSCRIBE = 14;
+  CAPABILITY_TTS = 15;
+  CAPABILITY_AUTO = 99;
+}
+
+enum OptimizeTarget {
+  OPTIMIZE_UNSPECIFIED = 0;
+  OPTIMIZE_CHEAP = 1;
+  OPTIMIZE_FAST = 2;
+  OPTIMIZE_BEST = 3;
+  OPTIMIZE_BALANCED = 4;
+}
+
+message CompleteRequest {
+  string run_id = 1;
+  string step_id = 2;
+  string tenant_id = 3;
+
+  Capability capability = 10;
+  OptimizeTarget optimize = 11;
+
+  repeated Message messages = 20;
+  repeated Tool tools = 21;
+  google.protobuf.Struct response_format = 22;
+
+  int32 max_tokens = 30;
+  double temperature = 31;
+  double top_p = 32;
+  repeated string stop = 33;
+
+  bool no_cache = 40;
+  string idempotency_key = 41;
+}
+
+message Message {
+  string role = 1;
+  string content = 2;
+  string name = 3;
+  repeated ToolCallMessage tool_calls = 4;
+  string tool_call_id = 5;
+  repeated ContentPart parts = 6;
+}
+
+message ContentPart {
+  oneof part {
+    string text = 1;
+    ImagePart image = 2;
+    FilePart file = 3;
+  }
+}
+
+message ImagePart {
+  string url = 1;
+  bytes data = 2;
+  string media_type = 3;
+}
+
+message FilePart {
+  string url = 1;
+  bytes data = 2;
+  string media_type = 3;
+  string filename = 4;
+}
+
+message ToolCallMessage {
+  string id = 1;
+  string name = 2;
+  string arguments = 3;
+}
+
+message Tool {
+  string name = 1;
+  string description = 2;
+  google.protobuf.Struct parameters = 3;
+}
+
+message CompleteResponse {
+  string id = 1;
+  string model_used = 2;
+  int32 tier = 3;
+
+  Message message = 10;
+
+  int64 tokens_in = 20;
+  int64 tokens_out = 21;
+  double cost_usd = 22;
+  string cache_kind = 23;
+  bool escalated = 24;
+  double latency_ms = 25;
+}
+
+message CompleteChunk {
+  string id = 1;
+  string model_used = 2;
+  int32 tier = 3;
+
+  oneof data {
+    string text_delta = 10;
+    ToolCallMessage tool_call_delta = 11;
+    ChunkUsage usage = 12;
+    ChunkDone done = 13;
+  }
+}
+
+message ChunkUsage {
+  int64 tokens_in = 1;
+  int64 tokens_out = 2;
+  double cost_usd = 3;
+  string cache_kind = 4;
+}
+
+message ChunkDone {
+  string finish_reason = 1;
+  bool escalated = 2;
+}
+
+message EmbedRequest {
+  string tenant_id = 1;
+  Capability capability = 2;
+  repeated string texts = 3;
+}
+
+message EmbedResponse {
+  repeated Embedding embeddings = 1;
+  string model_used = 2;
+  int64 total_tokens = 3;
+  double cost_usd = 4;
+}
+
+message Embedding {
+  repeated float values = 1;
+  int32 dimensions = 2;
+}
+
+message TokenizeRequest {
+  string model_hint = 1;
+  string text = 2;
+}
+
+message TokenizeResponse {
+  int32 token_count = 1;
+  string tokenizer_used = 2;
+}

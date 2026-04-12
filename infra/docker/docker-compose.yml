@@ -1,0 +1,128 @@
+version: "3.9"
+
+x-common-env: &common-env
+  DATABASE_URL: postgres://lantern:lantern@postgres:5432/lantern?sslmode=disable
+  REDIS_URL: redis://redis:6379
+  S3_ENDPOINT: http://minio:9000
+  S3_BUCKET: lantern-dev
+  AWS_ACCESS_KEY_ID: lantern
+  AWS_SECRET_ACCESS_KEY: lanternsecret
+  LOG_LEVEL: debug
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: lantern
+      POSTGRES_USER: lantern
+      POSTGRES_PASSWORD: lantern
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lantern"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: lantern
+      MINIO_ROOT_PASSWORD: lanternsecret
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 lantern lanternsecret &&
+        mc mb local/lantern-dev --ignore-existing &&
+        mc mb local/lantern-bundles --ignore-existing &&
+        mc mb local/lantern-snapshots --ignore-existing &&
+        echo 'Buckets created'
+      "
+
+  control-plane:
+    build:
+      context: ../../services/control-plane
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"
+      - "8080:8080"
+    environment:
+      <<: *common-env
+      LISTEN_ADDR: ":50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  # gateway:
+  #   build:
+  #     context: ../../services/gateway
+  #   ports:
+  #     - "8443:8443"
+  #   environment:
+  #     <<: *common-env
+  #     CONTROL_PLANE_ADDR: control-plane:50051
+  #   depends_on:
+  #     - control-plane
+
+  # model-router:
+  #   build:
+  #     context: ../../services/model-router
+  #   ports:
+  #     - "50053:50053"
+  #   environment:
+  #     <<: *common-env
+  #   depends_on:
+  #     - redis
+
+  landing:
+    build:
+      context: ../../apps/landing
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+
+  # dashboard:
+  #   build:
+  #     context: ../../apps/web
+  #   ports:
+  #     - "3001:3000"
+  #   environment:
+  #     LANTERN_API_URL: http://gateway:8443
+  #   depends_on:
+  #     - gateway
+
+volumes:
+  pg-data:
+  minio-data:

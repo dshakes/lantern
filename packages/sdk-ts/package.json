@@ -1,0 +1,38 @@
+{
+  "name": "@lantern/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Lantern serverless agents platform",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./connectors": {
+      "import": "./dist/connectors/index.js",
+      "types": "./dist/connectors/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "tsup src/index.ts --format esm --dts --watch",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/"
+  },
+  "files": ["dist", "README.md"],
+  "peerDependencies": {},
+  "dependencies": {
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0"
+  },
+  "license": "MIT"
+}

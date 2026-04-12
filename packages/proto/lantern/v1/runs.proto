@@ -1,0 +1,233 @@
+syntax = "proto3";
+
+package lantern.v1;
+
+option go_package = "github.com/dshakes/lantern/gen/go/lantern/v1;lanternv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// ---------------------------------------------------------------------------
+// Runs
+// ---------------------------------------------------------------------------
+
+service RunService {
+  rpc CreateRun(CreateRunRequest) returns (Run);
+  rpc GetRun(GetRunRequest) returns (Run);
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+  rpc CancelRun(CancelRunRequest) returns (Run);
+  rpc ReplayRun(ReplayRunRequest) returns (Run);
+
+  rpc StreamRunEvents(StreamRunEventsRequest) returns (stream StreamEvent);
+  rpc SignalRun(SignalRunRequest) returns (SignalRunResponse);
+  rpc QueryRun(QueryRunRequest) returns (QueryRunResponse);
+}
+
+enum RunStatus {
+  RUN_STATUS_UNSPECIFIED = 0;
+  RUN_STATUS_QUEUED = 1;
+  RUN_STATUS_RUNNING = 2;
+  RUN_STATUS_PAUSED = 3;
+  RUN_STATUS_SUCCEEDED = 4;
+  RUN_STATUS_FAILED = 5;
+  RUN_STATUS_CANCELLED = 6;
+}
+
+enum TriggerKind {
+  TRIGGER_KIND_UNSPECIFIED = 0;
+  TRIGGER_KIND_API = 1;
+  TRIGGER_KIND_SCHEDULE = 2;
+  TRIGGER_KIND_WEBHOOK = 3;
+  TRIGGER_KIND_SURFACE = 4;
+  TRIGGER_KIND_A2A = 5;
+  TRIGGER_KIND_CONNECTOR = 6;
+  TRIGGER_KIND_MANUAL = 7;
+}
+
+message Run {
+  string id = 1;
+  string tenant_id = 2;
+  string agent_id = 3;
+  string agent_version_id = 4;
+  RunStatus status = 5;
+  TriggerKind trigger_kind = 6;
+  google.protobuf.Struct trigger_meta = 7;
+  google.protobuf.Struct input = 8;
+  google.protobuf.Struct output = 9;
+  RunError error = 10;
+  double cost_usd = 11;
+  int64 tokens_in = 12;
+  int64 tokens_out = 13;
+  google.protobuf.Timestamp started_at = 14;
+  google.protobuf.Timestamp finished_at = 15;
+  google.protobuf.Timestamp created_at = 16;
+  string parent_run_id = 17;
+  map<string, string> labels = 18;
+}
+
+message RunError {
+  string code = 1;
+  string message = 2;
+  string step_id = 3;
+  google.protobuf.Struct details = 4;
+}
+
+// -- Stream events (the unified envelope) --
+
+message StreamEvent {
+  string run_id = 1;
+  string step_id = 2;
+  uint64 seq = 3;
+  google.protobuf.Timestamp ts = 4;
+
+  oneof payload {
+    LlmDelta llm_delta = 10;
+    LlmComplete llm_complete = 11;
+    ToolCallEvent tool_call = 12;
+    ToolResultEvent tool_result = 13;
+    StepStarted step_started = 14;
+    StepCompleted step_completed = 15;
+    StepFailed step_failed = 16;
+    LogLine log = 17;
+    QuestionEvent question = 18;
+    ApprovalEvent approval = 19;
+    Heartbeat heartbeat = 20;
+    StreamEnd end = 21;
+  }
+}
+
+message LlmDelta {
+  string text = 1;
+  string model_used = 2;
+  string generation_id = 3;
+  int32 tier = 4;
+}
+
+message LlmComplete {
+  string model_used = 1;
+  int64 tokens_in = 2;
+  int64 tokens_out = 3;
+  double cost_usd = 4;
+  string cache_kind = 5;
+  bool escalated = 6;
+}
+
+message ToolCallEvent {
+  string tool_name = 1;
+  google.protobuf.Struct arguments = 2;
+  string call_id = 3;
+}
+
+message ToolResultEvent {
+  string call_id = 1;
+  google.protobuf.Struct result = 2;
+  bool is_error = 3;
+}
+
+message StepStarted {
+  string step_id = 1;
+  int32 attempt = 2;
+  string kind = 3;
+}
+
+message StepCompleted {
+  string step_id = 1;
+  int32 attempt = 2;
+  double duration_ms = 3;
+}
+
+message StepFailed {
+  string step_id = 1;
+  int32 attempt = 2;
+  string error_code = 3;
+  string error_message = 4;
+  bool will_retry = 5;
+}
+
+message LogLine {
+  string level = 1;
+  string message = 2;
+  google.protobuf.Struct fields = 3;
+}
+
+message QuestionEvent {
+  string question = 1;
+  repeated string options = 2;
+  string timeout = 3;
+}
+
+message ApprovalEvent {
+  string reason = 1;
+  repeated string approvers = 2;
+  string expires_at = 3;
+}
+
+message Heartbeat {}
+
+message StreamEnd {
+  string reason = 1;
+}
+
+// -- Requests / Responses --
+
+message CreateRunRequest {
+  string agent_name = 1;
+  google.protobuf.Struct input = 2;
+  TriggerKind trigger_kind = 3;
+  google.protobuf.Struct trigger_meta = 4;
+  bool stream = 5;
+  map<string, string> labels = 6;
+  string idempotency_key = 7;
+}
+
+message GetRunRequest {
+  string id = 1;
+}
+
+message ListRunsRequest {
+  string agent_name = 1;
+  RunStatus status_filter = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListRunsResponse {
+  repeated Run runs = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message CancelRunRequest {
+  string id = 1;
+  string reason = 2;
+}
+
+message ReplayRunRequest {
+  string id = 1;
+  string from_step = 2;
+  google.protobuf.Struct modified_input = 3;
+}
+
+message StreamRunEventsRequest {
+  string run_id = 1;
+  uint64 from_seq = 2;
+  bool live = 3;
+}
+
+message SignalRunRequest {
+  string run_id = 1;
+  string signal_name = 2;
+  google.protobuf.Struct value = 3;
+}
+
+message SignalRunResponse {}
+
+message QueryRunRequest {
+  string run_id = 1;
+  string query_name = 2;
+  google.protobuf.Struct args = 3;
+}
+
+message QueryRunResponse {
+  google.protobuf.Struct result = 1;
+}

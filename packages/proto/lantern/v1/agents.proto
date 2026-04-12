@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package lantern.v1;
+
+option go_package = "github.com/dshakes/lantern/gen/go/lantern/v1;lanternv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
+
+service AgentService {
+  rpc CreateAgent(CreateAgentRequest) returns (Agent);
+  rpc GetAgent(GetAgentRequest) returns (Agent);
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse);
+  rpc UpdateAgent(UpdateAgentRequest) returns (Agent);
+
+  rpc CreateAgentVersion(CreateAgentVersionRequest) returns (AgentVersion);
+  rpc GetAgentVersion(GetAgentVersionRequest) returns (AgentVersion);
+  rpc ListAgentVersions(ListAgentVersionsRequest) returns (ListAgentVersionsResponse);
+  rpc PromoteAgentVersion(PromoteAgentVersionRequest) returns (Agent);
+}
+
+message Agent {
+  string id = 1;
+  string tenant_id = 2;
+  string name = 3;
+  string description = 4;
+  string current_version_id = 5;
+  string created_by = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp archived_at = 8;
+  map<string, string> labels = 9;
+}
+
+message AgentVersion {
+  string id = 1;
+  string agent_id = 2;
+  string version = 3;
+  bytes digest = 4;
+  string bundle_uri = 5;
+  google.protobuf.Struct manifest = 6;
+  bytes signature = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp promoted_at = 9;
+}
+
+// -- Requests / Responses --
+
+message CreateAgentRequest {
+  string name = 1;
+  string description = 2;
+  map<string, string> labels = 3;
+}
+
+message GetAgentRequest {
+  string name = 1;
+}
+
+message ListAgentsRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+  map<string, string> label_filter = 3;
+}
+
+message ListAgentsResponse {
+  repeated Agent agents = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message DeleteAgentRequest {
+  string name = 1;
+}
+
+message DeleteAgentResponse {}
+
+message UpdateAgentRequest {
+  string name = 1;
+  string description = 2;
+  map<string, string> labels = 3;
+}
+
+message CreateAgentVersionRequest {
+  string agent_name = 1;
+  string version = 2;
+  bytes bundle_data = 3;
+  bytes signature = 4;
+}
+
+message GetAgentVersionRequest {
+  string agent_name = 1;
+  string version = 2;
+}
+
+message ListAgentVersionsRequest {
+  string agent_name = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListAgentVersionsResponse {
+  repeated AgentVersion versions = 1;
+  string next_page_token = 2;
+}
+
+message PromoteAgentVersionRequest {
+  string agent_name = 1;
+  string version = 2;
+}

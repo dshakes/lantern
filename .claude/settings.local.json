@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(find . -type f \\\\\\( -name \"*.md\" -o -name \"*.yaml\" -o -name \"*.yml\" \\\\\\) -exec sed -i.bak -e 's/Helix/Lantern/g' -e 's/helix/lantern/g' -e 's/HELIX/LANTERN/g' {} +)",
+      "Bash(find . -name \"*.bak\" -delete)",
+      "mcp__claude_ai_Vercel__check_domain_availability_and_price",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:crates.io)",
+      "WebFetch(domain:registry.npmjs.org)",
+      "Bash(xargs ls:*)",
+      "Bash(ls -la /Users/shakes/workspace/lantern/*.*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)"
+    ]
+  }
+}

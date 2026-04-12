@@ -1,0 +1,99 @@
+.PHONY: help dev build test lint ci-local clean proto
+
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+# ---------- Dev ----------
+
+dev: ## Start the full dev stack (Postgres, Redis, MinIO, services)
+	docker compose -f infra/docker/docker-compose.yml up --build
+
+dev-infra: ## Start only infrastructure (Postgres, Redis, MinIO)
+	docker compose -f infra/docker/docker-compose.yml up postgres redis minio minio-init
+
+landing-dev: ## Start the landing page in dev mode
+	cd apps/landing && npm run dev
+
+dashboard-dev: ## Start the dashboard in dev mode
+	cd apps/web && npm run dev
+
+# ---------- Build ----------
+
+build: build-go build-rust build-ts ## Build everything
+
+build-go: ## Build Go services
+	cd services/control-plane && go build -o ../../bin/control-plane ./cmd/server
+
+build-rust: ## Build Rust services
+	cd services/gateway && cargo build --release
+	cd services/model-router && cargo build --release
+	cd services/runtime-manager && cargo build --release
+
+build-ts: ## Build TypeScript packages
+	cd packages/sdk-ts && npm run build
+	cd apps/landing && npm run build
+	cd apps/web && npm run build
+
+# ---------- Proto ----------
+
+proto: ## Regenerate code from proto definitions
+	@echo "Generating Go code..."
+	protoc --proto_path=packages/proto \
+		--go_out=gen/go --go_opt=paths=source_relative \
+		--go-grpc_out=gen/go --go-grpc_opt=paths=source_relative \
+		packages/proto/lantern/v1/*.proto
+	@echo "Generating TypeScript types..."
+	npx ts-proto --out=gen/ts packages/proto/lantern/v1/*.proto
+	@echo "Done."
+
+# ---------- Test ----------
+
+test: test-go test-rust test-ts ## Run all tests
+
+test-go: ## Run Go tests
+	cd services/control-plane && go test -race -count=1 ./...
+	cd services/workflow-engine && go test -race -count=1 ./...
+
+test-rust: ## Run Rust tests
+	cd services/gateway && cargo test
+	cd services/model-router && cargo test
+	cd services/runtime-manager && cargo test
+
+test-ts: ## Run TypeScript tests
+	cd packages/sdk-ts && npm test
+
+# ---------- Lint ----------
+
+lint: lint-go lint-rust lint-ts ## Lint everything
+
+lint-go: ## Lint Go code
+	cd services/control-plane && golangci-lint run ./...
+
+lint-rust: ## Lint Rust code
+	cd services/gateway && cargo clippy -- -D warnings
+	cd services/model-router && cargo clippy -- -D warnings
+	cd services/runtime-manager && cargo clippy -- -D warnings
+
+lint-ts: ## Lint TypeScript code
+	cd packages/sdk-ts && npm run lint
+	cd apps/landing && npm run lint
+
+# ---------- Security ----------
+
+audit: ## Run security audits on all dependencies
+	cd services/control-plane && govulncheck ./...
+	cd services/gateway && cargo audit
+	cd services/model-router && cargo audit
+	cd services/runtime-manager && cargo audit
+	cd packages/sdk-ts && npm audit
+
+# ---------- CI ----------
+
+ci-local: lint test audit ## Run the same checks as CI, locally
+	@echo "All CI checks passed."
+
+# ---------- Clean ----------
+
+clean: ## Remove build artifacts
+	rm -rf bin/ gen/ dist/
+	docker compose -f infra/docker/docker-compose.yml down -v

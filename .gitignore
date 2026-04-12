@@ -1,0 +1,54 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build
+bin/
+dist/
+target/
+.next/
+out/
+gen/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+credentials.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test
+coverage/
+.nyc_output/
+
+# Docker
+docker-compose.override.yml
+
+# Snapshots
+*.fcs
+memfile.bin
+
+# Rust
+services/gateway/target/
+services/model-router/target/
+services/runtime-manager/target/
+
+# Go
+services/control-plane/control-plane
+services/workflow-engine/workflow-engine
