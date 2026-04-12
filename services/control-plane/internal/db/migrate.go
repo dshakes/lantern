@@ -320,4 +320,18 @@ var migrations = []string{
 		config JSONB DEFAULT '{}'::jsonb,
 		created_at TIMESTAMPTZ DEFAULT now()
 	)`,
+
+	// ---------------------------------------------------------------
+	// LLM provider configs (stores API keys per tenant)
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS llm_provider_configs (
+		id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+		tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		provider TEXT NOT NULL,
+		api_key_encrypted TEXT NOT NULL,
+		status TEXT DEFAULT 'active',
+		created_at TIMESTAMPTZ DEFAULT now(),
+		updated_at TIMESTAMPTZ DEFAULT now(),
+		UNIQUE(tenant_id, provider)
+	)`,
 }

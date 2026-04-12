@@ -211,9 +211,28 @@ export default function SettingsPage() {
   // Load from real API (with localStorage fallback) on mount.
   useEffect(() => {
     setGeneral(loadLS("general", defaultGeneral));
-    setProviders(loadLS("providers", defaultProviders));
     setMembers(loadLS("members", defaultMembersList()));
     setBilling(loadLS("billing", defaultBilling));
+
+    // Load LLM providers from real API, fall back to localStorage.
+    (async () => {
+      try {
+        const realProviders = await api.listLlmProviders();
+        const newState = { ...defaultProviders };
+        for (const p of realProviders) {
+          const key = p.provider as keyof ProviderSettings;
+          if (key in newState) {
+            newState[key] = {
+              key: p.keyMasked ?? "",
+              status: p.status === "active" ? "connected" as ProviderStatus : "not_configured" as ProviderStatus,
+            };
+          }
+        }
+        setProviders(newState);
+      } catch {
+        setProviders(loadLS("providers", defaultProviders));
+      }
+    })();
 
     // Try real API for API keys, fall back to localStorage.
     (async () => {
@@ -337,30 +356,88 @@ export default function SettingsPage() {
 
   const testProvider = useCallback(
     async (provider: keyof ProviderSettings): Promise<boolean> => {
-      await new Promise((r) => setTimeout(r, 1200));
       const key = providers[provider].key;
-      // Simple validation: key must be non-empty and at least 10 chars
-      const success = key.length >= 10;
-      setProviders((prev) => ({
-        ...prev,
-        [provider]: {
-          ...prev[provider],
-          status: success ? ("connected" as ProviderStatus) : ("error" as ProviderStatus),
-        },
-      }));
-      if (success) {
-        toast("success", `${provider.charAt(0).toUpperCase() + provider.slice(1)} connection successful`);
-      } else {
-        toast("error", `${provider.charAt(0).toUpperCase() + provider.slice(1)} key is invalid`);
+      if (!key || key.length < 10) {
+        setProviders((prev) => ({
+          ...prev,
+          [provider]: { ...prev[provider], status: "error" as ProviderStatus },
+        }));
+        toast("error", `${provider.charAt(0).toUpperCase() + provider.slice(1)} key is too short`);
+        return false;
       }
-      return success;
+
+      // First save the key to backend, then test it.
+      try {
+        await api.saveLlmProvider(provider, key);
+      } catch {
+        // If save fails, still try testing via env var fallback.
+      }
+
+      try {
+        const result = await api.testLlmProvider(provider);
+        const success = result.success;
+        setProviders((prev) => ({
+          ...prev,
+          [provider]: {
+            ...prev[provider],
+            status: success ? ("connected" as ProviderStatus) : ("error" as ProviderStatus),
+          },
+        }));
+        if (success) {
+          toast("success", result.message || `${provider.charAt(0).toUpperCase() + provider.slice(1)} connection successful`);
+        } else {
+          toast("error", result.error || `${provider.charAt(0).toUpperCase() + provider.slice(1)} key is invalid`);
+        }
+        return success;
+      } catch {
+        // API unavailable - fall back to simple local validation.
+        const success = key.length >= 10;
+        setProviders((prev) => ({
+          ...prev,
+          [provider]: {
+            ...prev[provider],
+            status: success ? ("connected" as ProviderStatus) : ("error" as ProviderStatus),
+          },
+        }));
+        if (success) {
+          toast("success", `${provider.charAt(0).toUpperCase() + provider.slice(1)} key saved locally (API unavailable for test)`);
+        } else {
+          toast("error", `${provider.charAt(0).toUpperCase() + provider.slice(1)} key is invalid`);
+        }
+        return success;
+      }
     },
     [providers, toast]
   );
 
   const handleSaveProviders = async () => {
     setProvidersSaving(true);
-    await new Promise((r) => setTimeout(r, 500));
+
+    // Save each configured provider to the backend.
+    const savePromises: Promise<void>[] = [];
+    const providerKeys = Object.keys(providers) as Array<keyof ProviderSettings>;
+    for (const provider of providerKeys) {
+      const config = providers[provider];
+      if (config.key && config.key.length >= 10 && !config.key.includes("****")) {
+        savePromises.push(
+          api.saveLlmProvider(provider, config.key).then(() => {
+            setProviders((prev) => ({
+              ...prev,
+              [provider]: { ...prev[provider], status: "connected" as ProviderStatus },
+            }));
+          }).catch(() => {
+            // Fall back to localStorage save.
+          })
+        );
+      }
+    }
+
+    try {
+      await Promise.all(savePromises);
+    } catch {
+      // Some saves may have failed.
+    }
+
     saveLS("providers", providers);
     setProvidersSaving(false);
     toast("success", "Provider settings saved");

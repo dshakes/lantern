@@ -997,6 +997,60 @@ class LanternAPI {
       );
     }
   }
+
+  // ---- LLM Completions ------------------------------------------------------
+
+  /**
+   * Send a completion request to the LLM proxy. Returns the raw Response so
+   * the caller can handle SSE streaming or read JSON directly.
+   */
+  async complete(params: {
+    messages: Array<{ role: string; content: string }>;
+    model?: string;
+    stream?: boolean;
+    temperature?: number;
+    maxTokens?: number;
+  }): Promise<Response> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (this._token) {
+      headers["Authorization"] = `Bearer ${this._token}`;
+    }
+    return fetch(`${this.baseUrl}/v1/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(params),
+    });
+  }
+
+  // ---- LLM Provider Settings ------------------------------------------------
+
+  async listLlmProviders(): Promise<
+    Array<{
+      provider: string;
+      status: string;
+      keyMasked: string;
+      source?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    }>
+  > {
+    return this.request("/v1/settings/llm-providers");
+  }
+
+  async saveLlmProvider(provider: string, apiKey: string): Promise<{ status: string; provider: string }> {
+    return this.request("/v1/settings/llm-providers", {
+      method: "POST",
+      body: JSON.stringify({ provider, apiKey }),
+    });
+  }
+
+  async testLlmProvider(provider: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    return this.request(`/v1/settings/llm-providers/${encodeURIComponent(provider)}/test`, {
+      method: "POST",
+    });
+  }
 }
 
 export const api = new LanternAPI();

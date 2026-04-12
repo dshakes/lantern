@@ -14,15 +14,15 @@ import {
   Braces,
   History,
   Loader2,
-  Trash2,
   AlertCircle,
+  ExternalLink,
+  Info,
 } from "lucide-react";
 import { format } from "date-fns";
 import clsx from "clsx";
 import {
-  agents,
+  agents as mockAgents,
   modelOptions,
-  agentInputExamples,
   sampleRunEvents,
   failedRunEvents,
   runningRunEvents,
@@ -37,6 +37,12 @@ import {
   useStreamSimulation,
 } from "@/components/event-stream";
 import { JsonViewer } from "@/components/json-viewer";
+import { api } from "@/lib/api";
+import Link from "next/link";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface PlaygroundRun {
   id: string;
@@ -45,11 +51,72 @@ interface PlaygroundRun {
   input: string;
   startedAt: Date;
   finishedAt?: Date;
-  events: StreamEvent[];
   status: "running" | "succeeded" | "failed";
+  output: string;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  provider: string;
+  resolvedModel: string;
+  demoMode?: boolean;
 }
 
-// Demo event sets keyed by agent name for the playground simulation
+// ---------------------------------------------------------------------------
+// Agent input examples (richer descriptions)
+// ---------------------------------------------------------------------------
+
+const agentExamples: Record<
+  string,
+  { input: Record<string, unknown>; description: string; systemPrompt?: string }
+> = {
+  "research-agent": {
+    input: {
+      topic: "Impact of AI agents on enterprise software",
+    },
+    description:
+      "Researches a topic using multiple sources and produces a structured report with citations.",
+    systemPrompt:
+      "You are a research analyst. Given a topic, write a comprehensive research briefing with key findings, trends, and implications. Use clear headers and bullet points.",
+  },
+  "code-reviewer": {
+    input: {
+      repo: "dshakes/lantern",
+      prNumber: 1,
+    },
+    description:
+      "Reviews a pull request for correctness, security, style, and performance issues.",
+    systemPrompt:
+      "You are a senior code reviewer. Given a PR description, provide a thorough code review covering correctness, security, style, and performance. Be specific and actionable.",
+  },
+  "customer-support": {
+    input: {
+      ticketId: "T-1234",
+      customerMessage: "My billing shows wrong charges",
+    },
+    description:
+      "Handles a customer support ticket by drafting an empathetic, helpful response.",
+    systemPrompt:
+      "You are a customer support agent. Draft a professional, empathetic response to the customer's issue. Include specific next steps and offer to escalate if needed.",
+  },
+  "data-pipeline": {
+    input: {},
+    description:
+      "Scheduled pipeline agent -- no interactive input needed. Runs on a cron schedule.",
+  },
+  "talent-scout": {
+    input: {
+      role: "Senior ML Engineer",
+      skills: ["PyTorch", "transformers"],
+      experience: "5+ years",
+    },
+    description:
+      "Generates a talent search strategy and outreach templates for recruiting.",
+    systemPrompt:
+      "You are a technical recruiter AI. Given a role, skills, and experience requirements, create a talent search strategy with sourcing channels, screening criteria, and a personalized outreach template.",
+  },
+};
+
+// Demo event sets for fallback mode.
 const demoEventSets: Record<string, StreamEvent[]> = {
   "research-agent": sampleRunEvents,
   "code-reviewer": runningRunEvents,
@@ -81,48 +148,113 @@ function prettyPrintJson(str: string): string {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Page component
+// ---------------------------------------------------------------------------
+
 export default function PlaygroundPage() {
   // Input config state
-  const [selectedAgent, setSelectedAgent] = useState(agents[0].name);
+  const [selectedAgent, setSelectedAgent] = useState("research-agent");
   const [selectedModel, setSelectedModel] = useState("auto");
   const [inputJson, setInputJson] = useState(
-    JSON.stringify(agentInputExamples[agents[0].name], null, 2)
+    JSON.stringify(agentExamples["research-agent"]?.input ?? {}, null, 2)
   );
   const [jsonValid, setJsonValid] = useState(true);
 
   // Advanced settings
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [temperature, setTemperature] = useState(1.0);
-  const [maxTokens, setMaxTokens] = useState(100000);
+  const [maxTokens, setMaxTokens] = useState(4096);
   const [costLimit, setCostLimit] = useState("1.00");
   const [streamEnabled, setStreamEnabled] = useState(true);
 
+  // LLM provider state
+  const [providersChecked, setProvidersChecked] = useState(false);
+  const [hasProviders, setHasProviders] = useState(false);
+  const [providerCheckError, setProviderCheckError] = useState(false);
+
   // Run state
-  const [currentEvents, setCurrentEvents] = useState<StreamEvent[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [runHistory, setRunHistory] = useState<PlaygroundRun[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
-  // Stream simulation
-  const { visibleEvents, streamingText, isStreaming, isComplete, reset } =
-    useStreamSimulation(currentEvents, {
-      enabled: isRunning,
+  // Streaming output state
+  const [streamedOutput, setStreamedOutput] = useState("");
+  const [streamDone, setStreamDone] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [demoMode, setDemoMode] = useState(false);
+  const [runMeta, setRunMeta] = useState<{
+    tokensIn: number;
+    tokensOut: number;
+    costUsd: number;
+    model: string;
+    provider: string;
+    durationMs: number;
+  } | null>(null);
+
+  // Demo mode fallback state (for when API is unavailable)
+  const [demoEvents, setDemoEvents] = useState<StreamEvent[]>([]);
+  const { visibleEvents, streamingText, isStreaming, isComplete, reset: resetDemo } =
+    useStreamSimulation(demoEvents, {
+      enabled: isRunning && demoMode,
       onComplete: () => {
         setIsRunning(false);
       },
     });
 
-  // Validate JSON as user types
+  const abortRef = useRef<AbortController | null>(null);
+  const outputRef = useRef<HTMLDivElement>(null);
+  const startTimeRef = useRef<number>(0);
+
+  // Check for configured LLM providers on mount.
+  useEffect(() => {
+    (async () => {
+      try {
+        const providers = await api.listLlmProviders();
+        setHasProviders(providers.length > 0);
+        setProvidersChecked(true);
+      } catch {
+        setProviderCheckError(true);
+        setProvidersChecked(true);
+      }
+    })();
+  }, []);
+
+  // Load agents from API (with mock fallback).
+  const [agents, setAgents] = useState(mockAgents);
+  useEffect(() => {
+    (async () => {
+      try {
+        const realAgents = await api.listAgents();
+        if (realAgents.length > 0) {
+          setAgents(realAgents);
+        }
+      } catch {
+        // Keep mock agents.
+      }
+    })();
+  }, []);
+
+  // Validate JSON as user types.
   useEffect(() => {
     setJsonValid(isValidJson(inputJson));
   }, [inputJson]);
 
-  // Update input example when agent changes
+  // Auto-scroll output.
+  useEffect(() => {
+    if (outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [streamedOutput]);
+
+  // Update input example when agent changes.
   const handleAgentChange = useCallback((agentName: string) => {
     setSelectedAgent(agentName);
-    const example = agentInputExamples[agentName];
+    const example = agentExamples[agentName];
     if (example) {
-      setInputJson(JSON.stringify(example, null, 2));
+      setInputJson(JSON.stringify(example.input, null, 2));
+    } else {
+      setInputJson("{}");
     }
   }, []);
 
@@ -133,67 +265,273 @@ export default function PlaygroundPage() {
   }, [inputJson]);
 
   const handleFillExample = useCallback(() => {
-    const example = agentInputExamples[selectedAgent];
+    const example = agentExamples[selectedAgent];
     if (example) {
-      setInputJson(JSON.stringify(example, null, 2));
+      setInputJson(JSON.stringify(example.input, null, 2));
     }
   }, [selectedAgent]);
 
-  const handleRun = useCallback(() => {
+  // ----------- Real LLM run -----------
+
+  const handleRun = useCallback(async () => {
     if (!jsonValid || !inputJson.trim()) return;
 
-    // Pick demo events for the selected agent
-    const events =
-      demoEventSets[selectedAgent] || sampleRunEvents;
-
-    // Tag events for this playground run
-    const taggedEvents = events.map((e) => ({
-      ...e,
-      runId: `playground_${Date.now()}`,
-    }));
-
-    setCurrentEvents(taggedEvents);
+    // Reset state.
+    setStreamedOutput("");
+    setStreamDone(false);
+    setStreamError(null);
+    setRunMeta(null);
+    setDemoMode(false);
+    setDemoEvents([]);
+    resetDemo();
     setIsRunning(true);
-    reset();
+    startTimeRef.current = Date.now();
 
-    // After a small tick, re-trigger simulation by updating events
-    setTimeout(() => {
-      setCurrentEvents([...taggedEvents]);
-    }, 10);
-  }, [selectedAgent, jsonValid, inputJson, reset]);
+    // Build messages from the agent's system prompt + user input.
+    const agentConfig = agentExamples[selectedAgent];
+    const messages: Array<{ role: string; content: string }> = [];
+
+    if (agentConfig?.systemPrompt) {
+      messages.push({ role: "system", content: agentConfig.systemPrompt });
+    }
+
+    // Parse the input JSON and include it as user content.
+    let parsedInput: Record<string, unknown> = {};
+    try {
+      parsedInput = JSON.parse(inputJson);
+    } catch {
+      // Already validated.
+    }
+
+    const userContent =
+      Object.keys(parsedInput).length > 0
+        ? `Here is my request:\n\n${JSON.stringify(parsedInput, null, 2)}`
+        : "Hello, please help me.";
+
+    messages.push({ role: "user", content: userContent });
+
+    try {
+      const response = await api.complete({
+        messages,
+        model: selectedModel,
+        stream: streamEnabled,
+        temperature,
+        maxTokens,
+      });
+
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => "");
+        let errMsg = `API error ${response.status}`;
+        try {
+          const parsed = JSON.parse(errBody);
+          errMsg = parsed.error || errMsg;
+        } catch {
+          if (errBody) errMsg = errBody;
+        }
+        throw new Error(errMsg);
+      }
+
+      if (streamEnabled && response.headers.get("content-type")?.includes("text/event-stream")) {
+        // Handle SSE stream.
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("No response body");
+
+        const decoder = new TextDecoder();
+        let fullOutput = "";
+        let totalTokensIn = 0;
+        let totalTokensOut = 0;
+        let totalCost = 0;
+        let resolvedModel = selectedModel;
+        let resolvedProvider = "";
+
+        const processLine = (line: string) => {
+          if (!line.startsWith("data: ")) return;
+          const data = line.slice(6).trim();
+          if (!data) return;
+
+          try {
+            const event = JSON.parse(data);
+            if (event.type === "delta" && event.content) {
+              fullOutput += event.content;
+              setStreamedOutput(fullOutput);
+            } else if (event.type === "done") {
+              totalTokensIn = event.tokensIn ?? 0;
+              totalTokensOut = event.tokensOut ?? 0;
+              totalCost = event.costUsd ?? 0;
+              resolvedModel = event.model ?? selectedModel;
+              resolvedProvider = event.provider ?? "";
+            }
+          } catch {
+            // Ignore malformed events.
+          }
+        };
+
+        let buffer = "";
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            processLine(line);
+          }
+        }
+
+        // Process any remaining buffer.
+        if (buffer.trim()) {
+          processLine(buffer);
+        }
+
+        const durationMs = Date.now() - startTimeRef.current;
+
+        setRunMeta({
+          tokensIn: totalTokensIn,
+          tokensOut: totalTokensOut,
+          costUsd: totalCost,
+          model: resolvedModel,
+          provider: resolvedProvider,
+          durationMs,
+        });
+        setStreamDone(true);
+        setIsRunning(false);
+
+        // Add to history.
+        setRunHistory((prev) => [
+          {
+            id: `run_${Date.now()}`,
+            agentName: selectedAgent,
+            model: selectedModel,
+            input: inputJson,
+            startedAt: new Date(startTimeRef.current),
+            finishedAt: new Date(),
+            status: "succeeded",
+            output: fullOutput,
+            tokensIn: totalTokensIn,
+            tokensOut: totalTokensOut,
+            costUsd: totalCost,
+            provider: resolvedProvider,
+            resolvedModel,
+          },
+          ...prev.slice(0, 19),
+        ]);
+      } else {
+        // Non-streaming JSON response.
+        const result = await response.json();
+        const durationMs = Date.now() - startTimeRef.current;
+
+        setStreamedOutput(result.content || "");
+        setRunMeta({
+          tokensIn: result.tokensIn ?? 0,
+          tokensOut: result.tokensOut ?? 0,
+          costUsd: result.costUsd ?? 0,
+          model: result.model ?? selectedModel,
+          provider: result.provider ?? "",
+          durationMs,
+        });
+        setStreamDone(true);
+        setIsRunning(false);
+
+        setRunHistory((prev) => [
+          {
+            id: `run_${Date.now()}`,
+            agentName: selectedAgent,
+            model: selectedModel,
+            input: inputJson,
+            startedAt: new Date(startTimeRef.current),
+            finishedAt: new Date(),
+            status: "succeeded",
+            output: result.content || "",
+            tokensIn: result.tokensIn ?? 0,
+            tokensOut: result.tokensOut ?? 0,
+            costUsd: result.costUsd ?? 0,
+            provider: result.provider ?? "",
+            resolvedModel: result.model ?? selectedModel,
+          },
+          ...prev.slice(0, 19),
+        ]);
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+
+      // Check if this is a network error (API down) -- fall back to demo mode.
+      if (
+        errorMessage.includes("fetch") ||
+        errorMessage.includes("network") ||
+        errorMessage.includes("Failed") ||
+        errorMessage.includes("ECONNREFUSED") ||
+        (err instanceof TypeError)
+      ) {
+        // Fall back to demo simulation.
+        setDemoMode(true);
+        const events = demoEventSets[selectedAgent] || sampleRunEvents;
+        const taggedEvents = events.map((e) => ({
+          ...e,
+          runId: `playground_${Date.now()}`,
+        }));
+        setDemoEvents(taggedEvents);
+        setTimeout(() => {
+          setDemoEvents([...taggedEvents]);
+        }, 10);
+        return;
+      }
+
+      setStreamError(errorMessage);
+      setIsRunning(false);
+      setStreamDone(true);
+
+      setRunHistory((prev) => [
+        {
+          id: `run_${Date.now()}`,
+          agentName: selectedAgent,
+          model: selectedModel,
+          input: inputJson,
+          startedAt: new Date(startTimeRef.current),
+          finishedAt: new Date(),
+          status: "failed",
+          output: "",
+          tokensIn: 0,
+          tokensOut: 0,
+          costUsd: 0,
+          provider: "",
+          resolvedModel: selectedModel,
+        },
+        ...prev.slice(0, 19),
+      ]);
+    }
+  }, [
+    selectedAgent,
+    selectedModel,
+    jsonValid,
+    inputJson,
+    streamEnabled,
+    temperature,
+    maxTokens,
+    resetDemo,
+  ]);
 
   const handleStop = useCallback(() => {
+    abortRef.current?.abort();
     setIsRunning(false);
-    reset();
-  }, [reset]);
+    resetDemo();
+  }, [resetDemo]);
 
   const handleRunAgain = useCallback(() => {
     handleRun();
   }, [handleRun]);
 
-  // Compute run summary from visible events
-  const runSummary = useMemo(() => {
-    if (visibleEvents.length === 0) return null;
+  // Agent description.
+  const agentDescription = useMemo(() => {
+    const config = agentExamples[selectedAgent];
+    return config?.description ?? agents.find((a) => a.name === selectedAgent)?.description ?? "";
+  }, [selectedAgent, agents]);
 
-    const endEvent = visibleEvents.find((e) => e.kind === "end");
-    if (!endEvent) return null;
-
-    return {
-      status: String(endEvent.data.status),
-      durationMs: endEvent.data.totalDurationMs as number,
-      costUsd: endEvent.data.totalCostUsd as number,
-      tokensIn: endEvent.data.totalTokensIn as number,
-      tokensOut: endEvent.data.totalTokensOut as number,
-    };
-  }, [visibleEvents]);
-
-  // Extract final output from the last llm_delta event
-  const finalOutput = useMemo(() => {
-    const llmDeltas = visibleEvents.filter((e) => e.kind === "llm_delta");
-    if (llmDeltas.length === 0) return null;
-    const last = llmDeltas[llmDeltas.length - 1];
-    return String(last.data.text);
-  }, [visibleEvents]);
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -210,19 +548,45 @@ export default function PlaygroundPage() {
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setShowHistory(!showHistory)}
-          className={clsx(
-            "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
-            showHistory
-              ? "border-lantern-500/30 bg-lantern-500/10 text-lantern-400"
-              : "border-zinc-700 text-zinc-400 hover:bg-surface-3"
+        <div className="flex items-center gap-2">
+          {demoMode && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-400">
+              <Info className="h-3 w-3" />
+              Demo Mode
+            </span>
           )}
-        >
-          <History className="h-3.5 w-3.5" />
-          History ({runHistory.length})
-        </button>
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className={clsx(
+              "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+              showHistory
+                ? "border-lantern-500/30 bg-lantern-500/10 text-lantern-400"
+                : "border-zinc-700 text-zinc-400 hover:bg-surface-3"
+            )}
+          >
+            <History className="h-3.5 w-3.5" />
+            History ({runHistory.length})
+          </button>
+        </div>
       </div>
+
+      {/* Provider warning banner */}
+      {providersChecked && !hasProviders && !providerCheckError && (
+        <div className="flex items-center gap-3 border-b border-amber-500/20 bg-amber-500/5 px-6 py-3">
+          <AlertCircle className="h-4 w-4 flex-shrink-0 text-amber-400" />
+          <p className="text-sm text-amber-300">
+            No LLM provider configured.{" "}
+            <Link
+              href="/settings"
+              className="inline-flex items-center gap-1 font-medium text-amber-200 underline underline-offset-2 hover:text-amber-100"
+            >
+              Add an API key in Settings
+              <ExternalLink className="h-3 w-3" />
+            </Link>{" "}
+            to use the playground with real LLM output.
+          </p>
+        </div>
+      )}
 
       {/* Main content: two panels */}
       <div className="flex flex-1 overflow-hidden">
@@ -242,14 +606,16 @@ export default function PlaygroundPage() {
                 {agents
                   .filter((a) => a.status === "active")
                   .map((agent) => (
-                    <option key={agent.id} value={agent.name}>
+                    <option key={agent.id ?? agent.name} value={agent.name}>
                       {agent.name}
                     </option>
                   ))}
+                {/* Always show example agents even if not in DB */}
+                {!agents.find((a) => a.name === "talent-scout") && (
+                  <option value="talent-scout">talent-scout</option>
+                )}
               </select>
-              <p className="mt-1 text-xs text-zinc-600">
-                {agents.find((a) => a.name === selectedAgent)?.description}
-              </p>
+              <p className="mt-1 text-xs text-zinc-600">{agentDescription}</p>
             </div>
 
             {/* Model override */}
@@ -367,9 +733,9 @@ export default function PlaygroundPage() {
                     </div>
                     <input
                       type="range"
-                      min="1000"
-                      max="200000"
-                      step="1000"
+                      min="256"
+                      max="16384"
+                      step="256"
                       value={maxTokens}
                       onChange={(e) =>
                         setMaxTokens(parseInt(e.target.value))
@@ -377,8 +743,8 @@ export default function PlaygroundPage() {
                       className="mt-1.5 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-lantern-500 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-lantern-500"
                     />
                     <div className="mt-0.5 flex justify-between text-[10px] text-zinc-600">
-                      <span>1k</span>
-                      <span>200k</span>
+                      <span>256</span>
+                      <span>16k</span>
                     </div>
                   </div>
 
@@ -466,12 +832,21 @@ export default function PlaygroundPage() {
                         setSelectedAgent(run.agentName);
                         setInputJson(run.input);
                         setSelectedModel(run.model);
-                        setCurrentEvents(run.events);
-                        setIsRunning(true);
-                        reset();
-                        setTimeout(() => {
-                          setCurrentEvents([...run.events]);
-                        }, 10);
+                        // Show the previous run output.
+                        setStreamedOutput(run.output);
+                        setStreamDone(true);
+                        setStreamError(null);
+                        setDemoMode(run.demoMode ?? false);
+                        setRunMeta({
+                          tokensIn: run.tokensIn,
+                          tokensOut: run.tokensOut,
+                          costUsd: run.costUsd,
+                          model: run.resolvedModel,
+                          provider: run.provider,
+                          durationMs: run.finishedAt
+                            ? run.finishedAt.getTime() - run.startedAt.getTime()
+                            : 0,
+                        });
                       }}
                       className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left transition-colors hover:bg-surface-2"
                     >
@@ -491,6 +866,11 @@ export default function PlaygroundPage() {
                         >
                           {run.status}
                         </span>
+                        {run.provider && (
+                          <span className="ml-2 text-[11px] text-zinc-600">
+                            via {run.provider}
+                          </span>
+                        )}
                       </div>
                       <span className="text-[11px] text-zinc-600">
                         {format(run.startedAt, "HH:mm:ss")}
@@ -510,14 +890,33 @@ export default function PlaygroundPage() {
             <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
               Output
             </h2>
-            {visibleEvents.length > 0 && (
-              <EventCountBadge count={visibleEvents.length} />
-            )}
+            <div className="flex items-center gap-2">
+              {isRunning && !demoMode && (
+                <span className="flex items-center gap-1.5 text-xs text-blue-400">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Streaming...
+                </span>
+              )}
+              {demoMode && visibleEvents.length > 0 && (
+                <EventCountBadge count={visibleEvents.length} />
+              )}
+            </div>
           </div>
 
           {/* Output area */}
           <div className="flex-1 overflow-hidden">
-            {visibleEvents.length === 0 && !isStreaming ? (
+            {/* Demo mode: use EventStream component */}
+            {demoMode && (visibleEvents.length > 0 || isStreaming) ? (
+              <div className="flex h-full flex-col">
+                <div className="flex-1 overflow-hidden">
+                  <EventStream
+                    events={visibleEvents}
+                    streaming={isStreaming}
+                    streamingText={streamingText}
+                  />
+                </div>
+              </div>
+            ) : !streamedOutput && !isRunning && !streamError ? (
               /* Idle state */
               <div className="flex h-full items-center justify-center">
                 <div className="text-center">
@@ -533,42 +932,58 @@ export default function PlaygroundPage() {
                 </div>
               </div>
             ) : (
-              /* Active / completed state */
+              /* Real LLM output */
               <div className="flex h-full flex-col">
-                <div className="flex-1 overflow-hidden">
-                  <EventStream
-                    events={visibleEvents}
-                    streaming={isStreaming}
-                    streamingText={streamingText}
-                  />
+                {/* Streaming / completed output */}
+                <div
+                  ref={outputRef}
+                  className="flex-1 overflow-auto p-6"
+                >
+                  {streamError ? (
+                    <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+                      <div className="flex items-center gap-2 text-sm font-medium text-red-400">
+                        <AlertCircle className="h-4 w-4" />
+                        Error
+                      </div>
+                      <p className="mt-2 text-sm text-red-300/80">{streamError}</p>
+                    </div>
+                  ) : (
+                    <div className="prose prose-invert max-w-none">
+                      <div className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-zinc-200">
+                        {streamedOutput}
+                        {isRunning && (
+                          <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-lantern-400" />
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Completion summary */}
-                {isComplete && runSummary && (
+                {streamDone && runMeta && !streamError && (
                   <div className="flex-shrink-0 border-t border-zinc-800 bg-surface-1/50 px-6 py-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-4">
-                        <span
-                          className={clsx(
-                            "inline-flex items-center gap-1.5 text-xs font-medium",
-                            runSummary.status === "succeeded"
-                              ? "text-emerald-400"
-                              : "text-red-400"
-                          )}
-                        >
-                          {runSummary.status === "succeeded" ? "Completed" : "Failed"}
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+                          Completed
                         </span>
+                        {runMeta.provider && (
+                          <span className="text-[11px] text-zinc-500">
+                            {runMeta.provider}/{runMeta.model}
+                          </span>
+                        )}
                         <div className="flex items-center gap-1 text-[11px] text-zinc-500">
                           <Clock className="h-3 w-3" />
-                          {formatDuration(runSummary.durationMs)}
+                          {formatDuration(runMeta.durationMs)}
                         </div>
                         <div className="flex items-center gap-1 text-[11px] text-zinc-500">
                           <Braces className="h-3 w-3" />
-                          {formatTokens(runSummary.tokensIn + runSummary.tokensOut)} tokens
+                          {formatTokens(runMeta.tokensIn + runMeta.tokensOut)}{" "}
+                          tokens
                         </div>
                         <div className="flex items-center gap-1 text-[11px] text-zinc-500">
                           <Coins className="h-3 w-3" />
-                          {formatCost(runSummary.costUsd)}
+                          {formatCost(runMeta.costUsd)}
                         </div>
                       </div>
                       <button
@@ -579,16 +994,24 @@ export default function PlaygroundPage() {
                         Run Again
                       </button>
                     </div>
+                  </div>
+                )}
 
-                    {/* Final output collapsible */}
-                    {finalOutput && (
-                      <div className="mt-3">
-                        <JsonViewer
-                          data={{ output: finalOutput.slice(0, 200) + "..." }}
-                          label="Final Output"
-                        />
-                      </div>
-                    )}
+                {/* Error summary */}
+                {streamDone && streamError && (
+                  <div className="flex-shrink-0 border-t border-zinc-800 bg-surface-1/50 px-6 py-4">
+                    <div className="flex items-center justify-between">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-400">
+                        Failed
+                      </span>
+                      <button
+                        onClick={handleRunAgain}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                        Retry
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

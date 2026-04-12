@@ -127,6 +127,7 @@ func main() {
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
 	apiKeyHandler := handlers.NewApiKeyHandler(srv, authHandler)
 	deploymentHandler := handlers.NewDeploymentHandler(srv, authHandler)
+	llmProxyHandler := handlers.NewLlmProxyHandler(srv, authHandler)
 
 	// --- HTTP server (health + auth + REST API) ---
 	httpMux := http.NewServeMux()
@@ -182,6 +183,14 @@ func main() {
 	httpMux.HandleFunc("POST /v1/api-keys", apiKeyHandler.CreateApiKey)
 	httpMux.HandleFunc("GET /v1/api-keys", apiKeyHandler.ListApiKeys)
 	httpMux.HandleFunc("DELETE /v1/api-keys/{id}", apiKeyHandler.RevokeApiKey)
+
+	// LLM proxy / completions endpoint.
+	httpMux.HandleFunc("POST /v1/completions", llmProxyHandler.Complete)
+
+	// LLM provider settings endpoints.
+	httpMux.HandleFunc("POST /v1/settings/llm-providers", llmProxyHandler.SaveLlmProvider)
+	httpMux.HandleFunc("GET /v1/settings/llm-providers", llmProxyHandler.ListLlmProviders)
+	httpMux.HandleFunc("POST /v1/settings/llm-providers/{provider}/test", llmProxyHandler.TestLlmProvider)
 
 	// Deployment endpoints.
 	httpMux.HandleFunc("POST /v1/deployments", deploymentHandler.CreateDeployment)

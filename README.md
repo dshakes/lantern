@@ -61,46 +61,97 @@ The agent ecosystem is split between frameworks that run on your laptop and prop
 ## Architecture
 
 ```
-                        +--------------------+
-    WhatsApp -----------|                    |
-    Slack --------------|  Surface Gateway   |
-    Telegram -----------|  (Rust/Axum)       |
-    Voice --------------|                    |
-                        +---------+----------+
-                                  |
-    SDK --------------------+-----+----------+
-    CLI --------------------|  API Gateway   |
-    Dashboard --------------|  (Rust/Axum)   |
-                            +-----+----------+
-                                  |
-              +-------------------+-------------------+
-              v                   v                   v
-    +------------------+  +--------------+   +------------------+
-    |  Control Plane   |  | Model Router |   |  Workflow Engine  |
-    |  (Go)            |  | (Rust)       |   |  (Go)             |
-    +------------------+  +--------------+   +---------+---------+
-                                                       |
-                                             +---------+---------+
-                                             v                   v
-                                      +-----------+       +-----------+
-                                      | Firecracker|       |  K8s Job  |
-                                      | MicroVMs   |       |  Runtime  |
-                                      +-----------+       +-----------+
+ CONTROL PLANE (Lantern-hosted or self-hosted)
+ =====================================================================
+
+                         +--------------------+
+     WhatsApp -----------|                    |
+     Slack --------------|  Surface Gateway   |
+     Telegram -----------|  (Rust/Axum)       |
+     Voice --------------|                    |
+                         +---------+----------+
+                                   |
+     SDK --------------------+-----+----------+
+     CLI --------------------|  API Gateway   |
+     Dashboard --------------|  (Rust/Axum)   |
+                             +-----+----------+
+                                   |
+               +-------------------+-------------------+
+               v                   v                   v
+     +------------------+  +--------------+   +----------------+
+     |  Control Plane   |  | Model Router |   |   Scheduler    |
+     |  (Go)            |  | (Rust)       |   |   (Go)         |
+     +--------+---------+  +--------------+   +----------------+
+              |
+              |  Postgres, Redis, S3
+              |
+     +--------+---------+----------+-----------+
+     |  Memory (Go)     | Notifier | Billing   |
+     |  pgvector        | (Go)     | (Go)      |
+     +------------------+----------+-----------+
+
+                    | gRPC tunnel (mTLS, outbound-only)
+                    | metadata only -- customer data never crosses
+                    |
+ ===================|=================================================
+                    |
+ DATA PLANE (customer VPC: EKS / GKE / AKS / bare metal)
+ =====================================================================
+
+          +---------+----------+
+          | Data Plane Agent   |
+          | (Go)               |
+          | tunnel, dispatch,  |
+          | heartbeat, metrics |
+          +---------+----------+
+                    |
+          +---------+-------------------+
+          v                             v
+   +------------------+       +------------------+
+   | Workflow Engine   |       | Runtime Manager  |
+   | (Go)              |       | (Rust)           |
+   | durable execution |       | isolation orch.  |
+   +--------+----------+       +--------+---------+
+            |                           |
+            |                  +--------+---------+
+            |                  v                  v
+            |           +-----------+      +-----------+
+            |           | Firecracker|      |  K8s Job  |
+            |           | MicroVMs   |      |  Runtime  |
+            |           +-----------+      +-----------+
+            |
+            +--- local Postgres, Redis (customer-managed)
 ```
 
-**Control plane** (Go) -- system of record for agents, versions, runs, tenants, API keys. gRPC + REST APIs. Postgres.
+### Control plane
 
-**Workflow engine** (Go) -- durable execution. Event-sourced run state with journal, replay, and recovery. The only service that mutates run state.
+**Control plane** (Go) -- system of record for agents, versions, runs, tenants, API keys. gRPC + REST APIs. Postgres. Hosted as multi-tenant SaaS or self-hosted.
 
 **API gateway** (Rust/Axum) -- authentication, rate limiting, streaming proxy (SSE + WebSocket + gRPC bidi). Single entry point for external clients.
 
 **Model router** (Rust) -- multi-LLM endpoint. Capability-based addressing (`reasoning-large`, `chat-small`, `auto`), prompt caching, semantic deduplication, cost-aware routing, provider failover.
 
-**Runtime manager** (Rust) -- orchestrates compute isolation. K8s Jobs, Firecracker microVMs, Kata Containers, Wasmtime. Snapshot/restore for fast cold start.
-
 **Surface gateway** (Rust/Axum) -- omnichannel message adapter. Webhook verification, session management, unified event format across providers.
 
 **Supporting services** (Go) -- scheduler (cron, delayed jobs), memory (three-tier: core/recall/archival with pgvector), notifier (webhook, email, Slack, SMS), billing (usage metering, budget enforcement).
+
+### Data plane
+
+**Data plane agent** (Go) -- lightweight connector deployed in the customer's VPC. Maintains a persistent outbound gRPC tunnel (mTLS) to the control plane. Receives run assignments, dispatches to the local workflow engine, and reports status/metrics back. Only metadata crosses the tunnel boundary -- customer code, inputs, outputs, secrets, and LLM responses never leave the VPC.
+
+**Workflow engine** (Go) -- durable execution. Event-sourced run state with journal, replay, and recovery. The only service that mutates run state. Runs in the data plane so agent execution stays in the customer's network.
+
+**Runtime manager** (Rust) -- orchestrates compute isolation. K8s Jobs, Firecracker microVMs, Kata Containers, Wasmtime. Snapshot/restore for fast cold start. Four isolation classes: trusted, standard, untrusted, hostile.
+
+### Deployment modes
+
+| Mode | Control plane | Data plane | Best for |
+|---|---|---|---|
+| **Fully managed** | Lantern-hosted | Lantern-hosted | Teams wanting zero ops |
+| **Hybrid** | Lantern SaaS | Customer VPC | Data sovereignty, compliance |
+| **Self-hosted** | Customer-hosted | Customer-hosted | Air-gap, FedRAMP, full control |
+
+See [`docs/architecture/17-deployment-model.md`](docs/architecture/17-deployment-model.md) for the full deployment architecture.
 
 All inter-service communication is gRPC (protobuf3). Protos are the single source of truth: [`packages/proto/lantern/v1/`](packages/proto/lantern/v1/).
 
