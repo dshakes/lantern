@@ -773,6 +773,210 @@ func (h *LlmProxyHandler) testAnthropic(ctx context.Context, apiKey string) erro
 	return nil
 }
 
+// ---------- Agent spec generation ----------
+
+// agentSpecRequest is the request body for POST /v1/agents/generate-spec.
+type agentSpecRequest struct {
+	Description string `json:"description"`
+}
+
+// GenerateAgentSpec handles POST /v1/agents/generate-spec.
+// It takes a natural-language description and generates a structured agent spec via LLM.
+func (h *LlmProxyHandler) GenerateAgentSpec(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	var req agentSpecRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if strings.TrimSpace(req.Description) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "description is required"})
+		return
+	}
+
+	h.logger().Info("generating agent spec",
+		zap.String("tenant_id", tenantID),
+		zap.String("description", req.Description),
+	)
+
+	systemPrompt := `You are Lantern's agent architect. Given a user's description, generate a structured agent specification.
+
+Output ONLY valid JSON with this exact structure (no markdown, no backticks, no explanation):
+{
+  "name": "kebab-case-name",
+  "description": "One sentence description",
+  "model": "auto",
+  "steps": [
+    { "name": "step-name", "type": "llm", "description": "What this step does", "config": {} }
+  ],
+  "tools": [],
+  "connectors": [],
+  "surfaces": [],
+  "triggers": [{ "type": "manual", "config": {} }],
+  "isolation": "standard",
+  "limits": { "timeout": "5m", "maxTokens": 100000, "maxCostUsd": 1.0 }
+}
+
+Valid step types: llm, tool, connector, condition, loop, approval
+Valid tools: web-search, python-exec, fs-read, fs-write, browser, code-interpreter
+Valid connectors: gmail, slack, github, linear, notion, stripe, google-calendar, jira, discord
+Valid surfaces: whatsapp, slack, discord, telegram, twilio, email, webchat
+Valid trigger types: manual, schedule, webhook, surface
+Valid isolation levels: trusted, standard, untrusted
+Valid models: auto, reasoning-large, reasoning-small, chat-large, chat-small, code-large
+
+Generate a thoughtful, well-structured agent with appropriate steps for the task described. Use descriptive step names in kebab-case.`
+
+	completionReq := &completionRequest{
+		Model: "auto",
+		Messages: []completionMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: req.Description},
+		},
+		Stream: false,
+	}
+
+	provider, model := resolveModel(completionReq.Model)
+
+	apiKey, err := h.resolveProviderKey(ctx, tenantID, provider)
+	if err != nil {
+		altProvider := "anthropic"
+		if provider == "anthropic" {
+			altProvider = "openai"
+		}
+		altKey, altErr := h.resolveProviderKey(ctx, tenantID, altProvider)
+		if altErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "No LLM provider API key configured. Add one in Settings > LLM Providers.",
+			})
+			return
+		}
+		provider = altProvider
+		apiKey = altKey
+		if provider == "openai" {
+			model = "gpt-4o"
+		} else {
+			model = "claude-sonnet-4-20250514"
+		}
+	}
+
+	h.logger().Info("proxying spec generation",
+		zap.String("tenant_id", tenantID),
+		zap.String("provider", provider),
+		zap.String("model", model),
+	)
+
+	// Use the existing proxy infrastructure to call the LLM, but capture the response.
+	switch provider {
+	case "openai":
+		h.proxyOpenAI(w, ctx, apiKey, model, completionReq)
+	case "anthropic":
+		h.proxyAnthropic(w, ctx, apiKey, model, completionReq)
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported provider"})
+	}
+}
+
+// agentCodeRequest is the request body for POST /v1/agents/generate-code.
+type agentCodeRequest struct {
+	Spec json.RawMessage `json:"spec"`
+}
+
+// GenerateAgentCode handles POST /v1/agents/generate-code.
+// It takes an agent spec and generates TypeScript agent code + agent.yaml via LLM.
+func (h *LlmProxyHandler) GenerateAgentCode(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	var req agentCodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if len(req.Spec) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "spec is required"})
+		return
+	}
+
+	h.logger().Info("generating agent code",
+		zap.String("tenant_id", tenantID),
+	)
+
+	systemPrompt := `You are Lantern's code generator. Given an agent specification JSON, generate production-ready TypeScript agent code using the @lantern/sdk.
+
+Output ONLY valid JSON with this exact structure (no markdown, no backticks):
+{
+  "code": "// TypeScript code here",
+  "yaml": "// YAML config as a string"
+}
+
+The TypeScript code should:
+- Import from "@lantern/sdk"
+- Use the Agent class with proper typing
+- Implement each step using the step() function for durability
+- Use ctx.llm.generate() for LLM calls (never call models directly)
+- Use ctx.connectors.<name>.<action>() for connector calls
+- Use ctx.mcp("<tool>").call() for tool invocations
+- Include proper error handling
+- Be clean, well-commented, production-quality code
+
+The YAML should be a valid agent.yaml configuration matching the spec.
+
+Ensure the code string and yaml string are properly escaped for JSON (newlines as \n, quotes escaped, etc).`
+
+	completionReq := &completionRequest{
+		Model: "auto",
+		Messages: []completionMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: string(req.Spec)},
+		},
+		Stream: false,
+	}
+
+	provider, model := resolveModel(completionReq.Model)
+
+	apiKey, err := h.resolveProviderKey(ctx, tenantID, provider)
+	if err != nil {
+		altProvider := "anthropic"
+		if provider == "anthropic" {
+			altProvider = "openai"
+		}
+		altKey, altErr := h.resolveProviderKey(ctx, tenantID, altProvider)
+		if altErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "No LLM provider API key configured. Add one in Settings > LLM Providers.",
+			})
+			return
+		}
+		provider = altProvider
+		apiKey = altKey
+		if provider == "openai" {
+			model = "gpt-4o"
+		} else {
+			model = "claude-sonnet-4-20250514"
+		}
+	}
+
+	switch provider {
+	case "openai":
+		h.proxyOpenAI(w, ctx, apiKey, model, completionReq)
+	case "anthropic":
+		h.proxyAnthropic(w, ctx, apiKey, model, completionReq)
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported provider"})
+	}
+}
+
 // ---------- Cost estimation ----------
 
 func estimateCost(provider, model string, tokensIn, tokensOut int) float64 {

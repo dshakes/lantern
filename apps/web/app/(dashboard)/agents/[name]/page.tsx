@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { format } from "date-fns";
 import {
@@ -28,6 +28,11 @@ import {
   Plus,
   Filter,
   RefreshCw,
+  Brain,
+  Sparkles,
+  Send,
+  ChevronRight,
+  X,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -146,6 +151,13 @@ export default function AgentDetailPage() {
   const [showRunDialog, setShowRunDialog] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // AI chat sidebar
+  const [showAiChat, setShowAiChat] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
   if (agentLoading) return <AgentDetailSkeleton />;
 
   if (agentError || !agent) {
@@ -173,6 +185,53 @@ export default function AgentDetailPage() {
       setShowDeleteConfirm(false);
     }
   };
+
+  const handleChatSend = async () => {
+    if (!chatInput.trim() || chatLoading) return;
+    const userMessage = chatInput.trim();
+    setChatInput("");
+    setChatMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setChatLoading(true);
+
+    try {
+      const res = await api.complete({
+        messages: [
+          {
+            role: "system",
+            content: `You are an AI assistant for the Lantern agent "${name}". This agent: ${agent.description}. You help users manage, configure, and debug this agent. Be concise and actionable. Current status: ${agent.status}. Total runs: ${agentRuns.length}. Success rate: ${agentRuns.length > 0 ? Math.round((succeededRuns / agentRuns.length) * 100) : 0}%.`,
+          },
+          ...chatMessages.map((m) => ({ role: m.role, content: m.content })),
+          { role: "user", content: userMessage },
+        ],
+        model: "auto",
+        maxTokens: 1024,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setChatMessages((prev) => [...prev, { role: "assistant", content: data.content ?? "I could not generate a response." }]);
+      } else {
+        setChatMessages((prev) => [...prev, { role: "assistant", content: "Sorry, I could not connect to the LLM. Please check your provider settings." }]);
+      }
+    } catch {
+      setChatMessages((prev) => [...prev, { role: "assistant", content: "Connection error. Please check that your LLM provider is configured." }]);
+    } finally {
+      setChatLoading(false);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    }
+  };
+
+  // Mock connectivity data for the agent
+  const connectedModel = "auto";
+  const connectedSurfaces = [
+    { id: "slack", name: "Slack", color: "text-purple-400" },
+    { id: "webchat", name: "Web Chat", color: "text-indigo-400" },
+  ];
+  const connectedConnectors = [
+    { id: "gmail", name: "Gmail", color: "text-red-400" },
+    { id: "notion", name: "Notion", color: "text-zinc-300" },
+    { id: "github", name: "GitHub", color: "text-zinc-300" },
+  ];
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
@@ -202,6 +261,18 @@ export default function AgentDetailPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowAiChat(!showAiChat)}
+              className={clsx(
+                "inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
+                showAiChat
+                  ? "border-indigo-500/50 bg-indigo-500/10 text-indigo-400"
+                  : "border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
+              )}
+            >
+              <Sparkles className="h-4 w-4" />
+              AI Chat
+            </button>
             <button
               onClick={() => router.push(`/agents/${name}/editor`)}
               className="inline-flex items-center gap-2 rounded-lg border border-lantern-500/30 px-4 py-2 text-sm font-medium text-lantern-400 transition-colors hover:bg-lantern-500/10"
@@ -272,6 +343,74 @@ export default function AgentDetailPage() {
                 }
               />
               <StatCard label="Total Cost" value={runsLoading ? "..." : formatCost(totalCost)} />
+            </div>
+
+            {/* Agent Connectivity */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <h3 className="mb-4 text-sm font-semibold text-zinc-200">Agent Connectivity</h3>
+              <div className="grid grid-cols-3 gap-4">
+                {/* Connected LLM */}
+                <div className="rounded-lg border border-zinc-800 bg-surface-2 p-4">
+                  <div className="mb-2 flex items-center gap-2">
+                    <Brain className="h-4 w-4 text-indigo-400" />
+                    <span className="text-xs font-medium text-zinc-300">LLM Model</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-md bg-indigo-500/10 px-2 py-0.5 text-xs font-medium text-indigo-400">
+                      {connectedModel}
+                    </span>
+                    <span className="text-[10px] text-zinc-600">capability routing</span>
+                  </div>
+                </div>
+
+                {/* Connected Surfaces */}
+                <div className="rounded-lg border border-zinc-800 bg-surface-2 p-4">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="h-4 w-4 text-green-400" />
+                      <span className="text-xs font-medium text-zinc-300">Surfaces</span>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab("surfaces")}
+                      className="text-[10px] text-indigo-400 transition-colors hover:text-indigo-300"
+                    >
+                      Add <ChevronRight className="inline h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {connectedSurfaces.map((s) => (
+                      <span key={s.id} className="inline-flex items-center gap-1 rounded-md bg-surface-3 px-2 py-0.5 text-[11px] text-zinc-400">
+                        <MessageSquare className={clsx("h-2.5 w-2.5", s.color)} />
+                        {s.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Connected Connectors */}
+                <div className="rounded-lg border border-zinc-800 bg-surface-2 p-4">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Plug className="h-4 w-4 text-teal-400" />
+                      <span className="text-xs font-medium text-zinc-300">Connectors</span>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab("connectors")}
+                      className="text-[10px] text-indigo-400 transition-colors hover:text-indigo-300"
+                    >
+                      Add <ChevronRight className="inline h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {connectedConnectors.map((c) => (
+                      <span key={c.id} className="inline-flex items-center gap-1 rounded-md bg-surface-3 px-2 py-0.5 text-[11px] text-zinc-400">
+                        <Plug className={clsx("h-2.5 w-2.5", c.color)} />
+                        {c.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Labels */}
@@ -433,6 +572,102 @@ export default function AgentDetailPage() {
                     Delete
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Chat Sidebar */}
+      {showAiChat && (
+        <div className="fixed right-0 top-0 z-40 flex h-full w-96 flex-col border-l border-zinc-800 bg-surface-1 shadow-2xl">
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-indigo-400" />
+              <span className="text-sm font-semibold text-zinc-200">AI Assistant</span>
+            </div>
+            <button
+              onClick={() => setShowAiChat(false)}
+              className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-auto p-4 space-y-3">
+            {chatMessages.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Sparkles className="mb-3 h-8 w-8 text-zinc-600" />
+                <p className="text-xs text-zinc-500 max-w-[220px]">
+                  Ask me anything about this agent. I can help you configure, debug, and optimize it.
+                </p>
+                <div className="mt-4 space-y-1.5">
+                  {[
+                    "What runs failed today?",
+                    "Add Slack integration",
+                    "How can I improve success rate?",
+                  ].map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      onClick={() => {
+                        setChatInput(suggestion);
+                      }}
+                      className="block w-full rounded-lg border border-zinc-800 bg-surface-2 px-3 py-2 text-left text-[11px] text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-300"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {chatMessages.map((msg, i) => (
+              <div
+                key={i}
+                className={clsx(
+                  "rounded-lg px-3 py-2 text-xs leading-relaxed",
+                  msg.role === "user"
+                    ? "ml-6 bg-indigo-500/10 text-indigo-200"
+                    : "mr-6 bg-surface-2 text-zinc-300"
+                )}
+              >
+                {msg.content}
+              </div>
+            ))}
+
+            {chatLoading && (
+              <div className="mr-6 flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2">
+                <Loader2 className="h-3 w-3 animate-spin text-indigo-400" />
+                <span className="text-xs text-zinc-500">Thinking...</span>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Input */}
+          <div className="border-t border-zinc-800 p-3">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Ask about this agent..."
+                className="flex-1 rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleChatSend();
+                  }
+                }}
+              />
+              <button
+                onClick={handleChatSend}
+                disabled={!chatInput.trim() || chatLoading}
+                className="rounded-lg bg-indigo-600 p-2 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+              >
+                <Send className="h-3.5 w-3.5" />
               </button>
             </div>
           </div>

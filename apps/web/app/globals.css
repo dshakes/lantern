@@ -462,6 +462,54 @@ input[type="range"]::-webkit-slider-thumb {
   border: 1px solid rgba(110, 93, 206, 0.3);
 }
 
+/* Wizard step transitions */
+@keyframes step-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.step-enter {
+  animation: step-slide-in 0.3s ease-out;
+}
+
+/* AI chat sidebar slide */
+@keyframes sidebar-slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.sidebar-enter {
+  animation: sidebar-slide-in 0.2s ease-out;
+}
+
+/* Skeleton card grid */
+@keyframes card-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.card-enter {
+  animation: card-fade-in 0.3s ease-out;
+}
+
 /* Toast slide-in animation */
 @keyframes slide-in-from-right {
   from {

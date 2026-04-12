@@ -36,6 +36,41 @@ export interface CreateAgentInput {
   model?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Agent spec types (AI-generated agent specification)
+// ---------------------------------------------------------------------------
+
+export interface AgentSpecStep {
+  name: string;
+  type: "llm" | "tool" | "connector" | "condition" | "loop" | "approval";
+  description: string;
+  config: Record<string, unknown>;
+}
+
+export interface AgentSpecTrigger {
+  type: "manual" | "schedule" | "webhook" | "surface";
+  config: Record<string, unknown>;
+}
+
+export interface AgentSpecLimits {
+  timeout: string;
+  maxTokens: number;
+  maxCostUsd: number;
+}
+
+export interface AgentSpec {
+  name: string;
+  description: string;
+  model: string;
+  steps: AgentSpecStep[];
+  tools: string[];
+  connectors: string[];
+  surfaces: string[];
+  triggers: AgentSpecTrigger[];
+  isolation: "trusted" | "standard" | "untrusted";
+  limits: AgentSpecLimits;
+}
+
 export interface RunFilters {
   agentName?: string;
   status?: RunStatus | "all";
@@ -996,6 +1031,114 @@ class LanternAPI {
         "[lantern] Gateway unavailable for removeDataPlane, simulating locally",
       );
     }
+  }
+
+  // ---- Agent AI Generation ---------------------------------------------------
+
+  /** Agent spec shape returned by the generate-spec endpoint. */
+  async generateAgentSpec(description: string): Promise<AgentSpec> {
+    const res = await this.complete({
+      messages: [
+        {
+          role: "system",
+          content: `You are Lantern's agent architect. Given a user's description, generate a structured agent specification.
+
+Output ONLY valid JSON with this exact structure (no markdown, no backticks, no explanation):
+{
+  "name": "kebab-case-name",
+  "description": "One sentence description",
+  "model": "auto",
+  "steps": [
+    { "name": "step-name", "type": "llm", "description": "What this step does", "config": {} }
+  ],
+  "tools": [],
+  "connectors": [],
+  "surfaces": [],
+  "triggers": [{ "type": "manual", "config": {} }],
+  "isolation": "standard",
+  "limits": { "timeout": "5m", "maxTokens": 100000, "maxCostUsd": 1.0 }
+}
+
+Valid step types: llm, tool, connector, condition, loop, approval
+Valid tools: web-search, python-exec, fs-read, fs-write, browser, code-interpreter
+Valid connectors: gmail, slack, github, linear, notion, stripe, google-calendar, jira, discord
+Valid surfaces: whatsapp, slack, discord, telegram, twilio, email, webchat
+Valid trigger types: manual, schedule, webhook, surface
+Valid isolation levels: trusted, standard, untrusted
+Valid models: auto, reasoning-large, reasoning-small, chat-large, chat-small, code-large
+
+Generate a thoughtful, well-structured agent with appropriate steps for the task described. Use descriptive step names in kebab-case.`,
+        },
+        { role: "user", content: description },
+      ],
+      model: "auto",
+      temperature: 0.7,
+      maxTokens: 4096,
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to generate agent spec");
+    }
+
+    const data = await res.json();
+    const content: string = data.content ?? "";
+
+    // Extract JSON from the response (handle potential markdown wrapping)
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error("Could not parse agent spec from LLM response");
+    }
+
+    return JSON.parse(jsonMatch[0]) as AgentSpec;
+  }
+
+  async generateAgentCode(spec: AgentSpec): Promise<{ code: string; yaml: string }> {
+    const res = await this.complete({
+      messages: [
+        {
+          role: "system",
+          content: `You are Lantern's code generator. Given an agent specification JSON, generate production-ready TypeScript agent code using the @lantern/sdk.
+
+Output ONLY valid JSON with this exact structure (no markdown, no backticks):
+{
+  "code": "// TypeScript code here",
+  "yaml": "// YAML config as a string"
+}
+
+The TypeScript code should:
+- Import from "@lantern/sdk"
+- Use the Agent class with proper typing
+- Implement each step using the step() function for durability
+- Use ctx.llm.generate() for LLM calls (never call models directly)
+- Use ctx.connectors.<name>.<action>() for connector calls
+- Use ctx.mcp("<tool>").call() for tool invocations
+- Include proper error handling
+- Be clean, well-commented, production-quality code
+
+The YAML should be a valid agent.yaml configuration matching the spec.
+
+Ensure the code string and yaml string are properly escaped for JSON (newlines as \\n, quotes escaped, etc).`,
+        },
+        { role: "user", content: JSON.stringify(spec) },
+      ],
+      model: "auto",
+      temperature: 0.4,
+      maxTokens: 8192,
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to generate agent code");
+    }
+
+    const data = await res.json();
+    const content: string = data.content ?? "";
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error("Could not parse generated code from LLM response");
+    }
+
+    return JSON.parse(jsonMatch[0]) as { code: string; yaml: string };
   }
 
   // ---- LLM Completions ------------------------------------------------------

@@ -187,6 +187,10 @@ func main() {
 	// LLM proxy / completions endpoint.
 	httpMux.HandleFunc("POST /v1/completions", llmProxyHandler.Complete)
 
+	// Agent AI generation endpoints.
+	httpMux.HandleFunc("POST /v1/agents/generate-spec", llmProxyHandler.GenerateAgentSpec)
+	httpMux.HandleFunc("POST /v1/agents/generate-code", llmProxyHandler.GenerateAgentCode)
+
 	// LLM provider settings endpoints.
 	httpMux.HandleFunc("POST /v1/settings/llm-providers", llmProxyHandler.SaveLlmProvider)
 	httpMux.HandleFunc("GET /v1/settings/llm-providers", llmProxyHandler.ListLlmProviders)
