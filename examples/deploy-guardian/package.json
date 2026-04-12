@@ -1,0 +1,10 @@
+{
+  "name": "@lantern/example-deploy-guardian",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@lantern/sdk": "workspace:*",
+    "zod": "^3.24.0"
+  }
+}

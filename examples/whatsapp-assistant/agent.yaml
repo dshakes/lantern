@@ -1,0 +1,16 @@
+name: whatsapp-assistant
+version: "0.1.0"
+description: Personal WhatsApp agent that manages calendar, email, tasks, reminders, and expenses
+model: auto
+isolation:
+  class: trusted
+triggers:
+  - kind: surface
+    surface: whatsapp
+limits:
+  timeout: 15m
+  max_tokens: 100000
+  max_cost_usd: 1.00
+labels:
+  category: personal
+  surface: whatsapp

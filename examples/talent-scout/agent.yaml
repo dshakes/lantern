@@ -1,0 +1,13 @@
+name: talent-scout
+version: "0.1.0"
+description: Searches for AI/ML talent across platforms and generates personalized outreach
+model: auto
+isolation:
+  class: standard
+limits:
+  timeout: 10m
+  max_tokens: 200000
+  max_cost_usd: 3.00
+labels:
+  category: recruiting
+  complexity: high

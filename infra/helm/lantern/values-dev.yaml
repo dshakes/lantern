@@ -1,0 +1,142 @@
+# values-dev.yaml -- Development overrides for local Kind clusters.
+#
+# Usage:
+#   helm install lantern infra/helm/lantern \
+#     -f infra/helm/lantern/values.yaml \
+#     -f infra/helm/lantern/values-dev.yaml
+
+global:
+  image:
+    registry: ""          # images are loaded directly into Kind
+    repository: lantern
+    tag: dev
+    pullPolicy: Never     # already loaded via `kind load docker-image`
+  logLevel: debug
+
+# -- Single replica for every service --
+
+gateway:
+  replicas: 1
+  image:
+    name: lantern-gateway
+  service:
+    type: NodePort
+    port: 8443
+    nodePort: 30080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+  env:
+    LISTEN_ADDR: "0.0.0.0:8443"
+    CONTROL_PLANE_ADDR: "lantern-control-plane:50051"
+    MODEL_ROUTER_ADDR: "lantern-model-router:50053"
+    LOG_LEVEL: "debug"
+
+controlPlane:
+  replicas: 1
+  image:
+    name: lantern-control-plane
+  service:
+    type: NodePort
+    grpcPort: 50051
+    httpPort: 8080
+    grpcNodePort: 30051
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  env:
+    LISTEN_ADDR: ":50051"
+    LOG_LEVEL: "debug"
+
+modelRouter:
+  replicas: 1
+  image:
+    name: lantern-model-router
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+workflowEngine:
+  replicas: 1
+  image:
+    name: lantern-workflow-engine
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+runtimeManager:
+  replicas: 0            # Not needed for local dev without microVMs
+  image:
+    name: lantern-runtime-manager
+
+dashboard:
+  replicas: 1
+  image:
+    name: lantern-web
+  service:
+    type: NodePort
+    port: 3000
+    nodePort: 30081
+  env:
+    LANTERN_API_URL: "http://lantern-gateway:8443"
+
+# -- Infrastructure with dev credentials --
+
+postgresql:
+  enabled: true
+  auth:
+    username: lantern
+    password: lantern-dev
+    database: lantern
+  primary:
+    persistence:
+      size: 1Gi
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+
+minio:
+  enabled: true
+  auth:
+    rootUser: lantern
+    rootPassword: lantern-dev-secret
+  defaultBuckets: "lantern-bundles,lantern-snapshots,lantern-dev"
+  persistence:
+    size: 1Gi
+
+ingress:
+  enabled: false
+
+secrets:
+  jwtSecret: "dev-jwt-secret-not-for-production"
+  openaiApiKey: "sk-dev-placeholder"
+  anthropicApiKey: "sk-ant-dev-placeholder"
+  postgresPassword: "lantern-dev"
+  minioPassword: "lantern-dev-secret"
+
+serviceAccount:
+  create: true
+  name: "lantern"
+  annotations: {}

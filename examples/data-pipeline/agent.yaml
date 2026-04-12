@@ -1,0 +1,16 @@
+name: data-pipeline
+version: "0.1.0"
+description: Scheduled weekly data pipeline that aggregates CRM, billing, and analytics into a stakeholder report
+model: auto
+isolation:
+  class: standard
+triggers:
+  - kind: schedule
+    schedule: "0 9 * * MON"
+limits:
+  timeout: 15m
+  max_tokens: 300000
+  max_cost_usd: 5.00
+labels:
+  category: data
+  schedule: weekly

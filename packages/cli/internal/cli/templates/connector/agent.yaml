@@ -1,0 +1,14 @@
+name: "{{.Name}}"
+version: "0.1.0"
+description: "Connector agent — integrates with Slack, Gmail, and Google Sheets"
+model: auto
+connectors:
+  - slack
+  - gmail
+  - google-sheets
+isolation:
+  class: trusted
+limits:
+  timeout: 5m
+  max_tokens: 100000
+  max_cost_usd: 2.0

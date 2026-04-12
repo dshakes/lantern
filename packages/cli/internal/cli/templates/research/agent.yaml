@@ -1,0 +1,10 @@
+name: "{{.Name}}"
+version: "0.1.0"
+description: "Research agent — generates queries, searches the web, and synthesizes findings"
+model: auto
+isolation:
+  class: standard
+limits:
+  timeout: 10m
+  max_tokens: 200000
+  max_cost_usd: 5.0

@@ -1,0 +1,18 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: lantern-dev
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # Gateway (NodePort 30080 -> host 8443)
+      - containerPort: 30080
+        hostPort: 8443
+        protocol: TCP
+      # Dashboard (NodePort 30081 -> host 3001)
+      - containerPort: 30081
+        hostPort: 3001
+        protocol: TCP
+      # Control-plane gRPC (NodePort 30051 -> host 50051)
+      - containerPort: 30051
+        hostPort: 50051
+        protocol: TCP

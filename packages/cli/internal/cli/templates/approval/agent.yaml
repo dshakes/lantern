@@ -1,0 +1,12 @@
+name: "{{.Name}}"
+version: "0.1.0"
+description: "Human-in-the-loop agent — approval gates, user questions, and durable pause/resume"
+model: auto
+memory:
+  - vector-recall
+isolation:
+  class: trusted
+limits:
+  timeout: 30m
+  max_tokens: 100000
+  max_cost_usd: 2.0

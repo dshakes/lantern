@@ -1,0 +1,21 @@
+name: customer-support
+version: "0.1.0"
+description: Support agent with memory, approval gates, and human-in-the-loop review
+model: auto
+isolation:
+  class: trusted
+memory:
+  - kind: vector
+    name: recall
+    scope: tenant
+    embedding: embed-small
+  - kind: kv
+    name: core
+    scope: tenant
+limits:
+  timeout: 30m
+  max_tokens: 150000
+  max_cost_usd: 2.00
+labels:
+  category: support
+  complexity: high

@@ -1,0 +1,9 @@
+{
+  "name": "{{.Name}}",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@lantern/sdk": "^0.1.0",
+    "zod": "^3.23.0"
+  }
+}

@@ -42,20 +42,34 @@
 |---|---|---|
 | `control-plane` | Go | 🟡 spike — agents/runs CRUD, gRPC server, Postgres schema |
 | `workflow-engine` | Go | 🟡 spike — step journaling, replay loop, in-memory queue |
-| `runtime-manager` | Rust | 🟡 spike — K8s Job runtime; Firecracker stub |
-| `gateway` | Rust | 🟡 spike — Axum, JWT auth, SSE proxy |
-| `model-router` | Rust | 🟡 spike — OpenAI + Anthropic providers, big/small heuristic |
+| `runtime-manager` | Rust | 🟡 spike — K8s Job runtime, Firecracker integration seam |
+| `gateway` | Rust | 🟡 spike — Axum, JWT auth, SSE streaming proxy, rate limiting |
+| `model-router` | Rust | 🟡 spike — OpenAI + Anthropic providers, streaming, response cache, big/small heuristic |
 | `memory` | Go | ⬜ stub |
 | `notifier` | Go | ⬜ stub |
 | `billing` | Go | ⬜ stub |
 | `scheduler` | Go | ⬜ stub |
+
+## Surface gateway
+
+| Item | Status |
+|---|---|
+| Surface gateway service (Rust) | 🟡 spike — message normalization, channel adapters |
+| WhatsApp adapter | ⬜ stub |
+| Slack adapter | ⬜ stub |
+| iMessage adapter | ⬜ stub |
+| Discord adapter | ⬜ stub |
+| Telegram adapter | ⬜ stub |
+| Voice adapter | ⬜ stub |
+| SMS adapter | ⬜ stub |
+| Email adapter | ⬜ stub |
 
 ## Runtimes
 
 | Runtime | Status |
 |---|---|
 | `k8s-job` (trusted) | 🟡 spike |
-| `firecracker` (untrusted) | ⬜ stub + ADR |
+| `firecracker` (untrusted) | 🟡 spike — snapshot/restore integration seam, syscall filtering config |
 | `kata` (hostile) | ⬜ stub + ADR |
 | `wasm` (pure-fn) | ⬜ stub + ADR |
 | `devcontainer` (long-lived) | ⬜ stub + ADR |
@@ -67,7 +81,7 @@
 | `sdk-ts` | 🟡 spike — `agent()`, `step()`, `step.map`, streaming |
 | `sdk-python` | ⬜ stub |
 | `sdk-go` | ⬜ stub |
-| `cli` (Go) | 🟡 spike — `init`, `build`, `deploy`, `run`, `logs` |
+| `cli` (Go) | 🟡 spike — `init`, `build`, `deploy`, `run`, `logs`, `replay` commands |
 | `proto` | 🟡 spike — agents.proto, runs.proto, events.proto |
 | `shared-types` | ⬜ stub |
 | `ui-kit` | ⬜ stub |
@@ -76,7 +90,7 @@
 
 | App | Status |
 |---|---|
-| `web` (Next.js dashboard) | 🟡 spike — runs list, run inspector with streaming |
+| `web` (Next.js dashboard) | 🟡 spike — agents list, agent detail, runs list, run inspector with event stream, settings |
 | `docs-site` | 🟡 spike — Nextra-style scaffold |
 | `landing` (YC-style) | 🟡 spike — landing + pitch deck |
 
@@ -84,10 +98,32 @@
 
 | Item | Status |
 |---|---|
-| `infra/helm/` Helm chart | 🟡 spike |
-| `infra/docker/` dev compose | 🟡 spike |
+| `infra/helm/` Helm chart | 🟡 spike — chart with all services, configurable values, single `helm install` |
+| `infra/docker/` dev compose | 🟡 spike — Postgres, Redis, MinIO, all services |
 | `infra/terraform/` modules | ⬜ stub |
 | K8s manifests | ⬜ stub |
+
+## Examples
+
+| Example | Status |
+|---|---|
+| `hello-world` | 🟡 spike — minimal agent, agent.yaml + agent.ts |
+| `research-agent` | 🟡 spike — web search, structured report, parallel fan-out |
+| `code-reviewer` | 🟡 spike — GitHub PR review with inline comments |
+| `customer-support` | 🟡 spike — vector memory, approval gates, human-in-the-loop |
+| `data-pipeline` | 🟡 spike — scheduled pipeline, multi-source, multi-channel distribution |
+| `deploy-guardian` | 🟡 spike — deployment watcher, pre-flight checks, human approval |
+| `talent-scout` | 🟡 spike — multi-platform candidate search, personalized outreach |
+| `whatsapp-assistant` | 🟡 spike — personal WhatsApp agent, calendar/email/tasks |
+
+## Local dev
+
+| Item | Status |
+|---|---|
+| `make dev` (full stack) | 🟡 spike — docker-compose with Postgres, Redis, MinIO, all services |
+| `make dev-infra` (infra only) | 🟡 spike — run services individually against shared infra |
+| `make ci-local` (lint + test + audit) | 🟡 spike — same matrix as CI |
+| `make proto` (codegen) | 🟡 spike — Go + TS generation from protos |
 
 ## Tests
 

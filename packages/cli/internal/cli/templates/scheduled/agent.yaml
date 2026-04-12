@@ -1,0 +1,12 @@
+name: "{{.Name}}"
+version: "0.1.0"
+description: "Scheduled pipeline agent — runs on a cron schedule to fetch, analyze, and report"
+model: auto
+triggers:
+  - schedule: "0 9 * * MON"
+isolation:
+  class: trusted
+limits:
+  timeout: 10m
+  max_tokens: 200000
+  max_cost_usd: 3.0

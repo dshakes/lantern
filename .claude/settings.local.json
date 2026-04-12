@@ -30,7 +30,18 @@
       "Bash(/tmp/lantern-test init:*)",
       "Bash(npm run:*)",
       "Bash(/tmp/lantern-test deploy:*)",
-      "Bash(go vet:*)"
+      "Bash(go vet:*)",
+      "Bash(git commit:*)",
+      "Bash(git config:*)",
+      "Bash(chmod +x:*)",
+      "Bash(bash -n /Users/shakes/workspace/lantern/scripts/local-dev.sh)",
+      "Bash(bash -n /Users/shakes/workspace/lantern/scripts/seed-data.sh)",
+      "Bash(make:*)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(echo \"---EXIT: $?---\")",
+      "Bash(go test:*)",
+      "Bash(protoc --version)",
+      "Bash(ls -d examples/*/)"
     ]
   }
 }

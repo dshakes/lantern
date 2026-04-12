@@ -1,4 +1,4 @@
-.PHONY: help dev build test lint ci-local clean proto
+.PHONY: help dev build test lint ci-local clean proto local-dev local-kind seed docker-build
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -17,6 +17,15 @@ landing-dev: ## Start the landing page in dev mode
 dashboard-dev: ## Start the dashboard in dev mode
 	cd apps/web && npm run dev
 
+local-dev: ## One-command local dev setup (docker-compose)
+	./scripts/local-dev.sh docker
+
+local-kind: ## Set up a local Kind cluster with Helm
+	./scripts/local-dev.sh kind
+
+seed: ## Seed sample data into running services
+	./scripts/seed-data.sh
+
 # ---------- Build ----------
 
 build: build-go build-rust build-ts ## Build everything
@@ -33,6 +42,14 @@ build-ts: ## Build TypeScript packages
 	cd packages/sdk-ts && npm run build
 	cd apps/landing && npm run build
 	cd apps/web && npm run build
+
+docker-build: ## Build all Docker images
+	docker build -t lantern-control-plane services/control-plane
+	docker build -t lantern-gateway services/gateway
+	docker build -t lantern-model-router services/model-router
+	docker build -t lantern-workflow-engine services/workflow-engine
+	docker build -t lantern-web apps/web
+	docker build -t lantern-landing apps/landing
 
 # ---------- Proto ----------
 

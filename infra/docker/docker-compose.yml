@@ -84,27 +84,71 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
-  # gateway:
-  #   build:
-  #     context: ../../services/gateway
-  #   ports:
-  #     - "8443:8443"
-  #   environment:
-  #     <<: *common-env
-  #     CONTROL_PLANE_ADDR: control-plane:50051
-  #   depends_on:
-  #     - control-plane
+  workflow-engine:
+    build:
+      context: ../../services/workflow-engine
+      dockerfile: Dockerfile
+    ports:
+      - "50052:50052"
+    environment:
+      <<: *common-env
+      LISTEN_ADDR: ":50052"
+      CONTROL_PLANE_ADDR: control-plane:50051
+    depends_on:
+      control-plane:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
-  # model-router:
-  #   build:
-  #     context: ../../services/model-router
-  #   ports:
-  #     - "50053:50053"
-  #   environment:
-  #     <<: *common-env
-  #   depends_on:
-  #     - redis
+  gateway:
+    build:
+      context: ../../services/gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8443:8443"
+    environment:
+      <<: *common-env
+      LISTEN_ADDR: "0.0.0.0:8443"
+      CONTROL_PLANE_ADDR: control-plane:50051
+      MODEL_ROUTER_ADDR: model-router:50053
+      WORKFLOW_ENGINE_ADDR: workflow-engine:50052
+    depends_on:
+      control-plane:
+        condition: service_healthy
+      model-router:
+        condition: service_started
+
+  model-router:
+    build:
+      context: ../../services/model-router
+      dockerfile: Dockerfile
+    ports:
+      - "50053:50053"
+    environment:
+      <<: *common-env
+      LISTEN_ADDR: "0.0.0.0:50053"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  dashboard:
+    build:
+      context: ../../apps/web
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000"
+    environment:
+      LANTERN_API_URL: http://gateway:8443
+      NEXT_PUBLIC_API_URL: http://localhost:8443
+    depends_on:
+      - gateway
 
   landing:
     build:
@@ -112,16 +156,6 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
-
-  # dashboard:
-  #   build:
-  #     context: ../../apps/web
-  #   ports:
-  #     - "3001:3000"
-  #   environment:
-  #     LANTERN_API_URL: http://gateway:8443
-  #   depends_on:
-  #     - gateway
 
 volumes:
   pg-data:

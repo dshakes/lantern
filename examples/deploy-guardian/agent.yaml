@@ -1,0 +1,15 @@
+name: deploy-guardian
+version: "0.1.0"
+description: CI/CD guardian that analyzes deploy risk, checks operational signals, and gates releases
+model: auto
+isolation:
+  class: trusted
+triggers:
+  - kind: webhook
+limits:
+  timeout: 20m
+  max_tokens: 200000
+  max_cost_usd: 3.00
+labels:
+  category: devops
+  trigger: webhook

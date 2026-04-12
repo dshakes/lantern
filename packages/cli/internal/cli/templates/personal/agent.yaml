@@ -1,0 +1,12 @@
+name: "{{.Name}}"
+version: "0.1.0"
+description: "Personal workflow agent — chat-triggered, handles tasks via WhatsApp or mobile"
+model: auto
+triggers:
+  - surface: whatsapp
+isolation:
+  class: trusted
+limits:
+  timeout: 5m
+  max_tokens: 100000
+  max_cost_usd: 1.0

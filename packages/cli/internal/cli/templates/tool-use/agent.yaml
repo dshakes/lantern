@@ -1,0 +1,14 @@
+name: "{{.Name}}"
+version: "0.1.0"
+description: "Tool-using agent — demonstrates web search, Python exec, and file I/O"
+model: auto
+tools:
+  - web-search
+  - python-exec
+  - file-io
+isolation:
+  class: standard
+limits:
+  timeout: 5m
+  max_tokens: 100000
+  max_cost_usd: 2.0
