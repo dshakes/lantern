@@ -47,7 +47,11 @@
       "Bash(./node_modules/.bin/next build:*)",
       "Bash(wc:*)",
       "Bash(xargs cat:*)",
-      "Bash(ls -d services/*/)"
+      "Bash(ls -d services/*/)",
+      "Bash(npx tsc:*)",
+      "Bash(find /Users/shakes/workspace/lantern/apps/web/components/settings -name \"*.tsx\" -exec echo {} \\\\;)",
+      "Bash(find /Users/shakes/workspace/lantern/apps/web/app/onboarding -name \"*.tsx\" -exec echo {} \\\\;)",
+      "Bash(ls /Users/shakes/workspace/lantern/apps/web/lib/workflow-*.ts /Users/shakes/workspace/lantern/apps/web/lib/sample-workflows.ts)"
     ]
   }
 }

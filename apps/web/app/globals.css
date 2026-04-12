@@ -119,7 +119,7 @@ body {
 
 .sidebar-item.active {
   background: var(--color-surface-3);
-  color: #f59e0b;
+  color: var(--color-lantern-400);
 }
 
 /* Data table styles */
@@ -183,4 +183,144 @@ body {
 
 .status-running {
   animation: status-pulse 2s ease-in-out infinite;
+}
+
+/* Streaming cursor blink */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.streaming-cursor {
+  animation: cursor-blink 0.8s step-end infinite;
+}
+
+/* Event stream entry animation */
+@keyframes event-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.event-enter {
+  animation: event-fade-in 0.2s ease-out;
+}
+
+/* Smooth collapsible sections */
+.collapsible-content {
+  overflow: hidden;
+  transition: max-height 0.25s ease, opacity 0.2s ease;
+}
+
+/* Playground slider thumb */
+input[type="range"]::-webkit-slider-thumb {
+  cursor: pointer;
+}
+
+/* ---- Visual workflow editor (React Flow) ---- */
+
+.editor-canvas .react-flow__pane {
+  cursor: default;
+}
+
+.editor-canvas .react-flow__node {
+  cursor: grab;
+}
+
+.editor-canvas .react-flow__node:active {
+  cursor: grabbing;
+}
+
+.editor-canvas .react-flow__edge-path {
+  stroke: #52525b;
+  stroke-width: 2;
+}
+
+.editor-canvas .react-flow__edge.selected .react-flow__edge-path {
+  stroke: #6e5dce;
+  stroke-width: 2.5;
+}
+
+.editor-canvas .react-flow__connection-line {
+  stroke: #6e5dce;
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+}
+
+.editor-canvas .react-flow__handle {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.editor-canvas .react-flow__handle:hover {
+  transform: scale(1.3);
+  box-shadow: 0 0 0 3px rgba(110, 93, 206, 0.3);
+}
+
+/* Controls styling */
+.editor-controls {
+  border: 1px solid #27272a !important;
+  border-radius: 8px !important;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+}
+
+.editor-controls .react-flow__controls-button {
+  background: #0f0f12 !important;
+  border: none !important;
+  border-bottom: 1px solid #27272a !important;
+  color: #a1a1aa !important;
+  width: 28px !important;
+  height: 28px !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.editor-controls .react-flow__controls-button:hover {
+  background: #18181b !important;
+  color: #fafafa !important;
+}
+
+.editor-controls .react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+.editor-controls .react-flow__controls-button svg {
+  max-width: 14px !important;
+  max-height: 14px !important;
+  fill: currentColor !important;
+}
+
+/* Edge label */
+.editor-canvas .react-flow__edge-text {
+  font-size: 10px;
+  fill: #71717a;
+}
+
+/* Selection box */
+.editor-canvas .react-flow__selection {
+  background: rgba(110, 93, 206, 0.08);
+  border: 1px solid rgba(110, 93, 206, 0.3);
+}
+
+/* Toast slide-in animation */
+@keyframes slide-in-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-in.slide-in-from-right {
+  animation: slide-in-from-right 0.2s ease-out;
 }

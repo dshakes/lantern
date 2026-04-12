@@ -4,8 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Bot, Archive, X, Wand2, Code, Workflow, MessageSquare, Calendar, ShieldCheck } from "lucide-react";
 import { format } from "date-fns";
-import { agents as initialAgents } from "@/lib/mock-data";
+import { api } from "@/lib/api";
+import { useAgents } from "@/lib/hooks";
+import { useToast } from "@/components/toast";
 import { DataTable, type Column } from "@/components/data-table";
+import { PageSkeleton } from "@/components/skeleton";
 import type { Agent } from "@/lib/mock-data";
 
 const templates = [
@@ -53,7 +56,7 @@ const columns: Column<Agent>[] = [
     header: "Created",
     render: (agent) => (
       <span className="text-zinc-500">
-        {format(agent.createdAt, "MMM d, yyyy")}
+        {format(new Date(agent.createdAt), "MMM d, yyyy")}
       </span>
     ),
   },
@@ -77,33 +80,43 @@ const columns: Column<Agent>[] = [
 
 export default function AgentsPage() {
   const router = useRouter();
+  const toast = useToast();
+  const { agents, setAgents, loading, error } = useAgents();
   const [showCreate, setShowCreate] = useState(false);
-  const [agents, setAgents] = useState(initialAgents);
   const [form, setForm] = useState({ name: "", description: "", template: "blank", model: "auto" });
   const [creating, setCreating] = useState(false);
 
   const handleCreate = async () => {
     if (!form.name.trim()) return;
     setCreating(true);
-
-    // Simulate API call — in production this calls the gateway
-    await new Promise((r) => setTimeout(r, 600));
-
-    const newAgent: Agent = {
-      id: `ag_${Date.now()}`,
-      name: form.name.trim().toLowerCase().replace(/\s+/g, "-"),
-      description: form.description || `Agent created from ${form.template} template`,
-      currentVersionId: "v_initial",
-      createdAt: new Date(),
-      status: "active",
-    };
-
-    setAgents((prev) => [newAgent, ...prev]);
-    setShowCreate(false);
-    setForm({ name: "", description: "", template: "blank", model: "auto" });
-    setCreating(false);
-    router.push(`/agents/${newAgent.name}`);
+    try {
+      const newAgent = await api.createAgent({
+        name: form.name.trim().toLowerCase().replace(/\s+/g, "-"),
+        description: form.description || `Agent created from ${form.template} template`,
+        template: form.template,
+        model: form.model,
+      });
+      setAgents((prev) => [newAgent, ...prev]);
+      setShowCreate(false);
+      setForm({ name: "", description: "", template: "blank", model: "auto" });
+      toast.success(`Agent "${newAgent.name}" created`);
+      router.push(`/agents/${newAgent.name}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create agent");
+    } finally {
+      setCreating(false);
+    }
   };
+
+  if (loading) return <PageSkeleton />;
+
+  if (error) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <p className="text-sm text-red-400">Failed to load agents: {error.message}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">

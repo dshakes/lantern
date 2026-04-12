@@ -15,18 +15,18 @@ import {
   Settings,
   LayoutDashboard,
   CheckCircle2,
+  Loader2,
+  PenTool,
 } from "lucide-react";
 import clsx from "clsx";
-import {
-  getAgentByName,
-  getRunsForAgent,
-  agentVersions,
-  formatCost,
-  formatTokens,
-  formatDuration,
-} from "@/lib/mock-data";
+import { api } from "@/lib/api";
+import { useAgent, useAgentRuns, useAgentVersions } from "@/lib/hooks";
+import { useToast } from "@/components/toast";
+import { RunDialog } from "@/components/run-dialog";
 import { StatusBadge } from "@/components/status-badge";
 import { DataTable, type Column } from "@/components/data-table";
+import { AgentDetailSkeleton } from "@/components/skeleton";
+import { formatCost, formatDuration } from "@/lib/mock-data";
 import type { Run, AgentVersion } from "@/lib/mock-data";
 
 const tabs = [
@@ -59,7 +59,7 @@ const runColumns: Column<Run>[] = [
     render: (run) => {
       if (!run.startedAt) return <span className="text-zinc-600">--</span>;
       const end = run.finishedAt ?? new Date();
-      const ms = end.getTime() - run.startedAt.getTime();
+      const ms = new Date(end).getTime() - new Date(run.startedAt).getTime();
       return <span className="text-zinc-400">{formatDuration(ms)}</span>;
     },
   },
@@ -75,7 +75,9 @@ const runColumns: Column<Run>[] = [
     header: "Started",
     render: (run) => (
       <span className="text-zinc-500">
-        {run.startedAt ? format(run.startedAt, "MMM d, HH:mm:ss") : "--"}
+        {run.startedAt
+          ? format(new Date(run.startedAt), "MMM d, HH:mm:ss")
+          : "--"}
       </span>
     ),
   },
@@ -94,7 +96,7 @@ const versionColumns: Column<AgentVersion>[] = [
     header: "Created",
     render: (v) => (
       <span className="text-zinc-500">
-        {format(v.createdAt, "MMM d, yyyy HH:mm")}
+        {format(new Date(v.createdAt), "MMM d, yyyy HH:mm")}
       </span>
     ),
   },
@@ -116,14 +118,21 @@ const versionColumns: Column<AgentVersion>[] = [
 export default function AgentDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const toast = useToast();
   const name = params.name as string;
+
+  const { agent, loading: agentLoading, error: agentError } = useAgent(name);
+  const { runs: agentRuns, loading: runsLoading } = useAgentRuns(name);
+  const { versions, loading: versionsLoading } = useAgentVersions(name);
+
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
+  const [deleting, setDeleting] = useState(false);
+  const [showRunDialog, setShowRunDialog] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  const agent = getAgentByName(name);
-  const agentRuns = getRunsForAgent(name);
-  const versions = agentVersions[name] ?? [];
+  if (agentLoading) return <AgentDetailSkeleton />;
 
-  if (!agent) {
+  if (agentError || !agent) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <p className="text-zinc-500">Agent not found.</p>
@@ -134,6 +143,20 @@ export default function AgentDetailPage() {
   const succeededRuns = agentRuns.filter((r) => r.status === "succeeded").length;
   const failedRuns = agentRuns.filter((r) => r.status === "failed").length;
   const totalCost = agentRuns.reduce((sum, r) => sum + r.costUsd, 0);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await api.deleteAgent(name);
+      toast.success(`Agent "${name}" deleted`);
+      router.push("/agents");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete agent");
+    } finally {
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
@@ -163,11 +186,28 @@ export default function AgentDetailPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-lantern-400">
+            <button
+              onClick={() => router.push(`/agents/${name}/editor`)}
+              className="inline-flex items-center gap-2 rounded-lg border border-lantern-500/30 px-4 py-2 text-sm font-medium text-lantern-400 transition-colors hover:bg-lantern-500/10"
+            >
+              <PenTool className="h-4 w-4" />
+              Visual Editor
+            </button>
+            <button
+              onClick={() => setShowRunDialog(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3"
+            >
+              <Play className="h-4 w-4" />
+              Run Agent
+            </button>
+            <button className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400">
               <Rocket className="h-4 w-4" />
               Deploy
             </button>
-            <button className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-4 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10">
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-4 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10"
+            >
               <Trash2 className="h-4 w-4" />
               Delete
             </button>
@@ -201,35 +241,39 @@ export default function AgentDetailPage() {
             {/* Stats */}
             <div className="grid grid-cols-4 gap-4">
               <StatCard label="Current Version" value={agent.currentVersionId.slice(0, 12)} />
-              <StatCard label="Total Runs" value={String(agentRuns.length)} />
+              <StatCard label="Total Runs" value={runsLoading ? "..." : String(agentRuns.length)} />
               <StatCard
                 label="Success Rate"
                 value={
-                  agentRuns.length > 0
-                    ? `${Math.round((succeededRuns / agentRuns.length) * 100)}%`
-                    : "--"
+                  runsLoading
+                    ? "..."
+                    : agentRuns.length > 0
+                      ? `${Math.round((succeededRuns / agentRuns.length) * 100)}%`
+                      : "--"
                 }
               />
-              <StatCard label="Total Cost" value={formatCost(totalCost)} />
+              <StatCard label="Total Cost" value={runsLoading ? "..." : formatCost(totalCost)} />
             </div>
 
             {/* Labels */}
-            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
-              <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-300">
-                <Tag className="h-4 w-4 text-zinc-500" />
-                Labels
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(agent.labels).map(([key, value]) => (
-                  <span
-                    key={key}
-                    className="rounded-md bg-surface-3 px-2.5 py-1 text-xs text-zinc-400"
-                  >
-                    <span className="text-zinc-500">{key}:</span> {value}
-                  </span>
-                ))}
+            {agent.labels && Object.keys(agent.labels).length > 0 && (
+              <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+                <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-300">
+                  <Tag className="h-4 w-4 text-zinc-500" />
+                  Labels
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(agent.labels).map(([key, value]) => (
+                    <span
+                      key={key}
+                      className="rounded-md bg-surface-3 px-2.5 py-1 text-xs text-zinc-400"
+                    >
+                      <span className="text-zinc-500">{key}:</span> {value}
+                    </span>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Info */}
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
@@ -241,7 +285,7 @@ export default function AgentDetailPage() {
                 <div>
                   <dt className="text-zinc-500">Created</dt>
                   <dd className="mt-0.5 text-zinc-300">
-                    {format(agent.createdAt, "MMMM d, yyyy 'at' HH:mm")}
+                    {format(new Date(agent.createdAt), "MMMM d, yyyy 'at' HH:mm")}
                   </dd>
                 </div>
                 <div>
@@ -258,7 +302,9 @@ export default function AgentDetailPage() {
                 </div>
                 <div>
                   <dt className="text-zinc-500">Versions</dt>
-                  <dd className="mt-0.5 text-zinc-300">{versions.length}</dd>
+                  <dd className="mt-0.5 text-zinc-300">
+                    {versionsLoading ? "..." : versions.length}
+                  </dd>
                 </div>
               </dl>
             </div>
@@ -266,31 +312,93 @@ export default function AgentDetailPage() {
         )}
 
         {activeTab === "versions" && (
-          <DataTable
-            columns={versionColumns}
-            rows={versions}
-            rowKey={(v) => v.id}
-          />
+          versionsLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
+            </div>
+          ) : (
+            <DataTable
+              columns={versionColumns}
+              rows={versions}
+              rowKey={(v) => v.id}
+            />
+          )
         )}
 
         {activeTab === "runs" && (
-          <DataTable
-            columns={runColumns}
-            rows={agentRuns}
-            rowKey={(r) => r.id}
-            onRowClick={(run) => router.push(`/runs/${run.id}`)}
-          />
+          runsLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
+            </div>
+          ) : (
+            <DataTable
+              columns={runColumns}
+              rows={agentRuns}
+              rowKey={(r) => r.id}
+              onRowClick={(run) => router.push(`/runs/${run.id}`)}
+            />
+          )
         )}
 
         {activeTab === "settings" && (
           <div className="rounded-xl border border-zinc-800 bg-surface-1 p-8 text-center">
             <Settings className="mx-auto mb-3 h-8 w-8 text-zinc-600" />
             <p className="text-sm text-zinc-500">
-              Agent settings — configuration, environment variables, resource limits, and isolation class.
+              Agent settings -- configuration, environment variables, resource limits, and isolation class.
             </p>
           </div>
         )}
       </div>
+
+      {/* Run Dialog */}
+      <RunDialog
+        open={showRunDialog}
+        onClose={() => setShowRunDialog(false)}
+        defaultAgentName={name}
+      />
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl">
+            <div className="px-6 py-5">
+              <h3 className="text-lg font-semibold text-zinc-100">
+                Delete agent
+              </h3>
+              <p className="mt-2 text-sm text-zinc-400">
+                Are you sure you want to delete{" "}
+                <span className="font-medium text-zinc-200">{name}</span>? This
+                action cannot be undone.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-zinc-800 px-6 py-4">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="inline-flex items-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deleting ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

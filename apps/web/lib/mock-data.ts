@@ -56,6 +56,8 @@ export interface StreamEvent {
     | "step_completed"
     | "step_failed"
     | "log"
+    | "approval"
+    | "question"
     | "end";
   data: Record<string, unknown>;
 }
@@ -292,6 +294,20 @@ export const runs: Run[] = [
     createdAt: new Date("2026-04-12T09:17:58Z"),
     labels: { trigger: "api" },
   },
+  {
+    id: "run_01hqb1x2y3z4",
+    tenantId: "t_acme",
+    agentId: "ag_01hq4b2n9p",
+    agentName: "code-reviewer",
+    status: "paused",
+    input: { prUrl: "https://github.com/acme/api/pull/485", checks: ["security", "correctness", "style"] },
+    costUsd: 0.0145,
+    tokensIn: 5200,
+    tokensOut: 2100,
+    startedAt: new Date("2026-04-12T09:30:00Z"),
+    createdAt: new Date("2026-04-12T09:29:58Z"),
+    labels: { trigger: "webhook" },
+  },
 ];
 
 // --- Stream events for run_01hqa1b2c3d4 (the succeeded research-agent run) ---
@@ -515,4 +531,464 @@ export function getRunsForAgent(agentName: string): Run[] {
 
 export function getRunById(id: string): Run | undefined {
   return runs.find((r) => r.id === id);
+}
+
+// --- Additional rich event streams ---
+
+// Failed run events (for run_01hqa3d4e5f6 - research-agent STEP_TIMEOUT)
+const failedBaseTs = new Date("2026-04-12T07:45:00Z");
+function fts(offsetMs: number): Date {
+  return new Date(failedBaseTs.getTime() + offsetMs);
+}
+
+export const failedRunEvents: StreamEvent[] = [
+  {
+    runId: "run_01hqa3d4e5f6",
+    stepId: "step_analyze_input",
+    seq: 1,
+    ts: fts(0),
+    kind: "step_started",
+    data: { name: "analyze-input" },
+  },
+  {
+    runId: "run_01hqa3d4e5f6",
+    stepId: "step_analyze_input",
+    seq: 2,
+    ts: fts(100),
+    kind: "log",
+    data: { level: "info", message: "Parsing user query for RISC-V vs ARM comparison..." },
+  },
+  {
+    runId: "run_01hqa3d4e5f6",
+    stepId: "step_analyze_input",
+    seq: 3,
+    ts: fts(600),
+    kind: "llm_delta",
+    data: { text: "The user wants a brief comparison of RISC-V versus ARM for edge ML inference. I need to search for recent benchmarks and architectural analyses." },
+  },
+  {
+    runId: "run_01hqa3d4e5f6",
+    stepId: "step_analyze_input",
+    seq: 4,
+    ts: fts(1800),
+    kind: "llm_complete",
+    data: { model: "chat-small", tokensIn: 210, tokensOut: 48, costUsd: 0.0003 },
+  },
+  {
+    runId: "run_01hqa3d4e5f6",
+    stepId: "step_analyze_input",
+    seq: 5,
+    ts: fts(2000),
+    kind: "step_completed",
+    data: { name: "analyze-input", durationMs: 2000 },
+  },
+  {
+    runId: "run_01hqa3d4e5f6",
+    stepId: "step_search_web_01",
+    seq: 6,
+    ts: fts(2100),
+    kind: "step_started",
+    data: { name: "search-web" },
+  },
+  {
+    runId: "run_01hqa3d4e5f6",
+    stepId: "step_search_web_01",
+    seq: 7,
+    ts: fts(2200),
+    kind: "tool_call",
+    data: {
+      name: "web.search",
+      arguments: { query: "RISC-V vs ARM edge ML inference benchmarks 2026", maxResults: 15 },
+    },
+  },
+  {
+    runId: "run_01hqa3d4e5f6",
+    stepId: "step_search_web_01",
+    seq: 8,
+    ts: fts(12000),
+    kind: "log",
+    data: { level: "warn", message: "web.search request taking longer than expected (10s elapsed)..." },
+  },
+  {
+    runId: "run_01hqa3d4e5f6",
+    stepId: "step_search_web_01",
+    seq: 9,
+    ts: fts(22000),
+    kind: "log",
+    data: { level: "warn", message: "web.search request still pending (20s elapsed). Timeout threshold: 30s." },
+  },
+  {
+    runId: "run_01hqa3d4e5f6",
+    stepId: "step_search_web_01",
+    seq: 10,
+    ts: fts(30000),
+    kind: "log",
+    data: { level: "error", message: "web.search exceeded 30s timeout. Aborting step." },
+  },
+  {
+    runId: "run_01hqa3d4e5f6",
+    stepId: "step_search_web_01",
+    seq: 11,
+    ts: fts(30200),
+    kind: "step_failed",
+    data: {
+      name: "search-web",
+      error: "STEP_TIMEOUT: Step 'search-web' exceeded timeout of 30s",
+      stackTrace: `Error: STEP_TIMEOUT: Step 'search-web' exceeded timeout of 30s
+    at StepRunner.execute (lantern-runtime/src/step-runner.ts:142:15)
+    at WorkflowEngine.runStep (lantern-engine/src/engine.ts:89:22)
+    at WorkflowEngine.executeGraph (lantern-engine/src/engine.ts:201:18)
+    at RunManager.start (lantern-engine/src/run-manager.ts:67:10)`,
+      durationMs: 28100,
+    },
+  },
+  {
+    runId: "run_01hqa3d4e5f6",
+    seq: 12,
+    ts: fts(30400),
+    kind: "end",
+    data: { status: "failed", totalDurationMs: 30400, totalCostUsd: 0.0034, totalTokensIn: 1560, totalTokensOut: 420 },
+  },
+];
+
+// Running code-reviewer events (for run_01hqa2c3d4e5 - currently running)
+const runningBaseTs = new Date("2026-04-12T09:15:30Z");
+function rts(offsetMs: number): Date {
+  return new Date(runningBaseTs.getTime() + offsetMs);
+}
+
+export const runningRunEvents: StreamEvent[] = [
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_fetch_pr",
+    seq: 1,
+    ts: rts(0),
+    kind: "step_started",
+    data: { name: "fetch-pr" },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_fetch_pr",
+    seq: 2,
+    ts: rts(80),
+    kind: "log",
+    data: { level: "info", message: "Fetching PR #482 from github.com/acme/api..." },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_fetch_pr",
+    seq: 3,
+    ts: rts(200),
+    kind: "tool_call",
+    data: {
+      name: "github.getPullRequest",
+      arguments: { owner: "acme", repo: "api", number: 482 },
+    },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_fetch_pr",
+    seq: 4,
+    ts: rts(1800),
+    kind: "tool_result",
+    data: {
+      name: "github.getPullRequest",
+      result: {
+        title: "feat: add rate limiting to /v2/agents endpoint",
+        author: "priya-patel",
+        changedFiles: 7,
+        additions: 342,
+        deletions: 18,
+        baseBranch: "main",
+        headBranch: "feat/rate-limiting",
+      },
+    },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_fetch_pr",
+    seq: 5,
+    ts: rts(2000),
+    kind: "tool_call",
+    data: {
+      name: "github.getPullRequestDiff",
+      arguments: { owner: "acme", repo: "api", number: 482 },
+    },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_fetch_pr",
+    seq: 6,
+    ts: rts(3200),
+    kind: "tool_result",
+    data: {
+      name: "github.getPullRequestDiff",
+      result: "diff --git a/pkg/middleware/ratelimit.go b/pkg/middleware/ratelimit.go\nnew file mode 100644\n+package middleware\n+\n+import (\n+\t\"net/http\"\n+\t\"sync\"\n+\t\"time\"\n+\t\"golang.org/x/time/rate\"\n+)\n+\n+type RateLimiter struct {\n+\tmu       sync.RWMutex\n+\tlimiters map[string]*rate.Limiter\n+\trate     rate.Limit\n+\tburst    int\n+}",
+    },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_fetch_pr",
+    seq: 7,
+    ts: rts(3400),
+    kind: "step_completed",
+    data: { name: "fetch-pr", durationMs: 3400 },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_security_review",
+    seq: 8,
+    ts: rts(3500),
+    kind: "step_started",
+    data: { name: "security-review" },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_security_review",
+    seq: 9,
+    ts: rts(3700),
+    kind: "log",
+    data: { level: "info", message: "Running security analysis on 7 changed files..." },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_security_review",
+    seq: 10,
+    ts: rts(4200),
+    kind: "llm_delta",
+    data: { text: "## Security Review\n\nAnalyzing the rate limiting implementation for potential security concerns:\n\n**1. Race condition in limiter map access** - The `RateLimiter` struct uses a `sync.RWMutex` which is correct. The `getLimiter()` method properly acquires a read lock first, then upgrades to a write lock for new entries. This follows the double-checked locking pattern correctly.\n\n**2. Memory exhaustion risk** - There is no eviction policy for the `limiters` map. An attacker could generate requests with unique identifiers to grow this map unboundedly. **Recommendation**: Add a TTL-based eviction or cap the map size with LRU eviction.\n\n**3. Key derivation** - The rate limit key is derived from `X-Tenant-ID` header, which is validated by the auth middleware upstream. This is acceptable but should be documented as a dependency.\n\n**No critical vulnerabilities found.** One medium-severity concern regarding memory exhaustion." },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_security_review",
+    seq: 11,
+    ts: rts(8500),
+    kind: "llm_complete",
+    data: { model: "reasoning-large", tokensIn: 3200, tokensOut: 1400, costUsd: 0.0089 },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_security_review",
+    seq: 12,
+    ts: rts(8700),
+    kind: "step_completed",
+    data: { name: "security-review", durationMs: 5200 },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_style_review",
+    seq: 13,
+    ts: rts(8800),
+    kind: "step_started",
+    data: { name: "style-review" },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_style_review",
+    seq: 14,
+    ts: rts(9200),
+    kind: "llm_delta",
+    data: { text: "## Style Review\n\nThe code follows Go conventions and the project's established patterns:\n\n- Naming: `RateLimiter`, `getLimiter()`, `cleanupExpired()` all follow Go naming conventions.\n- Error handling: Uses `http.Error()` consistently with appropriate status codes.\n- Package organization: Correctly placed in `pkg/middleware/`.\n- Test coverage: Tests include unit tests for the limiter logic and integration tests for the HTTP middleware.\n\n**Minor suggestions:**\n- Line 42: Consider extracting the cleanup interval (5 minutes) to a configurable constant.\n- Line 67: The error message could include the retry-after duration for better client UX." },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_style_review",
+    seq: 15,
+    ts: rts(12800),
+    kind: "llm_complete",
+    data: { model: "chat-small", tokensIn: 1000, tokensOut: 400, costUsd: 0.0034 },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_style_review",
+    seq: 16,
+    ts: rts(13000),
+    kind: "step_completed",
+    data: { name: "style-review", durationMs: 4200 },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_approval",
+    seq: 17,
+    ts: rts(13100),
+    kind: "step_started",
+    data: { name: "human-approval" },
+  },
+  {
+    runId: "run_01hqa2c3d4e5",
+    stepId: "step_approval",
+    seq: 18,
+    ts: rts(13200),
+    kind: "approval",
+    data: {
+      message: "The code review found 1 medium-severity security concern (memory exhaustion in rate limiter map). Should I post the review comments to the PR?",
+      options: ["Approve & Post", "Deny"],
+    },
+  },
+];
+
+// Approval-pending run (new mock run)
+export const approvalPendingRun: Run = {
+  id: "run_01hqb1x2y3z4",
+  tenantId: "t_acme",
+  agentId: "ag_01hq4b2n9p",
+  agentName: "code-reviewer",
+  status: "paused",
+  input: { prUrl: "https://github.com/acme/api/pull/485", checks: ["security", "correctness", "style"] },
+  costUsd: 0.0145,
+  tokensIn: 5200,
+  tokensOut: 2100,
+  startedAt: new Date("2026-04-12T09:30:00Z"),
+  createdAt: new Date("2026-04-12T09:29:58Z"),
+  labels: { trigger: "webhook" },
+};
+
+// Events for the approval-pending run
+const approvalBaseTs = new Date("2026-04-12T09:30:00Z");
+function ats(offsetMs: number): Date {
+  return new Date(approvalBaseTs.getTime() + offsetMs);
+}
+
+export const approvalPendingEvents: StreamEvent[] = [
+  {
+    runId: "run_01hqb1x2y3z4",
+    stepId: "step_fetch_pr",
+    seq: 1,
+    ts: ats(0),
+    kind: "step_started",
+    data: { name: "fetch-pr" },
+  },
+  {
+    runId: "run_01hqb1x2y3z4",
+    stepId: "step_fetch_pr",
+    seq: 2,
+    ts: ats(150),
+    kind: "tool_call",
+    data: {
+      name: "github.getPullRequest",
+      arguments: { owner: "acme", repo: "api", number: 485 },
+    },
+  },
+  {
+    runId: "run_01hqb1x2y3z4",
+    stepId: "step_fetch_pr",
+    seq: 3,
+    ts: ats(1500),
+    kind: "tool_result",
+    data: {
+      name: "github.getPullRequest",
+      result: {
+        title: "refactor: migrate auth to JWT with RS256",
+        author: "marcus-johnson",
+        changedFiles: 14,
+        additions: 890,
+        deletions: 423,
+      },
+    },
+  },
+  {
+    runId: "run_01hqb1x2y3z4",
+    stepId: "step_fetch_pr",
+    seq: 4,
+    ts: ats(1700),
+    kind: "step_completed",
+    data: { name: "fetch-pr", durationMs: 1700 },
+  },
+  {
+    runId: "run_01hqb1x2y3z4",
+    stepId: "step_review",
+    seq: 5,
+    ts: ats(1800),
+    kind: "step_started",
+    data: { name: "comprehensive-review" },
+  },
+  {
+    runId: "run_01hqb1x2y3z4",
+    stepId: "step_review",
+    seq: 6,
+    ts: ats(2200),
+    kind: "llm_delta",
+    data: { text: "## Comprehensive Review: Auth Migration to JWT RS256\n\nThis is a significant security-sensitive change. The migration from session-based auth to JWT with RS256 signing affects 14 files.\n\n### Critical Findings\n\n1. **Private key storage**: The RS256 private key is loaded from an environment variable. This is acceptable for production but the fallback to a hardcoded key in `auth_test.go` should use a dedicated test key, not the example key from the JWT spec.\n\n2. **Token expiration**: Access tokens expire in 15 minutes, refresh tokens in 7 days. These are reasonable defaults but should be configurable per-tenant.\n\n3. **Revocation**: The implementation includes a Redis-based token blacklist for revocation. The TTL on blacklist entries matches the token max lifetime. This is correct.\n\n### Recommendation\n\nThis PR requires careful review due to the security implications. I recommend approval with the condition that the test key issue is fixed before merge." },
+  },
+  {
+    runId: "run_01hqb1x2y3z4",
+    stepId: "step_review",
+    seq: 7,
+    ts: ats(8000),
+    kind: "llm_complete",
+    data: { model: "reasoning-large", tokensIn: 4800, tokensOut: 1900, costUsd: 0.0132 },
+  },
+  {
+    runId: "run_01hqb1x2y3z4",
+    stepId: "step_review",
+    seq: 8,
+    ts: ats(8200),
+    kind: "step_completed",
+    data: { name: "comprehensive-review", durationMs: 6400 },
+  },
+  {
+    runId: "run_01hqb1x2y3z4",
+    stepId: "step_post_approval",
+    seq: 9,
+    ts: ats(8300),
+    kind: "step_started",
+    data: { name: "post-approval" },
+  },
+  {
+    runId: "run_01hqb1x2y3z4",
+    stepId: "step_post_approval",
+    seq: 10,
+    ts: ats(8400),
+    kind: "approval",
+    data: {
+      message: "This PR touches authentication infrastructure and has 1 critical finding (test key issue). Should I post the review and request changes?",
+      options: ["Approve & Request Changes", "Approve & Approve PR", "Deny"],
+    },
+  },
+];
+
+// Example input templates per agent
+export const agentInputExamples: Record<string, unknown> = {
+  "research-agent": {
+    query: "Latest advances in quantum error correction 2026",
+    depth: "comprehensive",
+  },
+  "code-reviewer": {
+    prUrl: "https://github.com/acme/api/pull/482",
+    checks: ["security", "style", "correctness"],
+  },
+  "data-pipeline": {
+    source: "s3://acme-data/sales-q1-2026.csv",
+    destination: "warehouse.sales_q1",
+  },
+  "customer-support": {
+    ticketId: "TKT-9012",
+    customerMessage: "I can't reset my password after updating my email",
+  },
+};
+
+// Model options for playground
+export const modelOptions = [
+  { value: "auto", label: "Auto (recommended)" },
+  { value: "reasoning-large", label: "Reasoning Large" },
+  { value: "reasoning-small", label: "Reasoning Small" },
+  { value: "chat-large", label: "Chat Large" },
+  { value: "chat-small", label: "Chat Small" },
+  { value: "code-large", label: "Code Large" },
+] as const;
+
+// Helper: get events for a given run ID
+export function getEventsForRun(runId: string): StreamEvent[] {
+  switch (runId) {
+    case "run_01hqa1b2c3d4":
+      return sampleRunEvents;
+    case "run_01hqa3d4e5f6":
+      return failedRunEvents;
+    case "run_01hqa2c3d4e5":
+      return runningRunEvents;
+    case "run_01hqb1x2y3z4":
+      return approvalPendingEvents;
+    default:
+      return [];
+  }
 }

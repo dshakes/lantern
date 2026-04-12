@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { Search, Filter } from "lucide-react";
-import clsx from "clsx";
+import { Search, Filter, Play, Loader2 } from "lucide-react";
+import { api } from "@/lib/api";
+import { useRuns, useAgents } from "@/lib/hooks";
+import { useToast } from "@/components/toast";
+import { RunDialog } from "@/components/run-dialog";
 import {
-  runs,
-  agents,
   formatCost,
   formatTokens,
   formatDuration,
@@ -15,6 +16,7 @@ import {
 import type { Run, RunStatus } from "@/lib/mock-data";
 import { StatusBadge } from "@/components/status-badge";
 import { DataTable, type Column } from "@/components/data-table";
+import { PageSkeleton } from "@/components/skeleton";
 
 const statusOptions: Array<{ value: RunStatus | "all"; label: string }> = [
   { value: "all", label: "All statuses" },
@@ -53,7 +55,7 @@ const columns: Column<Run>[] = [
     render: (run) => {
       if (!run.startedAt) return <span className="text-zinc-600">--</span>;
       const end = run.finishedAt ?? new Date();
-      const ms = end.getTime() - run.startedAt.getTime();
+      const ms = new Date(end).getTime() - new Date(run.startedAt).getTime();
       return <span className="text-zinc-400">{formatDuration(ms)}</span>;
     },
   },
@@ -71,7 +73,9 @@ const columns: Column<Run>[] = [
     header: "Started",
     render: (run) => (
       <span className="text-zinc-500">
-        {run.startedAt ? format(run.startedAt, "MMM d, HH:mm:ss") : "--"}
+        {run.startedAt
+          ? format(new Date(run.startedAt), "MMM d, HH:mm:ss")
+          : "--"}
       </span>
     ),
   },
@@ -90,10 +94,20 @@ const columns: Column<Run>[] = [
 
 export default function RunsPage() {
   const router = useRouter();
+  const toast = useToast();
   const [agentFilter, setAgentFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [showRunDialog, setShowRunDialog] = useState(false);
 
+  const { agents, loading: agentsLoading } = useAgents();
+  const { runs, loading: runsLoading, error, refresh } = useRuns({
+    agentName: agentFilter !== "all" ? agentFilter : undefined,
+    status: statusFilter !== "all" ? (statusFilter as RunStatus) : undefined,
+    search: searchQuery || undefined,
+  });
+
+  // Client-side filtering as fallback (mock data doesn't filter server-side)
   const filteredRuns = useMemo(() => {
     return runs.filter((run) => {
       if (agentFilter !== "all" && run.agentName !== agentFilter) return false;
@@ -106,15 +120,33 @@ export default function RunsPage() {
         return false;
       return true;
     });
-  }, [agentFilter, statusFilter, searchQuery]);
+  }, [runs, agentFilter, statusFilter, searchQuery]);
+
+  const agentNames = useMemo(
+    () => agents.map((a) => a.name),
+    [agents],
+  );
+
+  if (runsLoading && runs.length === 0) return <PageSkeleton />;
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
       <div className="border-b border-zinc-800 bg-surface-1 px-8 py-5">
-        <h1 className="text-xl font-semibold text-zinc-100">Runs</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          Monitor and inspect agent run executions.
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold text-zinc-100">Runs</h1>
+            <p className="mt-1 text-sm text-zinc-500">
+              Monitor and inspect agent run executions.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowRunDialog(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400"
+          >
+            <Play className="h-4 w-4" />
+            Run Agent
+          </button>
+        </div>
       </div>
 
       {/* Filter bar */}
@@ -159,20 +191,36 @@ export default function RunsPage() {
             </select>
           </div>
 
-          <span className="ml-auto text-xs text-zinc-500">
+          <span className="ml-auto flex items-center gap-2 text-xs text-zinc-500">
+            {runsLoading && <Loader2 className="h-3 w-3 animate-spin" />}
             {filteredRuns.length} run{filteredRuns.length !== 1 ? "s" : ""}
           </span>
         </div>
       </div>
 
       <div className="flex-1 p-8">
-        <DataTable
-          columns={columns}
-          rows={filteredRuns}
-          rowKey={(r) => r.id}
-          onRowClick={(run) => router.push(`/runs/${run.id}`)}
-        />
+        {error ? (
+          <div className="flex items-center justify-center py-12">
+            <p className="text-sm text-red-400">
+              Failed to load runs: {error.message}
+            </p>
+          </div>
+        ) : (
+          <DataTable
+            columns={columns}
+            rows={filteredRuns}
+            rowKey={(r) => r.id}
+            onRowClick={(run) => router.push(`/runs/${run.id}`)}
+          />
+        )}
       </div>
+
+      {/* Run Dialog */}
+      <RunDialog
+        open={showRunDialog}
+        onClose={() => setShowRunDialog(false)}
+        agentNames={agentNames}
+      />
     </div>
   );
 }
