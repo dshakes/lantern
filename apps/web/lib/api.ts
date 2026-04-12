@@ -275,6 +275,10 @@ class LanternAPI {
     path: string,
     options: RequestInit = {},
   ): Promise<T> {
+    // Ensure token is loaded from localStorage if not already set
+    if (!this._token && typeof window !== "undefined") {
+      this.restoreToken();
+    }
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       ...(options.headers as Record<string, string> | undefined),
@@ -354,6 +358,10 @@ class LanternAPI {
 
   async getMe(): Promise<User> {
     return this.request<User>("/auth/me");
+  }
+
+  async oauthStart(provider: string): Promise<{ redirect_url: string }> {
+    return this.request<{ redirect_url: string }>(`/auth/oauth/${provider}/start`);
   }
 
   logout(): void {
@@ -1154,6 +1162,10 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     temperature?: number;
     maxTokens?: number;
   }): Promise<Response> {
+    // Ensure token is loaded (complete() bypasses this.request() so we must check)
+    if (!this._token) {
+      this.restoreToken();
+    }
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };

@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -308,6 +311,430 @@ func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		Name:     claims.Name,
 		Role:     claims.Role,
 	})
+}
+
+// ---------- OAuth login ----------
+
+// oauthLoginProvider describes OAuth endpoints for login (distinct from connector OAuth).
+type oauthLoginProvider struct {
+	AuthURL      string
+	TokenURL     string
+	UserInfoURL  string
+	Scopes       string
+	ClientIDEnv  string
+	ClientSecEnv string
+}
+
+var oauthLoginProviders = map[string]oauthLoginProvider{
+	"google": {
+		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
+		TokenURL:     "https://oauth2.googleapis.com/token",
+		UserInfoURL:  "https://www.googleapis.com/oauth2/v2/userinfo",
+		Scopes:       "email profile",
+		ClientIDEnv:  "GOOGLE_CLIENT_ID",
+		ClientSecEnv: "GOOGLE_CLIENT_SECRET",
+	},
+	"github": {
+		AuthURL:      "https://github.com/login/oauth/authorize",
+		TokenURL:     "https://github.com/login/oauth/access_token",
+		UserInfoURL:  "https://api.github.com/user",
+		Scopes:       "user:email",
+		ClientIDEnv:  "GITHUB_CLIENT_ID",
+		ClientSecEnv: "GITHUB_CLIENT_SECRET",
+	},
+}
+
+// oauthRedirectBase returns the base URL for OAuth redirect URIs.
+func oauthRedirectBase() string {
+	if v := os.Getenv("OAUTH_REDIRECT_BASE"); v != "" {
+		return v
+	}
+	return "http://localhost:8080"
+}
+
+// oauthDashboardURL returns the dashboard URL for the post-login redirect.
+func oauthDashboardURL() string {
+	if v := os.Getenv("OAUTH_DASHBOARD_URL"); v != "" {
+		return v
+	}
+	return "http://localhost:3001"
+}
+
+// OAuthStart initiates an OAuth login flow.
+// GET /auth/oauth/{provider}/start
+func (h *AuthHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
+	providerName := r.PathValue("provider")
+
+	provider, ok := oauthLoginProviders[providerName]
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported OAuth provider: " + providerName})
+		return
+	}
+
+	clientID := os.Getenv(provider.ClientIDEnv)
+	clientSecret := os.Getenv(provider.ClientSecEnv)
+	if clientID == "" || clientSecret == "" {
+		displayName := strings.Title(providerName) //nolint:staticcheck
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("%s OAuth is not configured. Set %s and %s environment variables.", displayName, provider.ClientIDEnv, provider.ClientSecEnv),
+		})
+		return
+	}
+
+	// Generate random state token.
+	stateBytes := make([]byte, 24)
+	if _, err := rand.Read(stateBytes); err != nil {
+		h.logger().Error("failed to generate state token", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	stateToken := hex.EncodeToString(stateBytes)
+
+	// Store state in Redis with 10-minute TTL.
+	stateData, _ := json.Marshal(map[string]string{
+		"provider": providerName,
+	})
+	err := h.srv.Redis.Set(r.Context(), "oauth_login_state:"+stateToken, string(stateData), 10*time.Minute).Err()
+	if err != nil {
+		h.logger().Error("failed to store OAuth state in Redis", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	redirectURI := oauthRedirectBase() + "/auth/oauth/" + providerName + "/callback"
+
+	params := url.Values{
+		"client_id":     {clientID},
+		"redirect_uri":  {redirectURI},
+		"response_type": {"code"},
+		"state":         {stateToken},
+		"scope":         {provider.Scopes},
+	}
+
+	// Google-specific params.
+	if providerName == "google" {
+		params.Set("access_type", "offline")
+	}
+
+	authURL := provider.AuthURL + "?" + params.Encode()
+	writeJSON(w, http.StatusOK, map[string]string{"redirect_url": authURL})
+}
+
+// OAuthCallback handles the OAuth provider callback after user authorization.
+// GET /auth/oauth/{provider}/callback
+func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	providerName := r.PathValue("provider")
+	dashboardURL := oauthDashboardURL()
+
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	oauthError := r.URL.Query().Get("error")
+
+	if oauthError != "" {
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Authorization denied: "+oauthError), http.StatusFound)
+		return
+	}
+
+	if code == "" || state == "" {
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Missing code or state parameter"), http.StatusFound)
+		return
+	}
+
+	// Validate state from Redis.
+	stateDataStr, err := h.srv.Redis.Get(ctx, "oauth_login_state:"+state).Result()
+	if err != nil {
+		h.logger().Warn("invalid or expired OAuth login state", zap.Error(err))
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Invalid or expired state token. Please try again."), http.StatusFound)
+		return
+	}
+
+	// Delete state to prevent replay.
+	h.srv.Redis.Del(ctx, "oauth_login_state:"+state) //nolint:errcheck
+
+	var stateData struct {
+		Provider string `json:"provider"`
+	}
+	if err := json.Unmarshal([]byte(stateDataStr), &stateData); err != nil {
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Corrupted state data"), http.StatusFound)
+		return
+	}
+
+	// Verify provider matches.
+	if stateData.Provider != providerName {
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("State mismatch"), http.StatusFound)
+		return
+	}
+
+	provider, ok := oauthLoginProviders[providerName]
+	if !ok {
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Unknown provider"), http.StatusFound)
+		return
+	}
+
+	// Exchange authorization code for access token.
+	accessToken, err := h.exchangeOAuthLoginCode(ctx, providerName, provider, code)
+	if err != nil {
+		h.logger().Error("OAuth login token exchange failed", zap.Error(err), zap.String("provider", providerName))
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Token exchange failed"), http.StatusFound)
+		return
+	}
+
+	// Fetch user profile from the provider.
+	email, displayName, err := h.fetchOAuthUserProfile(ctx, providerName, provider, accessToken)
+	if err != nil {
+		h.logger().Error("OAuth user profile fetch failed", zap.Error(err), zap.String("provider", providerName))
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Failed to fetch user profile"), http.StatusFound)
+		return
+	}
+
+	if email == "" {
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Could not determine email address from OAuth provider"), http.StatusFound)
+		return
+	}
+
+	// Find or create user by email.
+	var (
+		userID   string
+		tenantID string
+		role     string
+		name     string
+	)
+
+	err = h.srv.Pool.QueryRow(ctx, `
+		SELECT u.id, u.tenant_id, u.display_name,
+			COALESCE((SELECT 'owner' FROM tenants WHERE id = u.tenant_id LIMIT 1), 'member')
+		FROM users u WHERE u.email = $1 LIMIT 1
+	`, email).Scan(&userID, &tenantID, &name, &role)
+
+	if err == pgx.ErrNoRows {
+		// Create new user + tenant.
+		if displayName == "" {
+			displayName = strings.Split(email, "@")[0]
+		}
+
+		slugSuffix, _ := randomHex(4)
+		slug := strings.Split(email, "@")[0] + "-" + slugSuffix
+
+		tx, txErr := h.srv.Pool.Begin(ctx)
+		if txErr != nil {
+			h.logger().Error("begin tx failed", zap.Error(txErr))
+			http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Internal error"), http.StatusFound)
+			return
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck
+
+		txErr = tx.QueryRow(ctx, `
+			INSERT INTO tenants (slug, name, tier, k8s_namespace)
+			VALUES ($1, $2, 'personal', $3)
+			RETURNING id
+		`, slug, displayName+"'s Workspace", "lantern-t-"+slug).Scan(&tenantID)
+		if txErr != nil {
+			h.logger().Error("insert tenant failed", zap.Error(txErr))
+			http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Internal error"), http.StatusFound)
+			return
+		}
+
+		txErr = tx.QueryRow(ctx, `
+			INSERT INTO users (tenant_id, email, display_name, auth_provider, auth_subject)
+			VALUES ($1, $2, $3, $4, $5)
+			RETURNING id
+		`, tenantID, email, displayName, providerName, email).Scan(&userID)
+		if txErr != nil {
+			h.logger().Error("insert user failed", zap.Error(txErr))
+			http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Internal error"), http.StatusFound)
+			return
+		}
+
+		if txErr = tx.Commit(ctx); txErr != nil {
+			h.logger().Error("commit failed", zap.Error(txErr))
+			http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Internal error"), http.StatusFound)
+			return
+		}
+
+		name = displayName
+		role = "owner"
+
+		h.logger().Info("new user created via OAuth",
+			zap.String("user_id", userID),
+			zap.String("tenant_id", tenantID),
+			zap.String("email", email),
+			zap.String("provider", providerName),
+		)
+	} else if err != nil {
+		h.logger().Error("query user by email failed", zap.Error(err))
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Internal error"), http.StatusFound)
+		return
+	} else {
+		// Existing user: update last_seen_at.
+		_, _ = h.srv.Pool.Exec(ctx, `UPDATE users SET last_seen_at = now() WHERE id = $1`, userID)
+
+		h.logger().Info("user logged in via OAuth",
+			zap.String("user_id", userID),
+			zap.String("email", email),
+			zap.String("provider", providerName),
+		)
+	}
+
+	// Issue JWT.
+	token, err := h.generateToken(userID, tenantID, email, name, role)
+	if err != nil {
+		h.logger().Error("token generation failed", zap.Error(err))
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Internal error"), http.StatusFound)
+		return
+	}
+
+	// Redirect to dashboard with token.
+	http.Redirect(w, r, dashboardURL+"/auth/callback?token="+url.QueryEscape(token), http.StatusFound)
+}
+
+// exchangeOAuthLoginCode exchanges an authorization code for an access token.
+func (h *AuthHandler) exchangeOAuthLoginCode(ctx context.Context, providerName string, provider oauthLoginProvider, code string) (string, error) {
+	clientID := os.Getenv(provider.ClientIDEnv)
+	clientSecret := os.Getenv(provider.ClientSecEnv)
+	redirectURI := oauthRedirectBase() + "/auth/oauth/" + providerName + "/callback"
+
+	data := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {redirectURI},
+		"client_id":     {clientID},
+		"client_secret": {clientSecret},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, provider.TokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("build token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read token response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("parse token response: %w", err)
+	}
+
+	accessToken, ok := result["access_token"].(string)
+	if !ok || accessToken == "" {
+		return "", fmt.Errorf("no access_token in response")
+	}
+
+	return accessToken, nil
+}
+
+// fetchOAuthUserProfile fetches the user's email and display name from the provider.
+func (h *AuthHandler) fetchOAuthUserProfile(ctx context.Context, providerName string, provider oauthLoginProvider, accessToken string) (email, displayName string, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, provider.UserInfoURL, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("build userinfo request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("userinfo request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("read userinfo response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("userinfo endpoint returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var profile map[string]any
+	if err := json.Unmarshal(body, &profile); err != nil {
+		return "", "", fmt.Errorf("parse userinfo response: %w", err)
+	}
+
+	switch providerName {
+	case "google":
+		email, _ = profile["email"].(string)
+		displayName, _ = profile["name"].(string)
+	case "github":
+		displayName, _ = profile["name"].(string)
+		if displayName == "" {
+			displayName, _ = profile["login"].(string)
+		}
+		// GitHub may not include email in profile response; fetch from /user/emails.
+		email, _ = profile["email"].(string)
+		if email == "" {
+			email, err = h.fetchGitHubEmail(ctx, accessToken)
+			if err != nil {
+				return "", "", fmt.Errorf("fetch github email: %w", err)
+			}
+		}
+	}
+
+	return email, displayName, nil
+}
+
+// fetchGitHubEmail fetches the primary verified email from GitHub's /user/emails endpoint.
+func (h *AuthHandler) fetchGitHubEmail(ctx context.Context, accessToken string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user/emails", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var emails []struct {
+		Email    string `json:"email"`
+		Primary  bool   `json:"primary"`
+		Verified bool   `json:"verified"`
+	}
+	if err := json.Unmarshal(body, &emails); err != nil {
+		return "", err
+	}
+
+	// Prefer primary + verified.
+	for _, e := range emails {
+		if e.Primary && e.Verified {
+			return e.Email, nil
+		}
+	}
+	// Fall back to any verified.
+	for _, e := range emails {
+		if e.Verified {
+			return e.Email, nil
+		}
+	}
+	// Fall back to first.
+	if len(emails) > 0 {
+		return emails[0].Email, nil
+	}
+
+	return "", fmt.Errorf("no emails found")
 }
 
 // ---------- token helpers ----------

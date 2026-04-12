@@ -152,6 +152,8 @@ func main() {
 	httpMux.HandleFunc("POST /auth/signup", authHandler.Signup)
 	httpMux.HandleFunc("POST /auth/login", authHandler.Login)
 	httpMux.HandleFunc("GET /auth/me", authHandler.GetMe)
+	httpMux.HandleFunc("GET /auth/oauth/{provider}/start", authHandler.OAuthStart)
+	httpMux.HandleFunc("GET /auth/oauth/{provider}/callback", authHandler.OAuthCallback)
 
 	// REST API endpoints (direct, no gateway needed).
 	httpMux.HandleFunc("GET /v1/agents", restHandler.ListAgents)
