@@ -13,7 +13,24 @@
       "Bash(ls -la /Users/shakes/workspace/lantern/*.*)",
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit -m ':*)"
+      "Bash(git commit -m ':*)",
+      "Bash(go mod:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo build:*)",
+      "Bash(helm lint:*)",
+      "Bash(helm template:*)",
+      "Bash(go build:*)",
+      "Bash(go run:*)",
+      "Bash(rm -rf /tmp/my-agent)",
+      "Read(//private/tmp/**)",
+      "Read(//tmp/my-agent/**)",
+      "Read(//tmp/my-agent/src/**)",
+      "Bash(npm install:*)",
+      "Bash(rm -rf test-agent)",
+      "Bash(/tmp/lantern-test init:*)",
+      "Bash(npm run:*)",
+      "Bash(/tmp/lantern-test deploy:*)",
+      "Bash(go vet:*)"
     ]
   }
 }

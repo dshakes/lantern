@@ -1,0 +1,26 @@
+[package]
+name = "lantern-gateway"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["full"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "request-id", "set-header"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+jsonwebtoken = "9"
+redis = { version = "0.27", features = ["tokio-comp"] }
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+tokio-stream = "0.1"
+thiserror = "2"
+anyhow = "1"
+futures-core = "0.3"
+http = "1"

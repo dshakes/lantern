@@ -1,0 +1,13 @@
+name: code-reviewer
+version: "0.1.0"
+description: Reviews GitHub pull requests and posts comments with suggestions
+model: auto
+isolation:
+  class: trusted
+limits:
+  timeout: 5m
+  max_tokens: 150000
+  max_cost_usd: 1.50
+labels:
+  category: devtools
+  trigger: webhook

@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lantern.fullname" . }}-model-router
+  labels:
+    {{- include "lantern.componentLabels" (dict "root" . "component" "model-router") | nindent 4 }}
+spec:
+  replicas: {{ .Values.modelRouter.replicas }}
+  selector:
+    matchLabels:
+      {{- include "lantern.componentSelectorLabels" (dict "root" . "component" "model-router") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lantern.componentLabels" (dict "root" . "component" "model-router") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "lantern.serviceAccountName" . }}
+      containers:
+        - name: model-router
+          image: {{ include "lantern.image" (dict "root" . "component" .Values.modelRouter) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 50053
+              protocol: TCP
+          env:
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern.fullname" . }}-config
+                  key: LOG_LEVEL
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: postgres-password
+            - name: DATABASE_URL
+              value: "postgres://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "lantern.fullname" . }}-postgresql:5432/{{ .Values.postgresql.auth.database }}?sslmode=disable"
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern.fullname" . }}-config
+                  key: REDIS_URL
+            - name: S3_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern.fullname" . }}-config
+                  key: S3_ENDPOINT
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern.fullname" . }}-config
+                  key: S3_BUCKET
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern.fullname" . }}-config
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: minio-password
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: openai-api-key
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern.fullname" . }}-secrets
+                  key: anthropic-api-key
+          livenessProbe:
+            grpc:
+              port: 50053
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            grpc:
+              port: 50053
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.modelRouter.resources | nindent 12 }}

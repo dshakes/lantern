@@ -1,0 +1,10 @@
+Lantern has been deployed!
+
+1. Gateway:    kubectl port-forward svc/{{ include "lantern.fullname" . }}-gateway 8443:8443
+2. Dashboard:  kubectl port-forward svc/{{ include "lantern.fullname" . }}-dashboard 3001:3000
+3. Control Plane (gRPC): kubectl port-forward svc/{{ include "lantern.fullname" . }}-control-plane 50051:50051
+
+To get started:
+  lantern init my-agent
+  lantern deploy
+  lantern run my-agent --input '{"message": "hello"}'

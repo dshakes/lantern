@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lantern.fullname" . }}-model-router
+  labels:
+    {{- include "lantern.componentLabels" (dict "root" . "component" "model-router") | nindent 4 }}
+spec:
+  type: {{ .Values.modelRouter.service.type }}
+  ports:
+    - port: {{ .Values.modelRouter.service.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "lantern.componentSelectorLabels" (dict "root" . "component" "model-router") | nindent 4 }}

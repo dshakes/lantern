@@ -1,0 +1,153 @@
+global:
+  image:
+    registry: ghcr.io
+    repository: dshakes/lantern
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  logLevel: info
+
+gateway:
+  replicas: 2
+  image:
+    name: gateway
+  service:
+    type: ClusterIP
+    port: 8443
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  env:
+    LISTEN_ADDR: "0.0.0.0:8443"
+
+controlPlane:
+  replicas: 2
+  image:
+    name: control-plane
+  service:
+    type: ClusterIP
+    grpcPort: 50051
+    httpPort: 8080
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  env:
+    LISTEN_ADDR: ":50051"
+
+modelRouter:
+  replicas: 2
+  image:
+    name: model-router
+  service:
+    type: ClusterIP
+    port: 50053
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+workflowEngine:
+  replicas: 2
+  image:
+    name: workflow-engine
+  service:
+    type: ClusterIP
+    port: 50052
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+runtimeManager:
+  replicas: 1
+  image:
+    name: runtime-manager
+  service:
+    type: ClusterIP
+    port: 50054
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+dashboard:
+  replicas: 1
+  image:
+    name: web
+  service:
+    type: ClusterIP
+    port: 3000
+
+postgresql:
+  enabled: true
+  auth:
+    username: lantern
+    password: ""  # set via secret
+    database: lantern
+  primary:
+    persistence:
+      size: 10Gi
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+
+minio:
+  enabled: true
+  auth:
+    rootUser: lantern
+    rootPassword: ""  # set via secret
+  defaultBuckets: "lantern-bundles,lantern-snapshots,lantern-dev"
+  persistence:
+    size: 10Gi
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: api.lantern.run
+      paths:
+        - path: /
+          pathType: Prefix
+          service: gateway
+    - host: app.lantern.run
+      paths:
+        - path: /
+          pathType: Prefix
+          service: dashboard
+  tls: []
+
+secrets:
+  # These should be overridden via --set or external secrets
+  jwtSecret: ""
+  openaiApiKey: ""
+  anthropicApiKey: ""
+  postgresPassword: "lantern"
+  minioPassword: "lanternsecret"
+
+serviceAccount:
+  create: true
+  name: "lantern"
+  annotations: {}

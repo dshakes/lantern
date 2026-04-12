@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lantern.fullname" . }}-dashboard
+  labels:
+    {{- include "lantern.componentLabels" (dict "root" . "component" "dashboard") | nindent 4 }}
+spec:
+  type: {{ .Values.dashboard.service.type }}
+  ports:
+    - port: {{ .Values.dashboard.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "lantern.componentSelectorLabels" (dict "root" . "component" "dashboard") | nindent 4 }}

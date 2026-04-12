@@ -1,0 +1,13 @@
+name: research-agent
+version: "0.1.0"
+description: Researches a topic using web search and produces a structured report
+model: auto
+isolation:
+  class: standard
+limits:
+  timeout: 10m
+  max_tokens: 200000
+  max_cost_usd: 2.00
+labels:
+  category: research
+  complexity: medium

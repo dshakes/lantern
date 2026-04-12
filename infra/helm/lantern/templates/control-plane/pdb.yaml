@@ -1,0 +1,13 @@
+{{- if (gt (int .Values.controlPlane.replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "lantern.fullname" . }}-control-plane
+  labels:
+    {{- include "lantern.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "lantern.componentSelectorLabels" (dict "root" . "component" "control-plane") | nindent 6 }}
+{{- end }}

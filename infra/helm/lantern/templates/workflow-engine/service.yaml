@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lantern.fullname" . }}-workflow-engine
+  labels:
+    {{- include "lantern.componentLabels" (dict "root" . "component" "workflow-engine") | nindent 4 }}
+spec:
+  type: {{ .Values.workflowEngine.service.type }}
+  ports:
+    - port: {{ .Values.workflowEngine.service.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "lantern.componentSelectorLabels" (dict "root" . "component" "workflow-engine") | nindent 4 }}

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: lantern
+description: Lantern — Serverless platform for production AI agents
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai-agents
+  - serverless
+  - workflow
+  - llm
+home: https://lantern.run
+sources:
+  - https://github.com/dshakes/lantern
+maintainers:
+  - name: dshakes

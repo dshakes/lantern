@@ -1,0 +1,10 @@
+name: hello-world
+version: "0.1.0"
+description: A simple greeting agent that demonstrates the basics
+model: auto
+isolation:
+  class: trusted
+limits:
+  timeout: 1m
+  max_tokens: 10000
+  max_cost_usd: 0.10
