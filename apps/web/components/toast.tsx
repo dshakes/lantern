@@ -156,7 +156,7 @@ function ToastItem({
       <span className="text-sm text-zinc-200">{toast.message}</span>
       <button
         onClick={() => dismiss(toast.id)}
-        className="ml-2 shrink-0 text-zinc-500 hover:text-zinc-300"
+        className="ml-2 shrink-0 text-zinc-500 transition-colors hover:text-zinc-300"
       >
         <X className="h-3.5 w-3.5" />
       </button>

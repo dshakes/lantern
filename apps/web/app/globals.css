@@ -107,6 +107,23 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Global cursor styles for interactive elements */
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+a {
+  cursor: pointer;
+}
+
+select {
+  cursor: pointer;
+}
+
 /* Button press effect */
 button:active:not(:disabled) {
   transform: scale(0.98);
@@ -133,6 +150,11 @@ input:focus, textarea:focus, select:focus {
 @keyframes backdrop-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+/* Modal overlay cursor */
+.modal-backdrop {
+  cursor: default;
 }
 
 /* Modal content */
@@ -222,6 +244,7 @@ input:focus, textarea:focus, select:focus {
   color: #a1a1aa;
   transition: all 0.15s ease;
   position: relative;
+  cursor: pointer;
 }
 
 .sidebar-item:hover {
@@ -266,11 +289,17 @@ input:focus, textarea:focus, select:focus {
 
 .data-table tbody tr {
   border-bottom: 1px solid rgba(39, 39, 42, 0.5);
-  transition: background 0.15s ease;
+  transition: background-color 0.15s ease;
+  cursor: pointer;
 }
 
 .data-table tbody tr:hover {
   background: var(--color-surface-2);
+}
+
+/* For non-clickable table rows, override in the component */
+.data-table tbody tr.no-click {
+  cursor: default;
 }
 
 .data-table tbody td {

@@ -38,7 +38,7 @@ export function JsonViewer({ data, label, defaultOpen = false }: JsonViewerProps
     <div className="rounded-lg border border-zinc-800 bg-surface-2">
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-zinc-400 transition-colors hover:text-zinc-200"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-zinc-400 transition-colors hover:text-zinc-200"
       >
         {open ? (
           <ChevronDown className="h-3.5 w-3.5" />

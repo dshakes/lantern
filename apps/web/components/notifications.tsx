@@ -166,7 +166,10 @@ export function Notifications() {
 
           {/* Footer */}
           <div className="border-t border-zinc-800 px-4 py-2.5">
-            <button className="w-full text-center text-xs text-zinc-500 transition-colors hover:text-zinc-300">
+            <button
+              onClick={() => {}}
+              className="w-full text-center text-xs text-zinc-500 transition-colors hover:text-zinc-300"
+            >
               View all notifications
             </button>
           </div>

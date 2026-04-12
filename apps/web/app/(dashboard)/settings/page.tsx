@@ -605,7 +605,7 @@ function GeneralTab({
             <select
               value={general.defaultModel}
               onChange={(e) => setGeneral({ ...general, defaultModel: e.target.value })}
-              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
             >
               <option value="auto">Auto (recommended)</option>
               <option value="reasoning-large">Reasoning Large</option>
@@ -627,7 +627,7 @@ function GeneralTab({
             <select
               value={general.defaultIsolation}
               onChange={(e) => setGeneral({ ...general, defaultIsolation: e.target.value })}
-              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
             >
               <option value="trusted">Trusted -- runs in shared namespace</option>
               <option value="standard">Standard -- runs in isolated pod</option>
@@ -967,7 +967,7 @@ function TeamTab({
                     <select
                       value={member.role}
                       onChange={(e) => onChangeRole(member.id, e.target.value)}
-                      className="rounded-lg border border-zinc-700 bg-surface-2 px-2 py-1 text-xs text-zinc-300 outline-none focus:border-lantern-500"
+                      className="rounded-lg border border-zinc-700 bg-surface-2 px-2 py-1 text-xs text-zinc-300 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
                     >
                       <option value="admin">Admin</option>
                       <option value="member">Developer</option>

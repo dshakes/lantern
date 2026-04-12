@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { MessageSquare, X, Send, Bot, User } from "lucide-react";
 import clsx from "clsx";
+import { format } from "date-fns";
 
 // ---------------------------------------------------------------------------
 // Mock conversation
@@ -44,7 +45,7 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
       id: Date.now(),
       role: "user",
       text: input.trim(),
-      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      time: format(new Date(), "HH:mm"),
     };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
@@ -56,7 +57,7 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
         id: Date.now() + 1,
         role: "agent",
         text: "I understand. Let me work on that for you. I'll update you once it's ready.",
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        time: format(new Date(), "HH:mm"),
       };
       setMessages((prev) => [...prev, agentMsg]);
     }, 1500);
@@ -98,13 +99,13 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
         <div className="flex items-center gap-1">
           <button
             onClick={() => setIsOpen(false)}
-            className="rounded-md p-1 text-zinc-500 hover:bg-surface-3 hover:text-zinc-300"
+            className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"
           >
             <span className="text-xs">Minimize</span>
           </button>
           <button
             onClick={onClose}
-            className="rounded-md p-1 text-zinc-500 hover:bg-surface-3 hover:text-zinc-300"
+            className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"
           >
             <X className="h-4 w-4" />
           </button>

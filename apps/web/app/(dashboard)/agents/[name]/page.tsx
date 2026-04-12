@@ -216,7 +216,10 @@ export default function AgentDetailPage() {
               <Play className="h-4 w-4" />
               Run Agent
             </button>
-            <button className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400">
+            <button
+              onClick={() => router.push("/deployments")}
+              className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400"
+            >
               <Rocket className="h-4 w-4" />
               Deploy
             </button>
@@ -410,7 +413,7 @@ export default function AgentDetailPage() {
             <div className="flex items-center justify-end gap-3 border-t border-zinc-800 px-6 py-4">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200"
+                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
               >
                 Cancel
               </button>
@@ -508,7 +511,7 @@ function AgentCodeTab({ agentName }: { agentName: string }) {
           src/index.ts
         </div>
         <button
-          onClick={() => {}}
+          onClick={() => window.open(`vscode://file/${agentName}`, "_blank")}
           className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"
         >
           <ExternalLink className="h-3 w-3" />
@@ -745,7 +748,7 @@ function AgentLogsTab({ agentName }: { agentName: string }) {
           {filtered.map((log) => (
             <div key={log.id} className="flex items-start gap-3 px-4 py-2.5 hover:bg-surface-2 transition-colors">
               <span className="mt-0.5 shrink-0 font-mono text-[10px] text-zinc-600 w-16">
-                {new Date(log.ts).toLocaleTimeString()}
+                {format(new Date(log.ts), "HH:mm:ss")}
               </span>
               <span className={clsx("mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase", levelBg[log.level], levelColors[log.level])}>
                 {log.level}

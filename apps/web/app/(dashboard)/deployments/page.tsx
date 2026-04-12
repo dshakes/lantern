@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import {
   Cloud,
   Server,
@@ -222,7 +222,7 @@ export default function DeploymentsPage() {
   }, []);
 
   const handleAddDataPlane = async () => {
-    if (wizardStep < 2) {
+    if (wizardStep < 3) {
       setWizardStep(wizardStep + 1);
       return;
     }
@@ -421,9 +421,8 @@ helm install lantern-data-plane lantern/data-plane \\
               </thead>
               <tbody>
                 {deployments.map((dep) => (
-                  <>
+                  <Fragment key={dep.id}>
                     <tr
-                      key={dep.id}
                       onClick={() => setExpandedDep(expandedDep === dep.id ? null : dep.id)}
                       className="cursor-pointer"
                     >
@@ -467,7 +466,7 @@ helm install lantern-data-plane lantern/data-plane \\
                       </td>
                     </tr>
                     {expandedDep === dep.id && dep.logs && (
-                      <tr key={`${dep.id}-logs`}>
+                      <tr>
                         <td colSpan={7} className="!p-0">
                           <div className="border-t border-zinc-800/50 bg-surface-0 px-6 py-3">
                             <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-zinc-600">
@@ -492,7 +491,7 @@ helm install lantern-data-plane lantern/data-plane \\
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -561,7 +560,7 @@ helm install lantern-data-plane lantern/data-plane \\
               <h2 className="text-lg font-semibold text-zinc-100">Connect Data Plane</h2>
               <button
                 onClick={closeWizard}
-                className="rounded-lg p-1 text-zinc-500 hover:bg-surface-3 hover:text-zinc-300"
+                className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -633,7 +632,7 @@ helm install lantern-data-plane lantern/data-plane \\
                     <select
                       value={wizardForm.region}
                       onChange={(e) => setWizardForm({ ...wizardForm, region: e.target.value })}
-                      className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+                      className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
                     >
                       {wizardForm.cloud === "AWS" && <>
                         <option value="us-east-1">us-east-1 (N. Virginia)</option>
@@ -671,7 +670,7 @@ helm install lantern-data-plane lantern/data-plane \\
                     <select
                       value={wizardForm.instanceType}
                       onChange={(e) => setWizardForm({ ...wizardForm, instanceType: e.target.value })}
-                      className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+                      className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
                     >
                       <option value="m6i.xlarge">m6i.xlarge (4 vCPU, 16 GB)</option>
                       <option value="m6i.2xlarge">m6i.2xlarge (8 vCPU, 32 GB)</option>
@@ -698,7 +697,7 @@ helm install lantern-data-plane lantern/data-plane \\
                         navigator.clipboard.writeText(terraformCommands);
                         toast.success("Commands copied to clipboard");
                       }}
-                      className="absolute right-2 top-8 rounded-md bg-surface-3 p-1.5 text-zinc-400 hover:text-zinc-200"
+                      className="absolute right-2 top-8 rounded-md bg-surface-3 p-1.5 text-zinc-400 transition-colors hover:text-zinc-200"
                     >
                       <Copy className="h-3.5 w-3.5" />
                     </button>
@@ -737,7 +736,7 @@ helm install lantern-data-plane lantern/data-plane \\
             <div className="flex items-center justify-between border-t border-zinc-800 px-6 py-4">
               <button
                 onClick={wizardStep === 0 ? closeWizard : () => setWizardStep(wizardStep - 1)}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200"
+                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
               >
                 {wizardStep === 0 ? "Cancel" : "Back"}
               </button>

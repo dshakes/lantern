@@ -1,49 +1,110 @@
 # Lantern
 
-**The open-source serverless platform for production AI agents.**
+**Open-source serverless platform for production AI agents.**
 
-[![Build](https://img.shields.io/github/actions/workflow/status/dshakes/lantern/ci.yml?branch=main&style=flat-square)](https://github.com/dshakes/lantern/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-lantern.dev-8B5CF6?style=flat-square)](https://docs.lantern.dev)
 [![Discord](https://img.shields.io/discord/placeholder?label=discord&style=flat-square&color=5865F2)](https://discord.gg/lantern)
 
-Ship an agent in 60 seconds. Run it on infrastructure that scales from zero to a million parallel runs with crash-proof durable execution, Firecracker microVM isolation, and automatic multi-LLM routing. Self-host with one Helm install or use the managed cloud.
+Lantern runs long-lived, multi-step AI agents in production with crash-proof durable execution, Firecracker microVM isolation, cost-optimized multi-LLM routing, and end-to-end token streaming. Deploy with one Helm install or use the managed cloud.
+
+> **Status:** Active development. Core services are at spike maturity (functional, tested at the seam, gaps documented). See the [roadmap](docs/architecture/00-roadmap.md) for what is done, spiked, and stubbed.
+
+---
+
+## Table of contents
+
+- [Why Lantern](#why-lantern)
+- [Architecture](#architecture)
+- [Quick start](#quick-start)
+- [SDK usage](#sdk-usage)
+- [Repository layout](#repository-layout)
+- [Services](#services)
+- [Local development](#local-development)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Examples](#examples)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
 ## Why Lantern
 
-The agent ecosystem is split between **frameworks** that run on your laptop and **proprietary clouds** that lock you to one model vendor. Neither solves the real problem: running long-lived, stateful, multi-step AI agents **reliably in production** at any scale, on any model, with strong isolation and zero ops.
+The agent ecosystem is split between frameworks that run on your laptop and proprietary clouds that lock you to one model vendor. Neither solves the real problem: running stateful, multi-step AI agents reliably in production at any scale, on any model, with strong isolation.
 
-### Comparison
-
-| Feature | Claude Agents | Google Vertex | AWS Bedrock | Microsoft AutoGen | **Lantern** |
+| Capability | Claude Agents | Vertex AI | AWS Bedrock | AutoGen | **Lantern** |
 |---|---|---|---|---|---|
-| Durable execution (crash-proof) | No | No | No | No | **Yes -- Temporal-grade** |
-| Multi-LLM routing | Claude only | Google models | AWS models | Any (manual) | **Auto-route by capability** |
-| MicroVM isolation | Shared sandbox | Shared | Shared | Shared | **Firecracker per-run** |
-| Omnichannel (WhatsApp, iMessage, Voice) | No | No | No | No | **11 surfaces at launch** |
-| End-to-end streaming | Partial | No | No | No | **Token-level, no buffering** |
-| Personal workflows | No | No | No | No | **E2E encrypted, mobile-first** |
-| Self-hostable | No | No | No | Yes (OSS) | **Yes, one Helm install** |
+| Durable execution (crash-proof) | No | No | No | No | **Temporal-grade** |
+| Multi-LLM routing | Claude only | Google only | AWS only | Manual | **Auto by capability** |
+| MicroVM isolation | Shared | Shared | Shared | Shared | **Firecracker per-run** |
+| End-to-end streaming | Partial | No | No | No | **Token-level** |
+| Omnichannel surfaces | No | No | No | No | **11 at launch** |
+| Self-hostable | No | No | No | Yes | **One Helm install** |
 | Visual builder + code | No | No | Partial | No | **Both, same format** |
-| Human-in-the-loop approvals | Limited | No | No | Basic | **Durable, any surface** |
-| 30+ connectors built-in | No | Some | Some | No | **Yes** |
-| Cost-aware model routing | No | No | No | No | **Big/small auto-select** |
+| Cost-aware model selection | No | No | No | No | **Automatic** |
 
 ### Key differentiators
 
-**Durable Execution** -- Like Temporal for AI. Every `step()` is checkpointed to Postgres. If a run crashes at step 47, it resumes from step 47, not from scratch. Steps are idempotent, replayable, and exactly-once.
+**Durable execution.** Every `step()` is checkpointed to Postgres. A run that crashes at step 47 resumes from step 47, not from scratch. Steps are idempotent, replayable, and exactly-once.
 
-**Capability-Based Model Routing** -- Say `model: "auto"` and Lantern picks the best model for each step at the best price. Cheap prompts go to small models; reasoning-heavy steps escalate to large ones. Automatic failover across providers. Customers report 60% cost savings.
+**Capability-based model routing.** Say `model: "auto"` and Lantern picks the cheapest model that meets the quality bar for each step. Reasoning-heavy steps escalate to frontier models. Fast tool dispatch goes to small models. Automatic failover across providers.
 
-**MicroVM Sandboxing** -- Every run gets its own Firecracker microVM with syscall filtering and egress controls. 150ms warm start via snapshot/restore. Real isolation, not just containers.
+**MicroVM isolation.** Every run gets its own Firecracker microVM with syscall filtering and egress controls. 150ms warm start via snapshot/restore. Four isolation classes from trusted (bare K8s Job) to hostile (Kata + seccomp deny-all-but).
 
-**Drive Agents from Anywhere** -- WhatsApp, iMessage, Slack, Discord, Telegram, voice calls, SMS, email, web, mobile, API. First-class surface gateway, not bolted-on integrations.
+**Omnichannel surfaces.** WhatsApp, Slack, Discord, Telegram, SMS, voice, email, web, mobile, API. First-class surface gateway with webhook verification and session management, not bolted-on integrations.
 
-**Personal Workflows** -- Connect your Gmail, Calendar, and personal accounts. E2E encrypted with per-tenant keys. No enterprise sales call needed -- your agent, your data.
+**Cost intelligence.** Every run tracks cost per step. The model router optimizes spend in real time. Budget alerts, per-tenant caps, and full cost attribution in the dashboard.
 
-**Cost Intelligence** -- Every run tracks cost per step. The model router optimizes spend in real time. Budget alerts, dead-letter queues for overspend, and full cost attribution in the dashboard.
+---
+
+## Architecture
+
+```
+                        +--------------------+
+    WhatsApp -----------|                    |
+    Slack --------------|  Surface Gateway   |
+    Telegram -----------|  (Rust/Axum)       |
+    Voice --------------|                    |
+                        +---------+----------+
+                                  |
+    SDK --------------------+-----+----------+
+    CLI --------------------|  API Gateway   |
+    Dashboard --------------|  (Rust/Axum)   |
+                            +-----+----------+
+                                  |
+              +-------------------+-------------------+
+              v                   v                   v
+    +------------------+  +--------------+   +------------------+
+    |  Control Plane   |  | Model Router |   |  Workflow Engine  |
+    |  (Go)            |  | (Rust)       |   |  (Go)             |
+    +------------------+  +--------------+   +---------+---------+
+                                                       |
+                                             +---------+---------+
+                                             v                   v
+                                      +-----------+       +-----------+
+                                      | Firecracker|       |  K8s Job  |
+                                      | MicroVMs   |       |  Runtime  |
+                                      +-----------+       +-----------+
+```
+
+**Control plane** (Go) -- system of record for agents, versions, runs, tenants, API keys. gRPC + REST APIs. Postgres.
+
+**Workflow engine** (Go) -- durable execution. Event-sourced run state with journal, replay, and recovery. The only service that mutates run state.
+
+**API gateway** (Rust/Axum) -- authentication, rate limiting, streaming proxy (SSE + WebSocket + gRPC bidi). Single entry point for external clients.
+
+**Model router** (Rust) -- multi-LLM endpoint. Capability-based addressing (`reasoning-large`, `chat-small`, `auto`), prompt caching, semantic deduplication, cost-aware routing, provider failover.
+
+**Runtime manager** (Rust) -- orchestrates compute isolation. K8s Jobs, Firecracker microVMs, Kata Containers, Wasmtime. Snapshot/restore for fast cold start.
+
+**Surface gateway** (Rust/Axum) -- omnichannel message adapter. Webhook verification, session management, unified event format across providers.
+
+**Supporting services** (Go) -- scheduler (cron, delayed jobs), memory (three-tier: core/recall/archival with pgvector), notifier (webhook, email, Slack, SMS), billing (usage metering, budget enforcement).
+
+All inter-service communication is gRPC (protobuf3). Protos are the single source of truth: [`packages/proto/lantern/v1/`](packages/proto/lantern/v1/).
+
+For the full architecture, see [`docs/architecture/`](docs/architecture/).
 
 ---
 
@@ -51,130 +112,79 @@ The agent ecosystem is split between **frameworks** that run on your laptop and 
 
 ```bash
 # Install the CLI
-brew install dshakes/tap/lantern  # or: go install github.com/dshakes/lantern/packages/cli@latest
+brew install dshakes/tap/lantern
+# or: go install github.com/dshakes/lantern/packages/cli@latest
 
-# Create your first agent
+# Scaffold an agent
 lantern init my-agent --template research
 cd my-agent
 
-# Run locally
+# Run locally against the dev stack
 lantern run my-agent --input '{"topic": "AI agent frameworks 2026"}'
 
-# Deploy to the cloud
+# Deploy
 lantern deploy
 ```
 
 ---
 
-## The 60-second tour
+## SDK usage
+
+### TypeScript (primary)
 
 ```ts
-// agent.ts — declarative + typed
 import { agent, step, tool } from "@lantern/sdk";
 
 export default agent({
   name: "research-agent",
-  model: "auto",            // Lantern picks the right model per step
+  model: "auto",
   tools: [tool.web, tool.python, tool.fs],
   memory: { kind: "vector", scope: "user" },
 
   async run({ input, ctx }) {
+    // Plan -- uses a reasoning model automatically
     const plan = await step("plan", async () =>
-      ctx.llm.json({ schema: PlanSchema, prompt: `Plan: ${input}` })
+      ctx.llm.json({ schema: PlanSchema, prompt: `Plan: ${input.query}` })
     );
 
-    // Parallel fan-out — Lantern runs these on separate workers, durably
-    const findings = await step.map(plan.subqueries, async (q) =>
+    // Parallel fan-out -- each runs on a separate worker, durably
+    const findings = await step.map("search", plan.subqueries, async (q) =>
       ctx.tools.web.search(q)
     );
 
-    // Falls back to a smaller, cheaper model when the synthesis fits
-    const report = await step("synthesize", async () =>
+    // Synthesize -- falls back to a cheaper model when it fits
+    return await step("synthesize", async () =>
       ctx.llm.stream({ prompt: synthPrompt(findings), preferSmall: true })
     );
-
-    return report;
   },
 });
 ```
 
-```bash
-lantern deploy        # builds, snapshots, pushes, deploys
-lantern run research-agent --input "..."   # streams live
-lantern logs --follow # tail across replicas
-lantern replay r_01HXY2 --from-step plan   # rerun from any step
+### Python
+
+```python
+from lantern import agent, step
+
+@agent(name="research-agent", model="auto")
+async def run(input: dict, ctx):
+    plan = await step("plan", lambda: ctx.llm.complete(
+        prompt=f"Plan: {input['topic']}"
+    ))
+    return {"plan": plan}
 ```
 
----
-
-## Architecture
-
-```
-                        ┌──────────────────┐
-    WhatsApp ──────────▶│                  │
-    Slack    ──────────▶│  Surface Gateway │
-    iMessage ──────────▶│  (Rust)          │
-    Voice    ──────────▶│                  │
-                        └────────┬─────────┘
-                                 │
-    SDK ────────────────▶┌───────┴─────────┐
-    CLI ────────────────▶│   API Gateway   │
-    Dashboard ──────────▶│   (Rust/Axum)   │
-                         └───────┬─────────┘
-                                 │
-              ┌──────────────────┼──────────────────┐
-              ▼                  ▼                   ▼
-    ┌─────────────────┐  ┌──────────────┐   ┌──────────────┐
-    │  Control Plane  │  │ Model Router │   │  Workflow     │
-    │  (Go)           │  │ (Rust)       │   │  Engine (Go)  │
-    └─────────────────┘  └──────────────┘   └──────┬───────┘
-                                                    │
-                                            ┌───────┴───────┐
-                                            ▼               ▼
-                                     ┌────────────┐  ┌────────────┐
-                                     │ Firecracker│  │  K8s Job   │
-                                     │ MicroVMs   │  │  Runtime   │
-                                     └────────────┘  └────────────┘
-```
-
-See [`docs/architecture/`](docs/architecture/) for the deep version -- component reference, data model, runtime isolation, workflow engine, model router, streaming, observability, security, and testing strategy.
-
----
-
-## Examples
-
-| Example | Description |
-|---|---|
-| [`hello-world`](examples/hello-world/) | Minimal agent demonstrating the basics of `agent()`, `step()`, and `lantern deploy` |
-| [`research-agent`](examples/research-agent/) | Researches a topic with web search, produces a structured report with sources and findings |
-| [`code-reviewer`](examples/code-reviewer/) | Reviews GitHub PRs, posts inline comments with suggestions, submits a verdict |
-| [`customer-support`](examples/customer-support/) | Support agent with vector memory, approval gates, and human-in-the-loop review |
-| [`data-pipeline`](examples/data-pipeline/) | Scheduled weekly pipeline: HubSpot + Stripe + Analytics into reports across Slack, email, Sheets, Notion |
-| [`deploy-guardian`](examples/deploy-guardian/) | Watches deployments, runs pre-flight checks, gates rollouts with human approval |
-| [`talent-scout`](examples/talent-scout/) | Searches candidates across LinkedIn, GitHub, Stack Overflow; generates personalized outreach |
-| [`whatsapp-assistant`](examples/whatsapp-assistant/) | Personal WhatsApp agent for calendar, email, tasks, reminders, and expenses |
-
----
-
-## Local development
+### CLI
 
 ```bash
-git clone https://github.com/dshakes/lantern
-cd lantern
-
-# Start the full dev stack (Postgres, Redis, MinIO, all services)
-make dev
-
-# Or start just infrastructure and run services individually
-make dev-infra
-cd services/gateway && cargo run
+lantern deploy            # build, snapshot, push, promote
+lantern run my-agent \
+  --input '{"query": "..."}'  # stream output live
+lantern logs --follow     # tail across replicas
+lantern replay r_01HXY2 \
+  --from-step plan        # rerun from any checkpoint
 ```
 
-Run tests and linting (same checks as CI):
-
-```bash
-make ci-local
-```
+Full agent bundle spec: [`AGENT.md`](AGENT.md).
 
 ---
 
@@ -182,73 +192,264 @@ make ci-local
 
 ```
 lantern/
-├── apps/
-│   ├── web/              Next.js 15 dashboard (RSC + streaming)
-│   ├── docs-site/        Documentation site
-│   └── landing/          Marketing + pitch
-├── services/
-│   ├── control-plane/    Go — agents/runs CRUD, gRPC, Postgres
-│   ├── workflow-engine/  Go — durable execution, event sourcing
-│   ├── runtime-manager/  Rust — Firecracker / Kata / Wasm orchestrator
-│   ├── gateway/          Rust — Axum API gateway, streaming proxy
-│   ├── model-router/     Rust — multi-LLM, cache, big/small routing
-│   ├── memory/           Go — vector + KV + episodic memory
-│   ├── notifier/         Go — webhooks, email, Slack, SMS, push
-│   ├── billing/          Go — metering, usage, cost attribution
-│   └── scheduler/        Go — cron, delayed jobs, backpressure
-├── runtimes/
-│   ├── k8s-job/          Trusted lightweight steps
-│   ├── firecracker/      Untrusted user code, fast cold start
-│   ├── kata/             Hostile workloads, K8s RuntimeClass
-│   ├── wasm/             Pure-function steps via WASI
-│   └── devcontainer/     Long-running IDE-like agents
-├── packages/
-│   ├── sdk-ts/           TypeScript SDK (primary)
-│   ├── sdk-python/       Python SDK
-│   ├── sdk-go/           Go SDK
-│   ├── cli/              `lantern` CLI (Go)
-│   ├── proto/            gRPC protos (source of truth)
-│   ├── shared-types/     Generated types (TS/Python/Go/Rust)
-│   └── ui-kit/           React component library
-├── infra/
-│   ├── helm/             Helm chart (self-host with one install)
-│   ├── docker/           Dev compose stack
-│   ├── terraform/        AWS/GCP modules
-│   └── k8s/              Manifests
-├── examples/             8 end-to-end agent samples
-├── docs/
-│   ├── architecture/     System design, sequence diagrams, roadmap
-│   ├── adr/              Architecture Decision Records
-│   ├── api/              OpenAPI 3.1, AsyncAPI, gRPC reference
-│   ├── user-guides/      Quickstarts, recipes, concepts
-│   └── research/         Provider landscape research
-├── CLAUDE.md             Working agreement for AI assistants
-├── AGENT.md              Agent bundle specification
-└── README.md             This file
+  services/
+    control-plane/          Go    -- agents, runs, tenants, auth, API keys
+    workflow-engine/        Go    -- durable execution, event sourcing, journal
+    gateway/                Rust  -- API edge, auth, rate limiting, streaming proxy
+    model-router/           Rust  -- multi-LLM, caching, cost routing
+    runtime-manager/        Rust  -- Firecracker, Kata, K8s Job, Wasm orchestration
+    surface-gateway/        Rust  -- omnichannel webhooks, session management
+    scheduler/              Go    -- cron, delayed jobs, fair-share queue
+    memory/                 Go    -- core/recall/archival, pgvector
+    notifier/               Go    -- webhooks, email, Slack, SMS, push
+    billing/                Go    -- usage metering, cost attribution, budgets
+    data-plane-agent/       Go    -- outbound tunnel for hybrid deployments
+  packages/
+    sdk-ts/                 TS    -- primary SDK: agent(), step(), tools, runtime
+    sdk-python/             Py    -- secondary SDK: @agent decorator, step()
+    sdk-go/                 Go    -- Go SDK (stub)
+    cli/                    Go    -- `lantern` CLI (Cobra)
+    proto/                  proto -- gRPC definitions (source of truth)
+    shared-types/           *     -- generated types for all languages
+    ui-kit/                 TS    -- shared React component library
+  apps/
+    web/                    TS    -- Next.js 15 dashboard (RSC + streaming)
+    landing/                TS    -- marketing site (Next.js 15, Framer Motion)
+    docs-site/              TS    -- documentation site
+  runtimes/
+    k8s-job/                        trusted workloads
+    firecracker/                    standard/untrusted (microVM)
+    kata/                           hostile (Kata Containers)
+    wasm/                           pure-function (Wasmtime/WASI)
+    devcontainer/                   long-running, IDE-like
+  infra/
+    docker/                         docker-compose dev stack
+    helm/                           Helm charts (all-in-one, control-plane, data-plane)
+    terraform/                      AWS/GCP IaC modules
+  examples/                         8 reference agent implementations
+  docs/
+    architecture/                   17 design documents
+    adr/                            Architecture Decision Records
+    api/                            OpenAPI 3.1, AsyncAPI, gRPC reference
+    user-guides/                    quickstarts, recipes, concepts
 ```
+
+---
+
+## Services
+
+### Technology choices
+
+| Layer | Language | Rationale |
+|---|---|---|
+| Control plane, workflow engine, scheduler, memory, notifier, billing | Go 1.23 | K8s-native, single binary, mature gRPC + Postgres ecosystem |
+| Gateway, model router, runtime manager, surface gateway | Rust 2024 | Hot path. Predictable latency, memory safety, Firecracker interop |
+| Dashboard, landing, docs | TypeScript / Next.js 15 | RSC + streaming. SDK's primary language |
+| Primary SDK | TypeScript | Where the agent ecosystem lives |
+| Secondary SDKs | Python, Go | AI/ML users, infra users |
+| CLI | Go / Cobra | Static binary, cross-compile, reuses gRPC client |
+| API contracts | protobuf3 | Single source of truth across languages |
+
+### Data stores
+
+| Store | Use | Image |
+|---|---|---|
+| PostgreSQL 16 + pgvector | Primary database. Agents, runs, journal, memory embeddings | `pgvector/pgvector:pg16` |
+| Redis 7 | Session cache, rate limiting, pub/sub, queue | `redis:7-alpine` |
+| S3 / MinIO | Agent bundles, Firecracker snapshots, large attachments | `minio/minio:latest` |
+
+### Proto surface
+
+Four proto files in [`packages/proto/lantern/v1/`](packages/proto/lantern/v1/):
+
+| File | Services | Key types |
+|---|---|---|
+| `agents.proto` | `AgentService` | Agent, AgentVersion, CRUD + versioning RPCs |
+| `runs.proto` | `RunService` | Run, StreamEvent (11 event types), lifecycle RPCs |
+| `models.proto` | `ModelService` | Complete, Embed, Tokenize. 15 capability enums, optimization targets |
+| `engine.proto` | `WorkflowEngineService`, `RuntimeManagerService` | Execute/Resume/Signal/Cancel, Schedule/Snapshot/Restore, 6 isolation classes |
+
+Regenerate after editing protos:
+
+```bash
+make proto
+```
+
+---
+
+## Local development
+
+### Prerequisites
+
+- Docker and Docker Compose
+- Go 1.23+
+- Rust (latest stable)
+- Node.js 22+ and npm
+- Python 3.11+ (for Python SDK tests)
+
+### Start the dev stack
+
+```bash
+# Full stack: Postgres, Redis, MinIO, all services, dashboard
+make dev
+
+# Infrastructure only (run services individually for faster iteration)
+make dev-infra
+make run-api          # control-plane with correct env vars
+cd services/gateway && cargo run
+```
+
+### Default dev credentials
+
+| Service | Credentials |
+|---|---|
+| PostgreSQL | `lantern:lantern@localhost:5432/lantern` |
+| MinIO console | `lantern:lanternsecret` at `localhost:9001` |
+| Dashboard login | `admin@lantern.dev` / `lantern` |
+| JWT secret | `lantern-dev-jwt-secret-do-not-use-in-production` |
+
+### Useful make targets
+
+| Target | What it does |
+|---|---|
+| `make dev` | `docker compose up --build` (full stack) |
+| `make dev-infra` | Start Postgres, Redis, MinIO only |
+| `make run-api` | Run control-plane locally with dev DB credentials |
+| `make build` | Compile everything (Go + Rust + TypeScript) |
+| `make proto` | Regenerate Go + TypeScript from proto definitions |
+| `make test` | Run all test suites (Go, Rust, TypeScript, Python) |
+| `make lint` | Lint all code (golangci-lint, clippy, eslint) |
+| `make audit` | Security audit (govulncheck, cargo-audit, npm audit) |
+| `make ci-local` | Full CI matrix locally: lint + test + audit |
+| `make clean` | Remove build artifacts and docker volumes |
+| `make docker-build` | Build all container images |
+
+### Frontend development
+
+```bash
+make dashboard-dev    # Next.js 15 dashboard at localhost:3000
+make landing-dev      # Landing page at localhost:3000
+```
+
+---
+
+## Testing
+
+```bash
+make test             # all suites
+make test-go          # control-plane, workflow-engine, scheduler
+make test-rust        # gateway, model-router, runtime-manager
+make test-ts          # sdk-ts (vitest)
+make test-python      # sdk-python (pytest)
+```
+
+Go tests run with `-race -count=1`. Rust tests use `cargo test`. TypeScript uses Vitest. Python uses pytest.
+
+Run `make ci-local` before pushing -- it runs the same lint + test + audit matrix as CI.
+
+---
+
+## Deployment
+
+### Three deployment modes
+
+**Fully managed** -- Lantern hosts control plane and data plane. Multi-tenant K8s clusters. Best for teams that want zero ops.
+
+**Hybrid** (primary) -- Lantern SaaS control plane, customer-hosted data plane. Agent code and data never leave the customer VPC. The data-plane-agent maintains an outbound gRPC tunnel (no inbound firewall rules needed).
+
+**Self-hosted** -- Customer hosts both planes. Full control, no telemetry. Air-gap and FedRAMP compatible.
+
+### Helm
+
+Three charts in [`infra/helm/`](infra/helm/):
+
+```bash
+# All-in-one (includes Postgres, Redis, MinIO as subcharts)
+helm install lantern infra/helm/lantern \
+  --set secrets.jwtSecret=<secret> \
+  --set secrets.postgresPassword=<password>
+
+# Control plane only (for hybrid mode)
+helm install lantern-cp infra/helm/lantern-control-plane
+
+# Data plane only (deployed to customer clusters)
+helm install lantern-dp infra/helm/lantern-data-plane
+```
+
+### Terraform
+
+IaC modules for AWS and GCP in [`infra/terraform/`](infra/terraform/). The CLI can generate Terraform configuration for a customer data plane:
+
+```bash
+lantern infra install --cloud aws --region us-east-1
+```
+
+### Docker images
+
+```bash
+make docker-build     # builds all images locally
+```
+
+Images are published to `ghcr.io/dshakes/lantern`.
+
+---
+
+## Examples
+
+| Example | What it demonstrates |
+|---|---|
+| [`hello-world`](examples/hello-world/) | Minimal agent: `agent()`, `step()`, deploy |
+| [`research-agent`](examples/research-agent/) | Web search, `step.map()` parallel fan-out, structured report |
+| [`code-reviewer`](examples/code-reviewer/) | GitHub PR review, inline comments, tool calls |
+| [`customer-support`](examples/customer-support/) | Vector memory, approval gates, human-in-the-loop |
+| [`data-pipeline`](examples/data-pipeline/) | Scheduled weekly pipeline, multi-source ETL, Slack/email/Sheets |
+| [`deploy-guardian`](examples/deploy-guardian/) | Pre-flight checks, durable approval gates, monitoring hooks |
+| [`talent-scout`](examples/talent-scout/) | Multi-platform candidate search, personalized outreach |
+| [`whatsapp-assistant`](examples/whatsapp-assistant/) | Personal WhatsApp agent: calendar, email, tasks, reminders |
 
 ---
 
 ## Contributing
 
-We welcome contributions. Before your first PR:
+Before your first PR:
 
-1. Read [`CLAUDE.md`](CLAUDE.md) for repo conventions and architectural invariants.
+1. Read [`CLAUDE.md`](CLAUDE.md) for repo conventions and the 10 architectural invariants.
 2. Read the relevant [ADR](docs/adr/) if your change affects a load-bearing decision.
-3. Run `make ci-local` before pushing -- it runs the same matrix as CI.
+3. Run `make ci-local` before pushing.
 
-See the [architecture docs](docs/architecture/) for how the system fits together.
+### Standard flow for new features
+
+1. Find or write the architecture doc in `docs/architecture/`.
+2. Write or update the proto in `packages/proto/` if the feature crosses a service boundary. Run `make proto`.
+3. Implement the service-side change. Follow existing patterns.
+4. Wire the SDK in `packages/sdk-ts/`.
+5. Wire the CLI if user-facing.
+6. Wire the dashboard if user-facing.
+7. Test at every layer: unit, integration, e2e.
+8. Update docs.
+
+### Do not introduce
+
+- A new language without an [ADR](docs/adr/).
+- A new database. Postgres + Redis + S3 + pgvector cover current needs.
+- A new dependency without running `govulncheck` / `cargo audit` / `npm audit`.
+- Direct LLM calls. Go through the model router.
+- Cross-tenant joins. Every row has `tenant_id`.
+- Hardcoded model names. Use capability addressing (`reasoning-large`, `auto`).
 
 ---
 
 ## Quick links
 
-- [Architecture overview](docs/architecture/01-overview.md) -- components, data flow, sequence diagrams
-- [Roadmap](docs/architecture/00-roadmap.md) -- what is done, spiked, and planned
-- [Agent bundle spec](AGENT.md) -- the `agent.yaml` file format
-- [ADR index](docs/adr/) -- every load-bearing decision
-- [API reference](docs/api/) -- OpenAPI, gRPC, AsyncAPI
-- [Provider research](docs/research/01-providers.md) -- landscape analysis
+| Resource | Path |
+|---|---|
+| Architecture overview | [`docs/architecture/01-overview.md`](docs/architecture/01-overview.md) |
+| Roadmap | [`docs/architecture/00-roadmap.md`](docs/architecture/00-roadmap.md) |
+| Agent bundle spec | [`AGENT.md`](AGENT.md) |
+| ADR index | [`docs/adr/`](docs/adr/) |
+| API reference | [`docs/api/`](docs/api/) |
+| Proto definitions | [`packages/proto/lantern/v1/`](packages/proto/lantern/v1/) |
+| Provider research | [`docs/research/01-providers.md`](docs/research/01-providers.md) |
 
 ---
 

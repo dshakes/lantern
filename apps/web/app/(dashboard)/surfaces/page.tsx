@@ -438,8 +438,8 @@ export default function SurfacesPage() {
 
       {/* Config modal */}
       {configModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl">
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setConfigModal(null)}>
+          <div className="modal-content w-full max-w-lg rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {/* Modal header */}
             <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
               <div className="flex items-center gap-3">
@@ -450,7 +450,7 @@ export default function SurfacesPage() {
               </div>
               <button
                 onClick={() => setConfigModal(null)}
-                className="rounded-lg p-1 text-zinc-500 hover:bg-surface-3 hover:text-zinc-300"
+                className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -502,7 +502,7 @@ export default function SurfacesPage() {
                         navigator.clipboard.writeText(embedCode);
                         toast.success("Embed code copied to clipboard");
                       }}
-                      className="absolute right-2 top-2 rounded-md bg-surface-3 p-1.5 text-zinc-400 hover:text-zinc-200"
+                      className="absolute right-2 top-2 rounded-md bg-surface-3 p-1.5 text-zinc-400 transition-colors hover:text-zinc-200"
                     >
                       <Copy className="h-3.5 w-3.5" />
                     </button>
@@ -556,7 +556,7 @@ export default function SurfacesPage() {
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setConfigModal(null)}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200"
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
                 >
                   Cancel
                 </button>

@@ -321,7 +321,7 @@ export default function RunDetailPage() {
           Agent:{" "}
           <button
             onClick={() => router.push(`/agents/${run.agentName}`)}
-            className="text-zinc-400 underline decoration-zinc-700 hover:text-zinc-300"
+            className="text-zinc-400 underline decoration-zinc-700 transition-colors hover:text-zinc-300"
           >
             {run.agentName}
           </button>

@@ -17,6 +17,7 @@ import {
   Trash2,
   AlertCircle,
 } from "lucide-react";
+import { format } from "date-fns";
 import clsx from "clsx";
 import {
   agents,
@@ -492,7 +493,7 @@ export default function PlaygroundPage() {
                         </span>
                       </div>
                       <span className="text-[11px] text-zinc-600">
-                        {run.startedAt.toLocaleTimeString()}
+                        {format(run.startedAt, "HH:mm:ss")}
                       </span>
                     </button>
                   ))}

@@ -24,6 +24,7 @@ import {
   Plug,
 } from "lucide-react";
 import clsx from "clsx";
+import { format } from "date-fns";
 import { useToast } from "@/components/toast";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
 import { api } from "@/lib/api";
@@ -436,7 +437,7 @@ export default function ConnectorsPage() {
               <h2 className="text-lg font-semibold text-zinc-100">Connect {connectModal.name}</h2>
               <button
                 onClick={() => setConnectModal(null)}
-                className="rounded-lg p-1 text-zinc-500 hover:bg-surface-3 hover:text-zinc-300"
+                className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -484,7 +485,7 @@ export default function ConnectorsPage() {
             <div className="flex items-center justify-end gap-3 border-t border-zinc-800 px-6 py-4">
               <button
                 onClick={() => setConnectModal(null)}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200"
+                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
               >
                 Cancel
               </button>
@@ -523,7 +524,7 @@ export default function ConnectorsPage() {
               </div>
               <button
                 onClick={() => setConfigModal(null)}
-                className="rounded-lg p-1 text-zinc-500 hover:bg-surface-3 hover:text-zinc-300"
+                className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -541,7 +542,7 @@ export default function ConnectorsPage() {
                 </p>
                 {states[configModal.id]?.installedAt && (
                   <p className="text-xs text-zinc-600">
-                    Connected on {new Date(states[configModal.id]!.installedAt!).toLocaleDateString()}
+                    Connected on {format(new Date(states[configModal.id]!.installedAt!), "MMM d, yyyy")}
                   </p>
                 )}
               </div>
@@ -576,7 +577,7 @@ export default function ConnectorsPage() {
               </button>
               <button
                 onClick={() => setConfigModal(null)}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200"
+                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
               >
                 Close
               </button>

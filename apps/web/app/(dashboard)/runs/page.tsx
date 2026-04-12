@@ -169,7 +169,7 @@ export default function RunsPage() {
             <select
               value={agentFilter}
               onChange={(e) => setAgentFilter(e.target.value)}
-              className="h-9 rounded-lg border border-zinc-800 bg-surface-2 px-3 text-sm text-zinc-300 focus:border-lantern-500/50 focus:outline-none"
+              className="h-9 rounded-lg border border-zinc-800 bg-surface-2 px-3 text-sm text-zinc-300 focus:border-lantern-500/50 focus:outline-none focus:ring-1 focus:ring-lantern-500/20"
             >
               <option value="all">All agents</option>
               {agents.map((agent) => (
@@ -182,7 +182,7 @@ export default function RunsPage() {
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-9 rounded-lg border border-zinc-800 bg-surface-2 px-3 text-sm text-zinc-300 focus:border-lantern-500/50 focus:outline-none"
+              className="h-9 rounded-lg border border-zinc-800 bg-surface-2 px-3 text-sm text-zinc-300 focus:border-lantern-500/50 focus:outline-none focus:ring-1 focus:ring-lantern-500/20"
             >
               {statusOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>

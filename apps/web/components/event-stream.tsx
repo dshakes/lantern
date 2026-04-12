@@ -17,6 +17,7 @@ import {
   ArrowDown,
 } from "lucide-react";
 import clsx from "clsx";
+import { format as formatDate } from "date-fns";
 import type { StreamEvent } from "@/lib/mock-data";
 import { formatDuration, formatCost, formatTokens } from "@/lib/mock-data";
 import { JsonViewer } from "@/components/json-viewer";
@@ -481,12 +482,7 @@ function renderEventContent(event: StreamEvent) {
 }
 
 function formatTime(date: Date): string {
-  return date.toLocaleTimeString("en-US", {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  return formatDate(date, "HH:mm:ss");
 }
 
 function getBorderColor(kind: StreamEvent["kind"]): string {

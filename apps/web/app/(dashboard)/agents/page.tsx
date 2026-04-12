@@ -174,7 +174,7 @@ export default function AgentsPage() {
               <h2 className="text-lg font-semibold text-zinc-100">Create agent</h2>
               <button
                 onClick={() => setShowCreate(false)}
-                className="rounded-lg p-1 text-zinc-500 hover:bg-surface-3 hover:text-zinc-300"
+                className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -247,7 +247,7 @@ export default function AgentsPage() {
                 <select
                   value={form.model}
                   onChange={(e) => setForm({ ...form, model: e.target.value })}
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
                 >
                   <option value="auto">Auto (recommended)</option>
                   <option value="reasoning-large">Reasoning Large</option>
@@ -263,7 +263,7 @@ export default function AgentsPage() {
             <div className="flex items-center justify-end gap-3 border-t border-zinc-800 px-6 py-4">
               <button
                 onClick={() => setShowCreate(false)}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200"
+                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
               >
                 Cancel
               </button>

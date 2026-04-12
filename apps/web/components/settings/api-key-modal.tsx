@@ -110,7 +110,7 @@ export function ApiKeyModal({ open, onClose, onCreated }: ApiKeyModalProps) {
           </h2>
           <button
             onClick={handleClose}
-            className="rounded-lg p-1 text-zinc-500 hover:bg-surface-3 hover:text-zinc-300"
+            className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"
           >
             <X className="h-5 w-5" />
           </button>
@@ -251,7 +251,7 @@ export function ApiKeyModal({ open, onClose, onCreated }: ApiKeyModalProps) {
             <div className="flex items-center justify-end gap-3 border-t border-zinc-800 px-6 py-4">
               <button
                 onClick={handleClose}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 hover:text-zinc-200"
+                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200"
               >
                 Cancel
               </button>

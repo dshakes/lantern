@@ -77,7 +77,7 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: (id: string) =
           setVisible(false);
           setTimeout(() => onRemove(toast.id), 200);
         }}
-        className="shrink-0 rounded p-0.5 hover:bg-white/10"
+        className="shrink-0 rounded p-0.5 transition-colors hover:bg-white/10"
       >
         <X className="h-3 w-3" />
       </button>
