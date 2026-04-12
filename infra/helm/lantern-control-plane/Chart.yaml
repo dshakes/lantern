@@ -1,0 +1,21 @@
+apiVersion: v2
+name: lantern-control-plane
+description: >-
+  Lantern Control Plane — Dashboard, API gateway, model router, control-plane
+  service, surface gateway, billing, and scheduler. Deploy this chart for the
+  SaaS-hosted control plane or for self-hosted control plane installations.
+  For the data plane, see the lantern-data-plane chart.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai-agents
+  - serverless
+  - workflow
+  - llm
+  - control-plane
+home: https://lantern.run
+sources:
+  - https://github.com/dshakes/lantern
+maintainers:
+  - name: dshakes

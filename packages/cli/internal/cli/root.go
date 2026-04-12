@@ -45,6 +45,7 @@ stream logs, and deploy agent code from your terminal.`,
 	root.AddCommand(newLogsCommand())
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newDeployCommand())
+	root.AddCommand(newInfraCommand())
 
 	return root
 }

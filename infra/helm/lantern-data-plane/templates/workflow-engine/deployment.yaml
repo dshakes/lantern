@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-workflow-engine
+  labels:
+    {{- include "lantern-dp.componentLabels" (dict "root" . "component" "workflow-engine") | nindent 4 }}
+spec:
+  replicas: {{ .Values.workflowEngine.replicas }}
+  selector:
+    matchLabels:
+      {{- include "lantern-dp.componentSelectorLabels" (dict "root" . "component" "workflow-engine") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lantern-dp.componentLabels" (dict "root" . "component" "workflow-engine") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "lantern-dp.serviceAccountName" . }}
+      {{- if .Values.postgresql.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "lantern-dp.postgresHost" . }} {{ include "lantern-dp.postgresPort" . }}; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready"
+      {{- end }}
+      containers:
+        - name: workflow-engine
+          image: {{ include "lantern-dp.image" (dict "root" . "component" .Values.workflowEngine) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 50052
+              protocol: TCP
+          env:
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-config
+                  key: LOG_LEVEL
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-secrets
+                  key: postgres-password
+            - name: DATABASE_URL
+              value: "postgres://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "lantern-dp.postgresHost" . }}:{{ include "lantern-dp.postgresPort" . }}/{{ .Values.postgresql.auth.database }}?sslmode=disable"
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-config
+                  key: REDIS_URL
+            - name: S3_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-config
+                  key: S3_ENDPOINT
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-config
+                  key: S3_BUCKET
+            {{- if or .Values.minio.enabled .Values.minio.external.accessKeyId }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-config
+                  key: AWS_ACCESS_KEY_ID
+            {{- end }}
+            {{- if .Values.minio.enabled }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-secrets
+                  key: minio-password
+            {{- end }}
+          livenessProbe:
+            grpc:
+              port: 50052
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            grpc:
+              port: 50052
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.workflowEngine.resources | nindent 12 }}

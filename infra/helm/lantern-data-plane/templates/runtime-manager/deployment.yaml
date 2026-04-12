@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-runtime-manager
+  labels:
+    {{- include "lantern-dp.componentLabels" (dict "root" . "component" "runtime-manager") | nindent 4 }}
+spec:
+  replicas: {{ .Values.runtimeManager.replicas }}
+  selector:
+    matchLabels:
+      {{- include "lantern-dp.componentSelectorLabels" (dict "root" . "component" "runtime-manager") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lantern-dp.componentLabels" (dict "root" . "component" "runtime-manager") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "lantern-dp.serviceAccountName" . }}
+      containers:
+        - name: runtime-manager
+          image: {{ include "lantern-dp.image" (dict "root" . "component" .Values.runtimeManager) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          {{- if .Values.runtimeManager.firecrackerEnabled }}
+          securityContext:
+            privileged: true
+          {{- end }}
+          ports:
+            - name: grpc
+              containerPort: 50054
+              protocol: TCP
+          env:
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-config
+                  key: LOG_LEVEL
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-secrets
+                  key: postgres-password
+            - name: DATABASE_URL
+              value: "postgres://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "lantern-dp.postgresHost" . }}:{{ include "lantern-dp.postgresPort" . }}/{{ .Values.postgresql.auth.database }}?sslmode=disable"
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-config
+                  key: REDIS_URL
+            - name: S3_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-config
+                  key: S3_ENDPOINT
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-config
+                  key: S3_BUCKET
+            {{- if or .Values.minio.enabled .Values.minio.external.accessKeyId }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-config
+                  key: AWS_ACCESS_KEY_ID
+            {{- end }}
+            {{- if .Values.minio.enabled }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern-dp.fullname" . }}-secrets
+                  key: minio-password
+            {{- end }}
+            - name: FIRECRACKER_ENABLED
+              value: {{ .Values.runtimeManager.firecrackerEnabled | quote }}
+          {{- if .Values.runtimeManager.firecrackerEnabled }}
+          volumeMounts:
+            - name: dev-kvm
+              mountPath: /dev/kvm
+          {{- end }}
+          livenessProbe:
+            grpc:
+              port: 50054
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            grpc:
+              port: 50054
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.runtimeManager.resources | nindent 12 }}
+      {{- if .Values.runtimeManager.firecrackerEnabled }}
+      volumes:
+        - name: dev-kvm
+          hostPath:
+            path: /dev/kvm
+            type: CharDevice
+      {{- end }}

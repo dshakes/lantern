@@ -1,0 +1,21 @@
+apiVersion: v2
+name: lantern-data-plane
+description: >-
+  Lantern Data Plane — Workflow engine, runtime manager, and data plane agent.
+  Deploy this chart into the customer's own Kubernetes cluster (EKS, GKE, AKS,
+  or bare metal). The data plane agent connects outbound to the Lantern control
+  plane via a gRPC tunnel. Agent code and data never leave the customer's VPC.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai-agents
+  - serverless
+  - workflow
+  - llm
+  - data-plane
+home: https://lantern.run
+sources:
+  - https://github.com/dshakes/lantern
+maintainers:
+  - name: dshakes

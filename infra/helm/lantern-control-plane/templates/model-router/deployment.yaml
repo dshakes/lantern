@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lantern-cp.fullname" . }}-model-router
+  labels:
+    {{- include "lantern-cp.componentLabels" (dict "root" . "component" "model-router") | nindent 4 }}
+spec:
+  replicas: {{ .Values.modelRouter.replicas }}
+  selector:
+    matchLabels:
+      {{- include "lantern-cp.componentSelectorLabels" (dict "root" . "component" "model-router") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lantern-cp.componentLabels" (dict "root" . "component" "model-router") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "lantern-cp.serviceAccountName" . }}
+      containers:
+        - name: model-router
+          image: {{ include "lantern-cp.image" (dict "root" . "component" .Values.modelRouter) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 50053
+              protocol: TCP
+          env:
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-cp.fullname" . }}-config
+                  key: LOG_LEVEL
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern-cp.fullname" . }}-secrets
+                  key: openai-api-key
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern-cp.fullname" . }}-secrets
+                  key: anthropic-api-key
+          livenessProbe:
+            grpc:
+              port: 50053
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            grpc:
+              port: 50053
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.modelRouter.resources | nindent 12 }}

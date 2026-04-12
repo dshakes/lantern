@@ -1,0 +1,37 @@
+Lantern Data Plane has been deployed!
+
+Control plane endpoint: {{ .Values.controlPlane.endpoint }}
+Tenant ID:             {{ .Values.controlPlane.tenantId }}
+
+Components:
+  - Data Plane Agent:  {{ include "lantern-dp.fullname" . }}-data-plane-agent
+  - Workflow Engine:   {{ include "lantern-dp.fullname" . }}-workflow-engine
+  - Runtime Manager:   {{ include "lantern-dp.fullname" . }}-runtime-manager
+
+Verify the connection:
+
+  1. Check the data plane agent logs:
+     kubectl logs -l app.kubernetes.io/component=data-plane-agent -f
+
+  2. Check the agent status endpoint:
+     kubectl port-forward svc/{{ include "lantern-dp.fullname" . }}-data-plane-agent {{ .Values.dataPlaneAgent.service.port }}:{{ .Values.dataPlaneAgent.service.port }}
+     curl http://localhost:{{ .Values.dataPlaneAgent.service.port }}/status
+
+  3. Check from the CLI:
+     lantern infra status
+
+Expected output: "Data plane connected" with a healthy heartbeat.
+
+{{- if not .Values.controlPlane.tenantId }}
+
+WARNING: controlPlane.tenantId is not set. The data plane agent will not be
+able to register with the control plane. Set it via:
+  --set controlPlane.tenantId=<your-tenant-id>
+{{- end }}
+
+{{- if not .Values.controlPlane.agentToken }}
+
+WARNING: controlPlane.agentToken is not set. The data plane agent will not be
+able to authenticate with the control plane. Set it via:
+  --set controlPlane.agentToken=<your-agent-token>
+{{- end }}

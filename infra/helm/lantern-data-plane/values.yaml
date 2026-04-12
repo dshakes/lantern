@@ -1,0 +1,181 @@
+# lantern-data-plane values
+#
+# This chart deploys the Lantern data plane into the customer's Kubernetes
+# cluster. It connects outbound to the Lantern control plane via gRPC tunnel.
+# Agent code and data never leave this cluster.
+#
+# For the control plane chart, see lantern-control-plane.
+# For an all-in-one local dev deployment, see the lantern chart.
+
+global:
+  image:
+    registry: ghcr.io
+    repository: dshakes/lantern
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  logLevel: info
+
+# ---------------------------------------------------------------------------
+# Control plane connection settings
+# ---------------------------------------------------------------------------
+controlPlane:
+  # The control plane gRPC endpoint. For Lantern SaaS, use the default.
+  # For self-hosted, set to your control plane's address.
+  endpoint: "https://api.lantern.run"
+
+  # Tenant ID provisioned by Lantern during onboarding.
+  tenantId: ""
+
+  # Short-lived agent token for initial registration and mTLS bootstrap.
+  # Provisioned by `lantern infra install` or via the dashboard.
+  agentToken: ""
+
+  # TLS verification. Disable only for development with self-signed certs.
+  tlsInsecureSkipVerify: false
+
+# ---------------------------------------------------------------------------
+# Workflow Engine (Go) — durable execution, event sourcing, replay
+# ---------------------------------------------------------------------------
+workflowEngine:
+  replicas: 2
+  image:
+    name: workflow-engine
+  service:
+    type: ClusterIP
+    port: 50052
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Runtime Manager (Rust) — Firecracker, Kata, K8s Jobs, Wasm
+# ---------------------------------------------------------------------------
+runtimeManager:
+  replicas: 1
+  image:
+    name: runtime-manager
+  service:
+    type: ClusterIP
+    port: 50054
+
+  # Firecracker requires bare-metal instances or nested virtualization.
+  # Set to false on standard cloud VMs without nested virt support.
+  firecrackerEnabled: false
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+# ---------------------------------------------------------------------------
+# Data Plane Agent (Go) — tunnel connector to control plane
+# ---------------------------------------------------------------------------
+dataPlaneAgent:
+  replicas: 1
+  image:
+    name: data-plane-agent
+  service:
+    type: ClusterIP
+    port: 8090
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  # Heartbeat interval in seconds.
+  heartbeatIntervalSeconds: 30
+
+  # Reconnection settings.
+  reconnect:
+    initialDelayMs: 1000
+    maxDelayMs: 60000
+    jitterPercent: 20
+
+# ---------------------------------------------------------------------------
+# Infrastructure dependencies (in the customer's VPC)
+# ---------------------------------------------------------------------------
+postgresql:
+  # Set to false if using an external database (e.g., RDS, Cloud SQL).
+  enabled: true
+  auth:
+    username: lantern
+    password: ""  # set via secret
+    database: lantern
+  primary:
+    persistence:
+      size: 20Gi
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+
+  # External database settings (used when postgresql.enabled=false).
+  external:
+    host: ""
+    port: 5432
+    database: lantern
+    username: lantern
+    # Password should be set via secret, not in values.
+    existingSecret: ""
+    existingSecretKey: "postgres-password"
+
+redis:
+  # Set to false if using an external Redis (e.g., ElastiCache, Memorystore).
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+
+  # External Redis settings (used when redis.enabled=false).
+  external:
+    host: ""
+    port: 6379
+
+minio:
+  # Set to false if using cloud-native object storage (S3, GCS, Azure Blob).
+  enabled: true
+  auth:
+    rootUser: lantern
+    rootPassword: ""  # set via secret
+  defaultBuckets: "lantern-bundles,lantern-snapshots"
+  persistence:
+    size: 20Gi
+
+  # External object storage settings (used when minio.enabled=false).
+  external:
+    endpoint: ""
+    bucket: "lantern-bundles"
+    accessKeyId: ""
+    # Secret key should be set via secret, not in values.
+    existingSecret: ""
+    existingSecretKey: "s3-secret-key"
+
+# ---------------------------------------------------------------------------
+# Secrets — override via --set or external secrets operator
+# ---------------------------------------------------------------------------
+secrets:
+  postgresPassword: "lantern"
+  minioPassword: "lanternsecret"
+
+# ---------------------------------------------------------------------------
+# Service account
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: "lantern-data-plane"
+  annotations: {}
+  # For AWS EKS with IRSA:
+  #   annotations:
+  #     eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/lantern-data-plane
+  # For GKE with Workload Identity:
+  #   annotations:
+  #     iam.gke.io/gcp-service-account: lantern-data-plane@project.iam.gserviceaccount.com

@@ -1,0 +1,13 @@
+{{- if (gt (int .Values.gateway.replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "lantern-cp.fullname" . }}-gateway
+  labels:
+    {{- include "lantern-cp.componentLabels" (dict "root" . "component" "gateway") | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "lantern-cp.componentSelectorLabels" (dict "root" . "component" "gateway") | nindent 6 }}
+{{- end }}

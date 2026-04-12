@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lantern-cp.fullname" . }}-surface-gateway
+  labels:
+    {{- include "lantern-cp.componentLabels" (dict "root" . "component" "surface-gateway") | nindent 4 }}
+spec:
+  type: {{ .Values.surfaceGateway.service.type }}
+  ports:
+    - port: {{ .Values.surfaceGateway.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "lantern-cp.componentSelectorLabels" (dict "root" . "component" "surface-gateway") | nindent 4 }}

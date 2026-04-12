@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lantern-cp.fullname" . }}-gateway
+  labels:
+    {{- include "lantern-cp.componentLabels" (dict "root" . "component" "gateway") | nindent 4 }}
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      {{- include "lantern-cp.componentSelectorLabels" (dict "root" . "component" "gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lantern-cp.componentLabels" (dict "root" . "component" "gateway") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "lantern-cp.serviceAccountName" . }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "lantern-cp.componentSelectorLabels" (dict "root" . "component" "gateway") | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: gateway
+          image: {{ include "lantern-cp.image" (dict "root" . "component" .Values.gateway) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          env:
+            - name: LISTEN_ADDR
+              value: {{ .Values.gateway.env.LISTEN_ADDR | quote }}
+            - name: CONTROL_PLANE_ADDR
+              value: "{{ include "lantern-cp.fullname" . }}-control-plane:{{ .Values.controlPlane.service.grpcPort }}"
+            - name: MODEL_ROUTER_ADDR
+              value: "{{ include "lantern-cp.fullname" . }}-model-router:{{ .Values.modelRouter.service.port }}"
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-cp.fullname" . }}-config
+                  key: LOG_LEVEL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern-cp.fullname" . }}-secrets
+                  key: jwt-secret
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: https
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}

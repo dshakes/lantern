@@ -1,6 +1,17 @@
 apiVersion: v2
 name: lantern
-description: Lantern — Serverless platform for production AI agents
+description: >-
+  Lantern — Serverless platform for production AI agents.
+  This is the all-in-one chart that deploys every component into a single
+  cluster. Use it for local development, CI, and simple self-hosted
+  deployments.
+
+  For production split deployments, use the dedicated charts:
+    - lantern-control-plane (infra/helm/lantern-control-plane/)
+    - lantern-data-plane    (infra/helm/lantern-data-plane/)
+
+  See docs/architecture/17-deployment-model.md for the full deployment
+  architecture.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

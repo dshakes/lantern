@@ -1,0 +1,215 @@
+# lantern-control-plane values
+#
+# This chart deploys only the control plane components. For the data plane
+# (workflow engine, runtime manager, data plane agent), see lantern-data-plane.
+# For an all-in-one local dev deployment, see the lantern chart.
+
+global:
+  image:
+    registry: ghcr.io
+    repository: dshakes/lantern
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  logLevel: info
+
+# ---------------------------------------------------------------------------
+# Gateway (Rust, Axum) — TLS termination, auth, rate limiting, streaming proxy
+# ---------------------------------------------------------------------------
+gateway:
+  replicas: 2
+  image:
+    name: gateway
+  service:
+    type: ClusterIP
+    port: 8443
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  env:
+    LISTEN_ADDR: "0.0.0.0:8443"
+
+# ---------------------------------------------------------------------------
+# Control Plane Service (Go) — agents, runs, tenants, RBAC, API keys
+# ---------------------------------------------------------------------------
+controlPlane:
+  replicas: 2
+  image:
+    name: control-plane
+  service:
+    type: ClusterIP
+    grpcPort: 50051
+    httpPort: 8080
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  env:
+    LISTEN_ADDR: ":50051"
+
+# ---------------------------------------------------------------------------
+# Model Router (Rust) — capability addressing, LLM routing, caching
+# ---------------------------------------------------------------------------
+modelRouter:
+  replicas: 2
+  image:
+    name: model-router
+  service:
+    type: ClusterIP
+    port: 50053
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Surface Gateway (Rust) — external surface adapters (Slack, Teams, etc.)
+# ---------------------------------------------------------------------------
+surfaceGateway:
+  replicas: 1
+  image:
+    name: surface-gateway
+  service:
+    type: ClusterIP
+    port: 8444
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Dashboard (Next.js 15) — web UI
+# ---------------------------------------------------------------------------
+dashboard:
+  replicas: 1
+  image:
+    name: web
+  service:
+    type: ClusterIP
+    port: 3000
+
+# ---------------------------------------------------------------------------
+# Billing Service (Go) — usage metering, invoices, budget enforcement
+# ---------------------------------------------------------------------------
+billing:
+  replicas: 1
+  image:
+    name: billing
+  service:
+    type: ClusterIP
+    grpcPort: 50060
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Scheduler (Go) — cron triggers, delayed jobs, fair-share scheduling
+# ---------------------------------------------------------------------------
+scheduler:
+  replicas: 1
+  image:
+    name: scheduler
+  service:
+    type: ClusterIP
+    grpcPort: 50061
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Infrastructure dependencies
+# ---------------------------------------------------------------------------
+postgresql:
+  enabled: true
+  auth:
+    username: lantern
+    password: ""  # set via secret
+    database: lantern
+  primary:
+    persistence:
+      size: 10Gi
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+
+minio:
+  enabled: true
+  auth:
+    rootUser: lantern
+    rootPassword: ""  # set via secret
+  defaultBuckets: "lantern-bundles,lantern-snapshots"
+  persistence:
+    size: 10Gi
+
+# ---------------------------------------------------------------------------
+# Ingress
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: api.lantern.run
+      paths:
+        - path: /
+          pathType: Prefix
+          service: gateway
+    - host: app.lantern.run
+      paths:
+        - path: /
+          pathType: Prefix
+          service: dashboard
+  tls: []
+
+# ---------------------------------------------------------------------------
+# Secrets — override via --set or external secrets operator
+# ---------------------------------------------------------------------------
+secrets:
+  jwtSecret: ""
+  openaiApiKey: ""
+  anthropicApiKey: ""
+  postgresPassword: "lantern"
+  minioPassword: "lanternsecret"
+
+# ---------------------------------------------------------------------------
+# Data plane tunnel listener
+# ---------------------------------------------------------------------------
+dataPlaneListener:
+  # The control plane listens for inbound data plane agent connections on this port.
+  port: 50070
+  # Maximum number of data plane connections per tenant.
+  maxConnectionsPerTenant: 10
+
+# ---------------------------------------------------------------------------
+# Service account
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: "lantern-control-plane"
+  annotations: {}

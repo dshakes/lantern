@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-data-plane-agent
+  labels:
+    {{- include "lantern-dp.componentLabels" (dict "root" . "component" "data-plane-agent") | nindent 4 }}
+spec:
+  type: {{ .Values.dataPlaneAgent.service.type }}
+  ports:
+    - port: {{ .Values.dataPlaneAgent.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "lantern-dp.componentSelectorLabels" (dict "root" . "component" "data-plane-agent") | nindent 4 }}

@@ -1,0 +1,16 @@
+Lantern Control Plane has been deployed!
+
+1. Gateway:      kubectl port-forward svc/{{ include "lantern-cp.fullname" . }}-gateway 8443:8443
+2. Dashboard:    kubectl port-forward svc/{{ include "lantern-cp.fullname" . }}-dashboard 3001:3000
+3. Control Plane (gRPC): kubectl port-forward svc/{{ include "lantern-cp.fullname" . }}-control-plane 50051:50051
+
+Data plane agents connect to the control plane on port {{ .Values.dataPlaneListener.port }}.
+
+To install a data plane in your cloud:
+  lantern infra install --cloud aws --region us-east-1
+
+For self-hosted data planes, install the lantern-data-plane Helm chart:
+  helm install lantern-dp infra/helm/lantern-data-plane \
+    --set controlPlane.endpoint="https://<control-plane-address>:{{ .Values.dataPlaneListener.port }}" \
+    --set controlPlane.tenantId="<your-tenant-id>" \
+    --set controlPlane.agentToken="<your-agent-token>"

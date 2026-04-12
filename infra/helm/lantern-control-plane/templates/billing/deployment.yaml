@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lantern-cp.fullname" . }}-billing
+  labels:
+    {{- include "lantern-cp.componentLabels" (dict "root" . "component" "billing") | nindent 4 }}
+spec:
+  replicas: {{ .Values.billing.replicas }}
+  selector:
+    matchLabels:
+      {{- include "lantern-cp.componentSelectorLabels" (dict "root" . "component" "billing") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lantern-cp.componentLabels" (dict "root" . "component" "billing") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "lantern-cp.serviceAccountName" . }}
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "lantern-cp.fullname" . }}-postgresql 5432; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready"
+      containers:
+        - name: billing
+          image: {{ include "lantern-cp.image" (dict "root" . "component" .Values.billing) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 50060
+              protocol: TCP
+          env:
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-cp.fullname" . }}-config
+                  key: LOG_LEVEL
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern-cp.fullname" . }}-secrets
+                  key: postgres-password
+            - name: DATABASE_URL
+              value: "postgres://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "lantern-cp.fullname" . }}-postgresql:5432/{{ .Values.postgresql.auth.database }}?sslmode=disable"
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-cp.fullname" . }}-config
+                  key: REDIS_URL
+          livenessProbe:
+            grpc:
+              port: 50060
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            grpc:
+              port: 50060
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.billing.resources | nindent 12 }}

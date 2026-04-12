@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lantern-cp.fullname" . }}-scheduler
+  labels:
+    {{- include "lantern-cp.componentLabels" (dict "root" . "component" "scheduler") | nindent 4 }}
+spec:
+  replicas: {{ .Values.scheduler.replicas }}
+  selector:
+    matchLabels:
+      {{- include "lantern-cp.componentSelectorLabels" (dict "root" . "component" "scheduler") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "lantern-cp.componentLabels" (dict "root" . "component" "scheduler") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "lantern-cp.serviceAccountName" . }}
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "lantern-cp.fullname" . }}-postgresql 5432; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready"
+      containers:
+        - name: scheduler
+          image: {{ include "lantern-cp.image" (dict "root" . "component" .Values.scheduler) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 50061
+              protocol: TCP
+          env:
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-cp.fullname" . }}-config
+                  key: LOG_LEVEL
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lantern-cp.fullname" . }}-secrets
+                  key: postgres-password
+            - name: DATABASE_URL
+              value: "postgres://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "lantern-cp.fullname" . }}-postgresql:5432/{{ .Values.postgresql.auth.database }}?sslmode=disable"
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "lantern-cp.fullname" . }}-config
+                  key: REDIS_URL
+            - name: CONTROL_PLANE_ADDR
+              value: "{{ include "lantern-cp.fullname" . }}-control-plane:{{ .Values.controlPlane.service.grpcPort }}"
+          livenessProbe:
+            grpc:
+              port: 50061
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            grpc:
+              port: 50061
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.scheduler.resources | nindent 12 }}

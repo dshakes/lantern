@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-runtime-manager
+  labels:
+    {{- include "lantern-dp.componentLabels" (dict "root" . "component" "runtime-manager") | nindent 4 }}
+spec:
+  type: {{ .Values.runtimeManager.service.type }}
+  ports:
+    - port: {{ .Values.runtimeManager.service.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "lantern-dp.componentSelectorLabels" (dict "root" . "component" "runtime-manager") | nindent 4 }}

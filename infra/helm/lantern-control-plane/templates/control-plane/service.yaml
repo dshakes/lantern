@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lantern-cp.fullname" . }}-control-plane
+  labels:
+    {{- include "lantern-cp.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+spec:
+  type: {{ .Values.controlPlane.service.type }}
+  ports:
+    - port: {{ .Values.controlPlane.service.grpcPort }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+    - port: {{ .Values.controlPlane.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.dataPlaneListener.port }}
+      targetPort: {{ .Values.dataPlaneListener.port }}
+      protocol: TCP
+      name: data-plane-tunnel
+  selector:
+    {{- include "lantern-cp.componentSelectorLabels" (dict "root" . "component" "control-plane") | nindent 4 }}

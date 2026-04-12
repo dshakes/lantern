@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lantern-cp.fullname" . }}-billing
+  labels:
+    {{- include "lantern-cp.componentLabels" (dict "root" . "component" "billing") | nindent 4 }}
+spec:
+  type: {{ .Values.billing.service.type }}
+  ports:
+    - port: {{ .Values.billing.service.grpcPort }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "lantern-cp.componentSelectorLabels" (dict "root" . "component" "billing") | nindent 4 }}

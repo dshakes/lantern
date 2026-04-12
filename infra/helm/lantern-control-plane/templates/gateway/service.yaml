@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lantern-cp.fullname" . }}-gateway
+  labels:
+    {{- include "lantern-cp.componentLabels" (dict "root" . "component" "gateway") | nindent 4 }}
+spec:
+  type: {{ .Values.gateway.service.type }}
+  ports:
+    - port: {{ .Values.gateway.service.port }}
+      targetPort: https
+      protocol: TCP
+      name: https
+  selector:
+    {{- include "lantern-cp.componentSelectorLabels" (dict "root" . "component" "gateway") | nindent 4 }}
