@@ -14,6 +14,7 @@ const segmentLabels: Record<string, string> = {
   deployments: "Deployments",
   settings: "Settings",
   editor: "Editor",
+  create: "Create",
 };
 
 function formatSegment(segment: string): string {

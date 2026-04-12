@@ -17,7 +17,7 @@ import {
   PanelLeft,
 } from "lucide-react";
 import clsx from "clsx";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/lib/auth";
 
 const navItems = [
@@ -36,6 +36,26 @@ export function Sidebar() {
   const { user, isDemoMode, logout } = useAuth();
   const [showMenu, setShowMenu] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Click-outside handler for user dropdown
+  useEffect(() => {
+    if (!showMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowMenu(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [showMenu]);
 
   const handleLogout = () => {
     logout();
@@ -134,7 +154,7 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="relative border-t border-zinc-800 px-3 py-3">
+      <div className="relative border-t border-zinc-800 px-3 py-3" ref={menuRef}>
         <button
           onClick={() => setShowMenu(!showMenu)}
           className={clsx(

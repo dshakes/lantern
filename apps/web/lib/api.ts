@@ -15,6 +15,7 @@ import {
   getAgentByName,
   getRunsForAgent,
   getRunById,
+  getEventsForRun,
 } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
@@ -578,8 +579,9 @@ class LanternAPI {
     }
 
     function emitMockEvents() {
-      const events =
-        runId === "run_01hqa1b2c3d4" ? [...sampleRunEvents] : [];
+      // Use getEventsForRun to resolve mock events for any known mock run ID
+      const resolved = getEventsForRun(runId);
+      const events = resolved.length > 0 ? [...resolved] : [...sampleRunEvents];
       let idx = 0;
       const interval = setInterval(() => {
         if (closed || idx >= events.length) {

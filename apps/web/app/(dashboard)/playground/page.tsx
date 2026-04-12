@@ -319,8 +319,12 @@ export default function PlaygroundPage() {
     // In demo mode, always use simulation (no real API token)
     if (isDemoMode) {
       setDemoMode(true);
-      setDemoEvents(sampleRunEvents);
       resetDemo();
+      // Set events after reset so the useEffect sees the new events array
+      // on the next render after cancelRef is cleared
+      setTimeout(() => {
+        setDemoEvents([...sampleRunEvents]);
+      }, 0);
       return;
     }
 
@@ -338,8 +342,10 @@ export default function PlaygroundPage() {
         // Network error — API not running. Fall back to demo.
         console.warn("API unavailable, falling back to demo mode", fetchErr);
         setDemoMode(true);
-        setDemoEvents(sampleRunEvents);
         resetDemo();
+        setTimeout(() => {
+          setDemoEvents([...sampleRunEvents]);
+        }, 0);
         return;
       }
 
@@ -501,15 +507,15 @@ export default function PlaygroundPage() {
       ) {
         // Fall back to demo simulation.
         setDemoMode(true);
+        resetDemo();
         const events = demoEventSets[selectedAgent] || sampleRunEvents;
         const taggedEvents = events.map((e) => ({
           ...e,
           runId: `playground_${Date.now()}`,
         }));
-        setDemoEvents(taggedEvents);
         setTimeout(() => {
           setDemoEvents([...taggedEvents]);
-        }, 10);
+        }, 0);
         return;
       }
 
@@ -545,6 +551,7 @@ export default function PlaygroundPage() {
     temperature,
     maxTokens,
     resetDemo,
+    isDemoMode,
   ]);
 
   const handleStop = useCallback(() => {

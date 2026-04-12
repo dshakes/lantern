@@ -203,8 +203,29 @@ function AgentCreatePage() {
       setSpec(result);
       setCurrentStep("review");
       toast.success("Agent spec generated");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to generate spec. Check your LLM provider settings.");
+    } catch {
+      // Fallback: generate a demo spec locally so the wizard still works
+      const words = description.trim().toLowerCase().split(/\s+/);
+      const agentName = words.slice(0, 3).join("-").replace(/[^a-z0-9-]/g, "").slice(0, 30) || "my-agent";
+      const demoSpec: AgentSpec = {
+        name: agentName,
+        description: description.trim(),
+        model: "auto",
+        steps: [
+          { name: "gather-input", type: "llm", description: "Analyze the user input and determine the plan", config: {} },
+          { name: "execute", type: "tool", description: "Execute the main task based on the plan", config: {} },
+          { name: "summarize", type: "llm", description: "Summarize the results into a final output", config: {} },
+        ],
+        tools: ["web-search"],
+        connectors: [],
+        surfaces: [],
+        triggers: [{ type: "manual", config: {} }],
+        isolation: "standard",
+        limits: { timeout: "5m", maxTokens: 100000, maxCostUsd: 1.0 },
+      };
+      setSpec(demoSpec);
+      setCurrentStep("review");
+      toast.info("Generated spec from template (LLM unavailable). You can edit it below.");
     } finally {
       setGenerating(false);
     }

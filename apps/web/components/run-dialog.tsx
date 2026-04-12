@@ -56,6 +56,7 @@ export function RunDialog({
     "inspector"
   );
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Reset form when dialog opens
   useEffect(() => {
@@ -68,6 +69,7 @@ export function RunDialog({
       setModel("auto");
       setStream(true);
       setJsonError(null);
+      setSubmitError(null);
     }
   }, [open, defaultAgentName, resolvedNames]);
 
@@ -94,6 +96,7 @@ export function RunDialog({
 
   const handleSubmit = useCallback(async () => {
     if (!agentName.trim() || jsonError) return;
+    setSubmitError(null);
 
     if (destination === "playground") {
       router.push("/playground");
@@ -125,10 +128,21 @@ export function RunDialog({
         router.push(`/playground`);
       }
     } catch (err) {
-      // API error — show in playground with the agent pre-selected
-      console.warn("createRun failed, opening playground", err);
-      onClose();
-      router.push(`/playground`);
+      // Show inline error in the dialog instead of navigating away
+      const message = err instanceof Error ? err.message : "Failed to create run";
+      if (
+        message.includes("fetch") ||
+        message.includes("Failed") ||
+        message.includes("ECONNREFUSED") ||
+        message.includes("API") ||
+        err instanceof TypeError
+      ) {
+        setSubmitError(
+          `Could not create run: API unavailable. Use the Playground to test interactively, or start the API with: make run-api`
+        );
+      } else {
+        setSubmitError(message);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -304,6 +318,25 @@ export function RunDialog({
             </div>
           </div>
         </div>
+
+        {/* Inline error */}
+        {submitError && (
+          <div className="mx-6 mb-2 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" />
+            <div className="flex-1">
+              <p className="text-xs text-red-400">{submitError}</p>
+              <button
+                onClick={() => {
+                  onClose();
+                  router.push("/playground");
+                }}
+                className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-red-300 underline underline-offset-2 transition-colors hover:text-red-200"
+              >
+                Open Playground instead
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 border-t border-zinc-800 px-6 py-4">
