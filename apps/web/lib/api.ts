@@ -497,24 +497,10 @@ class LanternAPI {
         method: "POST",
         body: JSON.stringify(data),
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for createRun, simulating locally",
-      );
-      const run: Run = {
-        id: `run_${Date.now()}`,
-        tenantId: "t_acme",
-        agentId: "ag_simulated",
-        agentName: data.agentName,
-        status: "queued",
-        input: data.input,
-        costUsd: 0,
-        tokensIn: 0,
-        tokensOut: 0,
-        createdAt: new Date(),
-        labels: { trigger: "manual" },
-      };
-      return run;
+    } catch (err) {
+      console.warn("[lantern] createRun failed:", err);
+      // Re-throw so the caller can handle it (e.g., redirect to playground)
+      throw err;
     }
   }
 

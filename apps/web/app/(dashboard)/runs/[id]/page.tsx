@@ -218,8 +218,17 @@ export default function RunDetailPage() {
 
   if (error || !run) {
     return (
-      <div className="flex flex-1 items-center justify-center">
-        <p className="text-zinc-500">Run not found.</p>
+      <div className="flex flex-1 flex-col items-center justify-center gap-3">
+        <p className="text-zinc-400">Run not found in the database.</p>
+        <p className="text-xs text-zinc-600 max-w-sm text-center">
+          The agent may not exist in the database yet. Create agents via the API or use the Playground to test interactively.
+        </p>
+        <a
+          href="/playground"
+          className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white hover:bg-lantern-400 transition-colors"
+        >
+          Open Playground
+        </a>
       </div>
     );
   }

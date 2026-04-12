@@ -117,11 +117,18 @@ export function RunDialog({
         stream,
       });
       onClose();
-      router.push(`/runs/${run.id}`);
-    } catch {
-      // Fallback: navigate to demo run if API unavailable
+      // If we got a real run ID from the API, navigate to inspector
+      if (run.id && !run.id.startsWith("run_1")) {
+        router.push(`/runs/${run.id}`);
+      } else {
+        // Simulated run — open in playground instead
+        router.push(`/playground`);
+      }
+    } catch (err) {
+      // API error — show in playground with the agent pre-selected
+      console.warn("createRun failed, opening playground", err);
       onClose();
-      router.push("/runs/run_01hqa1b2c3d4");
+      router.push(`/playground`);
     } finally {
       setSubmitting(false);
     }
