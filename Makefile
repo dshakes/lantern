@@ -9,7 +9,14 @@ dev: ## Start the full dev stack (Postgres, Redis, MinIO, services)
 	docker compose -f infra/docker/docker-compose.yml up --build
 
 dev-infra: ## Start only infrastructure (Postgres, Redis, MinIO)
-	docker compose -f infra/docker/docker-compose.yml up postgres redis minio minio-init
+	docker compose -f infra/docker/docker-compose.yml up -d postgres redis minio minio-init
+
+run-api: ## Run the control-plane API server locally
+	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
+	REDIS_URL="redis://localhost:6379" \
+	S3_ENDPOINT="http://localhost:9000" \
+	LOG_LEVEL="debug" \
+	cd services/control-plane && go run ./cmd/server
 
 landing-dev: ## Start the landing page in dev mode
 	cd apps/landing && npm run dev
