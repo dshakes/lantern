@@ -109,3 +109,181 @@ body {
   box-shadow: 0 0 40px rgba(245, 158, 11, 0.08);
   transform: translateY(-2px);
 }
+
+/* ─────────────────────────────────────────────────────
+   Premium Visual Effects
+   ───────────────────────────────────────────────────── */
+
+/* Animated gradient orbs — floating background blobs */
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  opacity: 0.15;
+  animation: orb-float 20s ease-in-out infinite;
+}
+.orb-amber { background: radial-gradient(circle, #f59e0b, #d97706); }
+.orb-blue { background: radial-gradient(circle, #3b82f6, #1d4ed8); }
+.orb-purple { background: radial-gradient(circle, #8b5cf6, #6d28d9); }
+
+@keyframes orb-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(30px, -30px) scale(1.1); }
+  50% { transform: translate(-20px, 20px) scale(0.9); }
+  75% { transform: translate(20px, 10px) scale(1.05); }
+}
+
+/* Glassmorphism cards — frosted glass effect */
+.glass-card {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  transition: all 0.3s ease;
+}
+.glass-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(245, 158, 11, 0.2);
+  box-shadow: 0 8px 32px rgba(245, 158, 11, 0.1), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+/* Animated border gradient — hero CTA buttons */
+.btn-glow {
+  position: relative;
+  overflow: hidden;
+  z-index: 1;
+}
+.btn-glow::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  background: conic-gradient(from 0deg, #f59e0b, #d97706, #b45309, #d97706, #f59e0b);
+  border-radius: inherit;
+  animation: spin-gradient 3s linear infinite;
+  z-index: -1;
+}
+@keyframes spin-gradient {
+  to { transform: rotate(360deg); }
+}
+
+/* Shimmer text — key headlines */
+.shimmer-text {
+  background: linear-gradient(
+    110deg,
+    #fafafa 35%,
+    #fbbf24 45%,
+    #f59e0b 50%,
+    #fbbf24 55%,
+    #fafafa 65%
+  );
+  background-size: 250% 100%;
+  animation: shimmer 3s ease-in-out infinite;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+@keyframes shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Animated grid lines — subtle matrix background */
+.animated-grid {
+  background-image:
+    linear-gradient(rgba(245, 158, 11, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(245, 158, 11, 0.03) 1px, transparent 1px);
+  background-size: 80px 80px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 70%);
+}
+
+/* Stat counter — impressive numbers */
+.stat-value {
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(180deg, #fafafa 0%, #a1a1aa 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Comparison table — premium styling */
+.comparison-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.comparison-table th {
+  background: rgba(255,255,255,0.03);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+}
+.comparison-lantern {
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.08) 0%, rgba(245, 158, 11, 0.02) 100%);
+  border-left: 2px solid rgba(245, 158, 11, 0.3);
+  border-right: 2px solid rgba(245, 158, 11, 0.3);
+}
+
+/* Pulse ring — live indicators */
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+.pulse-ring {
+  position: relative;
+}
+.pulse-ring::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 2px solid #f59e0b;
+  border-radius: 50%;
+  animation: pulse-ring 2s ease-out infinite;
+}
+
+/* Terminal typing effect — CLI section */
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.terminal-cursor::after {
+  content: "\25CA";
+  animation: blink-cursor 1s step-end infinite;
+  color: #f59e0b;
+}
+
+/* Animated dashed connections for architecture diagram */
+@keyframes dash-flow {
+  to { stroke-dashoffset: -20; }
+}
+
+/* Gradient top border for use case cards */
+.gradient-border-top {
+  position: relative;
+}
+.gradient-border-top::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 20%;
+  right: 20%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #f59e0b, transparent);
+  border-radius: 2px;
+}
+
+/* Animated gradient line for footer */
+.footer-gradient-line {
+  position: relative;
+}
+.footer-gradient-line::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.4), rgba(245, 158, 11, 0.1), rgba(59, 130, 246, 0.3), transparent);
+  background-size: 200% 100%;
+  animation: gradient-shift 6s ease infinite;
+}
