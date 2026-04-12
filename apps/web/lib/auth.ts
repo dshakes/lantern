@@ -21,6 +21,7 @@ export interface AuthState {
   isLoading: boolean;
   isAuthenticated: boolean;
   isDemoMode: boolean;
+  signup: (email: string, password: string, name: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   loginDemo: () => void;
   logout: () => void;
@@ -59,13 +60,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (stored.startsWith("demo_token_")) {
         setUser(DEMO_USER);
         setIsDemoMode(true);
+        setIsLoading(false);
       } else {
-        // Assume valid token, set a default user
-        // In production this would call /api/v1/auth/me
-        setUser(DEMO_USER);
+        // Validate the real token by calling /auth/me
+        api.getMe().then((u) => {
+          setUser(u);
+          setIsLoading(false);
+        }).catch(() => {
+          // Token expired or invalid -- clear it
+          api.setToken(null);
+          setToken(null);
+          setIsLoading(false);
+        });
       }
+    } else {
+      setIsLoading(false);
     }
-    setIsLoading(false);
+  }, []);
+
+  const signup = useCallback(async (email: string, password: string, name: string) => {
+    const result = await api.signup(email, password, name);
+    setToken(result.token);
+    setUser(result.user);
+    setIsDemoMode(false);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
@@ -96,6 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isLoading,
     isAuthenticated: !!token,
     isDemoMode,
+    signup,
     login,
     loginDemo,
     logout,

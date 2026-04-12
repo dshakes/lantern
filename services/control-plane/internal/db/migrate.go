@@ -188,4 +188,51 @@ var migrations = []string{
 				USING (tenant_id::text = current_setting('app.tenant_id', true));
 		END IF;
 	END$$`,
+
+	// ---------------------------------------------------------------
+	// Add password_hash column to users (for local auth)
+	// ---------------------------------------------------------------
+	`DO $$
+	BEGIN
+		IF NOT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'users' AND column_name = 'password_hash'
+		) THEN
+			ALTER TABLE users ADD COLUMN password_hash TEXT;
+		END IF;
+	END$$`,
+
+	// ---------------------------------------------------------------
+	// Add role column to users
+	// ---------------------------------------------------------------
+	`DO $$
+	BEGIN
+		IF NOT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'users' AND column_name = 'role'
+		) THEN
+			ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member';
+		END IF;
+	END$$`,
+
+	// ---------------------------------------------------------------
+	// Seed default dev tenant and admin user
+	// Password is "lantern" hashed with bcrypt.
+	// ---------------------------------------------------------------
+	`INSERT INTO tenants (id, slug, name, tier, k8s_namespace)
+	 VALUES ('00000000-0000-0000-0000-000000000001', 'dev', 'Development', 'team', 'lantern-t-dev')
+	 ON CONFLICT (id) DO NOTHING`,
+
+	`INSERT INTO users (id, tenant_id, email, display_name, auth_provider, auth_subject, password_hash, role)
+	 VALUES (
+		'00000000-0000-0000-0000-000000000002',
+		'00000000-0000-0000-0000-000000000001',
+		'admin@lantern.dev',
+		'Admin',
+		'local',
+		'admin@lantern.dev',
+		'$2b$10$.hAunSjVIs5aiTYrzIAmfuLbpy1Im2N4xIvhjFVG5v3fak/eeyP7W',
+		'owner'
+	 )
+	 ON CONFLICT DO NOTHING`,
 }

@@ -9,6 +9,9 @@ import {
   Play,
   Check,
   Loader2,
+  Code,
+  Undo2,
+  Redo2,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -17,6 +20,11 @@ interface ToolbarProps {
   onSave: () => void;
   onDeploy: () => void;
   onTestRun: () => void;
+  onExportCode: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }
 
 export function Toolbar({
@@ -24,6 +32,11 @@ export function Toolbar({
   onSave,
   onDeploy,
   onTestRun,
+  onExportCode,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
 }: ToolbarProps) {
   const router = useRouter();
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">(
@@ -55,6 +68,25 @@ export function Toolbar({
         <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
           EDITOR
         </span>
+
+        {/* Undo / Redo */}
+        <div className="ml-2 h-4 w-px bg-zinc-800" />
+        <button
+          onClick={onUndo}
+          disabled={!canUndo}
+          title="Undo (Ctrl+Z)"
+          className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-500"
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={onRedo}
+          disabled={!canRedo}
+          title="Redo (Ctrl+Shift+Z)"
+          className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-zinc-500"
+        >
+          <Redo2 className="h-3.5 w-3.5" />
+        </button>
       </div>
 
       {/* Center: auto-save indicator */}
@@ -78,6 +110,14 @@ export function Toolbar({
 
       {/* Right: actions */}
       <div className="flex items-center gap-2">
+        <button
+          onClick={onExportCode}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"
+          title="Export as Code"
+        >
+          <Code className="h-3 w-3" />
+          Export
+        </button>
         <button
           onClick={onTestRun}
           className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"

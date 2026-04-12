@@ -21,7 +21,7 @@ services:
     volumes:
       - pg-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lantern"]
+      test: ["CMD-SHELL", "pg_isready -U lantern -d lantern"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -69,14 +69,15 @@ services:
 
   control-plane:
     build:
-      context: ../../services/control-plane
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: services/control-plane/Dockerfile
     ports:
       - "50051:50051"
       - "8080:8080"
     environment:
       <<: *common-env
       LISTEN_ADDR: ":50051"
+      JWT_SECRET: lantern-dev-jwt-secret-do-not-use-in-production
     depends_on:
       postgres:
         condition: service_healthy
@@ -119,6 +120,7 @@ services:
       CONTROL_PLANE_ADDR: control-plane:50051
       MODEL_ROUTER_ADDR: model-router:50053
       WORKFLOW_ENGINE_ADDR: workflow-engine:50052
+      JWT_SECRET: lantern-dev-jwt-secret-do-not-use-in-production
     depends_on:
       control-plane:
         condition: service_healthy
@@ -145,10 +147,11 @@ services:
     ports:
       - "3001:3000"
     environment:
-      LANTERN_API_URL: http://gateway:8443
-      NEXT_PUBLIC_API_URL: http://localhost:8443
+      LANTERN_API_URL: http://control-plane:8080
+      NEXT_PUBLIC_API_URL: http://localhost:8080
     depends_on:
-      - gateway
+      control-plane:
+        condition: service_healthy
 
   landing:
     build:

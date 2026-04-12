@@ -51,7 +51,19 @@
       "Bash(npx tsc:*)",
       "Bash(find /Users/shakes/workspace/lantern/apps/web/components/settings -name \"*.tsx\" -exec echo {} \\\\;)",
       "Bash(find /Users/shakes/workspace/lantern/apps/web/app/onboarding -name \"*.tsx\" -exec echo {} \\\\;)",
-      "Bash(ls /Users/shakes/workspace/lantern/apps/web/lib/workflow-*.ts /Users/shakes/workspace/lantern/apps/web/lib/sample-workflows.ts)"
+      "Bash(ls /Users/shakes/workspace/lantern/apps/web/lib/workflow-*.ts /Users/shakes/workspace/lantern/apps/web/lib/sample-workflows.ts)",
+      "Bash(go version:*)",
+      "Bash(python3 -c \"import bcrypt; print\\(bcrypt.hashpw\\(b'lantern', bcrypt.gensalt\\(10\\)\\).decode\\(\\)\\)\")",
+      "Bash(ls /Users/shakes/workspace/lantern/packages/sdk-ts/tsconfig*)",
+      "Bash(npx vitest:*)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python3 -m pytest tests/ -v)",
+      "Bash(pip3 install:*)",
+      "Bash(python3.11 --version)",
+      "Bash(python3.12 --version)",
+      "Bash(python3.13 --version)",
+      "Bash(python3.13 -m pip install -e \".[dev]\")",
+      "Bash(python3.13 -m pytest tests/ -v)"
     ]
   }
 }

@@ -115,7 +115,14 @@ func main() {
 		grpcErrCh <- grpcServer.Serve(lis)
 	}()
 
-	// --- HTTP health server ---
+	// --- Auth handler ---
+	jwtSecret := handlers.GetJWTSecret()
+	authHandler := handlers.NewAuthHandler(srv, jwtSecret)
+
+	// --- REST handler (wraps gRPC handlers for direct HTTP access) ---
+	restHandler := handlers.NewRESTHandler(srv, authHandler, agentSvc, runSvc)
+
+	// --- HTTP server (health + auth + REST API) ---
 	httpMux := http.NewServeMux()
 	httpMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -134,9 +141,24 @@ func main() {
 		fmt.Fprintln(w, "ok")
 	})
 
+	// Auth endpoints.
+	httpMux.HandleFunc("POST /auth/signup", authHandler.Signup)
+	httpMux.HandleFunc("POST /auth/login", authHandler.Login)
+	httpMux.HandleFunc("GET /auth/me", authHandler.GetMe)
+
+	// REST API endpoints (direct, no gateway needed).
+	httpMux.HandleFunc("GET /v1/agents", restHandler.ListAgents)
+	httpMux.HandleFunc("POST /v1/agents", restHandler.CreateAgent)
+	httpMux.HandleFunc("GET /v1/agents/{name}", restHandler.GetAgent)
+	httpMux.HandleFunc("DELETE /v1/agents/{name}", restHandler.DeleteAgent)
+	httpMux.HandleFunc("GET /v1/runs", restHandler.ListRuns)
+	httpMux.HandleFunc("POST /v1/runs", restHandler.CreateRun)
+	httpMux.HandleFunc("GET /v1/runs/{id}", restHandler.GetRun)
+	httpMux.HandleFunc("POST /v1/runs/{id}/cancel", restHandler.CancelRun)
+
 	httpServer := &http.Server{
 		Addr:              ":8080",
-		Handler:           httpMux,
+		Handler:           handlers.CORSMiddleware(httpMux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -184,6 +206,7 @@ type config struct {
 	ListenAddr  string
 	S3Bucket    string
 	LogLevel    string
+	JWTSecret   string
 }
 
 func loadConfig() config {
@@ -193,6 +216,7 @@ func loadConfig() config {
 		ListenAddr:  envOrDefault("LISTEN_ADDR", ":50051"),
 		S3Bucket:    envOrDefault("S3_BUCKET", "lantern-bundles-dev"),
 		LogLevel:    envOrDefault("LOG_LEVEL", "info"),
+		JWTSecret:   envOrDefault("JWT_SECRET", "lantern-dev-secret-change-me-in-production"),
 	}
 }
 

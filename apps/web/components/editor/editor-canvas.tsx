@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
   type DragEvent,
@@ -29,6 +30,8 @@ import { NodePalette } from "./node-palette";
 import { PropertiesPanel } from "./properties-panel";
 import { Toolbar } from "./toolbar";
 import { EditorMinimap } from "./minimap";
+import { ExportCodeModal } from "./export-code-modal";
+import { DeployModal } from "./deploy-modal";
 import { Map, EyeOff } from "lucide-react";
 
 import type {
@@ -74,6 +77,55 @@ function workflowToReactFlowEdges(def: WorkflowDefinition): Edge[] {
       height: 16,
     },
   }));
+}
+
+// ---- Undo/Redo history -----------------------------------------------------
+
+interface HistorySnapshot {
+  nodes: Node[];
+  edges: Edge[];
+}
+
+function useUndoRedo(initialNodes: Node[], initialEdges: Edge[]) {
+  const historyRef = useRef<HistorySnapshot[]>([
+    { nodes: structuredClone(initialNodes), edges: structuredClone(initialEdges) },
+  ]);
+  const pointerRef = useRef(0);
+
+  const pushSnapshot = useCallback((nodes: Node[], edges: Edge[]) => {
+    // Discard any forward history when a new action is taken
+    historyRef.current = historyRef.current.slice(0, pointerRef.current + 1);
+    historyRef.current.push({
+      nodes: structuredClone(nodes),
+      edges: structuredClone(edges),
+    });
+    // Keep history bounded to 50 entries
+    if (historyRef.current.length > 50) {
+      historyRef.current.shift();
+    } else {
+      pointerRef.current += 1;
+    }
+  }, []);
+
+  const undo = useCallback((): HistorySnapshot | null => {
+    if (pointerRef.current <= 0) return null;
+    pointerRef.current -= 1;
+    return structuredClone(historyRef.current[pointerRef.current]);
+  }, []);
+
+  const redo = useCallback((): HistorySnapshot | null => {
+    if (pointerRef.current >= historyRef.current.length - 1) return null;
+    pointerRef.current += 1;
+    return structuredClone(historyRef.current[pointerRef.current]);
+  }, []);
+
+  const canUndo = useCallback(() => pointerRef.current > 0, []);
+  const canRedo = useCallback(
+    () => pointerRef.current < historyRef.current.length - 1,
+    []
+  );
+
+  return { pushSnapshot, undo, redo, canUndo, canRedo };
 }
 
 // ---- Connection validation -------------------------------------------------
@@ -176,15 +228,82 @@ export function EditorCanvas({
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(
-    workflowToReactFlowNodes(initialWorkflow)
-  );
-  const [edges, setEdges, onEdgesChange] = useEdgesState(
-    workflowToReactFlowEdges(initialWorkflow)
-  );
+  const initialRfNodes = workflowToReactFlowNodes(initialWorkflow);
+  const initialRfEdges = workflowToReactFlowEdges(initialWorkflow);
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialRfNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialRfEdges);
 
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [minimapVisible, setMinimapVisible] = useState(true);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [deployModalOpen, setDeployModalOpen] = useState(false);
+
+  // Track undo/redo eligibility for re-render
+  const [undoRedoTick, setUndoRedoTick] = useState(0);
+
+  // Undo/redo
+  const { pushSnapshot, undo, redo, canUndo, canRedo } = useUndoRedo(
+    initialRfNodes,
+    initialRfEdges
+  );
+
+  // Push a snapshot after meaningful mutations (debounced via a stable ref)
+  const snapshotTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleSnapshot = useCallback(() => {
+    if (snapshotTimeoutRef.current) clearTimeout(snapshotTimeoutRef.current);
+    snapshotTimeoutRef.current = setTimeout(() => {
+      // Capture current state at the time the timeout fires
+      setNodes((currentNodes) => {
+        setEdges((currentEdges) => {
+          pushSnapshot(currentNodes, currentEdges);
+          setUndoRedoTick((t) => t + 1);
+          return currentEdges;
+        });
+        return currentNodes;
+      });
+    }, 300);
+  }, [pushSnapshot, setNodes, setEdges]);
+
+  const handleUndo = useCallback(() => {
+    const snapshot = undo();
+    if (snapshot) {
+      setNodes(snapshot.nodes);
+      setEdges(snapshot.edges);
+      setUndoRedoTick((t) => t + 1);
+    }
+  }, [undo, setNodes, setEdges]);
+
+  const handleRedo = useCallback(() => {
+    const snapshot = redo();
+    if (snapshot) {
+      setNodes(snapshot.nodes);
+      setEdges(snapshot.edges);
+      setUndoRedoTick((t) => t + 1);
+    }
+  }, [redo, setNodes, setEdges]);
+
+  // ---- Build current workflow definition for modals -------------------------
+
+  const getCurrentWorkflow = useCallback((): WorkflowDefinition => {
+    return {
+      metadata: { ...initialWorkflow.metadata },
+      nodes: nodes.map((n) => ({
+        id: n.id,
+        type: n.type as NodeType,
+        position: n.position,
+        data: n.data as unknown as NodeData,
+      })),
+      edges: edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle ?? undefined,
+        targetHandle: e.targetHandle ?? undefined,
+        label: e.label as string | undefined,
+      })),
+    };
+  }, [nodes, edges, initialWorkflow.metadata]);
 
   // ---- Connection handling --------------------------------------------------
 
@@ -223,8 +342,9 @@ export function EditorCanvas({
       } as Edge;
 
       setEdges((eds) => addEdge(newEdge, eds));
+      scheduleSnapshot();
     },
-    [setEdges]
+    [setEdges, scheduleSnapshot]
   );
 
   // ---- Drag & drop from palette --------------------------------------------
@@ -264,8 +384,9 @@ export function EditorCanvas({
       };
 
       setNodes((nds) => [...nds, newNode]);
+      scheduleSnapshot();
     },
-    [rfInstance, setNodes]
+    [rfInstance, setNodes, scheduleSnapshot]
   );
 
   // ---- Node selection -------------------------------------------------------
@@ -281,10 +402,120 @@ export function EditorCanvas({
     setSelectedNode(null);
   }, []);
 
+  // Track node moves for undo
+  const onNodeDragStop = useCallback(() => {
+    scheduleSnapshot();
+  }, [scheduleSnapshot]);
+
   // Keep selectedNode in sync with actual node data
   const actualSelectedNode = selectedNode
     ? nodes.find((n) => n.id === selectedNode.id) ?? null
     : null;
+
+  // ---- Keyboard shortcuts ---------------------------------------------------
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const isMod = e.metaKey || e.ctrlKey;
+
+      // Ctrl+Z / Cmd+Z — undo
+      if (isMod && !e.shiftKey && e.key === "z") {
+        e.preventDefault();
+        handleUndo();
+        return;
+      }
+
+      // Ctrl+Shift+Z / Cmd+Shift+Z — redo
+      if (isMod && e.shiftKey && e.key === "z") {
+        e.preventDefault();
+        handleRedo();
+        return;
+      }
+
+      // Ctrl+S / Cmd+S — save
+      if (isMod && e.key === "s") {
+        e.preventDefault();
+        handleSave();
+        return;
+      }
+
+      // Ctrl+A / Cmd+A — select all
+      if (isMod && e.key === "a") {
+        e.preventDefault();
+        setNodes((nds) => nds.map((n) => ({ ...n, selected: true })));
+        return;
+      }
+
+      // Ctrl+D / Cmd+D — duplicate selected
+      if (isMod && e.key === "d") {
+        e.preventDefault();
+        if (actualSelectedNode) {
+          const newNode: Node = {
+            ...actualSelectedNode,
+            id: generateNodeId(),
+            position: {
+              x: actualSelectedNode.position.x + 40,
+              y: actualSelectedNode.position.y + 40,
+            },
+            selected: true,
+            data: { ...actualSelectedNode.data },
+          };
+          setNodes((nds) => [
+            ...nds.map((n) => ({ ...n, selected: false })),
+            newNode,
+          ]);
+          setSelectedNode(newNode);
+          scheduleSnapshot();
+        }
+        return;
+      }
+
+      // Delete / Backspace — delete selected
+      if (e.key === "Delete" || e.key === "Backspace") {
+        // Do not intercept if user is typing in an input
+        const target = e.target as HTMLElement;
+        if (
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+        e.preventDefault();
+        setNodes((nds) => {
+          const toDelete = new Set(
+            nds.filter((n) => n.selected).map((n) => n.id)
+          );
+          if (toDelete.size === 0 && actualSelectedNode) {
+            toDelete.add(actualSelectedNode.id);
+          }
+          if (toDelete.size > 0) {
+            setEdges((eds) =>
+              eds.filter(
+                (ed) => !toDelete.has(ed.source) && !toDelete.has(ed.target)
+              )
+            );
+            setSelectedNode(null);
+            scheduleSnapshot();
+            return nds.filter((n) => !toDelete.has(n.id));
+          }
+          return nds;
+        });
+        return;
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    handleUndo,
+    handleRedo,
+    actualSelectedNode,
+    setNodes,
+    setEdges,
+    scheduleSnapshot,
+  ]);
 
   // ---- Save / Deploy / Test handlers ----------------------------------------
 
@@ -298,14 +529,17 @@ export function EditorCanvas({
   }, [rfInstance]);
 
   const handleDeploy = useCallback(() => {
-    // eslint-disable-next-line no-console
-    console.log("[editor] Deploy triggered for", agentName);
-  }, [agentName]);
+    setDeployModalOpen(true);
+  }, []);
 
   const handleTestRun = useCallback(() => {
     // eslint-disable-next-line no-console
     console.log("[editor] Test run triggered for", agentName);
   }, [agentName]);
+
+  const handleExportCode = useCallback(() => {
+    setExportModalOpen(true);
+  }, []);
 
   // ---- Render ---------------------------------------------------------------
 
@@ -316,6 +550,11 @@ export function EditorCanvas({
         onSave={handleSave}
         onDeploy={handleDeploy}
         onTestRun={handleTestRun}
+        onExportCode={handleExportCode}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={canUndo()}
+        canRedo={canRedo()}
       />
       <div className="flex flex-1 overflow-hidden">
         <NodePalette />
@@ -323,14 +562,28 @@ export function EditorCanvas({
           <ReactFlow
             nodes={nodes}
             edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
+            onNodesChange={(changes) => {
+              onNodesChange(changes);
+              // Schedule snapshot for position changes, removal, etc.
+              const hasStructuralChange = changes.some(
+                (c) => c.type === "remove" || c.type === "add"
+              );
+              if (hasStructuralChange) scheduleSnapshot();
+            }}
+            onEdgesChange={(changes) => {
+              onEdgesChange(changes);
+              const hasStructuralChange = changes.some(
+                (c) => c.type === "remove" || c.type === "add"
+              );
+              if (hasStructuralChange) scheduleSnapshot();
+            }}
             onConnect={onConnect}
             onInit={setRfInstance}
             onDrop={onDrop}
             onDragOver={onDragOver}
             onNodeClick={onNodeClick}
             onPaneClick={onPaneClick}
+            onNodeDragStop={onNodeDragStop}
             nodeTypes={nodeTypes}
             isValidConnection={isValidConnection}
             connectionLineType={ConnectionLineType.SmoothStep}
@@ -390,8 +643,21 @@ export function EditorCanvas({
         <PropertiesPanel
           selectedNode={actualSelectedNode}
           onClose={() => setSelectedNode(null)}
+          onNodeDataChange={scheduleSnapshot}
         />
       </div>
+
+      {/* Modals */}
+      <ExportCodeModal
+        open={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        workflow={getCurrentWorkflow()}
+      />
+      <DeployModal
+        open={deployModalOpen}
+        onClose={() => setDeployModalOpen(false)}
+        agentName={agentName}
+      />
     </div>
   );
 }

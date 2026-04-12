@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bot, Play, Sparkles, Settings, User, ChevronsUpDown, LogOut } from "lucide-react";
+import { Bot, Play, Sparkles, MessageSquare, Plug, Cloud, Settings, User, ChevronsUpDown, LogOut } from "lucide-react";
 import clsx from "clsx";
 import { useState } from "react";
 import { useAuth } from "@/lib/auth";
@@ -11,6 +11,9 @@ const navItems = [
   { href: "/agents", label: "Agents", icon: Bot },
   { href: "/runs", label: "Runs", icon: Play },
   { href: "/playground", label: "Playground", icon: Sparkles },
+  { href: "/surfaces", label: "Surfaces", icon: MessageSquare },
+  { href: "/connectors", label: "Connectors", icon: Plug },
+  { href: "/deployments", label: "Deployments", icon: Cloud },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

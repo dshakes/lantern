@@ -89,12 +89,20 @@ class LanternAPI {
   private _token: string | null = null;
 
   constructor() {
-    this.baseUrl =
-      (typeof window !== "undefined"
-        ? (window as unknown as Record<string, unknown>).__NEXT_PUBLIC_API_URL
-        : undefined) as string | undefined ??
-      process.env.NEXT_PUBLIC_API_URL ??
-      "http://localhost:8443";
+    // In the browser, use the Next.js proxy to avoid CORS. Server-side, call
+    // the control-plane directly (docker-compose service name or env var).
+    if (typeof window !== "undefined") {
+      // Browser: use relative URL so Next.js rewrites proxy to the backend.
+      this.baseUrl =
+        (window as unknown as Record<string, unknown>).__NEXT_PUBLIC_API_URL as string | undefined ??
+        process.env.NEXT_PUBLIC_API_URL ??
+        "http://localhost:8080";
+    } else {
+      this.baseUrl =
+        process.env.LANTERN_API_URL ??
+        process.env.NEXT_PUBLIC_API_URL ??
+        "http://localhost:8080";
+    }
   }
 
   // ---- token management ---------------------------------------------------
@@ -157,13 +165,37 @@ class LanternAPI {
 
   // ---- Auth ---------------------------------------------------------------
 
+  async signup(
+    email: string,
+    password: string,
+    name: string,
+  ): Promise<{ token: string; user: User }> {
+    try {
+      const data = await this.request<{ token: string; user: User }>(
+        "/auth/signup",
+        {
+          method: "POST",
+          body: JSON.stringify({ email, password, name }),
+        },
+      );
+      this.setToken(data.token);
+      return data;
+    } catch (err) {
+      console.warn(
+        "[lantern] Signup failed",
+        err,
+      );
+      throw err;
+    }
+  }
+
   async login(
     email: string,
     password: string,
   ): Promise<{ token: string; user: User }> {
     try {
       const data = await this.request<{ token: string; user: User }>(
-        "/api/v1/auth/login",
+        "/auth/login",
         {
           method: "POST",
           body: JSON.stringify({ email, password }),
@@ -185,6 +217,10 @@ class LanternAPI {
     }
   }
 
+  async getMe(): Promise<User> {
+    return this.request<User>("/auth/me");
+  }
+
   logout(): void {
     this.setToken(null);
   }
@@ -193,7 +229,7 @@ class LanternAPI {
 
   async listAgents(): Promise<Agent[]> {
     try {
-      return await this.request<Agent[]>("/api/v1/agents");
+      return await this.request<Agent[]>("/v1/agents");
     } catch {
       console.warn(
         "[lantern] Gateway unavailable for listAgents, using mock data",
@@ -204,7 +240,7 @@ class LanternAPI {
 
   async getAgent(name: string): Promise<Agent> {
     try {
-      return await this.request<Agent>(`/api/v1/agents/${encodeURIComponent(name)}`);
+      return await this.request<Agent>(`/v1/agents/${encodeURIComponent(name)}`);
     } catch {
       console.warn(
         "[lantern] Gateway unavailable for getAgent, using mock data",
@@ -217,7 +253,7 @@ class LanternAPI {
 
   async createAgent(data: CreateAgentInput): Promise<Agent> {
     try {
-      return await this.request<Agent>("/api/v1/agents", {
+      return await this.request<Agent>("/v1/agents", {
         method: "POST",
         body: JSON.stringify(data),
       });
@@ -247,7 +283,7 @@ class LanternAPI {
   async deleteAgent(name: string): Promise<void> {
     try {
       await this.request<void>(
-        `/api/v1/agents/${encodeURIComponent(name)}`,
+        `/v1/agents/${encodeURIComponent(name)}`,
         { method: "DELETE" },
       );
     } catch {
@@ -270,7 +306,7 @@ class LanternAPI {
       if (filters?.search) params.set("q", filters.search);
       const qs = params.toString();
       return await this.request<Run[]>(
-        `/api/v1/runs${qs ? `?${qs}` : ""}`,
+        `/v1/runs${qs ? `?${qs}` : ""}`,
       );
     } catch {
       console.warn(
@@ -301,7 +337,7 @@ class LanternAPI {
 
   async getRun(id: string): Promise<Run> {
     try {
-      return await this.request<Run>(`/api/v1/runs/${encodeURIComponent(id)}`);
+      return await this.request<Run>(`/v1/runs/${encodeURIComponent(id)}`);
     } catch {
       console.warn(
         "[lantern] Gateway unavailable for getRun, using mock data",
@@ -314,7 +350,7 @@ class LanternAPI {
 
   async createRun(data: CreateRunInput): Promise<Run> {
     try {
-      return await this.request<Run>("/api/v1/runs", {
+      return await this.request<Run>("/v1/runs", {
         method: "POST",
         body: JSON.stringify(data),
       });
@@ -342,7 +378,7 @@ class LanternAPI {
   async cancelRun(id: string, reason?: string): Promise<Run> {
     try {
       return await this.request<Run>(
-        `/api/v1/runs/${encodeURIComponent(id)}/cancel`,
+        `/v1/runs/${encodeURIComponent(id)}/cancel`,
         {
           method: "POST",
           body: JSON.stringify({ reason }),
@@ -369,7 +405,7 @@ class LanternAPI {
 
     // Try real SSE first
     try {
-      const url = `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/events`;
+      const url = `${this.baseUrl}/v1/runs/${encodeURIComponent(runId)}/events`;
       const es = new EventSource(
         this._token ? `${url}?token=${this._token}` : url,
       );
@@ -443,7 +479,7 @@ class LanternAPI {
   async getRunsForAgent(agentName: string): Promise<Run[]> {
     try {
       return await this.request<Run[]>(
-        `/api/v1/runs?agent=${encodeURIComponent(agentName)}`,
+        `/v1/runs?agent=${encodeURIComponent(agentName)}`,
       );
     } catch {
       console.warn(
@@ -460,7 +496,7 @@ class LanternAPI {
   ): Promise<import("@/lib/mock-data").AgentVersion[]> {
     try {
       return await this.request<import("@/lib/mock-data").AgentVersion[]>(
-        `/api/v1/agents/${encodeURIComponent(agentName)}/versions`,
+        `/v1/agents/${encodeURIComponent(agentName)}/versions`,
       );
     } catch {
       console.warn(
@@ -475,7 +511,7 @@ class LanternAPI {
 
   async listApiKeys(): Promise<ApiKey[]> {
     try {
-      return await this.request<ApiKey[]>("/api/v1/settings/api-keys");
+      return await this.request<ApiKey[]>("/v1/settings/api-keys");
     } catch {
       console.warn(
         "[lantern] Gateway unavailable for listApiKeys, using mock data",
@@ -489,7 +525,7 @@ class LanternAPI {
   ): Promise<ApiKey & { secret: string }> {
     try {
       return await this.request<ApiKey & { secret: string }>(
-        "/api/v1/settings/api-keys",
+        "/v1/settings/api-keys",
         {
           method: "POST",
           body: JSON.stringify(data),
@@ -514,7 +550,7 @@ class LanternAPI {
   async revokeApiKey(id: string): Promise<void> {
     try {
       await this.request<void>(
-        `/api/v1/settings/api-keys/${encodeURIComponent(id)}`,
+        `/v1/settings/api-keys/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       );
     } catch {
@@ -526,7 +562,7 @@ class LanternAPI {
 
   async getUsage(): Promise<UsageData> {
     try {
-      return await this.request<UsageData>("/api/v1/settings/usage");
+      return await this.request<UsageData>("/v1/settings/usage");
     } catch {
       console.warn(
         "[lantern] Gateway unavailable for getUsage, using mock data",
@@ -544,7 +580,7 @@ class LanternAPI {
 
   async updateSettings(data: SettingsInput): Promise<void> {
     try {
-      await this.request<void>("/api/v1/settings", {
+      await this.request<void>("/v1/settings", {
         method: "PATCH",
         body: JSON.stringify(data),
       });

@@ -65,11 +65,12 @@ proto: ## Regenerate code from proto definitions
 
 # ---------- Test ----------
 
-test: test-go test-rust test-ts ## Run all tests
+test: test-go test-rust test-ts test-python ## Run all tests
 
 test-go: ## Run Go tests
 	cd services/control-plane && go test -race -count=1 ./...
 	cd services/workflow-engine && go test -race -count=1 ./...
+	cd services/scheduler && go test -race -count=1 ./...
 
 test-rust: ## Run Rust tests
 	cd services/gateway && cargo test
@@ -77,7 +78,10 @@ test-rust: ## Run Rust tests
 	cd services/runtime-manager && cargo test
 
 test-ts: ## Run TypeScript tests
-	cd packages/sdk-ts && npm test
+	cd packages/sdk-ts && npx vitest run
+
+test-python: ## Run Python tests
+	cd packages/sdk-python && python3 -m pytest tests/ -v
 
 # ---------- Lint ----------
 
