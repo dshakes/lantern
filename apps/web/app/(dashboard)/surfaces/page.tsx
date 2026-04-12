@@ -24,6 +24,7 @@ import clsx from "clsx";
 import { useToast } from "@/components/toast";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
 import { WebChatWidget } from "@/components/web-chat-widget";
+import { QRCode, buildQRLink, generatePairingToken } from "@/components/qr-code";
 import { api } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -63,6 +64,9 @@ interface SurfaceDefinition {
   hasWebhookButton?: boolean;
   hasEmbedCode?: boolean;
   hasSendTestEmail?: boolean;
+  hasQRCode?: boolean;
+  qrType?: "whatsapp" | "telegram" | "pair";
+  qrLabel?: string;
 }
 
 type TestStatus = "idle" | "testing" | "success" | "error";
@@ -86,6 +90,9 @@ const surfaces: SurfaceDefinition[] = [
     ],
     hasTestButton: true,
     testButtonLabel: "Test Connection",
+    hasQRCode: true,
+    qrType: "whatsapp",
+    qrLabel: "Scan with WhatsApp to start chatting with your agent",
   },
   {
     id: "slack",
@@ -131,6 +138,9 @@ const surfaces: SurfaceDefinition[] = [
     hasWebhookButton: true,
     hasTestButton: true,
     testButtonLabel: "Send Test Message",
+    hasQRCode: true,
+    qrType: "telegram",
+    qrLabel: "Scan to open the bot in Telegram",
   },
   {
     id: "twilio",
@@ -174,6 +184,18 @@ const surfaces: SurfaceDefinition[] = [
       { key: "allowedOrigins", label: "Allowed Origins", type: "textarea", placeholder: "https://example.com\nhttps://app.example.com", helpText: "One origin per line. Leave empty to allow all origins." },
     ],
     hasEmbedCode: true,
+  },
+  {
+    id: "mobile",
+    name: "Mobile App",
+    description: "iOS and Android app with push notifications and voice",
+    icon: Phone,
+    iconColor: "text-rose-400",
+    iconBg: "bg-rose-500/10",
+    configFields: [],
+    hasQRCode: true,
+    qrType: "pair",
+    qrLabel: "Scan with the Lantern mobile app to pair this workspace",
   },
 ];
 
@@ -822,6 +844,46 @@ export default function SurfacesPage() {
                     >
                       <Copy className="h-3.5 w-3.5" />
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* QR Code section */}
+              {configModal.hasQRCode && (
+                <div className="rounded-xl border border-zinc-800 bg-surface-0 p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-sm font-medium text-zinc-200">Quick Connect via QR Code</h3>
+                      <p className="mt-0.5 text-xs text-zinc-500">
+                        {configModal.qrType === "pair"
+                          ? "Pair your mobile device by scanning this code"
+                          : `Open ${configModal.name} and scan this code`}
+                      </p>
+                    </div>
+                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-lantern-500/10">
+                      <Phone className="h-3.5 w-3.5 text-lantern-400" />
+                    </div>
+                  </div>
+                  <div className="flex justify-center">
+                    <QRCode
+                      value={buildQRLink({
+                        type: configModal.qrType ?? "pair",
+                        token: generatePairingToken(),
+                        botUsername: formFields.botToken ? "LanternBot" : undefined,
+                        phoneNumber: formFields.phoneNumberId || undefined,
+                      })}
+                      size={180}
+                      label={configModal.qrLabel}
+                      expiresIn={300}
+                      onRefresh={() =>
+                        buildQRLink({
+                          type: configModal.qrType ?? "pair",
+                          token: generatePairingToken(),
+                          botUsername: formFields.botToken ? "LanternBot" : undefined,
+                          phoneNumber: formFields.phoneNumberId || undefined,
+                        })
+                      }
+                    />
                   </div>
                 </div>
               )}

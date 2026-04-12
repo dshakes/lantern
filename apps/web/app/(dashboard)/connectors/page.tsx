@@ -71,6 +71,7 @@ interface ConnectorState {
   connectedAccount?: string;
   installedAt?: string;
   backendId?: string;
+  credentials?: Record<string, string>;
 }
 
 type WizardStep = "method" | "credentials" | "testing" | "done";
@@ -272,7 +273,19 @@ function loadConnectorStates(): Record<string, ConnectorState> {
   if (typeof window === "undefined") return {};
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    // Validate entries: only keep those with real credentials
+    const validated: Record<string, ConnectorState> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const state = value as ConnectorState;
+      if (state.installed && state.credentials && Object.keys(state.credentials).length > 0) {
+        // Has real credentials — keep it
+        validated[key] = state;
+      }
+      // Discard entries without credentials (legacy fake connections)
+    }
+    return validated;
   } catch {
     return {};
   }
@@ -584,13 +597,14 @@ export default function ConnectorsPage() {
       return;
     }
 
-    // Simulate successful connection
+    // Save connection with credentials
     const updated: Record<string, ConnectorState> = {
       ...states,
       [wizardConnector.id]: {
         installed: true,
-        connectedAccount: credentialValues.email || wizardConnector.name + " account",
+        connectedAccount: credentialValues.email || credentialValues.apiKey?.slice(0, 8) + "..." || wizardConnector.name,
         installedAt: new Date().toISOString(),
+        credentials: { ...credentialValues },
       },
     };
     setStates(updated);
