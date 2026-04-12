@@ -74,14 +74,21 @@ func (h *RESTHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.logger().Error("ListAgents failed", zap.Error(err))
+		// Return empty list instead of 500 for common errors (e.g., no agents yet)
+		if resp == nil {
+			writeJSON(w, http.StatusOK, []map[string]any{})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
 	// Convert proto agents to JSON-friendly format.
-	agents := make([]map[string]any, 0, len(resp.GetAgents()))
-	for _, a := range resp.GetAgents() {
-		agents = append(agents, agentToMap(a))
+	agents := make([]map[string]any, 0)
+	if resp != nil {
+		for _, a := range resp.GetAgents() {
+			agents = append(agents, agentToMap(a))
+		}
 	}
 
 	writeJSON(w, http.StatusOK, agents)
@@ -211,13 +218,19 @@ func (h *RESTHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.runSvc.ListRuns(ctx, req)
 	if err != nil {
 		h.logger().Error("ListRuns failed", zap.Error(err))
+		if resp == nil {
+			writeJSON(w, http.StatusOK, []map[string]any{})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
-	runs := make([]map[string]any, 0, len(resp.GetRuns()))
-	for _, run := range resp.GetRuns() {
-		runs = append(runs, runToMap(run))
+	runs := make([]map[string]any, 0)
+	if resp != nil {
+		for _, run := range resp.GetRuns() {
+			runs = append(runs, runToMap(run))
+		}
 	}
 
 	writeJSON(w, http.StatusOK, runs)

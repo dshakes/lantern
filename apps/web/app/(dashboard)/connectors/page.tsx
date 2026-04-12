@@ -533,10 +533,17 @@ export default function ConnectorsPage() {
       );
       // The popup will post a message when done (handled in the useEffect above).
     } catch {
-      // OAuth start failed, show error
-      setTestStatus("error");
-      setTestMessage("OAuth is not configured for this connector. Use API Key authentication instead.");
+      // OAuth not configured — skip to API Key credentials step
       setAuthorizing(false);
+      setTestStatus("idle");
+      setTestMessage("");
+      if (wizardConnector.credentialFields && wizardConnector.credentialFields.length > 0) {
+        setWizardStep("credentials");
+      } else {
+        setTestStatus("error");
+        setTestMessage("OAuth is not configured for this connector. Set the OAuth client ID in your environment variables.");
+        setWizardStep("testing");
+      }
     }
   };
 
