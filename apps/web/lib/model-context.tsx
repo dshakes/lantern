@@ -27,11 +27,13 @@ export interface ConfiguredProvider {
 /** Model capability names used by the router. */
 export type ModelCapability =
   | "auto"
+  | "reasoning-frontier"
   | "reasoning-large"
   | "reasoning-small"
   | "chat-large"
   | "chat-small"
-  | "code-large";
+  | "code-large"
+  | "vision-large";
 
 export interface ModelOption {
   value: ModelCapability;
