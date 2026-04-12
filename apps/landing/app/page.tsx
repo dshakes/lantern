@@ -290,18 +290,21 @@ function Navbar() {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-[#09090b]/80 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-        <a href="/" className="flex items-center gap-2">
-          <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
-            <rect width="32" height="32" rx="8" fill="url(#logo-grad)" />
-            <path d="M10 22V10h3v9h6v3H10Z" fill="white" />
+        <a href="/" className="flex items-center gap-1.5">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2C12 2 8 6 8 11c0 2.2 1.8 4 4 4s4-1.8 4-4c0-5-4-9-4-9Z" fill="url(#flame)" />
+            <path d="M12 6c0 0-2.5 2.5-2.5 5.5c0 1.4 1.1 2.5 2.5 2.5s2.5-1.1 2.5-2.5C14.5 8.5 12 6 12 6Z" fill="#09090b" />
+            <rect x="9" y="16" width="6" height="1.5" rx="0.5" fill="#71717a" />
+            <rect x="9.5" y="18.5" width="5" height="1" rx="0.5" fill="#52525b" />
+            <rect x="10" y="20.5" width="4" height="1" rx="0.5" fill="#3f3f46" />
             <defs>
-              <linearGradient id="logo-grad" x1="0" y1="0" x2="32" y2="32">
-                <stop stopColor="#7c6df8" />
-                <stop offset="1" stopColor="#5a48b5" />
+              <linearGradient id="flame" x1="12" y1="2" x2="12" y2="15">
+                <stop stopColor="#9590e8" />
+                <stop offset="1" stopColor="#6e5dce" />
               </linearGradient>
             </defs>
           </svg>
-          <span className="text-base font-semibold tracking-tight">Lantern</span>
+          <span className="text-[15px] font-medium tracking-[-0.01em] text-zinc-200">lantern</span>
         </a>
         <div className="hidden md:flex items-center gap-8 text-sm text-zinc-400">
           <a href="#why" className="hover:text-white transition-colors">
