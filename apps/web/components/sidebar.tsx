@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bot, Flame, Play, Settings, User, ChevronsUpDown } from "lucide-react";
+import { Bot, Play, Settings, User, ChevronsUpDown } from "lucide-react";
 import clsx from "clsx";
 
 const navItems = [
@@ -16,11 +16,11 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-screen w-64 flex-col border-r border-zinc-800 bg-surface-1">
-      <div className="flex items-center gap-2.5 px-5 py-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500/10">
-          <Flame className="h-5 w-5 text-lantern-500" />
+      <div className="flex items-center gap-3 px-5 py-5">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-lantern-400 to-lantern-600 shadow-lg shadow-lantern-500/20">
+          <span className="text-base font-bold text-white leading-none">L</span>
         </div>
-        <span className="text-lg font-semibold text-zinc-100">Lantern</span>
+        <span className="text-lg font-semibold tracking-[-0.02em] text-white">Lantern</span>
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-2">
