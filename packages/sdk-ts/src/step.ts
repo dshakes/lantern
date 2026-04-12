@@ -1,8 +1,12 @@
 import type { StepOptions } from "./types.js";
+import { LanternRuntime } from "./runtime/runtime.js";
+import type { Runtime } from "./runtime/runtime.js";
+import { createProductionStepProxy } from "./runtime/step-runtime.js";
+import type { StepAPI } from "./runtime/step-runtime.js";
 
 type StepFn<T> = () => Promise<T>;
 
-interface StepAPI {
+interface DevStepAPI {
   <T>(name: string, fn: StepFn<T>, opts?: StepOptions): Promise<T>;
   map<TItem, TResult>(
     name: string,
@@ -19,7 +23,14 @@ interface StepAPI {
   signal<T = unknown>(name: string, opts?: { timeout?: string }): Promise<T>;
 }
 
-function createStepProxy(): StepAPI {
+/**
+ * Create the dev-mode step proxy.
+ *
+ * In dev mode, steps execute directly without journal replay, the
+ * workflow engine, or durable timers. This is the default behavior
+ * when LANTERN_RUNTIME is not set.
+ */
+function createDevStepProxy(): DevStepAPI {
   const handler = async <T>(
     name: string,
     fn: StepFn<T>,
@@ -83,7 +94,7 @@ function createStepProxy(): StepAPI {
     );
   };
 
-  return handler as StepAPI;
+  return handler as DevStepAPI;
 }
 
 function parseDuration(s: string): number {
@@ -99,6 +110,106 @@ function parseDuration(s: string): number {
     case "d": return n * 86_400_000;
     default: throw new Error(`Unknown unit: ${unit}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Runtime-aware step proxy factory
+// ---------------------------------------------------------------------------
+
+/** Production runtime reference, set by `setStepRuntime`. */
+let _productionRuntime: Runtime | null = null;
+
+/**
+ * Inject the production runtime into the step module.
+ *
+ * Called by the runner when initializing a production execution.
+ * Once set, all subsequent `step()` calls route through the
+ * production step proxy (journal-aware, sidecar-backed).
+ *
+ * @param runtime - The production runtime.
+ */
+export function setStepRuntime(runtime: Runtime): void {
+  _productionRuntime = runtime;
+}
+
+/**
+ * Create the appropriate step proxy based on the current environment.
+ *
+ * - If a production runtime has been injected via `setStepRuntime`,
+ *   returns the production step proxy.
+ * - If LANTERN_RUNTIME=true but no runtime injected yet, returns
+ *   a deferred proxy that throws helpful errors.
+ * - Otherwise, returns the dev-mode step proxy.
+ */
+function createStepProxy(): StepAPI {
+  if (_productionRuntime) {
+    return createProductionStepProxy(_productionRuntime);
+  }
+
+  if (LanternRuntime.isProduction()) {
+    // Production mode but runtime not yet injected.
+    // Return a proxy that defers to the production runtime once available.
+    return createDeferredStepProxy();
+  }
+
+  return createDevStepProxy() as unknown as StepAPI;
+}
+
+/**
+ * Create a deferred step proxy for production mode.
+ *
+ * This proxy holds step calls until the production runtime is
+ * initialized. Once `setStepRuntime` is called, all pending and
+ * future calls go through the production proxy.
+ */
+function createDeferredStepProxy(): StepAPI {
+  const getProxy = (): StepAPI => {
+    if (_productionRuntime) {
+      return createProductionStepProxy(_productionRuntime);
+    }
+    throw new Error(
+      "step() called in production mode before the runtime was initialized. " +
+        "Ensure the runner has called setStepRuntime() before invoking agent.run().",
+    );
+  };
+
+  const handler = async <T>(
+    name: string,
+    fn: StepFn<T>,
+    opts?: StepOptions,
+  ): Promise<T> => {
+    return getProxy()(name, fn, opts);
+  };
+
+  handler.map = async <TItem, TResult>(
+    name: string,
+    items: TItem[],
+    fn: (item: TItem, index: number) => Promise<TResult>,
+    opts?: StepOptions & { concurrency?: number },
+  ): Promise<TResult[]> => {
+    return getProxy().map(name, items, fn, opts);
+  };
+
+  handler.race = async <T>(
+    name: string,
+    fns: Array<() => Promise<T>>,
+    opts?: StepOptions,
+  ): Promise<T> => {
+    return getProxy().race(name, fns, opts);
+  };
+
+  handler.sleep = async (name: string, duration: string): Promise<void> => {
+    return getProxy().sleep(name, duration);
+  };
+
+  handler.signal = async <T = unknown>(
+    name: string,
+    opts?: { timeout?: string },
+  ): Promise<T> => {
+    return getProxy().signal(name, opts);
+  };
+
+  return handler as StepAPI;
 }
 
 export const step: StepAPI = createStepProxy();

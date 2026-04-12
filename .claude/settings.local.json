@@ -41,7 +41,11 @@
       "Bash(echo \"---EXIT: $?---\")",
       "Bash(go test:*)",
       "Bash(protoc --version)",
-      "Bash(ls -d examples/*/)"
+      "Bash(ls -d examples/*/)",
+      "Bash(go env:*)",
+      "Bash(npx next:*)",
+      "Bash(./node_modules/.bin/next build:*)",
+      "Bash(wc:*)"
     ]
   }
 }
