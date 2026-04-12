@@ -122,6 +122,12 @@ func main() {
 	// --- REST handler (wraps gRPC handlers for direct HTTP access) ---
 	restHandler := handlers.NewRESTHandler(srv, authHandler, agentSvc, runSvc)
 
+	// --- Domain-specific handlers ---
+	connectorHandler := handlers.NewConnectorHandler(srv, authHandler)
+	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
+	apiKeyHandler := handlers.NewApiKeyHandler(srv, authHandler)
+	deploymentHandler := handlers.NewDeploymentHandler(srv, authHandler)
+
 	// --- HTTP server (health + auth + REST API) ---
 	httpMux := http.NewServeMux()
 	httpMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -155,6 +161,35 @@ func main() {
 	httpMux.HandleFunc("POST /v1/runs", restHandler.CreateRun)
 	httpMux.HandleFunc("GET /v1/runs/{id}", restHandler.GetRun)
 	httpMux.HandleFunc("POST /v1/runs/{id}/cancel", restHandler.CancelRun)
+
+	// Connector endpoints.
+	httpMux.HandleFunc("POST /v1/connectors/install", connectorHandler.InstallConnector)
+	httpMux.HandleFunc("GET /v1/connectors", connectorHandler.ListConnectors)
+	httpMux.HandleFunc("GET /v1/connectors/oauth/callback", connectorHandler.OAuthCallback)
+	httpMux.HandleFunc("POST /v1/connectors/oauth/start", connectorHandler.OAuthStart)
+	httpMux.HandleFunc("GET /v1/connectors/{id}", connectorHandler.GetConnector)
+	httpMux.HandleFunc("POST /v1/connectors/{id}/test", connectorHandler.TestConnector)
+	httpMux.HandleFunc("DELETE /v1/connectors/{id}", connectorHandler.UninstallConnector)
+
+	// Surface endpoints.
+	httpMux.HandleFunc("POST /v1/surfaces", surfaceHandler.ConfigureSurface)
+	httpMux.HandleFunc("GET /v1/surfaces", surfaceHandler.ListSurfaces)
+	httpMux.HandleFunc("PUT /v1/surfaces/{id}", surfaceHandler.UpdateSurface)
+	httpMux.HandleFunc("DELETE /v1/surfaces/{id}", surfaceHandler.RemoveSurface)
+	httpMux.HandleFunc("POST /v1/surfaces/{id}/test", surfaceHandler.TestSurface)
+
+	// API key endpoints.
+	httpMux.HandleFunc("POST /v1/api-keys", apiKeyHandler.CreateApiKey)
+	httpMux.HandleFunc("GET /v1/api-keys", apiKeyHandler.ListApiKeys)
+	httpMux.HandleFunc("DELETE /v1/api-keys/{id}", apiKeyHandler.RevokeApiKey)
+
+	// Deployment endpoints.
+	httpMux.HandleFunc("POST /v1/deployments", deploymentHandler.CreateDeployment)
+	httpMux.HandleFunc("GET /v1/deployments", deploymentHandler.ListDeployments)
+	httpMux.HandleFunc("GET /v1/deployments/{id}", deploymentHandler.GetDeployment)
+	httpMux.HandleFunc("POST /v1/data-planes", deploymentHandler.RegisterDataPlane)
+	httpMux.HandleFunc("GET /v1/data-planes", deploymentHandler.ListDataPlanes)
+	httpMux.HandleFunc("DELETE /v1/data-planes/{id}", deploymentHandler.RemoveDataPlane)
 
 	httpServer := &http.Server{
 		Addr:              ":8080",

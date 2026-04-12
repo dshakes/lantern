@@ -235,4 +235,89 @@ var migrations = []string{
 		'owner'
 	 )
 	 ON CONFLICT DO NOTHING`,
+
+	// ---------------------------------------------------------------
+	// Connector installs
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS connector_installs (
+		id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+		tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		connector_id TEXT NOT NULL,
+		display_name TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending',
+		config JSONB NOT NULL DEFAULT '{}'::jsonb,
+		oauth_token_encrypted JSONB,
+		scopes TEXT[],
+		installed_by TEXT,
+		installed_at TIMESTAMPTZ DEFAULT now(),
+		updated_at TIMESTAMPTZ DEFAULT now(),
+		UNIQUE(tenant_id, connector_id)
+	)`,
+
+	// ---------------------------------------------------------------
+	// Surface configs
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS surface_configs (
+		id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+		tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		surface_id TEXT NOT NULL,
+		display_name TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'disconnected',
+		config JSONB NOT NULL DEFAULT '{}'::jsonb,
+		webhook_url TEXT,
+		connected_at TIMESTAMPTZ,
+		updated_at TIMESTAMPTZ DEFAULT now(),
+		UNIQUE(tenant_id, surface_id)
+	)`,
+
+	// ---------------------------------------------------------------
+	// API keys
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS api_keys (
+		id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+		tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		name TEXT NOT NULL,
+		key_hash TEXT NOT NULL,
+		key_prefix TEXT NOT NULL,
+		scopes TEXT[] NOT NULL DEFAULT '{}',
+		expires_at TIMESTAMPTZ,
+		last_used_at TIMESTAMPTZ,
+		revoked_at TIMESTAMPTZ,
+		created_by TEXT,
+		created_at TIMESTAMPTZ DEFAULT now()
+	)`,
+
+	// ---------------------------------------------------------------
+	// Deployments
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS deployments (
+		id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+		tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_name TEXT NOT NULL,
+		version TEXT NOT NULL,
+		environment TEXT NOT NULL DEFAULT 'development',
+		status TEXT NOT NULL DEFAULT 'deploying',
+		deployed_by TEXT,
+		message TEXT,
+		logs JSONB DEFAULT '[]'::jsonb,
+		created_at TIMESTAMPTZ DEFAULT now(),
+		finished_at TIMESTAMPTZ
+	)`,
+
+	// ---------------------------------------------------------------
+	// Data planes
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS data_planes (
+		id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+		tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		name TEXT NOT NULL,
+		cloud TEXT NOT NULL,
+		region TEXT NOT NULL,
+		cluster_name TEXT,
+		status TEXT NOT NULL DEFAULT 'provisioning',
+		agent_count INTEGER DEFAULT 0,
+		last_heartbeat TIMESTAMPTZ,
+		config JSONB DEFAULT '{}'::jsonb,
+		created_at TIMESTAMPTZ DEFAULT now()
+	)`,
 }

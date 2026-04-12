@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { useToast } from "@/components/toast";
+import { api } from "@/lib/api";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
 
 // ---------------------------------------------------------------------------
@@ -166,10 +167,58 @@ export default function DeploymentsPage() {
   const [verified, setVerified] = useState(false);
 
   useEffect(() => {
-    const state = loadState();
-    setDataPlanes(state.dataPlanes);
-    setDeployments(state.deployments);
-    setLoading(false);
+    (async () => {
+      let usedApi = false;
+
+      // Try loading data planes from real API.
+      try {
+        const realPlanes = await api.listDataPlanes();
+        if (realPlanes && realPlanes.length > 0) {
+          const mapped: DataPlane[] = realPlanes.map((dp) => ({
+            id: dp.id,
+            name: dp.name,
+            cloud: dp.cloud as DataPlane["cloud"],
+            region: dp.region,
+            status: (dp.status === "healthy" ? "healthy" : dp.status === "degraded" ? "degraded" : "offline") as DataPlane["status"],
+            agentsDeployed: dp.agentCount,
+            lastHeartbeat: dp.lastHeartbeat ?? dp.createdAt,
+          }));
+          setDataPlanes(mapped);
+          usedApi = true;
+        }
+      } catch {
+        // API unavailable.
+      }
+
+      // Try loading deployments from real API.
+      try {
+        const realDeps = await api.listDeployments();
+        if (realDeps && realDeps.length > 0) {
+          const mapped: Deployment[] = realDeps.map((d) => ({
+            id: d.id,
+            agentName: d.agentName,
+            version: d.version,
+            environment: d.environment as Deployment["environment"],
+            status: d.status as Deployment["status"],
+            deployedAt: d.createdAt,
+            deployedBy: d.deployedBy ?? "unknown",
+            logs: d.logs,
+          }));
+          setDeployments(mapped);
+          usedApi = true;
+        }
+      } catch {
+        // API unavailable.
+      }
+
+      if (!usedApi) {
+        const state = loadState();
+        setDataPlanes(state.dataPlanes);
+        setDeployments(state.deployments);
+      }
+
+      setLoading(false);
+    })();
   }, []);
 
   const handleAddDataPlane = async () => {
@@ -183,15 +232,39 @@ export default function DeploymentsPage() {
     setVerifying(false);
     setVerified(true);
 
-    const newDp: DataPlane = {
-      id: `dp_${Date.now()}`,
-      name: wizardForm.clusterName || `${wizardForm.cloud.toLowerCase()}-${wizardForm.region}-new`,
-      cloud: wizardForm.cloud as DataPlane["cloud"],
-      region: wizardForm.region,
-      status: "healthy",
-      agentsDeployed: 0,
-      lastHeartbeat: new Date().toISOString(),
-    };
+    const dpName = wizardForm.clusterName || `${wizardForm.cloud.toLowerCase()}-${wizardForm.region}-new`;
+
+    // Try real API first.
+    let newDp: DataPlane;
+    try {
+      const result = await api.registerDataPlane({
+        name: dpName,
+        cloud: wizardForm.cloud,
+        region: wizardForm.region,
+        clusterName: wizardForm.clusterName,
+      });
+      newDp = {
+        id: result.id,
+        name: result.name,
+        cloud: result.cloud as DataPlane["cloud"],
+        region: result.region,
+        status: "healthy",
+        agentsDeployed: 0,
+        lastHeartbeat: new Date().toISOString(),
+      };
+    } catch {
+      // Fall back to local.
+      newDp = {
+        id: `dp_${Date.now()}`,
+        name: dpName,
+        cloud: wizardForm.cloud as DataPlane["cloud"],
+        region: wizardForm.region,
+        status: "healthy",
+        agentsDeployed: 0,
+        lastHeartbeat: new Date().toISOString(),
+      };
+    }
+
     const updated = [...dataPlanes, newDp];
     setDataPlanes(updated);
     saveState({ dataPlanes: updated, deployments });
@@ -481,8 +554,8 @@ helm install lantern-data-plane lantern/data-plane \\
 
       {/* Connect Data Plane Wizard */}
       {showWizard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl">
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={closeWizard}>
+          <div className="modal-content w-full max-w-lg rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
             <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
               <h2 className="text-lg font-semibold text-zinc-100">Connect Data Plane</h2>

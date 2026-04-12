@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Bot, Archive, X, Wand2, Code, Workflow, MessageSquare, Calendar, ShieldCheck } from "lucide-react";
 import { format } from "date-fns";
@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import { useAgents } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
 import { DataTable, type Column } from "@/components/data-table";
+import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
 import type { Agent } from "@/lib/mock-data";
 
@@ -139,18 +140,35 @@ export default function AgentsPage() {
       </div>
 
       <div className="flex-1 p-8">
-        <DataTable
-          columns={columns}
-          rows={agents}
-          rowKey={(a) => a.id}
-          onRowClick={(agent) => router.push(`/agents/${agent.name}`)}
-        />
+        {agents.length === 0 ? (
+          <EmptyState
+            icon={Bot}
+            title="No agents yet"
+            description="Create your first agent to get started building AI-powered workflows."
+            actionLabel="Create Agent"
+            onAction={() => setShowCreate(true)}
+          />
+        ) : (
+          <DataTable
+            columns={columns}
+            rows={agents}
+            rowKey={(a) => a.id}
+            onRowClick={(agent) => router.push(`/agents/${agent.name}`)}
+            emptyIcon={Bot}
+            emptyTitle="No agents yet"
+            emptyDescription="Create your first agent to get started."
+          />
+        )}
       </div>
 
       {/* Create Agent Modal */}
       {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl">
+        <div
+          className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowCreate(false)}
+          onKeyDown={(e) => { if (e.key === "Escape") setShowCreate(false); }}
+        >
+          <div className="modal-content w-full max-w-lg rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
             <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
               <h2 className="text-lg font-semibold text-zinc-100">Create agent</h2>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Search,
   Mail,
@@ -26,6 +26,8 @@ import {
 import clsx from "clsx";
 import { useToast } from "@/components/toast";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
+import { api } from "@/lib/api";
+import type { ConnectorInstall } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,6 +48,7 @@ interface ConnectorState {
   installed: boolean;
   connectedAccount?: string;
   installedAt?: string;
+  backendId?: string; // ID from the real API
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +96,7 @@ const connectors: ConnectorDef[] = [
 const categories = ["All", "Communication", "Email & Calendar", "Docs & Storage", "Dev Tools", "CRM & Sales", "Commerce"];
 
 // ---------------------------------------------------------------------------
-// localStorage helpers
+// localStorage helpers (fallback when API is unavailable)
 // ---------------------------------------------------------------------------
 
 const STORAGE_KEY = "lantern_connectors";
@@ -127,10 +130,36 @@ export default function ConnectorsPage() {
   const [configModal, setConfigModal] = useState<ConnectorDef | null>(null);
   const [authorizing, setAuthorizing] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [usingApi, setUsingApi] = useState(false);
 
-  useEffect(() => {
+  // Load connectors: try real API first, fall back to localStorage.
+  const loadData = useCallback(async () => {
+    try {
+      const installed = await api.listConnectors();
+      if (installed && installed.length >= 0) {
+        setUsingApi(true);
+        const stateMap: Record<string, ConnectorState> = {};
+        for (const ci of installed) {
+          stateMap[ci.connectorId] = {
+            installed: true,
+            connectedAccount: ci.displayName,
+            installedAt: ci.installedAt,
+            backendId: ci.id,
+          };
+        }
+        setStates(stateMap);
+        // Sync to localStorage as well.
+        saveConnectorStates(stateMap);
+        setLoading(false);
+        return;
+      }
+    } catch {
+      // API unavailable, fall back to localStorage.
+    }
+
+    setUsingApi(false);
     const stored = loadConnectorStates();
-    // Pre-install a few connectors for demo
+    // Pre-install a few connectors for demo if nothing stored.
     if (Object.keys(stored).length === 0) {
       const defaults: Record<string, ConnectorState> = {
         gmail: { installed: true, connectedAccount: "demo@lantern.dev", installedAt: "2026-03-15T10:00:00Z" },
@@ -144,6 +173,28 @@ export default function ConnectorsPage() {
     }
     setLoading(false);
   }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Listen for OAuth popup completion messages.
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === "lantern:oauth:complete") {
+        if (event.data.success) {
+          toast.success("Connected successfully");
+          loadData(); // Refresh from API.
+        } else {
+          toast.error(event.data.message || "OAuth failed");
+        }
+        setAuthorizing(false);
+        setConnectModal(null);
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [toast, loadData]);
 
   const filtered = useMemo(() => {
     let result = connectors;
@@ -166,7 +217,47 @@ export default function ConnectorsPage() {
 
   const handleAuthorize = async (connector: ConnectorDef) => {
     setAuthorizing(true);
-    // Simulate OAuth flow
+
+    // Try real OAuth flow first.
+    try {
+      const { redirectUrl } = await api.startOAuth(connector.id);
+      // Open OAuth popup.
+      const width = 600;
+      const height = 700;
+      const left = window.screenX + (window.outerWidth - width) / 2;
+      const top = window.screenY + (window.outerHeight - height) / 2;
+      window.open(
+        redirectUrl,
+        "lantern-oauth",
+        `width=${width},height=${height},left=${left},top=${top},popup=yes`
+      );
+      // The popup will post a message when done (handled in the useEffect above).
+      return;
+    } catch {
+      // OAuth start failed (e.g., no client ID configured). Fall back to
+      // direct install simulation.
+    }
+
+    // Fallback: install via API without OAuth, or localStorage.
+    try {
+      if (usingApi) {
+        await api.installConnector({
+          connectorId: connector.id,
+          displayName: connector.name,
+          config: {},
+          scopes: connector.permissions,
+        });
+        await loadData();
+        setAuthorizing(false);
+        setConnectModal(null);
+        toast.success(`${connector.name} connected successfully`);
+        return;
+      }
+    } catch {
+      // Fall back to localStorage.
+    }
+
+    // Pure localStorage fallback.
     await new Promise((r) => setTimeout(r, 1500));
     const updated = {
       ...states,
@@ -185,6 +276,24 @@ export default function ConnectorsPage() {
 
   const handleDisconnect = async (connector: ConnectorDef) => {
     setDisconnecting(true);
+
+    const state = states[connector.id];
+
+    // Try real API first.
+    try {
+      if (usingApi && state?.backendId) {
+        await api.uninstallConnector(state.backendId);
+        await loadData();
+        setDisconnecting(false);
+        setConfigModal(null);
+        toast.info(`${connector.name} disconnected`);
+        return;
+      }
+    } catch {
+      // Fall back to localStorage.
+    }
+
+    // localStorage fallback.
     await new Promise((r) => setTimeout(r, 600));
     const updated = { ...states };
     delete updated[connector.id];
@@ -319,10 +428,10 @@ export default function ConnectorsPage() {
         )}
       </div>
 
-      {/* Connect modal (OAuth simulation) */}
+      {/* Connect modal (OAuth flow) */}
       {connectModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl">
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setConnectModal(null)}>
+          <div className="modal-content w-full max-w-md rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
               <h2 className="text-lg font-semibold text-zinc-100">Connect {connectModal.name}</h2>
               <button
@@ -334,7 +443,7 @@ export default function ConnectorsPage() {
             </div>
 
             <div className="px-6 py-5">
-              {/* OAuth simulation */}
+              {/* OAuth info */}
               <div className="mb-5 flex items-center gap-3">
                 <div className={clsx("flex h-12 w-12 items-center justify-center rounded-xl", connectModal.iconBg)}>
                   <connectModal.icon className={clsx("h-6 w-6", connectModal.iconColor)} />
@@ -403,8 +512,8 @@ export default function ConnectorsPage() {
 
       {/* Configure modal (for installed connectors) */}
       {configModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl">
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setConfigModal(null)}>
+          <div className="modal-content w-full max-w-md rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
               <div className="flex items-center gap-3">
                 <div className={clsx("flex h-8 w-8 items-center justify-center rounded-lg", configModal.iconBg)}>

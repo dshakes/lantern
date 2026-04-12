@@ -98,6 +98,117 @@ body {
   border-radius: 12px;
 }
 
+/* Smooth page transitions */
+.page-enter {
+  animation: page-fade-in 0.2s ease-out;
+}
+@keyframes page-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Button press effect */
+button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Input focus transition */
+input:focus, textarea:focus, select:focus {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Card hover lift */
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+/* Smooth modal backdrop */
+.modal-backdrop {
+  animation: backdrop-in 0.15s ease-out;
+}
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Modal content */
+.modal-content {
+  animation: modal-in 0.2s ease-out;
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Tooltip */
+.tooltip {
+  position: relative;
+}
+.tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #27272a;
+  color: #fafafa;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.tooltip:hover::after {
+  opacity: 1;
+}
+
+/* Focus ring */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px #09090b, 0 0 0 4px rgba(124, 109, 248, 0.5);
+}
+
+/* Button variants */
+.btn-primary {
+  background: var(--color-lantern-500);
+  color: #fff;
+  transition: background 0.15s ease;
+}
+.btn-primary:hover {
+  background: var(--color-lantern-400);
+}
+.btn-secondary {
+  border: 1px solid #3f3f46;
+  color: #d4d4d8;
+  transition: all 0.15s ease;
+}
+.btn-secondary:hover {
+  border-color: #52525b;
+  color: #fff;
+}
+.btn-danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  transition: background 0.15s ease;
+}
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+.btn-ghost {
+  color: #a1a1aa;
+  transition: all 0.15s ease;
+}
+.btn-ghost:hover {
+  color: #e4e4e7;
+  background: var(--color-surface-3);
+}
+
 /* Dashboard-specific utilities */
 
 .sidebar-item {
@@ -110,6 +221,7 @@ body {
   font-weight: 500;
   color: #a1a1aa;
   transition: all 0.15s ease;
+  position: relative;
 }
 
 .sidebar-item:hover {
@@ -120,6 +232,18 @@ body {
 .sidebar-item.active {
   background: var(--color-surface-3);
   color: var(--color-lantern-400);
+}
+
+.sidebar-item.active::before {
+  content: "";
+  position: absolute;
+  left: -0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-lantern-400);
 }
 
 /* Data table styles */

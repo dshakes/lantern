@@ -37,8 +37,8 @@ export function DeployModal({ open, onClose, agentName }: DeployModalProps) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="mx-4 w-full max-w-md rounded-xl border border-zinc-700 bg-surface-1 shadow-2xl">
+    <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={handleClose}>
+      <div className="modal-content mx-4 w-full max-w-md rounded-xl border border-zinc-700 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-700 px-5 py-4">
           <div className="flex items-center gap-2">

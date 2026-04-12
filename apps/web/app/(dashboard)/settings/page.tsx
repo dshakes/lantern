@@ -23,6 +23,7 @@ import { ProviderCard, type ProviderStatus } from "@/components/settings/provide
 import { ApiKeyModal, type CreatedApiKey } from "@/components/settings/api-key-modal";
 import { InviteModal, type InvitedMember } from "@/components/settings/invite-modal";
 import { ConfirmDialog } from "@/components/settings/confirm-dialog";
+import { api } from "@/lib/api";
 import { useToast } from "@/components/settings/toast";
 
 // ---------------------------------------------------------------------------
@@ -207,13 +208,36 @@ export default function SettingsPage() {
   // Billing
   const [billing, setBilling] = useState<BillingSettings>(defaultBilling);
 
-  // Load from localStorage on mount
+  // Load from real API (with localStorage fallback) on mount.
   useEffect(() => {
     setGeneral(loadLS("general", defaultGeneral));
-    setKeys(loadLS("api_keys", defaultApiKeysList()));
     setProviders(loadLS("providers", defaultProviders));
     setMembers(loadLS("members", defaultMembersList()));
     setBilling(loadLS("billing", defaultBilling));
+
+    // Try real API for API keys, fall back to localStorage.
+    (async () => {
+      try {
+        const realKeys = await api.listApiKeysReal();
+        if (realKeys && realKeys.length >= 0) {
+          const mapped: StoredApiKey[] = realKeys.map((k) => ({
+            id: k.id,
+            name: k.name,
+            prefix: k.prefix,
+            scopes: k.scopes ?? [],
+            createdAt: k.createdAt,
+            lastUsed: k.lastUsedAt ?? "Never",
+            status: (k.status === "revoked" ? "revoked" : "active") as "active" | "revoked",
+          }));
+          setKeys(mapped);
+          saveLS("api_keys", mapped);
+          return;
+        }
+      } catch {
+        // API unavailable.
+      }
+      setKeys(loadLS("api_keys", defaultApiKeysList()));
+    })();
   }, []);
 
   // ----------- General tab handlers -----------
@@ -233,7 +257,31 @@ export default function SettingsPage() {
 
   // ----------- API Keys tab handlers -----------
 
-  const handleKeyCreated = (created: CreatedApiKey) => {
+  const handleKeyCreated = async (created: CreatedApiKey) => {
+    // Try creating via real API first.
+    try {
+      const result = await api.createApiKeyReal({
+        name: created.name,
+        scopes: created.scopes,
+      });
+      const stored: StoredApiKey = {
+        id: result.key.id,
+        name: result.key.name,
+        prefix: result.key.prefix,
+        scopes: result.key.scopes ?? [],
+        createdAt: result.key.createdAt,
+        lastUsed: "Never",
+        status: "active",
+      };
+      const next = [stored, ...keys];
+      setKeys(next);
+      saveLS("api_keys", next);
+      toast("success", `API key "${created.name}" created. Key: ${result.rawKey}`);
+      return;
+    } catch {
+      // Fall back to localStorage.
+    }
+
     const stored: StoredApiKey = {
       id: created.id,
       name: created.name,
@@ -251,6 +299,14 @@ export default function SettingsPage() {
 
   const handleRevokeKey = async () => {
     if (!revokeTarget) return;
+
+    // Try real API first.
+    try {
+      await api.revokeApiKeyReal(revokeTarget.id);
+    } catch {
+      // Fall back to localStorage-only revoke.
+    }
+
     await new Promise((r) => setTimeout(r, 400));
     const next = keys.map((k) =>
       k.id === revokeTarget.id ? { ...k, status: "revoked" as const } : k

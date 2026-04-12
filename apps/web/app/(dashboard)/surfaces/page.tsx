@@ -18,6 +18,7 @@ import clsx from "clsx";
 import { useToast } from "@/components/toast";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
 import { WebChatWidget } from "@/components/web-chat-widget";
+import { api } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,6 +28,7 @@ interface SurfaceConfig {
   connected: boolean;
   fields: Record<string, string>;
   agentCount: number;
+  backendId?: string;
 }
 
 interface SurfaceDefinition {
@@ -145,7 +147,7 @@ const surfaces: SurfaceDefinition[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// localStorage helpers
+// localStorage helpers (fallback)
 // ---------------------------------------------------------------------------
 
 const STORAGE_KEY = "lantern_surfaces";
@@ -178,12 +180,41 @@ export default function SurfacesPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [showWebChat, setShowWebChat] = useState(false);
+  const [usingApi, setUsingApi] = useState(false);
 
-  useEffect(() => {
+  // Load surfaces: try real API first, fall back to localStorage.
+  const loadData = useCallback(async () => {
+    try {
+      const surfaceList = await api.listSurfaces();
+      if (surfaceList && surfaceList.length >= 0) {
+        setUsingApi(true);
+        const configMap: Record<string, SurfaceConfig> = {};
+        for (const sc of surfaceList) {
+          configMap[sc.surfaceId] = {
+            connected: sc.status === "connected",
+            fields: (sc.config as Record<string, string>) ?? {},
+            agentCount: 0,
+            backendId: sc.id,
+          };
+        }
+        setConfigs(configMap);
+        saveSurfaceConfigs(configMap);
+        setLoading(false);
+        return;
+      }
+    } catch {
+      // API unavailable.
+    }
+
+    setUsingApi(false);
     const stored = loadSurfaceConfigs();
     setConfigs(stored);
     setLoading(false);
   }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const openConfig = useCallback((surface: SurfaceDefinition) => {
     const existing = configs[surface.id];
@@ -191,7 +222,6 @@ export default function SurfacesPage() {
     surface.configFields.forEach((f) => {
       fields[f.key] = existing?.fields?.[f.key] ?? "";
     });
-    // Auto-generate tenant email for email surface
     if (surface.id === "email" && !fields.tenantEmail) {
       fields.tenantEmail = "t_acme.lantern.email";
     }
@@ -202,7 +232,32 @@ export default function SurfacesPage() {
   const handleSave = async () => {
     if (!configModal) return;
     setSaving(true);
-    // Simulate API call
+
+    try {
+      if (usingApi) {
+        const existing = configs[configModal.id];
+        if (existing?.backendId) {
+          await api.updateSurface(existing.backendId, {
+            displayName: configModal.name,
+            config: { ...formFields },
+          });
+        } else {
+          await api.configureSurface({
+            surfaceId: configModal.id,
+            displayName: configModal.name,
+            config: { ...formFields },
+          });
+        }
+        await loadData();
+        setSaving(false);
+        setConfigModal(null);
+        toast.success(`${configModal.name} configured successfully`);
+        return;
+      }
+    } catch {
+      // Fall back to localStorage.
+    }
+
     await new Promise((r) => setTimeout(r, 600));
     const updated = {
       ...configs,
@@ -222,6 +277,21 @@ export default function SurfacesPage() {
   const handleDisconnect = async () => {
     if (!configModal) return;
     setSaving(true);
+
+    try {
+      const existing = configs[configModal.id];
+      if (usingApi && existing?.backendId) {
+        await api.removeSurface(existing.backendId);
+        await loadData();
+        setSaving(false);
+        setConfigModal(null);
+        toast.info(`${configModal.name} disconnected`);
+        return;
+      }
+    } catch {
+      // Fall back to localStorage.
+    }
+
     await new Promise((r) => setTimeout(r, 400));
     const updated = { ...configs };
     delete updated[configModal.id];
@@ -234,6 +304,23 @@ export default function SurfacesPage() {
 
   const handleTest = async () => {
     setTesting(true);
+
+    try {
+      const existing = configs[configModal?.id ?? ""];
+      if (usingApi && existing?.backendId) {
+        const result = await api.testSurface(existing.backendId);
+        setTesting(false);
+        if (result.success) {
+          toast.success(result.message);
+        } else {
+          toast.error(result.message);
+        }
+        return;
+      }
+    } catch {
+      // Fall back.
+    }
+
     await new Promise((r) => setTimeout(r, 1200));
     setTesting(false);
     toast.success("Test message sent successfully");

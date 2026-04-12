@@ -54,6 +54,106 @@ export interface CreateApiKeyInput {
   scopes: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Connector types
+// ---------------------------------------------------------------------------
+
+export interface ConnectorInstall {
+  id: string;
+  tenantId: string;
+  connectorId: string;
+  displayName: string;
+  status: string;
+  config: Record<string, unknown>;
+  scopes?: string[];
+  installedBy?: string;
+  installedAt: string;
+  updatedAt: string;
+}
+
+export interface InstallConnectorInput {
+  connectorId: string;
+  displayName: string;
+  config?: Record<string, unknown>;
+  scopes?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Surface types
+// ---------------------------------------------------------------------------
+
+export interface SurfaceConfigRecord {
+  id: string;
+  tenantId: string;
+  surfaceId: string;
+  displayName: string;
+  status: string;
+  config: Record<string, unknown>;
+  webhookUrl?: string;
+  connectedAt?: string;
+  updatedAt: string;
+}
+
+export interface ConfigureSurfaceInput {
+  surfaceId: string;
+  displayName: string;
+  config?: Record<string, unknown>;
+  webhookUrl?: string;
+}
+
+export interface UpdateSurfaceInput {
+  displayName?: string;
+  config?: Record<string, unknown>;
+  webhookUrl?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Deployment types
+// ---------------------------------------------------------------------------
+
+export interface Deployment {
+  id: string;
+  tenantId: string;
+  agentName: string;
+  version: string;
+  environment: string;
+  status: string;
+  deployedBy?: string;
+  message?: string;
+  logs?: string[];
+  createdAt: string;
+  finishedAt?: string;
+}
+
+export interface CreateDeploymentInput {
+  agentName: string;
+  version: string;
+  environment?: string;
+  message?: string;
+}
+
+export interface DataPlane {
+  id: string;
+  tenantId: string;
+  name: string;
+  cloud: string;
+  region: string;
+  clusterName?: string;
+  status: string;
+  agentCount: number;
+  lastHeartbeat?: string;
+  config?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface RegisterDataPlaneInput {
+  name: string;
+  cloud: string;
+  region: string;
+  clusterName?: string;
+  config?: Record<string, unknown>;
+}
+
 export interface UsageData {
   plan: string;
   planCostUsd: number;
@@ -587,6 +687,313 @@ class LanternAPI {
     } catch {
       console.warn(
         "[lantern] Gateway unavailable for updateSettings, simulating locally",
+      );
+    }
+  }
+
+  // ---- Connectors ----------------------------------------------------------
+
+  async listConnectors(): Promise<ConnectorInstall[]> {
+    try {
+      return await this.request<ConnectorInstall[]>("/v1/connectors");
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for listConnectors, using localStorage fallback",
+      );
+      return [];
+    }
+  }
+
+  async installConnector(data: InstallConnectorInput): Promise<ConnectorInstall> {
+    try {
+      return await this.request<ConnectorInstall>("/v1/connectors/install", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for installConnector, simulating locally",
+      );
+      return {
+        id: `ci_${Date.now()}`,
+        tenantId: "t_acme",
+        connectorId: data.connectorId,
+        displayName: data.displayName,
+        status: "connected",
+        config: data.config ?? {},
+        scopes: data.scopes,
+        installedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  async uninstallConnector(id: string): Promise<void> {
+    try {
+      await this.request<void>(`/v1/connectors/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for uninstallConnector, simulating locally",
+      );
+    }
+  }
+
+  async testConnector(id: string): Promise<{ success: boolean; message: string }> {
+    try {
+      return await this.request<{ success: boolean; message: string }>(
+        `/v1/connectors/${encodeURIComponent(id)}/test`,
+        { method: "POST" },
+      );
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for testConnector, simulating locally",
+      );
+      return { success: true, message: "Connection verified (simulated)" };
+    }
+  }
+
+  async startOAuth(connectorId: string): Promise<{ redirectUrl: string; state: string }> {
+    try {
+      return await this.request<{ redirectUrl: string; state: string }>(
+        `/v1/connectors/oauth/start?connector=${encodeURIComponent(connectorId)}`,
+        { method: "POST" },
+      );
+    } catch (err) {
+      console.warn(
+        "[lantern] Gateway unavailable for startOAuth, simulating locally",
+        err,
+      );
+      throw err;
+    }
+  }
+
+  // ---- Surfaces -------------------------------------------------------------
+
+  async listSurfaces(): Promise<SurfaceConfigRecord[]> {
+    try {
+      return await this.request<SurfaceConfigRecord[]>("/v1/surfaces");
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for listSurfaces, using localStorage fallback",
+      );
+      return [];
+    }
+  }
+
+  async configureSurface(data: ConfigureSurfaceInput): Promise<SurfaceConfigRecord> {
+    try {
+      return await this.request<SurfaceConfigRecord>("/v1/surfaces", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for configureSurface, simulating locally",
+      );
+      return {
+        id: `sc_${Date.now()}`,
+        tenantId: "t_acme",
+        surfaceId: data.surfaceId,
+        displayName: data.displayName,
+        status: "connected",
+        config: data.config ?? {},
+        webhookUrl: data.webhookUrl,
+        connectedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  async updateSurface(id: string, data: UpdateSurfaceInput): Promise<SurfaceConfigRecord> {
+    try {
+      return await this.request<SurfaceConfigRecord>(
+        `/v1/surfaces/${encodeURIComponent(id)}`,
+        {
+          method: "PUT",
+          body: JSON.stringify(data),
+        },
+      );
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for updateSurface, simulating locally",
+      );
+      return {
+        id,
+        tenantId: "t_acme",
+        surfaceId: "unknown",
+        displayName: data.displayName ?? "Surface",
+        status: "connected",
+        config: data.config ?? {},
+        webhookUrl: data.webhookUrl,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  async removeSurface(id: string): Promise<void> {
+    try {
+      await this.request<void>(`/v1/surfaces/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for removeSurface, simulating locally",
+      );
+    }
+  }
+
+  async testSurface(id: string): Promise<{ success: boolean; message: string }> {
+    try {
+      return await this.request<{ success: boolean; message: string }>(
+        `/v1/surfaces/${encodeURIComponent(id)}/test`,
+        { method: "POST" },
+      );
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for testSurface, simulating locally",
+      );
+      return { success: true, message: "Test message sent (simulated)" };
+    }
+  }
+
+  // ---- API Keys (real endpoints) -------------------------------------------
+
+  async listApiKeysReal(): Promise<Array<{
+    id: string;
+    name: string;
+    prefix: string;
+    scopes: string[];
+    status: string;
+    createdAt: string;
+    lastUsedAt?: string;
+    revokedAt?: string;
+  }>> {
+    try {
+      return await this.request("/v1/api-keys");
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for listApiKeysReal, falling back",
+      );
+      throw new Error("API unavailable");
+    }
+  }
+
+  async createApiKeyReal(data: CreateApiKeyInput): Promise<{
+    key: { id: string; name: string; prefix: string; scopes: string[]; createdAt: string };
+    rawKey: string;
+  }> {
+    try {
+      return await this.request("/v1/api-keys", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for createApiKeyReal, falling back",
+      );
+      throw new Error("API unavailable");
+    }
+  }
+
+  async revokeApiKeyReal(id: string): Promise<void> {
+    try {
+      await this.request<void>(`/v1/api-keys/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for revokeApiKeyReal, falling back",
+      );
+      throw new Error("API unavailable");
+    }
+  }
+
+  // ---- Deployments ----------------------------------------------------------
+
+  async listDeployments(): Promise<Deployment[]> {
+    try {
+      return await this.request<Deployment[]>("/v1/deployments");
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for listDeployments, using localStorage fallback",
+      );
+      return [];
+    }
+  }
+
+  async createDeployment(data: CreateDeploymentInput): Promise<Deployment> {
+    try {
+      return await this.request<Deployment>("/v1/deployments", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for createDeployment, simulating locally",
+      );
+      return {
+        id: `dep_${Date.now()}`,
+        tenantId: "t_acme",
+        agentName: data.agentName,
+        version: data.version,
+        environment: data.environment ?? "development",
+        status: "deploying",
+        message: data.message,
+        logs: ["Deployment initiated (simulated)"],
+        createdAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  async getDeployment(id: string): Promise<Deployment> {
+    return this.request<Deployment>(`/v1/deployments/${encodeURIComponent(id)}`);
+  }
+
+  async listDataPlanes(): Promise<DataPlane[]> {
+    try {
+      return await this.request<DataPlane[]>("/v1/data-planes");
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for listDataPlanes, using localStorage fallback",
+      );
+      return [];
+    }
+  }
+
+  async registerDataPlane(data: RegisterDataPlaneInput): Promise<DataPlane> {
+    try {
+      return await this.request<DataPlane>("/v1/data-planes", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for registerDataPlane, simulating locally",
+      );
+      return {
+        id: `dp_${Date.now()}`,
+        tenantId: "t_acme",
+        name: data.name,
+        cloud: data.cloud,
+        region: data.region,
+        clusterName: data.clusterName,
+        status: "provisioning",
+        agentCount: 0,
+        createdAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  async removeDataPlane(id: string): Promise<void> {
+    try {
+      await this.request<void>(`/v1/data-planes/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for removeDataPlane, simulating locally",
       );
     }
   }

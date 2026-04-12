@@ -16,6 +16,7 @@ import {
 import type { Run, RunStatus } from "@/lib/mock-data";
 import { StatusBadge } from "@/components/status-badge";
 import { DataTable, type Column } from "@/components/data-table";
+import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
 
 const statusOptions: Array<{ value: RunStatus | "all"; label: string }> = [
@@ -205,12 +206,23 @@ export default function RunsPage() {
               Failed to load runs: {error.message}
             </p>
           </div>
+        ) : filteredRuns.length === 0 && !runsLoading ? (
+          <EmptyState
+            icon={Play}
+            title="No runs yet"
+            description="Start your first agent run to see execution history here."
+            actionLabel="Run Agent"
+            onAction={() => setShowRunDialog(true)}
+          />
         ) : (
           <DataTable
             columns={columns}
             rows={filteredRuns}
             rowKey={(r) => r.id}
             onRowClick={(run) => router.push(`/runs/${run.id}`)}
+            emptyIcon={Play}
+            emptyTitle="No runs match your filters"
+            emptyDescription="Try adjusting your search or filters."
           />
         )}
       </div>
