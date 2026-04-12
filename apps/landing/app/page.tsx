@@ -347,7 +347,7 @@ function Navbar() {
 /* ───────────────────────────────────────────────────── */
 function Hero() {
   return (
-    <section className="relative min-h-[85vh] flex items-center justify-center pt-20 pb-12 overflow-hidden noise-bg">
+    <section className="relative flex items-center justify-center pt-28 pb-16 overflow-hidden noise-bg">
       {/* Animated grid background */}
       <div className="absolute inset-0 animated-grid pointer-events-none" />
 
@@ -377,16 +377,17 @@ function Hero() {
         </FadeIn>
 
         <FadeIn delay={0.1}>
-          <h1 className="text-5xl sm:text-7xl lg:text-[5.5rem] font-bold tracking-[-0.04em] leading-[1] mb-6">
-            <span className="text-zinc-200">Agents that </span>
-            <span className="shimmer-text">never go down.</span>
+          <h1 className="text-4xl sm:text-6xl lg:text-7xl font-bold tracking-[-0.03em] leading-[1.05] mb-5">
+            <span className="shimmer-text">Production runtime</span>
+            <br />
+            <span className="text-white">for AI agents.</span>
           </h1>
         </FadeIn>
 
         <FadeIn delay={0.2}>
-          <p className="text-base sm:text-lg text-zinc-500 max-w-lg mx-auto mb-10 leading-relaxed">
-            Lantern is the open-source runtime for AI agents in production.
-            Multi-model. Crash-proof. Deployed in your cloud.
+          <p className="text-sm sm:text-base text-zinc-500 max-w-md mx-auto mb-8 leading-relaxed">
+            One platform to build, deploy, and operate autonomous agents
+            across any model and any cloud. Open source.
           </p>
         </FadeIn>
 
@@ -421,7 +422,7 @@ function Hero() {
 /* ───────────────────────────────────────────────────── */
 function StatsBar() {
   return (
-    <section className="relative py-20 px-6 border-t border-white/5 overflow-hidden">
+    <section className="relative py-14 px-6 border-t border-white/5 overflow-hidden">
       <div className="absolute inset-0 animated-grid pointer-events-none opacity-50" />
       <div className="relative max-w-6xl mx-auto">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
@@ -433,7 +434,7 @@ function StatsBar() {
           ].map((stat, i) => (
             <FadeIn key={stat.label} delay={i * 0.1}>
               <div className="text-center">
-                <div className="text-5xl sm:text-6xl font-black stat-value mb-2">
+                <div className="text-4xl sm:text-5xl font-bold stat-value mb-1">
                   <AnimatedCounter
                     value={stat.value}
                     prefix={stat.prefix || ""}
@@ -498,11 +499,11 @@ const competitors: {
 
 function ComparisonTable() {
   return (
-    <section id="why" className="relative py-20 px-6 border-t border-white/5">
+    <section id="why" className="relative py-14 px-6 border-t border-white/5">
       <div className="max-w-6xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-10">
-            <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
+          <div className="text-center mb-8">
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
               Why another{" "}
               <span className="gradient-text">agent platform?</span>
             </h2>
@@ -692,11 +693,11 @@ CLI       REST API
 
 function Features() {
   return (
-    <section id="features" className="relative py-20 px-6">
+    <section id="features" className="relative py-14 px-6">
       <div className="max-w-7xl mx-auto">
         <FadeIn>
           <div className="text-center mb-12">
-            <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
               What makes Lantern{" "}
               <span className="gradient-text">different</span>
             </h2>
@@ -740,11 +741,11 @@ function Features() {
 /* ───────────────────────────────────────────────────── */
 function CodeTour() {
   return (
-    <section id="tour" className="relative py-20 px-6 border-t border-white/5">
+    <section id="tour" className="relative py-14 px-6 border-t border-white/5">
       <div className="max-w-6xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-10">
-            <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
+          <div className="text-center mb-8">
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
               60-second{" "}
               <span className="gradient-text">tour</span>
             </h2>
@@ -932,7 +933,7 @@ function CodeTour() {
         </FadeIn>
 
         {/* Annotation callouts */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mt-10 max-w-4xl mx-auto">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6 max-w-4xl mx-auto">
           {[
             {
               label: "Durable steps",
@@ -1005,11 +1006,11 @@ function ArchServiceBox({
 
 function Architecture() {
   return (
-    <section className="relative py-20 px-6 border-t border-white/5">
+    <section className="relative py-14 px-6 border-t border-white/5">
       <div className="max-w-6xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-10">
-            <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
+          <div className="text-center mb-8">
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
               Built for the{" "}
               <span className="gradient-text">real problems</span>
             </h2>
@@ -1167,11 +1168,11 @@ function Architecture() {
 /* ───────────────────────────────────────────────────── */
 function DeployCommands() {
   return (
-    <section className="relative py-20 px-6 border-t border-white/5">
+    <section className="relative py-14 px-6 border-t border-white/5">
       <div className="max-w-4xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-10">
-            <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
+          <div className="text-center mb-8">
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
               Deploy in{" "}
               <span className="gradient-text">3 commands</span>
             </h2>
@@ -1314,12 +1315,12 @@ function Pricing() {
   return (
     <section
       id="pricing"
-      className="relative py-20 px-6 border-t border-white/5"
+      className="relative py-14 px-6 border-t border-white/5"
     >
       <div className="max-w-5xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-10">
-            <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
+          <div className="text-center mb-8">
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
               Cheaper than{" "}
               <span className="gradient-text">doing it yourself</span>
             </h2>
@@ -1418,11 +1419,11 @@ const useCases: {
 
 function UseCases() {
   return (
-    <section className="relative py-20 px-6 border-t border-white/5">
+    <section className="relative py-14 px-6 border-t border-white/5">
       <div className="max-w-6xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-10">
-            <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
+          <div className="text-center mb-8">
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
               Built for the{" "}
               <span className="gradient-text">real world</span>
             </h2>
@@ -1467,7 +1468,7 @@ function SocialProof() {
   ];
 
   return (
-    <section className="relative py-20 px-6 border-t border-white/5">
+    <section className="relative py-14 px-6 border-t border-white/5">
       <div className="max-w-5xl mx-auto">
         <FadeIn>
           <p className="text-center text-sm text-zinc-600 uppercase tracking-widest mb-10">
@@ -1494,12 +1495,12 @@ function SocialProof() {
 /* ───────────────────────────────────────────────────── */
 function CTA() {
   return (
-    <section className="relative py-20 px-6 overflow-hidden">
+    <section className="relative py-14 px-6 overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-b from-transparent via-lantern-900/10 to-transparent pointer-events-none" />
       <div className="relative max-w-3xl mx-auto text-center">
         <FadeIn>
-          <Flame className="w-12 h-12 text-lantern-500 mx-auto mb-6 animate-[float_4s_ease-in-out_infinite]" />
-          <h2 className="text-4xl sm:text-6xl font-black tracking-tight mb-6">
+          <Flame className="w-8 h-8 text-lantern-500 mx-auto mb-4 animate-[float_4s_ease-in-out_infinite]" />
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-4">
             Start building in
             <br />
             <span className="gradient-text">60 seconds.</span>
