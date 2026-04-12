@@ -468,9 +468,20 @@ function AgentCreatePage() {
                     onChange={(e) => updateSpec({ model: e.target.value })}
                     className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
                   >
-                    {availableModels.map((m) => (
-                      <option key={m.value} value={m.value}>{m.label}</option>
-                    ))}
+                    <option value="auto">Auto (recommended)</option>
+                    <optgroup label="Anthropic">
+                      <option value="reasoning-frontier">Reasoning Frontier — Claude Opus 4</option>
+                      <option value="reasoning-large">Reasoning Large — Claude Sonnet 4</option>
+                      <option value="reasoning-small">Reasoning Small — Claude Haiku 4</option>
+                      <option value="code-large">Code Large — Claude Sonnet 4</option>
+                    </optgroup>
+                    <optgroup label="OpenAI">
+                      <option value="chat-large">Chat Large — GPT-4o</option>
+                      <option value="chat-small">Chat Small — GPT-4o Mini</option>
+                    </optgroup>
+                    <optgroup label="Google">
+                      <option value="vision-large">Vision Large — Gemini 2.5 Pro</option>
+                    </optgroup>
                   </select>
                   {!isConfigured && (
                     <p className="mt-1 text-[11px] text-amber-400">No LLM provider configured.</p>

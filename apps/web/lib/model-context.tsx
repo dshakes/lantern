@@ -43,11 +43,13 @@ export interface ModelOption {
 /** All capabilities the platform knows about. */
 export const ALL_MODELS: ModelOption[] = [
   { value: "auto", label: "Auto (recommended)", requiresProvider: true },
-  { value: "reasoning-large", label: "Reasoning Large", requiresProvider: true },
-  { value: "reasoning-small", label: "Reasoning Small", requiresProvider: true },
-  { value: "chat-large", label: "Chat Large", requiresProvider: true },
-  { value: "chat-small", label: "Chat Small", requiresProvider: true },
-  { value: "code-large", label: "Code Large", requiresProvider: true },
+  { value: "reasoning-frontier", label: "Reasoning Frontier — Claude Opus 4", requiresProvider: true },
+  { value: "reasoning-large", label: "Reasoning Large — Claude Sonnet 4", requiresProvider: true },
+  { value: "reasoning-small", label: "Reasoning Small — Claude Haiku 4", requiresProvider: true },
+  { value: "chat-large", label: "Chat Large — GPT-4o", requiresProvider: true },
+  { value: "chat-small", label: "Chat Small — GPT-4o Mini", requiresProvider: true },
+  { value: "code-large", label: "Code Large — Claude Sonnet 4", requiresProvider: true },
+  { value: "vision-large", label: "Vision Large — Gemini 2.5 Pro", requiresProvider: true },
 ];
 
 // ---------------------------------------------------------------------------
