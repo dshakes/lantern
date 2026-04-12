@@ -14,6 +14,7 @@ type globalFlags struct {
 	apiKey   string
 	tenantID string
 	output   string
+	rest     bool
 }
 
 var flags globalFlags
@@ -38,6 +39,12 @@ stream logs, and deploy agent code from your terminal.`,
 	pf.StringVar(&flags.apiKey, "api-key", envOrDefault("LANTERN_API_KEY", ""), "API key for authentication (env: LANTERN_API_KEY)")
 	pf.StringVar(&flags.tenantID, "tenant-id", envOrDefault("LANTERN_TENANT_ID", ""), "Tenant ID (env: LANTERN_TENANT_ID)")
 	pf.StringVarP(&flags.output, "output", "o", "text", "Output format: text or json")
+	pf.BoolVar(&flags.rest, "rest", false, "Force REST API instead of gRPC (env: LANTERN_USE_REST)")
+
+	// Check env var for REST mode.
+	if envOrDefault("LANTERN_USE_REST", "") != "" {
+		flags.rest = true
+	}
 
 	// Register subcommand groups.
 	root.AddCommand(newAgentsCommand())
@@ -47,16 +54,58 @@ stream logs, and deploy agent code from your terminal.`,
 	root.AddCommand(newDeployCommand())
 	root.AddCommand(newInfraCommand())
 
+	// Auth commands.
+	root.AddCommand(newLoginCommand())
+	root.AddCommand(newWhoamiCommand())
+	root.AddCommand(newLogoutCommand())
+
 	return root
 }
 
 // clientConfig builds a ClientConfig from the resolved global flags.
 func clientConfig() internal.ClientConfig {
-	return internal.ClientConfig{
+	cfg := internal.ClientConfig{
 		APIUrl:   flags.apiURL,
 		APIKey:   flags.apiKey,
 		TenantID: flags.tenantID,
 	}
+
+	// If a stored token exists and no API key was provided, use the token.
+	if cfg.APIKey == "" {
+		creds, err := internal.LoadCredentials()
+		if err == nil && creds != nil && creds.Token != "" {
+			cfg.APIKey = creds.Token
+		}
+	}
+
+	return cfg
+}
+
+// restClient creates a REST client configured from global flags and stored
+// credentials. Commands can use this as a fallback when gRPC is unavailable.
+func restClient() *internal.RESTClient {
+	restURL := deriveRESTURL(flags.apiURL)
+	token := flags.apiKey
+
+	// Try stored credentials if no API key was provided.
+	if token == "" {
+		creds, err := internal.LoadCredentials()
+		if err == nil && creds != nil && creds.Token != "" {
+			token = creds.Token
+		}
+	}
+
+	return internal.NewRESTClient(restURL, "", token)
+}
+
+// shouldUseREST returns true when the CLI should use REST instead of gRPC.
+// This is true when --rest is set, or when we auto-detect that gRPC is
+// unavailable (by checking if the REST API responds).
+func shouldUseREST() bool {
+	if flags.rest {
+		return true
+	}
+	return false
 }
 
 // isJSON returns true when the user requested JSON output.

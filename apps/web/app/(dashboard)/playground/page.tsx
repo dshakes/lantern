@@ -22,7 +22,6 @@ import { format } from "date-fns";
 import clsx from "clsx";
 import {
   agents as mockAgents,
-  modelOptions,
   sampleRunEvents,
   failedRunEvents,
   runningRunEvents,
@@ -38,6 +37,7 @@ import {
 } from "@/components/event-stream";
 import { JsonViewer } from "@/components/json-viewer";
 import { api } from "@/lib/api";
+import { useModels } from "@/lib/model-context";
 import Link from "next/link";
 
 // ---------------------------------------------------------------------------
@@ -153,6 +153,9 @@ function prettyPrintJson(str: string): string {
 // ---------------------------------------------------------------------------
 
 export default function PlaygroundPage() {
+  // Model context -- configured providers and available models
+  const { availableModels, isConfigured, loading: modelsLoading } = useModels();
+
   // Input config state
   const [selectedAgent, setSelectedAgent] = useState("research-agent");
   const [selectedModel, setSelectedModel] = useState("auto");
@@ -168,7 +171,7 @@ export default function PlaygroundPage() {
   const [costLimit, setCostLimit] = useState("1.00");
   const [streamEnabled, setStreamEnabled] = useState(true);
 
-  // LLM provider state
+  // LLM provider state (kept for backwards compat with existing checks)
   const [providersChecked, setProvidersChecked] = useState(false);
   const [hasProviders, setHasProviders] = useState(false);
   const [providerCheckError, setProviderCheckError] = useState(false);
@@ -628,12 +631,17 @@ export default function PlaygroundPage() {
                 onChange={(e) => setSelectedModel(e.target.value)}
                 className="h-10 w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 text-sm text-zinc-300 focus:border-lantern-500/50 focus:outline-none focus:ring-1 focus:ring-lantern-500/20"
               >
-                {modelOptions.map((m) => (
+                {availableModels.map((m) => (
                   <option key={m.value} value={m.value}>
                     {m.label}
                   </option>
                 ))}
               </select>
+              {!modelsLoading && !isConfigured && (
+                <p className="mt-1 text-[11px] text-amber-400">
+                  No LLM provider configured. Models may be unavailable.
+                </p>
+              )}
             </div>
 
             {/* Input JSON editor */}

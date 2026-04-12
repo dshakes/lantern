@@ -65,7 +65,8 @@
       "Bash(python3.13 -m pip install -e \".[dev]\")",
       "Bash(python3.13 -m pytest tests/ -v)",
       "Bash(grep -v '.lock$')",
-      "Bash(grep -v '.sum$')"
+      "Bash(grep -v '.sum$')",
+      "Bash(go get:*)"
     ]
   }
 }

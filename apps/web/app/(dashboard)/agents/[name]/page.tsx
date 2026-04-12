@@ -38,6 +38,7 @@ import clsx from "clsx";
 import { api } from "@/lib/api";
 import { useAgent, useAgentRuns, useAgentVersions } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
+import { useModels } from "@/lib/model-context";
 import { RunDialog } from "@/components/run-dialog";
 import { StatusBadge } from "@/components/status-badge";
 import { DataTable, type Column } from "@/components/data-table";
@@ -145,6 +146,7 @@ export default function AgentDetailPage() {
   const { agent, loading: agentLoading, error: agentError } = useAgent(name);
   const { runs: agentRuns, loading: runsLoading } = useAgentRuns(name);
   const { versions, loading: versionsLoading } = useAgentVersions(name);
+  const { isConfigured: hasLlmProvider } = useModels();
 
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
   const [deleting, setDeleting] = useState(false);
@@ -359,7 +361,11 @@ export default function AgentDetailPage() {
                     <span className="rounded-md bg-indigo-500/10 px-2 py-0.5 text-xs font-medium text-indigo-400">
                       {connectedModel}
                     </span>
-                    <span className="text-[10px] text-zinc-600">capability routing</span>
+                    {hasLlmProvider ? (
+                      <span className="text-[10px] text-emerald-500">available</span>
+                    ) : (
+                      <span className="text-[10px] text-amber-400">no provider</span>
+                    )}
                   </div>
                 </div>
 

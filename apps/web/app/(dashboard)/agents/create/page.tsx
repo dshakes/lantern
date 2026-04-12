@@ -35,6 +35,7 @@ import clsx from "clsx";
 import { api } from "@/lib/api";
 import type { AgentSpec, AgentSpecStep, AgentSpecTrigger } from "@/lib/api";
 import { useToast } from "@/components/toast";
+import { useModels } from "@/lib/model-context";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -138,6 +139,7 @@ function AgentCreatePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const toast = useToast();
+  const { availableModels, isConfigured } = useModels();
   const templateParam = searchParams.get("template");
 
   const [currentStep, setCurrentStep] = useState<WizardStep>("describe");
@@ -445,10 +447,13 @@ function AgentCreatePage() {
                     onChange={(e) => updateSpec({ model: e.target.value })}
                     className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
                   >
-                    {MODELS.map((m) => (
+                    {availableModels.map((m) => (
                       <option key={m.value} value={m.value}>{m.label}</option>
                     ))}
                   </select>
+                  {!isConfigured && (
+                    <p className="mt-1 text-[11px] text-amber-400">No LLM provider configured.</p>
+                  )}
                 </div>
               </div>
               <div>

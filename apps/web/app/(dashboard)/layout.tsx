@@ -4,8 +4,10 @@ import { Sidebar } from "@/components/sidebar";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { Notifications } from "@/components/notifications";
 import { CommandPalette } from "@/components/command-palette";
-import { User, Search } from "lucide-react";
+import { User, Search, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useModels } from "@/lib/model-context";
+import Link from "next/link";
 
 export default function DashboardLayout({
   children,
@@ -13,6 +15,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const { user } = useAuth();
+  const { isConfigured, loading: modelsLoading } = useModels();
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -55,6 +58,22 @@ export default function DashboardLayout({
             </div>
           </div>
         </header>
+
+        {/* LLM Provider banner */}
+        {!modelsLoading && !isConfigured && (
+          <div className="flex items-center gap-3 border-b border-amber-500/20 bg-amber-500/5 px-6 py-2.5">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+            <p className="text-sm text-amber-300">
+              Configure an LLM provider to unlock AI features.
+            </p>
+            <Link
+              href="/settings"
+              className="ml-auto shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
+            >
+              Go to Settings
+            </Link>
+          </div>
+        )}
 
         {/* Main content with page transition */}
         <main className="flex flex-1 flex-col overflow-hidden">

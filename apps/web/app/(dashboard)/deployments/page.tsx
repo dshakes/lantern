@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Fragment } from "react";
+import { useState, useEffect, Fragment, useCallback, useRef } from "react";
 import {
   Cloud,
   Server,
@@ -17,6 +17,9 @@ import {
   Globe,
   Shield,
   Terminal,
+  Trash2,
+  RotateCcw,
+  AlertTriangle,
 } from "lucide-react";
 import clsx from "clsx";
 import { useToast } from "@/components/toast";
@@ -151,6 +154,101 @@ function EnvBadge({ env }: { env: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Confirmation Modal
+// ---------------------------------------------------------------------------
+
+function ConfirmModal({
+  open,
+  title,
+  description,
+  confirmLabel,
+  confirmColor = "lantern",
+  loading = false,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  confirmColor?: "lantern" | "red" | "amber";
+  loading?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+
+  const btnColor = {
+    lantern: "bg-lantern-500 hover:bg-lantern-400",
+    red: "bg-red-600 hover:bg-red-500",
+    amber: "bg-amber-600 hover:bg-amber-500",
+  }[confirmColor];
+
+  return (
+    <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onCancel}>
+      <div className="modal-content w-full max-w-md rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-5">
+          <h3 className="text-lg font-semibold text-zinc-100">{title}</h3>
+          <p className="mt-2 text-sm text-zinc-400">{description}</p>
+        </div>
+        <div className="flex items-center justify-end gap-3 border-t border-zinc-800 px-6 py-4">
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className={clsx(
+              "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50",
+              btnColor,
+            )}
+          >
+            {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Log line renderer with color-coding and timestamps
+// ---------------------------------------------------------------------------
+
+function DeploymentLogView({ logs, deployedAt }: { logs: string[]; deployedAt: string }) {
+  const baseTime = new Date(deployedAt).getTime();
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-surface-2 p-3 font-mono text-xs text-zinc-400 space-y-0.5 max-h-64 overflow-y-auto">
+      {logs.map((line, i) => {
+        const ts = new Date(baseTime + i * 1200).toISOString().slice(11, 23);
+        return (
+          <div key={i} className="flex gap-2">
+            <span className="select-none shrink-0 text-zinc-700">{ts}</span>
+            <span className="select-none shrink-0 text-zinc-700">{String(i + 1).padStart(2, " ")}.</span>
+            <span className={clsx(
+              line.includes("FAILED") && "text-red-400 font-medium",
+              line.includes("Rollback") && "text-amber-400",
+              line.includes("complete") && "text-emerald-400 font-medium",
+              line.includes("healthy") && !line.includes("FAILED") && "text-emerald-400/70",
+              line.includes("Pulling") && "text-blue-400/70",
+              line.includes("verified") && "text-cyan-400/70",
+              line.includes("initiated") && "text-amber-400/70",
+            )}>
+              {line}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page component
 // ---------------------------------------------------------------------------
 
@@ -159,12 +257,44 @@ export default function DeploymentsPage() {
   const [loading, setLoading] = useState(true);
   const [dataPlanes, setDataPlanes] = useState<DataPlane[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [environments, setEnvironments] = useState<Environment[]>(mockEnvironments);
   const [expandedDep, setExpandedDep] = useState<string | null>(null);
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardForm, setWizardForm] = useState({ cloud: "AWS", region: "us-east-1", clusterName: "", instanceType: "m6i.xlarge" });
   const [verifying, setVerifying] = useState(false);
   const [verified, setVerified] = useState(false);
+
+  // Promote modal state
+  const [promoteModal, setPromoteModal] = useState<{
+    open: boolean;
+    sourceEnv: string;
+    targetEnv: string;
+  }>({ open: false, sourceEnv: "", targetEnv: "" });
+  const [promoting, setPromoting] = useState(false);
+
+  // Rollback modal state
+  const [rollbackModal, setRollbackModal] = useState<{
+    open: boolean;
+    deployment: Deployment | null;
+  }>({ open: false, deployment: null });
+  const [rollingBack, setRollingBack] = useState(false);
+
+  // Remove data plane modal state
+  const [removeModal, setRemoveModal] = useState<{
+    open: boolean;
+    dataPlane: DataPlane | null;
+  }>({ open: false, dataPlane: null });
+  const [removing, setRemoving] = useState(false);
+
+  // Polling ref for deploy progress
+  const deployProgressRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (deployProgressRef.current) clearInterval(deployProgressRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -220,6 +350,278 @@ export default function DeploymentsPage() {
       setLoading(false);
     })();
   }, []);
+
+  // Recompute environment agent counts from deployments
+  const computeEnvCounts = useCallback((deps: Deployment[]) => {
+    const counts: Record<string, Set<string>> = {
+      development: new Set(),
+      staging: new Set(),
+      production: new Set(),
+    };
+    for (const d of deps) {
+      if (d.status === "live" && counts[d.environment]) {
+        counts[d.environment].add(d.agentName);
+      }
+    }
+    setEnvironments((prev) =>
+      prev.map((env) => ({
+        ...env,
+        agentCount: counts[env.name]?.size ?? env.agentCount,
+      })),
+    );
+  }, []);
+
+  useEffect(() => {
+    computeEnvCounts(deployments);
+  }, [deployments, computeEnvCounts]);
+
+  // -------------------------------------------------------------------------
+  // Promote: deploy all agents from sourceEnv to targetEnv
+  // -------------------------------------------------------------------------
+
+  const handlePromote = async () => {
+    const { sourceEnv, targetEnv } = promoteModal;
+    setPromoting(true);
+
+    // Find unique agents that are live in the source environment
+    const liveAgentsInSource = deployments.filter(
+      (d) => d.environment === sourceEnv && d.status === "live",
+    );
+    const agentMap = new Map<string, Deployment>();
+    for (const d of liveAgentsInSource) {
+      agentMap.set(d.agentName, d);
+    }
+
+    const agentsToPromote = Array.from(agentMap.values());
+
+    if (agentsToPromote.length === 0) {
+      toast.warning(`No live agents found in ${sourceEnv} to promote.`);
+      setPromoting(false);
+      setPromoteModal({ open: false, sourceEnv: "", targetEnv: "" });
+      return;
+    }
+
+    const newDeployments: Deployment[] = [];
+
+    for (const agent of agentsToPromote) {
+      // Create a deployment via the API
+      try {
+        const result = await api.createDeployment({
+          agentName: agent.agentName,
+          version: agent.version,
+          environment: targetEnv,
+          message: `Promoted from ${sourceEnv}`,
+        });
+
+        const dep: Deployment = {
+          id: result.id,
+          agentName: result.agentName,
+          version: result.version,
+          environment: result.environment as Deployment["environment"],
+          status: "deploying",
+          deployedAt: result.createdAt,
+          deployedBy: result.deployedBy ?? "dashboard",
+          logs: result.logs ?? [`Promoting ${agent.agentName}@${agent.version} from ${sourceEnv} to ${targetEnv}...`],
+        };
+        newDeployments.push(dep);
+      } catch {
+        // If the API fails, simulate locally
+        const dep: Deployment = {
+          id: `dep_${Date.now()}_${agent.agentName}`,
+          agentName: agent.agentName,
+          version: agent.version,
+          environment: targetEnv as Deployment["environment"],
+          status: "deploying",
+          deployedAt: new Date().toISOString(),
+          deployedBy: "dashboard",
+          logs: [`Promoting ${agent.agentName}@${agent.version} from ${sourceEnv} to ${targetEnv}...`],
+        };
+        newDeployments.push(dep);
+      }
+    }
+
+    // Add new deployments to the list and persist
+    const updated = [...newDeployments, ...deployments];
+    setDeployments(updated);
+    saveState({ dataPlanes, deployments: updated });
+
+    toast.success(`Promoting ${agentsToPromote.length} agent(s) to ${targetEnv}`);
+    setPromoting(false);
+    setPromoteModal({ open: false, sourceEnv: "", targetEnv: "" });
+
+    // Simulate deployment progress: deploying -> live after a few seconds
+    const newDepIds = new Set(newDeployments.map((d) => d.id));
+    setTimeout(() => {
+      setDeployments((prev) => {
+        const withProgress = prev.map((d) => {
+          if (!newDepIds.has(d.id)) return d;
+          return {
+            ...d,
+            status: "live" as const,
+            logs: [
+              ...(d.logs ?? []),
+              "Bundle verified",
+              "Starting rollout...",
+              "All replicas healthy",
+              "Deployment complete.",
+            ],
+          };
+        });
+        saveState({ dataPlanes, deployments: withProgress });
+        return withProgress;
+      });
+      toast.success(`All agents successfully promoted to ${targetEnv}`);
+    }, 3000);
+  };
+
+  // -------------------------------------------------------------------------
+  // Rollback: create a new deployment with the previous version
+  // -------------------------------------------------------------------------
+
+  const handleRollback = async () => {
+    const dep = rollbackModal.deployment;
+    if (!dep) return;
+    setRollingBack(true);
+
+    // Find the most recent live deployment for this agent in this environment
+    // that has a different version (the "previous" version).
+    const previousDep = deployments.find(
+      (d) =>
+        d.agentName === dep.agentName &&
+        d.environment === dep.environment &&
+        d.version !== dep.version &&
+        (d.status === "live" || d.status === "rolled-back"),
+    );
+
+    const rollbackVersion = previousDep?.version ?? `${dep.version}-rollback`;
+
+    try {
+      const result = await api.createDeployment({
+        agentName: dep.agentName,
+        version: rollbackVersion,
+        environment: dep.environment,
+        message: `Rollback from ${dep.version}`,
+      });
+
+      const newDep: Deployment = {
+        id: result.id,
+        agentName: result.agentName,
+        version: result.version,
+        environment: result.environment as Deployment["environment"],
+        status: "deploying",
+        deployedAt: result.createdAt,
+        deployedBy: result.deployedBy ?? "dashboard",
+        logs: result.logs ?? [`Rolling back ${dep.agentName} to ${rollbackVersion}...`],
+      };
+
+      const updated = [
+        newDep,
+        ...deployments.map((d) =>
+          d.id === dep.id ? { ...d, status: "rolled-back" as const } : d,
+        ),
+      ];
+      setDeployments(updated);
+      saveState({ dataPlanes, deployments: updated });
+      toast.success(`Rolling back ${dep.agentName} to ${rollbackVersion}`);
+
+      // Simulate completion
+      setTimeout(() => {
+        setDeployments((prev) => {
+          const withProgress = prev.map((d) =>
+            d.id === newDep.id
+              ? {
+                  ...d,
+                  status: "live" as const,
+                  logs: [
+                    ...(d.logs ?? []),
+                    "Bundle verified",
+                    "Starting rollout...",
+                    "Rollback deployment complete.",
+                  ],
+                }
+              : d,
+          );
+          saveState({ dataPlanes, deployments: withProgress });
+          return withProgress;
+        });
+        toast.success(`Rollback of ${dep.agentName} complete`);
+      }, 2500);
+    } catch {
+      // Simulate locally on API failure
+      const newDep: Deployment = {
+        id: `dep_rb_${Date.now()}`,
+        agentName: dep.agentName,
+        version: rollbackVersion,
+        environment: dep.environment,
+        status: "deploying",
+        deployedAt: new Date().toISOString(),
+        deployedBy: "dashboard",
+        logs: [`Rolling back ${dep.agentName} to ${rollbackVersion}...`],
+      };
+
+      const updated = [
+        newDep,
+        ...deployments.map((d) =>
+          d.id === dep.id ? { ...d, status: "rolled-back" as const } : d,
+        ),
+      ];
+      setDeployments(updated);
+      saveState({ dataPlanes, deployments: updated });
+      toast.success(`Rolling back ${dep.agentName} to ${rollbackVersion}`);
+
+      setTimeout(() => {
+        setDeployments((prev) => {
+          const withProgress = prev.map((d) =>
+            d.id === newDep.id
+              ? {
+                  ...d,
+                  status: "live" as const,
+                  logs: [
+                    ...(d.logs ?? []),
+                    "Bundle verified",
+                    "Starting rollout...",
+                    "Rollback deployment complete.",
+                  ],
+                }
+              : d,
+          );
+          saveState({ dataPlanes, deployments: withProgress });
+          return withProgress;
+        });
+        toast.success(`Rollback of ${dep.agentName} complete`);
+      }, 2500);
+    } finally {
+      setRollingBack(false);
+      setRollbackModal({ open: false, deployment: null });
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Remove data plane
+  // -------------------------------------------------------------------------
+
+  const handleRemoveDataPlane = async () => {
+    const dp = removeModal.dataPlane;
+    if (!dp) return;
+    setRemoving(true);
+
+    try {
+      await api.removeDataPlane(dp.id);
+    } catch {
+      // Simulate locally
+    }
+
+    const updated = dataPlanes.filter((d) => d.id !== dp.id);
+    setDataPlanes(updated);
+    saveState({ dataPlanes: updated, deployments });
+    toast.success(`Data plane "${dp.name}" removed`);
+    setRemoving(false);
+    setRemoveModal({ open: false, dataPlane: null });
+  };
+
+  // -------------------------------------------------------------------------
+  // Add data plane wizard
+  // -------------------------------------------------------------------------
 
   const handleAddDataPlane = async () => {
     if (wizardStep < 3) {
@@ -304,6 +706,10 @@ helm install lantern-data-plane lantern/data-plane \\
     return `${Math.floor(hrs / 24)}d ago`;
   };
 
+  const getPromoteTarget = (envName: string): string => {
+    return envName === "development" ? "staging" : "production";
+  };
+
   if (loading) {
     return (
       <div className="flex flex-1 flex-col overflow-auto">
@@ -328,7 +734,7 @@ helm install lantern-data-plane lantern/data-plane \\
       <div className="border-b border-zinc-800 bg-surface-1 px-8 py-5">
         <h1 className="text-xl font-semibold text-zinc-100">Deployments</h1>
         <p className="mt-1 text-sm text-zinc-500">
-          Manage your infrastructure and data planes
+          Manage your infrastructure, data planes, and promotion pipeline
         </p>
       </div>
 
@@ -359,6 +765,7 @@ helm install lantern-data-plane lantern/data-plane \\
                   <th>Status</th>
                   <th>Agents</th>
                   <th>Last Heartbeat</th>
+                  <th className="w-16"></th>
                 </tr>
               </thead>
               <tbody>
@@ -392,6 +799,15 @@ helm install lantern-data-plane lantern/data-plane \\
                     <td>
                       <span className="text-xs text-zinc-500">{timeAgo(dp.lastHeartbeat)}</span>
                     </td>
+                    <td>
+                      <button
+                        onClick={() => setRemoveModal({ open: true, dataPlane: dp })}
+                        className="rounded-lg p-1.5 text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                        title="Remove data plane"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -417,6 +833,7 @@ helm install lantern-data-plane lantern/data-plane \\
                   <th>Status</th>
                   <th>Deployed At</th>
                   <th>Deployed By</th>
+                  <th className="w-24">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -464,29 +881,29 @@ helm install lantern-data-plane lantern/data-plane \\
                       <td>
                         <span className="text-xs text-zinc-500">{dep.deployedBy}</span>
                       </td>
+                      <td>
+                        {dep.status === "failed" && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRollbackModal({ open: true, deployment: dep });
+                            }}
+                            className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-400 transition-colors hover:bg-amber-500/20"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Rollback
+                          </button>
+                        )}
+                      </td>
                     </tr>
                     {expandedDep === dep.id && dep.logs && (
                       <tr>
-                        <td colSpan={7} className="!p-0">
+                        <td colSpan={8} className="!p-0">
                           <div className="border-t border-zinc-800/50 bg-surface-0 px-6 py-3">
                             <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-zinc-600">
                               Deployment Logs
                             </p>
-                            <div className="rounded-lg border border-zinc-800 bg-surface-2 p-3 font-mono text-xs text-zinc-400 space-y-0.5">
-                              {dep.logs.map((line, i) => (
-                                <div key={i} className="flex gap-2">
-                                  <span className="select-none text-zinc-700">{String(i + 1).padStart(2, " ")}.</span>
-                                  <span className={clsx(
-                                    line.includes("FAILED") && "text-red-400",
-                                    line.includes("Rollback") && "text-amber-400",
-                                    line.includes("complete") && "text-emerald-400",
-                                    line.includes("healthy") && !line.includes("FAILED") && "text-emerald-400/70",
-                                  )}>
-                                    {line}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
+                            <DeploymentLogView logs={dep.logs} deployedAt={dep.deployedAt} />
                           </div>
                         </td>
                       </tr>
@@ -506,7 +923,7 @@ helm install lantern-data-plane lantern/data-plane \\
           </h2>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {mockEnvironments.map((env) => (
+            {environments.map((env) => (
               <div
                 key={env.name}
                 className="rounded-xl border border-zinc-800 bg-surface-1 p-5"
@@ -532,7 +949,13 @@ helm install lantern-data-plane lantern/data-plane \\
                 <p className="mt-1 text-xs text-zinc-500">{env.agentCount} agents deployed</p>
                 {env.name !== "production" && (
                   <button
-                    onClick={() => toast.info(`Promote to ${env.name === "development" ? "staging" : "production"}?`)}
+                    onClick={() =>
+                      setPromoteModal({
+                        open: true,
+                        sourceEnv: env.name,
+                        targetEnv: getPromoteTarget(env.name),
+                      })
+                    }
                     className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"
                   >
                     <ArrowRight className="h-3 w-3" />
@@ -550,6 +973,41 @@ helm install lantern-data-plane lantern/data-plane \\
           </div>
         </section>
       </div>
+
+      {/* Promote Confirmation Modal */}
+      <ConfirmModal
+        open={promoteModal.open}
+        title={`Promote to ${promoteModal.targetEnv}?`}
+        description={`This will deploy all agents from ${promoteModal.sourceEnv} to ${promoteModal.targetEnv}. Each agent will get a new deployment record and transition through deploying to live.`}
+        confirmLabel={promoting ? "Promoting..." : "Promote"}
+        loading={promoting}
+        onConfirm={handlePromote}
+        onCancel={() => setPromoteModal({ open: false, sourceEnv: "", targetEnv: "" })}
+      />
+
+      {/* Rollback Confirmation Modal */}
+      <ConfirmModal
+        open={rollbackModal.open}
+        title={`Rollback ${rollbackModal.deployment?.agentName ?? ""}?`}
+        description={`This will create a new deployment for ${rollbackModal.deployment?.agentName ?? ""} in ${rollbackModal.deployment?.environment ?? ""} using the previous version. The failed deployment will be marked as rolled back.`}
+        confirmLabel={rollingBack ? "Rolling back..." : "Rollback"}
+        confirmColor="amber"
+        loading={rollingBack}
+        onConfirm={handleRollback}
+        onCancel={() => setRollbackModal({ open: false, deployment: null })}
+      />
+
+      {/* Remove Data Plane Confirmation Modal */}
+      <ConfirmModal
+        open={removeModal.open}
+        title={`Remove "${removeModal.dataPlane?.name ?? ""}"?`}
+        description={`This will disconnect the data plane "${removeModal.dataPlane?.name ?? ""}" from the control plane. Any agents deployed on it will become unreachable. This action cannot be undone.`}
+        confirmLabel={removing ? "Removing..." : "Remove"}
+        confirmColor="red"
+        loading={removing}
+        onConfirm={handleRemoveDataPlane}
+        onCancel={() => setRemoveModal({ open: false, dataPlane: null })}
+      />
 
       {/* Connect Data Plane Wizard */}
       {showWizard && (

@@ -2,14 +2,14 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { X, Play, AlertCircle } from "lucide-react";
+import { X, Play, AlertCircle, AlertTriangle } from "lucide-react";
 import clsx from "clsx";
 import {
   agents,
-  modelOptions,
   agentInputExamples,
 } from "@/lib/mock-data";
 import { api } from "@/lib/api";
+import { useModels } from "@/lib/model-context";
 
 interface RunDialogProps {
   open: boolean;
@@ -36,6 +36,7 @@ export function RunDialog({
 }: RunDialogProps) {
   const router = useRouter();
   const backdropRef = useRef<HTMLDivElement>(null);
+  const { availableModels, isConfigured } = useModels();
 
   const resolvedNames =
     agentNames.length > 0
@@ -217,12 +218,18 @@ export function RunDialog({
               onChange={(e) => setModel(e.target.value)}
               className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
             >
-              {modelOptions.map((m) => (
+              {availableModels.map((m) => (
                 <option key={m.value} value={m.value}>
                   {m.label}
                 </option>
               ))}
             </select>
+            {!isConfigured && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-400">
+                <AlertTriangle className="h-3 w-3" />
+                No LLM provider configured. Go to Settings to add one.
+              </div>
+            )}
           </div>
 
           {/* Stream toggle + destination */}
