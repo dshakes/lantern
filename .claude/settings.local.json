@@ -45,7 +45,9 @@
       "Bash(go env:*)",
       "Bash(npx next:*)",
       "Bash(./node_modules/.bin/next build:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(xargs cat:*)",
+      "Bash(ls -d services/*/)"
     ]
   }
 }

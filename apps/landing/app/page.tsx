@@ -290,14 +290,18 @@ function Navbar() {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-[#09090b]/80 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-        <a href="/" className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-lantern-400 to-lantern-600 flex items-center justify-center shadow-sm">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 18h6" /><path d="M10 22h4" /><path d="M12 2v1" />
-              <path d="M12 7a4 4 0 0 0-4 4c0 2.5 2 4.5 4 6c2-1.5 4-3.5 4-6a4 4 0 0 0-4-4Z" />
-            </svg>
-          </div>
-          <span className="text-lg font-semibold tracking-tight">Lantern</span>
+        <a href="/" className="flex items-center gap-2">
+          <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
+            <rect width="32" height="32" rx="8" fill="url(#logo-grad)" />
+            <path d="M10 22V10h3v9h6v3H10Z" fill="white" />
+            <defs>
+              <linearGradient id="logo-grad" x1="0" y1="0" x2="32" y2="32">
+                <stop stopColor="#7c6df8" />
+                <stop offset="1" stopColor="#5a48b5" />
+              </linearGradient>
+            </defs>
+          </svg>
+          <span className="text-base font-semibold tracking-tight">Lantern</span>
         </a>
         <div className="hidden md:flex items-center gap-8 text-sm text-zinc-400">
           <a href="#why" className="hover:text-white transition-colors">
@@ -343,7 +347,7 @@ function Navbar() {
 /* ───────────────────────────────────────────────────── */
 function Hero() {
   return (
-    <section className="relative min-h-screen flex items-center justify-center pt-16 overflow-hidden noise-bg">
+    <section className="relative min-h-[85vh] flex items-center justify-center pt-20 pb-12 overflow-hidden noise-bg">
       {/* Animated grid background */}
       <div className="absolute inset-0 animated-grid pointer-events-none" />
 
@@ -373,38 +377,33 @@ function Hero() {
         </FadeIn>
 
         <FadeIn delay={0.1}>
-          <h1 className="text-5xl sm:text-7xl lg:text-8xl font-black tracking-tight leading-[0.9] mb-6">
-            <span className="shimmer-text">The infrastructure</span>
-            <br />
-            <span className="text-white">behind autonomous AI.</span>
+          <h1 className="text-5xl sm:text-7xl lg:text-[5.5rem] font-bold tracking-[-0.04em] leading-[1] mb-6">
+            <span className="text-zinc-200">Agents that </span>
+            <span className="shimmer-text">never go down.</span>
           </h1>
         </FadeIn>
 
         <FadeIn delay={0.2}>
-          <p className="text-lg sm:text-xl text-zinc-400 max-w-2xl mx-auto mb-10 leading-relaxed">
-            Durable execution. Multi-LLM routing. Firecracker isolation.
-            Deploy into your cloud &mdash; AWS, GCP, or Azure &mdash; with
-            one Helm install. Control agents from WhatsApp, Slack, or voice.
+          <p className="text-base sm:text-lg text-zinc-500 max-w-lg mx-auto mb-10 leading-relaxed">
+            Lantern is the open-source runtime for AI agents in production.
+            Multi-model. Crash-proof. Deployed in your cloud.
           </p>
         </FadeIn>
 
         <FadeIn delay={0.3}>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-12">
             <a
               href="https://github.com/dshakes/lantern"
-              className="btn-glow group flex items-center gap-2 px-8 py-3.5 rounded-xl bg-lantern-600 hover:bg-lantern-500 text-white font-semibold text-base transition-all hover:shadow-xl hover:shadow-lantern-600/25 hover:-translate-y-0.5"
+              className="group flex items-center gap-2 px-7 py-3 rounded-lg bg-white text-zinc-950 font-medium text-sm transition-all hover:shadow-lg hover:shadow-white/10 hover:-translate-y-0.5"
             >
-              <span className="relative z-10 flex items-center gap-2">
-                Start building free
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-              </span>
+              Get started
+              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
             </a>
             <a
               href="https://github.com/dshakes/lantern#architecture"
-              className="flex items-center gap-2 px-8 py-3.5 rounded-xl border border-zinc-700 hover:border-zinc-500 text-zinc-300 hover:text-white font-medium text-base transition-all"
+              className="flex items-center gap-2 px-7 py-3 rounded-lg border border-zinc-800 hover:border-zinc-600 text-zinc-400 hover:text-white font-medium text-sm transition-all"
             >
-              <Terminal className="w-4 h-4" />
-              Read the docs
+              Documentation
             </a>
           </div>
         </FadeIn>
@@ -499,10 +498,10 @@ const competitors: {
 
 function ComparisonTable() {
   return (
-    <section id="why" className="relative py-32 px-6 border-t border-white/5">
+    <section id="why" className="relative py-20 px-6 border-t border-white/5">
       <div className="max-w-6xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-16">
+          <div className="text-center mb-10">
             <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
               Why another{" "}
               <span className="gradient-text">agent platform?</span>
@@ -693,10 +692,10 @@ CLI       REST API
 
 function Features() {
   return (
-    <section id="features" className="relative py-32 px-6">
+    <section id="features" className="relative py-20 px-6">
       <div className="max-w-7xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-20">
+          <div className="text-center mb-12">
             <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
               What makes Lantern{" "}
               <span className="gradient-text">different</span>
@@ -741,10 +740,10 @@ function Features() {
 /* ───────────────────────────────────────────────────── */
 function CodeTour() {
   return (
-    <section id="tour" className="relative py-32 px-6 border-t border-white/5">
+    <section id="tour" className="relative py-20 px-6 border-t border-white/5">
       <div className="max-w-6xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-16">
+          <div className="text-center mb-10">
             <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
               60-second{" "}
               <span className="gradient-text">tour</span>
@@ -1006,10 +1005,10 @@ function ArchServiceBox({
 
 function Architecture() {
   return (
-    <section className="relative py-32 px-6 border-t border-white/5">
+    <section className="relative py-20 px-6 border-t border-white/5">
       <div className="max-w-6xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-16">
+          <div className="text-center mb-10">
             <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
               Built for the{" "}
               <span className="gradient-text">real problems</span>
@@ -1168,10 +1167,10 @@ function Architecture() {
 /* ───────────────────────────────────────────────────── */
 function DeployCommands() {
   return (
-    <section className="relative py-32 px-6 border-t border-white/5">
+    <section className="relative py-20 px-6 border-t border-white/5">
       <div className="max-w-4xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-16">
+          <div className="text-center mb-10">
             <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
               Deploy in{" "}
               <span className="gradient-text">3 commands</span>
@@ -1315,11 +1314,11 @@ function Pricing() {
   return (
     <section
       id="pricing"
-      className="relative py-32 px-6 border-t border-white/5"
+      className="relative py-20 px-6 border-t border-white/5"
     >
       <div className="max-w-5xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-16">
+          <div className="text-center mb-10">
             <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
               Cheaper than{" "}
               <span className="gradient-text">doing it yourself</span>
@@ -1419,10 +1418,10 @@ const useCases: {
 
 function UseCases() {
   return (
-    <section className="relative py-32 px-6 border-t border-white/5">
+    <section className="relative py-20 px-6 border-t border-white/5">
       <div className="max-w-6xl mx-auto">
         <FadeIn>
-          <div className="text-center mb-16">
+          <div className="text-center mb-10">
             <h2 className="text-4xl sm:text-5xl font-black tracking-tight mb-4">
               Built for the{" "}
               <span className="gradient-text">real world</span>
@@ -1495,7 +1494,7 @@ function SocialProof() {
 /* ───────────────────────────────────────────────────── */
 function CTA() {
   return (
-    <section className="relative py-32 px-6 overflow-hidden">
+    <section className="relative py-20 px-6 overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-b from-transparent via-lantern-900/10 to-transparent pointer-events-none" />
       <div className="relative max-w-3xl mx-auto text-center">
         <FadeIn>
