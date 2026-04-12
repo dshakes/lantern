@@ -314,22 +314,42 @@ export default function PlaygroundPage() {
     messages.push({ role: "user", content: userContent });
 
     try {
-      const response = await api.complete({
-        messages,
-        model: selectedModel,
-        stream: streamEnabled,
-        temperature,
-        maxTokens,
-      });
+      let response: Response;
+      try {
+        response = await api.complete({
+          messages,
+          model: selectedModel,
+          stream: streamEnabled,
+          temperature,
+          maxTokens,
+        });
+      } catch (fetchErr) {
+        // Network error — API not running. Fall back to demo.
+        console.warn("API unavailable, falling back to demo mode", fetchErr);
+        setDemoMode(true);
+        setDemoEvents(sampleRunEvents);
+        resetDemo();
+        return;
+      }
 
       if (!response.ok) {
         const errBody = await response.text().catch(() => "");
-        let errMsg = `API error ${response.status}`;
-        try {
-          const parsed = JSON.parse(errBody);
-          errMsg = parsed.error || errMsg;
-        } catch {
-          if (errBody) errMsg = errBody;
+        let errMsg: string;
+        if (response.status === 404) {
+          errMsg = "API server is not running. Start it with: make run-api";
+        } else if (response.status === 401) {
+          errMsg = "Not authenticated. Please sign in again.";
+        } else {
+          try {
+            const parsed = JSON.parse(errBody);
+            errMsg = parsed.error || `API error ${response.status}`;
+          } catch {
+            errMsg = errBody || `API error ${response.status}`;
+          }
+          // Check if error is about missing LLM key
+          if (errMsg.toLowerCase().includes("no llm provider") || errMsg.toLowerCase().includes("no api key")) {
+            errMsg = "No LLM provider configured. Go to Settings → LLM Providers to add your API key.";
+          }
         }
         throw new Error(errMsg);
       }
@@ -631,15 +651,25 @@ export default function PlaygroundPage() {
                 onChange={(e) => setSelectedModel(e.target.value)}
                 className="h-10 w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 text-sm text-zinc-300 focus:border-lantern-500/50 focus:outline-none focus:ring-1 focus:ring-lantern-500/20"
               >
-                {availableModels.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
+                <option value="auto">Auto (recommended)</option>
+                <optgroup label="Anthropic">
+                  <option value="reasoning-frontier">Reasoning Frontier — Claude Opus 4</option>
+                  <option value="reasoning-large">Reasoning Large — Claude Sonnet 4</option>
+                  <option value="reasoning-small">Reasoning Small — Claude Haiku 4</option>
+                  <option value="code-large">Code Large — Claude Sonnet 4</option>
+                </optgroup>
+                <optgroup label="OpenAI">
+                  <option value="chat-large">Chat Large — GPT-4o</option>
+                  <option value="chat-small">Chat Small — GPT-4o Mini</option>
+                </optgroup>
+                <optgroup label="Google">
+                  <option value="vision-large">Vision Large — Gemini 2.5 Pro</option>
+                </optgroup>
               </select>
               {!modelsLoading && !isConfigured && (
-                <p className="mt-1 text-[11px] text-amber-400">
-                  No LLM provider configured. Models may be unavailable.
+                <p className="mt-1 text-[11px] text-amber-400/80">
+                  ⚠ No LLM provider key configured.{" "}
+                  <a href="/settings" className="underline hover:text-amber-300">Add one in Settings</a>
                 </p>
               )}
             </div>

@@ -93,22 +93,50 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   const fetchProviders = useCallback(async () => {
     try {
       const data = await api.listLlmProviders();
-      setProviders(data ?? []);
+      if (data && data.length > 0) {
+        setProviders(data);
+        setLoading(false);
+        return;
+      }
     } catch {
-      // If the API is unavailable, leave providers empty.
-      setProviders([]);
-    } finally {
-      setLoading(false);
+      // API unavailable — fall through to localStorage
     }
+    // Fallback: read from localStorage (Settings page saves here)
+    try {
+      const raw = typeof window !== "undefined" ? localStorage.getItem("lantern_settings_providers") : null;
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const localProviders: ConfiguredProvider[] = Object.entries(parsed)
+          .filter(([, v]: [string, any]) => v.key && v.key.length > 10)
+          .map(([k, v]: [string, any]) => ({
+            provider: k,
+            status: v.status === "connected" ? "active" : v.status || "active",
+            keyMasked: v.key ? `${v.key.slice(0, 6)}****` : "",
+            source: "local",
+          }));
+        setProviders(localProviders);
+      }
+    } catch {}
+    setLoading(false);
   }, []);
 
   useEffect(() => {
     fetchProviders();
   }, [fetchProviders]);
 
+  // Also check localStorage as fallback (Settings page saves there when API is down)
+  const localConfigured = typeof window !== "undefined" && (() => {
+    try {
+      const raw = localStorage.getItem("lantern_settings_providers");
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      return Object.values(parsed).some((p: any) => p.key && p.key.length > 10 && !p.key.includes("****"));
+    } catch { return false; }
+  })();
+
   const isConfigured = providers.some(
-    (p) => p.status === "configured" || p.status === "active" || p.status === "valid",
-  );
+    (p) => p.status === "configured" || p.status === "active" || p.status === "valid" || p.status === "connected",
+  ) || !!localConfigured;
 
   // When providers are configured, all models are available.
   // When none are configured, still show all models (they'll use the router)

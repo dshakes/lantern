@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useModels } from "@/lib/model-context";
 import { format } from "date-fns";
 import {
   Settings2,
@@ -182,6 +183,7 @@ const roleBadgeColors: Record<string, string> = {
 
 export default function SettingsPage() {
   const { toast } = useToast();
+  const { refresh: refreshModels } = useModels();
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabId>("general");
@@ -441,6 +443,7 @@ export default function SettingsPage() {
     saveLS("providers", providers);
     setProvidersSaving(false);
     toast("success", "Provider settings saved");
+    refreshModels(); // Update global model context so all pages see the new providers
   };
 
   // ----------- Team tab handlers -----------

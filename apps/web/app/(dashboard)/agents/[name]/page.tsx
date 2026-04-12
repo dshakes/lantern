@@ -48,14 +48,10 @@ import type { Run, AgentVersion } from "@/lib/mock-data";
 
 const tabs = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
-  { key: "code", label: "Code", icon: Code2 },
-  { key: "versions", label: "Versions", icon: GitBranch },
   { key: "runs", label: "Runs", icon: Play },
-  { key: "surfaces", label: "Surfaces", icon: MessageSquare },
-  { key: "connectors", label: "Connectors", icon: Plug },
-  { key: "logs", label: "Logs", icon: ScrollText },
+  { key: "versions", label: "Versions", icon: GitBranch },
   { key: "metrics", label: "Metrics", icon: BarChart3 },
-  { key: "settings", label: "Settings", icon: Settings },
+  { key: "settings", label: "Config", icon: Settings },
 ] as const;
 
 type TabKey = (typeof tabs)[number]["key"];
@@ -152,6 +148,7 @@ export default function AgentDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [showRunDialog, setShowRunDialog] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
 
   // AI chat sidebar
   const [showAiChat, setShowAiChat] = useState(false);
@@ -248,61 +245,66 @@ export default function AgentDetailPage() {
             Back to Agents
           </button>
         </div>
-        <div className="flex items-start justify-between">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lantern-500/10">
-              <Bot className="h-5 w-5 text-lantern-500" />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-lantern-500/10">
+              <Bot className="h-4.5 w-4.5 text-lantern-400" />
             </div>
             <div>
-              <h1 className="text-xl font-semibold text-zinc-100">
+              <h1 className="text-lg font-semibold text-zinc-100">
                 {agent.name}
               </h1>
-              <p className="mt-0.5 text-sm text-zinc-500">
+              <p className="text-xs text-zinc-500 max-w-md truncate">
                 {agent.description}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowAiChat(!showAiChat)}
-              className={clsx(
-                "inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
-                showAiChat
-                  ? "border-indigo-500/50 bg-indigo-500/10 text-indigo-400"
-                  : "border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
-              )}
+              onClick={() => setShowRunDialog(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400"
             >
-              <Sparkles className="h-4 w-4" />
-              AI Chat
+              <Play className="h-3.5 w-3.5" />
+              Run
             </button>
             <button
               onClick={() => router.push(`/agents/${name}/editor`)}
-              className="inline-flex items-center gap-2 rounded-lg border border-lantern-500/30 px-4 py-2 text-sm font-medium text-lantern-400 transition-colors hover:bg-lantern-500/10"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"
             >
-              <PenTool className="h-4 w-4" />
-              Visual Editor
+              <PenTool className="h-3.5 w-3.5" />
+              Editor
             </button>
-            <button
-              onClick={() => setShowRunDialog(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3"
-            >
-              <Play className="h-4 w-4" />
-              Run Agent
-            </button>
-            <button
-              onClick={() => router.push("/deployments")}
-              className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400"
-            >
-              <Rocket className="h-4 w-4" />
-              Deploy
-            </button>
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-4 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10"
-            >
-              <Trash2 className="h-4 w-4" />
-              Delete
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowMoreMenu(!showMoreMenu)}
+                className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs text-zinc-400 transition-colors hover:bg-surface-3"
+              >
+                <span>•••</span>
+              </button>
+              {showMoreMenu && (
+                <div className="absolute right-0 top-full mt-1 w-44 rounded-lg border border-zinc-800 bg-surface-2 py-1 shadow-xl z-50">
+                  <button
+                    onClick={() => { setShowAiChat(!showAiChat); setShowMoreMenu(false); }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-surface-3"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" /> AI Chat
+                  </button>
+                  <button
+                    onClick={() => { router.push("/deployments"); setShowMoreMenu(false); }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-300 hover:bg-surface-3"
+                  >
+                    <Rocket className="h-3.5 w-3.5" /> Deploy
+                  </button>
+                  <div className="my-1 border-t border-zinc-800" />
+                  <button
+                    onClick={() => { setShowDeleteConfirm(true); setShowMoreMenu(false); }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Delete
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -376,12 +378,12 @@ export default function AgentDetailPage() {
                       <MessageSquare className="h-4 w-4 text-green-400" />
                       <span className="text-xs font-medium text-zinc-300">Surfaces</span>
                     </div>
-                    <button
-                      onClick={() => setActiveTab("surfaces")}
+                    <a
+                      href="/surfaces"
                       className="text-[10px] text-indigo-400 transition-colors hover:text-indigo-300"
                     >
-                      Add <ChevronRight className="inline h-2.5 w-2.5" />
-                    </button>
+                      Manage <ChevronRight className="inline h-2.5 w-2.5" />
+                    </a>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {connectedSurfaces.map((s) => (
@@ -400,12 +402,12 @@ export default function AgentDetailPage() {
                       <Plug className="h-4 w-4 text-teal-400" />
                       <span className="text-xs font-medium text-zinc-300">Connectors</span>
                     </div>
-                    <button
-                      onClick={() => setActiveTab("connectors")}
+                    <a
+                      href="/connectors"
                       className="text-[10px] text-indigo-400 transition-colors hover:text-indigo-300"
                     >
-                      Add <ChevronRight className="inline h-2.5 w-2.5" />
-                    </button>
+                      Manage <ChevronRight className="inline h-2.5 w-2.5" />
+                    </a>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {connectedConnectors.map((c) => (
@@ -502,22 +504,6 @@ export default function AgentDetailPage() {
               onRowClick={(run) => router.push(`/runs/${run.id}`)}
             />
           )
-        )}
-
-        {activeTab === "code" && (
-          <AgentCodeTab agentName={name} />
-        )}
-
-        {activeTab === "surfaces" && (
-          <AgentSurfacesTab agentName={name} />
-        )}
-
-        {activeTab === "connectors" && (
-          <AgentConnectorsTab agentName={name} />
-        )}
-
-        {activeTab === "logs" && (
-          <AgentLogsTab agentName={name} />
         )}
 
         {activeTab === "metrics" && (

@@ -108,14 +108,18 @@ func resolveModel(capability string) (provider, model string) {
 	switch capability {
 	case "auto", "chat-large", "":
 		return "openai", "gpt-4o"
+	case "reasoning-frontier":
+		return "anthropic", "claude-opus-4-20250514"
 	case "reasoning-large":
 		return "anthropic", "claude-sonnet-4-20250514"
 	case "reasoning-small":
-		return "openai", "gpt-4o-mini"
+		return "anthropic", "claude-haiku-4-20250414"
 	case "chat-small":
 		return "openai", "gpt-4o-mini"
 	case "code-large":
 		return "anthropic", "claude-sonnet-4-20250514"
+	case "vision-large":
+		return "openai", "gpt-4o"
 	default:
 		// If it looks like a concrete model name, try to infer provider.
 		if strings.HasPrefix(capability, "gpt") || strings.HasPrefix(capability, "o1") || strings.HasPrefix(capability, "o3") {
