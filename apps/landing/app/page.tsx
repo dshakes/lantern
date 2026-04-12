@@ -290,10 +290,15 @@ function Navbar() {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-[#09090b]/80 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Flame className="w-6 h-6 text-lantern-500" />
-          <span className="text-lg font-bold tracking-tight">Lantern</span>
-        </div>
+        <a href="/" className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-lantern-400 to-lantern-600 flex items-center justify-center shadow-sm">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18h6" /><path d="M10 22h4" /><path d="M12 2v1" />
+              <path d="M12 7a4 4 0 0 0-4 4c0 2.5 2 4.5 4 6c2-1.5 4-3.5 4-6a4 4 0 0 0-4-4Z" />
+            </svg>
+          </div>
+          <span className="text-lg font-semibold tracking-tight">Lantern</span>
+        </a>
         <div className="hidden md:flex items-center gap-8 text-sm text-zinc-400">
           <a href="#why" className="hover:text-white transition-colors">
             Why Lantern
@@ -308,7 +313,7 @@ function Navbar() {
             Pricing
           </a>
           <a
-            href="https://docs.lantern.run"
+            href="https://github.com/dshakes/lantern#architecture"
             className="hover:text-white transition-colors"
           >
             Docs
@@ -316,13 +321,13 @@ function Navbar() {
         </div>
         <div className="flex items-center gap-3">
           <a
-            href="https://app.lantern.run"
+            href="https://github.com/dshakes/lantern"
             className="text-sm text-zinc-400 hover:text-white transition-colors hidden sm:block"
           >
             Sign in
           </a>
           <a
-            href="https://app.lantern.run/signup"
+            href="https://github.com/dshakes/lantern"
             className="text-sm font-medium px-4 py-2 rounded-lg bg-lantern-600 hover:bg-lantern-500 text-white transition-all hover:shadow-lg hover:shadow-lantern-600/20"
           >
             Get started
@@ -369,24 +374,24 @@ function Hero() {
 
         <FadeIn delay={0.1}>
           <h1 className="text-5xl sm:text-7xl lg:text-8xl font-black tracking-tight leading-[0.9] mb-6">
-            <span className="shimmer-text">Serverless agents,</span>
+            <span className="shimmer-text">The infrastructure</span>
             <br />
-            <span className="text-white">production grade.</span>
+            <span className="text-white">behind autonomous AI.</span>
           </h1>
         </FadeIn>
 
         <FadeIn delay={0.2}>
           <p className="text-lg sm:text-xl text-zinc-400 max-w-2xl mx-auto mb-10 leading-relaxed">
-            Deploy AI agents that survive crashes, route to any LLM, run in your
-            cloud, and respond on WhatsApp. Any model. Any scale. Your phone as
-            the remote.
+            Durable execution. Multi-LLM routing. Firecracker isolation.
+            Deploy into your cloud &mdash; AWS, GCP, or Azure &mdash; with
+            one Helm install. Control agents from WhatsApp, Slack, or voice.
           </p>
         </FadeIn>
 
         <FadeIn delay={0.3}>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
             <a
-              href="https://app.lantern.run/signup"
+              href="https://github.com/dshakes/lantern"
               className="btn-glow group flex items-center gap-2 px-8 py-3.5 rounded-xl bg-lantern-600 hover:bg-lantern-500 text-white font-semibold text-base transition-all hover:shadow-xl hover:shadow-lantern-600/25 hover:-translate-y-0.5"
             >
               <span className="relative z-10 flex items-center gap-2">
@@ -395,7 +400,7 @@ function Hero() {
               </span>
             </a>
             <a
-              href="https://docs.lantern.run"
+              href="https://github.com/dshakes/lantern#architecture"
               className="flex items-center gap-2 px-8 py-3.5 rounded-xl border border-zinc-700 hover:border-zinc-500 text-zinc-300 hover:text-white font-medium text-base transition-all"
             >
               <Terminal className="w-4 h-4" />
@@ -1363,7 +1368,7 @@ function Pricing() {
                   href={
                     tier.name === "Enterprise"
                       ? "mailto:sales@lantern.run"
-                      : "https://app.lantern.run/signup"
+                      : "https://github.com/dshakes/lantern"
                   }
                   className={`block text-center py-3 rounded-lg font-semibold text-sm transition-all ${
                     tier.highlighted
@@ -1508,7 +1513,7 @@ function CTA() {
           {/* Sign-up form */}
           <div className="max-w-md mx-auto mb-8">
             <form
-              action="https://app.lantern.run/signup"
+              action="https://github.com/dshakes/lantern"
               className="flex flex-col sm:flex-row gap-3"
             >
               <input
@@ -1538,7 +1543,7 @@ function CTA() {
             </a>
             <span className="hidden sm:inline text-zinc-700">|</span>
             <a
-              href="https://docs.lantern.run/quickstart"
+              href="https://github.com/dshakes/lantern#quick-start"
               className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
             >
               <ExternalLink className="w-4 h-4" />
@@ -1572,10 +1577,10 @@ function Footer() {
               <a href="https://github.com/dshakes/lantern" className="text-zinc-600 hover:text-zinc-400 transition-colors">
                 <Github className="w-4 h-4" />
               </a>
-              <a href="#" className="text-zinc-600 hover:text-zinc-400 transition-colors text-xs font-medium">
+              <a href="https://x.com/lanaborai" className="text-zinc-600 hover:text-zinc-400 transition-colors text-xs font-medium">
                 Twitter
               </a>
-              <a href="#" className="text-zinc-600 hover:text-zinc-400 transition-colors text-xs font-medium">
+              <a href="https://github.com/dshakes/lantern/discussions" className="text-zinc-600 hover:text-zinc-400 transition-colors text-xs font-medium">
                 Discord
               </a>
             </div>
@@ -1586,9 +1591,9 @@ function Footer() {
               links: [
                 { label: "Features", href: "#features" },
                 { label: "Pricing", href: "#pricing" },
-                { label: "Changelog", href: "#" },
-                { label: "Roadmap", href: "#" },
-                { label: "Status", href: "#" },
+                { label: "Changelog", href: "https://github.com/dshakes/lantern/releases" },
+                { label: "Roadmap", href: "https://github.com/dshakes/lantern/blob/master/docs/architecture/00-roadmap.md" },
+                { label: "Status", href: "https://github.com/dshakes/lantern" },
               ],
             },
             {
@@ -1596,25 +1601,25 @@ function Footer() {
               links: [
                 {
                   label: "Docs",
-                  href: "https://docs.lantern.run",
+                  href: "https://github.com/dshakes/lantern#architecture",
                 },
-                { label: "API Reference", href: "#" },
-                { label: "Quickstart", href: "#" },
+                { label: "API Reference", href: "https://github.com/dshakes/lantern/tree/master/packages/proto" },
+                { label: "Quickstart", href: "https://github.com/dshakes/lantern#quick-start" },
                 {
                   label: "GitHub",
                   href: "https://github.com/dshakes/lantern",
                 },
-                { label: "Blog", href: "#" },
+                { label: "Blog", href: "https://github.com/dshakes/lantern/discussions" },
               ],
             },
             {
               title: "Company",
               links: [
-                { label: "About", href: "#" },
-                { label: "Careers", href: "#" },
+                { label: "About", href: "https://github.com/dshakes/lantern" },
+                { label: "Careers", href: "mailto:careers@lantern.run" },
                 { label: "Contact", href: "mailto:hello@lantern.run" },
-                { label: "Discord", href: "#" },
-                { label: "Privacy", href: "#" },
+                { label: "Discord", href: "https://github.com/dshakes/lantern/discussions" },
+                { label: "Privacy", href: "/privacy" },
               ],
             },
           ].map((col) => (
@@ -1640,9 +1645,9 @@ function Footer() {
             &copy; {new Date().getFullYear()} Lantern. All rights reserved.
           </p>
           <div className="flex items-center gap-6 text-xs text-zinc-600">
-            <a href="#" className="hover:text-zinc-400 transition-colors">Privacy</a>
-            <a href="#" className="hover:text-zinc-400 transition-colors">Terms</a>
-            <a href="#" className="hover:text-zinc-400 transition-colors">Security</a>
+            <a href="/privacy" className="hover:text-zinc-400 transition-colors">Privacy</a>
+            <a href="/terms" className="hover:text-zinc-400 transition-colors">Terms</a>
+            <a href="https://github.com/dshakes/lantern/blob/master/docs/architecture/10-security.md" className="hover:text-zinc-400 transition-colors">Security</a>
           </div>
         </div>
       </div>
