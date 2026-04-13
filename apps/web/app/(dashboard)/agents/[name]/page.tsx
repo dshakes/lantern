@@ -32,6 +32,7 @@ import { AiAssistButton } from "@/components/ai-assist";
 import { useAgent, useAgentRuns } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
 import { StatusBadge } from "@/components/status-badge";
+import { ExecutionLog, deduplicateSteps } from "@/components/execution-log";
 import { AgentDetailSkeleton } from "@/components/skeleton";
 import { formatCost, formatDuration } from "@/lib/mock-data";
 import type { Run } from "@/lib/mock-data";
@@ -518,52 +519,12 @@ export default function AgentDetailPage() {
                       {/* Expanded details */}
                       {expanded && (
                         <div className="border-t border-zinc-800 p-4 space-y-4">
-                          {/* Execution Steps with premium icons */}
-                          {(() => {
-                            const raw = Array.isArray(run.triggerMeta) ? run.triggerMeta as Array<Record<string, string>> : [];
-                            const stepMap = new Map<string, Record<string, string>>();
-                            for (const s of raw) stepMap.set(s.step, s);
-                            const steps = Array.from(stepMap.values());
-                            const isRunDone = run.status === "succeeded" || run.status === "failed" || run.status === "cancelled";
-                            if (steps.length === 0 && run.status === "running") {
-                              return (<div className="flex items-center gap-2.5 py-3"><div className="h-4 w-4 rounded-full border-2 border-lantern-400 border-t-transparent animate-spin" /><span className="text-sm text-zinc-400">Agent is running...</span></div>);
-                            }
-                            if (steps.length === 0) return null;
-                            // Map step names to premium icons and colors
-                            const stepIcon = (stepName: string) => {
-                              if (stepName.includes("gmail") || stepName.includes("email") || stepName.includes("fetch")) return { icon: "📧", color: "bg-red-500/10 text-red-400" };
-                              if (stepName.includes("llm") || stepName.includes("ai") || stepName.includes("call")) return { icon: "🧠", color: "bg-purple-500/10 text-purple-400" };
-                              if (stepName.includes("prompt") || stepName.includes("build")) return { icon: "📝", color: "bg-blue-500/10 text-blue-400" };
-                              if (stepName.includes("save") || stepName.includes("output")) return { icon: "💾", color: "bg-emerald-500/10 text-emerald-400" };
-                              if (stepName.includes("complete") || stepName.includes("finish")) return { icon: "✅", color: "bg-emerald-500/10 text-emerald-400" };
-                              if (stepName.includes("data") || stepName.includes("fetch")) return { icon: "🔍", color: "bg-amber-500/10 text-amber-400" };
-                              return { icon: "⚡", color: "bg-zinc-500/10 text-zinc-400" };
-                            };
-                            return (
-                              <div>
-                                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Execution Log</p>
-                                <div className="space-y-1">
-                                  {steps.map((s, i) => {
-                                    const done = s.status === "completed" || (isRunDone && s.status === "running");
-                                    const si = stepIcon(s.step);
-                                    return (
-                                      <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2 bg-surface-0">
-                                        <div className={clsx("flex h-7 w-7 items-center justify-center rounded-lg text-sm shrink-0", si.color)}>
-                                          {!done && s.status === "running" && !isRunDone ? (
-                                            <div className="h-3.5 w-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                                          ) : si.icon}
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                          <span className={clsx("text-xs", done ? "text-zinc-200" : "text-zinc-500")}>{s.detail}</span>
-                                        </div>
-                                        {done && <CheckCircle2 className="h-3 w-3 text-emerald-500/60 shrink-0" />}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            );
-                          })()}
+                          {/* Execution Steps */}
+                          <ExecutionLog
+                            steps={deduplicateSteps(run.triggerMeta)}
+                            isRunDone={run.status === "succeeded" || run.status === "failed" || run.status === "cancelled"}
+                            isRunning={run.status === "running"}
+                          />
                           {/* Output */}
                           {run.output ? (
                             <div>
