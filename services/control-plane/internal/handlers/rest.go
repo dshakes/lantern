@@ -422,6 +422,7 @@ func (h *RESTHandler) autoCreateVersion(ctx context.Context, agentName string) {
 		tenantID, agentName,
 	).Scan(&agentID)
 	if err != nil {
+		h.logger().Error("autoCreateVersion: agent not found", zap.Error(err), zap.String("agent", agentName), zap.String("tenant", tenantID))
 		return
 	}
 
@@ -447,12 +448,13 @@ func (h *RESTHandler) autoCreateVersion(ctx context.Context, agentName string) {
 	// Create a default version.
 	var versionID string
 	err = tx.QueryRow(ctx,
-		`INSERT INTO agent_versions (agent_id, version, digest, bundle_uri)
-		 VALUES ($1, 'v0.1.0', decode(md5($2), 'hex'), 'local://auto-created')
+		`INSERT INTO agent_versions (agent_id, version, digest, bundle_uri, manifest)
+		 VALUES ($1, 'v0.1.0', decode(md5($2), 'hex'), 'local://auto-created', '{"runtime":"node","entry":"src/index.ts"}'::jsonb)
 		 RETURNING id`,
 		agentID, agentName+"-v0.1.0",
 	).Scan(&versionID)
 	if err != nil {
+		h.logger().Error("auto-create version insert failed", zap.Error(err), zap.String("agent", agentName))
 		return
 	}
 
