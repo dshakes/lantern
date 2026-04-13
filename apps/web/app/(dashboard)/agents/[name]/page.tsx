@@ -118,7 +118,7 @@ export default function AgentDetailPage() {
   const name = params.name as string;
 
   const { agent, loading: agentLoading, error: agentError } = useAgent(name);
-  const { runs: agentRuns, loading: runsLoading } = useAgentRuns(name);
+  const { runs: agentRuns, loading: runsLoading, refresh: refreshRuns } = useAgentRuns(name);
 
   const initialTab = (searchParams.get("tab") as TabKey) || "build";
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
@@ -429,7 +429,25 @@ export default function AgentDetailPage() {
         {/* RUNS TAB */}
         {activeTab === "runs" && (
           <div className="space-y-4">
-            <button onClick={handleTestRun} disabled={testRunning} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50">
+            <button
+              onClick={async () => {
+                setTestRunning(true);
+                try {
+                  const run = await api.createRun({ agentName: name, input: {} });
+                  toast.success(`Run started: ${run.id.slice(0, 12)}...`);
+                  // Refresh runs list after a delay
+                  setTimeout(() => refreshRuns(), 3000);
+                  setTimeout(() => refreshRuns(), 8000);
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : "Failed to create run";
+                  toast.error(msg);
+                } finally {
+                  setTestRunning(false);
+                }
+              }}
+              disabled={testRunning}
+              className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50"
+            >
               {testRunning ? <><Loader2 className="h-3 w-3 animate-spin" /> Running...</> : <><Play className="h-3 w-3" /> Run Now</>}
             </button>
             {runsLoading ? (
