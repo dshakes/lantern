@@ -19,6 +19,9 @@ run-api: ## Run the control-plane API server locally
 	LOG_LEVEL="debug" \
 	go run ./cmd/server
 
+run-whatsapp-bridge: ## Start the WhatsApp bridge service
+	cd services/whatsapp-bridge && npm run dev
+
 landing-dev: ## Start the landing page in dev mode
 	cd apps/landing && npm run dev
 

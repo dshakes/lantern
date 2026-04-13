@@ -158,6 +158,19 @@ services:
     ports:
       - "3000:3000"
 
+  whatsapp-bridge:
+    build:
+      context: ../..
+      dockerfile: services/whatsapp-bridge/Dockerfile
+    ports:
+      - "3100:3100"
+    environment:
+      PORT: "3100"
+      LOG_LEVEL: debug
+    volumes:
+      - whatsapp-auth:/app/auth_sessions
+
 volumes:
   pg-data:
   minio-data:
+  whatsapp-auth:

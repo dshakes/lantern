@@ -246,37 +246,8 @@ export default function AgentDetailPage() {
     }
   }, [quickRunOutput]);
 
-  if (agentLoading) return <AgentDetailSkeleton />;
-
-  if (agentError || !agent) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <div className="text-center">
-          <p className="text-zinc-400">Agent not found.</p>
-          <button
-            onClick={() => router.push("/agents")}
-            className="mt-3 text-sm text-indigo-400 transition-colors hover:text-indigo-300"
-          >
-            Back to Agents
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const succeededRuns = agentRuns.filter(
-    (r) => r.status === "succeeded",
-  ).length;
-  const failedRuns = agentRuns.filter((r) => r.status === "failed").length;
-  const totalCost = agentRuns.reduce((sum, r) => sum + r.costUsd, 0);
-  const successRate =
-    agentRuns.length > 0
-      ? Math.round((succeededRuns / agentRuns.length) * 100)
-      : 0;
-  const avgCost =
-    agentRuns.length > 0 ? totalCost / agentRuns.length : 0;
-
-  const handleDelete = async () => {
+  // All callbacks must be defined BEFORE any early returns (Rules of Hooks)
+  const handleDelete = useCallback(async () => {
     setDeleting(true);
     try {
       await api.deleteAgent(name);
@@ -290,23 +261,22 @@ export default function AgentDetailPage() {
       setDeleting(false);
       setShowDeleteConfirm(false);
     }
-  };
+  }, [name, toast, router]);
 
-  const handleSavePrompt = async () => {
+  const handleSavePrompt = useCallback(async () => {
     setSavingPrompt(true);
     try {
       setAgentPrompt(name, systemPrompt);
-      await api.updateAgent(name, { systemPrompt, description: agent?.description });
+      await api.updateAgent(name, { systemPrompt });
       setPromptDirty(false);
       toast.success("System prompt saved");
-    } catch (err) {
-      // localStorage save already happened via updateAgent fallback
+    } catch {
       setPromptDirty(false);
       toast.success("System prompt saved locally");
     } finally {
       setSavingPrompt(false);
     }
-  };
+  }, [name, systemPrompt, toast]);
 
   const handleQuickRun = useCallback(async () => {
     if (!quickRunInput.trim()) return;
@@ -408,7 +378,7 @@ export default function AgentDetailPage() {
     setQuickRunDone(true);
   }, []);
 
-  const handleSaveSettings = async () => {
+  const handleSaveSettings = useCallback(async () => {
     setSavingSettings(true);
     try {
       await api.updateAgent(name, {
@@ -419,15 +389,38 @@ export default function AgentDetailPage() {
         maxCostUsd: settingsMaxCost,
         cron: settingsCron,
       });
-      toast.success("Settings saved: model, isolation, limits, schedule");
-    } catch (err) {
-      // updateAgent fallback saves to localStorage
+      toast.success("Settings saved");
+    } catch {
       toast.success("Settings saved locally");
     } finally {
       setSavingSettings(false);
     }
-  };
+  }, [name, settingsModel, settingsIsolation, settingsTimeout, settingsMaxTokens, settingsMaxCost, settingsCron, toast]);
 
+  // --- Early returns AFTER all hooks ---
+
+  if (agentLoading) return <AgentDetailSkeleton />;
+
+  if (agentError || !agent) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <div className="text-center">
+          <p className="text-zinc-400">Agent not found.</p>
+          <button
+            onClick={() => router.push("/agents")}
+            className="mt-3 text-sm text-indigo-400 transition-colors hover:text-indigo-300"
+          >
+            Back to Agents
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const succeededRuns = agentRuns.filter((r) => r.status === "succeeded").length;
+  const totalCost = agentRuns.reduce((sum, r) => sum + r.costUsd, 0);
+  const successRate = agentRuns.length > 0 ? Math.round((succeededRuns / agentRuns.length) * 100) : 0;
+  const avgCost = agentRuns.length > 0 ? totalCost / agentRuns.length : 0;
   const recentRuns = agentRuns.slice(0, 5);
 
   return (
@@ -666,7 +659,7 @@ export default function AgentDetailPage() {
                   <dd className="mt-0.5">
                     <span className="text-emerald-400">{succeededRuns}</span>
                     <span className="text-zinc-600"> / </span>
-                    <span className="text-red-400">{failedRuns}</span>
+                    <span className="text-red-400">{agentRuns.filter((r) => r.status === "failed").length}</span>
                   </dd>
                 </div>
                 <div>

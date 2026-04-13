@@ -22,6 +22,7 @@ import { useToast } from "@/components/toast";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
 import { WebChatWidget } from "@/components/web-chat-widget";
 import { QRCode, buildQRLink, generatePairingToken } from "@/components/qr-code";
+import { WhatsAppPairing } from "@/components/whatsapp-pairing";
 import { api } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -212,6 +213,7 @@ export default function SurfacesPage() {
   const [saving, setSaving] = useState(false);
   const [showWebChat, setShowWebChat] = useState(false);
   const [usingApi, setUsingApi] = useState(false);
+  const [whatsappTab, setWhatsappTab] = useState<"personal" | "business">("personal");
 
   const loadData = useCallback(async () => {
     try {
@@ -448,30 +450,47 @@ export default function SurfacesPage() {
 
             {/* Body */}
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-              {/* WhatsApp-specific info */}
-              {configModal.id === "whatsapp" && !configs[configModal.id]?.connected && (
-                <div className="rounded-lg border border-zinc-800 bg-surface-0 p-4 space-y-3">
-                  <h4 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Two ways to connect</h4>
-                  <div className="space-y-2">
-                    <div className="flex items-start gap-2.5">
-                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-500/10 text-[10px] font-bold text-green-400">1</span>
-                      <div>
-                        <p className="text-xs font-medium text-zinc-200">Personal WhatsApp (recommended for dev)</p>
-                        <p className="text-[11px] text-zinc-500">Requires the WhatsApp bridge service. Run: <code className="rounded bg-surface-2 px-1 text-zinc-400">make run-whatsapp-bridge</code> — then a QR code will appear here to scan with your phone.</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-2.5">
-                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-500/10 text-[10px] font-bold text-green-400">2</span>
-                      <div>
-                        <p className="text-xs font-medium text-zinc-200">Business API (production)</p>
-                        <p className="text-[11px] text-zinc-500">Enter your Meta Business Platform credentials below. Requires a registered business account.</p>
-                      </div>
-                    </div>
+              {/* WhatsApp tab selector */}
+              {configModal.id === "whatsapp" && (
+                <div className="space-y-4">
+                  <div className="flex rounded-lg border border-zinc-800 bg-surface-0 p-1">
+                    <button
+                      onClick={() => setWhatsappTab("personal")}
+                      className={clsx(
+                        "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                        whatsappTab === "personal"
+                          ? "bg-green-500/15 text-green-400"
+                          : "text-zinc-500 hover:text-zinc-300"
+                      )}
+                    >
+                      Personal
+                    </button>
+                    <button
+                      onClick={() => setWhatsappTab("business")}
+                      className={clsx(
+                        "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                        whatsappTab === "business"
+                          ? "bg-green-500/15 text-green-400"
+                          : "text-zinc-500 hover:text-zinc-300"
+                      )}
+                    >
+                      Business API
+                    </button>
                   </div>
+
+                  {whatsappTab === "personal" && (
+                    <div className="space-y-3">
+                      <p className="text-[11px] text-zinc-500 leading-relaxed">
+                        Pair your personal WhatsApp by scanning a QR code. Great for development and testing.
+                      </p>
+                      <WhatsAppPairing tenantId="default" />
+                    </div>
+                  )}
                 </div>
               )}
 
-              {configModal.configFields.map((field) => (
+              {/* Show config fields: for whatsapp only when business tab is active, for others always */}
+              {(configModal.id !== "whatsapp" || whatsappTab === "business") && configModal.configFields.map((field) => (
                 <div key={field.key}>
                   <label className="mb-1.5 flex items-center gap-1 text-sm font-medium text-zinc-300">
                     {field.label}
