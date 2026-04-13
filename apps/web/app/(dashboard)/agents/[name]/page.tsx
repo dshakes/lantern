@@ -307,11 +307,33 @@ export default function AgentDetailPage() {
     }
 
     const isEmailAgent = name.toLowerCase().includes("gmail") || name.toLowerCase().includes("email");
-    if (gmailConnected && isEmailAgent) {
-      messages.push({
-        role: "user",
-        content: quickRunInput + "\n\n[Note: Gmail connector is connected. In production, the agent would automatically fetch emails via the Gmail API. For this quick run, please simulate analyzing emails and produce a realistic summary.]",
-      });
+
+    // For email agents: try to fetch real emails first
+    if (isEmailAgent) {
+      try {
+        const data = await api.executeConnector("gmail", "list_messages", { limit: 15 });
+        if (data.messages && data.messages.length > 0) {
+          const emailList = data.messages
+            .map((m: { from: string; subject: string; snippet: string; date: string }, i: number) =>
+              `${i + 1}. From: ${m.from}\n   Subject: ${m.subject}\n   Preview: ${m.snippet}\n   Date: ${m.date}`)
+            .join("\n\n");
+          messages.push({
+            role: "user",
+            content: `${quickRunInput}\n\nHere are my actual recent emails:\n\n${emailList}`,
+          });
+        } else {
+          messages.push({
+            role: "user",
+            content: quickRunInput + "\n\nNo emails found in the inbox. Let the user know their inbox is empty.",
+          });
+        }
+      } catch {
+        // Gmail not connected — tell the user clearly
+        setQuickRunOutput("Gmail is not connected. Go to Connectors → Gmail to connect your email account, then try again.\n\nAlternatively, paste email content directly into the input box above.");
+        setQuickRunDone(true);
+        setQuickRunning(false);
+        return;
+      }
     } else {
       messages.push({ role: "user", content: quickRunInput });
     }
@@ -424,37 +446,7 @@ export default function AgentDetailPage() {
         toast.info("No recent emails found");
       }
     } catch {
-      // Gmail connector not in the database — use sample emails for demo
-      // In production, the OAuth flow stores the token in the DB automatically
-      const sampleEmails = `Please analyze and summarize these emails from today:
-
-1. From: boss@company.com
-   Subject: Q2 Report Deadline - Action Required
-   Preview: The Q2 report is due by Friday. Please ensure all team leads submit their sections by Wednesday EOD. Finance needs the numbers by Thursday morning.
-   Date: ${new Date().toISOString()}
-
-2. From: hr@company.com
-   Subject: Benefits Open Enrollment Reminder
-   Preview: Open enrollment ends April 15. Review your options at benefits.company.com. New dental plan options available this year.
-   Date: ${new Date().toISOString()}
-
-3. From: notifications@github.com
-   Subject: [dshakes/lantern] PR #142 merged
-   Preview: Your pull request 'Fix auth middleware tenant injection' was merged into main by dshakes.
-   Date: ${new Date().toISOString()}
-
-4. From: team@linear.app
-   Subject: 3 issues assigned to you
-   Preview: LAN-245: Fix model dropdown, LAN-246: Add cron AI assist, LAN-247: Wire Gmail connector
-   Date: ${new Date().toISOString()}
-
-5. From: newsletter@tldr.tech
-   Subject: TLDR AI - April 12, 2026
-   Preview: OpenAI announces GPT-5 Turbo, Anthropic ships Claude Opus 4, Google launches Gemini 2.5 Ultra...
-   Date: ${new Date().toISOString()}`;
-
-      setQuickRunInput(sampleEmails);
-      toast.info("Using sample emails for demo. Connect Gmail via OAuth to fetch real emails.");
+      toast.error("Gmail is not connected. Go to Connectors → Gmail to connect your account.");
     } finally {
       setFetchingEmails(false);
     }
