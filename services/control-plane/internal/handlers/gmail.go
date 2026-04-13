@@ -1,11 +1,15 @@
 package handlers
 
 import (
+	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -135,6 +139,126 @@ func FetchGmailViaAPI(accessToken string, maxResults int) ([]GmailMessage, error
 	return messages, nil
 }
 
+// FetchGmailViaIMAP connects to Gmail's IMAP server using email + app password
+// and fetches recent messages. This is the fallback when OAuth is not available.
+func FetchGmailViaIMAP(email, appPassword string, maxResults int) ([]GmailMessage, error) {
+	// Connect to Gmail IMAP
+	addr := "imap.gmail.com:993"
+	conn, err := tls.Dial("tcp", addr, &tls.Config{})
+	if err != nil {
+		return nil, fmt.Errorf("connect to IMAP: %w", err)
+	}
+	defer conn.Close()
+
+	reader := bufio.NewReader(conn)
+
+	// Read greeting
+	readLine(reader)
+
+	// Login
+	sendCommand(conn, fmt.Sprintf("A001 LOGIN %s %s", email, appPassword))
+	loginResp := readLine(reader)
+	if !strings.Contains(loginResp, "OK") {
+		return nil, fmt.Errorf("IMAP login failed: %s", loginResp)
+	}
+	// Consume any extra lines from LOGIN
+	for strings.HasPrefix(peekLine(reader), "*") {
+		readLine(reader)
+	}
+
+	// Select INBOX
+	sendCommand(conn, "A002 SELECT INBOX")
+	var totalMessages int
+	for {
+		line := readLine(reader)
+		if strings.Contains(line, "EXISTS") {
+			fmt.Sscanf(line, "* %d EXISTS", &totalMessages)
+		}
+		if strings.HasPrefix(line, "A002") {
+			break
+		}
+	}
+
+	if totalMessages == 0 {
+		sendCommand(conn, "A099 LOGOUT")
+		return []GmailMessage{}, nil
+	}
+
+	// Fetch the last N messages (headers only)
+	start := totalMessages - maxResults + 1
+	if start < 1 {
+		start = 1
+	}
+	fetchCmd := fmt.Sprintf("A003 FETCH %d:%d (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT])", start, totalMessages)
+	sendCommand(conn, fetchCmd)
+
+	var messages []GmailMessage
+	var currentMsg *GmailMessage
+
+	for {
+		line := readLine(reader)
+		if strings.HasPrefix(line, "A003") {
+			break
+		}
+		if line == "" {
+			continue
+		}
+
+		lowerLine := strings.ToLower(line)
+		if strings.HasPrefix(lowerLine, "from: ") {
+			if currentMsg != nil {
+				messages = append(messages, *currentMsg)
+			}
+			currentMsg = &GmailMessage{From: strings.TrimPrefix(line, "From: ")}
+		} else if strings.HasPrefix(lowerLine, "subject: ") && currentMsg != nil {
+			currentMsg.Subject = strings.TrimPrefix(line, "Subject: ")
+		} else if strings.HasPrefix(lowerLine, "date: ") && currentMsg != nil {
+			currentMsg.Date = strings.TrimPrefix(line, "Date: ")
+		} else if currentMsg != nil && currentMsg.Snippet == "" && len(line) > 5 && !strings.HasPrefix(line, "*") && !strings.HasPrefix(line, ")") {
+			// First non-header, non-empty line is the snippet
+			snippet := line
+			if len(snippet) > 200 {
+				snippet = snippet[:200]
+			}
+			currentMsg.Snippet = snippet
+		}
+	}
+	if currentMsg != nil {
+		messages = append(messages, *currentMsg)
+	}
+
+	// Logout
+	sendCommand(conn, "A099 LOGOUT")
+
+	// Reverse so newest is first
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	if len(messages) > maxResults {
+		messages = messages[:maxResults]
+	}
+
+	return messages, nil
+}
+
+func sendCommand(conn net.Conn, cmd string) {
+	conn.Write([]byte(cmd + "\r\n"))
+}
+
+func readLine(reader *bufio.Reader) string {
+	line, _ := reader.ReadString('\n')
+	return strings.TrimRight(line, "\r\n")
+}
+
+func peekLine(reader *bufio.Reader) string {
+	bytes, _ := reader.Peek(1)
+	if len(bytes) == 0 {
+		return ""
+	}
+	return string(bytes)
+}
+
 // ---------- Gmail REST handler ----------
 
 // GmailHandler provides a REST endpoint to fetch Gmail messages for the
@@ -198,6 +322,27 @@ func (h *GmailHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 			FROM connector_installs
 			WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'
 		`, tenantID).Scan(&accessToken)
+	}
+
+	// Fall back to config->>'email' + config->>'appPassword' for IMAP mode.
+	if accessToken == "" {
+		var email, appPassword string
+		_ = h.srv.Pool.QueryRow(ctx, `
+			SELECT config->>'email', config->>'appPassword'
+			FROM connector_installs
+			WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'
+		`, tenantID).Scan(&email, &appPassword)
+
+		if email != "" && appPassword != "" {
+			messages, fetchErr := FetchGmailViaIMAP(email, appPassword, limit)
+			if fetchErr != nil {
+				h.logger().Warn("IMAP fetch failed", zap.Error(fetchErr))
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("IMAP fetch failed: %v", fetchErr)})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "count": len(messages), "source": "imap"})
+			return
+		}
 	}
 
 	if accessToken == "" {

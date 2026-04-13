@@ -487,13 +487,27 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 				zap.String("run_id", runID), zap.Error(fetchErr))
 		}
 	} else {
-		// Check if any Gmail connector exists at all (even without a valid token).
-		var configJSON []byte
+		// Try IMAP with email + app password
+		var email, appPassword string
 		_ = h.srv.Pool.QueryRow(ctx,
-			`SELECT config FROM connector_installs WHERE tenant_id = $1 AND connector_id = 'gmail'`,
+			`SELECT config->>'email', config->>'appPassword' FROM connector_installs WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'`,
 			tenantID,
-		).Scan(&configJSON)
-		if configJSON == nil {
+		).Scan(&email, &appPassword)
+
+		if email != "" && appPassword != "" {
+			emails, fetchErr := FetchGmailViaIMAP(email, appPassword, 20)
+			if fetchErr == nil && len(emails) > 0 {
+				var emailText strings.Builder
+				emailText.WriteString("\n\nHere are the user's recent emails (fetched via IMAP):\n\n")
+				for i, e := range emails {
+					emailText.WriteString(fmt.Sprintf("%d. From: %s\n   Subject: %s\n   Preview: %s\n   Date: %s\n\n",
+						i+1, e.From, e.Subject, e.Snippet, e.Date))
+				}
+				prompt += emailText.String()
+			} else if fetchErr != nil {
+				h.logger().Warn("inline executor: IMAP Gmail fetch failed", zap.String("run_id", runID), zap.Error(fetchErr))
+			}
+		} else {
 			prompt += "\n\nNote: Gmail is not connected. The user may paste email content manually, or you should explain how to connect Gmail."
 		}
 	}
