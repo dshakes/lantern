@@ -276,7 +276,17 @@ func (h *RESTHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	runs := make([]map[string]any, 0)
 	if resp != nil {
 		for _, run := range resp.GetRuns() {
-			runs = append(runs, runToMap(run))
+			m := runToMap(run)
+			// Enrich with execution steps from trigger_meta
+			var rawSteps []byte
+			_ = h.srv.Pool.QueryRow(ctx, `SELECT trigger_meta FROM runs WHERE id = $1`, run.GetId()).Scan(&rawSteps)
+			if len(rawSteps) > 0 && rawSteps[0] == '[' {
+				var steps []any
+				if json.Unmarshal(rawSteps, &steps) == nil {
+					m["triggerMeta"] = steps
+				}
+			}
+			runs = append(runs, m)
 		}
 	}
 
@@ -571,7 +581,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	}
 
 	// 4. Mark as succeeded with output.
-	logStep("call_llm", "completed", fmt.Sprintf("AI response received: %d tokens", tokensOut))
+	logStep("call_llm", "completed", fmt.Sprintf("Response from %s/%s: %d tokens", provider, model, tokensOut))
 	logStep("save_output", "running", "Saving results")
 	outputJSON, _ := json.Marshal(map[string]string{"result": result})
 	_, _ = h.srv.Pool.Exec(ctx,
