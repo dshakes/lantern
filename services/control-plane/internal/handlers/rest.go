@@ -3,8 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -266,15 +269,43 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 
 	inputStruct, _ := structpb.NewStruct(body.Input)
 
+	// Ensure the agent exists — auto-create if not found.
+	_, getErr := h.agentSvc.GetAgent(ctx, &lanternv1.GetAgentRequest{Name: body.AgentName})
+	if getErr != nil {
+		// Agent doesn't exist — create it with a default version.
+		h.logger().Info("auto-creating agent for run", zap.String("agent", body.AgentName))
+		_, createErr := h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+			Name:        body.AgentName,
+			Description: "Auto-created by run request",
+		})
+		if createErr != nil {
+			h.logger().Warn("auto-create agent failed", zap.Error(createErr))
+			// Continue anyway — maybe it was a race condition.
+		}
+	}
+
 	run, err := h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
 		AgentName:   body.AgentName,
 		Input:       inputStruct,
 		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_API,
 	})
 	if err != nil {
-		h.logger().Error("CreateRun failed", zap.Error(err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
+		// The most common error is "agent has no promoted version".
+		// For the spike, auto-create a version and retry once.
+		errStr := err.Error()
+		if strings.Contains(errStr, "no promoted version") || strings.Contains(errStr, "not found") {
+			h.autoCreateVersion(ctx, body.AgentName)
+			run, err = h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+				AgentName:   body.AgentName,
+				Input:       inputStruct,
+				TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_API,
+			})
+		}
+		if err != nil {
+			h.logger().Error("CreateRun failed", zap.Error(err))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusCreated, runToMap(run))
@@ -365,6 +396,76 @@ func CORSMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// autoCreateVersion creates a default agent version and promotes it.
+// This is a convenience for the spike — in production, versions come from
+// `lantern deploy`.
+func (h *RESTHandler) autoCreateVersion(ctx context.Context, agentName string) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	if tenantID == "" {
+		return
+	}
+
+	tx, err := h.srv.Pool.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	_, _ = tx.Exec(ctx, fmt.Sprintf("SET LOCAL app.tenant_id = '%s'", tenantID))
+
+	// Get the agent ID.
+	var agentID string
+	err = tx.QueryRow(ctx,
+		`SELECT id FROM agents WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL`,
+		tenantID, agentName,
+	).Scan(&agentID)
+	if err != nil {
+		return
+	}
+
+	// Check if a version already exists.
+	var existingVersionID string
+	err = tx.QueryRow(ctx,
+		`SELECT id FROM agent_versions WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 1`,
+		agentID,
+	).Scan(&existingVersionID)
+	if err == nil {
+		// Version exists — just promote it.
+		_, _ = tx.Exec(ctx,
+			`UPDATE agents SET current_version_id = $1 WHERE id = $2`,
+			existingVersionID, agentID,
+		)
+		_ = tx.Commit(ctx)
+		return
+	}
+	if err != pgx.ErrNoRows {
+		return
+	}
+
+	// Create a default version.
+	var versionID string
+	err = tx.QueryRow(ctx,
+		`INSERT INTO agent_versions (agent_id, version, digest, bundle_uri)
+		 VALUES ($1, 'v0.1.0', decode(md5($2), 'hex'), 'local://auto-created')
+		 RETURNING id`,
+		agentID, agentName+"-v0.1.0",
+	).Scan(&versionID)
+	if err != nil {
+		return
+	}
+
+	// Promote it.
+	_, _ = tx.Exec(ctx,
+		`UPDATE agents SET current_version_id = $1 WHERE id = $2`,
+		versionID, agentID,
+	)
+	_ = tx.Commit(ctx)
+	h.logger().Info("auto-created and promoted agent version",
+		zap.String("agent", agentName),
+		zap.String("version_id", versionID),
+	)
 }
 
 // ---------- proto to map converters ----------
