@@ -321,18 +321,38 @@ function CreatePage() {
               <textarea value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} rows={5} spellCheck={false} placeholder="You are a helpful assistant that..." className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-indigo-500/30" />
             </div>
 
-            {/* Connectors */}
+            {/* Connectors — only show connected ones */}
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Connectors</h3>
-              <p className="text-[10px] text-zinc-600">Select which services this agent can access</p>
-              <div className="flex flex-wrap gap-2">
-                {["Gmail", "Slack", "GitHub", "Notion", "Linear", "Stripe", "Jira", "HubSpot"].map(c => (
-                  <button key={c} onClick={() => setSelectedConnectors(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c])}
-                    className={clsx("rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-all", selectedConnectors.includes(c) ? "border-indigo-500/50 bg-indigo-500/10 text-indigo-400" : "border-zinc-800 text-zinc-500 hover:border-zinc-600")}>
-                    {c}
-                  </button>
-                ))}
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Connectors</h3>
+                <a href="/connectors" target="_blank" className="text-[10px] text-indigo-400 hover:text-indigo-300">+ Connect more</a>
               </div>
+              {(() => {
+                const stored = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("lantern_connectors") || "{}") : {};
+                const connected = Object.entries(stored).filter(([, v]: [string, any]) => v.installed).map(([k]) => k.charAt(0).toUpperCase() + k.slice(1));
+                if (connected.length === 0) {
+                  return (
+                    <div className="rounded-lg border border-dashed border-zinc-700 py-4 text-center">
+                      <p className="text-xs text-zinc-500">No connectors configured yet</p>
+                      <a href="/connectors" className="mt-1 inline-block text-[11px] text-indigo-400 hover:text-indigo-300">Go to Connectors to set up Gmail, Slack, GitHub, etc.</a>
+                    </div>
+                  );
+                }
+                return (
+                  <div>
+                    <p className="text-[10px] text-zinc-600 mb-2">Select which connected services this agent can use</p>
+                    <div className="flex flex-wrap gap-2">
+                      {connected.map(c => (
+                        <button key={c} onClick={() => setSelectedConnectors(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c])}
+                          className={clsx("rounded-lg border px-3 py-1.5 text-[11px] font-medium transition-all", selectedConnectors.includes(c) ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400" : "border-zinc-700 text-zinc-400 hover:border-zinc-500")}>
+                          <span className={clsx("mr-1.5 inline-block h-1.5 w-1.5 rounded-full", selectedConnectors.includes(c) ? "bg-emerald-400" : "bg-zinc-600")} />
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Environment + Privacy + Guardrails — compact row */}
