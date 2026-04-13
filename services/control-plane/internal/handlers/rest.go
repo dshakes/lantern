@@ -551,10 +551,17 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	inputJSON, _ := json.Marshal(input)
 	prompt := fmt.Sprintf("You are the agent '%s'. Process this input and produce a result:\n\n%s", agentName, string(inputJSON))
 
-	// 2b. Check if Gmail connector is installed for this tenant. If so, fetch
-	// emails and append them to the prompt so the LLM can reference them.
-	logStep("fetch_data", "running", "Checking for connected data sources")
-	gmailToken := resolveGmailToken(ctx, h.srv.Pool, tenantID)
+	// 2b. Only fetch Gmail if the agent is email-related (name contains email/gmail/digest/inbox)
+	isEmailAgent := strings.Contains(strings.ToLower(agentName), "email") ||
+		strings.Contains(strings.ToLower(agentName), "gmail") ||
+		strings.Contains(strings.ToLower(agentName), "digest") ||
+		strings.Contains(strings.ToLower(agentName), "inbox") ||
+		strings.Contains(strings.ToLower(agentName), "mail")
+
+	var gmailToken string
+	if isEmailAgent {
+		logStep("fetch_data", "running", "Checking for connected data sources")
+		gmailToken = resolveGmailToken(ctx, h.srv.Pool, tenantID)
 	// Try to refresh the token before use
 	if gmailToken != "" {
 		var refreshToken string
@@ -618,6 +625,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 			prompt += "\n\nNote: Gmail is not connected. The user may paste email content manually, or you should explain how to connect Gmail."
 		}
 	}
+	} // end isEmailAgent
 
 	// 3. Call the LLM.
 	logStep("call_llm", "running", "Sending to AI model for processing")
