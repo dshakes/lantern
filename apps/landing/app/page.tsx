@@ -365,7 +365,7 @@ function Hero() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-lantern-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-lantern-500" />
             </span>
-            NOW IN PUBLIC BETA
+            ALPHA — EARLY ACCESS
           </div>
         </FadeIn>
 
@@ -1267,7 +1267,7 @@ const pricingTiers = [
       "Community support",
       "30-day history",
     ],
-    cta: "Start free",
+    cta: "Join waitlist",
     highlighted: false,
   },
   {
@@ -1283,7 +1283,7 @@ const pricingTiers = [
       "Custom connectors",
       "Priority support",
     ],
-    cta: "Start your team",
+    cta: "Join waitlist",
     highlighted: true,
   },
   {
@@ -1313,6 +1313,9 @@ function Pricing() {
       <div className="max-w-5xl mx-auto">
         <FadeIn>
           <div className="text-center mb-8">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-lantern-700/40 bg-lantern-900/20 text-lantern-400 text-xs font-medium mb-4">
+              Coming soon — free during alpha
+            </div>
             <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
               Cheaper than{" "}
               <span className="gradient-text">doing it yourself</span>
@@ -1335,7 +1338,7 @@ function Pricing() {
               >
                 {tier.highlighted && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-gradient-to-r from-lantern-600 to-lantern-500 text-xs font-bold text-white uppercase tracking-wider shadow-lg shadow-lantern-600/30">
-                    Most Popular
+                    Recommended
                   </div>
                 )}
                 <h3 className="text-xl font-bold mb-1">{tier.name}</h3>
@@ -1421,8 +1424,8 @@ function UseCases() {
               <span className="gradient-text">real world</span>
             </h2>
             <p className="text-zinc-400 text-lg max-w-2xl mx-auto">
-              Not toy demos. These are agents that companies run in production
-              today.
+              Not toy demos. These are the kinds of agents Lantern is designed
+              to power.
             </p>
           </div>
         </FadeIn>
@@ -1446,37 +1449,46 @@ function UseCases() {
 }
 
 /* ───────────────────────────────────────────────────── */
-/*  Social Proof                                         */
+/*  Early Access                                         */
 /* ───────────────────────────────────────────────────── */
-function SocialProof() {
-  const companies = [
-    "Stripe",
-    "Notion",
-    "Linear",
-    "Vercel",
-    "Supabase",
-    "Replit",
-    "Raycast",
-    "Resend",
-  ];
-
+function EarlyAccess() {
   return (
     <section className="relative py-14 px-6 border-t border-white/5">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-3xl mx-auto text-center">
         <FadeIn>
-          <p className="text-center text-sm text-zinc-600 uppercase tracking-widest mb-10">
-            Trusted by engineers at
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-6">
-            {companies.map((name) => (
-              <span
-                key={name}
-                className="text-xl sm:text-2xl font-bold text-zinc-700 hover:text-zinc-500 transition-colors cursor-default"
-              >
-                {name}
-              </span>
-            ))}
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-lantern-700/40 bg-lantern-900/20 text-lantern-400 text-sm mb-6">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-lantern-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-lantern-500" />
+            </span>
+            Alpha
           </div>
+          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
+            We&apos;re in <span className="gradient-text">alpha</span>
+          </h2>
+          <p className="text-zinc-400 text-lg max-w-xl mx-auto mb-8">
+            Join the waitlist to get early access. We&apos;re onboarding users
+            in batches and would love your feedback.
+          </p>
+          <form
+            action="https://github.com/dshakes/lantern"
+            className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto"
+          >
+            <input
+              type="email"
+              placeholder="you@company.com"
+              className="flex-1 px-5 py-3.5 rounded-xl bg-surface-1 border border-zinc-800 text-white placeholder:text-zinc-600 text-sm focus:outline-none focus:border-lantern-600 focus:ring-1 focus:ring-lantern-600/50 transition-all"
+            />
+            <button
+              type="submit"
+              className="btn-glow group flex items-center justify-center gap-2 px-8 py-3.5 rounded-xl bg-lantern-600 hover:bg-lantern-500 text-white font-semibold text-sm transition-all hover:shadow-xl hover:shadow-lantern-600/25 hover:-translate-y-0.5 shrink-0"
+            >
+              <span className="relative z-10 flex items-center gap-2">
+                Join waitlist
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              </span>
+            </button>
+          </form>
         </FadeIn>
       </div>
     </section>
@@ -1664,7 +1676,7 @@ export default function LandingPage() {
       <DeployCommands />
       <Pricing />
       <UseCases />
-      <SocialProof />
+      <EarlyAccess />
       <CTA />
       <Footer />
     </main>

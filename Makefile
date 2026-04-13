@@ -25,6 +25,9 @@ run-whatsapp-bridge: ## Start the WhatsApp bridge service
 landing-dev: ## Start the landing page in dev mode
 	cd apps/landing && npm run dev
 
+docs-dev: ## Start the docs site in dev mode
+	cd apps/docs && npm run dev
+
 dashboard-dev: ## Start the dashboard in dev mode
 	cd apps/web && npm run dev
 
@@ -52,6 +55,7 @@ build-rust: ## Build Rust services
 build-ts: ## Build TypeScript packages
 	cd packages/sdk-ts && npm run build
 	cd apps/landing && npm run build
+	cd apps/docs && npm run build
 	cd apps/web && npm run build
 
 docker-build: ## Build all Docker images
