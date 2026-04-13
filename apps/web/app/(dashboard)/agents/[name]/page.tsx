@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
+import { AiAssistButton } from "@/components/ai-assist";
 import { useAgent, useAgentRuns } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
 import { RunDialog } from "@/components/run-dialog";
@@ -26,6 +27,27 @@ import { AgentDetailSkeleton } from "@/components/skeleton";
 import { EmptyState } from "@/components/empty-state";
 import { formatCost, formatDuration } from "@/lib/mock-data";
 import type { Run } from "@/lib/mock-data";
+
+// ---------------------------------------------------------------------------
+// Cron description helper
+// ---------------------------------------------------------------------------
+
+function describeCron(expr: string): string {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return "Invalid cron expression";
+  const [min, hour, dom, mon, dow] = parts;
+  const days: Record<string, string> = { "0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday", "1-5": "weekdays", "0,6": "weekends" };
+  let desc = "Runs ";
+  if (min === "*" && hour === "*") desc += "every minute";
+  else if (min === "0" && hour === "*") desc += "every hour";
+  else if (min.startsWith("*/")) desc += `every ${min.slice(2)} minutes`;
+  else if (hour !== "*") desc += `at ${hour.padStart(2, "0")}:${min.padStart(2, "0")}`;
+  else desc += `at minute ${min}`;
+  if (dow !== "*") desc += ` on ${days[dow] || dow}`;
+  if (dom !== "*") desc += ` on day ${dom}`;
+  if (mon !== "*") desc += ` in month ${mon}`;
+  return desc;
+}
 
 // ---------------------------------------------------------------------------
 // Tabs — simplified to 3
@@ -114,6 +136,7 @@ export default function AgentDetailPage() {
   const [settingsTimeout, setSettingsTimeout] = useState("5m");
   const [settingsMaxTokens, setSettingsMaxTokens] = useState(100000);
   const [settingsMaxCost, setSettingsMaxCost] = useState(1.0);
+  const [settingsCron, setSettingsCron] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
 
   // Click-outside handler for the more menu
@@ -447,11 +470,19 @@ export default function AgentDetailPage() {
                 className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50"
               >
                 <option value="auto">Auto (recommended)</option>
-                <option value="reasoning-large">Reasoning Large</option>
-                <option value="reasoning-small">Reasoning Small</option>
-                <option value="chat-large">Chat Large</option>
-                <option value="chat-small">Chat Small</option>
-                <option value="code-large">Code Large</option>
+                <optgroup label="Anthropic">
+                  <option value="reasoning-frontier">Reasoning Frontier — Claude Opus 4</option>
+                  <option value="reasoning-large">Reasoning Large — Claude Sonnet 4</option>
+                  <option value="reasoning-small">Reasoning Small — Claude Haiku 4</option>
+                  <option value="code-large">Code Large — Claude Sonnet 4</option>
+                </optgroup>
+                <optgroup label="OpenAI">
+                  <option value="chat-large">Chat Large — GPT-4o</option>
+                  <option value="chat-small">Chat Small — GPT-4o Mini</option>
+                </optgroup>
+                <optgroup label="Google">
+                  <option value="vision-large">Vision Large — Gemini 2.5 Pro</option>
+                </optgroup>
               </select>
             </div>
 
@@ -554,6 +585,35 @@ export default function AgentDetailPage() {
                     className="w-full accent-lantern-500"
                   />
                 </div>
+              </div>
+            </div>
+
+            {/* Schedule */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-zinc-200">Schedule (optional)</h3>
+              <p className="text-xs text-zinc-500">Run this agent on a recurring schedule using a cron expression.</p>
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="text-xs text-zinc-400">Cron expression</label>
+                  <AiAssistButton
+                    mode="cron"
+                    value={settingsCron}
+                    onChange={setSettingsCron}
+                    placeholder="e.g., every weekday at 9am"
+                  />
+                </div>
+                <input
+                  type="text"
+                  value={settingsCron}
+                  onChange={(e) => setSettingsCron(e.target.value)}
+                  placeholder="0 9 * * 1-5 (or use AI to generate)"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 font-mono placeholder:text-zinc-600 outline-none focus:border-lantern-500/50"
+                />
+                {settingsCron && (
+                  <p className="mt-1 text-[10px] text-zinc-500">
+                    {describeCron(settingsCron)}
+                  </p>
+                )}
               </div>
             </div>
 
