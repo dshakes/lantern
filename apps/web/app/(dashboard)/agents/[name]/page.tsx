@@ -476,38 +476,79 @@ export default function AgentDetailPage() {
                         <span className="text-zinc-500">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm:ss") : "--"}</span>
                       </button>
                       {expanded && (
-                        <div className="border-t border-zinc-800 p-4 space-y-3">
-                          {/* Execution Steps */}
+                        <div className="border-t border-zinc-800 p-4 space-y-4">
+                          {/* Execution Steps — deduplicated, proper icons */}
                           {(() => {
-                            const steps = Array.isArray(run.triggerMeta) ? run.triggerMeta as Array<Record<string, string>> : [];
+                            const raw = Array.isArray(run.triggerMeta) ? run.triggerMeta as Array<Record<string, string>> : [];
+                            // Deduplicate: keep only the last status for each step
+                            const stepMap = new Map<string, Record<string, string>>();
+                            for (const s of raw) stepMap.set(s.step, s);
+                            const steps = Array.from(stepMap.values());
+                            const isRunDone = run.status === "succeeded" || run.status === "failed" || run.status === "cancelled";
+
+                            if (steps.length === 0 && run.status === "running") {
+                              return (
+                                <div className="flex items-center gap-2.5 py-3">
+                                  <div className="h-4 w-4 rounded-full border-2 border-lantern-400 border-t-transparent animate-spin" />
+                                  <span className="text-sm text-zinc-400">Agent is running...</span>
+                                </div>
+                              );
+                            }
                             if (steps.length === 0) return null;
+
                             return (
-                              <div className="space-y-1.5">
-                                <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-600">Execution Steps</p>
-                                <div className="space-y-0.5">
-                                  {steps.map((s, i) => (
-                                    <div key={i} className="flex items-center gap-2 py-1">
-                                      {s.status === "completed" ? (
-                                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                                      ) : s.status === "running" ? (
-                                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-400" />
-                                      ) : (
-                                        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
-                                      )}
-                                      <span className="text-xs text-zinc-300">{s.detail}</span>
-                                      <span className="ml-auto text-[10px] text-zinc-600">{s.step}</span>
-                                    </div>
-                                  ))}
+                              <div>
+                                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Execution Log</p>
+                                <div className="rounded-lg border border-zinc-800 bg-surface-0 divide-y divide-zinc-800/50">
+                                  {steps.map((s, i) => {
+                                    const done = s.status === "completed" || (isRunDone && s.status === "running");
+                                    const isLast = i === steps.length - 1;
+                                    return (
+                                      <div key={i} className="flex items-center gap-3 px-3 py-2">
+                                        <div className="shrink-0">
+                                          {done ? (
+                                            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/15">
+                                              <CheckCircle2 className="h-3 w-3 text-emerald-400" />
+                                            </div>
+                                          ) : s.status === "running" && !isRunDone ? (
+                                            <div className="flex h-5 w-5 items-center justify-center">
+                                              <div className="h-3.5 w-3.5 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+                                            </div>
+                                          ) : (
+                                            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/15">
+                                              <AlertCircle className="h-3 w-3 text-red-400" />
+                                            </div>
+                                          )}
+                                        </div>
+                                        <span className={clsx("flex-1 text-xs", done ? "text-zinc-300" : "text-zinc-500")}>{s.detail}</span>
+                                        {isLast && s.detail.includes("tokens") && (
+                                          <span className="text-[10px] font-mono text-lantern-400">{s.detail.match(/\$[\d.]+/)?.[0]}</span>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             );
                           })()}
-                          {/* Output */}
+
+                          {/* Output — rendered as clean text, not raw markdown */}
                           {run.output ? (
                             <div>
-                              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-zinc-600">Output</p>
-                              <div className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm leading-relaxed text-zinc-200">
-                                {typeof run.output === "string" ? run.output : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>) ? String((run.output as Record<string, unknown>).result) : JSON.stringify(run.output, null, 2)}
+                              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Result</p>
+                              <div className="max-h-80 overflow-auto rounded-lg border border-emerald-500/10 bg-emerald-500/[0.02] p-4">
+                                {(() => {
+                                  const raw = typeof run.output === "string" ? run.output
+                                    : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>)
+                                    ? String((run.output as Record<string, unknown>).result)
+                                    : JSON.stringify(run.output, null, 2);
+                                  // Convert markdown bold to plain text, clean up formatting
+                                  const cleaned = raw
+                                    .replace(/\*\*(.*?)\*\*/g, "$1")
+                                    .replace(/^#{1,3}\s+/gm, "")
+                                    .replace(/^- /gm, "  • ");
+                                  return <pre className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200 font-sans">{cleaned}</pre>;
+                                })()}
                               </div>
                             </div>
                           ) : run.error ? (
@@ -516,9 +557,9 @@ export default function AgentDetailPage() {
                               <p className="mt-1 text-xs text-red-300/70">{run.error.message}</p>
                             </div>
                           ) : run.status === "running" ? (
-                            <div className="flex items-center gap-2 py-2">
-                              <Loader2 className="h-4 w-4 animate-spin text-lantern-400" />
-                              <span className="text-xs text-zinc-400">Processing... output will appear when complete</span>
+                            <div className="flex items-center gap-2.5 py-3">
+                              <div className="h-4 w-4 rounded-full border-2 border-lantern-400 border-t-transparent animate-spin" />
+                              <span className="text-sm text-zinc-400">Processing... result will appear when complete</span>
                             </div>
                           ) : <p className="text-xs text-zinc-600">No output available.</p>}
                         </div>
