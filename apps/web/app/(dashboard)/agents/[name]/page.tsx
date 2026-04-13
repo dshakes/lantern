@@ -36,6 +36,14 @@ import {
   ShieldAlert,
   Lightbulb,
   DollarSign,
+  Network,
+  Users,
+  BookOpen,
+  Plug,
+  Plus,
+  X,
+  Server,
+  Brain,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -50,6 +58,10 @@ import type { Run } from "@/lib/mock-data";
 import { type GuardrailConfig, getGuardrailConfig, saveGuardrailConfig, applyGuardrails, hasActiveGuardrails } from "@/lib/guardrails";
 import { type PromptVersion, getPromptVersions, savePromptVersion, formatVersionDate } from "@/lib/prompt-versions";
 import { estimateCost, formatEstimate } from "@/lib/cost-estimator";
+import { type McpServer, getMcpServers, addMcpServer, removeMcpServer, updateMcpServerStatus } from "@/lib/mcp-servers";
+import { type SubAgentLink, getSubAgents, addSubAgent, removeSubAgent } from "@/lib/sub-agents";
+import { type MemoryEntry, getAgentMemory, addMemoryEntry, removeMemoryEntry, memoryToContext } from "@/lib/agent-memory";
+import { getAgentInstructions, saveAgentInstructions, mergeInstructionsAndPrompt } from "@/lib/agent-instructions";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -196,6 +208,32 @@ export default function AgentDetailPage() {
   const [agentDocs, setAgentDocs] = useState("");
   const [showDocs, setShowDocs] = useState(false);
 
+  // Instructions (separated from system prompt)
+  const [instructions, setInstructions] = useState("");
+  const [instructionsDirty, setInstructionsDirty] = useState(false);
+
+  // MCP Servers
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+  const [showAddMcp, setShowAddMcp] = useState(false);
+  const [newMcpName, setNewMcpName] = useState("");
+  const [newMcpUrl, setNewMcpUrl] = useState("");
+  const [newMcpAuth, setNewMcpAuth] = useState<"none" | "bearer" | "api-key">("none");
+  const [newMcpToken, setNewMcpToken] = useState("");
+  const [testingMcpId, setTestingMcpId] = useState<string | null>(null);
+
+  // Sub-agents
+  const [subAgents, setSubAgents] = useState<SubAgentLink[]>([]);
+  const [showAddSubAgent, setShowAddSubAgent] = useState(false);
+  const [newSubAgentName, setNewSubAgentName] = useState("");
+  const [newSubAgentDesc, setNewSubAgentDesc] = useState("");
+  const [newSubAgentCondition, setNewSubAgentCondition] = useState("");
+
+  // Agent Memory
+  const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([]);
+  const [showAddMemory, setShowAddMemory] = useState(false);
+  const [newMemKey, setNewMemKey] = useState("");
+  const [newMemValue, setNewMemValue] = useState("");
+
   // Run comparison
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<[string | null, string | null]>([null, null]);
@@ -226,6 +264,15 @@ export default function AgentDetailPage() {
     setPromptVersions(getPromptVersions(name));
     // Load saved docs
     try { const d = localStorage.getItem(`lantern_agent_docs_${name}`); if (d) setAgentDocs(d); } catch { /* */ }
+    // Load instructions
+    setInstructions(getAgentInstructions(name));
+    setInstructionsDirty(false);
+    // Load MCP servers
+    setMcpServers(getMcpServers(name));
+    // Load sub-agents
+    setSubAgents(getSubAgents(name));
+    // Load memory
+    setMemoryEntries(getAgentMemory(name));
     api.listSchedules().then((sched) => {
       const m = sched.find((sc) => sc.agentName === name);
       if (m) { setSettingsCron(m.cronExpr); setScheduleId(m.id); setScheduleEnabled(m.enabled); if (m.nextFireAt) setNextFireAt(m.nextFireAt); if (m.deliveryEmail) { setDeliveryEmailEnabled(true); setDeliveryEmail(m.deliveryEmail); } }
@@ -263,10 +310,22 @@ export default function AgentDetailPage() {
 
   const handleSavePrompt = useCallback(async () => {
     setSavingPrompt(true);
-    try { setAgentPrompt(name, systemPrompt); await api.updateAgent(name, { systemPrompt }); setPromptDirty(false); toast.success("System prompt saved"); } catch { setPromptDirty(false); toast.success("System prompt saved locally"); } finally { setSavingPrompt(false); }
+    try {
+      setAgentPrompt(name, systemPrompt);
+      saveAgentInstructions(name, instructions);
+      const effectivePrompt = mergeInstructionsAndPrompt(instructions, systemPrompt);
+      await api.updateAgent(name, { systemPrompt: effectivePrompt });
+      setPromptDirty(false);
+      setInstructionsDirty(false);
+      toast.success("Prompt and instructions saved");
+    } catch {
+      setPromptDirty(false);
+      setInstructionsDirty(false);
+      toast.success("Saved locally");
+    } finally { setSavingPrompt(false); }
     // Save prompt version
     if (systemPrompt.trim()) { const updated = savePromptVersion(name, systemPrompt); setPromptVersions(updated); }
-  }, [name, systemPrompt, toast]);
+  }, [name, systemPrompt, instructions, toast]);
 
   const handleGeneratePrompt = useCallback(async () => {
     setSavingPrompt(true);
@@ -282,7 +341,8 @@ export default function AgentDetailPage() {
     setTestOutput(""); setTestDone(false); setTestError(null); setTestMeta(null); setTestRunning(true);
     const startTime = Date.now();
     const messages: Array<{ role: string; content: string }> = [];
-    if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+    const effectivePrompt = mergeInstructionsAndPrompt(instructions, systemPrompt) + memoryToContext(memoryEntries);
+    if (effectivePrompt.trim()) messages.push({ role: "system", content: effectivePrompt });
 
     if (isEmailAgent) {
       try {
@@ -316,7 +376,7 @@ export default function AgentDetailPage() {
       setTestMeta({ model: resolvedModel, tokens: totalTokens, cost: totalCost, duration: Date.now() - startTime });
       setTestDone(true); setTestRunning(false);
     } catch (err) { setTestError(err instanceof Error ? err.message : "Unknown error"); setTestRunning(false); setTestDone(true); }
-  }, [testInput, testModel, systemPrompt, isEmailAgent, name]);
+  }, [testInput, testModel, systemPrompt, instructions, memoryEntries, isEmailAgent, name]);
 
   const handleFetchEmails = useCallback(async () => {
     setFetchingEmails(true);
@@ -380,6 +440,65 @@ export default function AgentDetailPage() {
     setGuardrails(updated);
     saveGuardrailConfig(name, updated);
   }, [name]);
+
+  // MCP server handlers
+  const handleAddMcpServer = useCallback(() => {
+    if (!newMcpName.trim() || !newMcpUrl.trim()) { toast.error("Name and URL are required"); return; }
+    const updated = addMcpServer(name, { name: newMcpName.trim(), url: newMcpUrl.trim(), authType: newMcpAuth, authToken: newMcpToken || undefined });
+    setMcpServers(updated);
+    setNewMcpName(""); setNewMcpUrl(""); setNewMcpAuth("none"); setNewMcpToken(""); setShowAddMcp(false);
+    toast.success(`MCP server "${newMcpName}" added`);
+  }, [name, newMcpName, newMcpUrl, newMcpAuth, newMcpToken, toast]);
+
+  const handleTestMcpServer = useCallback(async (serverId: string) => {
+    setTestingMcpId(serverId);
+    // Simulate connection test
+    await new Promise(r => setTimeout(r, 1200));
+    const server = mcpServers.find(s => s.id === serverId);
+    if (server) {
+      const mockTools = ["read_file", "search", "execute_query", "list_resources"].slice(0, Math.floor(Math.random() * 3) + 1);
+      const updated = updateMcpServerStatus(name, serverId, "connected", mockTools);
+      setMcpServers(updated);
+      toast.success(`Connected to ${server.name} -- ${mockTools.length} tools available`);
+    }
+    setTestingMcpId(null);
+  }, [name, mcpServers, toast]);
+
+  const handleRemoveMcpServer = useCallback((serverId: string) => {
+    const updated = removeMcpServer(name, serverId);
+    setMcpServers(updated);
+    toast.success("MCP server removed");
+  }, [name, toast]);
+
+  // Sub-agent handlers
+  const handleAddSubAgent = useCallback(() => {
+    if (!newSubAgentName.trim()) { toast.error("Agent name is required"); return; }
+    const updated = addSubAgent(name, { targetAgentName: newSubAgentName.trim(), description: newSubAgentDesc.trim(), handoffCondition: newSubAgentCondition.trim() });
+    setSubAgents(updated);
+    setNewSubAgentName(""); setNewSubAgentDesc(""); setNewSubAgentCondition(""); setShowAddSubAgent(false);
+    toast.success(`Sub-agent "${newSubAgentName}" linked`);
+  }, [name, newSubAgentName, newSubAgentDesc, newSubAgentCondition, toast]);
+
+  const handleRemoveSubAgent = useCallback((linkId: string) => {
+    const updated = removeSubAgent(name, linkId);
+    setSubAgents(updated);
+    toast.success("Sub-agent removed");
+  }, [name, toast]);
+
+  // Memory handlers
+  const handleAddMemory = useCallback(() => {
+    if (!newMemKey.trim() || !newMemValue.trim()) { toast.error("Key and value required"); return; }
+    const updated = addMemoryEntry(name, newMemKey.trim(), newMemValue.trim());
+    setMemoryEntries(updated);
+    setNewMemKey(""); setNewMemValue(""); setShowAddMemory(false);
+    toast.success("Memory entry added");
+  }, [name, newMemKey, newMemValue, toast]);
+
+  const handleRemoveMemory = useCallback((entryId: string) => {
+    const updated = removeMemoryEntry(name, entryId);
+    setMemoryEntries(updated);
+    toast.success("Memory entry removed");
+  }, [name, toast]);
 
   // Filtered test output with guardrails applied
   const filteredTestOutput = useMemo(() => {
@@ -454,16 +573,33 @@ export default function AgentDetailPage() {
         {/* BUILD TAB */}
         {activeTab === "build" && (
           <div className="space-y-6">
-            {/* System Prompt */}
+            {/* Instructions (what the agent does) */}
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
               <div className="mb-3 flex items-center justify-between">
-                <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><MessageSquare className="h-4 w-4 text-indigo-400" /> System Prompt</h3>
+                <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><BookOpen className="h-4 w-4 text-teal-400" /> Instructions</h3>
+                <span className="text-[10px] text-zinc-600">What the agent does -- task goals, constraints, scope</span>
+              </div>
+              <textarea
+                value={instructions}
+                onChange={(e) => { setInstructions(e.target.value); setInstructionsDirty(true); }}
+                rows={4}
+                spellCheck={false}
+                placeholder="Define what this agent should accomplish. What are its goals? What data sources should it use? What constraints apply?"
+                className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20"
+              />
+              {instructionsDirty && <p className="mt-1.5 text-[11px] text-amber-400">Unsaved changes</p>}
+            </div>
+
+            {/* System Prompt (how the agent behaves) */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><MessageSquare className="h-4 w-4 text-indigo-400" /> System Prompt <span className="text-[10px] font-normal text-zinc-600">-- personality, tone, output format</span></h3>
                 <div className="flex items-center gap-2">
                   <button onClick={handleOptimizePrompt} disabled={optimizingPrompt || !systemPrompt.trim()} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-500/10 disabled:opacity-50">
                     {optimizingPrompt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />} Optimize
                   </button>
                   <button onClick={handleGeneratePrompt} disabled={savingPrompt} className="inline-flex items-center gap-1.5 rounded-lg border border-lantern-500/30 px-3 py-1.5 text-xs font-medium text-lantern-400 hover:bg-lantern-500/10"><Sparkles className="h-3 w-3" /> Generate</button>
-                  <button onClick={handleSavePrompt} disabled={savingPrompt || !promptDirty} className={clsx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium", promptDirty ? "bg-lantern-500 text-white hover:bg-lantern-400" : "border border-zinc-700 text-zinc-500 cursor-not-allowed")}>
+                  <button onClick={handleSavePrompt} disabled={savingPrompt || (!promptDirty && !instructionsDirty)} className={clsx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium", (promptDirty || instructionsDirty) ? "bg-lantern-500 text-white hover:bg-lantern-400" : "border border-zinc-700 text-zinc-500 cursor-not-allowed")}>
                     {savingPrompt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} {savingPrompt ? "Saving..." : "Save"}
                   </button>
                 </div>
@@ -518,6 +654,88 @@ export default function AgentDetailPage() {
                 </p>
                 <p className="mt-0.5 text-[10px] text-zinc-500">Data encrypted at rest</p>
               </div>
+            </div>
+
+            {/* Sub-agents / Agent Handoff */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><Users className="h-4 w-4 text-violet-400" /> Sub-agents</h3>
+                <button onClick={() => setShowAddSubAgent(!showAddSubAgent)} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:bg-surface-3">
+                  <Plus className="h-3 w-3" /> Add
+                </button>
+              </div>
+              <p className="mb-3 text-[10px] text-zinc-600">Connect other agents that this agent can invoke during execution (agent handoff).</p>
+
+              {showAddSubAgent && (
+                <div className="mb-3 space-y-2 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3">
+                  <input type="text" value={newSubAgentName} onChange={(e) => setNewSubAgentName(e.target.value)} placeholder="Target agent name (e.g., research-agent)" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-violet-500/50" />
+                  <input type="text" value={newSubAgentDesc} onChange={(e) => setNewSubAgentDesc(e.target.value)} placeholder="Description (e.g., Handles deep research tasks)" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-violet-500/50" />
+                  <input type="text" value={newSubAgentCondition} onChange={(e) => setNewSubAgentCondition(e.target.value)} placeholder="Handoff condition (e.g., when user asks for research)" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-violet-500/50" />
+                  <div className="flex items-center gap-2">
+                    <button onClick={handleAddSubAgent} className="rounded-lg bg-violet-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-violet-500">Link Agent</button>
+                    <button onClick={() => setShowAddSubAgent(false)} className="text-[11px] text-zinc-500 hover:text-zinc-300">Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {subAgents.length === 0 && !showAddSubAgent ? (
+                <p className="text-xs text-zinc-600">No sub-agents connected. Add agents to enable multi-agent workflows.</p>
+              ) : (
+                <div className="space-y-2">
+                  {subAgents.map((sa) => (
+                    <div key={sa.id} className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2">
+                      <Network className="h-4 w-4 shrink-0 text-violet-400" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-zinc-200">{sa.targetAgentName}</p>
+                        {sa.description && <p className="text-[10px] text-zinc-500">{sa.description}</p>}
+                        {sa.handoffCondition && <p className="text-[10px] text-zinc-600">Condition: {sa.handoffCondition}</p>}
+                      </div>
+                      <button onClick={() => handleRemoveSubAgent(sa.id)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10"><X className="h-3 w-3" /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Conversation Memory */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><Brain className="h-4 w-4 text-amber-400" /> Memory</h3>
+                <button onClick={() => setShowAddMemory(!showAddMemory)} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:bg-surface-3">
+                  <Plus className="h-3 w-3" /> Add
+                </button>
+              </div>
+              <p className="mb-3 text-[10px] text-zinc-600">Key-value facts that persist across runs. The agent remembers these in every conversation.</p>
+
+              {showAddMemory && (
+                <div className="mb-3 space-y-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+                  <input type="text" value={newMemKey} onChange={(e) => setNewMemKey(e.target.value)} placeholder="Key (e.g., user_name, preferred_language)" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-amber-500/50" />
+                  <input type="text" value={newMemValue} onChange={(e) => setNewMemValue(e.target.value)} placeholder="Value (e.g., Alice, English)" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-amber-500/50" />
+                  <div className="flex items-center gap-2">
+                    <button onClick={handleAddMemory} className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-amber-500">Save Entry</button>
+                    <button onClick={() => setShowAddMemory(false)} className="text-[11px] text-zinc-500 hover:text-zinc-300">Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {memoryEntries.length === 0 && !showAddMemory ? (
+                <p className="text-xs text-zinc-600">No memory entries. Add facts the agent should remember across runs.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {memoryEntries.map((entry) => (
+                    <div key={entry.id} className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[11px] font-medium text-amber-400">{entry.key}</span>
+                          <span className="text-[10px] text-zinc-600">{entry.source === "auto" ? "(auto)" : ""}</span>
+                        </div>
+                        <p className="text-xs text-zinc-300">{entry.value}</p>
+                      </div>
+                      <button onClick={() => handleRemoveMemory(entry.id)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10"><X className="h-3 w-3" /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Visual Editor link */}
@@ -947,6 +1165,71 @@ export default function AgentDetailPage() {
                 <span className="text-[10px] font-medium text-zinc-400">Data residency:</span>
                 <span className="rounded bg-surface-3 px-2 py-0.5 text-[10px] font-medium text-zinc-300">US-East-1</span>
               </div>
+            </div>
+
+            {/* MCP Servers */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-200"><Plug className="h-4 w-4 text-cyan-400" /> MCP Servers</h3>
+                <button onClick={() => setShowAddMcp(!showAddMcp)} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:bg-surface-3">
+                  <Plus className="h-3 w-3" /> Add Server
+                </button>
+              </div>
+              <p className="text-[10px] text-zinc-500">Connect to Model Context Protocol servers to give the agent access to external tools and data sources.</p>
+
+              {showAddMcp && (
+                <div className="space-y-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+                  <input type="text" value={newMcpName} onChange={(e) => setNewMcpName(e.target.value)} placeholder="Server name (e.g., My Database Tools)" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-cyan-500/50" />
+                  <input type="text" value={newMcpUrl} onChange={(e) => setNewMcpUrl(e.target.value)} placeholder="Server URL (e.g., https://mcp.example.com/sse)" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm font-mono text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-cyan-500/50" />
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-zinc-400">Auth:</label>
+                    <select value={newMcpAuth} onChange={(e) => setNewMcpAuth(e.target.value as "none" | "bearer" | "api-key")} className="rounded-lg border border-zinc-800 bg-surface-0 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-cyan-500/50">
+                      <option value="none">None</option>
+                      <option value="bearer">Bearer Token</option>
+                      <option value="api-key">API Key</option>
+                    </select>
+                  </div>
+                  {newMcpAuth !== "none" && (
+                    <input type="password" value={newMcpToken} onChange={(e) => setNewMcpToken(e.target.value)} placeholder={newMcpAuth === "bearer" ? "Bearer token" : "API key"} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-cyan-500/50" />
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button onClick={handleAddMcpServer} className="rounded-lg bg-cyan-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-cyan-500">Add Server</button>
+                    <button onClick={() => setShowAddMcp(false)} className="text-[11px] text-zinc-500 hover:text-zinc-300">Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {mcpServers.length === 0 && !showAddMcp ? (
+                <p className="text-xs text-zinc-600">No MCP servers configured. Add a server to extend agent capabilities.</p>
+              ) : (
+                <div className="space-y-2">
+                  {mcpServers.map((server) => (
+                    <div key={server.id} className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2.5">
+                      <Server className="h-4 w-4 shrink-0 text-cyan-400" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium text-zinc-200">{server.name}</span>
+                          <span className={clsx("rounded-full px-1.5 py-0.5 text-[9px] font-medium", server.status === "connected" ? "bg-emerald-500/10 text-emerald-400" : server.status === "error" ? "bg-red-500/10 text-red-400" : "bg-zinc-700 text-zinc-500")}>{server.status}</span>
+                        </div>
+                        <p className="font-mono text-[10px] text-zinc-500 truncate">{server.url}</p>
+                        {server.tools && server.tools.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {server.tools.map((tool) => (
+                              <span key={tool} className="rounded bg-surface-2 px-1.5 py-0.5 text-[9px] font-medium text-zinc-400">{tool}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => handleTestMcpServer(server.id)} disabled={testingMcpId === server.id} className="rounded-lg border border-zinc-700 px-2 py-1 text-[10px] font-medium text-zinc-400 hover:bg-surface-3 disabled:opacity-50">
+                          {testingMcpId === server.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Test"}
+                        </button>
+                        <button onClick={() => handleRemoveMcpServer(server.id)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10"><X className="h-3 w-3" /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Safety & Guardrails */}

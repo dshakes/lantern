@@ -1,6 +1,7 @@
 "use client";
 
-import { Zap, FileText, Database, Mail, Brain, HardDrive, CheckCircle, Loader2, XCircle, Clock } from "lucide-react";
+import { useState } from "react";
+import { Zap, FileText, Database, Mail, Brain, HardDrive, CheckCircle, Loader2, XCircle, Clock, ChevronDown, ChevronRight, ArrowRightLeft } from "lucide-react";
 import clsx from "clsx";
 
 interface Step {
@@ -8,6 +9,10 @@ interface Step {
   status: string;
   detail: string;
   ts?: string;
+  toolInput?: string;
+  toolOutput?: string;
+  toolName?: string;
+  durationMs?: number;
 }
 
 function getStepVisual(stepName: string): { Icon: typeof Zap; color: string } {
@@ -16,6 +21,7 @@ function getStepVisual(stepName: string): { Icon: typeof Zap; color: string } {
   if (stepName.includes("fetch_data") || stepName.includes("data")) return { Icon: Database, color: "text-cyan-400" };
   if (stepName.includes("gmail") || stepName.includes("email") || stepName.includes("fetch_gmail")) return { Icon: Mail, color: "text-red-400" };
   if (stepName.includes("llm") || stepName.includes("call_llm")) return { Icon: Brain, color: "text-purple-400" };
+  if (stepName.includes("tool") || stepName.includes("mcp")) return { Icon: ArrowRightLeft, color: "text-orange-400" };
   if (stepName.includes("save") || stepName.includes("output")) return { Icon: HardDrive, color: "text-teal-400" };
   if (stepName.includes("complete")) return { Icon: CheckCircle, color: "text-emerald-400" };
   return { Icon: Zap, color: "text-zinc-400" };
@@ -46,7 +52,40 @@ interface ExecutionLogProps {
   isRunning?: boolean;
 }
 
+function ToolDetail({ step }: { step: Step }) {
+  const hasToolData = step.toolInput || step.toolOutput || step.toolName;
+  if (!hasToolData) return null;
+
+  return (
+    <div className="mt-1.5 space-y-1.5 rounded-lg border border-zinc-800 bg-surface-0 p-2">
+      {step.toolName && (
+        <div className="flex items-center gap-1.5">
+          <ArrowRightLeft className="h-2.5 w-2.5 text-orange-400" />
+          <span className="text-[10px] font-medium text-orange-400">{step.toolName}</span>
+          {step.durationMs != null && step.durationMs > 0 && (
+            <span className="ml-auto text-[9px] text-zinc-600">{step.durationMs < 1000 ? `${step.durationMs}ms` : `${(step.durationMs / 1000).toFixed(1)}s`}</span>
+          )}
+        </div>
+      )}
+      {step.toolInput && (
+        <div>
+          <p className="text-[9px] font-medium uppercase tracking-wider text-zinc-600">Input</p>
+          <pre className="mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-surface-1 p-1.5 font-mono text-[10px] leading-relaxed text-zinc-400">{step.toolInput}</pre>
+        </div>
+      )}
+      {step.toolOutput && (
+        <div>
+          <p className="text-[9px] font-medium uppercase tracking-wider text-zinc-600">Output</p>
+          <pre className="mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-surface-1 p-1.5 font-mono text-[10px] leading-relaxed text-zinc-300">{step.toolOutput}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ExecutionLog({ steps, isRunDone, isRunning }: ExecutionLogProps) {
+  const [expandedStep, setExpandedStep] = useState<number | null>(null);
+
   if (steps.length === 0 && isRunning) {
     return (
       <div className="flex items-center gap-2 py-2">
@@ -68,33 +107,42 @@ export function ExecutionLog({ steps, isRunDone, isRunning }: ExecutionLogProps)
           const failed = s.status === "error" || s.status === "failed";
           const visual = getStepVisual(s.step);
           const dur = stepDuration(s.ts, i > 0 ? steps[i - 1].ts : undefined);
+          const hasToolData = s.toolInput || s.toolOutput || s.toolName;
+          const isExpanded = expandedStep === i;
 
           return (
-            <div
-              key={i}
-              className={clsx(
-                "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] transition-all",
-                done ? "border-zinc-800 bg-surface-0 text-zinc-300" :
-                running ? "border-lantern-500/30 bg-lantern-500/5 text-lantern-300" :
-                failed ? "border-red-500/30 bg-red-500/5 text-red-300" :
-                "border-zinc-800 bg-surface-0 text-zinc-500"
-              )}
-              title={s.detail}
-            >
-              {running ? (
-                <Loader2 className="h-3 w-3 animate-spin text-lantern-400" />
-              ) : failed ? (
-                <XCircle className="h-3 w-3 text-red-400" />
-              ) : (
-                <visual.Icon className={clsx("h-3 w-3", done ? visual.color : "text-zinc-600")} />
-              )}
-              <span className="max-w-[200px] truncate">{formatDetail(s.detail)}</span>
-              {dur && done && (
-                <span className="flex items-center gap-0.5 text-[9px] text-zinc-600">
-                  <Clock className="h-2 w-2" />{dur}
-                </span>
-              )}
-              {done && <CheckCircle className="h-2.5 w-2.5 text-emerald-500/70" />}
+            <div key={i} className="flex flex-col">
+              <button
+                onClick={() => hasToolData ? setExpandedStep(isExpanded ? null : i) : undefined}
+                className={clsx(
+                  "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] transition-all",
+                  done ? "border-zinc-800 bg-surface-0 text-zinc-300" :
+                  running ? "border-lantern-500/30 bg-lantern-500/5 text-lantern-300" :
+                  failed ? "border-red-500/30 bg-red-500/5 text-red-300" :
+                  "border-zinc-800 bg-surface-0 text-zinc-500",
+                  hasToolData ? "cursor-pointer hover:border-zinc-600" : "cursor-default"
+                )}
+                title={s.detail}
+              >
+                {running ? (
+                  <Loader2 className="h-3 w-3 animate-spin text-lantern-400" />
+                ) : failed ? (
+                  <XCircle className="h-3 w-3 text-red-400" />
+                ) : (
+                  <visual.Icon className={clsx("h-3 w-3", done ? visual.color : "text-zinc-600")} />
+                )}
+                <span className="max-w-[200px] truncate">{formatDetail(s.detail)}</span>
+                {dur && done && (
+                  <span className="flex items-center gap-0.5 text-[9px] text-zinc-600">
+                    <Clock className="h-2 w-2" />{dur}
+                  </span>
+                )}
+                {done && <CheckCircle className="h-2.5 w-2.5 text-emerald-500/70" />}
+                {hasToolData && (
+                  isExpanded ? <ChevronDown className="h-2.5 w-2.5 text-zinc-500" /> : <ChevronRight className="h-2.5 w-2.5 text-zinc-500" />
+                )}
+              </button>
+              {isExpanded && <ToolDetail step={s} />}
             </div>
           );
         })}
