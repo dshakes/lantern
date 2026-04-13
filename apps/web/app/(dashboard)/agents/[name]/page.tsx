@@ -25,6 +25,17 @@ import {
   Clock,
   Shield,
   Lock,
+  History,
+  Wand2,
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  Zap,
+  FileText,
+  GitCompare,
+  ShieldAlert,
+  Lightbulb,
+  DollarSign,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -36,6 +47,9 @@ import { ExecutionLog, deduplicateSteps } from "@/components/execution-log";
 import { AgentDetailSkeleton } from "@/components/skeleton";
 import { formatCost, formatDuration } from "@/lib/mock-data";
 import type { Run } from "@/lib/mock-data";
+import { type GuardrailConfig, getGuardrailConfig, saveGuardrailConfig, applyGuardrails, hasActiveGuardrails } from "@/lib/guardrails";
+import { type PromptVersion, getPromptVersions, savePromptVersion, formatVersionDate } from "@/lib/prompt-versions";
+import { estimateCost, formatEstimate } from "@/lib/cost-estimator";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -167,6 +181,25 @@ export default function AgentDetailPage() {
   const [settingsAuditLog, setSettingsAuditLog] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
 
+  // Guardrails
+  const [guardrails, setGuardrails] = useState<GuardrailConfig>({ contentFilter: false, blockPII: false, blockToxic: false, blockedTopics: [], maxResponseLength: 0 });
+  const [blockedTopicsInput, setBlockedTopicsInput] = useState("");
+
+  // Prompt versioning
+  const [promptVersions, setPromptVersions] = useState<PromptVersion[]>([]);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+
+  // AI features
+  const [optimizingPrompt, setOptimizingPrompt] = useState(false);
+  const [runSuggestions, setRunSuggestions] = useState<string[]>([]);
+  const [generatingDocs, setGeneratingDocs] = useState(false);
+  const [agentDocs, setAgentDocs] = useState("");
+  const [showDocs, setShowDocs] = useState(false);
+
+  // Run comparison
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareIds, setCompareIds] = useState<[string | null, string | null]>([null, null]);
+
   // Runs tab
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [runsPage, setRunsPage] = useState(0);
@@ -186,6 +219,13 @@ export default function AgentDetailPage() {
     try { const c = JSON.parse(localStorage.getItem("lantern_connectors") || "{}"); setGmailConnected(c.gmail?.installed === true); } catch { /* */ }
     const isEmail = name.toLowerCase().includes("gmail") || name.toLowerCase().includes("email");
     setTestInput(isEmail ? "Summarize my recent emails and highlight anything urgent." : `Hello, I'd like to test the ${name} agent.`);
+    // Load guardrails
+    setGuardrails(getGuardrailConfig(name));
+    setBlockedTopicsInput(getGuardrailConfig(name).blockedTopics.join(", "));
+    // Load prompt versions
+    setPromptVersions(getPromptVersions(name));
+    // Load saved docs
+    try { const d = localStorage.getItem(`lantern_agent_docs_${name}`); if (d) setAgentDocs(d); } catch { /* */ }
     api.listSchedules().then((sched) => {
       const m = sched.find((sc) => sc.agentName === name);
       if (m) { setSettingsCron(m.cronExpr); setScheduleId(m.id); setScheduleEnabled(m.enabled); if (m.nextFireAt) setNextFireAt(m.nextFireAt); if (m.deliveryEmail) { setDeliveryEmailEnabled(true); setDeliveryEmail(m.deliveryEmail); } }
@@ -193,6 +233,24 @@ export default function AgentDetailPage() {
   }, [name]);
 
   useEffect(() => { if (testRef.current) testRef.current.scrollTop = testRef.current.scrollHeight; }, [testOutput]);
+
+  // Trigger suggestions generation when test completes
+  const suggestionsTriggeredRef = useRef(false);
+  useEffect(() => {
+    if (testDone && !testError && testOutput && systemPrompt && !suggestionsTriggeredRef.current) {
+      suggestionsTriggeredRef.current = true;
+      (async () => {
+        try {
+          const resp = await api.complete({ messages: [
+            { role: "system", content: "Given an AI agent's system prompt and its output, suggest 2-3 brief improvements (one sentence each). Return a JSON array of strings. ONLY valid JSON." },
+            { role: "user", content: `Prompt: ${systemPrompt}\n\nOutput: ${testOutput.slice(0, 500)}` }
+          ], model: "auto", stream: false });
+          if (resp.ok) { const d = await resp.json(); const match = (d.content || "").match(/\[[\s\S]*\]/); if (match) { setRunSuggestions(JSON.parse(match[0])); } }
+        } catch { /* silent */ }
+      })();
+    }
+    if (!testDone) { suggestionsTriggeredRef.current = false; setRunSuggestions([]); }
+  }, [testDone, testError, testOutput, systemPrompt]);
 
   const isEmailAgent = useMemo(() => name.toLowerCase().includes("gmail") || name.toLowerCase().includes("email"), [name]);
 
@@ -206,6 +264,8 @@ export default function AgentDetailPage() {
   const handleSavePrompt = useCallback(async () => {
     setSavingPrompt(true);
     try { setAgentPrompt(name, systemPrompt); await api.updateAgent(name, { systemPrompt }); setPromptDirty(false); toast.success("System prompt saved"); } catch { setPromptDirty(false); toast.success("System prompt saved locally"); } finally { setSavingPrompt(false); }
+    // Save prompt version
+    if (systemPrompt.trim()) { const updated = savePromptVersion(name, systemPrompt); setPromptVersions(updated); }
   }, [name, systemPrompt, toast]);
 
   const handleGeneratePrompt = useCallback(async () => {
@@ -288,6 +348,72 @@ export default function AgentDetailPage() {
     try { await api.updateAgent(name, { model: settingsModel, isolation: settingsIsolation, timeout: settingsTimeout, maxTokens: settingsMaxTokens, maxCostUsd: settingsMaxCost }); toast.success("Settings saved"); } catch { toast.success("Settings saved locally"); } finally { setSavingSettings(false); }
   }, [name, settingsModel, settingsIsolation, settingsTimeout, settingsMaxTokens, settingsMaxCost, toast]);
 
+  // Prompt optimizer
+  const handleOptimizePrompt = useCallback(async () => {
+    if (!systemPrompt.trim()) { toast.error("Write a prompt first"); return; }
+    setOptimizingPrompt(true);
+    try {
+      const resp = await api.complete({ messages: [
+        { role: "system", content: "You are an expert prompt engineer. Analyze the given system prompt and return an improved version. Focus on clarity, specificity, output format instructions, and edge case handling. Return ONLY the improved prompt text, nothing else." },
+        { role: "user", content: systemPrompt }
+      ], model: "auto", stream: false });
+      if (resp.ok) { const d = await resp.json(); const opt = (d.content || "").trim(); if (opt) { setSystemPrompt(opt); setPromptDirty(true); toast.success("Prompt optimized -- review and save"); return; } }
+      toast.error("Failed to optimize prompt");
+    } catch { toast.error("LLM unavailable"); } finally { setOptimizingPrompt(false); }
+  }, [systemPrompt, toast]);
+
+  // Auto-documentation
+  const handleGenerateDocs = useCallback(async () => {
+    setGeneratingDocs(true);
+    try {
+      const resp = await api.complete({ messages: [
+        { role: "system", content: "Generate a concise README documentation for this AI agent. Include: purpose, how it works, expected input/output, and any limitations. Use markdown. Keep it under 300 words." },
+        { role: "user", content: `Agent: ${name}\nDescription: ${agent?.description || ""}\nSystem Prompt: ${systemPrompt}\nRuns: ${agentRuns.length}, Success rate: ${agentRuns.length > 0 ? Math.round((agentRuns.filter(r => r.status === "succeeded").length / agentRuns.length) * 100) : 0}%` }
+      ], model: "auto", stream: false });
+      if (resp.ok) { const d = await resp.json(); const docs = (d.content || "").trim(); if (docs) { setAgentDocs(docs); localStorage.setItem(`lantern_agent_docs_${name}`, docs); setShowDocs(true); toast.success("Documentation generated"); return; } }
+      toast.error("Failed to generate docs");
+    } catch { toast.error("LLM unavailable"); } finally { setGeneratingDocs(false); }
+  }, [name, agent?.description, systemPrompt, agentRuns, toast]);
+
+  // Guardrails save helper
+  const handleSaveGuardrails = useCallback((updated: GuardrailConfig) => {
+    setGuardrails(updated);
+    saveGuardrailConfig(name, updated);
+  }, [name]);
+
+  // Filtered test output with guardrails applied
+  const filteredTestOutput = useMemo(() => {
+    if (!testOutput || !hasActiveGuardrails(guardrails)) return { text: testOutput, blocked: false, warnings: [] as string[] };
+    return applyGuardrails(testOutput, guardrails);
+  }, [testOutput, guardrails]);
+
+  // Cost estimate
+  const costEstimate = useMemo(() => {
+    if (!testInput.trim()) return null;
+    return estimateCost(systemPrompt, testInput, testModel);
+  }, [systemPrompt, testInput, testModel]);
+
+  // Agent health stats
+  const healthStats = useMemo(() => {
+    const total = agentRuns.length;
+    const succeeded = agentRuns.filter(r => r.status === "succeeded").length;
+    const successRate = total > 0 ? Math.round((succeeded / total) * 100) : 0;
+    const avgCost = total > 0 ? agentRuns.reduce((s, r) => s + r.costUsd, 0) / total : 0;
+    const avgDuration = total > 0 ? agentRuns.reduce((s, r) => {
+      if (!r.startedAt) return s;
+      const end = r.finishedAt ? new Date(r.finishedAt).getTime() : Date.now();
+      return s + (end - new Date(r.startedAt).getTime());
+    }, 0) / total : 0;
+    const lastRun = agentRuns[0] ?? null;
+    // Trend: compare last 5 vs previous 5
+    const recent5 = agentRuns.slice(0, 5);
+    const prev5 = agentRuns.slice(5, 10);
+    const recentRate = recent5.length > 0 ? recent5.filter(r => r.status === "succeeded").length / recent5.length : 0;
+    const prevRate = prev5.length > 0 ? prev5.filter(r => r.status === "succeeded").length / prev5.length : 0;
+    const trend = recent5.length < 2 ? "neutral" : recentRate >= prevRate ? "up" : "down";
+    return { total, succeeded, successRate, avgCost, avgDuration, lastRun, trend };
+  }, [agentRuns]);
+
   const succeededRuns = agentRuns.filter((r) => r.status === "succeeded").length;
   const totalCost = agentRuns.reduce((sum, r) => sum + r.costUsd, 0);
 
@@ -333,7 +459,10 @@ export default function AgentDetailPage() {
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><MessageSquare className="h-4 w-4 text-indigo-400" /> System Prompt</h3>
                 <div className="flex items-center gap-2">
-                  <button onClick={handleGeneratePrompt} disabled={savingPrompt} className="inline-flex items-center gap-1.5 rounded-lg border border-lantern-500/30 px-3 py-1.5 text-xs font-medium text-lantern-400 hover:bg-lantern-500/10"><Sparkles className="h-3 w-3" /> Generate with AI</button>
+                  <button onClick={handleOptimizePrompt} disabled={optimizingPrompt || !systemPrompt.trim()} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-500/10 disabled:opacity-50">
+                    {optimizingPrompt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />} Optimize
+                  </button>
+                  <button onClick={handleGeneratePrompt} disabled={savingPrompt} className="inline-flex items-center gap-1.5 rounded-lg border border-lantern-500/30 px-3 py-1.5 text-xs font-medium text-lantern-400 hover:bg-lantern-500/10"><Sparkles className="h-3 w-3" /> Generate</button>
                   <button onClick={handleSavePrompt} disabled={savingPrompt || !promptDirty} className={clsx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium", promptDirty ? "bg-lantern-500 text-white hover:bg-lantern-400" : "border border-zinc-700 text-zinc-500 cursor-not-allowed")}>
                     {savingPrompt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} {savingPrompt ? "Saving..." : "Save"}
                   </button>
@@ -341,6 +470,29 @@ export default function AgentDetailPage() {
               </div>
               <textarea value={systemPrompt} onChange={(e) => { setSystemPrompt(e.target.value); setPromptDirty(true); }} rows={6} spellCheck={false} placeholder="Define what this agent does..." className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20" />
               {promptDirty && <p className="mt-1.5 text-[11px] text-amber-400">Unsaved changes</p>}
+
+              {/* Version History */}
+              {promptVersions.length > 0 && (
+                <div className="mt-3">
+                  <button onClick={() => setShowVersionHistory(!showVersionHistory)} className="flex items-center gap-1.5 text-[11px] text-zinc-500 hover:text-zinc-300">
+                    <History className="h-3 w-3" /> Version History ({promptVersions.length})
+                    {showVersionHistory ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  </button>
+                  {showVersionHistory && (
+                    <div className="mt-2 max-h-48 space-y-1 overflow-auto rounded-lg border border-zinc-800 bg-surface-0 p-2">
+                      {promptVersions.map((v, i) => (
+                        <button key={i} onClick={() => { setSystemPrompt(v.prompt); setPromptDirty(true); toast.info(`Restored version ${v.version}`); }} className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left hover:bg-surface-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono text-zinc-500">v{v.version}</span>
+                            <span className="max-w-xs truncate text-[11px] text-zinc-400">{v.prompt.slice(0, 60)}...</span>
+                          </div>
+                          <span className="shrink-0 text-[10px] text-zinc-600">{formatVersionDate(v.savedAt)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Resources & Security */}
@@ -407,14 +559,22 @@ export default function AgentDetailPage() {
                   ) : (
                     <div ref={testRef} className="max-h-80 overflow-auto p-3">
                       <div className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-zinc-200">
-                        {testOutput}
+                        {filteredTestOutput.text || testOutput}
                         {testRunning && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-lantern-400" />}
                       </div>
+                      {filteredTestOutput.warnings.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {filteredTestOutput.warnings.map((w, i) => (
+                            <div key={i} className="flex items-center gap-1.5 text-[10px] text-amber-400"><ShieldAlert className="h-3 w-3 shrink-0" /> {w}</div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                   {testDone && !testError && (
                     <div className="flex items-center gap-3 border-t border-zinc-800 px-3 py-2">
                       <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Completed</span>
+                      {filteredTestOutput.blocked && <span className="text-[11px] font-medium text-red-400">Blocked by guardrails</span>}
                       {testMeta && (
                         <>
                           <span className="text-[11px] text-zinc-500">{testMeta.model}</span>
@@ -425,6 +585,70 @@ export default function AgentDetailPage() {
                       )}
                     </div>
                   )}
+                </div>
+              )}
+            </div>
+
+            {/* Smart Run Suggestions */}
+            {testDone && !testError && runSuggestions.length > 0 && (
+              <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
+                <h4 className="mb-2 flex items-center gap-2 text-xs font-medium text-indigo-400"><Lightbulb className="h-3.5 w-3.5" /> Suggestions</h4>
+                <div className="space-y-1.5">
+                  {runSuggestions.map((s, i) => <p key={i} className="text-xs text-zinc-400">{s}</p>)}
+                </div>
+              </div>
+            )}
+
+            {/* Cost Estimator */}
+            {testInput.trim() && !testRunning && !testDone && costEstimate && (
+              <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+                <DollarSign className="h-3 w-3" />
+                {formatEstimate(costEstimate)}
+              </div>
+            )}
+
+            {/* Agent Health Dashboard */}
+            {healthStats.total > 0 && (
+              <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+                <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-300"><Activity className="h-4 w-4 text-teal-400" /> Health</h3>
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                  <div className="rounded-lg bg-surface-0 p-3">
+                    <p className="text-[10px] font-medium text-zinc-500">Success Rate</p>
+                    <p className="mt-1 flex items-center gap-1 text-lg font-semibold text-zinc-100">{healthStats.successRate}%
+                      {healthStats.trend === "up" && <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />}
+                      {healthStats.trend === "down" && <TrendingDown className="h-3.5 w-3.5 text-red-400" />}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-surface-0 p-3">
+                    <p className="text-[10px] font-medium text-zinc-500">Avg Cost / Run</p>
+                    <p className="mt-1 text-lg font-semibold text-zinc-100">{formatCost(healthStats.avgCost)}</p>
+                  </div>
+                  <div className="rounded-lg bg-surface-0 p-3">
+                    <p className="text-[10px] font-medium text-zinc-500">Avg Duration</p>
+                    <p className="mt-1 text-lg font-semibold text-zinc-100">{formatDuration(healthStats.avgDuration)}</p>
+                  </div>
+                  <div className="rounded-lg bg-surface-0 p-3">
+                    <p className="text-[10px] font-medium text-zinc-500">Total Runs</p>
+                    <p className="mt-1 text-lg font-semibold text-zinc-100">{healthStats.total}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Auto-Documentation */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <div className="flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><FileText className="h-4 w-4 text-zinc-400" /> Documentation</h3>
+                <div className="flex items-center gap-2">
+                  {agentDocs && <button onClick={() => setShowDocs(!showDocs)} className="text-[11px] text-zinc-500 hover:text-zinc-300">{showDocs ? "Hide" : "Show"}</button>}
+                  <button onClick={handleGenerateDocs} disabled={generatingDocs} className="inline-flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50">
+                    {generatingDocs ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} {agentDocs ? "Regenerate" : "Generate"}
+                  </button>
+                </div>
+              </div>
+              {showDocs && agentDocs && (
+                <div className="mt-3 max-h-60 overflow-auto rounded-lg border border-zinc-800 bg-surface-0 p-3">
+                  <pre className="whitespace-pre-wrap text-xs leading-relaxed text-zinc-300 font-sans">{agentDocs}</pre>
                 </div>
               )}
             </div>
@@ -455,6 +679,60 @@ export default function AgentDetailPage() {
             >
               {testRunning ? <><Loader2 className="h-3 w-3 animate-spin" /> Running...</> : <><Play className="h-3 w-3" /> Run Now</>}
             </button>
+            {agentRuns.length >= 2 && (
+              <button onClick={() => { setCompareMode(!compareMode); setCompareIds([null, null]); }} className={clsx("inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-medium", compareMode ? "border-indigo-500/50 bg-indigo-500/10 text-indigo-400" : "border-zinc-700 text-zinc-400 hover:bg-surface-3")}>
+                <GitCompare className="h-3 w-3" /> {compareMode ? "Exit Compare" : "Compare Runs"}
+              </button>
+            )}
+
+            {/* Run Comparison View */}
+            {compareMode && (
+              <div className="rounded-xl border border-indigo-500/20 bg-surface-1 p-4">
+                <p className="mb-3 text-xs text-zinc-400">Select two runs to compare side by side:</p>
+                <div className="grid grid-cols-2 gap-4">
+                  {([0, 1] as const).map((idx) => (
+                    <div key={idx}>
+                      <select value={compareIds[idx] || ""} onChange={(e) => { const ids = [...compareIds] as [string | null, string | null]; ids[idx] = e.target.value || null; setCompareIds(ids); }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-xs text-zinc-100 outline-none">
+                        <option value="">Select run...</option>
+                        {agentRuns.map((r) => <option key={r.id} value={r.id}>{r.id.slice(0, 12)} - {r.status} {r.startedAt ? `(${format(new Date(r.startedAt), "MMM d HH:mm")})` : ""}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+                {compareIds[0] && compareIds[1] && (() => {
+                  const runA = agentRuns.find(r => r.id === compareIds[0]);
+                  const runB = agentRuns.find(r => r.id === compareIds[1]);
+                  if (!runA || !runB) return null;
+                  const getOutput = (run: Run) => typeof run.output === "string" ? run.output : run.output ? JSON.stringify(run.output, null, 2) : "(no output)";
+                  const durA = runA.startedAt ? new Date(runA.finishedAt ?? new Date()).getTime() - new Date(runA.startedAt).getTime() : 0;
+                  const durB = runB.startedAt ? new Date(runB.finishedAt ?? new Date()).getTime() - new Date(runB.startedAt).getTime() : 0;
+                  return (
+                    <div className="mt-4 grid grid-cols-2 gap-4">
+                      {[runA, runB].map((run, i) => {
+                        const dur = i === 0 ? durA : durB;
+                        return (
+                          <div key={run.id} className="space-y-2 rounded-lg border border-zinc-800 bg-surface-0 p-3">
+                            <div className="flex items-center gap-2">
+                              <StatusBadge status={run.status} />
+                              <span className="font-mono text-[10px] text-zinc-500">{run.id.slice(0, 12)}</span>
+                            </div>
+                            <div className="flex gap-3 text-[10px] text-zinc-500">
+                              <span>{formatDuration(dur)}</span>
+                              <span>{formatCost(run.costUsd)}</span>
+                              <span>{(run.tokensIn + run.tokensOut).toLocaleString()} tokens</span>
+                            </div>
+                            <div className="max-h-40 overflow-auto rounded border border-zinc-800 bg-surface-1 p-2">
+                              <pre className="whitespace-pre-wrap text-[11px] text-zinc-300 font-sans">{getOutput(run).slice(0, 500)}</pre>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
             {runsLoading ? (
               <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-zinc-500" /></div>
             ) : agentRuns.length === 0 ? (
@@ -669,6 +947,45 @@ export default function AgentDetailPage() {
                 <span className="text-[10px] font-medium text-zinc-400">Data residency:</span>
                 <span className="rounded bg-surface-3 px-2 py-0.5 text-[10px] font-medium text-zinc-300">US-East-1</span>
               </div>
+            </div>
+
+            {/* Safety & Guardrails */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-200"><ShieldAlert className="h-4 w-4 text-amber-400" /> Safety & Guardrails</h3>
+              <p className="text-[10px] text-zinc-500">Client-side filters applied to agent output before display</p>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div><span className="text-xs font-medium text-zinc-300">Enable content filtering</span><p className="text-[10px] text-zinc-500">Flag and redact potential secrets in output</p></div>
+                  <button type="button" role="switch" aria-checked={guardrails.contentFilter} onClick={() => handleSaveGuardrails({ ...guardrails, contentFilter: !guardrails.contentFilter })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.contentFilter ? "bg-lantern-500" : "bg-zinc-700")}>
+                    <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", guardrails.contentFilter ? "translate-x-4" : "translate-x-0.5")} />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div><span className="text-xs font-medium text-zinc-300">Block PII in output</span><p className="text-[10px] text-zinc-500">Redact emails, phone numbers, SSNs, card numbers</p></div>
+                  <button type="button" role="switch" aria-checked={guardrails.blockPII} onClick={() => handleSaveGuardrails({ ...guardrails, blockPII: !guardrails.blockPII })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.blockPII ? "bg-lantern-500" : "bg-zinc-700")}>
+                    <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", guardrails.blockPII ? "translate-x-4" : "translate-x-0.5")} />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div><span className="text-xs font-medium text-zinc-300">Block toxic content</span><p className="text-[10px] text-zinc-500">Block output containing harmful or toxic content</p></div>
+                  <button type="button" role="switch" aria-checked={guardrails.blockToxic} onClick={() => handleSaveGuardrails({ ...guardrails, blockToxic: !guardrails.blockToxic })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.blockToxic ? "bg-lantern-500" : "bg-zinc-700")}>
+                    <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", guardrails.blockToxic ? "translate-x-4" : "translate-x-0.5")} />
+                  </button>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">Blocked topics (comma-separated)</label>
+                  <input type="text" value={blockedTopicsInput} onChange={(e) => { setBlockedTopicsInput(e.target.value); const topics = e.target.value.split(",").map(t => t.trim()).filter(Boolean); handleSaveGuardrails({ ...guardrails, blockedTopics: topics }); }} placeholder="e.g., politics, religion, violence" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />
+                </div>
+                <div>
+                  <label className="mb-1 flex items-center justify-between text-xs text-zinc-400">Max response length <span className="font-mono text-zinc-500">{guardrails.maxResponseLength === 0 ? "Unlimited" : `${guardrails.maxResponseLength.toLocaleString()} chars`}</span></label>
+                  <input type="range" min={0} max={10000} step={100} value={guardrails.maxResponseLength} onChange={(e) => handleSaveGuardrails({ ...guardrails, maxResponseLength: parseInt(e.target.value) })} className="w-full accent-lantern-500" />
+                </div>
+              </div>
+              {hasActiveGuardrails(guardrails) && (
+                <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-[10px] text-amber-400">
+                  <ShieldAlert className="h-3 w-3" /> Guardrails active -- output will be filtered
+                </div>
+              )}
             </div>
 
             <button onClick={handleSaveSettings} disabled={savingSettings} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-sm font-medium text-white hover:bg-lantern-400 disabled:opacity-50">

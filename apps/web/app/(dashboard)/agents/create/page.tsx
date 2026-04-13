@@ -2,7 +2,7 @@
 
 import { Suspense, useState, useCallback, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Sparkles, Loader2, FileText, Puzzle, Play, Square, Save, CheckCircle2, AlertCircle } from "lucide-react";
+import { ArrowLeft, ArrowRight, Sparkles, Loader2, FileText, Puzzle, Play, Square, Save, CheckCircle2, AlertCircle, Search, Headphones, Code, Mail, BarChart3, PenTool, ClipboardList, ShieldCheck, Star, Link2 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import { AiAssistButton } from "@/components/ai-assist";
@@ -18,10 +18,14 @@ type CreationPath = "ai" | "manual" | "template";
 type WizardStep = "choose" | "configure" | "test";
 
 const TEMPLATES = [
-  { id: "research", name: "research-agent", description: "Researches a topic and produces a structured report with citations", model: "auto", prompt: "You are a research analyst. Given a topic, write a comprehensive research briefing with key findings, trends, and implications. Use clear headers and bullet points." },
-  { id: "support", name: "customer-support", description: "Handles customer support tickets with empathetic, helpful responses", model: "auto", prompt: "You are a customer support agent. Draft a professional, empathetic response to the customer's issue. Include specific next steps and offer to escalate if needed." },
-  { id: "code-review", name: "code-reviewer", description: "Reviews pull requests for correctness, security, and style", model: "code-large", prompt: "You are a senior code reviewer. Given a PR description, provide a thorough code review covering correctness, security, style, and performance. Be specific and actionable." },
-  { id: "email-digest", name: "email-digest", description: "Summarizes emails and highlights urgent items", model: "auto", prompt: "You are an email assistant. Summarize the provided emails concisely, grouping by priority. Highlight anything urgent or time-sensitive." },
+  { id: "research", name: "research-agent", description: "Researches a topic and produces a structured report with citations", model: "auto", prompt: "You are a research analyst. Given a topic, write a comprehensive research briefing with key findings, trends, and implications. Use clear headers and bullet points.", tags: ["Research", "Data"], icon: "search", popular: true, connectors: [] },
+  { id: "support", name: "customer-support", description: "Handles customer support tickets with empathetic, helpful responses", model: "auto", prompt: "You are a customer support agent. Draft a professional, empathetic response to the customer's issue. Include specific next steps and offer to escalate if needed.", tags: ["Email", "Support"], icon: "headphones", popular: true, connectors: ["Email", "Slack"] },
+  { id: "code-review", name: "code-reviewer", description: "Reviews pull requests for correctness, security, and style", model: "code-large", prompt: "You are a senior code reviewer. Given a PR description, provide a thorough code review covering correctness, security, style, and performance. Be specific and actionable.", tags: ["Code", "Engineering"], icon: "code", popular: false, connectors: ["GitHub"] },
+  { id: "email-digest", name: "email-digest", description: "Summarizes emails and highlights urgent items", model: "auto", prompt: "You are an email assistant. Summarize the provided emails concisely, grouping by priority. Highlight anything urgent or time-sensitive.", tags: ["Email", "Productivity"], icon: "mail", popular: false, connectors: ["Gmail"] },
+  { id: "data-analyst", name: "data-analyst", description: "Analyzes datasets, finds patterns, and generates visualizations", model: "reasoning-large", prompt: "You are a data analyst. Given data or a question about data, provide thorough analysis with key insights, statistical summaries, and actionable recommendations. Format output with clear sections.", tags: ["Data", "Analytics"], icon: "chart", popular: true, connectors: [] },
+  { id: "content-writer", name: "content-writer", description: "Writes blog posts, social media content, and marketing copy", model: "auto", prompt: "You are a professional content writer. Create engaging, well-structured content optimized for the target audience and platform. Include compelling hooks, clear structure, and strong calls to action.", tags: ["Content", "Marketing"], icon: "pen", popular: false, connectors: [] },
+  { id: "meeting-notes", name: "meeting-notes", description: "Processes meeting transcripts into structured action items and summaries", model: "auto", prompt: "You are a meeting notes specialist. Given a meeting transcript, extract: 1) Key decisions made, 2) Action items with owners and deadlines, 3) Open questions, 4) Brief summary. Format clearly with bullet points.", tags: ["Productivity", "Meetings"], icon: "clipboard", popular: false, connectors: ["Calendar", "Slack"] },
+  { id: "security-scanner", name: "security-scanner", description: "Scans code and configurations for security vulnerabilities", model: "code-large", prompt: "You are a security analyst. Review the provided code or configuration for security vulnerabilities, following OWASP guidelines. Rate severity (Critical/High/Medium/Low), explain the risk, and provide specific remediation steps.", tags: ["Security", "Code"], icon: "shield", popular: false, connectors: ["GitHub"] },
 ];
 
 function ModelSelect({ value, onChange, className }: { value: string; onChange: (v: string) => void; className?: string }) {
@@ -68,6 +72,8 @@ function CreatePage() {
   const [testOutput, setTestOutput] = useState("");
   const [testDone, setTestDone] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [previewTemplate, setPreviewTemplate] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const testRef = useRef<HTMLDivElement>(null);
 
@@ -183,16 +189,62 @@ function CreatePage() {
                 </button>
               </div>
             )}
-            {path === "template" && (
-              <div className="mt-8 grid grid-cols-1 gap-3 md:grid-cols-2">
-                {TEMPLATES.map((tpl) => (
-                  <button key={tpl.id} onClick={() => handleTemplateSelect(tpl)} className="rounded-xl border border-zinc-800 bg-surface-1 p-4 text-left hover:border-zinc-600">
-                    <h4 className="text-sm font-medium text-zinc-200">{tpl.name}</h4>
-                    <p className="mt-1 text-xs text-zinc-500">{tpl.description}</p>
-                  </button>
-                ))}
-              </div>
-            )}
+            {path === "template" && (() => {
+              const ICON_MAP: Record<string, React.ComponentType<{className?: string}>> = { search: Search, headphones: Headphones, code: Code, mail: Mail, chart: BarChart3, pen: PenTool, clipboard: ClipboardList, shield: ShieldCheck };
+              const allTags = Array.from(new Set(TEMPLATES.flatMap(t => t.tags)));
+              const filtered = selectedTag ? TEMPLATES.filter(t => t.tags.includes(selectedTag)) : TEMPLATES;
+              return (
+                <div className="mt-8 space-y-4">
+                  {/* Tag filter */}
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => setSelectedTag(null)} className={clsx("rounded-full px-3 py-1 text-[11px] font-medium transition-colors", !selectedTag ? "bg-indigo-500/20 text-indigo-400" : "bg-surface-2 text-zinc-500 hover:text-zinc-300")}>All</button>
+                    {allTags.map(tag => (
+                      <button key={tag} onClick={() => setSelectedTag(selectedTag === tag ? null : tag)} className={clsx("rounded-full px-3 py-1 text-[11px] font-medium transition-colors", selectedTag === tag ? "bg-indigo-500/20 text-indigo-400" : "bg-surface-2 text-zinc-500 hover:text-zinc-300")}>{tag}</button>
+                    ))}
+                  </div>
+                  {/* Template cards */}
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {filtered.map((tpl) => {
+                      const Icon = ICON_MAP[tpl.icon] || Puzzle;
+                      const isPreview = previewTemplate === tpl.id;
+                      return (
+                        <div key={tpl.id} className="group relative rounded-xl border border-zinc-800 bg-surface-1 p-4 hover:border-zinc-600 transition-all">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-3">
+                              <Icon className="h-4 w-4 text-zinc-400" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-sm font-medium text-zinc-200">{tpl.name}</h4>
+                                {tpl.popular && <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-400"><Star className="h-2.5 w-2.5" /> Popular</span>}
+                              </div>
+                              <p className="mt-0.5 text-xs text-zinc-500">{tpl.description}</p>
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {tpl.tags.map(tag => <span key={tag} className="rounded bg-surface-3 px-1.5 py-0.5 text-[9px] font-medium text-zinc-400">{tag}</span>)}
+                                {tpl.connectors.length > 0 && (
+                                  <span className="inline-flex items-center gap-0.5 text-[9px] text-zinc-600"><Link2 className="h-2.5 w-2.5" /> {tpl.connectors.join(", ")}</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          {/* Preview prompt on click */}
+                          {isPreview && (
+                            <div className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 p-2">
+                              <p className="text-[10px] font-medium text-zinc-500 mb-1">System Prompt Preview</p>
+                              <p className="text-xs text-zinc-400 leading-relaxed">{tpl.prompt}</p>
+                            </div>
+                          )}
+                          <div className="mt-3 flex items-center gap-2">
+                            <button onClick={() => handleTemplateSelect(tpl)} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-indigo-500">Use Template</button>
+                            <button onClick={() => setPreviewTemplate(isPreview ? null : tpl.id)} className="rounded-lg border border-zinc-700 px-3 py-1.5 text-[11px] font-medium text-zinc-400 hover:bg-surface-3">{isPreview ? "Hide" : "Preview"}</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
