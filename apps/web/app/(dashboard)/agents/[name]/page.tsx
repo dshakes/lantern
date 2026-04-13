@@ -1136,26 +1136,6 @@ export default function AgentDetailPage() {
               </div>
             )}
 
-            {/* Code Sandbox (Feature 3) */}
-            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
-              <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-300"><Code2 className="h-4 w-4 text-cyan-400" /> Code Sandbox</h3>
-              <div className="mb-2 flex items-center gap-2">
-                <label className="text-xs text-zinc-500">Language:</label>
-                <select value={sandboxLang} onChange={(e) => setSandboxLang(e.target.value as CodeLanguage)} className="rounded-lg border border-zinc-800 bg-surface-0 px-2 py-1 text-xs text-zinc-100 outline-none">
-                  <option value="javascript">JavaScript</option><option value="python">Python</option><option value="sql">SQL</option>
-                </select>
-              </div>
-              <textarea value={sandboxCode} onChange={(e) => setSandboxCode(e.target.value)} rows={4} spellCheck={false} placeholder={sandboxLang === "javascript" ? 'console.log("Hello, world!");' : sandboxLang === "python" ? 'print("Hello, world!")' : "SELECT * FROM users LIMIT 10;"} className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-cyan-500/50" />
-              <button onClick={handleRunSandbox} disabled={sandboxRunning || !sandboxCode.trim()} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-cyan-500 disabled:opacity-50">
-                {sandboxRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />} Run
-              </button>
-              {sandboxOutput && (
-                <div className="mt-2 rounded-lg border border-zinc-800 bg-surface-0 p-3">
-                  <pre className="whitespace-pre-wrap font-mono text-xs text-zinc-300">{sandboxOutput}</pre>
-                </div>
-              )}
-            </div>
-
             {/* Agent Health Dashboard */}
             {healthStats.total > 0 && (
               <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
