@@ -7,10 +7,7 @@ import {
   ChevronsUpDown,
   ChevronLeft,
   ChevronRight,
-  MoreHorizontal,
   Eye,
-  Pencil,
-  Trash2,
   Inbox,
 } from "lucide-react";
 
@@ -57,7 +54,6 @@ export function DataTable<T>({
   emptyTitle = "No data",
   emptyDescription = "There are no items to display.",
 }: DataTableProps<T>) {
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
   const [page, setPage] = useState(0);
@@ -93,36 +89,6 @@ export function DataTable<T>({
     });
   }, []);
 
-  const toggleSelect = useCallback(
-    (key: string) => {
-      setSelectedKeys((prev) => {
-        const next = new Set(prev);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        return next;
-      });
-    },
-    [],
-  );
-
-  const toggleSelectAll = useCallback(() => {
-    const pageKeys = paginatedRows.map(rowKey);
-    const allSelected = pageKeys.every((k) => selectedKeys.has(k));
-    if (allSelected) {
-      setSelectedKeys((prev) => {
-        const next = new Set(prev);
-        pageKeys.forEach((k) => next.delete(k));
-        return next;
-      });
-    } else {
-      setSelectedKeys((prev) => {
-        const next = new Set(prev);
-        pageKeys.forEach((k) => next.add(k));
-        return next;
-      });
-    }
-  }, [paginatedRows, rowKey, selectedKeys]);
-
   // Resize handlers
   const handleResizeStart = useCallback(
     (e: React.MouseEvent, colKey: string, defaultWidth: number) => {
@@ -152,10 +118,6 @@ export function DataTable<T>({
     [columnWidths, columns],
   );
 
-  const pageKeys = paginatedRows.map(rowKey);
-  const allPageSelected = pageKeys.length > 0 && pageKeys.every((k) => selectedKeys.has(k));
-  const somePageSelected = pageKeys.some((k) => selectedKeys.has(k));
-
   if (rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-700/60 bg-surface-1 px-8 py-20 text-center">
@@ -175,18 +137,6 @@ export function DataTable<T>({
           {/* Sticky header */}
           <thead className="sticky top-0 z-10 bg-surface-1">
             <tr>
-              {/* Checkbox column */}
-              <th className="w-10 border-b border-zinc-800 px-3 py-3">
-                <input
-                  type="checkbox"
-                  checked={allPageSelected}
-                  ref={(el) => {
-                    if (el) el.indeterminate = somePageSelected && !allPageSelected;
-                  }}
-                  onChange={toggleSelectAll}
-                  className="h-3.5 w-3.5 rounded border-zinc-600 bg-surface-3 accent-lantern-500"
-                />
-              </th>
               {columns.map((col) => {
                 const isSorted = sortKey === col.key;
                 const width = columnWidths[col.key] ?? col.width;
@@ -230,29 +180,17 @@ export function DataTable<T>({
           <tbody>
             {paginatedRows.map((row) => {
               const key = rowKey(row);
-              const isSelected = selectedKeys.has(key);
               const isHovered = hoveredRowKey === key;
               return (
                 <tr
                   key={key}
-                  className={`border-b border-zinc-800/40 transition-colors ${
-                    isSelected
-                      ? "bg-lantern-500/[0.06]"
-                      : "hover:bg-surface-2"
-                  } ${onRowClick ? "cursor-pointer" : ""}`}
+                  className={`border-b border-zinc-800/40 transition-colors hover:bg-surface-2 ${
+                    onRowClick ? "cursor-pointer" : ""
+                  }`}
                   onClick={() => onRowClick?.(row)}
                   onMouseEnter={() => setHoveredRowKey(key)}
                   onMouseLeave={() => setHoveredRowKey(null)}
                 >
-                  {/* Checkbox */}
-                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleSelect(key)}
-                      className="h-3.5 w-3.5 rounded border-zinc-600 bg-surface-3 accent-lantern-500"
-                    />
-                  </td>
                   {columns.map((col) => {
                     const width = columnWidths[col.key] ?? col.width;
                     return (

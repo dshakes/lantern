@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { format } from "date-fns";
 import {
@@ -20,6 +20,10 @@ import {
   CheckCircle2,
   Sparkles,
   Mail,
+  Wrench,
+  ExternalLink,
+  X,
+  Code2,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -200,6 +204,9 @@ export default function AgentDetailPage() {
   const [deliveryEmail, setDeliveryEmail] = useState("");
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [scheduleId, setScheduleId] = useState<string | null>(null);
+
+  // Code modal state
+  const [showCodeModal, setShowCodeModal] = useState(false);
 
   // Settings form state
   const [settingsModel, setSettingsModel] = useState("auto");
@@ -576,6 +583,38 @@ export default function AgentDetailPage() {
     }
   }, [scheduleId, toast]);
 
+  // Generate a TypeScript representation of the agent workflow
+  const generatedCode = useMemo(() => {
+    const model = settingsModel === "auto" ? "auto" : settingsModel;
+    const promptPreview = systemPrompt
+      ? systemPrompt.slice(0, 200).replace(/`/g, "\\`") + (systemPrompt.length > 200 ? "..." : "")
+      : "// No system prompt defined yet";
+    return `import { Agent, step } from "@lantern/sdk";
+
+const ${name.replace(/[^a-zA-Z0-9_]/g, "_")} = new Agent({
+  name: "${name}",
+  model: "${model}",
+  systemPrompt: \`${promptPreview}\`,
+});
+
+${name.replace(/[^a-zA-Z0-9_]/g, "_")}.workflow("main", async (ctx) => {
+  // Step 1: Process input
+  const result = await step("process", async () => {
+    return ctx.llm.complete({
+      messages: [
+        { role: "system", content: ctx.agent.systemPrompt },
+        { role: "user", content: ctx.input },
+      ],
+    });
+  });
+
+  return result;
+});
+
+export default ${name.replace(/[^a-zA-Z0-9_]/g, "_")};
+`;
+  }, [name, systemPrompt, settingsModel]);
+
   // --- Early returns AFTER all hooks ---
 
   if (agentLoading) return <AgentDetailSkeleton />;
@@ -775,6 +814,36 @@ Return ONLY the system prompt text, no explanations or markdown wrapping.`
                   Unsaved changes
                 </p>
               )}
+            </div>
+
+            {/* Agent Workflow Card */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-300">
+                <Wrench className="h-4 w-4 text-amber-400" />
+                Agent Workflow
+              </h3>
+              <p className="mb-4 text-sm leading-relaxed text-zinc-400">
+                This agent runs your system prompt against the LLM with connected connectors.
+              </p>
+              <div className="space-y-2">
+                <p className="text-xs text-zinc-500">To build a multi-step workflow:</p>
+                <button
+                  onClick={() => router.push(`/agents/${encodeURIComponent(name)}/editor`)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-lantern-500/30 bg-lantern-500/5 px-4 py-2.5 text-sm font-medium text-lantern-400 transition-colors hover:bg-lantern-500/10"
+                >
+                  Open Visual Editor
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </button>
+                <p className="mt-3 text-xs text-zinc-500">To edit the code directly:</p>
+                <button
+                  onClick={() => setShowCodeModal(true)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2.5 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3"
+                >
+                  <Code2 className="h-3.5 w-3.5" />
+                  View Agent Code
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
 
             {/* Quick Run Card */}
@@ -1263,6 +1332,50 @@ Return ONLY the system prompt text, no explanations or markdown wrapping.`
         onClose={() => setShowRunDialog(false)}
         defaultAgentName={name}
       />
+
+      {/* Agent Code Modal */}
+      {showCodeModal && (
+        <div
+          className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowCodeModal(false)}
+        >
+          <div
+            className="modal-content w-full max-w-2xl rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+              <h3 className="flex items-center gap-2 text-lg font-semibold text-zinc-100">
+                <Code2 className="h-5 w-5 text-lantern-400" />
+                Agent Code
+              </h3>
+              <button
+                onClick={() => setShowCodeModal(false)}
+                className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-surface-3 hover:text-zinc-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="mb-3 text-xs text-zinc-500">
+                Generated TypeScript from the workflow compiler. This code represents how your agent runs.
+              </p>
+              <pre className="max-h-96 overflow-auto rounded-lg border border-zinc-800 bg-surface-0 p-4 font-mono text-xs leading-relaxed text-zinc-300">
+                <code>{generatedCode}</code>
+              </pre>
+            </div>
+            <div className="flex items-center justify-end border-t border-zinc-800 px-6 py-4">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(generatedCode);
+                }}
+                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400"
+              >
+                Copy Code
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (

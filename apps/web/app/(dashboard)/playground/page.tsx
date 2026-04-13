@@ -12,6 +12,7 @@ import {
   Loader2,
   AlertCircle,
   Info,
+  Mail,
 } from "lucide-react";
 import clsx from "clsx";
 import {
@@ -74,6 +75,29 @@ const agentExamples: Record<
 };
 
 // ---------------------------------------------------------------------------
+// localStorage helpers for agent prompts
+// ---------------------------------------------------------------------------
+
+const PROMPTS_KEY = "lantern_agent_prompts";
+
+function getStoredAgentPrompt(agentName: string): string {
+  if (typeof window === "undefined") return "";
+  const stored = localStorage.getItem(PROMPTS_KEY);
+  if (!stored) return "";
+  try {
+    const prompts = JSON.parse(stored);
+    return prompts[agentName] || "";
+  } catch {
+    return "";
+  }
+}
+
+function isEmailAgent(agentName: string): boolean {
+  const lower = agentName.toLowerCase();
+  return lower.includes("gmail") || lower.includes("email");
+}
+
+// ---------------------------------------------------------------------------
 // Page component
 // ---------------------------------------------------------------------------
 
@@ -83,7 +107,8 @@ export default function PlaygroundPage() {
   // Input state — default will be updated once agents load
   const [selectedAgent, setSelectedAgent] = useState("");
   const [selectedModel, setSelectedModel] = useState("auto");
-  const [inputText, setInputText] = useState("{}");
+  const [inputText, setInputText] = useState("");
+  const [fetchingEmails, setFetchingEmails] = useState(false);
 
   // Run state
   const [isRunning, setIsRunning] = useState(false);
@@ -143,6 +168,10 @@ export default function PlaygroundPage() {
       const example = agentExamples[first.name];
       if (example) {
         setInputText(JSON.stringify(example.input, null, 2));
+      } else if (isEmailAgent(first.name)) {
+        setInputText("");
+      } else {
+        setInputText("");
       }
     }
   }, [agents, selectedAgent]);
@@ -161,7 +190,8 @@ export default function PlaygroundPage() {
     if (example) {
       setInputText(JSON.stringify(example.input, null, 2));
     } else {
-      setInputText("{}");
+      // Natural language input for all agents
+      setInputText("");
     }
   }, []);
 
@@ -174,6 +204,26 @@ export default function PlaygroundPage() {
       ""
     );
   }, [selectedAgent, agents]);
+
+  // Whether the selected agent is an email agent
+  const selectedIsEmail = useMemo(
+    () => isEmailAgent(selectedAgent),
+    [selectedAgent],
+  );
+
+  // Smart placeholder based on agent type
+  const inputPlaceholder = useMemo(() => {
+    if (selectedIsEmail) {
+      return "Type a message or click Run to fetch and summarize your emails";
+    }
+    return "What would you like this agent to do?";
+  }, [selectedIsEmail]);
+
+  // Load system prompt from localStorage for the selected agent
+  const storedPrompt = useMemo(
+    () => getStoredAgentPrompt(selectedAgent),
+    [selectedAgent],
+  );
 
   // ----------- Run handler -----------
 
@@ -196,22 +246,62 @@ export default function PlaygroundPage() {
     const agentConfig = agentExamples[selectedAgent];
     const messages: Array<{ role: string; content: string }> = [];
 
-    if (agentConfig?.systemPrompt) {
-      messages.push({ role: "system", content: agentConfig.systemPrompt });
+    // Use stored system prompt from localStorage first, then fall back to hardcoded examples
+    const systemPrompt = storedPrompt || agentConfig?.systemPrompt || "";
+    if (systemPrompt) {
+      messages.push({ role: "system", content: systemPrompt });
     }
 
-    let userContent: string;
-    try {
-      const parsed = JSON.parse(inputText);
-      userContent =
-        Object.keys(parsed).length > 0
-          ? `Here is my request:\n\n${JSON.stringify(parsed, null, 2)}`
-          : inputText;
-    } catch {
-      userContent = inputText;
-    }
+    // For email agents: auto-fetch emails when input is empty or generic
+    if (selectedIsEmail) {
+      const userText = inputText.trim() || "Fetch and summarize my recent emails. Highlight anything urgent.";
+      try {
+        setFetchingEmails(true);
+        // Try syncing Gmail credentials from localStorage
+        try {
+          const connStates = JSON.parse(localStorage.getItem("lantern_connectors") || "{}");
+          if (connStates.gmail?.installed && connStates.gmail?.credentials) {
+            await api.installConnector({ connectorId: "gmail", displayName: "Gmail", config: connStates.gmail.credentials }).catch(() => {});
+          }
+        } catch { /* ignore */ }
 
-    messages.push({ role: "user", content: userContent });
+        const raw = await api.executeConnector("gmail", "list_messages", { limit: 15 });
+        const data = raw as unknown as { messages?: Array<{ from: string; subject: string; snippet: string; date: string }>; count?: number };
+        if (data.messages && data.messages.length > 0) {
+          const emailList = data.messages
+            .map((m: { from: string; subject: string; snippet: string; date: string }, i: number) =>
+              `${i + 1}. From: ${m.from}\n   Subject: ${m.subject}\n   Preview: ${m.snippet}\n   Date: ${m.date}`)
+            .join("\n\n");
+          messages.push({
+            role: "user",
+            content: `${userText}\n\nHere are my actual recent emails:\n\n${emailList}`,
+          });
+        } else {
+          messages.push({
+            role: "user",
+            content: userText + "\n\nNo emails found in the inbox. Let the user know their inbox is empty.",
+          });
+        }
+      } catch {
+        // Gmail fetch failed -- just use the user's text as-is
+        messages.push({ role: "user", content: userText });
+      } finally {
+        setFetchingEmails(false);
+      }
+    } else {
+      let userContent: string;
+      try {
+        const parsed = JSON.parse(inputText);
+        userContent =
+          Object.keys(parsed).length > 0
+            ? `Here is my request:\n\n${JSON.stringify(parsed, null, 2)}`
+            : inputText;
+      } catch {
+        userContent = inputText || "Hello, please introduce yourself and explain what you can do.";
+      }
+
+      messages.push({ role: "user", content: userContent });
+    }
 
     // In demo mode, always use simulation
     if (isDemoMode) {
@@ -402,7 +492,7 @@ export default function PlaygroundPage() {
       setIsRunning(false);
       setStreamDone(true);
     }
-  }, [selectedAgent, selectedModel, inputText, resetDemo, isDemoMode]);
+  }, [selectedAgent, selectedModel, inputText, resetDemo, isDemoMode, storedPrompt, selectedIsEmail]);
 
   const handleStop = useCallback(() => {
     setIsRunning(false);
@@ -505,10 +595,15 @@ export default function PlaygroundPage() {
                 onChange={(e) => setInputText(e.target.value)}
                 rows={10}
                 spellCheck={false}
-                placeholder="Type your input or paste JSON..."
-                className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-xs leading-relaxed text-zinc-300 placeholder:text-zinc-600 focus:border-lantern-500/50 focus:outline-none focus:ring-1 focus:ring-lantern-500/20"
+                placeholder={inputPlaceholder}
+                className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 focus:border-lantern-500/50 focus:outline-none focus:ring-1 focus:ring-lantern-500/20"
               />
               <p className="mt-1 text-xs text-zinc-600">{agentDescription}</p>
+              {storedPrompt && (
+                <p className="mt-1 text-xs text-lantern-400/70">
+                  Using saved system prompt
+                </p>
+              )}
             </div>
 
             {/* Run button */}
@@ -523,11 +618,24 @@ export default function PlaygroundPage() {
             ) : (
               <button
                 onClick={handleRun}
-                disabled={!inputText.trim()}
                 className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <Play className="h-4 w-4" />
-                Run
+                {fetchingEmails ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Fetching emails...
+                  </>
+                ) : selectedIsEmail ? (
+                  <>
+                    <Mail className="h-4 w-4" />
+                    Run
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4" />
+                    Run
+                  </>
+                )}
               </button>
             )}
           </div>
@@ -544,7 +652,7 @@ export default function PlaygroundPage() {
               {isRunning && !demoMode && (
                 <span className="flex items-center gap-1.5 text-xs text-blue-400">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  Streaming...
+                  {fetchingEmails ? "Fetching emails..." : "Streaming..."}
                 </span>
               )}
               {demoMode && visibleEvents.length > 0 && (
