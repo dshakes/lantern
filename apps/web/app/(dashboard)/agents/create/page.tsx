@@ -661,11 +661,19 @@ function AgentCreatePage() {
                     className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50"
                   >
                     <option value="auto">Auto (recommended)</option>
-                    <option value="reasoning-large">Reasoning Large</option>
-                    <option value="reasoning-small">Reasoning Small</option>
-                    <option value="chat-large">Chat Large</option>
-                    <option value="chat-small">Chat Small</option>
-                    <option value="code-large">Code Large</option>
+                    <optgroup label="Anthropic">
+                      <option value="reasoning-frontier">Reasoning Frontier — Claude Opus 4</option>
+                      <option value="reasoning-large">Reasoning Large — Claude Sonnet 4</option>
+                      <option value="reasoning-small">Reasoning Small — Claude Haiku 4</option>
+                      <option value="code-large">Code Large — Claude Sonnet 4</option>
+                    </optgroup>
+                    <optgroup label="OpenAI">
+                      <option value="chat-large">Chat Large — GPT-4o</option>
+                      <option value="chat-small">Chat Small — GPT-4o Mini</option>
+                    </optgroup>
+                    <optgroup label="Google">
+                      <option value="vision-large">Vision Large — Gemini 2.5 Pro</option>
+                    </optgroup>
                   </select>
                 </div>
               </div>

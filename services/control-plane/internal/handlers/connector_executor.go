@@ -287,21 +287,22 @@ func executeGmail(config map[string]any, action string, params map[string]any) (
 	switch action {
 	case "list_messages":
 		limit := intParam(params, "limit", 20)
-		if accessToken != "" {
-			messages, err := FetchGmailViaAPI(accessToken, limit)
-			if err != nil {
-				return nil, err
-			}
-			return map[string]any{"messages": messages, "count": len(messages), "source": "api"}, nil
-		}
+		// Prefer IMAP (email+appPassword) since it works without OAuth setup
 		if email != "" && appPassword != "" {
 			messages, err := FetchGmailViaIMAP(email, appPassword, limit)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("IMAP fetch failed: %w", err)
 			}
 			return map[string]any{"messages": messages, "count": len(messages), "source": "imap"}, nil
 		}
-		return nil, fmt.Errorf("no Gmail credentials configured. Provide an OAuth token or email+appPassword")
+		if accessToken != "" {
+			messages, err := FetchGmailViaAPI(accessToken, limit)
+			if err != nil {
+				return nil, fmt.Errorf("Gmail API fetch failed: %w", err)
+			}
+			return map[string]any{"messages": messages, "count": len(messages), "source": "api"}, nil
+		}
+		return nil, fmt.Errorf("no Gmail credentials configured. Provide email+appPassword or an OAuth token")
 
 	case "send_message":
 		to := stringParam(params, "to")

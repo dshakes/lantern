@@ -399,11 +399,13 @@ function AiStepConfig({
             onChange({ capability: v as AiStepData["capability"] })
           }
           options={[
-            { value: "auto", label: "Auto" },
-            { value: "reasoning-large", label: "Reasoning Large" },
-            { value: "reasoning-small", label: "Reasoning Small" },
-            { value: "fast", label: "Fast" },
-            { value: "code", label: "Code" },
+            { value: "auto", label: "Auto (recommended)" },
+            { value: "reasoning-frontier", label: "Claude Opus 4" },
+            { value: "reasoning-large", label: "Claude Sonnet 4" },
+            { value: "reasoning-small", label: "Claude Haiku 4" },
+            { value: "chat-large", label: "GPT-4o" },
+            { value: "chat-small", label: "GPT-4o Mini" },
+            { value: "code-large", label: "Claude Sonnet 4 (Code)" },
           ]}
         />
         <FieldHelp>The model router maps this to a concrete model. Never hardcode a model name.</FieldHelp>

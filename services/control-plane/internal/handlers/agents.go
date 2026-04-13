@@ -72,6 +72,10 @@ func (s *AgentService) CreateAgent(ctx context.Context, req *lanternv1.CreateAge
 	err = tx.QueryRow(ctx, `
 		INSERT INTO agents (tenant_id, name, description, labels)
 		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (tenant_id, name) DO UPDATE SET
+			description = EXCLUDED.description,
+			labels = EXCLUDED.labels,
+			archived_at = NULL
 		RETURNING id, created_at
 	`, tenantID, req.GetName(), req.GetDescription(), labelsJSON).Scan(&id, &createdAt)
 	if err != nil {
