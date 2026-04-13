@@ -195,6 +195,12 @@ export default function AgentDetailPage() {
   const [gmailConnected, setGmailConnected] = useState(false);
   const [fetchingEmails, setFetchingEmails] = useState(false);
 
+  // Schedule / email delivery state
+  const [deliveryEmailEnabled, setDeliveryEmailEnabled] = useState(false);
+  const [deliveryEmail, setDeliveryEmail] = useState("");
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [scheduleId, setScheduleId] = useState<string | null>(null);
+
   // Settings form state
   const [settingsModel, setSettingsModel] = useState("auto");
   const [settingsIsolation, setSettingsIsolation] = useState("standard");
@@ -253,6 +259,19 @@ export default function AgentDetailPage() {
     } else {
       setQuickRunInput(`Hello, I'd like to test the ${name} agent.`);
     }
+
+    // Load schedule from backend if it exists.
+    api.listSchedules().then((schedules) => {
+      const match = schedules.find((s) => s.agentName === name);
+      if (match) {
+        setSettingsCron(match.cronExpr);
+        setScheduleId(match.id);
+        if (match.deliveryEmail) {
+          setDeliveryEmailEnabled(true);
+          setDeliveryEmail(match.deliveryEmail);
+        }
+      }
+    }).catch(() => { /* ignore */ });
   }, [name]);
 
   // Auto-scroll quick run output
@@ -319,7 +338,8 @@ export default function AgentDetailPage() {
       } catch { /* ignore */ }
 
       try {
-        const data = await api.executeConnector("gmail", "list_messages", { limit: 15 });
+        const raw = await api.executeConnector("gmail", "list_messages", { limit: 15 });
+        const data = raw as unknown as { messages?: Array<{ from: string; subject: string; snippet: string; date: string }>; count?: number };
         if (data.messages && data.messages.length > 0) {
           const emailList = data.messages
             .map((m: { from: string; subject: string; snippet: string; date: string }, i: number) =>
@@ -514,6 +534,47 @@ export default function AgentDetailPage() {
       setSavingSettings(false);
     }
   }, [name, settingsModel, settingsIsolation, settingsTimeout, settingsMaxTokens, settingsMaxCost, settingsCron, toast]);
+
+  const handleSaveSchedule = useCallback(async () => {
+    if (!settingsCron.trim()) {
+      toast.error("Enter a cron expression first");
+      return;
+    }
+    setSavingSchedule(true);
+    try {
+      const result = await api.createSchedule({
+        agentName: name,
+        cronExpr: settingsCron,
+        deliveryEmail: deliveryEmailEnabled ? deliveryEmail : undefined,
+        enabled: true,
+      });
+      setScheduleId(result.id);
+      toast.success(
+        result.nextFireAt
+          ? `Schedule saved — next run at ${new Date(result.nextFireAt).toLocaleString()}`
+          : "Schedule saved"
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to save schedule";
+      toast.error(msg);
+    } finally {
+      setSavingSchedule(false);
+    }
+  }, [name, settingsCron, deliveryEmailEnabled, deliveryEmail, toast]);
+
+  const handleDeleteSchedule = useCallback(async () => {
+    if (!scheduleId) return;
+    try {
+      await api.deleteSchedule(scheduleId);
+      setScheduleId(null);
+      setSettingsCron("");
+      setDeliveryEmailEnabled(false);
+      setDeliveryEmail("");
+      toast.success("Schedule removed");
+    } catch {
+      toast.error("Failed to delete schedule");
+    }
+  }, [scheduleId, toast]);
 
   // --- Early returns AFTER all hooks ---
 
@@ -1104,6 +1165,75 @@ Return ONLY the system prompt text, no explanations or markdown wrapping.`
                   <p className="mt-1 text-[10px] text-zinc-500">
                     {describeCron(settingsCron)}
                   </p>
+                )}
+              </div>
+
+              {/* Email delivery toggle */}
+              <div className="border-t border-zinc-800 pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-xs font-medium text-zinc-300">Deliver results to email</label>
+                    <p className="text-[10px] text-zinc-500">Send the run output via email when the scheduled run completes.</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={deliveryEmailEnabled}
+                    onClick={() => setDeliveryEmailEnabled(!deliveryEmailEnabled)}
+                    className={clsx(
+                      "relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors",
+                      deliveryEmailEnabled ? "bg-lantern-500" : "bg-zinc-700",
+                    )}
+                  >
+                    <span
+                      className={clsx(
+                        "inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform",
+                        deliveryEmailEnabled ? "translate-x-4" : "translate-x-0.5",
+                      )}
+                    />
+                  </button>
+                </div>
+                {deliveryEmailEnabled && (
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-400">Email address</label>
+                    <input
+                      type="email"
+                      value={deliveryEmail}
+                      onChange={(e) => setDeliveryEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Save / Delete schedule */}
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  onClick={handleSaveSchedule}
+                  disabled={savingSchedule || !settingsCron.trim()}
+                  className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-lantern-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingSchedule ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Clock className="h-3 w-3" />
+                      Save Schedule
+                    </>
+                  )}
+                </button>
+                {scheduleId && (
+                  <button
+                    onClick={handleDeleteSchedule}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-4 py-2 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    Remove Schedule
+                  </button>
                 )}
               </div>
             </div>

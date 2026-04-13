@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -548,6 +551,175 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		zap.Int64("tokens_in", tokensIn),
 		zap.Int64("tokens_out", tokensOut),
 	)
+
+	// 5. Check if email delivery is configured for this agent's schedule.
+	var deliveryEmail string
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT config->>'deliveryEmail' FROM schedules WHERE tenant_id = $1 AND agent_name = $2 AND enabled = true`,
+		tenantID, agentName,
+	).Scan(&deliveryEmail)
+
+	if deliveryEmail != "" {
+		go func() {
+			if err := h.sendEmailViaGmail(tenantID, deliveryEmail, fmt.Sprintf("Lantern: %s run completed", agentName), result); err != nil {
+				h.logger().Warn("email delivery failed",
+					zap.String("run_id", runID),
+					zap.String("to", deliveryEmail),
+					zap.Error(err),
+				)
+			} else {
+				h.logger().Info("email delivered",
+					zap.String("run_id", runID),
+					zap.String("to", deliveryEmail),
+				)
+			}
+		}()
+	}
+}
+
+// ExecuteScheduledRun creates and runs an agent on behalf of the scheduler.
+// It mirrors the logic in CreateRun but without an HTTP request context.
+func (h *RESTHandler) ExecuteScheduledRun(tenantID, agentName string, input map[string]any) {
+	ctx := context.Background()
+	ctx = middleware.InjectTenantID(ctx, tenantID)
+	md := metadata.Pairs("tenant_id", tenantID)
+	ctx = metadata.NewIncomingContext(ctx, md)
+
+	if input == nil {
+		input = map[string]any{}
+	}
+
+	inputStruct, _ := structpb.NewStruct(input)
+
+	// Ensure agent exists.
+	_, getErr := h.agentSvc.GetAgent(ctx, &lanternv1.GetAgentRequest{Name: agentName})
+	if getErr != nil {
+		h.logger().Info("scheduler: auto-creating agent", zap.String("agent", agentName))
+		_, _ = h.agentSvc.CreateAgent(ctx, &lanternv1.CreateAgentRequest{
+			Name:        agentName,
+			Description: "Auto-created by scheduler",
+		})
+	}
+
+	run, err := h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+		AgentName:   agentName,
+		Input:       inputStruct,
+		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
+	})
+	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "no promoted version") || strings.Contains(errStr, "not found") {
+			h.autoCreateVersion(ctx, agentName)
+			run, err = h.runSvc.CreateRun(ctx, &lanternv1.CreateRunRequest{
+				AgentName:   agentName,
+				Input:       inputStruct,
+				TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_SCHEDULE,
+			})
+		}
+		if err != nil {
+			h.logger().Error("scheduler: CreateRun failed", zap.String("agent", agentName), zap.Error(err))
+			return
+		}
+	}
+
+	// Execute inline (this already handles email delivery at the end).
+	if h.llmProxy != nil {
+		go h.executeRunInline(run.GetId(), run.GetTenantId(), agentName, input)
+	}
+}
+
+// sendEmailViaGmail sends an email using the tenant's Gmail OAuth token via
+// the Gmail API. This is the spike-mode email delivery — in production, use a
+// dedicated notification service with proper retry and templating.
+func (h *RESTHandler) sendEmailViaGmail(tenantID, to, subject, body string) error {
+	ctx := context.Background()
+	token := resolveGmailToken(ctx, h.srv.Pool, tenantID)
+	if token == "" {
+		return fmt.Errorf("no Gmail token for tenant %s", tenantID)
+	}
+
+	// If the token is a refresh token, try refreshing it.
+	// The resolveGmailToken helper already returns the access token, but it
+	// may be expired. We attempt the send and, on 401, try refreshing.
+	if err := h.doGmailSend(token, to, subject, body); err != nil {
+		if strings.Contains(err.Error(), "401") {
+			// Try refreshing the token.
+			newToken, refreshErr := h.tryRefreshGmailToken(ctx, tenantID)
+			if refreshErr != nil {
+				return fmt.Errorf("send failed and refresh failed: send=%v, refresh=%v", err, refreshErr)
+			}
+			return h.doGmailSend(newToken, to, subject, body)
+		}
+		return err
+	}
+	return nil
+}
+
+// doGmailSend performs the actual Gmail API send.
+func (h *RESTHandler) doGmailSend(accessToken, to, subject, body string) error {
+	// Build RFC 2822 message.
+	msg := fmt.Sprintf("To: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s", to, subject, body)
+	encoded := base64.URLEncoding.EncodeToString([]byte(msg))
+
+	reqBody, _ := json.Marshal(map[string]string{"raw": encoded})
+	req, err := http.NewRequest("POST", "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", bytes.NewReader(reqBody))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("gmail API call: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("gmail API %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// tryRefreshGmailToken attempts to refresh the Gmail OAuth token for the given
+// tenant and updates it in the database.
+func (h *RESTHandler) tryRefreshGmailToken(ctx context.Context, tenantID string) (string, error) {
+	var oauthTokenJSON []byte
+	err := h.srv.Pool.QueryRow(ctx, `
+		SELECT oauth_token_encrypted
+		FROM connector_installs
+		WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'
+	`, tenantID).Scan(&oauthTokenJSON)
+	if err != nil {
+		return "", fmt.Errorf("no Gmail connector: %w", err)
+	}
+
+	var tokenData map[string]any
+	if err := json.Unmarshal(oauthTokenJSON, &tokenData); err != nil {
+		return "", fmt.Errorf("parse token: %w", err)
+	}
+
+	refreshToken, _ := tokenData["refresh_token"].(string)
+	if refreshToken == "" {
+		return "", fmt.Errorf("no refresh token available")
+	}
+
+	newAccessToken, err := refreshGoogleToken(refreshToken)
+	if err != nil {
+		return "", err
+	}
+
+	// Update the stored token.
+	tokenData["access_token"] = newAccessToken
+	updatedJSON, _ := json.Marshal(tokenData)
+	_, _ = h.srv.Pool.Exec(ctx,
+		`UPDATE connector_installs SET oauth_token_encrypted = $1::jsonb WHERE tenant_id = $2 AND connector_id = 'gmail'`,
+		string(updatedJSON), tenantID,
+	)
+
+	return newAccessToken, nil
 }
 
 // autoCreateVersion creates a default agent version and promotes it.

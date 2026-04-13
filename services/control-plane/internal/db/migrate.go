@@ -334,4 +334,26 @@ var migrations = []string{
 		updated_at TIMESTAMPTZ DEFAULT now(),
 		UNIQUE(tenant_id, provider)
 	)`,
+
+	// ---------------------------------------------------------------
+	// Schedules (cron-based agent execution)
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS schedules (
+		id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+		tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_name TEXT NOT NULL,
+		cron_expr TEXT NOT NULL,
+		input_template JSONB DEFAULT '{}'::jsonb,
+		config JSONB DEFAULT '{}'::jsonb,
+		enabled BOOLEAN NOT NULL DEFAULT true,
+		next_fire_at TIMESTAMPTZ,
+		last_fired_at TIMESTAMPTZ,
+		created_at TIMESTAMPTZ DEFAULT now(),
+		updated_at TIMESTAMPTZ DEFAULT now(),
+		UNIQUE(tenant_id, agent_name)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS schedules_due_idx
+		ON schedules (enabled, next_fire_at)
+		WHERE enabled = true`,
 }

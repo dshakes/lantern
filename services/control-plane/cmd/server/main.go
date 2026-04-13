@@ -25,6 +25,7 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/db"
 	"github.com/dshakes/lantern/services/control-plane/internal/handlers"
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/lantern/services/control-plane/internal/scheduler"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -213,6 +214,12 @@ func main() {
 	httpMux.HandleFunc("GET /v1/data-planes", deploymentHandler.ListDataPlanes)
 	httpMux.HandleFunc("DELETE /v1/data-planes/{id}", deploymentHandler.RemoveDataPlane)
 
+	// Schedule endpoints.
+	httpMux.HandleFunc("POST /v1/schedules", restHandler.CreateSchedule)
+	httpMux.HandleFunc("GET /v1/schedules", restHandler.ListSchedules)
+	httpMux.HandleFunc("PUT /v1/schedules/{id}", restHandler.UpdateSchedule)
+	httpMux.HandleFunc("DELETE /v1/schedules/{id}", restHandler.DeleteSchedule)
+
 	httpServer := &http.Server{
 		Addr:              ":8080",
 		Handler:           handlers.CORSMiddleware(httpMux),
@@ -227,6 +234,15 @@ func main() {
 		}
 		close(httpErrCh)
 	}()
+
+	// --- Cron scheduler ---
+	// The scheduler fires due schedules by creating runs via the same inline
+	// executor path used by POST /v1/runs.
+	sched := scheduler.New(pool, logger, func(runID, tenantID, agentName string, input map[string]any) {
+		restHandler.ExecuteScheduledRun(tenantID, agentName, input)
+	})
+	go sched.Start(ctx)
+	defer sched.Stop()
 
 	// --- Wait for shutdown ---
 	select {

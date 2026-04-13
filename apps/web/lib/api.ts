@@ -1199,6 +1199,76 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     });
   }
 
+  // ---- Schedules --------------------------------------------------------------
+
+  async createSchedule(data: {
+    agentName: string;
+    cronExpr: string;
+    inputTemplate?: Record<string, unknown>;
+    deliveryEmail?: string;
+    enabled?: boolean;
+  }): Promise<{
+    id: string;
+    agentName: string;
+    cronExpr: string;
+    deliveryEmail?: string;
+    enabled: boolean;
+    nextFireAt?: string;
+  }> {
+    try {
+      return await this.request("/v1/schedules", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    } catch (err) {
+      console.warn("[lantern] createSchedule failed:", err);
+      throw err;
+    }
+  }
+
+  async listSchedules(): Promise<
+    Array<{
+      id: string;
+      tenantId: string;
+      agentName: string;
+      cronExpr: string;
+      inputTemplate?: Record<string, unknown>;
+      deliveryEmail?: string;
+      enabled: boolean;
+      nextFireAt?: string;
+      lastFiredAt?: string;
+      createdAt: string;
+      updatedAt: string;
+    }>
+  > {
+    try {
+      return await this.request("/v1/schedules");
+    } catch {
+      console.warn("[lantern] listSchedules failed, returning empty");
+      return [];
+    }
+  }
+
+  async updateSchedule(
+    id: string,
+    data: { cronExpr?: string; deliveryEmail?: string; enabled?: boolean },
+  ): Promise<{ id: string; cronExpr: string; enabled: boolean; nextFireAt?: string }> {
+    return this.request(`/v1/schedules/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteSchedule(id: string): Promise<void> {
+    try {
+      await this.request<void>(`/v1/schedules/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      console.warn("[lantern] deleteSchedule failed");
+    }
+  }
+
   // ---- Gmail connector -------------------------------------------------------
 
   async fetchGmailMessages(limit = 20): Promise<{
