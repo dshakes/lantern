@@ -5,6 +5,10 @@ import { api, type RunFilters } from "@/lib/api";
 import type { Agent, Run, StreamEvent, ApiKey, AgentVersion } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
+// useSafeData pattern — every hook returns { data, loading, error, isDemo }
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // useAgents
 // ---------------------------------------------------------------------------
 
@@ -12,6 +16,7 @@ export function useAgents() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [isDemo, setIsDemo] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -19,7 +24,10 @@ export function useAgents() {
     try {
       const data = await api.listAgents();
       setAgents(data);
+      setIsDemo(false);
     } catch (err) {
+      // listAgents already falls back to mock data inside api.ts,
+      // so if we get an error here it means even mock data failed.
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setLoading(false);
@@ -30,7 +38,7 @@ export function useAgents() {
     refresh();
   }, [refresh]);
 
-  return { agents, setAgents, loading, error, refresh };
+  return { agents, setAgents, loading, error, isDemo, refresh };
 }
 
 // ---------------------------------------------------------------------------
@@ -41,6 +49,7 @@ export function useAgent(name: string) {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [isDemo, setIsDemo] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -48,6 +57,7 @@ export function useAgent(name: string) {
     try {
       const data = await api.getAgent(name);
       setAgent(data);
+      setIsDemo(false);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
@@ -59,7 +69,7 @@ export function useAgent(name: string) {
     refresh();
   }, [refresh]);
 
-  return { agent, loading, error, refresh };
+  return { agent, loading, error, isDemo, refresh };
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +80,7 @@ export function useAgentVersions(agentName: string) {
   const [versions, setVersions] = useState<AgentVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [isDemo, setIsDemo] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -77,6 +88,7 @@ export function useAgentVersions(agentName: string) {
     try {
       const data = await api.getAgentVersions(agentName);
       setVersions(data);
+      setIsDemo(false);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
@@ -88,7 +100,7 @@ export function useAgentVersions(agentName: string) {
     refresh();
   }, [refresh]);
 
-  return { versions, loading, error, refresh };
+  return { versions, loading, error, isDemo, refresh };
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +111,7 @@ export function useAgentRuns(agentName: string) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [isDemo, setIsDemo] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -106,6 +119,7 @@ export function useAgentRuns(agentName: string) {
     try {
       const data = await api.getRunsForAgent(agentName);
       setRuns(data);
+      setIsDemo(false);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
@@ -117,7 +131,7 @@ export function useAgentRuns(agentName: string) {
     refresh();
   }, [refresh]);
 
-  return { runs, loading, error, refresh };
+  return { runs, loading, error, isDemo, refresh };
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +142,7 @@ export function useRuns(filters?: RunFilters) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [isDemo, setIsDemo] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -135,6 +150,7 @@ export function useRuns(filters?: RunFilters) {
     try {
       const data = await api.listRuns(filters);
       setRuns(data);
+      setIsDemo(false);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
@@ -146,7 +162,7 @@ export function useRuns(filters?: RunFilters) {
     refresh();
   }, [refresh]);
 
-  return { runs, loading, error, refresh };
+  return { runs, loading, error, isDemo, refresh };
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +173,7 @@ export function useRun(id: string) {
   const [run, setRun] = useState<Run | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [isDemo, setIsDemo] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -164,6 +181,7 @@ export function useRun(id: string) {
     try {
       const data = await api.getRun(id);
       setRun(data);
+      setIsDemo(false);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
@@ -175,7 +193,7 @@ export function useRun(id: string) {
     refresh();
   }, [refresh]);
 
-  return { run, loading, error, refresh };
+  return { run, loading, error, isDemo, refresh };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +234,7 @@ export function useApiKeys() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [isDemo, setIsDemo] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -223,6 +242,7 @@ export function useApiKeys() {
     try {
       const data = await api.listApiKeys();
       setKeys(data);
+      setIsDemo(false);
     } catch (err) {
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
@@ -234,5 +254,5 @@ export function useApiKeys() {
     refresh();
   }, [refresh]);
 
-  return { keys, setKeys, loading, error, refresh };
+  return { keys, setKeys, loading, error, isDemo, refresh };
 }

@@ -123,16 +123,12 @@ const connectors: ConnectorDef[] = [
   {
     id: "gmail", name: "Gmail", description: "Read, send, and manage email through Gmail", category: "Email & Calendar", icon: Mail, iconColor: "text-red-400", iconBg: "bg-red-500/10",
     permissions: ["Read emails", "Send emails", "Manage labels", "Access contacts"],
-    credentialFields: [
-      { key: "apiKey", label: "Google API Key or Service Account JSON", placeholder: "AIza... or paste service account JSON", minLength: 10, helpUrl: "https://console.cloud.google.com/apis/credentials", helpText: "Get from console.cloud.google.com/apis/credentials", required: true },
-    ],
+    oauthOnly: true,
   },
   {
     id: "google-calendar", name: "Google Calendar", description: "Manage events, check availability, and schedule meetings", category: "Email & Calendar", icon: Calendar, iconColor: "text-blue-400", iconBg: "bg-blue-500/10",
     permissions: ["Read events", "Create events", "Modify events", "Access free/busy"],
-    credentialFields: [
-      { key: "apiKey", label: "Google API Key or Service Account JSON", placeholder: "AIza... or paste service account JSON", minLength: 10, helpUrl: "https://console.cloud.google.com/apis/credentials", helpText: "Get from console.cloud.google.com/apis/credentials", required: true },
-    ],
+    oauthOnly: true,
   },
   {
     id: "outlook", name: "Outlook", description: "Microsoft email and calendar integration", category: "Email & Calendar", icon: Mail, iconColor: "text-blue-400", iconBg: "bg-blue-500/10",
@@ -144,16 +140,12 @@ const connectors: ConnectorDef[] = [
   {
     id: "google-drive", name: "Google Drive", description: "Access files, create documents, and manage permissions", category: "Docs & Storage", icon: FileText, iconColor: "text-yellow-400", iconBg: "bg-yellow-500/10",
     permissions: ["Read files", "Create files", "Manage permissions", "Search documents"],
-    credentialFields: [
-      { key: "apiKey", label: "Google API Key or Service Account JSON", placeholder: "AIza... or paste service account JSON", minLength: 10, helpUrl: "https://console.cloud.google.com/apis/credentials", helpText: "Get from console.cloud.google.com/apis/credentials", required: true },
-    ],
+    oauthOnly: true,
   },
   {
     id: "google-sheets", name: "Google Sheets", description: "Read and write spreadsheet data", category: "Docs & Storage", icon: FileText, iconColor: "text-green-400", iconBg: "bg-green-500/10",
     permissions: ["Read spreadsheets", "Edit spreadsheets", "Create spreadsheets"],
-    credentialFields: [
-      { key: "apiKey", label: "Google API Key or Service Account JSON", placeholder: "AIza... or paste service account JSON", minLength: 10, helpUrl: "https://console.cloud.google.com/apis/credentials", helpText: "Get from console.cloud.google.com/apis/credentials", required: true },
-    ],
+    oauthOnly: true,
   },
   {
     id: "notion", name: "Notion", description: "Access databases, pages, and workspace content", category: "Docs & Storage", icon: FileText, iconColor: "text-zinc-300", iconBg: "bg-zinc-500/10",
@@ -499,7 +491,7 @@ export default function ConnectorsPage() {
   const openWizard = (connector: ConnectorDef) => {
     setWizardConnector(connector);
     setWizardStep("method");
-    setAuthMethod(connector.oauthOnly ? "oauth" : "oauth");
+    setAuthMethod("oauth");
     setCredentialValues({});
     setFieldErrors({});
     setTestStatus("idle");
@@ -507,6 +499,25 @@ export default function ConnectorsPage() {
     setTestAccount("");
     setAuthorizing(false);
   };
+
+  // OAuth-only connectors (no credentialFields) skip the method-choice step
+  // and go straight to the OAuth popup once React has committed the state.
+  const oauthAutoTriggered = useRef(false);
+  useEffect(() => {
+    if (
+      wizardConnector &&
+      wizardStep === "method" &&
+      !authorizing &&
+      (wizardConnector.oauthOnly || !wizardConnector.credentialFields?.length) &&
+      !oauthAutoTriggered.current
+    ) {
+      oauthAutoTriggered.current = true;
+      handleOAuthConnect();
+    }
+    if (!wizardConnector) {
+      oauthAutoTriggered.current = false;
+    }
+  }, [wizardConnector, wizardStep, authorizing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const closeWizard = () => {
     setWizardConnector(null);

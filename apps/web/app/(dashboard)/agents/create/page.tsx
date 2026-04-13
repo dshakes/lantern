@@ -10,17 +10,11 @@ import {
   Check,
   Plus,
   Trash2,
-  GripVertical,
   ChevronDown,
   ChevronUp,
-  Play,
   Rocket,
   Code2,
   FileText,
-  RefreshCw,
-  PenTool,
-  Bot,
-  Wand2,
   X,
   Brain,
   Wrench,
@@ -28,14 +22,12 @@ import {
   GitBranch,
   Repeat,
   ShieldCheck,
-  Zap,
   Send,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import type { AgentSpec, AgentSpecStep, AgentSpecTrigger } from "@/lib/api";
 import { useToast } from "@/components/toast";
-import { useModels } from "@/lib/model-context";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -60,44 +52,240 @@ const STEP_TYPES = [
 ] as const;
 
 const AVAILABLE_TOOLS = [
-  "web-search", "python-exec", "fs-read", "fs-write", "browser", "code-interpreter",
+  "web-search",
+  "python-exec",
+  "fs-read",
+  "fs-write",
+  "browser",
+  "code-interpreter",
 ];
 
 const AVAILABLE_CONNECTORS = [
-  "gmail", "slack", "github", "linear", "notion", "stripe", "google-calendar", "jira", "discord",
+  "gmail",
+  "slack",
+  "github",
+  "linear",
+  "notion",
+  "stripe",
+  "google-calendar",
+  "jira",
+  "discord",
 ];
 
 const AVAILABLE_SURFACES = [
-  "whatsapp", "slack", "discord", "telegram", "twilio", "email", "webchat",
-];
-
-const MODELS = [
-  { value: "auto", label: "Auto (recommended)" },
-  { value: "reasoning-large", label: "Reasoning Large" },
-  { value: "reasoning-small", label: "Reasoning Small" },
-  { value: "chat-large", label: "Chat Large" },
-  { value: "chat-small", label: "Chat Small" },
-  { value: "code-large", label: "Code Large" },
+  "whatsapp",
+  "slack",
+  "discord",
+  "telegram",
+  "twilio",
+  "email",
+  "webchat",
 ];
 
 const ISOLATION_LEVELS = [
   { value: "trusted", label: "Trusted", desc: "Direct execution, no sandbox" },
-  { value: "standard", label: "Standard", desc: "Lightweight container isolation" },
-  { value: "untrusted", label: "Untrusted", desc: "Full microVM sandbox (Firecracker)" },
+  {
+    value: "standard",
+    label: "Standard",
+    desc: "Lightweight container isolation",
+  },
+  {
+    value: "untrusted",
+    label: "Untrusted",
+    desc: "Full microVM sandbox (Firecracker)",
+  },
 ];
 
 // ---------------------------------------------------------------------------
-// Step indicator
+// Wizard steps
 // ---------------------------------------------------------------------------
 
 const WIZARD_STEPS = [
   { key: "describe", label: "Describe", icon: Sparkles },
   { key: "review", label: "Review Spec", icon: FileText },
   { key: "code", label: "Generated Code", icon: Code2 },
-  { key: "deploy", label: "Test & Deploy", icon: Rocket },
+  { key: "deploy", label: "Create", icon: Rocket },
 ] as const;
 
 type WizardStep = (typeof WIZARD_STEPS)[number]["key"];
+
+// ---------------------------------------------------------------------------
+// Local spec generation (template-based, no LLM needed)
+// ---------------------------------------------------------------------------
+
+function generateSpecLocally(description: string): AgentSpec {
+  const words = description
+    .trim()
+    .toLowerCase()
+    .split(/\s+/);
+  const agentName =
+    words
+      .slice(0, 3)
+      .join("-")
+      .replace(/[^a-z0-9-]/g, "")
+      .slice(0, 30) || "my-agent";
+
+  // Detect intent from keywords
+  const desc = description.toLowerCase();
+  const hasSearch = desc.includes("search") || desc.includes("research") || desc.includes("find");
+  const hasSlack = desc.includes("slack");
+  const hasEmail = desc.includes("email") || desc.includes("gmail");
+  const hasGithub = desc.includes("github") || desc.includes("pr") || desc.includes("pull request");
+  const hasSchedule = desc.includes("daily") || desc.includes("schedule") || desc.includes("cron");
+  const hasApproval = desc.includes("approval") || desc.includes("review") || desc.includes("human");
+
+  const steps: AgentSpecStep[] = [
+    {
+      name: "analyze-input",
+      type: "llm",
+      description: "Analyze the user input and determine the plan",
+      config: {},
+    },
+  ];
+
+  if (hasSearch) {
+    steps.push({
+      name: "search-web",
+      type: "tool",
+      description: "Search the web for relevant information",
+      config: {},
+    });
+  }
+
+  steps.push({
+    name: "execute",
+    type: "llm",
+    description: "Execute the main task based on the plan",
+    config: {},
+  });
+
+  if (hasApproval) {
+    steps.push({
+      name: "human-review",
+      type: "approval",
+      description: "Wait for human approval before proceeding",
+      config: {},
+    });
+  }
+
+  steps.push({
+    name: "summarize",
+    type: "llm",
+    description: "Summarize the results into a final output",
+    config: {},
+  });
+
+  const tools: string[] = [];
+  if (hasSearch) tools.push("web-search");
+
+  const connectors: string[] = [];
+  if (hasSlack) connectors.push("slack");
+  if (hasEmail) connectors.push("gmail");
+  if (hasGithub) connectors.push("github");
+
+  const surfaces: string[] = [];
+  if (hasSlack) surfaces.push("slack");
+
+  const triggers: AgentSpecTrigger[] = [{ type: "manual", config: {} }];
+  if (hasSchedule) {
+    triggers.push({ type: "schedule", config: { cron: "0 9 * * *" } });
+  }
+
+  return {
+    name: agentName,
+    description: description.trim(),
+    model: "auto",
+    steps,
+    tools,
+    connectors,
+    surfaces,
+    triggers,
+    isolation: "standard",
+    limits: { timeout: "5m", maxTokens: 100000, maxCostUsd: 1.0 },
+  };
+}
+
+function generateLocalCode(spec: AgentSpec): { code: string; yaml: string } {
+  const camel = (s: string) =>
+    s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+
+  const stepsCode = spec.steps
+    .map((step) => {
+      const varName = camel(step.name);
+      switch (step.type) {
+        case "llm":
+          return `    // ${step.description || step.name}
+    const ${varName} = await step("${step.name}", async () => {
+      return ctx.llm.generate({
+        messages: [
+          { role: "system", content: "You are a helpful assistant." },
+          { role: "user", content: JSON.stringify(ctx.input) },
+        ],
+      });
+    });`;
+        case "tool":
+          return `    // ${step.description || step.name}
+    const ${varName} = await step("${step.name}", async () => {
+      return ctx.mcp("${spec.tools[0] || "web-search"}").call("execute", {
+        query: ctx.input.query,
+      });
+    });`;
+        case "connector":
+          return `    // ${step.description || step.name}
+    const ${varName} = await step("${step.name}", async () => {
+      return ctx.connectors.${spec.connectors[0] || "slack"}.send_message({
+        channel: "#general",
+        text: "Agent completed",
+      });
+    });`;
+        case "approval":
+          return `    // ${step.description || step.name}
+    const ${varName} = await step("${step.name}", async () => {
+      return ctx.requestApproval({
+        message: "Please review and approve this action.",
+      });
+    });`;
+        default:
+          return `    // ${step.description || step.name}
+    const ${varName} = await step("${step.name}", async () => {
+      // TODO: implement ${step.name}
+      return {};
+    });`;
+      }
+    })
+    .join("\n\n");
+
+  const code = `import { Agent, step } from "@lantern/sdk";
+
+export default new Agent({
+  name: "${spec.name}",
+  model: "${spec.model}",
+
+  async run(ctx) {
+${stepsCode}
+
+    return { success: true };
+  },
+});
+`;
+
+  const yaml = `name: ${spec.name}
+description: ${spec.description}
+model: ${spec.model}
+isolation: ${spec.isolation}
+limits:
+  timeout: ${spec.limits.timeout}
+  maxTokens: ${spec.limits.maxTokens}
+  maxCostUsd: ${spec.limits.maxCostUsd}
+triggers:
+${spec.triggers.map((t) => `  - type: ${t.type}`).join("\n")}
+tools: [${spec.tools.join(", ")}]
+connectors: [${spec.connectors.join(", ")}]
+surfaces: [${spec.surfaces.join(", ")}]
+`;
+
+  return { code, yaml };
+}
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -119,14 +307,17 @@ function CreatePageSkeleton() {
         <div className="h-6 w-48 animate-pulse rounded bg-surface-3" />
         <div className="mt-5 flex gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-8 w-28 animate-pulse rounded-lg bg-surface-3" />
+            <div
+              key={i}
+              className="h-8 w-28 animate-pulse rounded-lg bg-surface-3"
+            />
           ))}
         </div>
       </div>
       <div className="flex-1 p-8">
         <div className="mx-auto max-w-2xl space-y-4">
-          <div className="h-14 w-14 mx-auto animate-pulse rounded-2xl bg-surface-3" />
-          <div className="h-6 w-64 mx-auto animate-pulse rounded bg-surface-3" />
+          <div className="mx-auto h-14 w-14 animate-pulse rounded-2xl bg-surface-3" />
+          <div className="mx-auto h-6 w-64 animate-pulse rounded bg-surface-3" />
           <div className="h-32 w-full animate-pulse rounded-xl bg-surface-3" />
           <div className="h-12 w-full animate-pulse rounded-xl bg-surface-3" />
         </div>
@@ -139,23 +330,19 @@ function AgentCreatePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const toast = useToast();
-  const { availableModels, isConfigured } = useModels();
   const templateParam = searchParams.get("template");
 
   const [currentStep, setCurrentStep] = useState<WizardStep>("describe");
   const [description, setDescription] = useState("");
   const [generating, setGenerating] = useState(false);
   const [spec, setSpec] = useState<AgentSpec | null>(null);
-  const [generatedCode, setGeneratedCode] = useState<{ code: string; yaml: string } | null>(null);
+  const [generatedCode, setGeneratedCode] = useState<{
+    code: string;
+    yaml: string;
+  } | null>(null);
   const [generatingCode, setGeneratingCode] = useState(false);
   const [codeTab, setCodeTab] = useState<"code" | "yaml">("code");
   const [deploying, setDeploying] = useState(false);
-  const [deployEnv, setDeployEnv] = useState("development");
-
-  // Refine with AI
-  const [showRefine, setShowRefine] = useState(false);
-  const [refineInput, setRefineInput] = useState("");
-  const [refining, setRefining] = useState(false);
 
   // Placeholder rotation
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
@@ -172,11 +359,16 @@ function AgentCreatePage() {
   useEffect(() => {
     if (templateParam) {
       const prefills: Record<string, string> = {
-        research: "Research a topic on the web, synthesize findings, and produce a structured report with citations",
-        connector: "Integrate with external services to sync data between Gmail, Slack, and Notion",
-        chatbot: "A conversational agent that answers questions on WhatsApp and Slack using a knowledge base",
-        scheduled: "Run a daily check of competitor pricing and send a summary report",
-        approval: "Process expense requests with automatic classification and human approval gates for high amounts",
+        research:
+          "Research a topic on the web, synthesize findings, and produce a structured report with citations",
+        connector:
+          "Integrate with external services to sync data between Gmail, Slack, and Notion",
+        chatbot:
+          "A conversational agent that answers questions on WhatsApp and Slack using a knowledge base",
+        scheduled:
+          "Run a daily check of competitor pricing and send a summary report",
+        approval:
+          "Process expense requests with automatic classification and human approval gates for high amounts",
       };
       if (prefills[templateParam]) {
         setDescription(prefills[templateParam]);
@@ -191,67 +383,34 @@ function AgentCreatePage() {
     }
   }, [currentStep]);
 
-  const currentStepIndex = WIZARD_STEPS.findIndex((s) => s.key === currentStep);
+  const currentStepIndex = WIZARD_STEPS.findIndex(
+    (s) => s.key === currentStep,
+  );
 
   // ---- Step 1: Generate spec ----
-
   const handleGenerate = useCallback(async () => {
     if (!description.trim()) return;
     setGenerating(true);
     try {
+      // Try the real LLM-powered spec generation first
       const result = await api.generateAgentSpec(description.trim());
       setSpec(result);
       setCurrentStep("review");
       toast.success("Agent spec generated");
     } catch {
-      // Fallback: generate a demo spec locally so the wizard still works
-      const words = description.trim().toLowerCase().split(/\s+/);
-      const agentName = words.slice(0, 3).join("-").replace(/[^a-z0-9-]/g, "").slice(0, 30) || "my-agent";
-      const demoSpec: AgentSpec = {
-        name: agentName,
-        description: description.trim(),
-        model: "auto",
-        steps: [
-          { name: "gather-input", type: "llm", description: "Analyze the user input and determine the plan", config: {} },
-          { name: "execute", type: "tool", description: "Execute the main task based on the plan", config: {} },
-          { name: "summarize", type: "llm", description: "Summarize the results into a final output", config: {} },
-        ],
-        tools: ["web-search"],
-        connectors: [],
-        surfaces: [],
-        triggers: [{ type: "manual", config: {} }],
-        isolation: "standard",
-        limits: { timeout: "5m", maxTokens: 100000, maxCostUsd: 1.0 },
-      };
-      setSpec(demoSpec);
+      // Fallback: generate locally from templates (no LLM needed)
+      const localSpec = generateSpecLocally(description);
+      setSpec(localSpec);
       setCurrentStep("review");
-      toast.info("Generated spec from template (LLM unavailable). You can edit it below.");
+      toast.info(
+        "Generated spec from template (LLM unavailable). You can edit it below.",
+      );
     } finally {
       setGenerating(false);
     }
   }, [description, toast]);
 
-  // ---- Step 2: Refine with AI ----
-
-  const handleRefine = useCallback(async () => {
-    if (!refineInput.trim() || !spec) return;
-    setRefining(true);
-    try {
-      const refinedDescription = `Original agent spec:\n${JSON.stringify(spec, null, 2)}\n\nUser requested changes:\n${refineInput.trim()}\n\nGenerate an updated spec incorporating these changes.`;
-      const result = await api.generateAgentSpec(refinedDescription);
-      setSpec(result);
-      setRefineInput("");
-      setShowRefine(false);
-      toast.success("Spec updated with your changes");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to refine spec");
-    } finally {
-      setRefining(false);
-    }
-  }, [refineInput, spec, toast]);
-
-  // ---- Step 3: Generate code ----
-
+  // ---- Step 2 -> Step 3: Generate code ----
   const handleGenerateCode = useCallback(async () => {
     if (!spec) return;
     setGeneratingCode(true);
@@ -260,9 +419,9 @@ function AgentCreatePage() {
       setGeneratedCode(result);
       setCurrentStep("code");
       toast.success("Code generated");
-    } catch (err) {
-      // Fallback: generate a simple template locally
-      const fallbackCode = generateFallbackCode(spec);
+    } catch {
+      // Fallback: generate code locally
+      const fallbackCode = generateLocalCode(spec);
       setGeneratedCode(fallbackCode);
       setCurrentStep("code");
       toast.info("Generated code from template (LLM unavailable)");
@@ -271,8 +430,7 @@ function AgentCreatePage() {
     }
   }, [spec, toast]);
 
-  // ---- Step 4: Deploy ----
-
+  // ---- Step 4: Create agent ----
   const handleDeploy = useCallback(async () => {
     if (!spec) return;
     setDeploying(true);
@@ -282,17 +440,18 @@ function AgentCreatePage() {
         description: spec.description,
         model: spec.model,
       });
-      toast.success(`Agent "${agent.name}" created and queued for deployment`);
+      toast.success(`Agent "${agent.name}" created`);
       router.push(`/agents/${agent.name}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create agent");
+      toast.error(
+        err instanceof Error ? err.message : "Failed to create agent",
+      );
     } finally {
       setDeploying(false);
     }
-  }, [spec, router, toast, deployEnv]);
+  }, [spec, router, toast]);
 
   // ---- Spec editing helpers ----
-
   const updateSpec = (partial: Partial<AgentSpec>) => {
     if (spec) setSpec({ ...spec, ...partial });
   };
@@ -308,7 +467,15 @@ function AgentCreatePage() {
     if (!spec) return;
     setSpec({
       ...spec,
-      steps: [...spec.steps, { name: `step-${spec.steps.length + 1}`, type: "llm", description: "", config: {} }],
+      steps: [
+        ...spec.steps,
+        {
+          name: `step-${spec.steps.length + 1}`,
+          type: "llm",
+          description: "",
+          config: {},
+        },
+      ],
     });
   };
 
@@ -317,11 +484,14 @@ function AgentCreatePage() {
     setSpec({ ...spec, steps: spec.steps.filter((_, i) => i !== index) });
   };
 
-  const toggleArrayItem = (field: "tools" | "connectors" | "surfaces", item: string) => {
+  const toggleArrayItem = (
+    field: "tools" | "connectors" | "surfaces",
+    item: string,
+  ) => {
     if (!spec) return;
     const arr = spec[field];
     if (arr.includes(item)) {
-      updateSpec({ [field]: arr.filter((i) => i !== item) });
+      updateSpec({ [field]: arr.filter((i: string) => i !== item) });
     } else {
       updateSpec({ [field]: [...arr, item] });
     }
@@ -341,7 +511,9 @@ function AgentCreatePage() {
           </button>
         </div>
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-zinc-100">Create Agent with AI</h1>
+          <h1 className="text-lg font-semibold text-zinc-100">
+            Create Agent with AI
+          </h1>
         </div>
 
         {/* Step indicator */}
@@ -354,7 +526,12 @@ function AgentCreatePage() {
             return (
               <div key={step.key} className="flex items-center gap-2">
                 {i > 0 && (
-                  <div className={clsx("h-px w-8", isDone ? "bg-indigo-500" : "bg-zinc-700")} />
+                  <div
+                    className={clsx(
+                      "h-px w-8",
+                      isDone ? "bg-indigo-500" : "bg-zinc-700",
+                    )}
+                  />
                 )}
                 <button
                   onClick={() => {
@@ -366,8 +543,8 @@ function AgentCreatePage() {
                     isActive
                       ? "bg-indigo-500/10 text-indigo-400"
                       : isDone
-                        ? "text-zinc-300 hover:bg-surface-3 cursor-pointer"
-                        : "text-zinc-600 cursor-default"
+                        ? "cursor-pointer text-zinc-300 hover:bg-surface-3"
+                        : "cursor-default text-zinc-600",
                   )}
                 >
                   {isDone ? (
@@ -385,9 +562,7 @@ function AgentCreatePage() {
 
       {/* Step content */}
       <div className="flex-1 p-8">
-        {/* ================================================================ */}
         {/* STEP 1: DESCRIBE */}
-        {/* ================================================================ */}
         {currentStep === "describe" && (
           <div className="mx-auto max-w-2xl">
             <div className="mb-8 text-center">
@@ -398,7 +573,8 @@ function AgentCreatePage() {
                 What should your agent do?
               </h2>
               <p className="mt-2 text-sm text-zinc-500">
-                Describe your agent in plain language. AI will generate the full specification.
+                Describe your agent in plain language. We will generate the full
+                specification.
               </p>
             </div>
 
@@ -410,7 +586,7 @@ function AgentCreatePage() {
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder={PLACEHOLDER_EXAMPLES[placeholderIdx]}
                   rows={5}
-                  className="w-full rounded-xl border border-zinc-700 bg-surface-2 px-4 py-3.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 resize-none transition-all"
+                  className="w-full resize-none rounded-xl border border-zinc-800 bg-surface-0 px-4 py-3.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none transition-all focus:border-lantern-500/50 focus:ring-2 focus:ring-lantern-500/20"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                       handleGenerate();
@@ -418,7 +594,11 @@ function AgentCreatePage() {
                   }}
                 />
                 <div className="absolute bottom-3 right-3 text-[10px] text-zinc-600">
-                  {navigator.platform.includes("Mac") ? "Cmd" : "Ctrl"}+Enter to generate
+                  {typeof navigator !== "undefined" &&
+                  navigator.platform?.includes("Mac")
+                    ? "Cmd"
+                    : "Ctrl"}
+                  +Enter to generate
                 </div>
               </div>
 
@@ -430,7 +610,9 @@ function AgentCreatePage() {
                 {generating ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    <span className="animate-pulse">Generating agent spec...</span>
+                    <span className="animate-pulse">
+                      Generating agent spec...
+                    </span>
                   </>
                 ) : (
                   <>
@@ -443,64 +625,65 @@ function AgentCreatePage() {
           </div>
         )}
 
-        {/* ================================================================ */}
         {/* STEP 2: REVIEW SPEC */}
-        {/* ================================================================ */}
         {currentStep === "review" && spec && (
           <div className="mx-auto max-w-3xl space-y-6">
             {/* Name & Description */}
-            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
-              <h3 className="text-sm font-semibold text-zinc-200">Basic Info</h3>
+            <div className="space-y-4 rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <h3 className="text-sm font-semibold text-zinc-200">
+                Basic Info
+              </h3>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-400">Name</label>
+                  <label className="mb-1 block text-xs font-medium text-zinc-400">
+                    Name
+                  </label>
                   <input
                     type="text"
                     value={spec.name}
-                    onChange={(e) => updateSpec({ name: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") })}
-                    className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+                    onChange={(e) =>
+                      updateSpec({
+                        name: e.target.value
+                          .toLowerCase()
+                          .replace(/[^a-z0-9-]/g, "-"),
+                      })
+                    }
+                    className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-zinc-400">Model</label>
+                  <label className="mb-1 block text-xs font-medium text-zinc-400">
+                    Model
+                  </label>
                   <select
                     value={spec.model}
                     onChange={(e) => updateSpec({ model: e.target.value })}
-                    className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+                    className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50"
                   >
                     <option value="auto">Auto (recommended)</option>
-                    <optgroup label="Anthropic">
-                      <option value="reasoning-frontier">Reasoning Frontier — Claude Opus 4</option>
-                      <option value="reasoning-large">Reasoning Large — Claude Sonnet 4</option>
-                      <option value="reasoning-small">Reasoning Small — Claude Haiku 4</option>
-                      <option value="code-large">Code Large — Claude Sonnet 4</option>
-                    </optgroup>
-                    <optgroup label="OpenAI">
-                      <option value="chat-large">Chat Large — GPT-4o</option>
-                      <option value="chat-small">Chat Small — GPT-4o Mini</option>
-                    </optgroup>
-                    <optgroup label="Google">
-                      <option value="vision-large">Vision Large — Gemini 2.5 Pro</option>
-                    </optgroup>
+                    <option value="reasoning-large">Reasoning Large</option>
+                    <option value="reasoning-small">Reasoning Small</option>
+                    <option value="chat-large">Chat Large</option>
+                    <option value="chat-small">Chat Small</option>
+                    <option value="code-large">Code Large</option>
                   </select>
-                  {!isConfigured && (
-                    <p className="mt-1 text-[11px] text-amber-400">No LLM provider configured.</p>
-                  )}
                 </div>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-400">Description</label>
+                <label className="mb-1 block text-xs font-medium text-zinc-400">
+                  Description
+                </label>
                 <textarea
                   value={spec.description}
                   onChange={(e) => updateSpec({ description: e.target.value })}
                   rows={2}
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500 resize-none"
+                  className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50"
                 />
               </div>
             </div>
 
             {/* Steps */}
-            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
+            <div className="space-y-4 rounded-xl border border-zinc-800 bg-surface-1 p-5">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-zinc-200">Steps</h3>
                 <button
@@ -512,31 +695,50 @@ function AgentCreatePage() {
               </div>
               <div className="space-y-3">
                 {spec.steps.map((step, i) => {
-                  const typeConfig = STEP_TYPES.find((t) => t.value === step.type);
+                  const typeConfig = STEP_TYPES.find(
+                    (t) => t.value === step.type,
+                  );
                   const TypeIcon = typeConfig?.icon ?? Brain;
 
                   return (
                     <div
                       key={i}
-                      className="rounded-lg border border-zinc-800 bg-surface-2 p-4 space-y-3"
+                      className="space-y-3 rounded-lg border border-zinc-800 bg-surface-2 p-4"
                     >
                       <div className="flex items-center gap-3">
                         <div className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-3">
-                          <TypeIcon className={clsx("h-3.5 w-3.5", typeConfig?.color ?? "text-zinc-400")} />
+                          <TypeIcon
+                            className={clsx(
+                              "h-3.5 w-3.5",
+                              typeConfig?.color ?? "text-zinc-400",
+                            )}
+                          />
                         </div>
                         <input
                           type="text"
                           value={step.name}
-                          onChange={(e) => updateStep(i, { name: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") })}
-                          className="flex-1 rounded-md border border-zinc-700 bg-surface-1 px-2 py-1 text-xs font-medium text-zinc-200 outline-none focus:border-indigo-500"
+                          onChange={(e) =>
+                            updateStep(i, {
+                              name: e.target.value
+                                .toLowerCase()
+                                .replace(/[^a-z0-9-]/g, "-"),
+                            })
+                          }
+                          className="flex-1 rounded-md border border-zinc-700 bg-surface-1 px-2 py-1 text-xs font-medium text-zinc-200 outline-none focus:border-lantern-500/50"
                         />
                         <select
                           value={step.type}
-                          onChange={(e) => updateStep(i, { type: e.target.value as AgentSpecStep["type"] })}
-                          className="rounded-md border border-zinc-700 bg-surface-1 px-2 py-1 text-xs text-zinc-300 outline-none focus:border-indigo-500"
+                          onChange={(e) =>
+                            updateStep(i, {
+                              type: e.target.value as AgentSpecStep["type"],
+                            })
+                          }
+                          className="rounded-md border border-zinc-700 bg-surface-1 px-2 py-1 text-xs text-zinc-300 outline-none focus:border-lantern-500/50"
                         >
                           {STEP_TYPES.map((t) => (
-                            <option key={t.value} value={t.value}>{t.label}</option>
+                            <option key={t.value} value={t.value}>
+                              {t.label}
+                            </option>
                           ))}
                         </select>
                         <button
@@ -550,9 +752,11 @@ function AgentCreatePage() {
                       <input
                         type="text"
                         value={step.description}
-                        onChange={(e) => updateStep(i, { description: e.target.value })}
+                        onChange={(e) =>
+                          updateStep(i, { description: e.target.value })
+                        }
                         placeholder="What does this step do?"
-                        className="w-full rounded-md border border-zinc-700/50 bg-surface-1 px-2.5 py-1.5 text-xs text-zinc-400 outline-none placeholder:text-zinc-600 focus:border-indigo-500"
+                        className="w-full rounded-md border border-zinc-700/50 bg-surface-1 px-2.5 py-1.5 text-xs text-zinc-400 outline-none placeholder:text-zinc-600 focus:border-lantern-500/50"
                       />
                     </div>
                   );
@@ -562,8 +766,7 @@ function AgentCreatePage() {
 
             {/* Tools, Connectors, Surfaces */}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              {/* Tools */}
-              <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4 space-y-3">
+              <div className="space-y-3 rounded-xl border border-zinc-800 bg-surface-1 p-4">
                 <h3 className="text-xs font-semibold text-zinc-300">Tools</h3>
                 <div className="flex flex-wrap gap-1.5">
                   {AVAILABLE_TOOLS.map((t) => (
@@ -574,7 +777,7 @@ function AgentCreatePage() {
                         "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
                         spec.tools.includes(t)
                           ? "bg-blue-500/15 text-blue-400"
-                          : "bg-surface-3 text-zinc-500 hover:text-zinc-300"
+                          : "bg-surface-3 text-zinc-500 hover:text-zinc-300",
                       )}
                     >
                       {t}
@@ -583,9 +786,10 @@ function AgentCreatePage() {
                 </div>
               </div>
 
-              {/* Connectors */}
-              <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4 space-y-3">
-                <h3 className="text-xs font-semibold text-zinc-300">Connectors</h3>
+              <div className="space-y-3 rounded-xl border border-zinc-800 bg-surface-1 p-4">
+                <h3 className="text-xs font-semibold text-zinc-300">
+                  Connectors
+                </h3>
                 <div className="flex flex-wrap gap-1.5">
                   {AVAILABLE_CONNECTORS.map((c) => (
                     <button
@@ -595,7 +799,7 @@ function AgentCreatePage() {
                         "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
                         spec.connectors.includes(c)
                           ? "bg-teal-500/15 text-teal-400"
-                          : "bg-surface-3 text-zinc-500 hover:text-zinc-300"
+                          : "bg-surface-3 text-zinc-500 hover:text-zinc-300",
                       )}
                     >
                       {c}
@@ -604,9 +808,10 @@ function AgentCreatePage() {
                 </div>
               </div>
 
-              {/* Surfaces */}
-              <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4 space-y-3">
-                <h3 className="text-xs font-semibold text-zinc-300">Surfaces</h3>
+              <div className="space-y-3 rounded-xl border border-zinc-800 bg-surface-1 p-4">
+                <h3 className="text-xs font-semibold text-zinc-300">
+                  Surfaces
+                </h3>
                 <div className="flex flex-wrap gap-1.5">
                   {AVAILABLE_SURFACES.map((s) => (
                     <button
@@ -616,7 +821,7 @@ function AgentCreatePage() {
                         "rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
                         spec.surfaces.includes(s)
                           ? "bg-green-500/15 text-green-400"
-                          : "bg-surface-3 text-zinc-500 hover:text-zinc-300"
+                          : "bg-surface-3 text-zinc-500 hover:text-zinc-300",
                       )}
                     >
                       {s}
@@ -626,62 +831,12 @@ function AgentCreatePage() {
               </div>
             </div>
 
-            {/* Triggers */}
-            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-3">
-              <h3 className="text-sm font-semibold text-zinc-200">Triggers</h3>
-              <div className="space-y-2">
-                {spec.triggers.map((trigger, i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <select
-                      value={trigger.type}
-                      onChange={(e) => {
-                        const triggers = [...spec.triggers];
-                        triggers[i] = { ...triggers[i], type: e.target.value as AgentSpecTrigger["type"] };
-                        updateSpec({ triggers });
-                      }}
-                      className="rounded-lg border border-zinc-700 bg-surface-2 px-3 py-1.5 text-xs text-zinc-300 outline-none focus:border-indigo-500"
-                    >
-                      <option value="manual">Manual</option>
-                      <option value="schedule">Schedule</option>
-                      <option value="webhook">Webhook</option>
-                      <option value="surface">Surface</option>
-                    </select>
-                    {trigger.type === "schedule" && (
-                      <input
-                        type="text"
-                        placeholder="*/5 * * * *"
-                        value={(trigger.config?.cron as string) ?? ""}
-                        onChange={(e) => {
-                          const triggers = [...spec.triggers];
-                          triggers[i] = { ...triggers[i], config: { ...triggers[i].config, cron: e.target.value } };
-                          updateSpec({ triggers });
-                        }}
-                        className="flex-1 rounded-lg border border-zinc-700 bg-surface-2 px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-indigo-500"
-                      />
-                    )}
-                    <button
-                      onClick={() => {
-                        updateSpec({ triggers: spec.triggers.filter((_, j) => j !== i) });
-                      }}
-                      className="rounded p-1 text-zinc-600 transition-colors hover:text-red-400"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-                <button
-                  onClick={() => updateSpec({ triggers: [...spec.triggers, { type: "manual", config: {} }] })}
-                  className="inline-flex items-center gap-1 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
-                >
-                  <Plus className="h-3 w-3" /> Add trigger
-                </button>
-              </div>
-            </div>
-
             {/* Isolation + Limits */}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-3">
-                <h3 className="text-sm font-semibold text-zinc-200">Isolation</h3>
+              <div className="space-y-3 rounded-xl border border-zinc-800 bg-surface-1 p-5">
+                <h3 className="text-sm font-semibold text-zinc-200">
+                  Isolation
+                </h3>
                 <div className="space-y-2">
                   {ISOLATION_LEVELS.map((level) => (
                     <label
@@ -689,8 +844,8 @@ function AgentCreatePage() {
                       className={clsx(
                         "flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition-all",
                         spec.isolation === level.value
-                          ? "border-indigo-500/50 bg-indigo-500/5"
-                          : "border-zinc-800 hover:border-zinc-600"
+                          ? "border-lantern-500/50 bg-lantern-500/5"
+                          : "border-zinc-800 hover:border-zinc-600",
                       )}
                     >
                       <input
@@ -698,30 +853,47 @@ function AgentCreatePage() {
                         name="isolation"
                         value={level.value}
                         checked={spec.isolation === level.value}
-                        onChange={(e) => updateSpec({ isolation: e.target.value as AgentSpec["isolation"] })}
-                        className="accent-indigo-500"
+                        onChange={(e) =>
+                          updateSpec({
+                            isolation:
+                              e.target.value as AgentSpec["isolation"],
+                          })
+                        }
+                        className="accent-lantern-500"
                       />
                       <div>
-                        <div className="text-xs font-medium text-zinc-200">{level.label}</div>
-                        <div className="text-[10px] text-zinc-500">{level.desc}</div>
+                        <div className="text-xs font-medium text-zinc-200">
+                          {level.label}
+                        </div>
+                        <div className="text-[10px] text-zinc-500">
+                          {level.desc}
+                        </div>
                       </div>
                     </label>
                   ))}
                 </div>
               </div>
 
-              <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
-                <h3 className="text-sm font-semibold text-zinc-200">Resource Limits</h3>
+              <div className="space-y-4 rounded-xl border border-zinc-800 bg-surface-1 p-5">
+                <h3 className="text-sm font-semibold text-zinc-200">
+                  Resource Limits
+                </h3>
                 <div className="space-y-3">
                   <div>
                     <label className="mb-1 flex items-center justify-between text-xs text-zinc-400">
                       Timeout
-                      <span className="font-mono text-zinc-500">{spec.limits.timeout}</span>
+                      <span className="font-mono text-zinc-500">
+                        {spec.limits.timeout}
+                      </span>
                     </label>
                     <select
                       value={spec.limits.timeout}
-                      onChange={(e) => updateSpec({ limits: { ...spec.limits, timeout: e.target.value } })}
-                      className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-indigo-500"
+                      onChange={(e) =>
+                        updateSpec({
+                          limits: { ...spec.limits, timeout: e.target.value },
+                        })
+                      }
+                      className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-lantern-500/50"
                     >
                       <option value="1m">1 minute</option>
                       <option value="5m">5 minutes</option>
@@ -733,7 +905,9 @@ function AgentCreatePage() {
                   <div>
                     <label className="mb-1 flex items-center justify-between text-xs text-zinc-400">
                       Max tokens
-                      <span className="font-mono text-zinc-500">{spec.limits.maxTokens.toLocaleString()}</span>
+                      <span className="font-mono text-zinc-500">
+                        {spec.limits.maxTokens.toLocaleString()}
+                      </span>
                     </label>
                     <input
                       type="range"
@@ -741,14 +915,23 @@ function AgentCreatePage() {
                       max={500000}
                       step={1000}
                       value={spec.limits.maxTokens}
-                      onChange={(e) => updateSpec({ limits: { ...spec.limits, maxTokens: parseInt(e.target.value) } })}
-                      className="w-full accent-indigo-500"
+                      onChange={(e) =>
+                        updateSpec({
+                          limits: {
+                            ...spec.limits,
+                            maxTokens: parseInt(e.target.value),
+                          },
+                        })
+                      }
+                      className="w-full accent-lantern-500"
                     />
                   </div>
                   <div>
                     <label className="mb-1 flex items-center justify-between text-xs text-zinc-400">
                       Max cost
-                      <span className="font-mono text-zinc-500">${spec.limits.maxCostUsd.toFixed(2)}</span>
+                      <span className="font-mono text-zinc-500">
+                        ${spec.limits.maxCostUsd.toFixed(2)}
+                      </span>
                     </label>
                     <input
                       type="range"
@@ -756,70 +939,34 @@ function AgentCreatePage() {
                       max={50}
                       step={0.1}
                       value={spec.limits.maxCostUsd}
-                      onChange={(e) => updateSpec({ limits: { ...spec.limits, maxCostUsd: parseFloat(e.target.value) } })}
-                      className="w-full accent-indigo-500"
+                      onChange={(e) =>
+                        updateSpec({
+                          limits: {
+                            ...spec.limits,
+                            maxCostUsd: parseFloat(e.target.value),
+                          },
+                        })
+                      }
+                      className="w-full accent-lantern-500"
                     />
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Refine with AI */}
-            {showRefine && (
-              <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-5 space-y-3">
-                <h3 className="flex items-center gap-2 text-sm font-semibold text-indigo-300">
-                  <Wand2 className="h-4 w-4" />
-                  Refine with AI
-                </h3>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={refineInput}
-                    onChange={(e) => setRefineInput(e.target.value)}
-                    placeholder='e.g. "Add a step that sends results to Slack" or "Change the model to reasoning-large"'
-                    className="flex-1 rounded-lg border border-indigo-500/30 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        handleRefine();
-                      }
-                      if (e.key === "Escape") {
-                        setShowRefine(false);
-                      }
-                    }}
-                  />
-                  <button
-                    onClick={handleRefine}
-                    disabled={!refineInput.trim() || refining}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
-                  >
-                    {refining ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                    Apply
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Actions */}
+            {/* Action buttons */}
             <div className="flex items-center justify-between pt-2">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setCurrentStep("describe")}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3"
-                >
-                  <ArrowLeft className="h-3.5 w-3.5" /> Back
-                </button>
-                <button
-                  onClick={() => setShowRefine(!showRefine)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/30 px-4 py-2 text-sm font-medium text-indigo-400 transition-colors hover:bg-indigo-500/10"
-                >
-                  <Wand2 className="h-3.5 w-3.5" /> Refine with AI
-                </button>
-              </div>
+              <button
+                onClick={() => setCurrentStep("describe")}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Back
+              </button>
               <button
                 onClick={handleGenerateCode}
                 disabled={generatingCode}
-                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {generatingCode ? (
                   <>
@@ -829,7 +976,7 @@ function AgentCreatePage() {
                 ) : (
                   <>
                     Generate Code
-                    <ArrowRight className="h-4 w-4" />
+                    <ArrowRight className="h-3.5 w-3.5" />
                   </>
                 )}
               </button>
@@ -837,340 +984,126 @@ function AgentCreatePage() {
           </div>
         )}
 
-        {/* ================================================================ */}
-        {/* STEP 3: GENERATED CODE */}
-        {/* ================================================================ */}
+        {/* STEP 3: CODE */}
         {currentStep === "code" && generatedCode && (
-          <div className="mx-auto max-w-4xl space-y-6">
-            {/* Tabs */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1 rounded-lg bg-surface-2 p-0.5">
+          <div className="mx-auto max-w-3xl space-y-6">
+            <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
+              <div className="flex items-center border-b border-zinc-800">
                 <button
                   onClick={() => setCodeTab("code")}
                   className={clsx(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    codeTab === "code" ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
+                    "px-4 py-2.5 text-xs font-medium transition-colors",
+                    codeTab === "code"
+                      ? "border-b-2 border-indigo-500 text-zinc-100"
+                      : "text-zinc-500 hover:text-zinc-300",
                   )}
                 >
-                  <Code2 className="mr-1 inline h-3 w-3" />
+                  <Code2 className="mr-1.5 inline h-3.5 w-3.5" />
                   src/index.ts
                 </button>
                 <button
                   onClick={() => setCodeTab("yaml")}
                   className={clsx(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    codeTab === "yaml" ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
+                    "px-4 py-2.5 text-xs font-medium transition-colors",
+                    codeTab === "yaml"
+                      ? "border-b-2 border-indigo-500 text-zinc-100"
+                      : "text-zinc-500 hover:text-zinc-300",
                   )}
                 >
-                  <FileText className="mr-1 inline h-3 w-3" />
+                  <FileText className="mr-1.5 inline h-3.5 w-3.5" />
                   agent.yaml
                 </button>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setCurrentStep("review");
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"
-                >
-                  <PenTool className="h-3 w-3" /> Edit Spec
-                </button>
-                <button
-                  onClick={handleGenerateCode}
-                  disabled={generatingCode}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3 disabled:opacity-50"
-                >
-                  <RefreshCw className={clsx("h-3 w-3", generatingCode && "animate-spin")} /> Regenerate
-                </button>
-              </div>
+              <pre className="overflow-x-auto p-4 font-mono text-xs leading-relaxed text-zinc-400">
+                <code>
+                  {codeTab === "code"
+                    ? generatedCode.code
+                    : generatedCode.yaml}
+                </code>
+              </pre>
             </div>
 
-            {/* Code viewer */}
-            <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
-              <div className="border-b border-zinc-800/50 bg-surface-2 px-4 py-2.5">
-                <span className="text-xs text-zinc-500">
-                  {codeTab === "code" ? "src/index.ts" : "agent.yaml"}
-                </span>
-              </div>
-              <div className="overflow-auto p-4" style={{ maxHeight: "60vh" }}>
-                <pre className="font-mono text-xs leading-relaxed">
-                  <code>
-                    {highlightCode(codeTab === "code" ? generatedCode.code : generatedCode.yaml)}
-                  </code>
-                </pre>
-              </div>
-            </div>
-
-            {/* Actions */}
             <div className="flex items-center justify-between pt-2">
               <button
                 onClick={() => setCurrentStep("review")}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3"
               >
-                <ArrowLeft className="h-3.5 w-3.5" /> Back to Spec
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Back to Spec
               </button>
               <button
                 onClick={() => setCurrentStep("deploy")}
-                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
+                className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
               >
-                Create & Deploy
-                <ArrowRight className="h-4 w-4" />
+                Continue
+                <ArrowRight className="h-3.5 w-3.5" />
               </button>
             </div>
           </div>
         )}
 
-        {/* ================================================================ */}
-        {/* STEP 4: TEST & DEPLOY */}
-        {/* ================================================================ */}
+        {/* STEP 4: CREATE */}
         {currentStep === "deploy" && spec && (
-          <div className="mx-auto max-w-2xl space-y-6">
-            <div className="text-center">
-              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10">
-                <Rocket className="h-7 w-7 text-emerald-400" />
-              </div>
-              <h2 className="text-xl font-semibold text-zinc-100">Deploy your agent</h2>
-              <p className="mt-2 text-sm text-zinc-500">
-                Choose an environment and deploy. You can test in the playground afterward.
-              </p>
+          <div className="mx-auto max-w-xl text-center">
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/10">
+              <Rocket className="h-8 w-8 text-emerald-400" />
             </div>
+            <h2 className="mb-2 text-xl font-semibold text-zinc-100">
+              Ready to create
+            </h2>
+            <p className="mb-8 text-sm text-zinc-500">
+              Agent <span className="font-medium text-zinc-300">{spec.name}</span>{" "}
+              will be created and registered in the platform.
+            </p>
 
-            {/* Agent summary card */}
-            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10">
-                  <Bot className="h-5 w-5 text-indigo-400" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-zinc-100">{spec.name}</h3>
-                  <p className="text-xs text-zinc-500">{spec.description}</p>
-                </div>
+            <div className="mb-8 space-y-2 rounded-xl border border-zinc-800 bg-surface-1 p-5 text-left text-sm">
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Name</span>
+                <span className="text-zinc-200">{spec.name}</span>
               </div>
-              <div className="grid grid-cols-3 gap-3 border-t border-zinc-800 pt-3">
-                <div>
-                  <span className="text-[10px] uppercase tracking-wider text-zinc-600">Steps</span>
-                  <p className="text-sm font-medium text-zinc-200">{spec.steps.length}</p>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase tracking-wider text-zinc-600">Model</span>
-                  <p className="text-sm font-medium text-zinc-200">{spec.model}</p>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase tracking-wider text-zinc-600">Isolation</span>
-                  <p className="text-sm font-medium text-zinc-200 capitalize">{spec.isolation}</p>
-                </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Model</span>
+                <span className="text-zinc-200">{spec.model}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Steps</span>
+                <span className="text-zinc-200">{spec.steps.length}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Isolation</span>
+                <span className="text-zinc-200">{spec.isolation}</span>
               </div>
             </div>
 
-            {/* Environment selector */}
-            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-3">
-              <h3 className="text-sm font-semibold text-zinc-200">Environment</h3>
-              <div className="grid grid-cols-3 gap-3">
-                {(["development", "staging", "production"] as const).map((env) => (
-                  <button
-                    key={env}
-                    onClick={() => setDeployEnv(env)}
-                    className={clsx(
-                      "rounded-lg border px-4 py-3 text-center text-sm font-medium capitalize transition-all",
-                      deployEnv === env
-                        ? "border-indigo-500/50 bg-indigo-500/10 text-indigo-300"
-                        : "border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
-                    )}
-                  >
-                    {env}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center justify-between pt-2">
+            <div className="flex items-center justify-center gap-3">
               <button
                 onClick={() => setCurrentStep("code")}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3"
               >
-                <ArrowLeft className="h-3.5 w-3.5" /> Back
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Back
               </button>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    toast.info("Opening playground for testing...");
-                    router.push(`/playground?agent=${spec.name}`);
-                  }}
-                  className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3"
-                >
-                  <Play className="h-4 w-4" />
-                  Test in Playground
-                </button>
-                <button
-                  onClick={handleDeploy}
-                  disabled={deploying}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
-                >
-                  {deploying ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Deploying...
-                    </>
-                  ) : (
-                    <>
-                      <Rocket className="h-4 w-4" />
-                      Create & Deploy
-                    </>
-                  )}
-                </button>
-              </div>
+              <button
+                onClick={handleDeploy}
+                disabled={deploying}
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deploying ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  <>
+                    <Rocket className="h-4 w-4" />
+                    Create Agent
+                  </>
+                )}
+              </button>
             </div>
           </div>
         )}
       </div>
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Syntax highlighting (simple keyword-based for TypeScript/YAML)
-// ---------------------------------------------------------------------------
-
-function highlightCode(code: string): React.ReactNode {
-  if (!code) return null;
-
-  const lines = code.split("\n");
-  return lines.map((line, i) => {
-    let highlighted = line;
-
-    // Comments (// and #)
-    const commentMatch = highlighted.match(/^(\s*)(\/\/.*|#.*)$/);
-    if (commentMatch) {
-      return (
-        <div key={i} className="text-zinc-600">
-          {commentMatch[1]}
-          <span className="text-zinc-600">{commentMatch[2]}</span>
-        </div>
-      );
-    }
-
-    // Build spans with highlighting
-    const parts: React.ReactNode[] = [];
-    let remaining = highlighted;
-    let partKey = 0;
-
-    // Simple token-based highlighting
-    const tokens = remaining.split(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/g);
-    for (let j = 0; j < tokens.length; j++) {
-      const token = tokens[j];
-      if (j % 2 === 1) {
-        // String literal
-        parts.push(<span key={partKey++} className="text-green-400">{token}</span>);
-      } else {
-        // Highlight keywords
-        const keywordRegex = /\b(import|export|from|const|let|var|async|await|function|return|new|if|else|for|of|in|type|interface|class|default)\b/g;
-        let lastIndex = 0;
-        let match;
-        while ((match = keywordRegex.exec(token)) !== null) {
-          if (match.index > lastIndex) {
-            parts.push(<span key={partKey++} className="text-zinc-300">{token.slice(lastIndex, match.index)}</span>);
-          }
-          parts.push(<span key={partKey++} className="text-indigo-400">{match[0]}</span>);
-          lastIndex = keywordRegex.lastIndex;
-        }
-        if (lastIndex < token.length) {
-          parts.push(<span key={partKey++} className="text-zinc-300">{token.slice(lastIndex)}</span>);
-        }
-      }
-    }
-
-    return <div key={i}>{parts}</div>;
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Fallback code generator (when LLM is unavailable)
-// ---------------------------------------------------------------------------
-
-function generateFallbackCode(spec: AgentSpec): { code: string; yaml: string } {
-  const stepsCode = spec.steps
-    .map((step) => {
-      switch (step.type) {
-        case "llm":
-          return `    // ${step.description || step.name}
-    const ${camelCase(step.name)} = await step("${step.name}", async () => {
-      return ctx.llm.generate({
-        messages: [
-          { role: "system", content: "You are a helpful assistant." },
-          { role: "user", content: JSON.stringify(ctx.input) },
-        ],
-      });
-    });`;
-        case "tool":
-          return `    // ${step.description || step.name}
-    const ${camelCase(step.name)} = await step("${step.name}", async () => {
-      return ctx.mcp("${spec.tools[0] || "web-search"}").call("execute", {
-        query: ctx.input.query,
-      });
-    });`;
-        case "connector":
-          return `    // ${step.description || step.name}
-    const ${camelCase(step.name)} = await step("${step.name}", async () => {
-      return ctx.connectors.${spec.connectors[0] || "slack"}.send_message({
-        channel: "#general",
-        text: "Agent completed",
-      });
-    });`;
-        default:
-          return `    // ${step.description || step.name}
-    const ${camelCase(step.name)} = await step("${step.name}", async () => {
-      // TODO: implement ${step.type} step
-    });`;
-      }
-    })
-    .join("\n\n");
-
-  const code = `import { Agent, step } from "@lantern/sdk";
-
-export default new Agent({
-  name: "${spec.name}",
-  model: "${spec.model}",
-
-  async run(ctx) {
-${stepsCode}
-
-    return { success: true };
-  },
-});
-`;
-
-  const yaml = `name: ${spec.name}
-version: "1.0.0"
-description: "${spec.description}"
-
-model: ${spec.model}
-isolation: ${spec.isolation}
-
-triggers:
-${spec.triggers.map((t) => `  - type: ${t.type}${t.type === "schedule" && t.config?.cron ? `\n    cron: "${t.config.cron}"` : ""}`).join("\n")}
-
-tools:
-${spec.tools.length > 0 ? spec.tools.map((t) => `  - ${t}`).join("\n") : "  []"}
-
-connectors:
-${spec.connectors.length > 0 ? spec.connectors.map((c) => `  - ${c}`).join("\n") : "  []"}
-
-surfaces:
-${spec.surfaces.length > 0 ? spec.surfaces.map((s) => `  - ${s}`).join("\n") : "  []"}
-
-limits:
-  timeout: ${spec.limits.timeout}
-  maxTokens: ${spec.limits.maxTokens}
-  maxCostUsd: ${spec.limits.maxCostUsd}
-
-steps:
-${spec.steps.map((s) => `  - name: ${s.name}\n    type: ${s.type}\n    description: "${s.description}"`).join("\n")}
-`;
-
-  return { code, yaml };
-}
-
-function camelCase(str: string): string {
-  return str.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 }

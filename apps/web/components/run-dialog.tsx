@@ -2,30 +2,16 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { X, Play, AlertCircle, AlertTriangle } from "lucide-react";
+import { X, Play, AlertCircle } from "lucide-react";
 import clsx from "clsx";
-import {
-  agents,
-  agentInputExamples,
-} from "@/lib/mock-data";
+import { agents, agentInputExamples } from "@/lib/mock-data";
 import { api } from "@/lib/api";
-import { useModels } from "@/lib/model-context";
 
 interface RunDialogProps {
   open: boolean;
   onClose: () => void;
   defaultAgentName?: string;
   agentNames?: string[];
-}
-
-function isValidJson(str: string): boolean {
-  if (!str.trim()) return true;
-  try {
-    JSON.parse(str);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function RunDialog({
@@ -36,7 +22,6 @@ export function RunDialog({
 }: RunDialogProps) {
   const router = useRouter();
   const backdropRef = useRef<HTMLDivElement>(null);
-  const { availableModels, isConfigured } = useModels();
 
   const resolvedNames =
     agentNames.length > 0
@@ -46,14 +31,8 @@ export function RunDialog({
   const defaultAgent = defaultAgentName || resolvedNames[0] || "";
 
   const [agentName, setAgentName] = useState(defaultAgent);
-  const [inputJson, setInputJson] = useState(
-    JSON.stringify(agentInputExamples[defaultAgent] || {}, null, 2)
-  );
-  const [model, setModel] = useState("auto");
-  const [stream, setStream] = useState(true);
-  const [jsonError, setJsonError] = useState<string | null>(null);
-  const [destination, setDestination] = useState<"inspector" | "playground">(
-    "inspector"
+  const [inputText, setInputText] = useState(
+    JSON.stringify(agentInputExamples[defaultAgent] || {}, null, 2),
   );
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -63,73 +42,45 @@ export function RunDialog({
     if (open) {
       const agent = defaultAgentName || resolvedNames[0] || "";
       setAgentName(agent);
-      setInputJson(
-        JSON.stringify(agentInputExamples[agent] || {}, null, 2)
+      setInputText(
+        JSON.stringify(agentInputExamples[agent] || {}, null, 2),
       );
-      setModel("auto");
-      setStream(true);
-      setJsonError(null);
       setSubmitError(null);
     }
   }, [open, defaultAgentName, resolvedNames]);
-
-  // Validate JSON on change
-  const validateJson = useCallback((value: string) => {
-    setInputJson(value);
-    try {
-      JSON.parse(value);
-      setJsonError(null);
-    } catch (err) {
-      setJsonError(err instanceof Error ? err.message : "Invalid JSON");
-    }
-  }, []);
 
   // Update input when agent changes
   const handleAgentChange = useCallback((name: string) => {
     setAgentName(name);
     const example = agentInputExamples[name];
     if (example) {
-      setInputJson(JSON.stringify(example, null, 2));
-      setJsonError(null);
+      setInputText(JSON.stringify(example, null, 2));
     }
   }, []);
 
   const handleSubmit = useCallback(async () => {
-    if (!agentName.trim() || jsonError) return;
+    if (!agentName.trim()) return;
     setSubmitError(null);
-
-    if (destination === "playground") {
-      router.push("/playground");
-      onClose();
-      return;
-    }
-
-    // Call the API to create a run
     setSubmitting(true);
+
     try {
       let parsedInput: unknown = {};
       try {
-        parsedInput = JSON.parse(inputJson);
+        parsedInput = JSON.parse(inputText);
       } catch {
-        // Already validated above, but fallback
+        // Use raw text as input if not valid JSON
+        parsedInput = { text: inputText };
       }
+
       const run = await api.createRun({
         agentName: agentName.trim(),
         input: parsedInput,
-        model: model !== "auto" ? model : undefined,
-        stream,
       });
       onClose();
-      // If we got a real run ID from the API, navigate to inspector
-      if (run.id && !run.id.startsWith("run_1")) {
-        router.push(`/runs/${run.id}`);
-      } else {
-        // Simulated run — open in playground instead
-        router.push(`/playground`);
-      }
+      router.push(`/runs/${run.id}`);
     } catch (err) {
-      // Show inline error in the dialog instead of navigating away
-      const message = err instanceof Error ? err.message : "Failed to create run";
+      const message =
+        err instanceof Error ? err.message : "Failed to create run";
       if (
         message.includes("fetch") ||
         message.includes("Failed") ||
@@ -138,7 +89,7 @@ export function RunDialog({
         err instanceof TypeError
       ) {
         setSubmitError(
-          `Could not create run: API unavailable. Use the Playground to test interactively, or start the API with: make run-api`
+          "Could not create run: API unavailable. Use the Playground to test interactively, or start the API with: make run-api",
         );
       } else {
         setSubmitError(message);
@@ -146,7 +97,7 @@ export function RunDialog({
     } finally {
       setSubmitting(false);
     }
-  }, [agentName, jsonError, destination, inputJson, model, stream, router, onClose]);
+  }, [agentName, inputText, router, onClose]);
 
   // Close on escape
   useEffect(() => {
@@ -183,9 +134,9 @@ export function RunDialog({
           </button>
         </div>
 
-        {/* Form */}
+        {/* Form — just 3 fields */}
         <div className="space-y-5 px-6 py-5">
-          {/* Agent name */}
+          {/* Agent */}
           <div>
             <label className="mb-1.5 block text-sm font-medium text-zinc-300">
               Agent
@@ -193,7 +144,7 @@ export function RunDialog({
             <select
               value={agentName}
               onChange={(e) => handleAgentChange(e.target.value)}
-              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+              className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/30"
             >
               <option value="">Select an agent...</option>
               {resolvedNames.map((name) => (
@@ -204,118 +155,19 @@ export function RunDialog({
             </select>
           </div>
 
-          {/* Input JSON */}
+          {/* Input */}
           <div>
             <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-              Input (JSON)
+              Input
             </label>
             <textarea
-              value={inputJson}
-              onChange={(e) => validateJson(e.target.value)}
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
               rows={5}
               spellCheck={false}
-              className={clsx(
-                "w-full resize-none rounded-lg border bg-surface-2 px-3 py-2 font-mono text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:ring-1",
-                jsonError
-                  ? "border-red-500/50 focus:border-red-500 focus:ring-red-500/30"
-                  : "border-zinc-700 focus:border-lantern-500 focus:ring-lantern-500/30"
-              )}
+              placeholder="Type your input or paste JSON..."
+              className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/30"
             />
-            {jsonError && (
-              <div className="mt-1 flex items-center gap-1.5 text-xs text-red-400">
-                <AlertCircle className="h-3 w-3" />
-                {jsonError}
-              </div>
-            )}
-          </div>
-
-          {/* Model override */}
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-              Model override
-            </label>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
-            >
-              <option value="auto">Auto (recommended)</option>
-              <optgroup label="Anthropic">
-                <option value="reasoning-frontier">Reasoning Frontier — Claude Opus 4</option>
-                <option value="reasoning-large">Reasoning Large — Claude Sonnet 4</option>
-                <option value="reasoning-small">Reasoning Small — Claude Haiku 4</option>
-                <option value="code-large">Code Large — Claude Sonnet 4</option>
-              </optgroup>
-              <optgroup label="OpenAI">
-                <option value="chat-large">Chat Large — GPT-4o</option>
-                <option value="chat-small">Chat Small — GPT-4o Mini</option>
-              </optgroup>
-              <optgroup label="Google">
-                <option value="vision-large">Vision Large — Gemini 2.5 Pro</option>
-              </optgroup>
-            </select>
-            {!isConfigured && (
-              <div className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-400">
-                <AlertTriangle className="h-3 w-3" />
-                No LLM provider configured. Go to Settings to add one.
-              </div>
-            )}
-          </div>
-
-          {/* Stream toggle + destination */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div>
-                <span className="text-sm font-medium text-zinc-300">
-                  Stream events
-                </span>
-                <p className="text-xs text-zinc-500">
-                  See events in real-time
-                </p>
-              </div>
-              <button
-                onClick={() => setStream(!stream)}
-                className={clsx(
-                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-                  stream ? "bg-lantern-500" : "bg-surface-4"
-                )}
-              >
-                <span
-                  className={clsx(
-                    "inline-block h-4 w-4 rounded-full bg-white transition-transform",
-                    stream ? "translate-x-6" : "translate-x-1"
-                  )}
-                />
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-zinc-500">Open in:</label>
-              <div className="flex overflow-hidden rounded-lg border border-zinc-700">
-                <button
-                  onClick={() => setDestination("inspector")}
-                  className={clsx(
-                    "px-2.5 py-1 text-[11px] font-medium transition-colors",
-                    destination === "inspector"
-                      ? "bg-surface-3 text-zinc-200"
-                      : "text-zinc-500 hover:text-zinc-300"
-                  )}
-                >
-                  Inspector
-                </button>
-                <button
-                  onClick={() => setDestination("playground")}
-                  className={clsx(
-                    "px-2.5 py-1 text-[11px] font-medium transition-colors",
-                    destination === "playground"
-                      ? "bg-surface-3 text-zinc-200"
-                      : "text-zinc-500 hover:text-zinc-300"
-                  )}
-                >
-                  Playground
-                </button>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -332,7 +184,7 @@ export function RunDialog({
                 }}
                 className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-red-300 underline underline-offset-2 transition-colors hover:text-red-200"
               >
-                Open Playground instead
+                Try in Playground
               </button>
             </div>
           </div>
@@ -348,7 +200,7 @@ export function RunDialog({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={!agentName.trim() || !!jsonError || submitting}
+            disabled={!agentName.trim() || submitting}
             className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? (
