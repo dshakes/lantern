@@ -532,9 +532,14 @@ export function EditorCanvas({
     setDeployModalOpen(true);
   }, []);
 
-  const handleTestRun = useCallback(() => {
-    // eslint-disable-next-line no-console
-    console.log("[editor] Test run triggered for", agentName);
+  const handleTestRun = useCallback(async () => {
+    try {
+      const { api } = await import("@/lib/api");
+      const run = await api.createRun({ agentName, input: {} });
+      alert(`Run started: ${run.id}\n\nGo to the agent's Runs tab to see the result.`);
+    } catch (err) {
+      alert(`Failed to start run: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }, [agentName]);
 
   const handleExportCode = useCallback(() => {

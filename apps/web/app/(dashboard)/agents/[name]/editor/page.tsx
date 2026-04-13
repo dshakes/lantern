@@ -50,7 +50,7 @@ function buildWorkflowFromAgent(agentName: string): WorkflowDefinition | null {
       id: fetchId,
       type: "tool",
       position: { x: 300, y },
-      data: { label: "Fetch Emails", toolName: "gmail.list_messages", parameters: { limit: "20" } } as any,
+      data: { label: "Fetch Emails", tool: "" as any, parameters: JSON.stringify({ connector: "gmail", action: "list_messages", limit: 20 }, null, 2) },
     });
     edges.push({ id: `e-${lastNodeId}-${fetchId}`, source: lastNodeId, target: fetchId });
     lastNodeId = fetchId;
