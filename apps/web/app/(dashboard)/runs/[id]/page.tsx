@@ -358,12 +358,21 @@ export default function RunDetailPage() {
               <div className="flex h-full items-center justify-center">
                 <div className="text-center">
                   {run.status === "queued" ? (
-                    <>
-                      <Loader2 className="mx-auto h-8 w-8 animate-spin text-zinc-600" />
-                      <p className="mt-3 text-sm text-zinc-600">
-                        Waiting for run to start...
+                    <div className="max-w-xs">
+                      <Loader2 className="mx-auto h-6 w-6 animate-spin text-zinc-600" />
+                      <p className="mt-3 text-sm text-zinc-500">
+                        Run is queued. The workflow engine needs to be running to execute agents.
                       </p>
-                    </>
+                      <p className="mt-1 text-xs text-zinc-600">
+                        For immediate results, use the Playground which calls the LLM directly.
+                      </p>
+                      <a
+                        href="/playground"
+                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-lantern-400 transition-colors"
+                      >
+                        Open Playground
+                      </a>
+                    </div>
                   ) : run.status === "running" ? (
                     <>
                       <Loader2 className="mx-auto h-8 w-8 animate-spin text-lantern-500" />

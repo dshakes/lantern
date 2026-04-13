@@ -67,14 +67,14 @@ interface SurfaceDefinition {
 const surfaces: SurfaceDefinition[] = [
   {
     id: "whatsapp", name: "WhatsApp",
-    description: "WhatsApp Business Cloud API for messaging",
+    description: "Connect your personal WhatsApp or Business API",
     icon: MessageSquare, iconColor: "text-green-400", iconBg: "bg-green-500/10",
     configFields: [
-      { key: "phoneNumberId", label: "Phone Number ID", type: "text", placeholder: "e.g. 112233445566778", required: true, minLength: 10, helpText: "Found in your WhatsApp Business Platform dashboard" },
-      { key: "apiToken", label: "API Token", type: "password", placeholder: "WhatsApp Business API token", required: true, minLength: 20, helpUrl: "https://business.facebook.com/settings/whatsapp-business-api", helpText: "Get from business.facebook.com" },
-      { key: "verifyToken", label: "Verify Token", type: "password", placeholder: "Webhook verify token", required: true, minLength: 8, helpText: "A custom token for webhook verification" },
+      { key: "connectionMode", label: "Connection Mode", type: "text", placeholder: "personal", helpText: "Choose: personal (QR scan) or business (API token)" },
+      { key: "phoneNumberId", label: "Phone Number ID", type: "text", placeholder: "e.g. 112233445566778", helpText: "Business API only — from Meta Business Platform" },
+      { key: "apiToken", label: "API Token", type: "password", placeholder: "WhatsApp Business API token", helpText: "Business API only — from business.facebook.com" },
     ],
-    // WhatsApp Business API uses token auth, not QR pairing
+    hasQRCode: true, qrType: "whatsapp", qrLabel: "Scan with WhatsApp on your phone to link your personal account (like WhatsApp Web)"
   },
   {
     id: "slack", name: "Slack",
