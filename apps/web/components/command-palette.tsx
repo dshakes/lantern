@@ -15,6 +15,8 @@ import {
   Hash,
   Clock,
 } from "lucide-react";
+import { api } from "@/lib/api";
+import { agents as mockAgents } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,6 +29,10 @@ interface CommandItem {
   icon: typeof Search;
   shortcut?: string;
   onSelect: () => void;
+}
+
+interface AgentSummary {
+  name: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,6 +61,23 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // Load agents from API on mount (with mock fallback)
+  const [agentNames, setAgentNames] = useState<AgentSummary[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    async function loadAgents() {
+      try {
+        const agents = await api.listAgents();
+        if (!cancelled) setAgentNames(agents.map((a) => ({ name: a.name })));
+      } catch {
+        // API unavailable — fall back to mock agents
+        if (!cancelled) setAgentNames(mockAgents.map((a) => ({ name: a.name })));
+      }
+    }
+    loadAgents();
+    return () => { cancelled = true; };
+  }, []);
+
   const items: CommandItem[] = useMemo(
     () => [
       // Navigation
@@ -67,16 +90,19 @@ export function CommandPalette() {
       // Actions
       { id: "action-create-agent", label: "Create new agent", section: "Actions", icon: Plus, onSelect: () => router.push("/agents/create") },
       { id: "action-new-run", label: "Start a new run", section: "Actions", icon: Play, onSelect: () => router.push("/runs") },
-      // Agents
-      { id: "agent-research", label: "research-agent", section: "Agents", icon: Bot, onSelect: () => router.push("/agents/research-agent") },
-      { id: "agent-code-reviewer", label: "code-reviewer", section: "Agents", icon: Bot, onSelect: () => router.push("/agents/code-reviewer") },
-      { id: "agent-data-pipeline", label: "data-pipeline", section: "Agents", icon: Bot, onSelect: () => router.push("/agents/data-pipeline") },
-      { id: "agent-customer-support", label: "customer-support", section: "Agents", icon: Bot, onSelect: () => router.push("/agents/customer-support") },
+      // Agents (loaded dynamically)
+      ...agentNames.map((a) => ({
+        id: `agent-${a.name}`,
+        label: a.name,
+        section: "Agents",
+        icon: Bot,
+        onSelect: () => router.push(`/agents/${encodeURIComponent(a.name)}`),
+      })),
       // Recent
       { id: "recent-1", label: "run_01hqa1b2c3d4", section: "Recent", icon: Clock, onSelect: () => router.push("/runs/run_01hqa1b2c3d4") },
       { id: "recent-2", label: "run_01hqa2c3d4e5", section: "Recent", icon: Clock, onSelect: () => router.push("/runs/run_01hqa2c3d4e5") },
     ],
-    [router],
+    [router, agentNames],
   );
 
   const filtered = useMemo(() => {

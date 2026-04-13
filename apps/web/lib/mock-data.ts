@@ -968,7 +968,7 @@ export const agentInputExamples: Record<string, unknown> = {
   },
 };
 
-// Model options for playground
+// Model options for agent testing
 export const modelOptions = [
   { value: "auto", label: "Auto (recommended)" },
   { value: "reasoning-large", label: "Reasoning Large" },

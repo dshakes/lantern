@@ -159,8 +159,8 @@ export default function OnboardingPage() {
       localStorage.setItem("lantern_onboarding_complete", "true");
     }
 
-    // Navigate to a run — use the first succeeded run as demo
-    router.push("/runs/run_01hqa1b2c3d4");
+    // Navigate to the agents dashboard
+    router.push("/agents");
   };
 
   // Proceed to next step from step 2 (provider config)
