@@ -93,7 +93,13 @@ function CreatePage() {
       if (resp.ok) {
         const data = await resp.json();
         const match = (data.content || "").match(/\{[\s\S]*\}/);
-        if (match) { const p = JSON.parse(match[0]); setName(p.name || ""); setDescription(p.description || ""); setModel(p.model || "auto"); setInstructions(p.instructions || ""); setSystemPrompt(p.systemPrompt || ""); setStep("configure"); toast.success("AI generated your agent configuration"); setAiGenerating(false); return; }
+        if (match) {
+          const p = JSON.parse(match[0]);
+          const str = (v: unknown): string => typeof v === "string" ? v : v ? JSON.stringify(v, null, 2) : "";
+          setName(str(p.name)); setDescription(str(p.description)); setModel(typeof p.model === "string" ? p.model : "auto");
+          setInstructions(str(p.instructions)); setSystemPrompt(str(p.systemPrompt));
+          setStep("configure"); toast.success("AI generated your agent configuration"); setAiGenerating(false); return;
+        }
       }
       throw new Error("Parse failed");
     } catch {
