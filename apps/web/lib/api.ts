@@ -741,21 +741,25 @@ class LanternAPI {
         method: "POST",
         body: JSON.stringify(data),
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for installConnector, simulating locally",
-      );
-      return {
-        id: `ci_${Date.now()}`,
-        tenantId: "t_acme",
-        connectorId: data.connectorId,
-        displayName: data.displayName,
-        status: "connected",
-        config: data.config ?? {},
-        scopes: data.scopes,
-        installedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Only simulate locally for network errors (API completely down)
+      if (msg.includes("fetch") || msg.includes("ECONNREFUSED") || err instanceof TypeError) {
+        console.warn("[lantern] API unavailable for installConnector, saving locally only");
+        return {
+          id: `ci_local_${Date.now()}`,
+          tenantId: "local",
+          connectorId: data.connectorId,
+          displayName: data.displayName,
+          status: "connected",
+          config: data.config ?? {},
+          scopes: data.scopes,
+          installedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      // Re-throw real API errors
+      throw err;
     }
   }
 

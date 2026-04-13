@@ -310,6 +310,14 @@ export default function AgentDetailPage() {
 
     // For email agents: try to fetch real emails first
     if (isEmailAgent) {
+      // Sync Gmail credentials from localStorage to backend if needed
+      try {
+        const connStates = JSON.parse(localStorage.getItem("lantern_connectors") || "{}");
+        if (connStates.gmail?.installed && connStates.gmail?.credentials) {
+          await api.installConnector({ connectorId: "gmail", displayName: "Gmail", config: connStates.gmail.credentials }).catch(() => {});
+        }
+      } catch { /* ignore */ }
+
       try {
         const data = await api.executeConnector("gmail", "list_messages", { limit: 15 });
         if (data.messages && data.messages.length > 0) {
@@ -428,6 +436,22 @@ export default function AgentDetailPage() {
   const handleFetchEmails = useCallback(async () => {
     setFetchingEmails(true);
     try {
+      // Ensure Gmail connector is in the database — sync from localStorage if needed
+      const connectorStates = JSON.parse(localStorage.getItem("lantern_connectors") || "{}");
+      const gmailState = connectorStates.gmail;
+      if (gmailState?.installed && gmailState?.credentials) {
+        // Try to sync credentials to the backend DB
+        try {
+          await api.installConnector({
+            connectorId: "gmail",
+            displayName: "Gmail",
+            config: gmailState.credentials,
+          });
+        } catch {
+          // Already installed or API down — continue anyway
+        }
+      }
+
       // Use the generic connector executor to fetch Gmail messages.
       const result = await api.executeConnector("gmail", "list_messages", { limit: 20 });
       const msgData = result.data as { messages?: Array<{ from: string; subject: string; snippet: string; date: string }>; count?: number } | undefined;
