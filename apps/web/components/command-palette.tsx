@@ -6,7 +6,6 @@ import {
   Search,
   Bot,
   Play,
-  Sparkles,
   MessageSquare,
   Plug,
   Cloud,
@@ -61,11 +60,10 @@ export function CommandPalette() {
       // Navigation
       { id: "nav-agents", label: "Go to Agents", section: "Navigation", icon: Bot, shortcut: "1", onSelect: () => router.push("/agents") },
       { id: "nav-runs", label: "Go to Runs", section: "Navigation", icon: Play, shortcut: "2", onSelect: () => router.push("/runs") },
-      { id: "nav-playground", label: "Go to Playground", section: "Navigation", icon: Sparkles, shortcut: "3", onSelect: () => router.push("/playground") },
-      { id: "nav-surfaces", label: "Go to Surfaces", section: "Navigation", icon: MessageSquare, shortcut: "4", onSelect: () => router.push("/surfaces") },
-      { id: "nav-connectors", label: "Go to Connectors", section: "Navigation", icon: Plug, shortcut: "5", onSelect: () => router.push("/connectors") },
-      { id: "nav-deployments", label: "Go to Deployments", section: "Navigation", icon: Cloud, shortcut: "6", onSelect: () => router.push("/deployments") },
-      { id: "nav-settings", label: "Go to Settings", section: "Navigation", icon: Settings, shortcut: "7", onSelect: () => router.push("/settings") },
+      { id: "nav-surfaces", label: "Go to Surfaces", section: "Navigation", icon: MessageSquare, shortcut: "3", onSelect: () => router.push("/surfaces") },
+      { id: "nav-connectors", label: "Go to Connectors", section: "Navigation", icon: Plug, shortcut: "4", onSelect: () => router.push("/connectors") },
+      { id: "nav-deployments", label: "Go to Deployments", section: "Navigation", icon: Cloud, shortcut: "5", onSelect: () => router.push("/deployments") },
+      { id: "nav-settings", label: "Go to Settings", section: "Navigation", icon: Settings, shortcut: "6", onSelect: () => router.push("/settings") },
       // Actions
       { id: "action-create-agent", label: "Create new agent", section: "Actions", icon: Plus, onSelect: () => router.push("/agents/create") },
       { id: "action-new-run", label: "Start a new run", section: "Actions", icon: Play, onSelect: () => router.push("/runs") },

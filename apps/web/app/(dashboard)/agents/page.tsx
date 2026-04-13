@@ -12,40 +12,47 @@ import {
   MoreHorizontal,
   Trash2,
   Loader2,
+  Calendar,
+  TrendingUp,
+  AlertCircle,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import clsx from "clsx";
 import { api } from "@/lib/api";
-import { useAgents } from "@/lib/hooks";
+import { useAgents, useRuns } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
 import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
-import type { Agent } from "@/lib/mock-data";
+import type { Agent, Run } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
-// Constants
+// Status display
 // ---------------------------------------------------------------------------
 
-const modelBadgeColors: Record<string, string> = {
-  auto: "bg-indigo-500/10 text-indigo-400",
-  "reasoning-large": "bg-purple-500/10 text-purple-400",
-  "reasoning-small": "bg-purple-500/10 text-purple-300",
-  "chat-large": "bg-sky-500/10 text-sky-400",
-  "chat-small": "bg-sky-500/10 text-sky-300",
-  "code-large": "bg-emerald-500/10 text-emerald-400",
+type AgentDisplayStatus = "active" | "scheduled" | "draft" | "error";
+
+const statusConfig: Record<AgentDisplayStatus, { label: string; dot: string; bg: string; text: string }> = {
+  active: { label: "Active", dot: "bg-emerald-400", bg: "bg-emerald-500/10", text: "text-emerald-400" },
+  scheduled: { label: "Scheduled", dot: "bg-blue-400", bg: "bg-blue-500/10", text: "text-blue-400" },
+  draft: { label: "Draft", dot: "bg-zinc-500", bg: "bg-zinc-500/10", text: "text-zinc-400" },
+  error: { label: "Error", dot: "bg-red-400", bg: "bg-red-500/10", text: "text-red-400" },
 };
 
-// ---------------------------------------------------------------------------
-// Simple enrichment for display (when real stats aren't available)
-// ---------------------------------------------------------------------------
+function deriveStatus(agent: Agent, agentRuns: Run[]): AgentDisplayStatus {
+  if (agent.status === "archived") return "draft";
+  const recent = agentRuns.filter((r) => r.agentName === agent.name);
+  const lastRun = recent[0];
+  if (lastRun?.status === "failed") return "error";
+  if (recent.length === 0) return "draft";
+  return "active";
+}
 
-function enrichAgent(agent: Agent) {
-  const hash = agent.name.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-  return {
-    runsCount: (hash * 7) % 500 + 10,
-    lastRunAt: new Date(Date.now() - (hash % 48) * 3600000),
-    model: (["auto", "reasoning-large", "chat-small", "code-large"] as const)[hash % 4],
-  };
+function getAgentStats(agent: Agent, allRuns: Run[]) {
+  const runs = allRuns.filter((r) => r.agentName === agent.name);
+  const succeeded = runs.filter((r) => r.status === "succeeded").length;
+  const successRate = runs.length > 0 ? Math.round((succeeded / runs.length) * 100) : 0;
+  const lastRun = runs.length > 0 ? runs[0] : null;
+  return { runsCount: runs.length, successRate, lastRun };
 }
 
 // ---------------------------------------------------------------------------
@@ -56,6 +63,7 @@ export default function AgentsPage() {
   const router = useRouter();
   const toast = useToast();
   const { agents, setAgents, loading, error, isDemo } = useAgents();
+  const { runs } = useRuns({});
 
   const [search, setSearch] = useState("");
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -94,6 +102,11 @@ export default function AgentsPage() {
     }
   };
 
+  const handleQuickRun = async (agent: Agent, e: React.MouseEvent) => {
+    e.stopPropagation();
+    router.push(`/agents/${agent.name}?tab=build&autorun=true`);
+  };
+
   if (loading) return <PageSkeleton />;
 
   if (error) {
@@ -130,22 +143,13 @@ export default function AgentsPage() {
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => router.push("/agents/create")}
-              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
-            >
-              <Sparkles className="h-4 w-4" />
-              Create with AI
-            </button>
-            <button
-              onClick={() => router.push("/agents/create")}
-              className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3 hover:text-zinc-100"
-            >
-              <Plus className="h-4 w-4" />
-              New Agent
-            </button>
-          </div>
+          <button
+            onClick={() => router.push("/agents/create")}
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+          >
+            <Plus className="h-4 w-4" />
+            Create Agent
+          </button>
         </div>
       </div>
 
@@ -155,10 +159,8 @@ export default function AgentsPage() {
             icon={Bot}
             title="No agents yet"
             description="Create your first AI agent in 30 seconds. Describe what you want it to do and we will generate everything for you."
-            actionLabel="Create with AI"
+            actionLabel="Create Agent"
             onAction={() => router.push("/agents/create")}
-            secondaryActionLabel="Browse templates"
-            secondaryActionHref="/agents/create?template=research"
           />
         ) : (
           <>
@@ -179,7 +181,9 @@ export default function AgentsPage() {
             {/* Agent cards grid */}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {filtered.map((agent) => {
-                const enriched = enrichAgent(agent);
+                const stats = getAgentStats(agent, runs);
+                const displayStatus = deriveStatus(agent, runs);
+                const sc = statusConfig[displayStatus];
 
                 return (
                   <div
@@ -193,20 +197,16 @@ export default function AgentsPage() {
                         router.push(`/agents/${agent.name}`);
                     }}
                   >
-                    {/* Top row: name + status */}
+                    {/* Top row: name + status badge */}
                     <div className="mb-2 flex items-start justify-between">
                       <div className="flex items-center gap-2.5">
                         <h3 className="text-sm font-semibold text-zinc-100 group-hover:text-white">
                           {agent.name}
                         </h3>
-                        <span
-                          className={clsx(
-                            "h-2 w-2 rounded-full",
-                            agent.status === "active"
-                              ? "bg-emerald-400"
-                              : "bg-zinc-600",
-                          )}
-                        />
+                        <span className={clsx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium", sc.bg, sc.text)}>
+                          <span className={clsx("h-1.5 w-1.5 rounded-full", sc.dot)} />
+                          {sc.label}
+                        </span>
                       </div>
                     </div>
 
@@ -215,36 +215,40 @@ export default function AgentsPage() {
                       {agent.description}
                     </p>
 
-                    {/* Bottom row: model badge + last run + run count */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={clsx(
-                            "rounded-md px-1.5 py-0.5 text-[10px] font-medium",
-                            modelBadgeColors[enriched.model] ??
-                              "bg-zinc-500/10 text-zinc-400",
-                          )}
-                        >
-                          {enriched.model}
+                    {/* Stats row */}
+                    <div className="flex items-center justify-between text-[10px]">
+                      <div className="flex items-center gap-3">
+                        <span className="inline-flex items-center gap-1 text-zinc-500">
+                          <Play className="h-2.5 w-2.5" />
+                          {stats.runsCount} runs
                         </span>
-                        <span className="text-[10px] text-zinc-600">
-                          <Clock className="mr-0.5 inline h-2.5 w-2.5" />
-                          {formatDistanceToNow(enriched.lastRunAt, {
-                            addSuffix: true,
-                          })}
-                        </span>
+                        {stats.runsCount > 0 && (
+                          <span className="inline-flex items-center gap-1 text-zinc-500">
+                            <TrendingUp className="h-2.5 w-2.5" />
+                            {stats.successRate}%
+                          </span>
+                        )}
+                        {stats.lastRun?.startedAt && (
+                          <span className="text-zinc-600">
+                            <Clock className="mr-0.5 inline h-2.5 w-2.5" />
+                            {formatDistanceToNow(new Date(stats.lastRun.startedAt), { addSuffix: true })}
+                          </span>
+                        )}
                       </div>
-                      <span className="inline-flex items-center gap-1 text-[11px] text-zinc-500">
-                        <Play className="h-3 w-3" />
-                        {enriched.runsCount} runs
-                      </span>
                     </div>
 
-                    {/* Hover actions — stay visible when menu is open */}
+                    {/* Quick actions on hover */}
                     <div className={clsx(
                       "absolute right-3 top-3 flex items-center gap-1 transition-opacity",
                       openMenu === agent.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                     )}>
+                      <button
+                        onClick={(e) => handleQuickRun(agent, e)}
+                        className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-lantern-500/10 hover:text-lantern-400"
+                        title="Run agent"
+                      >
+                        <Play className="h-3.5 w-3.5" />
+                      </button>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -260,9 +264,24 @@ export default function AgentsPage() {
 
                       {openMenu === agent.id && (
                         <div
-                          className="absolute right-0 top-8 z-20 w-36 rounded-lg border border-zinc-800 bg-surface-1 py-1 shadow-xl"
+                          className="absolute right-0 top-8 z-20 w-40 rounded-lg border border-zinc-800 bg-surface-1 py-1 shadow-xl"
                           onClick={(e) => e.stopPropagation()}
                         >
+                          <button
+                            onClick={(e) => { e.stopPropagation(); router.push(`/agents/${agent.name}`); setOpenMenu(null); }}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-300 transition-colors hover:bg-surface-3"
+                          >
+                            <Sparkles className="h-3 w-3" />
+                            Edit
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); router.push(`/agents/${agent.name}?tab=schedule`); setOpenMenu(null); }}
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-300 transition-colors hover:bg-surface-3"
+                          >
+                            <Calendar className="h-3 w-3" />
+                            Schedule
+                          </button>
+                          <div className="my-1 border-t border-zinc-800" />
                           <button
                             onClick={(e) => { e.stopPropagation(); handleDelete(agent); }}
                             disabled={deletingId === agent.id}

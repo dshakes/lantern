@@ -500,7 +500,7 @@ class LanternAPI {
       });
     } catch (err) {
       console.warn("[lantern] createRun failed:", err);
-      // Re-throw so the caller can handle it (e.g., redirect to playground)
+      // Re-throw so the caller can handle it
       throw err;
     }
   }

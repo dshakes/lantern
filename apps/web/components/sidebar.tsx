@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Bot,
   Play,
-  Sparkles,
   MessageSquare,
   Plug,
   Cloud,
@@ -23,12 +22,11 @@ import { useAuth } from "@/lib/auth";
 const navItems = [
   { href: "/agents", label: "Agents", icon: Bot, shortcut: "1" },
   { href: "/runs", label: "Runs", icon: Play, shortcut: "2" },
-  { href: "/playground", label: "Playground", icon: Sparkles, shortcut: "3" },
-  { href: "/surfaces", label: "Surfaces", icon: MessageSquare, shortcut: "4" },
-  { href: "/connectors", label: "Connectors", icon: Plug, shortcut: "5" },
-  { href: "/deployments", label: "Deployments", icon: Cloud, shortcut: "6" },
-  { href: "/settings", label: "Settings", icon: Settings, shortcut: "7" },
-];
+  { href: "/surfaces", label: "Surfaces", icon: MessageSquare, shortcut: "3" },
+  { href: "/connectors", label: "Connectors", icon: Plug, shortcut: "4" },
+  { href: "/deployments", label: "Deployments", icon: Cloud, shortcut: "5" },
+  { href: "/settings", label: "Settings", icon: Settings, shortcut: "6" },
+] as const;
 
 export function Sidebar() {
   const pathname = usePathname();
