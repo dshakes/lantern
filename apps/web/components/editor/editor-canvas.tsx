@@ -536,9 +536,20 @@ export function EditorCanvas({
     try {
       const { api } = await import("@/lib/api");
       const run = await api.createRun({ agentName, input: {} });
-      alert(`Run started: ${run.id}\n\nGo to the agent's Runs tab to see the result.`);
+      // Navigate to agent's Runs tab to see the result
+      window.location.href = `/agents/${agentName}?tab=runs`;
     } catch (err) {
-      alert(`Failed to start run: ${err instanceof Error ? err.message : String(err)}`);
+      // Show error inline in toolbar instead of alert
+      const msg = err instanceof Error ? err.message : String(err);
+      const { useToast } = await import("@/components/toast");
+      // Can't use hook here, fall back to console + simple UI feedback
+      console.error("[editor] Test run failed:", msg);
+      // Use a temporary DOM notification
+      const el = document.createElement("div");
+      el.className = "fixed top-4 right-4 z-[100] rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300 shadow-xl backdrop-blur-sm";
+      el.textContent = `Run failed: ${msg}`;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 5000);
     }
   }, [agentName]);
 

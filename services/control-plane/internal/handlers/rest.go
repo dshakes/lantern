@@ -277,14 +277,21 @@ func (h *RESTHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	if resp != nil {
 		for _, run := range resp.GetRuns() {
 			m := runToMap(run)
-			// Enrich with execution steps from trigger_meta
+			// Enrich: execution steps + agent name
 			var rawSteps []byte
-			_ = h.srv.Pool.QueryRow(ctx, `SELECT trigger_meta FROM runs WHERE id = $1`, run.GetId()).Scan(&rawSteps)
+			var agentName string
+			_ = h.srv.Pool.QueryRow(ctx,
+				`SELECT r.trigger_meta, COALESCE(a.name, '') FROM runs r LEFT JOIN agents a ON a.id = r.agent_id WHERE r.id = $1`,
+				run.GetId(),
+			).Scan(&rawSteps, &agentName)
 			if len(rawSteps) > 0 && rawSteps[0] == '[' {
 				var steps []any
 				if json.Unmarshal(rawSteps, &steps) == nil {
 					m["triggerMeta"] = steps
 				}
+			}
+			if agentName != "" {
+				m["agentName"] = agentName
 			}
 			runs = append(runs, m)
 		}
@@ -395,14 +402,20 @@ func (h *RESTHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := runToMap(run)
-	// Enrich with execution steps from trigger_meta (stored as JSON array by logStep)
+	// Enrich: execution steps + agent name
 	var rawSteps []byte
-	_ = h.srv.Pool.QueryRow(ctx, `SELECT trigger_meta FROM runs WHERE id = $1`, id).Scan(&rawSteps)
+	var agentName string
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT r.trigger_meta, COALESCE(a.name, '') FROM runs r LEFT JOIN agents a ON a.id = r.agent_id WHERE r.id = $1`, id,
+	).Scan(&rawSteps, &agentName)
 	if len(rawSteps) > 0 && rawSteps[0] == '[' {
 		var steps []any
 		if json.Unmarshal(rawSteps, &steps) == nil {
 			result["triggerMeta"] = steps
 		}
+	}
+	if agentName != "" {
+		result["agentName"] = agentName
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -542,6 +555,28 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	// emails and append them to the prompt so the LLM can reference them.
 	logStep("fetch_data", "running", "Checking for connected data sources")
 	gmailToken := resolveGmailToken(ctx, h.srv.Pool, tenantID)
+	// Try to refresh the token before use
+	if gmailToken != "" {
+		var refreshToken string
+		var oauthJSON []byte
+		_ = h.srv.Pool.QueryRow(ctx,
+			`SELECT oauth_token_encrypted FROM connector_installs WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'`,
+			tenantID,
+		).Scan(&oauthJSON)
+		if len(oauthJSON) > 0 {
+			var tok map[string]any
+			if json.Unmarshal(oauthJSON, &tok) == nil {
+				if rt, ok := tok["refresh_token"].(string); ok { refreshToken = rt }
+			}
+		}
+		if refreshToken != "" {
+			if newToken, err := refreshGoogleToken(refreshToken); err == nil && newToken != "" {
+				gmailToken = newToken
+				updatedOAuth, _ := json.Marshal(map[string]any{"access_token": newToken, "refresh_token": refreshToken, "token_type": "Bearer"})
+				_, _ = h.srv.Pool.Exec(ctx, `UPDATE connector_installs SET oauth_token_encrypted = $1 WHERE tenant_id = $2 AND connector_id = 'gmail'`, string(updatedOAuth), tenantID)
+			}
+		}
+	}
 	if gmailToken != "" {
 		logStep("fetch_gmail", "running", "Fetching emails from Gmail API")
 		emails, fetchErr := FetchGmailViaAPI(gmailToken, 20)
