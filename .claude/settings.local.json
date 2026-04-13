@@ -68,7 +68,8 @@
       "Bash(grep -v '.sum$')",
       "Bash(go get:*)",
       "Bash(python3 -c \"import sys, json; d = json.load\\(sys.stdin\\); print\\(json.dumps\\({**d.get\\('dependencies',{}\\), **d.get\\('devDependencies',{}\\)}, indent=2\\)\\)\")",
-      "Bash(docker exec:*)"
+      "Bash(docker exec:*)",
+      "Bash(NEXT_PRIVATE_STANDALONE=1 npx next build --no-lint)"
     ]
   }
 }
