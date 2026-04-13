@@ -1206,6 +1206,29 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
   }> {
     return this.request(`/v1/connectors/gmail/messages?limit=${limit}`);
   }
+
+  // ---- Generic Connector Executor -------------------------------------------
+
+  /**
+   * Execute a connector action. For read-only actions (list_*, get_*) uses GET;
+   * for actions that require parameters uses POST with a JSON body.
+   */
+  async executeConnector(
+    connectorId: string,
+    action: string,
+    params?: Record<string, unknown>,
+  ): Promise<{ connector: string; action: string; data: unknown }> {
+    const encodedId = encodeURIComponent(connectorId);
+    const encodedAction = encodeURIComponent(action);
+    const url = `/v1/connectors/${encodedId}/execute?action=${encodedAction}`;
+    if (params && Object.keys(params).length > 0) {
+      return this.request(url, {
+        method: "POST",
+        body: JSON.stringify(params),
+      });
+    }
+    return this.request(url);
+  }
 }
 
 export const api = new LanternAPI();

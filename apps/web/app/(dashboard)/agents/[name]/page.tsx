@@ -406,9 +406,11 @@ export default function AgentDetailPage() {
   const handleFetchEmails = useCallback(async () => {
     setFetchingEmails(true);
     try {
-      const data = await api.fetchGmailMessages(20);
-      if (data.messages && data.messages.length > 0) {
-        const formatted = data.messages
+      // Use the generic connector executor to fetch Gmail messages.
+      const result = await api.executeConnector("gmail", "list_messages", { limit: 20 });
+      const msgData = result.data as { messages?: Array<{ from: string; subject: string; snippet: string; date: string }>; count?: number } | undefined;
+      if (msgData?.messages && msgData.messages.length > 0) {
+        const formatted = msgData.messages
           .map(
             (m: { from: string; subject: string; snippet: string; date: string }, i: number) =>
               `${i + 1}. From: ${m.from}\n   Subject: ${m.subject}\n   Preview: ${m.snippet}\n   Date: ${m.date}`,
@@ -417,7 +419,7 @@ export default function AgentDetailPage() {
         setQuickRunInput(
           `Please analyze and summarize these emails:\n\n${formatted}`,
         );
-        toast.success(`Fetched ${data.count} emails`);
+        toast.success(`Fetched ${msgData.count ?? msgData.messages.length} emails`);
       } else {
         toast.info("No recent emails found");
       }

@@ -124,6 +124,7 @@ func main() {
 
 	// --- Domain-specific handlers ---
 	connectorHandler := handlers.NewConnectorHandler(srv, authHandler)
+	connectorExecutor := handlers.NewConnectorExecutor(srv, authHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
 	apiKeyHandler := handlers.NewApiKeyHandler(srv, authHandler)
 	deploymentHandler := handlers.NewDeploymentHandler(srv, authHandler)
@@ -173,6 +174,9 @@ func main() {
 	httpMux.HandleFunc("GET /v1/connectors/oauth/callback", connectorHandler.OAuthCallback)
 	httpMux.HandleFunc("POST /v1/connectors/oauth/start", connectorHandler.OAuthStart)
 	httpMux.HandleFunc("GET /v1/connectors/gmail/messages", gmailHandler.GetMessages)
+	// Connector executor — registered before {id} to avoid path conflict.
+	httpMux.HandleFunc("GET /v1/connectors/{connectorId}/execute", connectorExecutor.Execute)
+	httpMux.HandleFunc("POST /v1/connectors/{connectorId}/execute", connectorExecutor.Execute)
 	httpMux.HandleFunc("GET /v1/connectors/{id}", connectorHandler.GetConnector)
 	httpMux.HandleFunc("POST /v1/connectors/{id}/test", connectorHandler.TestConnector)
 	httpMux.HandleFunc("DELETE /v1/connectors/{id}", connectorHandler.UninstallConnector)
