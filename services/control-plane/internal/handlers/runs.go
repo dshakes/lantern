@@ -57,7 +57,8 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 	}
 
 	// Resolve agent_id and current_version_id from agent name.
-	var agentID, agentVersionID string
+	var agentID string
+	var agentVersionID *string
 	err = tx.QueryRow(ctx, `
 		SELECT id, current_version_id
 		FROM agents
@@ -70,9 +71,10 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 		return nil, status.Errorf(codes.Internal, "failed to resolve agent: %v", err)
 	}
 
-	if agentVersionID == "" {
+	if agentVersionID == nil || *agentVersionID == "" {
 		return nil, status.Error(codes.FailedPrecondition, "agent has no promoted version")
 	}
+	resolvedVersionID := *agentVersionID
 
 	// Marshal input and trigger_meta to JSONB.
 	inputJSON, err := structToJSON(req.GetInput())
@@ -100,7 +102,7 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, trigger_kind, trigger_meta, input, labels)
 		VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7)
 		RETURNING id, created_at
-	`, tenantID, agentID, agentVersionID, triggerKind, triggerMetaJSON, inputJSON, labelsJSON,
+	`, tenantID, agentID, resolvedVersionID, triggerKind, triggerMetaJSON, inputJSON, labelsJSON,
 	).Scan(&runID, &createdAt)
 	if err != nil {
 		s.logger().Error("insert run failed", zap.Error(err), zap.String("tenant_id", tenantID))
@@ -121,7 +123,7 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 		Id:             runID,
 		TenantId:       tenantID,
 		AgentId:        agentID,
-		AgentVersionId: agentVersionID,
+		AgentVersionId: resolvedVersionID,
 		Status:         lanternv1.RunStatus_RUN_STATUS_QUEUED,
 		TriggerKind:    req.GetTriggerKind(),
 		TriggerMeta:    req.GetTriggerMeta(),

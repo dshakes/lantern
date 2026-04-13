@@ -525,3 +525,20 @@ input[type="range"]::-webkit-slider-thumb {
 .animate-in.slide-in-from-right {
   animation: slide-in-from-right 0.2s ease-out;
 }
+
+/* Consistent page padding */
+.page-content {
+  padding: 24px 32px;
+}
+
+/* Card consistent style */
+.surface-card, .connector-card {
+  border-radius: 12px;
+  border: 1px solid #27272a;
+  background: #0f0f12;
+  padding: 20px;
+  transition: border-color 0.15s ease;
+}
+.surface-card:hover, .connector-card:hover {
+  border-color: #3f3f46;
+}
