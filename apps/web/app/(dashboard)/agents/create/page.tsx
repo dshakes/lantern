@@ -290,7 +290,17 @@ function CreatePage() {
             <div className="rounded-xl border border-teal-500/20 bg-teal-500/[0.02] p-5 space-y-2">
               <div className="flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-teal-400"><ClipboardList className="h-3.5 w-3.5" /> Instructions</h3>
-                <span className="text-[10px] text-zinc-600">What the agent does — goals, scope, constraints</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-zinc-600">Goals, scope, constraints</span>
+                  <button onClick={async () => {
+                    if (!name && !description) { toast.info("Add a name or description first"); return; }
+                    try {
+                      const resp = await api.complete({ messages: [{ role: "user", content: `Generate clear instructions for an AI agent called "${name}". Description: "${description}". Write 3-5 bullet points defining: goals, scope, constraints, and expected behavior. Return ONLY the instructions text.` }], model: "auto", stream: false });
+                      if (resp.ok) { const d = await resp.json(); const g = (d.content || "").trim(); if (g) { setInstructions(g); toast.success("Instructions generated"); return; } }
+                    } catch { /* ignore */ }
+                    toast.error("Could not generate — add description first or configure LLM in Settings");
+                  }} className="inline-flex items-center gap-1 rounded-md bg-teal-500/10 px-2 py-0.5 text-[10px] font-medium text-teal-400 hover:bg-teal-500/20"><Sparkles className="h-2.5 w-2.5" /> Generate</button>
+                </div>
               </div>
               <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={3} placeholder="Define the agent's purpose, goals, and constraints..." className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-teal-500/30" />
             </div>
