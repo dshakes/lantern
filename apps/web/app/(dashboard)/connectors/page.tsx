@@ -1,190 +1,106 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import {
-  Search,
-  Mail,
-  Github,
-  Calendar,
-  FileText,
-  MessageSquare,
-  Phone,
-  CreditCard,
-  ShoppingCart,
-  BarChart3,
-  Bug,
-  Trello,
-  Database,
-  Globe,
-  X,
-  Check,
-  Loader2,
-  Plug,
-  Eye,
-  EyeOff,
-  AlertCircle,
-  CheckCircle2,
-  RefreshCw,
-  Key,
-} from "lucide-react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { Search, Mail, Github, Calendar, FileText, MessageSquare, Phone, CreditCard, BarChart3, Bug, Trello, Database, Globe, X, Loader2, Plug, Eye, EyeOff, AlertCircle, CheckCircle2, RefreshCw, ExternalLink } from "lucide-react";
 import clsx from "clsx";
 import { useToast } from "@/components/toast";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
 import { api } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
-// Types
+// Types & helpers
 // ---------------------------------------------------------------------------
 
-interface CredentialField {
-  key: string;
-  label: string;
-  placeholder: string;
-  prefix?: string;
-  minLength?: number;
-  helpUrl?: string;
-  helpText?: string;
-  required?: boolean;
-}
+interface Field { key: string; label: string; placeholder: string; type?: "text" | "password"; prefix?: string; minLength?: number; helpUrl?: string; helpText?: string; required?: boolean }
+interface ConnectorDef { id: string; name: string; description: string; category: string; icon: typeof Mail; iconColor: string; iconBg: string; oauthProvider?: string; oauthLabel?: string; fields: Field[]; manualLabel?: string }
+interface ConnectorState { installed: boolean; connectedAccount?: string; installedAt?: string; backendId?: string; credentials?: Record<string, string> }
 
-interface ConnectorDef {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  icon: typeof Mail;
-  iconColor: string;
-  iconBg: string;
-  oauthOnly?: boolean;
-  credentialFields?: CredentialField[];
-}
+const googleFields: Field[] = [
+  { key: "email", label: "Email address", placeholder: "you@gmail.com", type: "text", minLength: 5, required: true },
+  { key: "appPassword", label: "App Password", placeholder: "xxxx xxxx xxxx xxxx", minLength: 16, helpUrl: "https://myaccount.google.com/apppasswords", helpText: "Generate an app password at myaccount.google.com/apppasswords", required: true },
+];
 
-interface ConnectorState {
-  installed: boolean;
-  connectedAccount?: string;
-  installedAt?: string;
-  backendId?: string;
-  credentials?: Record<string, string>;
-}
-
-// ---------------------------------------------------------------------------
-// Connector catalog
-// ---------------------------------------------------------------------------
+const d = (id: string, name: string, desc: string, cat: string, icon: typeof Mail, color: string, bg: string, fields: Field[], extra?: Partial<ConnectorDef>): ConnectorDef =>
+  ({ id, name, description: desc, category: cat, icon, iconColor: color, iconBg: bg, fields, ...extra });
+const goo = (id: string, name: string, desc: string, cat: string, icon: typeof Mail, color: string, bg: string) =>
+  d(id, name, desc, cat, icon, color, bg, googleFields, { oauthProvider: "google", oauthLabel: "Sign in with Google", manualLabel: "Use App Password" });
 
 const connectors: ConnectorDef[] = [
-  // Communication
-  { id: "slack", name: "Slack", description: "Send messages, manage channels, and respond to events", category: "Communication", icon: MessageSquare, iconColor: "text-purple-400", iconBg: "bg-purple-500/10",
-    credentialFields: [
-      { key: "botToken", label: "Bot Token", placeholder: "xoxb-...", prefix: "xoxb-", minLength: 20, helpUrl: "https://api.slack.com/apps", helpText: "Create an app at api.slack.com/apps", required: true },
-      { key: "signingSecret", label: "Signing Secret", placeholder: "Slack signing secret", minLength: 10, helpText: "Found in Basic Information > App Credentials", required: true },
-    ] },
-  { id: "discord", name: "Discord", description: "Bot integration for servers and DMs", category: "Communication", icon: MessageSquare, iconColor: "text-indigo-400", iconBg: "bg-indigo-500/10",
-    credentialFields: [{ key: "botToken", label: "Bot Token", placeholder: "Discord bot token", minLength: 50, helpUrl: "https://discord.com/developers/applications", helpText: "Get from discord.com/developers", required: true }] },
-  { id: "telegram", name: "Telegram", description: "Bot messaging with inline buttons and media", category: "Communication", icon: MessageSquare, iconColor: "text-sky-400", iconBg: "bg-sky-500/10",
-    credentialFields: [{ key: "botToken", label: "Bot Token", placeholder: "123456:ABC-DEF1234ghIkl-zyx57W2v...", minLength: 30, helpUrl: "https://t.me/BotFather", helpText: "Get from @BotFather", required: true }] },
-  { id: "ms-teams", name: "Microsoft Teams", description: "Team messaging and channel integration", category: "Communication", icon: MessageSquare, iconColor: "text-blue-400", iconBg: "bg-blue-500/10", oauthOnly: true },
-  { id: "twilio", name: "Twilio", description: "SMS, voice, and WhatsApp messaging", category: "Communication", icon: Phone, iconColor: "text-red-400", iconBg: "bg-red-500/10",
-    credentialFields: [
-      { key: "accountSid", label: "Account SID", placeholder: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", prefix: "AC", minLength: 34, helpUrl: "https://console.twilio.com", helpText: "Found in your Twilio Console", required: true },
-      { key: "authToken", label: "Auth Token", placeholder: "Your Twilio auth token", minLength: 32, helpText: "Found in your Twilio Console", required: true },
-    ] },
-  // Email & Calendar
-  { id: "gmail", name: "Gmail", description: "Read, send, and manage email", category: "Email & Calendar", icon: Mail, iconColor: "text-red-400", iconBg: "bg-red-500/10", oauthOnly: true },
-  { id: "google-calendar", name: "Google Calendar", description: "Manage events, check availability", category: "Email & Calendar", icon: Calendar, iconColor: "text-blue-400", iconBg: "bg-blue-500/10", oauthOnly: true },
-  { id: "outlook", name: "Outlook", description: "Microsoft email and calendar", category: "Email & Calendar", icon: Mail, iconColor: "text-blue-400", iconBg: "bg-blue-500/10", oauthOnly: true },
-  // Docs & Storage
-  { id: "google-drive", name: "Google Drive", description: "Access files and manage permissions", category: "Docs & Storage", icon: FileText, iconColor: "text-yellow-400", iconBg: "bg-yellow-500/10", oauthOnly: true },
-  { id: "google-sheets", name: "Google Sheets", description: "Read and write spreadsheet data", category: "Docs & Storage", icon: FileText, iconColor: "text-green-400", iconBg: "bg-green-500/10", oauthOnly: true },
-  { id: "notion", name: "Notion", description: "Access databases and workspace content", category: "Docs & Storage", icon: FileText, iconColor: "text-zinc-300", iconBg: "bg-zinc-500/10",
-    credentialFields: [{ key: "integrationToken", label: "Integration Token", placeholder: "secret_...", prefix: "secret_", minLength: 20, helpUrl: "https://www.notion.so/my-integrations", helpText: "Get from notion.so/my-integrations", required: true }] },
-  { id: "dropbox", name: "Dropbox", description: "File storage, sync, and sharing", category: "Docs & Storage", icon: FileText, iconColor: "text-blue-400", iconBg: "bg-blue-500/10", oauthOnly: true },
-  // Dev Tools
-  { id: "github", name: "GitHub", description: "Repositories, issues, pull requests", category: "Dev Tools", icon: Github, iconColor: "text-zinc-300", iconBg: "bg-zinc-500/10",
-    credentialFields: [{ key: "personalAccessToken", label: "Personal Access Token", placeholder: "ghp_... or github_pat_...", prefix: "gh", minLength: 20, helpUrl: "https://github.com/settings/tokens", helpText: "Get from github.com/settings/tokens", required: true }] },
-  { id: "gitlab", name: "GitLab", description: "Repositories, merge requests, CI/CD", category: "Dev Tools", icon: Github, iconColor: "text-orange-400", iconBg: "bg-orange-500/10",
-    credentialFields: [{ key: "personalAccessToken", label: "Personal Access Token", placeholder: "glpat-...", prefix: "glpat-", minLength: 20, helpUrl: "https://gitlab.com/-/profile/personal_access_tokens", helpText: "Get from GitLab > Settings > Access Tokens", required: true }] },
-  { id: "linear", name: "Linear", description: "Issue tracking and project management", category: "Dev Tools", icon: Trello, iconColor: "text-indigo-400", iconBg: "bg-indigo-500/10",
-    credentialFields: [{ key: "apiKey", label: "API Key", placeholder: "lin_api_...", prefix: "lin_api_", minLength: 20, helpUrl: "https://linear.app/settings/api", helpText: "Get from linear.app/settings/api", required: true }] },
-  { id: "jira", name: "Jira", description: "Issue tracking and agile management", category: "Dev Tools", icon: Trello, iconColor: "text-blue-400", iconBg: "bg-blue-500/10",
-    credentialFields: [
-      { key: "email", label: "Email", placeholder: "you@company.com", minLength: 5, required: true },
-      { key: "apiToken", label: "API Token", placeholder: "Jira API token", minLength: 10, helpUrl: "https://id.atlassian.net/manage-profile/security/api-tokens", helpText: "Get from Atlassian > API Tokens", required: true },
-      { key: "domain", label: "Domain", placeholder: "your-company.atlassian.net", minLength: 5, helpText: "Your Jira Cloud domain", required: true },
-    ] },
-  { id: "sentry", name: "Sentry", description: "Error tracking and performance monitoring", category: "Dev Tools", icon: Bug, iconColor: "text-pink-400", iconBg: "bg-pink-500/10",
-    credentialFields: [{ key: "authToken", label: "Auth Token", placeholder: "sntrys_...", prefix: "sntrys_", minLength: 20, helpUrl: "https://sentry.io/settings/account/api/auth-tokens/", helpText: "Get from sentry.io > Auth Tokens", required: true }] },
-  { id: "vercel", name: "Vercel", description: "Deployment management and project config", category: "Dev Tools", icon: Globe, iconColor: "text-zinc-300", iconBg: "bg-zinc-500/10",
-    credentialFields: [{ key: "authToken", label: "Auth Token", placeholder: "Vercel access token", minLength: 20, helpUrl: "https://vercel.com/account/tokens", helpText: "Get from vercel.com/account/tokens", required: true }] },
-  // CRM & Sales
-  { id: "hubspot", name: "HubSpot", description: "CRM contacts, deals, and marketing", category: "CRM & Sales", icon: BarChart3, iconColor: "text-orange-400", iconBg: "bg-orange-500/10",
-    credentialFields: [{ key: "apiKey", label: "API Key", placeholder: "HubSpot API key", minLength: 10, helpUrl: "https://app.hubspot.com/settings/api-key", helpText: "Get from HubSpot Settings", required: true }] },
-  { id: "salesforce", name: "Salesforce", description: "CRM platform with full API access", category: "CRM & Sales", icon: Database, iconColor: "text-blue-400", iconBg: "bg-blue-500/10",
-    credentialFields: [{ key: "apiKey", label: "API Key", placeholder: "Salesforce security token", minLength: 10, helpUrl: "https://help.salesforce.com/s/articleView?id=sf.user_security_token.htm", helpText: "Get from Salesforce Settings", required: true }] },
-  { id: "intercom", name: "Intercom", description: "Customer messaging and support", category: "CRM & Sales", icon: MessageSquare, iconColor: "text-blue-400", iconBg: "bg-blue-500/10",
-    credentialFields: [{ key: "accessToken", label: "Access Token", placeholder: "Intercom access token", minLength: 10, helpUrl: "https://app.intercom.com/a/developer-hub", helpText: "Get from Developer Hub", required: true }] },
-  { id: "zendesk", name: "Zendesk", description: "Customer support ticketing", category: "CRM & Sales", icon: MessageSquare, iconColor: "text-green-400", iconBg: "bg-green-500/10",
-    credentialFields: [{ key: "apiToken", label: "API Token", placeholder: "Zendesk API token", minLength: 10, helpUrl: "https://support.zendesk.com/hc/en-us/articles/4408889192858", helpText: "Get from Admin Center > APIs", required: true }] },
-  // Commerce
-  { id: "stripe", name: "Stripe", description: "Payments, subscriptions, and billing", category: "Commerce", icon: CreditCard, iconColor: "text-purple-400", iconBg: "bg-purple-500/10",
-    credentialFields: [{ key: "apiKey", label: "API Key", placeholder: "sk_live_... or sk_test_...", prefix: "sk_", minLength: 20, helpUrl: "https://dashboard.stripe.com/apikeys", helpText: "Get from stripe.com/apikeys", required: true }] },
-  { id: "shopify", name: "Shopify", description: "E-commerce store management", category: "Commerce", icon: ShoppingCart, iconColor: "text-green-400", iconBg: "bg-green-500/10",
-    credentialFields: [{ key: "accessToken", label: "Admin API Access Token", placeholder: "shpat_...", prefix: "shpat_", minLength: 20, helpUrl: "https://shopify.dev/docs/apps/getting-started", helpText: "Get from Shopify admin settings", required: true }] },
+  d("slack", "Slack", "Send messages, manage channels, and respond to events", "Communication", MessageSquare, "text-purple-400", "bg-purple-500/10",
+    [{ key: "workspaceUrl", label: "Workspace URL", placeholder: "your-team.slack.com", type: "text", minLength: 5, required: true },
+     { key: "botToken", label: "Bot Token", placeholder: "xoxb-...", prefix: "xoxb-", minLength: 20, helpUrl: "https://api.slack.com/apps", helpText: "Create a Slack app at api.slack.com", required: true }],
+    { oauthProvider: "slack", oauthLabel: "Add to Slack", manualLabel: "Enter bot token" }),
+  d("discord", "Discord", "Bot integration for servers and DMs", "Communication", MessageSquare, "text-indigo-400", "bg-indigo-500/10",
+    [{ key: "botToken", label: "Bot Token", placeholder: "Discord bot token", minLength: 50, helpUrl: "https://discord.com/developers/applications", helpText: "Get from discord.com/developers", required: true }]),
+  d("telegram", "Telegram", "Bot messaging with inline buttons and media", "Communication", MessageSquare, "text-sky-400", "bg-sky-500/10",
+    [{ key: "botToken", label: "Bot Token", placeholder: "123456:ABC-DEF1234...", minLength: 30, helpUrl: "https://t.me/BotFather", helpText: "Get from @BotFather on Telegram", required: true }]),
+  d("twilio", "Twilio", "SMS, voice, and WhatsApp messaging", "Communication", Phone, "text-red-400", "bg-red-500/10",
+    [{ key: "accountSid", label: "Account SID", placeholder: "ACxxxxxxxx...", prefix: "AC", minLength: 34, helpUrl: "https://console.twilio.com", helpText: "Found in your Twilio Console", required: true },
+     { key: "authToken", label: "Auth Token", placeholder: "Your Twilio auth token", minLength: 32, required: true },
+     { key: "phoneNumber", label: "Phone Number", placeholder: "+1234567890", type: "text", minLength: 10, helpText: "Your Twilio phone number", required: true }]),
+  goo("gmail", "Gmail", "Read, send, and manage email", "Email & Calendar", Mail, "text-red-400", "bg-red-500/10"),
+  goo("google-calendar", "Google Calendar", "Manage events and check availability", "Email & Calendar", Calendar, "text-blue-400", "bg-blue-500/10"),
+  goo("google-drive", "Google Drive", "Access files and manage permissions", "Docs & Storage", FileText, "text-yellow-400", "bg-yellow-500/10"),
+  goo("google-sheets", "Google Sheets", "Read and write spreadsheet data", "Docs & Storage", FileText, "text-green-400", "bg-green-500/10"),
+  d("notion", "Notion", "Access databases and workspace content", "Docs & Storage", FileText, "text-zinc-300", "bg-zinc-500/10",
+    [{ key: "integrationToken", label: "Integration Token", placeholder: "secret_...", prefix: "secret_", minLength: 20, helpUrl: "https://www.notion.so/my-integrations", helpText: "Get from notion.so/my-integrations", required: true }]),
+  d("github", "GitHub", "Repositories, issues, pull requests", "Dev Tools", Github, "text-zinc-300", "bg-zinc-500/10",
+    [{ key: "username", label: "Username", placeholder: "your-github-username", type: "text", minLength: 1, required: true },
+     { key: "personalAccessToken", label: "Personal Access Token", placeholder: "ghp_...", prefix: "gh", minLength: 20, helpUrl: "https://github.com/settings/tokens", helpText: "Create at github.com/settings/tokens", required: true }],
+    { oauthProvider: "github", oauthLabel: "Sign in with GitHub", manualLabel: "Enter Personal Access Token" }),
+  d("linear", "Linear", "Issue tracking and project management", "Dev Tools", Trello, "text-indigo-400", "bg-indigo-500/10",
+    [{ key: "apiKey", label: "API Key", placeholder: "lin_api_...", prefix: "lin_api_", minLength: 20, helpUrl: "https://linear.app/settings/api", helpText: "Get from linear.app/settings/api", required: true }]),
+  d("jira", "Jira", "Issue tracking and agile management", "Dev Tools", Trello, "text-blue-400", "bg-blue-500/10",
+    [{ key: "email", label: "Email", placeholder: "you@company.com", type: "text", minLength: 5, required: true },
+     { key: "apiToken", label: "API Token", placeholder: "Jira API token", minLength: 10, helpUrl: "https://id.atlassian.net/manage-profile/security/api-tokens", helpText: "Get from Atlassian > API Tokens", required: true },
+     { key: "domain", label: "Domain", placeholder: "yourcompany.atlassian.net", type: "text", minLength: 5, helpText: "e.g. yourcompany.atlassian.net", required: true }]),
+  d("sentry", "Sentry", "Error tracking and performance monitoring", "Dev Tools", Bug, "text-pink-400", "bg-pink-500/10",
+    [{ key: "authToken", label: "Auth Token", placeholder: "sntrys_...", prefix: "sntrys_", minLength: 20, helpUrl: "https://sentry.io/settings/account/api/auth-tokens/", helpText: "Get from sentry.io > Auth Tokens", required: true }]),
+  d("vercel", "Vercel", "Deployment management and project config", "Dev Tools", Globe, "text-zinc-300", "bg-zinc-500/10",
+    [{ key: "authToken", label: "Token", placeholder: "Vercel access token", minLength: 20, helpUrl: "https://vercel.com/account/tokens", helpText: "Get from vercel.com/account/tokens", required: true }]),
+  d("hubspot", "HubSpot", "CRM contacts, deals, and marketing", "CRM & Sales", BarChart3, "text-orange-400", "bg-orange-500/10",
+    [{ key: "apiKey", label: "API Key", placeholder: "HubSpot API key", minLength: 10, helpUrl: "https://app.hubspot.com/settings/api-key", helpText: "Get from HubSpot Settings", required: true }]),
+  d("salesforce", "Salesforce", "CRM platform with full API access", "CRM & Sales", Database, "text-blue-400", "bg-blue-500/10",
+    [{ key: "username", label: "Username", placeholder: "you@company.com", type: "text", minLength: 3, required: true },
+     { key: "password", label: "Password", placeholder: "Your Salesforce password", minLength: 5, required: true },
+     { key: "securityToken", label: "Security Token", placeholder: "Salesforce security token", minLength: 5, helpUrl: "https://help.salesforce.com/s/articleView?id=sf.user_security_token.htm", helpText: "Reset from Salesforce Settings", required: true }]),
+  d("stripe", "Stripe", "Payments, subscriptions, and billing", "Commerce", CreditCard, "text-purple-400", "bg-purple-500/10",
+    [{ key: "secretKey", label: "Secret Key", placeholder: "sk_live_... or sk_test_...", prefix: "sk_", minLength: 20, helpUrl: "https://dashboard.stripe.com/apikeys", helpText: "Get from stripe.com/apikeys", required: true }]),
 ];
 
 const categories = ["All", "Communication", "Email & Calendar", "Docs & Storage", "Dev Tools", "CRM & Sales", "Commerce"];
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 const STORAGE_KEY = "lantern_connectors";
 
-function loadConnectorStates(): Record<string, ConnectorState> {
+function loadStates(): Record<string, ConnectorState> {
   if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    const validated: Record<string, ConnectorState> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      const state = value as ConnectorState;
-      if (state.installed && state.credentials && Object.keys(state.credentials).length > 0) validated[key] = state;
-    }
-    return validated;
-  } catch { return {}; }
+  try { const r = localStorage.getItem(STORAGE_KEY); if (!r) return {}; const p = JSON.parse(r); const v: Record<string, ConnectorState> = {}; for (const [k, s] of Object.entries(p)) { if ((s as ConnectorState).installed) v[k] = s as ConnectorState; } return v; } catch { return {}; }
+}
+function saveStates(s: Record<string, ConnectorState>) { if (typeof window !== "undefined") localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); }
+
+function validate(vals: Record<string, string>, defs: Field[]): Record<string, string> {
+  const e: Record<string, string> = {};
+  for (const f of defs) {
+    const v = (vals[f.key] ?? "").trim();
+    if (f.required && !v) { e[f.key] = `${f.label} is required`; continue; }
+    if (v && f.minLength && v.length < f.minLength) { e[f.key] = `Must be at least ${f.minLength} characters`; continue; }
+    if (v && f.prefix && !v.startsWith(f.prefix)) e[f.key] = `Should start with "${f.prefix}"`;
+  }
+  return e;
 }
 
-function saveConnectorStates(states: Record<string, ConnectorState>) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(states));
-}
-
-function PasswordInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
-  const [visible, setVisible] = useState(false);
+function SecretInput({ value, onChange, placeholder, isText }: { value: string; onChange: (v: string) => void; placeholder: string; isText?: boolean }) {
+  const [vis, setVis] = useState(false);
   return (
     <div className="relative">
-      <input type={visible ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+      <input type={isText || vis ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
         className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 pr-10 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
-      <button type="button" onClick={() => setVisible(!visible)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 transition-colors hover:text-zinc-300">
-        {visible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-      </button>
+      {!isText && <button type="button" onClick={() => setVis(!vis)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-500 transition-colors hover:text-zinc-300">{vis ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}</button>}
     </div>
   );
 }
 
-function validateFields(fields: Record<string, string>, definitions: CredentialField[]): Record<string, string> {
-  const errors: Record<string, string> = {};
-  for (const def of definitions) {
-    const val = (fields[def.key] ?? "").trim();
-    if (def.required && !val) { errors[def.key] = `${def.label} is required`; continue; }
-    if (val && def.minLength && val.length < def.minLength) { errors[def.key] = `Must be at least ${def.minLength} characters`; continue; }
-    if (val && def.prefix && !val.startsWith(def.prefix)) { errors[def.key] = `Should start with "${def.prefix}"`; }
-  }
-  return errors;
-}
-
 // ---------------------------------------------------------------------------
-// Page component
+// Page
 // ---------------------------------------------------------------------------
 
 export default function ConnectorsPage() {
@@ -192,216 +108,106 @@ export default function ConnectorsPage() {
   const [states, setStates] = useState<Record<string, ConnectorState>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [activeCategory, setActiveCategory] = useState("All");
+  const [category, setCategory] = useState("All");
   const [usingApi, setUsingApi] = useState(false);
 
-  // Wizard state: 2 steps only -- credentials + test
-  const [wizardConnector, setWizardConnector] = useState<ConnectorDef | null>(null);
-  const [credentialValues, setCredentialValues] = useState<Record<string, string>>({});
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
-  const [testMessage, setTestMessage] = useState("");
-
-  // Config modal for already-connected connectors
-  const [configModal, setConfigModal] = useState<ConnectorDef | null>(null);
+  // Modal
+  const [mc, setMc] = useState<ConnectorDef | null>(null); // modal connector
+  const [view, setView] = useState<"choose" | "manual" | "testing" | "success" | "config">("choose");
+  const [creds, setCreds] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [msg, setMsg] = useState("");
   const [disconnecting, setDisconnecting] = useState(false);
-  const [configTestStatus, setConfigTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
-  const [configTestMessage, setConfigTestMessage] = useState("");
+  const [oauthErr, setOauthErr] = useState("");
 
   const loadData = useCallback(async () => {
     try {
       const installed = await api.listConnectors();
       if (installed && installed.length >= 0) {
         setUsingApi(true);
-        const stateMap: Record<string, ConnectorState> = {};
-        for (const ci of installed) {
-          stateMap[ci.connectorId] = { installed: true, connectedAccount: ci.displayName, installedAt: ci.installedAt, backendId: ci.id };
-        }
-        setStates(stateMap);
-        saveConnectorStates(stateMap);
-        setLoading(false);
-        return;
+        const m: Record<string, ConnectorState> = {};
+        for (const ci of installed) m[ci.connectorId] = { installed: true, connectedAccount: ci.displayName, installedAt: ci.installedAt, backendId: ci.id };
+        setStates(m); saveStates(m); setLoading(false); return;
       }
     } catch { /* API unavailable */ }
-    setUsingApi(false);
-    setStates(loadConnectorStates());
-    setLoading(false);
+    setUsingApi(false); setStates(loadStates()); setLoading(false);
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
-
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { if (wizardConnector) setWizardConnector(null); else if (configModal) setConfigModal(null); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [wizardConnector, configModal]);
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape" && mc) setMc(null); };
+    window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
+  }, [mc]);
 
   const filtered = useMemo(() => {
-    let result = connectors;
-    if (activeCategory !== "All") result = result.filter((c) => c.category === activeCategory);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter((c) => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q) || c.category.toLowerCase().includes(q));
-    }
-    return result;
-  }, [activeCategory, search]);
+    let r = connectors;
+    if (category !== "All") r = r.filter((c) => c.category === category);
+    if (search.trim()) { const q = search.toLowerCase(); r = r.filter((c) => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)); }
+    return r;
+  }, [category, search]);
 
-  const installedCount = Object.values(states).filter((s) => s.installed).length;
-  const categoryCounts = useMemo(() => {
-    const counts: Record<string, number> = { All: connectors.length };
-    for (const c of connectors) counts[c.category] = (counts[c.category] ?? 0) + 1;
-    return counts;
-  }, []);
+  const installed = Object.values(states).filter((s) => s.installed).length;
+  const counts = useMemo(() => { const m: Record<string, number> = { All: connectors.length }; for (const c of connectors) m[c.category] = (m[c.category] ?? 0) + 1; return m; }, []);
 
-  // -- Wizard: open --
-  const openWizard = (connector: ConnectorDef) => {
-    if (connector.oauthOnly || !connector.credentialFields?.length) {
-      toast.error(`${connector.name} requires OAuth which is not configured yet. Please set the OAuth client ID in your environment variables.`);
-      return;
-    }
-    setWizardConnector(connector);
-    setCredentialValues({});
-    setFieldErrors({});
-    setTestStatus("idle");
-    setTestMessage("");
+  const openModal = (con: ConnectorDef) => {
+    const inst = states[con.id]?.installed;
+    setMc(con); setCreds({}); setErrors({}); setMsg(""); setDisconnecting(false); setOauthErr("");
+    setView(inst ? "config" : con.oauthProvider ? "choose" : con.fields.length > 0 ? "manual" : "choose");
   };
 
-  // -- Wizard: test & connect --
-  const handleTestAndConnect = async () => {
-    if (!wizardConnector?.credentialFields) return;
-    const errors = validateFields(credentialValues, wizardConnector.credentialFields);
-    setFieldErrors(errors);
-    if (Object.keys(errors).length > 0) return;
+  const handleOAuth = () => {
+    if (!mc) return;
+    setOauthErr(`OAuth is not configured for ${mc.name} yet. Connect manually instead.`);
+    if (mc.fields.length > 0) setView("manual");
+  };
 
-    setTestStatus("testing");
-    setTestMessage("Testing connection...");
-
+  const handleConnect = async () => {
+    if (!mc) return;
+    const errs = validate(creds, mc.fields);
+    setErrors(errs); if (Object.keys(errs).length > 0) return;
+    setView("testing"); setMsg("Testing connection...");
     try {
       if (usingApi) {
-        const installResult = await api.installConnector({
-          connectorId: wizardConnector.id,
-          displayName: wizardConnector.name,
-          config: credentialValues,
-        });
-        const testResult = await api.testConnector(installResult.id);
-        if (testResult.success) {
-          setTestStatus("success");
-          setTestMessage(testResult.message);
-          await loadData();
-          setTimeout(() => { setWizardConnector(null); toast.success(`${wizardConnector.name} connected successfully`); }, 800);
-          return;
-        }
-        await api.uninstallConnector(installResult.id);
-        setTestStatus("error");
-        setTestMessage(testResult.message);
-        return;
-      }
-    } catch { /* fall back */ }
-
-    // Simulated test
-    await new Promise((r) => setTimeout(r, 1500));
-    const updated: Record<string, ConnectorState> = {
-      ...states,
-      [wizardConnector.id]: {
-        installed: true,
-        connectedAccount: credentialValues.email || wizardConnector.name + " account",
-        installedAt: new Date().toISOString(),
-        credentials: { ...credentialValues },
-      },
-    };
-    setStates(updated);
-    saveConnectorStates(updated);
-    setTestStatus("success");
-    setTestMessage("Connection verified successfully");
-    setTimeout(() => { setWizardConnector(null); toast.success(`${wizardConnector.name} connected successfully`); }, 800);
-  };
-
-  // -- Config modal --
-  const openConfigModal = (connector: ConnectorDef) => {
-    setConfigModal(connector);
-    setConfigTestStatus("idle");
-    setConfigTestMessage("");
-    setDisconnecting(false);
-  };
-
-  const handleConfigTest = async () => {
-    if (!configModal) return;
-    setConfigTestStatus("testing");
-    setConfigTestMessage("Verifying connection...");
-    try {
-      const state = states[configModal.id];
-      if (usingApi && state?.backendId) {
-        const result = await api.testConnector(state.backendId);
-        setConfigTestStatus(result.success ? "success" : "error");
-        setConfigTestMessage(result.message);
-        return;
+        const inst = await api.installConnector({ connectorId: mc.id, displayName: mc.name, config: creds });
+        const res = await api.testConnector(inst.id);
+        if (res.success) { setView("success"); setMsg(res.message); await loadData(); const a = creds.email || mc.name + " account"; setTimeout(() => { setMc(null); toast.success(`${mc.name} connected as ${a}`); }, 800); return; }
+        await api.uninstallConnector(inst.id); setView("manual"); setMsg(res.message); return;
       }
     } catch { /* fall back */ }
     await new Promise((r) => setTimeout(r, 1500));
-    setConfigTestStatus("success");
-    setConfigTestMessage("Connection is active and working");
+    const account = creds.email || mc.name + " account";
+    const up = { ...states, [mc.id]: { installed: true, connectedAccount: account, installedAt: new Date().toISOString(), credentials: { ...creds } } };
+    setStates(up); saveStates(up); setView("success"); setMsg("Connection verified successfully");
+    setTimeout(() => { setMc(null); toast.success(`${mc.name} connected as ${account}`); }, 800);
   };
 
-  const handleDisconnect = async (connector: ConnectorDef) => {
-    setDisconnecting(true);
-    const state = states[connector.id];
-    try {
-      if (usingApi && state?.backendId) {
-        await api.uninstallConnector(state.backendId);
-        await loadData();
-        setDisconnecting(false);
-        setConfigModal(null);
-        toast.info(`${connector.name} disconnected`);
-        return;
-      }
-    } catch { /* fall back */ }
+  const handleTest = async () => {
+    if (!mc) return; setMsg("Verifying connection..."); setView("testing");
+    try { const s = states[mc.id]; if (usingApi && s?.backendId) { const r = await api.testConnector(s.backendId); setView("config"); setMsg(r.success ? "Connection is active" : r.message); return; } } catch { /* fall back */ }
+    await new Promise((r) => setTimeout(r, 1500)); setView("config"); setMsg("Connection is active and working");
+  };
+
+  const handleDisconnect = async () => {
+    if (!mc) return; setDisconnecting(true); const s = states[mc.id];
+    try { if (usingApi && s?.backendId) { await api.uninstallConnector(s.backendId); await loadData(); setDisconnecting(false); setMc(null); toast.info(`${mc.name} disconnected`); return; } } catch { /* fall back */ }
     await new Promise((r) => setTimeout(r, 600));
-    const updated = { ...states };
-    delete updated[connector.id];
-    setStates(updated);
-    saveConnectorStates(updated);
-    setDisconnecting(false);
-    setConfigModal(null);
-    toast.info(`${connector.name} disconnected`);
+    const up = { ...states }; delete up[mc.id]; setStates(up); saveStates(up); setDisconnecting(false); setMc(null); toast.info(`${mc.name} disconnected`);
   };
 
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
-
-  if (loading) {
-    return (
-      <div className="flex flex-1 flex-col overflow-auto">
-        <HeaderSkeleton />
-        <div className="p-8">
-          <Skeleton className="mb-6 h-10 w-full max-w-md rounded-lg" />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {Array.from({ length: 12 }).map((_, i) => (
-              <div key={i} className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
-                <Skeleton className="mb-3 h-10 w-10 rounded-xl" />
-                <Skeleton className="mb-2 h-4 w-20" />
-                <Skeleton className="mb-3 h-3 w-full" />
-                <Skeleton className="h-7 w-16 rounded-lg" />
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return (
+    <div className="flex flex-1 flex-col overflow-auto"><HeaderSkeleton /><div className="p-8"><Skeleton className="mb-6 h-10 w-full max-w-md rounded-lg" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {Array.from({ length: 12 }).map((_, i) => <div key={i} className="rounded-xl border border-zinc-800 bg-surface-1 p-4"><Skeleton className="mb-3 h-10 w-10 rounded-xl" /><Skeleton className="mb-2 h-4 w-20" /><Skeleton className="mb-3 h-3 w-full" /><Skeleton className="h-7 w-16 rounded-lg" /></div>)}
+      </div></div></div>
+  );
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
       {/* Header */}
       <div className="border-b border-zinc-800 bg-surface-1 px-8 py-5">
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-zinc-100">Connectors</h1>
-            <p className="mt-1 text-sm text-zinc-500">Connect your agents to the tools you already use</p>
-          </div>
-          <span className="rounded-full bg-lantern-500/10 px-3 py-1 text-xs font-medium text-lantern-400">{installedCount} installed</span>
+          <div><h1 className="text-xl font-semibold text-zinc-100">Connectors</h1><p className="mt-1 text-sm text-zinc-500">Connect your agents to the tools you already use</p></div>
+          <span className="rounded-full bg-lantern-500/10 px-3 py-1 text-xs font-medium text-lantern-400">{installed} connected</span>
         </div>
       </div>
 
@@ -412,198 +218,105 @@ export default function ConnectorsPage() {
           <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search connectors..."
             className="w-full rounded-lg border border-zinc-700 bg-surface-2 py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
         </div>
-
         {/* Category tabs */}
         <div className="mb-6 flex gap-1 overflow-x-auto pb-1">
           {categories.map((cat) => (
-            <button key={cat} onClick={() => setActiveCategory(cat)}
+            <button key={cat} onClick={() => setCategory(cat)}
               className={clsx("whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors inline-flex items-center gap-1.5",
-                activeCategory === cat ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:bg-surface-2 hover:text-zinc-300")}>
-              {cat}
-              <span className={clsx("rounded-full px-1.5 py-0.5 text-[10px] font-medium", activeCategory === cat ? "bg-lantern-500/20 text-lantern-400" : "bg-surface-3 text-zinc-600")}>
-                {categoryCounts[cat] ?? 0}
-              </span>
+                category === cat ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:bg-surface-2 hover:text-zinc-300")}>
+              {cat}<span className={clsx("rounded-full px-1.5 py-0.5 text-[10px] font-medium", category === cat ? "bg-lantern-500/20 text-lantern-400" : "bg-surface-3 text-zinc-600")}>{counts[cat] ?? 0}</span>
             </button>
           ))}
         </div>
-
         {/* Grid */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filtered.map((connector) => {
-            const state = states[connector.id];
-            const isInstalled = state?.installed ?? false;
-            const Icon = connector.icon;
+          {filtered.map((con) => {
+            const s = states[con.id]; const on = s?.installed ?? false; const I = con.icon;
             return (
-              <div key={connector.id} className="connector-card card-hover group">
+              <div key={con.id} className="connector-card card-hover group">
                 <div className="flex items-start justify-between">
-                  <div className={clsx("flex h-10 w-10 items-center justify-center rounded-xl", connector.iconBg)}>
-                    <Icon className={clsx("h-5 w-5", connector.iconColor)} />
-                  </div>
-                  {isInstalled && <span className="h-2 w-2 rounded-full bg-emerald-400" title="Connected" />}
+                  <div className={clsx("flex h-10 w-10 items-center justify-center rounded-xl", con.iconBg)}><I className={clsx("h-5 w-5", con.iconColor)} /></div>
+                  {on && <span className="h-2 w-2 rounded-full bg-emerald-400" title="Connected" />}
                 </div>
-                <h3 className="mt-3 text-sm font-semibold text-zinc-100">{connector.name}</h3>
-                <p className="mt-1 text-[11px] text-zinc-500 leading-relaxed line-clamp-2">{connector.description}</p>
-                {isInstalled && state?.connectedAccount && (
-                  <p className="mt-1.5 truncate text-[11px] text-emerald-400/70">{state.connectedAccount}</p>
-                )}
-                <button
-                  onClick={() => isInstalled ? openConfigModal(connector) : openWizard(connector)}
-                  className={clsx("mt-3 w-full rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                    isInstalled ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-white hover:bg-lantern-400")}
-                >
-                  {isInstalled ? "Configure" : "Connect"}
+                <h3 className="mt-3 text-sm font-semibold text-zinc-100">{con.name}</h3>
+                <p className="mt-1 text-[11px] text-zinc-500 leading-relaxed line-clamp-2">{con.description}</p>
+                {on && s?.connectedAccount && <p className="mt-1.5 truncate text-[11px] text-emerald-400/70">{s.connectedAccount}</p>}
+                <button onClick={() => openModal(con)}
+                  className={clsx("mt-3 w-full rounded-lg px-3 py-1.5 text-xs font-medium transition-colors", on ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-white hover:bg-lantern-400")}>
+                  {on ? "Configure" : "Connect"}
                 </button>
               </div>
             );
           })}
         </div>
-
-        {filtered.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16">
-            <Plug className="mb-3 h-10 w-10 text-zinc-600" />
-            <p className="text-sm text-zinc-500">No connectors match your search</p>
-          </div>
-        )}
+        {filtered.length === 0 && <div className="flex flex-col items-center justify-center py-16"><Plug className="mb-3 h-10 w-10 text-zinc-600" /><p className="text-sm text-zinc-500">No connectors match your search</p></div>}
       </div>
 
-      {/* ================================================================= */}
-      {/* Connection Wizard (2-step: credentials + test)                    */}
-      {/* ================================================================= */}
-      {wizardConnector && (
-        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setWizardConnector(null)}>
+      {/* Modal */}
+      {mc && (
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setMc(null)}>
           <div className="modal-content w-full max-w-lg rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
             <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
               <div className="flex items-center gap-3">
-                <div className={clsx("flex h-8 w-8 items-center justify-center rounded-lg", wizardConnector.iconBg)}>
-                  <wizardConnector.icon className={clsx("h-4 w-4", wizardConnector.iconColor)} />
-                </div>
+                <div className={clsx("flex h-8 w-8 items-center justify-center rounded-lg", mc.iconBg)}><mc.icon className={clsx("h-4 w-4", mc.iconColor)} /></div>
                 <div>
-                  <h2 className="text-lg font-semibold text-zinc-100">Connect {wizardConnector.name}</h2>
-                  <p className="text-xs text-zinc-500">Enter your credentials to connect</p>
+                  <h2 className="text-lg font-semibold text-zinc-100">{view === "config" ? mc.name : `Connect ${mc.name}`}</h2>
+                  <p className="text-xs text-zinc-500">{view === "config" ? "Manage your connection" : view === "choose" ? "Choose how to connect" : view === "manual" ? "Enter your credentials" : ""}</p>
                 </div>
               </div>
-              <button onClick={() => setWizardConnector(null)} className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300">
-                <X className="h-5 w-5" />
-              </button>
+              <button onClick={() => setMc(null)} className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"><X className="h-5 w-5" /></button>
             </div>
-
-            {/* Body: credentials form */}
+            {/* Body */}
             <div className="px-6 py-5 space-y-4">
-              {testStatus === "idle" || testStatus === "error" ? (
-                <>
-                  {wizardConnector.credentialFields?.map((field) => (
-                    <div key={field.key}>
-                      <label className="mb-1.5 flex items-center gap-1 text-sm font-medium text-zinc-300">
-                        {field.label}
-                        {field.required && <span className="text-red-400">*</span>}
-                      </label>
-                      <PasswordInput
-                        value={credentialValues[field.key] ?? ""}
-                        onChange={(v) => { setCredentialValues((p) => ({ ...p, [field.key]: v })); setFieldErrors((p) => { const n = { ...p }; delete n[field.key]; return n; }); }}
-                        placeholder={field.placeholder}
-                      />
-                      {fieldErrors[field.key] && (
-                        <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{fieldErrors[field.key]}</p>
-                      )}
-                      {field.helpText && !fieldErrors[field.key] && (
-                        <p className="mt-1 text-[11px] text-zinc-600">
-                          {field.helpUrl ? <a href={field.helpUrl} target="_blank" rel="noopener noreferrer" className="text-lantern-400/70 hover:text-lantern-400 underline underline-offset-2">{field.helpText}</a> : field.helpText}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                  {testStatus === "error" && (
-                    <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-                      <div className="flex items-center gap-2">
-                        <AlertCircle className="h-3.5 w-3.5 text-red-400" />
-                        <p className="text-xs font-medium text-red-400">{testMessage}</p>
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : testStatus === "testing" ? (
-                <div className="flex flex-col items-center py-8">
-                  <Loader2 className="mb-4 h-10 w-10 animate-spin text-lantern-400" />
-                  <p className="text-sm font-medium text-zinc-200">{testMessage}</p>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center py-8">
-                  <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10">
-                    <CheckCircle2 className="h-7 w-7 text-emerald-400" />
-                  </div>
-                  <p className="text-sm font-medium text-emerald-400">{testMessage}</p>
-                </div>
-              )}
-            </div>
+              {view === "choose" && (<>
+                {oauthErr && <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3"><p className="text-xs text-amber-400">{oauthErr}</p></div>}
+                {mc.oauthProvider && <button onClick={handleOAuth} className="flex w-full items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-medium text-zinc-900 transition-colors hover:bg-zinc-100"><ExternalLink className="h-4 w-4" />{mc.oauthLabel ?? `Sign in with ${mc.name}`}</button>}
+                {mc.fields.length > 0 && (<>
+                  {mc.oauthProvider && <div className="flex items-center gap-3"><div className="h-px flex-1 bg-zinc-800" /><span className="text-xs text-zinc-600">or</span><div className="h-px flex-1 bg-zinc-800" /></div>}
+                  <button onClick={() => { setOauthErr(""); setView("manual"); }} className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3">{mc.manualLabel ?? "Connect manually"}</button>
+                </>)}
+                {!mc.oauthProvider && mc.fields.length === 0 && <p className="py-4 text-center text-sm text-zinc-500">This connector requires OAuth which is not configured yet.</p>}
+              </>)}
 
+              {view === "manual" && (<>
+                {oauthErr && <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3"><p className="text-xs text-amber-400">{oauthErr}</p></div>}
+                {msg && <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3"><div className="flex items-center gap-2"><AlertCircle className="h-3.5 w-3.5 text-red-400" /><p className="text-xs font-medium text-red-400">{msg}</p></div></div>}
+                {mc.fields.map((f) => (
+                  <div key={f.key}>
+                    <label className="mb-1.5 flex items-center gap-1 text-sm font-medium text-zinc-300">{f.label}{f.required && <span className="text-red-400">*</span>}</label>
+                    <SecretInput value={creds[f.key] ?? ""} onChange={(v) => { setCreds((p) => ({ ...p, [f.key]: v })); setErrors((p) => { const n = { ...p }; delete n[f.key]; return n; }); }} placeholder={f.placeholder} isText={f.type === "text"} />
+                    {errors[f.key] && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{errors[f.key]}</p>}
+                    {f.helpText && !errors[f.key] && <p className="mt-1 text-[11px] text-zinc-600">{f.helpUrl ? <a href={f.helpUrl} target="_blank" rel="noopener noreferrer" className="text-lantern-400/70 hover:text-lantern-400 underline underline-offset-2">{f.helpText}</a> : f.helpText}</p>}
+                  </div>
+                ))}
+              </>)}
+
+              {view === "testing" && <div className="flex flex-col items-center py-8"><Loader2 className="mb-4 h-10 w-10 animate-spin text-lantern-400" /><p className="text-sm font-medium text-zinc-200">{msg}</p></div>}
+              {view === "success" && <div className="flex flex-col items-center py-8"><div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10"><CheckCircle2 className="h-7 w-7 text-emerald-400" /></div><p className="text-sm font-medium text-emerald-400">{msg}</p></div>}
+
+              {view === "config" && (<>
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
+                  <div className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-400" /><p className="text-sm font-medium text-emerald-400">Connected</p></div>
+                  <p className="mt-1 text-xs text-zinc-500">Account: {states[mc.id]?.connectedAccount ?? "unknown"}</p>
+                  {states[mc.id]?.installedAt && <p className="mt-0.5 text-xs text-zinc-600">Since {new Date(states[mc.id]!.installedAt!).toLocaleDateString()}</p>}
+                </div>
+                {msg && <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3"><div className="flex items-center gap-2"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /><p className="text-xs font-medium text-emerald-400">{msg}</p></div></div>}
+              </>)}
+            </div>
             {/* Footer */}
-            <div className="flex items-center justify-end gap-3 border-t border-zinc-800 px-6 py-4">
-              <button onClick={() => setWizardConnector(null)} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">Cancel</button>
-              {(testStatus === "idle" || testStatus === "error") && (
-                <button onClick={handleTestAndConnect} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400">
-                  <Key className="h-3.5 w-3.5" />Test &amp; Connect
-                </button>
-              )}
-              {testStatus === "error" && (
-                <button onClick={() => setTestStatus("idle")} className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3">
-                  <RefreshCw className="h-3.5 w-3.5" />Retry
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ================================================================= */}
-      {/* Configure Modal (for installed connectors)                        */}
-      {/* ================================================================= */}
-      {configModal && (
-        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setConfigModal(null)}>
-          <div className="modal-content w-full max-w-md rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
-              <div className="flex items-center gap-3">
-                <div className={clsx("flex h-8 w-8 items-center justify-center rounded-lg", configModal.iconBg)}>
-                  <configModal.icon className={clsx("h-4 w-4", configModal.iconColor)} />
-                </div>
-                <h2 className="text-lg font-semibold text-zinc-100">{configModal.name}</h2>
-              </div>
-              <button onClick={() => setConfigModal(null)} className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="px-6 py-5 space-y-4">
-              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                  <p className="text-sm font-medium text-emerald-400">Connected</p>
-                </div>
-                <p className="mt-1 text-xs text-zinc-500">Account: {states[configModal.id]?.connectedAccount ?? "unknown"}</p>
-              </div>
-
-              {configTestStatus !== "idle" && (
-                <div className={clsx("rounded-lg border p-3", configTestStatus === "testing" && "border-zinc-800 bg-surface-2", configTestStatus === "success" && "border-emerald-500/20 bg-emerald-500/5", configTestStatus === "error" && "border-red-500/20 bg-red-500/5")}>
-                  <div className="flex items-center gap-2">
-                    {configTestStatus === "testing" && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />}
-                    {configTestStatus === "success" && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />}
-                    {configTestStatus === "error" && <AlertCircle className="h-3.5 w-3.5 text-red-400" />}
-                    <p className={clsx("text-xs font-medium", configTestStatus === "testing" && "text-zinc-400", configTestStatus === "success" && "text-emerald-400", configTestStatus === "error" && "text-red-400")}>{configTestMessage}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-
             <div className="flex items-center justify-between border-t border-zinc-800 px-6 py-4">
-              <button onClick={() => handleDisconnect(configModal)} disabled={disconnecting}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50">
-                {disconnecting ? <><Loader2 className="h-3 w-3 animate-spin" />Disconnecting...</> : "Disconnect"}
-              </button>
-              <button onClick={handleConfigTest} disabled={configTestStatus === "testing"}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3 disabled:opacity-50">
-                {configTestStatus === "testing" ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                Test Connection
-              </button>
+              {view === "config" ? (<>
+                <button onClick={handleDisconnect} disabled={disconnecting} className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50">
+                  {disconnecting ? <><Loader2 className="h-3 w-3 animate-spin" />Disconnecting...</> : "Disconnect"}</button>
+                <button onClick={handleTest} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"><RefreshCw className="h-3 w-3" />Test Connection</button>
+              </>) : (<>
+                <button onClick={() => setMc(null)} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">Cancel</button>
+                <div className="flex items-center gap-2">
+                  {view === "manual" && mc.oauthProvider && <button onClick={() => { setOauthErr(""); setMsg(""); setView("choose"); }} className="rounded-lg px-3 py-2 text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-300">Back</button>}
+                  {view === "manual" && <button onClick={handleConnect} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400"><Plug className="h-3.5 w-3.5" />Test &amp; Connect</button>}
+                </div>
+              </>)}
             </div>
           </div>
         </div>
