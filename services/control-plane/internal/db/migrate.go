@@ -356,4 +356,20 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS schedules_due_idx
 		ON schedules (enabled, next_fire_at)
 		WHERE enabled = true`,
+
+	// ---------------------------------------------------------------
+	// Sessions (interactive, long-lived agent sessions)
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS sessions (
+		id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id  UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_name TEXT NOT NULL,
+		status     TEXT NOT NULL DEFAULT 'active',
+		messages   JSONB NOT NULL DEFAULT '[]'::jsonb,
+		created_at TIMESTAMPTZ DEFAULT now(),
+		updated_at TIMESTAMPTZ DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS sessions_tenant_agent_idx
+		ON sessions (tenant_id, agent_name, updated_at DESC)`,
 }

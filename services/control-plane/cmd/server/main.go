@@ -131,6 +131,7 @@ func main() {
 	deploymentHandler := handlers.NewDeploymentHandler(srv, authHandler)
 	llmProxyHandler := handlers.NewLlmProxyHandler(srv, authHandler)
 	gmailHandler := handlers.NewGmailHandler(srv, authHandler)
+	sessionHandler := handlers.NewSessionHandler(srv, authHandler, llmProxyHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
 
 	// --- HTTP server (health + auth + REST API) ---
@@ -220,6 +221,15 @@ func main() {
 	httpMux.HandleFunc("GET /v1/schedules", restHandler.ListSchedules)
 	httpMux.HandleFunc("PUT /v1/schedules/{id}", restHandler.UpdateSchedule)
 	httpMux.HandleFunc("DELETE /v1/schedules/{id}", restHandler.DeleteSchedule)
+
+	// Session endpoints (interactive, long-lived agent sessions).
+	httpMux.HandleFunc("POST /v1/sessions", sessionHandler.CreateSession)
+	httpMux.HandleFunc("GET /v1/sessions", sessionHandler.ListSessions)
+	httpMux.HandleFunc("POST /v1/sessions/{id}/messages", sessionHandler.SendMessage)
+	httpMux.HandleFunc("GET /v1/sessions/{id}/events", sessionHandler.GetEvents)
+	httpMux.HandleFunc("POST /v1/sessions/{id}/stop", sessionHandler.StopSession)
+	httpMux.HandleFunc("DELETE /v1/sessions/{id}", sessionHandler.DeleteSession)
+	httpMux.HandleFunc("GET /v1/sessions/{id}", sessionHandler.GetSession)
 
 	httpServer := &http.Server{
 		Addr:              ":8080",

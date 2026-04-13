@@ -1310,6 +1310,72 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     }
     return this.request(url);
   }
+
+  // ---- Sessions (interactive, long-lived agent sessions) ---------------------
+
+  async createSession(agentName: string): Promise<{ id: string; status: string }> {
+    return this.request("/v1/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agentName }),
+    });
+  }
+
+  async sendSessionMessage(sessionId: string, content: string): Promise<void> {
+    await this.request(`/v1/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+  }
+
+  async getSession(sessionId: string): Promise<{
+    id: string;
+    tenantId: string;
+    agentName: string;
+    status: string;
+    messages: Array<{ role: string; content: string; timestamp: string }>;
+    createdAt: string;
+    updatedAt: string;
+  }> {
+    return this.request(`/v1/sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  async listSessions(): Promise<Array<{
+    id: string;
+    tenantId: string;
+    agentName: string;
+    status: string;
+    messages: Array<{ role: string; content: string; timestamp: string }>;
+    createdAt: string;
+    updatedAt: string;
+  }>> {
+    try {
+      return await this.request("/v1/sessions");
+    } catch {
+      console.warn("[lantern] listSessions failed, returning empty");
+      return [];
+    }
+  }
+
+  async stopSession(sessionId: string): Promise<void> {
+    await this.request(`/v1/sessions/${encodeURIComponent(sessionId)}/stop`, {
+      method: "POST",
+    });
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.request(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  connectSessionEvents(sessionId: string): EventSource {
+    // Ensure token is loaded
+    if (!this._token) {
+      this.restoreToken();
+    }
+    const url = `${this.baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/events`;
+    return new EventSource(this._token ? `${url}?token=${this._token}` : url);
+  }
 }
 
 export const api = new LanternAPI();

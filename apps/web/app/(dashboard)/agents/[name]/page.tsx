@@ -260,13 +260,26 @@ export default function AgentDetailPage() {
   const [newMemKey, setNewMemKey] = useState("");
   const [newMemValue, setNewMemValue] = useState("");
 
-  // Chat (Feature 1)
+  // Chat (Feature 1) — now session-backed
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatStreaming, setChatStreaming] = useState(false);
   const [chatIncludeEmails, setChatIncludeEmails] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [chatFiles, setChatFiles] = useState<Array<{ name: string; content: string }>>([]);
+
+  // Session state (Gap 1: Session Abstraction)
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<string>("idle");
+  const [sessionConnected, setSessionConnected] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  // Gap 2: Managed environment settings (stored in localStorage)
+  const [envRuntime, setEnvRuntime] = useState("node22");
+  const [envMemory, setEnvMemory] = useState("512mb");
+  const [envTimeout, setEnvTimeout] = useState("5m");
+  const [envNetwork, setEnvNetwork] = useState("allow-all");
+  const [envPackages, setEnvPackages] = useState("");
 
   // File attachments (Feature 2) — for build test section
   const [testFiles, setTestFiles] = useState<Array<{ name: string; content: string }>>([]);
@@ -327,6 +340,37 @@ export default function AgentDetailPage() {
     setChatMessages(loadChat(name));
     // Load sharing config
     setSharing(loadSharing(name));
+    // Load managed environment settings (Gap 2)
+    try {
+      const envSettings = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}");
+      if (envSettings.runtime) setEnvRuntime(envSettings.runtime);
+      if (envSettings.memory) setEnvMemory(envSettings.memory);
+      if (envSettings.timeout) setEnvTimeout(envSettings.timeout);
+      if (envSettings.network) setEnvNetwork(envSettings.network);
+      if (envSettings.packages) setEnvPackages(envSettings.packages);
+    } catch { /* */ }
+    // Restore session ID from localStorage (Gap 1)
+    try {
+      const savedSessionId = localStorage.getItem(`lantern_session_${name}`);
+      if (savedSessionId) {
+        setSessionId(savedSessionId);
+        // Verify the session is still valid
+        api.getSession(savedSessionId).then((s) => {
+          if (s.status === "active" || s.status === "processing") {
+            setChatMessages(s.messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content, timestamp: m.timestamp })));
+            setSessionConnected(true);
+          } else {
+            // Session is stopped/deleted, clear it
+            localStorage.removeItem(`lantern_session_${name}`);
+            setSessionId(null);
+          }
+        }).catch(() => {
+          // API unavailable, fall back to localStorage chat
+          setChatMessages(loadChat(name));
+          setSessionConnected(false);
+        });
+      }
+    } catch { /* */ }
     api.listSchedules().then((sched) => {
       const m = sched.find((sc) => sc.agentName === name);
       if (m) { setSettingsCron(m.cronExpr); setScheduleId(m.id); setScheduleEnabled(m.enabled); if (m.nextFireAt) setNextFireAt(m.nextFireAt); if (m.deliveryEmail) { setDeliveryEmailEnabled(true); setDeliveryEmail(m.deliveryEmail); } }
@@ -335,6 +379,50 @@ export default function AgentDetailPage() {
 
   useEffect(() => { if (testRef.current) testRef.current.scrollTop = testRef.current.scrollHeight; }, [testOutput]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages, chatStreaming]);
+
+  // Gap 1: Connect to session SSE when sessionId is set
+  useEffect(() => {
+    if (!sessionId || !sessionConnected) return;
+    const es = api.connectSessionEvents(sessionId);
+    eventSourceRef.current = es;
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "agent.message") {
+          const assistantMsg: ChatMessage = {
+            role: "assistant",
+            content: data.data?.content || "",
+            timestamp: data.data?.timestamp || new Date().toISOString(),
+          };
+          setChatMessages((prev) => {
+            const updated = [...prev, assistantMsg];
+            saveChat(name, updated);
+            return updated;
+          });
+          setChatStreaming(false);
+          setSessionStatus("idle");
+        } else if (data.type === "agent.thinking") {
+          setChatStreaming(true);
+          setSessionStatus("thinking");
+        } else if (data.type === "session.status_idle") {
+          setChatStreaming(false);
+          setSessionStatus("idle");
+        } else if (data.type === "session.stopped") {
+          setSessionStatus("stopped");
+          setChatStreaming(false);
+        }
+      } catch { /* ignore malformed events */ }
+    };
+    es.onerror = () => {
+      // SSE connection failed — mark as disconnected but keep session
+      setSessionConnected(false);
+      es.close();
+    };
+    return () => {
+      es.close();
+      eventSourceRef.current = null;
+    };
+  }, [sessionId, sessionConnected, name]);
 
   // Feature 5: Polling for running runs
   useEffect(() => {
@@ -570,7 +658,7 @@ export default function AgentDetailPage() {
     toast.success("Memory entry removed");
   }, [name, toast]);
 
-  // Feature 1: Chat handler
+  // Gap 1: Session-backed chat handler with mid-execution steering (Gap 3)
   const handleChatSend = useCallback(async () => {
     const text = chatInput.trim();
     if (!text && chatFiles.length === 0) return;
@@ -578,7 +666,50 @@ export default function AgentDetailPage() {
     for (const f of chatFiles) { content += `\n\n[Attached file: ${f.name}]\n<file-content>\n${f.content.slice(0, 5000)}\n</file-content>`; }
     const userMsg: ChatMessage = { role: "user", content, timestamp: new Date().toISOString() };
     const updated = [...chatMessages, userMsg];
-    setChatMessages(updated); setChatInput(""); setChatFiles([]); setChatStreaming(true);
+    setChatMessages(updated); setChatInput(""); setChatFiles([]);
+    saveChat(name, updated);
+
+    // Gap 3: Mid-execution steering — always allow sending, even while streaming.
+    // If a session is active, send via session endpoint (which handles steering).
+    // Otherwise fall back to direct LLM call.
+    if (sessionId && sessionConnected) {
+      // Session-backed path: send message via API
+      setChatStreaming(true);
+      setSessionStatus("thinking");
+      try {
+        await api.sendSessionMessage(sessionId, content);
+        // Response will arrive via SSE (handled in useEffect above)
+      } catch (err) {
+        // Session API failed — fall back to direct LLM
+        console.warn("[lantern] Session API unavailable, falling back to direct LLM");
+        setSessionConnected(false);
+        await fallbackDirectLLM(updated, content);
+      }
+    } else {
+      // Try to create a session first
+      if (!sessionId) {
+        try {
+          const session = await api.createSession(name);
+          setSessionId(session.id);
+          setSessionConnected(true);
+          localStorage.setItem(`lantern_session_${name}`, session.id);
+          // Send the message via the new session
+          setChatStreaming(true);
+          setSessionStatus("thinking");
+          await api.sendSessionMessage(session.id, content);
+          return;
+        } catch {
+          // API unavailable — fall through to direct LLM
+          console.warn("[lantern] Session creation failed, using direct LLM");
+        }
+      }
+      await fallbackDirectLLM(updated, content);
+    }
+  }, [chatInput, chatFiles, chatMessages, instructions, systemPrompt, memoryEntries, testModel, name, sessionId, sessionConnected]);
+
+  // Fallback: direct LLM call when session API is unavailable
+  const fallbackDirectLLM = useCallback(async (updated: ChatMessage[], _content: string) => {
+    setChatStreaming(true);
     const effectivePrompt = mergeInstructionsAndPrompt(instructions, systemPrompt) + memoryToContext(memoryEntries);
     const messages: Array<{ role: string; content: string }> = [];
     if (effectivePrompt.trim()) messages.push({ role: "system", content: effectivePrompt });
@@ -602,7 +733,7 @@ export default function AgentDetailPage() {
       const errMsg: ChatMessage = { role: "assistant", content: `Error: ${err instanceof Error ? err.message : "Unknown error"}`, timestamp: new Date().toISOString() };
       const final = [...updated, errMsg]; setChatMessages(final); saveChat(name, final);
     } finally { setChatStreaming(false); }
-  }, [chatInput, chatFiles, chatMessages, instructions, systemPrompt, memoryEntries, testModel, name]);
+  }, [instructions, systemPrompt, memoryEntries, testModel, name]);
 
   // Feature 2: File attachment handler (shared between build test and chat)
   const handleFileAttach = useCallback((setter: (fn: (prev: Array<{ name: string; content: string }>) => Array<{ name: string; content: string }>) => void) => {
@@ -713,6 +844,30 @@ export default function AgentDetailPage() {
         {/* BUILD TAB */}
         {activeTab === "build" && (
           <div className="space-y-6">
+            {/* Gap 2: Managed environment header */}
+            <div className="flex items-center justify-between rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-5 py-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10">
+                  <Zap className="h-4 w-4 text-emerald-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-zinc-200">Managed Agent <span className="text-emerald-400">&#183;</span> Running on Lantern Cloud</p>
+                  <p className="text-[10px] text-zinc-500">Zero-setup execution -- no code deployment required</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-medium text-zinc-400">
+                  {envRuntime === "node22" ? "Node.js 22" : envRuntime === "python312" ? "Python 3.12" : "Custom"}
+                </span>
+                <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-medium text-zinc-400">
+                  {envMemory === "256mb" ? "256MB RAM" : envMemory === "512mb" ? "512MB RAM" : envMemory === "1gb" ? "1GB RAM" : "2GB RAM"}
+                </span>
+                <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-medium text-zinc-400">
+                  {envTimeout} timeout
+                </span>
+              </div>
+            </div>
+
             {/* Instructions (what the agent does) */}
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
               <div className="mb-3 flex items-center justify-between">
@@ -1046,13 +1201,31 @@ export default function AgentDetailPage() {
           </div>
         )}
 
-        {/* CHAT TAB (Feature 1) */}
+        {/* CHAT TAB — Session-backed (Gap 1) with mid-execution steering (Gap 3) */}
         {activeTab === "chat" && (
           <div className="flex h-[calc(100vh-260px)] flex-col">
-            {/* Chat header */}
+            {/* Chat header with session status */}
             <div className="mb-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-medium text-zinc-300">Conversation</h3>
+                <h3 className="text-sm font-medium text-zinc-300">Session</h3>
+                {sessionConnected ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Connected
+                  </span>
+                ) : sessionId ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Reconnecting...
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-700/50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                    Local mode
+                  </span>
+                )}
+                {sessionStatus === "thinking" && (
+                  <span className="inline-flex items-center gap-1.5 text-[10px] text-lantern-400">
+                    <Brain className="h-3 w-3 animate-pulse" /> Processing...
+                  </span>
+                )}
                 {isEmailAgent && (
                   <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-zinc-500">
                     <button type="button" role="switch" aria-checked={chatIncludeEmails} onClick={() => setChatIncludeEmails(!chatIncludeEmails)} className={clsx("relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors", chatIncludeEmails ? "bg-indigo-500" : "bg-zinc-700")}>
@@ -1062,13 +1235,37 @@ export default function AgentDetailPage() {
                   </label>
                 )}
               </div>
-              <button onClick={() => { setChatMessages([]); saveChat(name, []); toast.success("Conversation cleared"); }} className="text-[11px] text-zinc-500 hover:text-red-400">Clear conversation</button>
+              <div className="flex items-center gap-2">
+                {sessionId && (
+                  <button onClick={async () => {
+                    try { await api.stopSession(sessionId); } catch { /* */ }
+                    setSessionId(null); setSessionConnected(false);
+                    localStorage.removeItem(`lantern_session_${name}`);
+                    toast.success("Session ended");
+                  }} className="text-[11px] text-zinc-500 hover:text-amber-400">End session</button>
+                )}
+                <button onClick={() => {
+                  setChatMessages([]); saveChat(name, []);
+                  if (sessionId) {
+                    api.deleteSession(sessionId).catch(() => {});
+                    setSessionId(null); setSessionConnected(false);
+                    localStorage.removeItem(`lantern_session_${name}`);
+                  }
+                  toast.success("Conversation cleared");
+                }} className="text-[11px] text-zinc-500 hover:text-red-400">Clear conversation</button>
+              </div>
             </div>
 
             {/* Message list */}
             <div className="flex-1 overflow-auto rounded-xl border border-zinc-800 bg-surface-0 p-4 space-y-3">
               {chatMessages.length === 0 && !chatStreaming && (
-                <div className="flex h-full items-center justify-center"><p className="text-sm text-zinc-600">Start a conversation with {name}</p></div>
+                <div className="flex h-full flex-col items-center justify-center gap-2">
+                  <Brain className="h-8 w-8 text-zinc-700" />
+                  <p className="text-sm text-zinc-600">Start a conversation with {name}</p>
+                  <p className="text-[10px] text-zinc-700">
+                    {sessionConnected ? "Session active -- messages are persisted server-side" : "Messages will be sent to the LLM directly"}
+                  </p>
+                </div>
               )}
               {chatMessages.map((msg, i) => (
                 <div key={i} className={clsx("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
@@ -1091,13 +1288,20 @@ export default function AgentDetailPage() {
               ))}
               {chatStreaming && (
                 <div className="flex justify-start">
-                  <div className="rounded-xl bg-surface-2 px-3.5 py-2.5"><div className="flex items-center gap-1.5"><div className="h-2 w-2 animate-pulse rounded-full bg-lantern-400" /><span className="text-xs text-zinc-500">Thinking...</span></div></div>
+                  <div className="rounded-xl bg-surface-2 px-3.5 py-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <div className="h-2 w-2 animate-pulse rounded-full bg-lantern-400" />
+                      <span className="text-xs text-zinc-500">
+                        {sessionStatus === "thinking" ? "Thinking..." : "Processing..."}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
               <div ref={chatEndRef} />
             </div>
 
-            {/* Chat input */}
+            {/* Chat input — Gap 3: stays ENABLED during streaming for mid-execution steering */}
             {chatFiles.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {chatFiles.map((f, i) => (
@@ -1108,6 +1312,12 @@ export default function AgentDetailPage() {
                 ))}
               </div>
             )}
+            {chatStreaming && sessionConnected && (
+              <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-lantern-500/5 border border-lantern-500/20 px-3 py-1.5">
+                <Zap className="h-3 w-3 text-lantern-400" />
+                <span className="text-[10px] text-lantern-400">Agent is responding -- you can send another message to steer the conversation</span>
+              </div>
+            )}
             <div className="mt-3 flex items-center gap-2">
               <button onClick={() => handleFileAttach(setChatFiles)} className="rounded-lg border border-zinc-700 p-2 text-zinc-500 hover:bg-surface-3 hover:text-zinc-300" title="Attach file">
                 <Paperclip className="h-4 w-4" />
@@ -1115,11 +1325,11 @@ export default function AgentDetailPage() {
               <input
                 type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }}
-                placeholder="Type a message..." disabled={chatStreaming}
-                className="flex-1 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 disabled:opacity-50"
+                placeholder={chatStreaming && sessionConnected ? "Steer the agent -- send a follow-up..." : "Type a message..."}
+                className="flex-1 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50"
               />
-              <button onClick={handleChatSend} disabled={chatStreaming || (!chatInput.trim() && chatFiles.length === 0)} className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2.5 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50">
-                {chatStreaming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+              <button onClick={handleChatSend} disabled={!chatInput.trim() && chatFiles.length === 0} className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2.5 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50">
+                {chatStreaming && !sessionConnected ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
               </button>
             </div>
           </div>
@@ -1372,6 +1582,57 @@ export default function AgentDetailPage() {
                     <div><div className="text-xs font-medium text-zinc-200">{level.label}</div><div className="text-[10px] text-zinc-500">{level.desc}</div></div>
                   </label>
                 ))}
+              </div>
+            </div>
+
+            {/* Gap 2: Managed Environment Settings */}
+            <div className="rounded-xl border border-emerald-500/20 bg-surface-1 p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <Zap className="h-4 w-4 text-emerald-400" />
+                <h3 className="text-sm font-semibold text-zinc-200">Environment</h3>
+                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-medium text-emerald-400">Managed</span>
+              </div>
+              <p className="text-[10px] text-zinc-500">Configure the managed runtime environment for this agent. Changes are saved locally and will apply to future deployments.</p>
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">Runtime</label>
+                  <select value={envRuntime} onChange={(e) => { setEnvRuntime(e.target.value); try { const s = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}"); s.runtime = e.target.value; localStorage.setItem(`lantern_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
+                    <option value="node22">Node.js 22 (default)</option>
+                    <option value="python312">Python 3.12</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">Memory</label>
+                  <select value={envMemory} onChange={(e) => { setEnvMemory(e.target.value); try { const s = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}"); s.memory = e.target.value; localStorage.setItem(`lantern_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
+                    <option value="256mb">256MB</option>
+                    <option value="512mb">512MB (default)</option>
+                    <option value="1gb">1GB</option>
+                    <option value="2gb">2GB</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">Timeout</label>
+                  <select value={envTimeout} onChange={(e) => { setEnvTimeout(e.target.value); try { const s = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}"); s.timeout = e.target.value; localStorage.setItem(`lantern_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
+                    <option value="1m">1 minute</option>
+                    <option value="5m">5 minutes (default)</option>
+                    <option value="15m">15 minutes</option>
+                    <option value="30m">30 minutes</option>
+                    <option value="1h">1 hour</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">Network Access</label>
+                  <select value={envNetwork} onChange={(e) => { setEnvNetwork(e.target.value); try { const s = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}"); s.network = e.target.value; localStorage.setItem(`lantern_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-emerald-500/50">
+                    <option value="allow-all">Allow all</option>
+                    <option value="restricted">Restricted</option>
+                    <option value="no-egress">No egress</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">Additional Packages (comma-separated)</label>
+                  <input type="text" value={envPackages} onChange={(e) => { setEnvPackages(e.target.value); try { const s = JSON.parse(localStorage.getItem(`lantern_env_${name}`) || "{}"); s.packages = e.target.value; localStorage.setItem(`lantern_env_${name}`, JSON.stringify(s)); } catch { /* */ } }} placeholder="e.g., axios, lodash, cheerio" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-emerald-500/50" />
+                </div>
               </div>
             </div>
 

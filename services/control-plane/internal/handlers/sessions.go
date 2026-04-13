@@ -1,0 +1,579 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"go.uber.org/zap"
+
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/lantern/services/control-plane/internal/server"
+)
+
+// SessionHandler provides HTTP handlers for interactive agent sessions.
+// A session is a durable, long-lived entity that allows multi-turn
+// conversation with an agent. Users send messages, the agent responds,
+// and users can steer mid-execution.
+type SessionHandler struct {
+	srv      *server.Server
+	auth     *AuthHandler
+	llmProxy *LlmProxyHandler
+}
+
+// NewSessionHandler creates a new SessionHandler.
+func NewSessionHandler(srv *server.Server, auth *AuthHandler, llmProxy *LlmProxyHandler) *SessionHandler {
+	return &SessionHandler{
+		srv:      srv,
+		auth:     auth,
+		llmProxy: llmProxy,
+	}
+}
+
+func (h *SessionHandler) logger() *zap.Logger {
+	return h.srv.Logger.Named("sessions")
+}
+
+// contextWithTenant extracts the JWT from the request and returns a context
+// carrying the tenant_id, plus the tenant ID string itself.
+func (h *SessionHandler) contextWithTenant(r *http.Request) (context.Context, string, error) {
+	claims, err := h.auth.validateRequest(r)
+	if err != nil {
+		return nil, "", err
+	}
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	return ctx, claims.TenantID, nil
+}
+
+// ---------- JSON types ----------
+
+type sessionMessage struct {
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Timestamp string `json:"timestamp"`
+}
+
+type sessionJSON struct {
+	ID        string           `json:"id"`
+	TenantID  string           `json:"tenantId"`
+	AgentName string           `json:"agentName"`
+	Status    string           `json:"status"`
+	Messages  []sessionMessage `json:"messages"`
+	CreatedAt string           `json:"createdAt"`
+	UpdatedAt string           `json:"updatedAt"`
+}
+
+// ---------- Handlers ----------
+
+// CreateSession handles POST /v1/sessions.
+// Creates a new interactive session for an agent.
+func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	var body struct {
+		AgentName   string            `json:"agentName"`
+		Environment map[string]string `json:"environment"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if body.AgentName == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentName is required"})
+		return
+	}
+
+	// Insert session row.
+	var sessionID string
+	err = h.srv.Pool.QueryRow(ctx, `
+		INSERT INTO sessions (tenant_id, agent_name, status, messages)
+		VALUES ($1, $2, 'active', '[]'::jsonb)
+		RETURNING id
+	`, tenantID, body.AgentName).Scan(&sessionID)
+	if err != nil {
+		h.logger().Error("create session failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create session"})
+		return
+	}
+
+	h.logger().Info("session created",
+		zap.String("session_id", sessionID),
+		zap.String("agent", body.AgentName),
+		zap.String("tenant_id", tenantID),
+	)
+
+	writeJSON(w, http.StatusCreated, map[string]string{
+		"id":     sessionID,
+		"status": "active",
+	})
+}
+
+// SendMessage handles POST /v1/sessions/{id}/messages.
+// Appends a user message to the session, triggers an LLM response, and
+// publishes events to Redis for SSE consumers.
+func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	sessionID := r.PathValue("id")
+	if sessionID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session id is required"})
+		return
+	}
+
+	var body struct {
+		Content     string   `json:"content"`
+		Attachments []string `json:"attachments"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if body.Content == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "content is required"})
+		return
+	}
+
+	// Verify session belongs to tenant and is active.
+	var agentName, status string
+	var messagesRaw []byte
+	err = h.srv.Pool.QueryRow(ctx, `
+		SELECT agent_name, status, messages
+		FROM sessions
+		WHERE id = $1 AND tenant_id = $2
+	`, sessionID, tenantID).Scan(&agentName, &status, &messagesRaw)
+	if err == pgx.ErrNoRows {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+	if err != nil {
+		h.logger().Error("query session failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if status != "active" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "session is not active"})
+		return
+	}
+
+	// Parse existing messages.
+	var messages []sessionMessage
+	if len(messagesRaw) > 0 {
+		if err := json.Unmarshal(messagesRaw, &messages); err != nil {
+			messages = []sessionMessage{}
+		}
+	}
+
+	// Append user message.
+	userMsg := sessionMessage{
+		Role:      "user",
+		Content:   body.Content,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+	messages = append(messages, userMsg)
+
+	// Update messages in DB and mark as processing.
+	updatedMsgs, _ := json.Marshal(messages)
+	_, err = h.srv.Pool.Exec(ctx, `
+		UPDATE sessions SET messages = $1::jsonb, status = 'processing', updated_at = now()
+		WHERE id = $2
+	`, string(updatedMsgs), sessionID)
+	if err != nil {
+		h.logger().Error("update session messages failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save message"})
+		return
+	}
+
+	// Publish user message event to Redis for SSE listeners.
+	h.publishEvent(sessionID, "user.message", map[string]string{
+		"content":   body.Content,
+		"timestamp": userMsg.Timestamp,
+	})
+
+	// Return immediately — the LLM call happens asynchronously.
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"status": "processing",
+	})
+
+	// Kick off LLM response in background.
+	go h.processMessage(sessionID, tenantID, agentName, messages)
+}
+
+// processMessage calls the LLM with the full message history and appends the
+// assistant response. Events are published to Redis as the processing happens.
+func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage) {
+	ctx := context.Background()
+	ctx = middleware.InjectTenantID(ctx, tenantID)
+
+	h.publishEvent(sessionID, "agent.thinking", map[string]string{
+		"status": "Processing your message...",
+	})
+
+	// Build the prompt from message history.
+	// The first system message is the agent's prompt from localStorage (the
+	// frontend injects it as the first user message context).
+	var promptMessages []map[string]string
+	promptMessages = append(promptMessages, map[string]string{
+		"role":    "system",
+		"content": fmt.Sprintf("You are the agent '%s'. You are in an interactive session. Respond helpfully and concisely.", agentName),
+	})
+	for _, m := range messages {
+		promptMessages = append(promptMessages, map[string]string{
+			"role":    m.Role,
+			"content": m.Content,
+		})
+	}
+
+	// Resolve model and API key.
+	provider, model := resolveModel("auto")
+	apiKey, err := h.llmProxy.resolveProviderKey(ctx, tenantID, provider)
+	if err != nil {
+		h.logger().Warn("session: no LLM key", zap.Error(err))
+		h.appendAssistantMessage(ctx, sessionID, "I'm unable to process your request right now. Please configure an LLM provider in Settings.")
+		h.publishEvent(sessionID, "agent.message", map[string]string{
+			"content": "I'm unable to process your request right now. Please configure an LLM provider in Settings.",
+		})
+		h.publishEvent(sessionID, "session.status_idle", map[string]string{})
+		return
+	}
+
+	// Call LLM with full message history.
+	result, _, _, _, llmErr := h.callLLMWithMessages(ctx, provider, model, apiKey, promptMessages)
+	if llmErr != nil {
+		h.logger().Error("session: LLM call failed", zap.Error(llmErr))
+		errContent := fmt.Sprintf("Sorry, I encountered an error: %s", llmErr.Error())
+		h.appendAssistantMessage(ctx, sessionID, errContent)
+		h.publishEvent(sessionID, "agent.message", map[string]string{
+			"content": errContent,
+		})
+		h.publishEvent(sessionID, "session.status_idle", map[string]string{})
+		return
+	}
+
+	// Append assistant message and publish.
+	h.appendAssistantMessage(ctx, sessionID, result)
+	h.publishEvent(sessionID, "agent.message", map[string]string{
+		"content":   result,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+	h.publishEvent(sessionID, "session.status_idle", map[string]string{})
+}
+
+// appendAssistantMessage appends an assistant message to the session in DB
+// and sets the status back to active.
+func (h *SessionHandler) appendAssistantMessage(ctx context.Context, sessionID, content string) {
+	msg := sessionMessage{
+		Role:      "assistant",
+		Content:   content,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+	msgJSON, _ := json.Marshal(msg)
+
+	_, err := h.srv.Pool.Exec(ctx, `
+		UPDATE sessions
+		SET messages = messages || $1::jsonb,
+		    status = 'active',
+		    updated_at = now()
+		WHERE id = $2
+	`, string(msgJSON), sessionID)
+	if err != nil {
+		h.logger().Error("append assistant message failed", zap.String("session_id", sessionID), zap.Error(err))
+	}
+}
+
+// publishEvent sends an event to Redis pub/sub for SSE consumers.
+func (h *SessionHandler) publishEvent(sessionID, eventType string, data map[string]string) {
+	evt := map[string]any{
+		"type":      eventType,
+		"data":      data,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+	payload, _ := json.Marshal(evt)
+	channel := fmt.Sprintf("session:%s:events", sessionID)
+	if err := h.srv.Redis.Publish(context.Background(), channel, string(payload)).Err(); err != nil {
+		h.logger().Warn("publish event failed", zap.String("session_id", sessionID), zap.Error(err))
+	}
+}
+
+// GetEvents handles GET /v1/sessions/{id}/events.
+// Returns a Server-Sent Events stream of session events.
+func (h *SessionHandler) GetEvents(w http.ResponseWriter, r *http.Request) {
+	// SSE requires the connection to stay open. Validate auth first.
+	claims, err := h.auth.validateRequest(r)
+	if err != nil {
+		// Also check query param for EventSource (which can't set headers).
+		tokenParam := r.URL.Query().Get("token")
+		if tokenParam != "" {
+			claims, err = h.auth.ValidateToken(tokenParam)
+		}
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+	}
+	tenantID := claims.TenantID
+
+	sessionID := r.PathValue("id")
+	if sessionID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session id is required"})
+		return
+	}
+
+	// Verify session belongs to tenant.
+	var exists bool
+	err = h.srv.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1 AND tenant_id = $2)
+	`, sessionID, tenantID).Scan(&exists)
+	if err != nil || !exists {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+
+	// Set SSE headers.
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming not supported"})
+		return
+	}
+
+	// Send initial connected event.
+	fmt.Fprintf(w, "data: %s\n\n", `{"type":"connected","data":{}}`)
+	flusher.Flush()
+
+	// Subscribe to Redis pub/sub for this session.
+	channel := fmt.Sprintf("session:%s:events", sessionID)
+	pubsub := h.srv.Redis.Subscribe(r.Context(), channel)
+	defer pubsub.Close()
+
+	ch := pubsub.Channel()
+
+	// Keep connection open and forward events.
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(w, "data: %s\n\n", msg.Payload)
+			flusher.Flush()
+		}
+	}
+}
+
+// StopSession handles POST /v1/sessions/{id}/stop.
+func (h *SessionHandler) StopSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	sessionID := r.PathValue("id")
+	if sessionID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session id is required"})
+		return
+	}
+
+	tag, err := h.srv.Pool.Exec(ctx, `
+		UPDATE sessions SET status = 'stopped', updated_at = now()
+		WHERE id = $1 AND tenant_id = $2
+	`, sessionID, tenantID)
+	if err != nil {
+		h.logger().Error("stop session failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+
+	h.publishEvent(sessionID, "session.stopped", map[string]string{})
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+}
+
+// DeleteSession handles DELETE /v1/sessions/{id}.
+func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	sessionID := r.PathValue("id")
+	if sessionID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session id is required"})
+		return
+	}
+
+	tag, err := h.srv.Pool.Exec(ctx, `
+		DELETE FROM sessions WHERE id = $1 AND tenant_id = $2
+	`, sessionID, tenantID)
+	if err != nil {
+		h.logger().Error("delete session failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListSessions handles GET /v1/sessions.
+func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	rows, err := h.srv.Pool.Query(ctx, `
+		SELECT id, tenant_id, agent_name, status, messages, created_at, updated_at
+		FROM sessions
+		WHERE tenant_id = $1
+		ORDER BY updated_at DESC
+		LIMIT 100
+	`, tenantID)
+	if err != nil {
+		h.logger().Error("list sessions failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	defer rows.Close()
+
+	sessions := make([]sessionJSON, 0)
+	for rows.Next() {
+		var s sessionJSON
+		var messagesRaw []byte
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(&s.ID, &s.TenantID, &s.AgentName, &s.Status, &messagesRaw, &createdAt, &updatedAt); err != nil {
+			continue
+		}
+		s.CreatedAt = createdAt.Format(time.RFC3339)
+		s.UpdatedAt = updatedAt.Format(time.RFC3339)
+		if err := json.Unmarshal(messagesRaw, &s.Messages); err != nil {
+			s.Messages = []sessionMessage{}
+		}
+		sessions = append(sessions, s)
+	}
+
+	writeJSON(w, http.StatusOK, sessions)
+}
+
+// GetSession handles GET /v1/sessions/{id}.
+func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	sessionID := r.PathValue("id")
+	if sessionID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session id is required"})
+		return
+	}
+
+	var s sessionJSON
+	var messagesRaw []byte
+	var createdAt, updatedAt time.Time
+	err = h.srv.Pool.QueryRow(ctx, `
+		SELECT id, tenant_id, agent_name, status, messages, created_at, updated_at
+		FROM sessions
+		WHERE id = $1 AND tenant_id = $2
+	`, sessionID, tenantID).Scan(&s.ID, &s.TenantID, &s.AgentName, &s.Status, &messagesRaw, &createdAt, &updatedAt)
+	if err == pgx.ErrNoRows {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+	if err != nil {
+		h.logger().Error("get session failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	s.CreatedAt = createdAt.Format(time.RFC3339)
+	s.UpdatedAt = updatedAt.Format(time.RFC3339)
+	if err := json.Unmarshal(messagesRaw, &s.Messages); err != nil {
+		s.Messages = []sessionMessage{}
+	}
+
+	writeJSON(w, http.StatusOK, s)
+}
+
+// ---------- LLM helper for multi-turn messages ----------
+
+// callLLMWithMessages calls the LLM with a full message history (multi-turn).
+// This extends callLLMSync to support the session abstraction.
+func (h *SessionHandler) callLLMWithMessages(ctx context.Context, provider, model, apiKey string, messages []map[string]string) (result string, tokensIn, tokensOut int64, costUsd float64, err error) {
+	// Build a single prompt from the messages for the existing callLLMSync.
+	// In production, this would use the native messages API. For the spike,
+	// we concatenate messages into a structured prompt.
+	var prompt string
+	for _, m := range messages {
+		role := m["role"]
+		content := m["content"]
+		switch role {
+		case "system":
+			prompt += fmt.Sprintf("[System]\n%s\n\n", content)
+		case "user":
+			prompt += fmt.Sprintf("[User]\n%s\n\n", content)
+		case "assistant":
+			prompt += fmt.Sprintf("[Assistant]\n%s\n\n", content)
+		}
+	}
+	prompt += "[Assistant]\n"
+
+	return h.llmProxy.callLLMSync(ctx, provider, model, apiKey, prompt)
+}
