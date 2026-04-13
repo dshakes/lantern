@@ -168,6 +168,7 @@ func main() {
 	httpMux.HandleFunc("POST /v1/runs", restHandler.CreateRun)
 	httpMux.HandleFunc("GET /v1/runs/{id}", restHandler.GetRun)
 	httpMux.HandleFunc("POST /v1/runs/{id}/cancel", restHandler.CancelRun)
+	httpMux.HandleFunc("DELETE /v1/runs/{id}", restHandler.DeleteRun)
 
 	// Connector endpoints.
 	httpMux.HandleFunc("POST /v1/connectors/install", connectorHandler.InstallConnector)

@@ -444,6 +444,35 @@ func (h *RESTHandler) CancelRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, runToMap(run))
 }
 
+// DeleteRun handles DELETE /v1/runs/{id}.
+func (h *RESTHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	ctx, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
+		return
+	}
+
+	_, err = h.srv.Pool.Exec(ctx, `DELETE FROM runs WHERE id = $1`, id)
+	if err != nil {
+		h.logger().Error("DeleteRun failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ---------- CORS middleware ----------
 
 // CORSMiddleware wraps an http.Handler to add CORS headers for browser access.

@@ -524,6 +524,10 @@ class LanternAPI {
     }
   }
 
+  async deleteRun(id: string): Promise<void> {
+    await this.request<void>(`/v1/runs/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
   // ---- Streaming ----------------------------------------------------------
 
   streamRunEvents(runId: string): {

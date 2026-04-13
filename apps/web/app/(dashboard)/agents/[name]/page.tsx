@@ -98,6 +98,8 @@ function ModelSelect({ value, onChange, className }: { value: string; onChange: 
 // Tabs
 // ---------------------------------------------------------------------------
 
+const RUNS_PER_PAGE = 10;
+
 const tabs = [
   { key: "build", label: "Build", icon: Hammer },
   { key: "runs", label: "Runs", icon: Play },
@@ -166,6 +168,8 @@ export default function AgentDetailPage() {
 
   // Runs tab
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [runsPage, setRunsPage] = useState(0);
+  const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
 
   // Load saved state
   useEffect(() => {
@@ -460,15 +464,23 @@ export default function AgentDetailPage() {
               </div>
             ) : (
               <div className="space-y-1">
-                <div className="grid grid-cols-[auto_1fr_100px_80px_140px] gap-4 px-4 py-2 text-xs font-medium text-zinc-500">
-                  <span className="w-4" /><span>Status</span><span>Duration</span><span>Cost</span><span>Started</span>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-zinc-500">{agentRuns.length} run{agentRuns.length !== 1 ? "s" : ""}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-zinc-600">Page {runsPage + 1} of {Math.ceil(agentRuns.length / RUNS_PER_PAGE)}</span>
+                    <button onClick={() => setRunsPage(p => Math.max(0, p - 1))} disabled={runsPage === 0} className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-surface-3 disabled:opacity-30">Prev</button>
+                    <button onClick={() => setRunsPage(p => Math.min(Math.ceil(agentRuns.length / RUNS_PER_PAGE) - 1, p + 1))} disabled={(runsPage + 1) * RUNS_PER_PAGE >= agentRuns.length} className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-surface-3 disabled:opacity-30">Next</button>
+                  </div>
                 </div>
-                {agentRuns.map((run) => {
+                <div className="grid grid-cols-[auto_1fr_100px_80px_140px_auto] gap-4 px-4 py-2 text-xs font-medium text-zinc-500">
+                  <span className="w-4" /><span>Status</span><span>Duration</span><span>Cost</span><span>Started</span><span className="w-6" />
+                </div>
+                {agentRuns.slice(runsPage * RUNS_PER_PAGE, (runsPage + 1) * RUNS_PER_PAGE).map((run) => {
                   const expanded = expandedRunId === run.id;
                   const dur = run.startedAt ? formatDuration(new Date(run.finishedAt ?? new Date()).getTime() - new Date(run.startedAt).getTime()) : "--";
                   return (
                     <div key={run.id} className="rounded-lg border border-zinc-800 bg-surface-1">
-                      <button onClick={() => setExpandedRunId(expanded ? null : run.id)} className="grid w-full grid-cols-[auto_1fr_100px_80px_140px] items-center gap-4 px-4 py-3 text-left text-sm hover:bg-surface-2">
+                      <button onClick={() => setExpandedRunId(expanded ? null : run.id)} className="grid w-full grid-cols-[auto_1fr_100px_80px_140px] items-center gap-4 px-4 py-3 text-left text-sm hover:bg-surface-2 rounded-lg">
                         {expanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />}
                         <div className="flex items-center gap-3"><StatusBadge status={run.status} /><span className="font-mono text-xs text-zinc-500">{run.id.slice(0, 16)}</span></div>
                         <span className="text-zinc-400">{dur}</span>
@@ -562,6 +574,29 @@ export default function AgentDetailPage() {
                               <span className="text-sm text-zinc-400">Processing... result will appear when complete</span>
                             </div>
                           ) : <p className="text-xs text-zinc-600">No output available.</p>}
+                          {/* Delete run */}
+                          <div className="flex justify-end pt-2 border-t border-zinc-800/50 mt-3">
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                setDeletingRunId(run.id);
+                                try {
+                                  await api.deleteRun(run.id);
+                                  toast.success("Run deleted");
+                                  refreshRuns();
+                                } catch (err) {
+                                  toast.error(err instanceof Error ? err.message : "Failed to delete");
+                                } finally {
+                                  setDeletingRunId(null);
+                                }
+                              }}
+                              disabled={deletingRunId === run.id}
+                              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+                            >
+                              {deletingRunId === run.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                              Delete run
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
