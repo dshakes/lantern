@@ -1342,7 +1342,8 @@ export default function AgentDetailPage() {
               onClick={async () => {
                 setTestRunning(true);
                 try {
-                  const run = await api.createRun({ agentName: name, input: {} });
+                  const agentConf = JSON.parse(localStorage.getItem(`lantern_agent_settings_${name}`) || "{}");
+                  const run = await api.createRun({ agentName: name, input: { connectors: agentConf.connectors || [] } });
                   toast.success(`Run started: ${run.id.slice(0, 12)}...`);
                   // Refresh runs list after a delay
                   setTimeout(() => refreshRuns(), 3000);

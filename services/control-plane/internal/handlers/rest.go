@@ -551,16 +551,30 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	inputJSON, _ := json.Marshal(input)
 	prompt := fmt.Sprintf("You are the agent '%s'. Process this input and produce a result:\n\n%s", agentName, string(inputJSON))
 
-	// 2b. Only fetch Gmail if the agent is email-related (name contains email/gmail/digest/inbox)
-	isEmailAgent := strings.Contains(strings.ToLower(agentName), "email") ||
-		strings.Contains(strings.ToLower(agentName), "gmail") ||
-		strings.Contains(strings.ToLower(agentName), "digest") ||
-		strings.Contains(strings.ToLower(agentName), "inbox") ||
-		strings.Contains(strings.ToLower(agentName), "mail")
+	// 2b. Check if this agent has Gmail in its connector config.
+	// The agent's connector list is stored in the input JSON under "connectors"
+	// or we check if the agent has a Gmail connector explicitly linked.
+	// For now, check the input for a "useGmail" flag, or check if the agent
+	// description/labels mention email. The proper fix: read agent's connector
+	// config from a dedicated table.
+	agentUsesGmail := false
+	if connectors, ok := input["connectors"]; ok {
+		if connList, ok := connectors.([]any); ok {
+			for _, c := range connList {
+				if cs, ok := c.(string); ok && (cs == "Gmail" || cs == "gmail") {
+					agentUsesGmail = true
+				}
+			}
+		}
+	}
+	// Also check if explicitly requested in the input
+	if _, ok := input["fetchEmails"]; ok {
+		agentUsesGmail = true
+	}
 
 	var gmailToken string
-	if isEmailAgent {
-		logStep("fetch_data", "running", "Checking for connected data sources")
+	if agentUsesGmail {
+		logStep("fetch_data", "running", "Fetching data from connected sources")
 		gmailToken = resolveGmailToken(ctx, h.srv.Pool, tenantID)
 	// Try to refresh the token before use
 	if gmailToken != "" {
