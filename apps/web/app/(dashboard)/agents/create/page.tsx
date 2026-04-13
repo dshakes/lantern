@@ -395,22 +395,44 @@ function CreatePage() {
 
         {step === "test" && (
           <div className="mx-auto max-w-2xl space-y-6">
-            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
-              <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-300"><Play className="h-4 w-4 text-emerald-400" /> Test Your Agent</h3>
-              <div className="mb-3 flex items-center gap-2"><label className="text-xs text-zinc-500">Model:</label><ModelSelect value={testModel} onChange={setTestModel} className="h-8 text-xs" /></div>
-              <textarea value={testInput} onChange={(e) => setTestInput(e.target.value)} rows={3} placeholder="Type a test message..." className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />
+            {/* Agent Summary */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Agent Summary</h3>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div><span className="text-zinc-500">Name:</span> <span className="text-zinc-200 font-medium">{name}</span></div>
+                <div><span className="text-zinc-500">Model:</span> <span className="text-zinc-200">{model === "auto" ? "Auto (recommended)" : model}</span></div>
+                <div className="col-span-2"><span className="text-zinc-500">Description:</span> <span className="text-zinc-300">{description || "—"}</span></div>
+                {instructions && <div className="col-span-2"><span className="text-zinc-500">Instructions:</span> <span className="text-zinc-400 text-[11px]">{instructions.slice(0, 100)}{instructions.length > 100 ? "..." : ""}</span></div>}
+                {selectedConnectors.length > 0 && <div className="col-span-2"><span className="text-zinc-500">Connectors:</span> <span className="text-zinc-300">{selectedConnectors.join(", ")}</span></div>}
+                <div><span className="text-zinc-500">Privacy:</span> <span className="text-zinc-300">{PRIVACY_LEVELS.find(l => l.value === privacy)?.label}</span></div>
+                <div><span className="text-zinc-500">Guardrails:</span> <span className="text-zinc-300">{[guardrails.contentFilter && "Content filter", guardrails.blockPII && "PII blocking"].filter(Boolean).join(", ") || "None"}</span></div>
+              </div>
+            </div>
+
+            {/* Quick Test — optional */}
+            <div className="rounded-xl border border-dashed border-zinc-700 bg-surface-1/50 p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-400"><Play className="h-4 w-4 text-zinc-500" /> Quick Test <span className="text-[10px] text-zinc-600">(optional)</span></h3>
+                <ModelSelect value={testModel} onChange={setTestModel} className="h-7 text-[11px]" />
+              </div>
+              <p className="text-[11px] text-zinc-600 mb-3">Test your agent before creating. You can always test later from the agent&apos;s Build tab.</p>
+              <textarea value={testInput} onChange={(e) => setTestInput(e.target.value)} rows={2}
+                placeholder={description.toLowerCase().includes("email") ? "Summarize my recent emails" : description.toLowerCase().includes("code") ? "Review this code for security issues" : description.toLowerCase().includes("research") ? "Research the latest trends in AI agents" : `Test the ${name || "agent"}: ask it something relevant`}
+                className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />
               <div className="mt-2 flex items-center gap-2">
                 {testRunning ? (<button onClick={() => { setTestRunning(false); setTestDone(true); }} className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-red-500"><Square className="h-3 w-3" /> Stop</button>
-                ) : (<button onClick={handleTestRun} disabled={!testInput.trim()} className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50"><Play className="h-3 w-3" /> Run</button>)}
+                ) : (<button onClick={handleTestRun} disabled={!testInput.trim()} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3.5 py-1.5 text-xs font-medium text-zinc-300 hover:bg-surface-3 disabled:opacity-50"><Play className="h-3 w-3" /> Run Test</button>)}
               </div>
               {(testOutput || testRunning || testError) && (
                 <div className="mt-3 rounded-lg border border-zinc-800 bg-surface-0">
                   {testError ? (<div className="p-3"><div className="flex items-center gap-2 text-xs font-medium text-red-400"><AlertCircle className="h-3 w-3" /> Error</div><p className="mt-1 text-xs text-red-300/70">{testError}</p></div>
-                  ) : (<div ref={testRef} className="max-h-64 overflow-auto p-3"><div className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-zinc-200">{testOutput}{testRunning && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-lantern-400" />}</div></div>)}
-                  {testDone && !testError && (<div className="border-t border-zinc-800 px-3 py-2"><span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Completed</span></div>)}
+                  ) : (<div ref={testRef} className="max-h-48 overflow-auto p-3"><div className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200">{testOutput}{testRunning && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-lantern-400" />}</div></div>)}
+                  {testDone && !testError && (<div className="border-t border-zinc-800 px-3 py-2"><span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Test passed</span></div>)}
                 </div>
               )}
             </div>
+
+            {/* Actions */}
             <div className="flex items-center justify-between">
               <button onClick={() => setStep("configure")} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-surface-3"><ArrowLeft className="h-3.5 w-3.5" /> Back</button>
               <button onClick={handleCreate} disabled={creating || !name.trim()} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50">
