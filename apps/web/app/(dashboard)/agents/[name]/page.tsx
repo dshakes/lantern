@@ -478,64 +478,85 @@ export default function AgentDetailPage() {
                 {agentRuns.slice(runsPage * RUNS_PER_PAGE, (runsPage + 1) * RUNS_PER_PAGE).map((run) => {
                   const expanded = expandedRunId === run.id;
                   const dur = run.startedAt ? formatDuration(new Date(run.finishedAt ?? new Date()).getTime() - new Date(run.startedAt).getTime()) : "--";
+                  const confirmingDelete = deletingRunId === `confirm_${run.id}`;
                   return (
-                    <div key={run.id} className="rounded-lg border border-zinc-800 bg-surface-1">
-                      <button onClick={() => setExpandedRunId(expanded ? null : run.id)} className="grid w-full grid-cols-[auto_1fr_100px_80px_140px] items-center gap-4 px-4 py-3 text-left text-sm hover:bg-surface-2 rounded-lg">
-                        {expanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />}
-                        <div className="flex items-center gap-3"><StatusBadge status={run.status} /><span className="font-mono text-xs text-zinc-500">{run.id.slice(0, 16)}</span></div>
-                        <span className="text-zinc-400">{dur}</span>
-                        <span className="font-mono text-xs text-zinc-400">{formatCost(run.costUsd)}</span>
-                        <span className="text-zinc-500">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm:ss") : "--"}</span>
-                      </button>
+                    <div key={run.id} className="group rounded-lg border border-zinc-800 bg-surface-1">
+                      {/* Row with inline delete */}
+                      <div className="flex items-center">
+                        <button onClick={() => setExpandedRunId(expanded ? null : run.id)} className="flex flex-1 items-center gap-4 px-4 py-3 text-left text-sm hover:bg-surface-2 rounded-l-lg">
+                          {expanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />}
+                          <StatusBadge status={run.status} />
+                          <span className="font-mono text-xs text-zinc-500 hidden sm:inline">{run.id.slice(0, 12)}</span>
+                          <span className="text-xs text-zinc-400 ml-auto">{dur}</span>
+                          <span className="font-mono text-[11px] text-zinc-500">{formatCost(run.costUsd)}</span>
+                          <span className="text-[11px] text-zinc-600 hidden md:inline">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
+                        </button>
+                        {/* Delete — visible on hover or when confirming */}
+                        <div className={clsx("flex items-center pr-2", confirmingDelete ? "opacity-100" : "opacity-0 group-hover:opacity-100 transition-opacity")}>
+                          {confirmingDelete ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={async () => {
+                                  setDeletingRunId(run.id);
+                                  try { await api.deleteRun(run.id); toast.success("Deleted"); refreshRuns(); } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); }
+                                  finally { setDeletingRunId(null); }
+                                }}
+                                disabled={deletingRunId === run.id}
+                                className="rounded px-2 py-1 text-[10px] font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20"
+                              >
+                                {deletingRunId === run.id ? "..." : "Yes"}
+                              </button>
+                              <button onClick={() => setDeletingRunId(null)} className="rounded px-2 py-1 text-[10px] text-zinc-500 hover:text-zinc-300">No</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setDeletingRunId(`confirm_${run.id}`)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10" title="Delete">
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {/* Expanded details */}
                       {expanded && (
                         <div className="border-t border-zinc-800 p-4 space-y-4">
-                          {/* Execution Steps — deduplicated, proper icons */}
+                          {/* Execution Steps with premium icons */}
                           {(() => {
                             const raw = Array.isArray(run.triggerMeta) ? run.triggerMeta as Array<Record<string, string>> : [];
-                            // Deduplicate: keep only the last status for each step
                             const stepMap = new Map<string, Record<string, string>>();
                             for (const s of raw) stepMap.set(s.step, s);
                             const steps = Array.from(stepMap.values());
                             const isRunDone = run.status === "succeeded" || run.status === "failed" || run.status === "cancelled";
-
                             if (steps.length === 0 && run.status === "running") {
-                              return (
-                                <div className="flex items-center gap-2.5 py-3">
-                                  <div className="h-4 w-4 rounded-full border-2 border-lantern-400 border-t-transparent animate-spin" />
-                                  <span className="text-sm text-zinc-400">Agent is running...</span>
-                                </div>
-                              );
+                              return (<div className="flex items-center gap-2.5 py-3"><div className="h-4 w-4 rounded-full border-2 border-lantern-400 border-t-transparent animate-spin" /><span className="text-sm text-zinc-400">Agent is running...</span></div>);
                             }
                             if (steps.length === 0) return null;
-
+                            // Map step names to premium icons and colors
+                            const stepIcon = (stepName: string) => {
+                              if (stepName.includes("gmail") || stepName.includes("email") || stepName.includes("fetch")) return { icon: "📧", color: "bg-red-500/10 text-red-400" };
+                              if (stepName.includes("llm") || stepName.includes("ai") || stepName.includes("call")) return { icon: "🧠", color: "bg-purple-500/10 text-purple-400" };
+                              if (stepName.includes("prompt") || stepName.includes("build")) return { icon: "📝", color: "bg-blue-500/10 text-blue-400" };
+                              if (stepName.includes("save") || stepName.includes("output")) return { icon: "💾", color: "bg-emerald-500/10 text-emerald-400" };
+                              if (stepName.includes("complete") || stepName.includes("finish")) return { icon: "✅", color: "bg-emerald-500/10 text-emerald-400" };
+                              if (stepName.includes("data") || stepName.includes("fetch")) return { icon: "🔍", color: "bg-amber-500/10 text-amber-400" };
+                              return { icon: "⚡", color: "bg-zinc-500/10 text-zinc-400" };
+                            };
                             return (
                               <div>
                                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Execution Log</p>
-                                <div className="rounded-lg border border-zinc-800 bg-surface-0 divide-y divide-zinc-800/50">
+                                <div className="space-y-1">
                                   {steps.map((s, i) => {
                                     const done = s.status === "completed" || (isRunDone && s.status === "running");
-                                    const isLast = i === steps.length - 1;
+                                    const si = stepIcon(s.step);
                                     return (
-                                      <div key={i} className="flex items-center gap-3 px-3 py-2">
-                                        <div className="shrink-0">
-                                          {done ? (
-                                            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/15">
-                                              <CheckCircle2 className="h-3 w-3 text-emerald-400" />
-                                            </div>
-                                          ) : s.status === "running" && !isRunDone ? (
-                                            <div className="flex h-5 w-5 items-center justify-center">
-                                              <div className="h-3.5 w-3.5 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
-                                            </div>
-                                          ) : (
-                                            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/15">
-                                              <AlertCircle className="h-3 w-3 text-red-400" />
-                                            </div>
-                                          )}
+                                      <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2 bg-surface-0">
+                                        <div className={clsx("flex h-7 w-7 items-center justify-center rounded-lg text-sm shrink-0", si.color)}>
+                                          {!done && s.status === "running" && !isRunDone ? (
+                                            <div className="h-3.5 w-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                                          ) : si.icon}
                                         </div>
-                                        <span className={clsx("flex-1 text-xs", done ? "text-zinc-300" : "text-zinc-500")}>{s.detail}</span>
-                                        {isLast && s.detail.includes("tokens") && (
-                                          <span className="text-[10px] font-mono text-lantern-400">{s.detail.match(/\$[\d.]+/)?.[0]}</span>
-                                        )}
+                                        <div className="flex-1 min-w-0">
+                                          <span className={clsx("text-xs", done ? "text-zinc-200" : "text-zinc-500")}>{s.detail}</span>
+                                        </div>
+                                        {done && <CheckCircle2 className="h-3 w-3 text-emerald-500/60 shrink-0" />}
                                       </div>
                                     );
                                   })}
@@ -543,22 +564,14 @@ export default function AgentDetailPage() {
                               </div>
                             );
                           })()}
-
-                          {/* Output — rendered as clean text, not raw markdown */}
+                          {/* Output */}
                           {run.output ? (
                             <div>
                               <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Result</p>
                               <div className="max-h-80 overflow-auto rounded-lg border border-emerald-500/10 bg-emerald-500/[0.02] p-4">
                                 {(() => {
-                                  const raw = typeof run.output === "string" ? run.output
-                                    : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>)
-                                    ? String((run.output as Record<string, unknown>).result)
-                                    : JSON.stringify(run.output, null, 2);
-                                  // Convert markdown bold to plain text, clean up formatting
-                                  const cleaned = raw
-                                    .replace(/\*\*(.*?)\*\*/g, "$1")
-                                    .replace(/^#{1,3}\s+/gm, "")
-                                    .replace(/^- /gm, "  • ");
+                                  const raw = typeof run.output === "string" ? run.output : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>) ? String((run.output as Record<string, unknown>).result) : JSON.stringify(run.output, null, 2);
+                                  const cleaned = raw.replace(/\*\*(.*?)\*\*/g, "$1").replace(/^#{1,3}\s+/gm, "").replace(/^- /gm, "  • ");
                                   return <pre className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200 font-sans">{cleaned}</pre>;
                                 })()}
                               </div>
@@ -569,34 +582,8 @@ export default function AgentDetailPage() {
                               <p className="mt-1 text-xs text-red-300/70">{run.error.message}</p>
                             </div>
                           ) : run.status === "running" ? (
-                            <div className="flex items-center gap-2.5 py-3">
-                              <div className="h-4 w-4 rounded-full border-2 border-lantern-400 border-t-transparent animate-spin" />
-                              <span className="text-sm text-zinc-400">Processing... result will appear when complete</span>
-                            </div>
+                            <div className="flex items-center gap-2.5 py-3"><div className="h-4 w-4 rounded-full border-2 border-lantern-400 border-t-transparent animate-spin" /><span className="text-sm text-zinc-400">Processing...</span></div>
                           ) : <p className="text-xs text-zinc-600">No output available.</p>}
-                          {/* Delete run */}
-                          <div className="flex justify-end pt-2 border-t border-zinc-800/50 mt-3">
-                            <button
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                setDeletingRunId(run.id);
-                                try {
-                                  await api.deleteRun(run.id);
-                                  toast.success("Run deleted");
-                                  refreshRuns();
-                                } catch (err) {
-                                  toast.error(err instanceof Error ? err.message : "Failed to delete");
-                                } finally {
-                                  setDeletingRunId(null);
-                                }
-                              }}
-                              disabled={deletingRunId === run.id}
-                              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
-                            >
-                              {deletingRunId === run.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                              Delete run
-                            </button>
-                          </div>
                         </div>
                       )}
                     </div>
