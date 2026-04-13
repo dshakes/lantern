@@ -298,6 +298,10 @@ export default function DeploymentsPage() {
               <p className="mt-1 text-sm text-zinc-500 max-w-md mx-auto">
                 Connect your cloud infrastructure to run agents in your own VPC with microVM isolation.
               </p>
+              <p className="mt-2 text-xs text-zinc-600 max-w-lg mx-auto">
+                A data plane is a Kubernetes cluster in your cloud account that executes agent workloads.
+                Your agents and data stay in your infrastructure while Lantern orchestrates from the control plane.
+              </p>
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

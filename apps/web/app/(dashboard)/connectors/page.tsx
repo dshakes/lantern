@@ -248,7 +248,7 @@ export default function ConnectorsPage() {
         <div className="mb-6 relative max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
           <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search connectors..."
-            className="w-full rounded-lg border border-zinc-700 bg-surface-2 py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
+            className="w-full rounded-lg border border-zinc-800 bg-surface-0 py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/30" />
         </div>
         {/* Category tabs */}
         <div className="mb-6 flex gap-1 overflow-x-auto pb-1">

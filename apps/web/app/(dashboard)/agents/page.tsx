@@ -145,7 +145,7 @@ export default function AgentsPage() {
           </div>
           <button
             onClick={() => router.push("/agents/create")}
-            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+            className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400"
           >
             <Plus className="h-4 w-4" />
             Create Agent
@@ -311,7 +311,7 @@ export default function AgentsPage() {
                 </p>
                 <button
                   onClick={() => setSearch("")}
-                  className="mt-2 text-xs text-indigo-400 transition-colors hover:text-indigo-300"
+                  className="mt-2 text-xs text-lantern-400 transition-colors hover:text-lantern-300"
                 >
                   Clear search
                 </button>

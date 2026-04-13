@@ -811,8 +811,11 @@ export default function AgentDetailPage() {
   if (agentError || !agent) return (
     <div className="flex flex-1 items-center justify-center">
       <div className="text-center">
-        <p className="text-zinc-400">Agent not found.</p>
-        <button onClick={() => router.push("/agents")} className="mt-3 text-sm text-indigo-400 hover:text-indigo-300">Back to Agents</button>
+        <p className="text-sm font-medium text-zinc-300">Agent not found</p>
+        <p className="mt-1 max-w-sm text-xs text-zinc-500">
+          The agent <code className="rounded bg-surface-3 px-1.5 py-0.5 font-mono text-zinc-400">{name}</code> does not exist or may have been deleted.
+        </p>
+        <button onClick={() => router.push("/agents")} className="mt-3 text-sm text-lantern-400 hover:text-lantern-300">Back to Agents</button>
       </div>
     </div>
   );
@@ -899,7 +902,7 @@ export default function AgentDetailPage() {
                   </button>
                 </div>
               </div>
-              <textarea value={systemPrompt} onChange={(e) => { setSystemPrompt(e.target.value); setPromptDirty(true); }} rows={6} spellCheck={false} placeholder="Define what this agent does..." className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20" />
+              <textarea value={systemPrompt} onChange={(e) => { setSystemPrompt(e.target.value); setPromptDirty(true); }} rows={6} spellCheck={false} placeholder="You are a helpful assistant that responds in a professional tone. Always format output as structured bullet points..." className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20" />
               {promptDirty && <p className="mt-1.5 text-[11px] text-amber-400">Unsaved changes</p>}
 
               {/* Version History */}

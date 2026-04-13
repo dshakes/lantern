@@ -521,6 +521,7 @@ function TeamTab({ members, onInviteClick, onChangeRole, onRemoveClick }: { memb
         <table className="data-table">
           <thead><tr><th>Member</th><th>Email</th><th>Role</th><th>Joined</th><th className="w-20"></th></tr></thead>
           <tbody>
+            {members.length === 0 && <tr><td colSpan={5} className="text-center text-zinc-500 py-8">No team members yet. Invite someone to collaborate on your agents.</td></tr>}
             {members.map((member) => (
               <tr key={member.id}>
                 <td>
@@ -597,7 +598,10 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit }: { b
 
       {/* Usage */}
       <div>
-        <h3 className="mb-4 text-sm font-semibold text-zinc-100">Usage This Month</h3>
+        <div className="mb-4 flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-zinc-100">Usage This Month</h3>
+          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">Sample data</span>
+        </div>
         <div className="rounded-xl border border-zinc-800 bg-surface-1 p-6">
           <div className="grid grid-cols-2 gap-6">
             {usageData.map((item) => {

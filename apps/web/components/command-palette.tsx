@@ -98,9 +98,8 @@ export function CommandPalette() {
         icon: Bot,
         onSelect: () => router.push(`/agents/${encodeURIComponent(a.name)}`),
       })),
-      // Recent
-      { id: "recent-1", label: "run_01hqa1b2c3d4", section: "Recent", icon: Clock, onSelect: () => router.push("/runs/run_01hqa1b2c3d4") },
-      { id: "recent-2", label: "run_01hqa2c3d4e5", section: "Recent", icon: Clock, onSelect: () => router.push("/runs/run_01hqa2c3d4e5") },
+      // Quick links
+      { id: "quick-all-runs", label: "View all runs", section: "Quick Links", icon: Clock, onSelect: () => router.push("/runs") },
     ],
     [router, agentNames],
   );
@@ -112,7 +111,7 @@ export function CommandPalette() {
 
   // Group by section
   const grouped = useMemo(() => {
-    const sectionOrder = ["Recent", "Agents", "Navigation", "Actions"];
+    const sectionOrder = ["Quick Links", "Agents", "Navigation", "Actions"];
     const map = new Map<string, CommandItem[]>();
     for (const item of filtered) {
       const list = map.get(item.section) ?? [];

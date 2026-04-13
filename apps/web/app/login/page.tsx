@@ -303,10 +303,12 @@ export default function LoginPage() {
           No account needed — explore with sample data
         </p>
 
-        {/* Dev hint */}
-        <p className="mt-6 text-center text-[10px] text-zinc-700">
-          Dev: admin@lantern.dev / lantern
-        </p>
+        {/* Dev hint -- only visible in development */}
+        {process.env.NODE_ENV === "development" && (
+          <p className="mt-6 text-center text-[10px] text-zinc-700">
+            Dev: admin@lantern.dev / lantern
+          </p>
+        )}
       </div>
     </div>
   );

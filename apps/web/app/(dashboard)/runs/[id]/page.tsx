@@ -59,10 +59,13 @@ export default function RunDetailPage() {
   if (error || !run) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3">
-        <p className="text-zinc-400">Run not found.</p>
+        <p className="text-sm font-medium text-zinc-300">Run not found</p>
+        <p className="max-w-sm text-center text-xs text-zinc-500">
+          The run <code className="rounded bg-surface-3 px-1.5 py-0.5 font-mono text-zinc-400">{id}</code> does not exist or may have been deleted.
+        </p>
         <button
           onClick={() => router.push("/runs")}
-          className="mt-2 text-sm text-indigo-400 transition-colors hover:text-indigo-300"
+          className="mt-2 text-sm text-lantern-400 transition-colors hover:text-lantern-300"
         >
           Back to Runs
         </button>

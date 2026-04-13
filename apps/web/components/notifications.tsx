@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Bell, Check, CheckCheck, Rocket, Play, AlertTriangle, Users } from "lucide-react";
+import { Bell, CheckCheck, Rocket, Play, AlertTriangle, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -165,14 +165,11 @@ export function Notifications() {
           </div>
 
           {/* Footer */}
-          <div className="border-t border-zinc-800 px-4 py-2.5">
-            <button
-              onClick={() => {}}
-              className="w-full text-center text-xs text-zinc-500 transition-colors hover:text-zinc-300"
-            >
-              View all notifications
-            </button>
-          </div>
+          {notifications.every((n) => n.read) && (
+            <div className="border-t border-zinc-800 px-4 py-2.5">
+              <p className="text-center text-xs text-zinc-600">All caught up</p>
+            </div>
+          )}
         </div>
       )}
     </div>

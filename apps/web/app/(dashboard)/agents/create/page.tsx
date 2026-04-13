@@ -139,7 +139,7 @@ function CreatePage() {
       } else { const result = await response.json(); setTestOutput(result.content || JSON.stringify(result, null, 2)); }
       setTestDone(true); setTestRunning(false);
     } catch (err) { setTestError(err instanceof Error ? err.message : "Unknown error"); setTestRunning(false); setTestDone(true); }
-  }, [testInput, testModel, systemPrompt]);
+  }, [testInput, testModel, systemPrompt, instructions]);
 
   const handleCreate = useCallback(async () => {
     if (!name.trim()) { toast.error("Agent name is required"); return; }
@@ -325,7 +325,7 @@ function CreatePage() {
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Connectors</h3>
-                <a href="/connectors" target="_blank" className="text-[10px] text-indigo-400 hover:text-indigo-300">+ Connect more</a>
+                <a href="/connectors" className="text-[10px] text-lantern-400 hover:text-lantern-300">+ Connect more</a>
               </div>
               {(() => {
                 const stored = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("lantern_connectors") || "{}") : {};
@@ -334,7 +334,7 @@ function CreatePage() {
                   return (
                     <div className="rounded-lg border border-dashed border-zinc-700 py-4 text-center">
                       <p className="text-xs text-zinc-500">No connectors configured yet</p>
-                      <a href="/connectors" className="mt-1 inline-block text-[11px] text-indigo-400 hover:text-indigo-300">Go to Connectors to set up Gmail, Slack, GitHub, etc.</a>
+                      <a href="/connectors" className="mt-1 inline-block text-[11px] text-lantern-400 hover:text-lantern-300">Go to Connectors to set up Gmail, Slack, GitHub, etc.</a>
                     </div>
                   );
                 }

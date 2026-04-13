@@ -106,9 +106,12 @@ export default function RunsPage() {
       {/* Content */}
       <div className="flex-1 p-8">
         {error ? (
-          <div className="text-center py-12"><p className="text-sm text-red-400">Failed to load runs: {error.message}</p></div>
+          <div className="text-center py-12">
+            <p className="text-sm text-red-400">Failed to load runs: {error.message}</p>
+            <p className="mt-2 text-xs text-zinc-500">Check that the API server is running, or refresh the page to try again.</p>
+          </div>
         ) : filtered.length === 0 ? (
-          <EmptyState icon={Play} title="No runs yet" description="Run an agent from its detail page to see results here." />
+          <EmptyState icon={Play} title="No runs yet" description="Runs appear here when you execute an agent. Go to an agent's Build tab and click Run to get started." actionLabel="View Agents" onAction={() => router.push("/agents")} />
         ) : (
           <div className="space-y-1">
             {/* Pagination header */}
