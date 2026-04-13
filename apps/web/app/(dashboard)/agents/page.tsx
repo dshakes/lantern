@@ -264,7 +264,7 @@ export default function AgentsPage() {
                           onClick={(e) => e.stopPropagation()}
                         >
                           <button
-                            onClick={() => handleDelete(agent)}
+                            onClick={(e) => { e.stopPropagation(); handleDelete(agent); }}
                             disabled={deletingId === agent.id}
                             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
                           >

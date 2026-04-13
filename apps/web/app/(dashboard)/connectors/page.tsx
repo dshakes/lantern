@@ -139,6 +139,23 @@ export default function ConnectorsPage() {
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
   }, [mc]);
 
+  // Listen for OAuth popup completion.
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type !== "lantern:oauth:complete") return;
+      if (e.data.success) {
+        setView("success"); setMsg(e.data.message || "Connected successfully"); setOauthErr("");
+        loadData();
+        setTimeout(() => { setMc(null); toast.success(`${mc?.name ?? "Connector"} connected via OAuth`); }, 1200);
+      } else {
+        setOauthErr(e.data.message || "OAuth authorization failed");
+        setView("choose");
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [mc, loadData, toast]);
+
   const filtered = useMemo(() => {
     let r = connectors;
     if (category !== "All") r = r.filter((c) => c.category === category);
@@ -155,10 +172,25 @@ export default function ConnectorsPage() {
     setView(inst ? "config" : con.oauthProvider ? "choose" : con.fields.length > 0 ? "manual" : "choose");
   };
 
-  const handleOAuth = () => {
+  const handleOAuth = async () => {
     if (!mc) return;
-    setOauthErr(`OAuth is not configured for ${mc.name} yet. Connect manually instead.`);
-    if (mc.fields.length > 0) setView("manual");
+    setOauthErr("");
+    try {
+      const { redirectUrl } = await api.startOAuth(mc.id);
+      const w = 600, h = 700;
+      const left = window.screenX + (window.outerWidth - w) / 2;
+      const top = window.screenY + (window.outerHeight - h) / 2;
+      window.open(redirectUrl, "lantern-oauth", `width=${w},height=${h},left=${left},top=${top},popup=yes`);
+      // The popup will postMessage on completion (handled by the useEffect above).
+    } catch {
+      // OAuth not configured on the backend — fall back to manual if fields exist.
+      if (mc.fields.length > 0) {
+        setOauthErr(`OAuth is not configured for ${mc.name}. Connect manually instead.`);
+        setView("manual");
+      } else {
+        setOauthErr(`OAuth is not configured for ${mc.name}. Set OAUTH_CLIENT_ID_${mc.id.toUpperCase().replace(/-/g, "_")} and OAUTH_CLIENT_SECRET_${mc.id.toUpperCase().replace(/-/g, "_")} in your environment.`);
+      }
+    }
   };
 
   const handleConnect = async () => {

@@ -453,11 +453,14 @@ class LanternAPI {
         `/v1/agents/${encodeURIComponent(name)}`,
         { method: "DELETE" },
       );
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for deleteAgent, simulating locally",
-      );
-      // Simulate success in demo mode
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Only swallow network errors (API down). Re-throw real API errors.
+      if (msg.includes("fetch") || msg.includes("ECONNREFUSED") || err instanceof TypeError) {
+        console.warn("[lantern] API unavailable for deleteAgent");
+        return; // silent success in demo mode
+      }
+      throw err;
     }
   }
 
