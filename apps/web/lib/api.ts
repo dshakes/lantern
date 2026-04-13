@@ -1191,6 +1191,21 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       method: "POST",
     });
   }
+
+  // ---- Gmail connector -------------------------------------------------------
+
+  async fetchGmailMessages(limit = 20): Promise<{
+    messages: Array<{
+      from: string;
+      subject: string;
+      snippet: string;
+      date: string;
+      body: string;
+    }>;
+    count: number;
+  }> {
+    return this.request(`/v1/connectors/gmail/messages?limit=${limit}`);
+  }
 }
 
 export const api = new LanternAPI();

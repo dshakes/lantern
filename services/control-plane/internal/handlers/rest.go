@@ -17,6 +17,39 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
+// resolveGmailToken looks up the Gmail OAuth access token for a tenant from
+// connector_installs. It checks oauth_token_encrypted first (OAuth flow), then
+// falls back to config->>'accessToken' (manual install).
+func resolveGmailToken(ctx context.Context, pool interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}, tenantID string) string {
+	// Try oauth_token_encrypted first.
+	var oauthTokenJSON []byte
+	err := pool.QueryRow(ctx, `
+		SELECT oauth_token_encrypted
+		FROM connector_installs
+		WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'
+	`, tenantID).Scan(&oauthTokenJSON)
+	if err == nil && len(oauthTokenJSON) > 0 {
+		var tokenData map[string]any
+		if jsonErr := json.Unmarshal(oauthTokenJSON, &tokenData); jsonErr == nil {
+			if at, ok := tokenData["access_token"].(string); ok && at != "" {
+				return at
+			}
+		}
+	}
+
+	// Fall back to config->>'accessToken'.
+	var accessToken string
+	_ = pool.QueryRow(ctx, `
+		SELECT config->>'accessToken'
+		FROM connector_installs
+		WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'
+	`, tenantID).Scan(&accessToken)
+
+	return accessToken
+}
+
 // RESTHandler wraps the gRPC service handlers to expose them over HTTP/JSON.
 type RESTHandler struct {
 	srv      *server.Server
@@ -435,6 +468,35 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	// 2. Build a prompt from the input.
 	inputJSON, _ := json.Marshal(input)
 	prompt := fmt.Sprintf("You are the agent '%s'. Process this input and produce a result:\n\n%s", agentName, string(inputJSON))
+
+	// 2b. Check if Gmail connector is installed for this tenant. If so, fetch
+	// emails and append them to the prompt so the LLM can reference them.
+	gmailToken := resolveGmailToken(ctx, h.srv.Pool, tenantID)
+	if gmailToken != "" {
+		emails, fetchErr := FetchGmailViaAPI(gmailToken, 20)
+		if fetchErr == nil && len(emails) > 0 {
+			var emailText strings.Builder
+			emailText.WriteString("\n\nHere are the user's recent emails:\n\n")
+			for i, e := range emails {
+				emailText.WriteString(fmt.Sprintf("%d. From: %s\n   Subject: %s\n   Preview: %s\n   Date: %s\n\n",
+					i+1, e.From, e.Subject, e.Snippet, e.Date))
+			}
+			prompt += emailText.String()
+		} else if fetchErr != nil {
+			h.logger().Warn("inline executor: Gmail fetch failed, continuing without emails",
+				zap.String("run_id", runID), zap.Error(fetchErr))
+		}
+	} else {
+		// Check if any Gmail connector exists at all (even without a valid token).
+		var configJSON []byte
+		_ = h.srv.Pool.QueryRow(ctx,
+			`SELECT config FROM connector_installs WHERE tenant_id = $1 AND connector_id = 'gmail'`,
+			tenantID,
+		).Scan(&configJSON)
+		if configJSON == nil {
+			prompt += "\n\nNote: Gmail is not connected. The user may paste email content manually, or you should explain how to connect Gmail."
+		}
+	}
 
 	// 3. Call the LLM.
 	provider, model := resolveModel("auto")

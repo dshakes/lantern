@@ -19,6 +19,7 @@ import {
   Square,
   CheckCircle2,
   Sparkles,
+  Mail,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -190,6 +191,10 @@ export default function AgentDetailPage() {
   const [quickRunError, setQuickRunError] = useState<string | null>(null);
   const quickRunOutputRef = useRef<HTMLDivElement>(null);
 
+  // Gmail connector state
+  const [gmailConnected, setGmailConnected] = useState(false);
+  const [fetchingEmails, setFetchingEmails] = useState(false);
+
   // Settings form state
   const [settingsModel, setSettingsModel] = useState("auto");
   const [settingsIsolation, setSettingsIsolation] = useState("standard");
@@ -236,8 +241,18 @@ export default function AgentDetailPage() {
     if (settings.maxCostUsd) setSettingsMaxCost(settings.maxCostUsd as number);
     if (settings.cron) setSettingsCron(settings.cron as string);
 
+    // Check if Gmail connector is installed (from localStorage)
+    const connectorStates = JSON.parse(localStorage.getItem("lantern_connectors") || "{}");
+    const isGmailConnected = connectorStates.gmail?.installed === true;
+    setGmailConnected(isGmailConnected);
+
     // Set default quick run input
-    setQuickRunInput(`Hello, I'd like to test the ${name} agent.`);
+    const isEmailAgent = name.toLowerCase().includes("gmail") || name.toLowerCase().includes("email");
+    if (isEmailAgent && isGmailConnected) {
+      setQuickRunInput("Summarize my recent emails and highlight anything urgent.");
+    } else {
+      setQuickRunInput(`Hello, I'd like to test the ${name} agent.`);
+    }
   }, [name]);
 
   // Auto-scroll quick run output
@@ -290,7 +305,16 @@ export default function AgentDetailPage() {
     if (systemPrompt) {
       messages.push({ role: "system", content: systemPrompt });
     }
-    messages.push({ role: "user", content: quickRunInput });
+
+    const isEmailAgent = name.toLowerCase().includes("gmail") || name.toLowerCase().includes("email");
+    if (gmailConnected && isEmailAgent) {
+      messages.push({
+        role: "user",
+        content: quickRunInput + "\n\n[Note: Gmail connector is connected. In production, the agent would automatically fetch emails via the Gmail API. For this quick run, please simulate analyzing emails and produce a realistic summary.]",
+      });
+    } else {
+      messages.push({ role: "user", content: quickRunInput });
+    }
 
     try {
       const response = await api.complete({
@@ -372,12 +396,38 @@ export default function AgentDetailPage() {
       setQuickRunning(false);
       setQuickRunDone(true);
     }
-  }, [quickRunInput, systemPrompt, settingsModel]);
+  }, [quickRunInput, systemPrompt, settingsModel, gmailConnected, name]);
 
   const handleStopQuickRun = useCallback(() => {
     setQuickRunning(false);
     setQuickRunDone(true);
   }, []);
+
+  const handleFetchEmails = useCallback(async () => {
+    setFetchingEmails(true);
+    try {
+      const data = await api.fetchGmailMessages(20);
+      if (data.messages && data.messages.length > 0) {
+        const formatted = data.messages
+          .map(
+            (m, i) =>
+              `${i + 1}. From: ${m.from}\n   Subject: ${m.subject}\n   Preview: ${m.snippet}\n   Date: ${m.date}`,
+          )
+          .join("\n\n");
+        setQuickRunInput(
+          `Please analyze and summarize these emails:\n\n${formatted}`,
+        );
+        toast.success(`Fetched ${data.count} emails`);
+      } else {
+        toast.info("No recent emails found");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to fetch emails";
+      toast.error(msg);
+    } finally {
+      setFetchingEmails(false);
+    }
+  }, [toast]);
 
   const handleSaveSettings = useCallback(async () => {
     setSavingSettings(true);
@@ -611,27 +661,45 @@ Return ONLY the system prompt text, no explanations or markdown wrapping.`
                   onChange={(e) => setQuickRunInput(e.target.value)}
                   rows={3}
                   spellCheck={false}
-                  placeholder="Type a message to test this agent..."
+                  placeholder="What would you like this agent to do? For email agents, you can paste email content here."
                   className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
                 />
-                {quickRunning ? (
-                  <button
-                    onClick={handleStopQuickRun}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-500"
-                  >
-                    <Square className="h-3 w-3" />
-                    Stop
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleQuickRun}
-                    disabled={!quickRunInput.trim()}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Play className="h-3 w-3" />
-                    Run
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {quickRunning ? (
+                    <button
+                      onClick={handleStopQuickRun}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-500"
+                    >
+                      <Square className="h-3 w-3" />
+                      Stop
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleQuickRun}
+                      disabled={!quickRunInput.trim()}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Play className="h-3 w-3" />
+                      Run
+                    </button>
+                  )}
+                  {gmailConnected &&
+                    (name.toLowerCase().includes("gmail") ||
+                      name.toLowerCase().includes("email")) && (
+                      <button
+                        onClick={handleFetchEmails}
+                        disabled={fetchingEmails || quickRunning}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/30 px-3.5 py-1.5 text-xs font-medium text-indigo-400 transition-colors hover:bg-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {fetchingEmails ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Mail className="h-3 w-3" />
+                        )}
+                        {fetchingEmails ? "Fetching..." : "Fetch Emails"}
+                      </button>
+                    )}
+                </div>
 
                 {/* Quick run output */}
                 {(quickRunOutput || quickRunning || quickRunError) && (

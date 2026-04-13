@@ -128,6 +128,7 @@ func main() {
 	apiKeyHandler := handlers.NewApiKeyHandler(srv, authHandler)
 	deploymentHandler := handlers.NewDeploymentHandler(srv, authHandler)
 	llmProxyHandler := handlers.NewLlmProxyHandler(srv, authHandler)
+	gmailHandler := handlers.NewGmailHandler(srv, authHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
 
 	// --- HTTP server (health + auth + REST API) ---
@@ -171,6 +172,7 @@ func main() {
 	httpMux.HandleFunc("GET /v1/connectors", connectorHandler.ListConnectors)
 	httpMux.HandleFunc("GET /v1/connectors/oauth/callback", connectorHandler.OAuthCallback)
 	httpMux.HandleFunc("POST /v1/connectors/oauth/start", connectorHandler.OAuthStart)
+	httpMux.HandleFunc("GET /v1/connectors/gmail/messages", gmailHandler.GetMessages)
 	httpMux.HandleFunc("GET /v1/connectors/{id}", connectorHandler.GetConnector)
 	httpMux.HandleFunc("POST /v1/connectors/{id}/test", connectorHandler.TestConnector)
 	httpMux.HandleFunc("DELETE /v1/connectors/{id}", connectorHandler.UninstallConnector)
