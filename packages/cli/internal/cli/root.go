@@ -23,11 +23,14 @@ var flags globalFlags
 func NewRootCommand(version, commit, date string) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "lantern",
-		Short: "Lantern CLI — manage agents, runs, and deployments",
-		Long: `Lantern is a serverless platform for production AI agents.
+		Short: "Lantern CLI — production runtime for AI agents",
+		Long: `Lantern is an open-source platform for building, running, and managing
+production AI agents with multi-LLM routing, managed sessions, real API
+connectors, visual workflows, and cron scheduling.
 
-The lantern CLI lets you create and manage agents, trigger runs,
-stream logs, and deploy agent code from your terminal.`,
+The lantern CLI lets you create and manage agents, start interactive
+sessions, trigger runs, stream logs, connect APIs, schedule jobs,
+and deploy agent code from your terminal.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),

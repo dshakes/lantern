@@ -50,6 +50,30 @@ export type IsolationClass =
   | "wasm"
   | "devcontainer";
 
+export type PrivacyLevel = "standard" | "private" | "audit";
+
+export interface GuardrailConfig {
+  /** Block messages containing PII (emails, phone numbers, SSNs, etc.). */
+  blockPII?: boolean;
+  /** Enable content filtering for harmful or inappropriate content. */
+  contentFilter?: boolean;
+  /** List of topics the agent should refuse to engage with. */
+  blockedTopics?: string[];
+  /** Custom guardrail function evaluated before each LLM call. */
+  custom?: (messages: Message[]) => Promise<{ allow: boolean; reason?: string }>;
+}
+
+export interface SessionConfig {
+  /** Whether this agent supports interactive multi-turn sessions. */
+  enabled: boolean;
+  /** Maximum number of messages retained in session history. */
+  maxMessages?: number;
+  /** Session idle timeout (e.g. "30m", "2h"). Session is closed after this period of inactivity. */
+  idleTimeout?: string;
+  /** Whether to persist sessions across restarts. Defaults to true. */
+  durable?: boolean;
+}
+
 export interface AgentConfig<TInput = unknown, TOutput = unknown> {
   name: string;
   version?: string;
@@ -60,6 +84,19 @@ export interface AgentConfig<TInput = unknown, TOutput = unknown> {
   limits?: ResourceLimits;
   isolation?: { class: IsolationClass };
   labels?: Record<string, string>;
+
+  /** High-level instructions defining the agent's goals, scope, and constraints. */
+  instructions?: string;
+  /** System prompt defining personality, tone, and output format. */
+  systemPrompt?: string;
+  /** Guardrail configuration for PII blocking, content filtering, and topic restrictions. */
+  guardrails?: GuardrailConfig;
+  /** Privacy level: "standard" (encrypted at rest), "private" (E2E encrypted), "audit" (full audit trail). */
+  privacy?: PrivacyLevel;
+  /** Session configuration for interactive multi-turn conversations. */
+  session?: SessionConfig;
+  /** Connectors this agent requires (e.g. ["gmail", "slack", "github"]). */
+  connectors?: string[];
 
   init?(): Promise<void>;
   run(params: { input: TInput; ctx: AgentContext }): Promise<TOutput>;
