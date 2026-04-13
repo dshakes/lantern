@@ -335,9 +335,19 @@ export default function AgentDetailPage() {
             content: quickRunInput + "\n\nNo emails found in the inbox. Let the user know their inbox is empty.",
           });
         }
-      } catch {
-        // Gmail not connected — tell the user clearly
-        setQuickRunOutput("Gmail is not connected. Go to Connectors → Gmail to connect your email account, then try again.\n\nAlternatively, paste email content directly into the input box above.");
+      } catch (fetchErr) {
+        // Show the REAL error from the API
+        const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        // Extract the useful part from "API 403: {...json...}" format
+        let displayMsg = errMsg;
+        try {
+          const jsonMatch = errMsg.match(/API \d+: (.*)/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[1]);
+            displayMsg = parsed.error || parsed.message || errMsg;
+          }
+        } catch { /* use raw message */ }
+        setQuickRunOutput(`Error fetching emails: ${displayMsg}\n\nTroubleshooting:\n• Go to Connectors → Gmail to verify your connection\n• If using Google OAuth, ensure the Gmail API is enabled in your Google Cloud Console\n• If using App Password, verify the password is correct`);
         setQuickRunDone(true);
         setQuickRunning(false);
         return;
@@ -469,8 +479,18 @@ export default function AgentDetailPage() {
       } else {
         toast.info("No recent emails found");
       }
-    } catch {
-      toast.error("Gmail is not connected. Go to Connectors → Gmail to connect your account.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Parse API error JSON if present
+      let display = msg;
+      try {
+        const match = msg.match(/API \d+: (.*)/);
+        if (match) {
+          const parsed = JSON.parse(match[1]);
+          display = parsed.error || parsed.message || msg;
+        }
+      } catch { /* use raw */ }
+      toast.error(display);
     } finally {
       setFetchingEmails(false);
     }
