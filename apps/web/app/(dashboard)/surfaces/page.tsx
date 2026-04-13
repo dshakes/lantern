@@ -74,7 +74,7 @@ const surfaces: SurfaceDefinition[] = [
       { key: "apiToken", label: "API Token", type: "password", placeholder: "WhatsApp Business API token", required: true, minLength: 20, helpUrl: "https://business.facebook.com/settings/whatsapp-business-api", helpText: "Get from business.facebook.com" },
       { key: "verifyToken", label: "Verify Token", type: "password", placeholder: "Webhook verify token", required: true, minLength: 8, helpText: "A custom token for webhook verification" },
     ],
-    hasQRCode: true, qrType: "whatsapp", qrLabel: "Scan with WhatsApp to start chatting",
+    // WhatsApp Business API uses token auth, not QR pairing
   },
   {
     id: "slack", name: "Slack",
