@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { X, Play, AlertCircle } from "lucide-react";
 import clsx from "clsx";
-import { agents, agentInputExamples } from "@/lib/mock-data";
+import { agents as mockAgents, agentInputExamples } from "@/lib/mock-data";
 import { api } from "@/lib/api";
 
 interface RunDialogProps {
@@ -23,11 +23,29 @@ export function RunDialog({
   const router = useRouter();
   const backdropRef = useRef<HTMLDivElement>(null);
 
-  const resolvedNames =
-    agentNames.length > 0
-      ? agentNames
-      : agents.filter((a) => a.status === "active").map((a) => a.name);
+  // Fetch real agents from API, fallback to mock
+  const [allAgentNames, setAllAgentNames] = useState<string[]>(
+    agentNames.length > 0 ? agentNames : mockAgents.filter((a) => a.status === "active").map((a) => a.name)
+  );
 
+  useEffect(() => {
+    if (agentNames.length > 0) {
+      setAllAgentNames(agentNames);
+      return;
+    }
+    (async () => {
+      try {
+        const real = await api.listAgents();
+        if (real.length > 0) {
+          setAllAgentNames(real.map((a) => a.name));
+        }
+      } catch {
+        // Keep mock names
+      }
+    })();
+  }, [agentNames]);
+
+  const resolvedNames = allAgentNames;
   const defaultAgent = defaultAgentName || resolvedNames[0] || "";
 
   const [agentName, setAgentName] = useState(defaultAgent);
