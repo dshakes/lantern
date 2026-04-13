@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -46,10 +47,15 @@ func (h *RESTHandler) contextWithTenant(r *http.Request) (context.Context, error
 		return nil, err
 	}
 
-	// The gRPC handlers extract tenant_id from incoming gRPC metadata.
-	// We inject it so the same code path works for REST.
+	// The gRPC handlers extract tenant_id from incoming gRPC metadata via
+	// the tenant interceptor. But when called directly from REST (not via
+	// the gRPC interceptor chain), we need to also inject it as a context
+	// value so middleware.MustTenantID works.
 	md := metadata.Pairs("tenant_id", claims.TenantID)
 	ctx := metadata.NewIncomingContext(r.Context(), md)
+
+	// Also inject as context value (what MustTenantID actually reads).
+	ctx = middleware.InjectTenantID(ctx, claims.TenantID)
 
 	return ctx, nil
 }

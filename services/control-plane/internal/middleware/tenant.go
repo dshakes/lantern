@@ -20,6 +20,12 @@ func TenantIDFromContext(ctx context.Context) (string, bool) {
 	return v, ok
 }
 
+// InjectTenantID sets the tenant ID in the context. Used by REST handlers
+// that bypass the gRPC interceptor chain.
+func InjectTenantID(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, tenantIDKey{}, tenantID)
+}
+
 // MustTenantID is a convenience wrapper that returns a gRPC error if the
 // tenant ID is missing. Handlers should call this at the top.
 func MustTenantID(ctx context.Context) (string, error) {
