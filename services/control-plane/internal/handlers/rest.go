@@ -23,6 +23,7 @@ type RESTHandler struct {
 	auth     *AuthHandler
 	agentSvc *AgentService
 	runSvc   *RunService
+	llmProxy *LlmProxyHandler
 }
 
 // NewRESTHandler creates a new RESTHandler.
@@ -308,6 +309,13 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Kick off inline execution in a background goroutine so the run
+	// transitions from queued → running → succeeded without needing the
+	// separate workflow-engine service.
+	if h.llmProxy != nil {
+		go h.executeRunInline(run.GetId(), run.GetTenantId(), body.AgentName, body.Input)
+	}
+
 	writeJSON(w, http.StatusCreated, runToMap(run))
 }
 
@@ -396,6 +404,74 @@ func CORSMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// SetLlmProxy injects the LLM proxy handler for inline run execution.
+func (h *RESTHandler) SetLlmProxy(proxy *LlmProxyHandler) {
+	h.llmProxy = proxy
+}
+
+// executeRunInline processes a run in the background by calling the LLM
+// directly. This is the spike-mode "workflow engine" — in production, the
+// separate workflow-engine service handles this with durable execution.
+func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input map[string]any) {
+	ctx := context.Background()
+	ctx = middleware.InjectTenantID(ctx, tenantID)
+	md := metadata.Pairs("tenant_id", tenantID)
+	ctx = metadata.NewIncomingContext(ctx, md)
+
+	h.logger().Info("inline executor: starting run", zap.String("run_id", runID), zap.String("agent", agentName))
+
+	// 1. Mark as running.
+	_, err := h.srv.Pool.Exec(ctx,
+		`UPDATE runs SET status = 'running', started_at = now() WHERE id = $1`,
+		runID,
+	)
+	if err != nil {
+		h.logger().Error("inline executor: failed to mark running", zap.Error(err))
+		return
+	}
+
+	// 2. Build a prompt from the input.
+	inputJSON, _ := json.Marshal(input)
+	prompt := fmt.Sprintf("You are the agent '%s'. Process this input and produce a result:\n\n%s", agentName, string(inputJSON))
+
+	// 3. Call the LLM.
+	provider, model := resolveModel("auto")
+	apiKey, err := h.llmProxy.resolveProviderKey(ctx, tenantID, provider)
+	if err != nil {
+		h.logger().Warn("inline executor: no LLM key, marking failed", zap.Error(err))
+		_, _ = h.srv.Pool.Exec(ctx,
+			`UPDATE runs SET status = 'failed', finished_at = now(), error = $2 WHERE id = $1`,
+			runID, fmt.Sprintf(`{"code":"no_llm","message":"%s"}`, err.Error()),
+		)
+		return
+	}
+
+	result, tokensIn, tokensOut, costUsd, llmErr := h.llmProxy.callLLMSync(ctx, provider, model, apiKey, prompt)
+
+	if llmErr != nil {
+		h.logger().Error("inline executor: LLM call failed", zap.Error(llmErr))
+		errJSON, _ := json.Marshal(map[string]string{"code": "llm_error", "message": llmErr.Error()})
+		_, _ = h.srv.Pool.Exec(ctx,
+			`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
+			runID, string(errJSON),
+		)
+		return
+	}
+
+	// 4. Mark as succeeded with output.
+	outputJSON, _ := json.Marshal(map[string]string{"result": result})
+	_, _ = h.srv.Pool.Exec(ctx,
+		`UPDATE runs SET status = 'succeeded', finished_at = now(), output = $2::jsonb, tokens_in = $3, tokens_out = $4, cost_usd = $5 WHERE id = $1`,
+		runID, string(outputJSON), tokensIn, tokensOut, costUsd,
+	)
+
+	h.logger().Info("inline executor: run completed",
+		zap.String("run_id", runID),
+		zap.Int64("tokens_in", tokensIn),
+		zap.Int64("tokens_out", tokensOut),
+	)
 }
 
 // autoCreateVersion creates a default agent version and promotes it.

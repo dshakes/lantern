@@ -128,6 +128,7 @@ func main() {
 	apiKeyHandler := handlers.NewApiKeyHandler(srv, authHandler)
 	deploymentHandler := handlers.NewDeploymentHandler(srv, authHandler)
 	llmProxyHandler := handlers.NewLlmProxyHandler(srv, authHandler)
+	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
 
 	// --- HTTP server (health + auth + REST API) ---
 	httpMux := http.NewServeMux()

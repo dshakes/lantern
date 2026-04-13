@@ -179,6 +179,13 @@ export default function RunDetailPage() {
 
   const { run, loading, error, refresh } = useRun(id);
 
+  // Poll for status changes (queued → running → succeeded) every 2 seconds
+  useEffect(() => {
+    if (!run || run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") return;
+    const interval = setInterval(() => refresh(), 2000);
+    return () => clearInterval(interval);
+  }, [run?.status, refresh]);
+
   // Get mock events for fallback/demo mode
   const allEvents = run ? getEventsForRun(run.id) : [];
 

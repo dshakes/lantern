@@ -103,6 +103,100 @@ func (h *LlmProxyHandler) resolveProviderKey(ctx context.Context, tenantID, prov
 	return "", fmt.Errorf("no API key configured for provider %q", provider)
 }
 
+// callLLMSync makes a synchronous (non-streaming) LLM call and returns the
+// result text along with usage metrics. Used by the inline run executor.
+func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiKey, prompt string) (result string, tokensIn, tokensOut int64, costUsd float64, err error) {
+	_ = ctx // context for future cancellation support
+
+	switch provider {
+	case "openai":
+		reqBody := map[string]any{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "user", "content": prompt},
+			},
+			"max_tokens": 2048,
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+
+		req, _ := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+
+		resp, httpErr := http.DefaultClient.Do(req)
+		if httpErr != nil {
+			return "", 0, 0, 0, httpErr
+		}
+		defer resp.Body.Close()
+
+		var oaiResp struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+			Usage struct {
+				PromptTokens     int64 `json:"prompt_tokens"`
+				CompletionTokens int64 `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+		if decErr := json.NewDecoder(resp.Body).Decode(&oaiResp); decErr != nil {
+			return "", 0, 0, 0, decErr
+		}
+		if len(oaiResp.Choices) == 0 {
+			return "", 0, 0, 0, fmt.Errorf("no choices in response")
+		}
+		tin := oaiResp.Usage.PromptTokens
+		tout := oaiResp.Usage.CompletionTokens
+		cost := float64(tin)*2.5/1_000_000 + float64(tout)*10.0/1_000_000
+		return oaiResp.Choices[0].Message.Content, tin, tout, cost, nil
+
+	case "anthropic":
+		reqBody := map[string]any{
+			"model":      model,
+			"max_tokens": 2048,
+			"messages": []map[string]string{
+				{"role": "user", "content": prompt},
+			},
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+
+		req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+
+		resp, httpErr := http.DefaultClient.Do(req)
+		if httpErr != nil {
+			return "", 0, 0, 0, httpErr
+		}
+		defer resp.Body.Close()
+
+		var antResp struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+			Usage struct {
+				InputTokens  int64 `json:"input_tokens"`
+				OutputTokens int64 `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if decErr := json.NewDecoder(resp.Body).Decode(&antResp); decErr != nil {
+			return "", 0, 0, 0, decErr
+		}
+		if len(antResp.Content) == 0 {
+			return "", 0, 0, 0, fmt.Errorf("no content in response")
+		}
+		tin := antResp.Usage.InputTokens
+		tout := antResp.Usage.OutputTokens
+		cost := float64(tin)*3.0/1_000_000 + float64(tout)*15.0/1_000_000
+		return antResp.Content[0].Text, tin, tout, cost, nil
+
+	default:
+		return "", 0, 0, 0, fmt.Errorf("unsupported provider: %s", provider)
+	}
+}
+
 // resolveModel maps a capability name to a concrete provider + model.
 func resolveModel(capability string) (provider, model string) {
 	switch capability {
