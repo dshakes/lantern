@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Square,
   CheckCircle2,
+  Sparkles,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -517,23 +518,68 @@ export default function AgentDetailPage() {
                   <MessageSquare className="h-4 w-4 text-indigo-400" />
                   System Prompt
                 </h3>
-                <button
-                  onClick={handleSavePrompt}
-                  disabled={savingPrompt || !promptDirty}
-                  className={clsx(
-                    "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                    promptDirty
-                      ? "bg-lantern-500 text-white hover:bg-lantern-400"
-                      : "border border-zinc-700 text-zinc-500 cursor-not-allowed",
-                  )}
-                >
-                  {savingPrompt ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Save className="h-3 w-3" />
-                  )}
-                  {savingPrompt ? "Saving..." : "Save"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      setSavingPrompt(true);
+                      try {
+                        const resp = await api.complete({
+                          messages: [{
+                            role: "user",
+                            content: `Generate a system prompt for an AI agent called "${name}". The agent's description is: "${agent.description || name}".
+
+Write a detailed system prompt that:
+1. Defines the agent's role and expertise
+2. Lists the specific tasks it should perform
+3. Specifies the output format
+4. Includes any relevant constraints or guidelines
+
+Return ONLY the system prompt text, no explanations or markdown wrapping.`
+                          }],
+                          model: "auto",
+                          stream: false,
+                        });
+                        if (resp.ok) {
+                          const data = await resp.json();
+                          const generated = data.content || data.message?.content || "";
+                          if (generated) {
+                            setSystemPrompt(generated.trim());
+                            setPromptDirty(true);
+                            toast.success("System prompt generated — review and save");
+                          }
+                        } else {
+                          toast.error("Failed to generate prompt. Check your LLM provider settings.");
+                        }
+                      } catch {
+                        toast.error("LLM unavailable. Configure a provider in Settings.");
+                      } finally {
+                        setSavingPrompt(false);
+                      }
+                    }}
+                    disabled={savingPrompt}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-lantern-500/30 px-3 py-1.5 text-xs font-medium text-lantern-400 transition-colors hover:bg-lantern-500/10"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Generate with AI
+                  </button>
+                  <button
+                    onClick={handleSavePrompt}
+                    disabled={savingPrompt || !promptDirty}
+                    className={clsx(
+                      "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                      promptDirty
+                        ? "bg-lantern-500 text-white hover:bg-lantern-400"
+                        : "border border-zinc-700 text-zinc-500 cursor-not-allowed",
+                    )}
+                  >
+                    {savingPrompt ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Save className="h-3 w-3" />
+                    )}
+                    {savingPrompt ? "Saving..." : "Save"}
+                  </button>
+                </div>
               </div>
               <textarea
                 value={systemPrompt}
