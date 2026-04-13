@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -121,6 +122,25 @@ func (h *ConnectorExecutor) Execute(w http.ResponseWriter, r *http.Request) {
 			if at, ok := oauthData["access_token"].(string); ok {
 				config["accessToken"] = at
 			}
+		}
+	}
+
+	// If we have a refresh token, try to refresh the access token before use.
+	if rt, ok := config["oauth_refresh_token"].(string); ok && rt != "" {
+		newToken, refreshErr := refreshGoogleToken(rt)
+		if refreshErr == nil && newToken != "" {
+			config["accessToken"] = newToken
+			// Update the stored token in the database
+			updatedOAuth, _ := json.Marshal(map[string]any{
+				"access_token":  newToken,
+				"refresh_token": rt,
+				"token_type":    "Bearer",
+			})
+			_, _ = h.srv.Pool.Exec(ctx,
+				`UPDATE connector_installs SET oauth_token_encrypted = $1 WHERE tenant_id = $2 AND connector_id = $3`,
+				string(updatedOAuth), tenantID, connectorID,
+			)
+			h.logger().Info("refreshed OAuth token", zap.String("connector", connectorID))
 		}
 	}
 
@@ -278,6 +298,35 @@ func intParam(params map[string]any, key string, defaultVal int) int {
 // ---------------------------------------------------------------------------
 // Gmail
 // ---------------------------------------------------------------------------
+
+// refreshGoogleToken uses a refresh token to get a new access token from Google.
+func refreshGoogleToken(refreshToken string) (string, error) {
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	if clientID == "" || clientSecret == "" {
+		return "", fmt.Errorf("GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not set")
+	}
+
+	data := fmt.Sprintf("client_id=%s&client_secret=%s&refresh_token=%s&grant_type=refresh_token",
+		clientID, clientSecret, refreshToken)
+
+	resp, err := http.Post("https://oauth2.googleapis.com/token", "application/x-www-form-urlencoded", strings.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	if result.AccessToken == "" {
+		return "", fmt.Errorf("no access token in refresh response")
+	}
+	return result.AccessToken, nil
+}
 
 func executeGmail(config map[string]any, action string, params map[string]any) (any, error) {
 	accessToken, _ := config["accessToken"].(string)
