@@ -69,6 +69,7 @@ function CreatePage() {
   const [guardrails, setGuardrails] = useState({ contentFilter: false, blockPII: false, blockedTopics: "" });
   const [environment, setEnvironment] = useState({ runtime: "node22", memory: "512mb", timeout: "5m", network: "allow-all" });
   const [selectedConnectors, setSelectedConnectors] = useState<string[]>([]);
+  const [generatingInstructions, setGeneratingInstructions] = useState(false);
   const [generatingPrompt, setGeneratingPrompt] = useState(false);
   const [testInput, setTestInput] = useState("");
   const [testModel, setTestModel] = useState("auto");
@@ -298,14 +299,16 @@ function CreatePage() {
                 <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-teal-400"><ClipboardList className="h-3.5 w-3.5" /> Instructions</h3>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-zinc-600">Goals, scope, constraints</span>
-                  <button onClick={async () => {
+                  <button disabled={generatingInstructions} onClick={async () => {
                     if (!name && !description) { toast.info("Add a name or description first"); return; }
+                    setGeneratingInstructions(true);
                     try {
                       const resp = await api.complete({ messages: [{ role: "user", content: `Generate clear instructions for an AI agent called "${name}". Description: "${description}". Write 3-5 bullet points defining: goals, scope, constraints, and expected behavior. Return ONLY the instructions text.` }], model: "auto", stream: false });
-                      if (resp.ok) { const d = await resp.json(); const g = (d.content || "").trim(); if (g) { setInstructions(g); toast.success("Instructions generated"); return; } }
+                      if (resp.ok) { const d = await resp.json(); const g = (d.content || "").trim(); if (g) { setInstructions(g); toast.success("Instructions generated"); setGeneratingInstructions(false); return; } }
                     } catch { /* ignore */ }
+                    setGeneratingInstructions(false);
                     toast.error("Could not generate — add description first or configure LLM in Settings");
-                  }} className="inline-flex items-center gap-1 rounded-md bg-teal-500/10 px-2 py-0.5 text-[10px] font-medium text-teal-400 hover:bg-teal-500/20"><Sparkles className="h-2.5 w-2.5" /> Generate</button>
+                  }} className="inline-flex items-center gap-1 rounded-md bg-teal-500/10 px-2 py-0.5 text-[10px] font-medium text-teal-400 hover:bg-teal-500/20 disabled:opacity-50">{generatingInstructions ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Sparkles className="h-2.5 w-2.5" />} {generatingInstructions ? "Generating..." : "Generate"}</button>
                 </div>
               </div>
               <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={3} placeholder="Define the agent's purpose, goals, and constraints..." className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-teal-500/30" />
@@ -413,7 +416,7 @@ function CreatePage() {
             <div className="rounded-xl border border-dashed border-zinc-700 bg-surface-1/50 p-5">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-400"><Play className="h-4 w-4 text-zinc-500" /> Quick Test <span className="text-[10px] text-zinc-600">(optional)</span></h3>
-                <ModelSelect value={testModel} onChange={setTestModel} className="h-7 text-[11px]" />
+                <ModelSelect value={testModel} onChange={setTestModel} className="h-7 w-48 text-[11px]" />
               </div>
               <p className="text-[11px] text-zinc-600 mb-3">Test your agent before creating. You can always test later from the agent&apos;s Build tab.</p>
               <textarea value={testInput} onChange={(e) => setTestInput(e.target.value)} rows={2}

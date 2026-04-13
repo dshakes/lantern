@@ -23,7 +23,7 @@ const googleFields: Field[] = [
 const d = (id: string, name: string, desc: string, cat: string, icon: typeof Mail, color: string, bg: string, fields: Field[], extra?: Partial<ConnectorDef>): ConnectorDef =>
   ({ id, name, description: desc, category: cat, icon, iconColor: color, iconBg: bg, fields, ...extra });
 const goo = (id: string, name: string, desc: string, cat: string, icon: typeof Mail, color: string, bg: string) =>
-  d(id, name, desc, cat, icon, color, bg, googleFields, { oauthProvider: "google", oauthLabel: "Sign in with Google", manualLabel: "Use App Password" });
+  d(id, name, desc, cat, icon, color, bg, googleFields, { oauthProvider: id, oauthLabel: "Sign in with Google", manualLabel: "Use App Password" });
 
 const connectors: ConnectorDef[] = [
   d("slack", "Slack", "Send messages, manage channels, and respond to events", "Communication", MessageSquare, "text-purple-400", "bg-purple-500/10",
