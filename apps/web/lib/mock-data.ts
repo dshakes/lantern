@@ -40,6 +40,7 @@ export interface Run {
   finishedAt?: Date;
   createdAt: Date;
   labels: Record<string, string>;
+  triggerMeta?: unknown;
 }
 
 export interface StreamEvent {

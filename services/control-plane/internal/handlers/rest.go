@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
@@ -383,7 +384,17 @@ func (h *RESTHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, runToMap(run))
+	result := runToMap(run)
+	// Enrich with execution steps from trigger_meta (stored as JSON array by logStep)
+	var rawSteps []byte
+	_ = h.srv.Pool.QueryRow(ctx, `SELECT trigger_meta FROM runs WHERE id = $1`, id).Scan(&rawSteps)
+	if len(rawSteps) > 0 && rawSteps[0] == '[' {
+		var steps []any
+		if json.Unmarshal(rawSteps, &steps) == nil {
+			result["triggerMeta"] = steps
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // CancelRun handles POST /v1/runs/{id}/cancel.
@@ -458,7 +469,22 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 
 	h.logger().Info("inline executor: starting run", zap.String("run_id", runID), zap.String("agent", agentName))
 
+	// Helper to log execution steps to the run's trigger_meta field (used as steps log)
+	logStep := func(stepName, status, detail string) {
+		step := map[string]string{"step": stepName, "status": status, "detail": detail, "ts": time.Now().Format(time.RFC3339)}
+		stepJSON, _ := json.Marshal(step)
+		// Append to trigger_meta as a JSON array of steps
+		_, _ = h.srv.Pool.Exec(ctx,
+			`UPDATE runs SET trigger_meta = CASE
+				WHEN trigger_meta IS NULL OR trigger_meta::text = '{}' THEN jsonb_build_array($2::jsonb)
+				ELSE trigger_meta || $2::jsonb
+			END WHERE id = $1`,
+			runID, string(stepJSON),
+		)
+	}
+
 	// 1. Mark as running.
+	logStep("initialize", "running", "Starting agent execution")
 	_, err := h.srv.Pool.Exec(ctx,
 		`UPDATE runs SET status = 'running', started_at = now() WHERE id = $1`,
 		runID,
@@ -469,15 +495,19 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	}
 
 	// 2. Build a prompt from the input.
+	logStep("build_prompt", "running", "Building prompt from agent configuration")
 	inputJSON, _ := json.Marshal(input)
 	prompt := fmt.Sprintf("You are the agent '%s'. Process this input and produce a result:\n\n%s", agentName, string(inputJSON))
 
 	// 2b. Check if Gmail connector is installed for this tenant. If so, fetch
 	// emails and append them to the prompt so the LLM can reference them.
+	logStep("fetch_data", "running", "Checking for connected data sources")
 	gmailToken := resolveGmailToken(ctx, h.srv.Pool, tenantID)
 	if gmailToken != "" {
+		logStep("fetch_gmail", "running", "Fetching emails from Gmail API")
 		emails, fetchErr := FetchGmailViaAPI(gmailToken, 20)
 		if fetchErr == nil && len(emails) > 0 {
+			logStep("fetch_gmail", "completed", fmt.Sprintf("Fetched %d emails", len(emails)))
 			var emailText strings.Builder
 			emailText.WriteString("\n\nHere are the user's recent emails:\n\n")
 			for i, e := range emails {
@@ -516,6 +546,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	}
 
 	// 3. Call the LLM.
+	logStep("call_llm", "running", "Sending to AI model for processing")
 	provider, model := resolveModel("auto")
 	apiKey, err := h.llmProxy.resolveProviderKey(ctx, tenantID, provider)
 	if err != nil {
@@ -540,11 +571,15 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	}
 
 	// 4. Mark as succeeded with output.
+	logStep("call_llm", "completed", fmt.Sprintf("AI response received: %d tokens", tokensOut))
+	logStep("save_output", "running", "Saving results")
 	outputJSON, _ := json.Marshal(map[string]string{"result": result})
 	_, _ = h.srv.Pool.Exec(ctx,
 		`UPDATE runs SET status = 'succeeded', finished_at = now(), output = $2::jsonb, tokens_in = $3, tokens_out = $4, cost_usd = $5 WHERE id = $1`,
 		runID, string(outputJSON), tokensIn, tokensOut, costUsd,
 	)
+
+	logStep("complete", "completed", fmt.Sprintf("Run finished: %d tokens, $%.4f", tokensIn+tokensOut, costUsd))
 
 	h.logger().Info("inline executor: run completed",
 		zap.String("run_id", runID),
@@ -833,6 +868,9 @@ func runToMap(r *lanternv1.Run) map[string]any {
 		"tokensOut":      r.GetTokensOut(),
 		"createdAt":      r.GetCreatedAt().AsTime(),
 		"labels":         r.GetLabels(),
+	}
+	if r.GetTriggerMeta() != nil {
+		m["triggerMeta"] = r.GetTriggerMeta().AsMap()
 	}
 	if r.GetInput() != nil {
 		m["input"] = r.GetInput().AsMap()

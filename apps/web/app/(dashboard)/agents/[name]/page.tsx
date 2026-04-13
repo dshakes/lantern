@@ -476,15 +476,49 @@ export default function AgentDetailPage() {
                         <span className="text-zinc-500">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm:ss") : "--"}</span>
                       </button>
                       {expanded && (
-                        <div className="border-t border-zinc-800 p-4">
+                        <div className="border-t border-zinc-800 p-4 space-y-3">
+                          {/* Execution Steps */}
+                          {(() => {
+                            const steps = Array.isArray(run.triggerMeta) ? run.triggerMeta as Array<Record<string, string>> : [];
+                            if (steps.length === 0) return null;
+                            return (
+                              <div className="space-y-1.5">
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-600">Execution Steps</p>
+                                <div className="space-y-0.5">
+                                  {steps.map((s, i) => (
+                                    <div key={i} className="flex items-center gap-2 py-1">
+                                      {s.status === "completed" ? (
+                                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                                      ) : s.status === "running" ? (
+                                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-400" />
+                                      ) : (
+                                        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
+                                      )}
+                                      <span className="text-xs text-zinc-300">{s.detail}</span>
+                                      <span className="ml-auto text-[10px] text-zinc-600">{s.step}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          {/* Output */}
                           {run.output ? (
-                            <div className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm leading-relaxed text-zinc-200">
-                              {typeof run.output === "string" ? run.output : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>) ? String((run.output as Record<string, unknown>).result) : JSON.stringify(run.output, null, 2)}
+                            <div>
+                              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-zinc-600">Output</p>
+                              <div className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm leading-relaxed text-zinc-200">
+                                {typeof run.output === "string" ? run.output : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>) ? String((run.output as Record<string, unknown>).result) : JSON.stringify(run.output, null, 2)}
+                              </div>
                             </div>
                           ) : run.error ? (
                             <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
                               <p className="text-xs font-medium text-red-400">{run.error.code}</p>
                               <p className="mt-1 text-xs text-red-300/70">{run.error.message}</p>
+                            </div>
+                          ) : run.status === "running" ? (
+                            <div className="flex items-center gap-2 py-2">
+                              <Loader2 className="h-4 w-4 animate-spin text-lantern-400" />
+                              <span className="text-xs text-zinc-400">Processing... output will appear when complete</span>
                             </div>
                           ) : <p className="text-xs text-zinc-600">No output available.</p>}
                         </div>
