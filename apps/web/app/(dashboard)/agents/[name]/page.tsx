@@ -44,6 +44,12 @@ import {
   X,
   Server,
   Brain,
+  Paperclip,
+  Send,
+  Copy,
+  Link,
+  Code2,
+  Share2,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -62,6 +68,7 @@ import { type McpServer, getMcpServers, addMcpServer, removeMcpServer, updateMcp
 import { type SubAgentLink, getSubAgents, addSubAgent, removeSubAgent } from "@/lib/sub-agents";
 import { type MemoryEntry, getAgentMemory, addMemoryEntry, removeMemoryEntry, memoryToContext } from "@/lib/agent-memory";
 import { getAgentInstructions, saveAgentInstructions, mergeInstructionsAndPrompt } from "@/lib/agent-instructions";
+import { type CodeLanguage, runCode, extractCodeBlocks } from "@/lib/code-runner";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -129,11 +136,30 @@ const RUNS_PER_PAGE = 10;
 
 const tabs = [
   { key: "build", label: "Build", icon: Hammer },
+  { key: "chat", label: "Chat", icon: MessageSquare },
   { key: "runs", label: "Runs", icon: Play },
   { key: "schedule", label: "Schedule", icon: Calendar },
   { key: "settings", label: "Settings", icon: Settings },
 ] as const;
 type TabKey = (typeof tabs)[number]["key"];
+
+// ---------------------------------------------------------------------------
+// Chat types & localStorage helpers
+// ---------------------------------------------------------------------------
+
+interface ChatMessage { role: "user" | "assistant"; content: string; timestamp: string; }
+const CHAT_KEY = (n: string) => `lantern_chat_${n}`;
+function loadChat(n: string): ChatMessage[] { if (typeof window === "undefined") return []; try { return JSON.parse(localStorage.getItem(CHAT_KEY(n)) || "[]"); } catch { return []; } }
+function saveChat(n: string, msgs: ChatMessage[]) { if (typeof window === "undefined") return; localStorage.setItem(CHAT_KEY(n), JSON.stringify(msgs)); }
+
+// ---------------------------------------------------------------------------
+// Sharing localStorage helpers
+// ---------------------------------------------------------------------------
+
+interface SharingConfig { isPublic: boolean; accessLevel: "view" | "run" | "fork"; publicId: string; }
+const SHARING_KEY = (n: string) => `lantern_agent_sharing_${n}`;
+function loadSharing(n: string): SharingConfig { if (typeof window === "undefined") return { isPublic: false, accessLevel: "view", publicId: "" }; try { const raw = localStorage.getItem(SHARING_KEY(n)); if (!raw) return { isPublic: false, accessLevel: "view", publicId: `pub_${Date.now().toString(36)}` }; return JSON.parse(raw); } catch { return { isPublic: false, accessLevel: "view", publicId: `pub_${Date.now().toString(36)}` }; } }
+function saveSharing(n: string, cfg: SharingConfig) { if (typeof window === "undefined") return; localStorage.setItem(SHARING_KEY(n), JSON.stringify(cfg)); }
 
 // ---------------------------------------------------------------------------
 // Main Component
@@ -234,6 +260,30 @@ export default function AgentDetailPage() {
   const [newMemKey, setNewMemKey] = useState("");
   const [newMemValue, setNewMemValue] = useState("");
 
+  // Chat (Feature 1)
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatStreaming, setChatStreaming] = useState(false);
+  const [chatIncludeEmails, setChatIncludeEmails] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const [chatFiles, setChatFiles] = useState<Array<{ name: string; content: string }>>([]);
+
+  // File attachments (Feature 2) — for build test section
+  const [testFiles, setTestFiles] = useState<Array<{ name: string; content: string }>>([]);
+
+  // Code Sandbox (Feature 3)
+  const [sandboxCode, setSandboxCode] = useState("");
+  const [sandboxLang, setSandboxLang] = useState<CodeLanguage>("javascript");
+  const [sandboxOutput, setSandboxOutput] = useState("");
+  const [sandboxRunning, setSandboxRunning] = useState(false);
+  const [codeBlockResults, setCodeBlockResults] = useState<Record<number, { output: string; error: boolean }>>({});
+
+  // Sharing (Feature 4)
+  const [sharing, setSharing] = useState<SharingConfig>({ isPublic: false, accessLevel: "view", publicId: "" });
+
+  // Run polling (Feature 5)
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // Run comparison
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<[string | null, string | null]>([null, null]);
@@ -273,6 +323,10 @@ export default function AgentDetailPage() {
     setSubAgents(getSubAgents(name));
     // Load memory
     setMemoryEntries(getAgentMemory(name));
+    // Load chat history
+    setChatMessages(loadChat(name));
+    // Load sharing config
+    setSharing(loadSharing(name));
     api.listSchedules().then((sched) => {
       const m = sched.find((sc) => sc.agentName === name);
       if (m) { setSettingsCron(m.cronExpr); setScheduleId(m.id); setScheduleEnabled(m.enabled); if (m.nextFireAt) setNextFireAt(m.nextFireAt); if (m.deliveryEmail) { setDeliveryEmailEnabled(true); setDeliveryEmail(m.deliveryEmail); } }
@@ -280,6 +334,18 @@ export default function AgentDetailPage() {
   }, [name]);
 
   useEffect(() => { if (testRef.current) testRef.current.scrollTop = testRef.current.scrollHeight; }, [testOutput]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages, chatStreaming]);
+
+  // Feature 5: Polling for running runs
+  useEffect(() => {
+    if (!expandedRunId) return;
+    const run = agentRuns.find(r => r.id === expandedRunId);
+    if (!run || run.status !== "running") { if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; } return; }
+    pollingRef.current = setInterval(async () => {
+      try { await refreshRuns(); } catch { /* silent */ }
+    }, 2000);
+    return () => { if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; } };
+  }, [expandedRunId, agentRuns, refreshRuns]);
 
   // Trigger suggestions generation when test completes
   const suggestionsTriggeredRef = useRef(false);
@@ -358,7 +424,11 @@ export default function AgentDetailPage() {
         const msg = err instanceof Error ? err.message : String(err);
         setTestOutput(`Error fetching emails: ${msg}`); setTestDone(true); setTestRunning(false); return;
       }
-    } else { messages.push({ role: "user", content: testInput }); }
+    } else {
+      let userContent = testInput;
+      for (const f of testFiles) { userContent += `\n\n[Attached file: ${f.name}]\n<file-content>\n${f.content.slice(0, 5000)}\n</file-content>`; }
+      messages.push({ role: "user", content: userContent });
+    }
 
     try {
       const response = await api.complete({ messages, model: testModel, stream: true, temperature: 1.0, maxTokens: 4096 });
@@ -376,7 +446,7 @@ export default function AgentDetailPage() {
       setTestMeta({ model: resolvedModel, tokens: totalTokens, cost: totalCost, duration: Date.now() - startTime });
       setTestDone(true); setTestRunning(false);
     } catch (err) { setTestError(err instanceof Error ? err.message : "Unknown error"); setTestRunning(false); setTestDone(true); }
-  }, [testInput, testModel, systemPrompt, instructions, memoryEntries, isEmailAgent, name]);
+  }, [testInput, testModel, systemPrompt, instructions, memoryEntries, isEmailAgent, name, testFiles]);
 
   const handleFetchEmails = useCallback(async () => {
     setFetchingEmails(true);
@@ -499,6 +569,76 @@ export default function AgentDetailPage() {
     setMemoryEntries(updated);
     toast.success("Memory entry removed");
   }, [name, toast]);
+
+  // Feature 1: Chat handler
+  const handleChatSend = useCallback(async () => {
+    const text = chatInput.trim();
+    if (!text && chatFiles.length === 0) return;
+    let content = text;
+    for (const f of chatFiles) { content += `\n\n[Attached file: ${f.name}]\n<file-content>\n${f.content.slice(0, 5000)}\n</file-content>`; }
+    const userMsg: ChatMessage = { role: "user", content, timestamp: new Date().toISOString() };
+    const updated = [...chatMessages, userMsg];
+    setChatMessages(updated); setChatInput(""); setChatFiles([]); setChatStreaming(true);
+    const effectivePrompt = mergeInstructionsAndPrompt(instructions, systemPrompt) + memoryToContext(memoryEntries);
+    const messages: Array<{ role: string; content: string }> = [];
+    if (effectivePrompt.trim()) messages.push({ role: "system", content: effectivePrompt });
+    for (const m of updated) messages.push({ role: m.role, content: m.content });
+    try {
+      const response = await api.complete({ messages, model: testModel, stream: true, temperature: 1.0, maxTokens: 4096 });
+      if (!response.ok) throw new Error(`API error ${response.status}`);
+      let full = "";
+      if (response.headers.get("content-type")?.includes("text/event-stream")) {
+        const reader = response.body?.getReader(); if (!reader) throw new Error("No body");
+        const decoder = new TextDecoder(); let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read(); if (done) break;
+          buffer += decoder.decode(value, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop() ?? "";
+          for (const line of lines) { if (!line.startsWith("data: ")) continue; try { const evt = JSON.parse(line.slice(6).trim()); if (evt.type === "delta" && evt.content) full += evt.content; } catch { /* */ } }
+        }
+      } else { const result = await response.json(); full = result.content || JSON.stringify(result, null, 2); }
+      const assistantMsg: ChatMessage = { role: "assistant", content: full || "(no response)", timestamp: new Date().toISOString() };
+      const final = [...updated, assistantMsg]; setChatMessages(final); saveChat(name, final);
+    } catch (err) {
+      const errMsg: ChatMessage = { role: "assistant", content: `Error: ${err instanceof Error ? err.message : "Unknown error"}`, timestamp: new Date().toISOString() };
+      const final = [...updated, errMsg]; setChatMessages(final); saveChat(name, final);
+    } finally { setChatStreaming(false); }
+  }, [chatInput, chatFiles, chatMessages, instructions, systemPrompt, memoryEntries, testModel, name]);
+
+  // Feature 2: File attachment handler (shared between build test and chat)
+  const handleFileAttach = useCallback((setter: (fn: (prev: Array<{ name: string; content: string }>) => Array<{ name: string; content: string }>) => void) => {
+    const input = document.createElement("input"); input.type = "file"; input.multiple = true;
+    input.accept = ".txt,.csv,.json,.pdf,.md,.py,.js,.ts";
+    input.onchange = () => {
+      if (!input.files) return;
+      Array.from(input.files).forEach(file => {
+        const reader = new FileReader();
+        reader.onload = () => { setter(prev => [...prev, { name: file.name, content: reader.result as string }]); };
+        reader.readAsText(file);
+      });
+    };
+    input.click();
+  }, []);
+
+  // Feature 3: Code sandbox handler
+  const handleRunSandbox = useCallback(async () => {
+    setSandboxRunning(true); setSandboxOutput("");
+    const result = await runCode(sandboxCode, sandboxLang);
+    setSandboxOutput((result.error ? "[Error] " : "") + result.output + `\n(${result.duration}ms)`);
+    setSandboxRunning(false);
+  }, [sandboxCode, sandboxLang]);
+
+  const handleRunCodeBlock = useCallback(async (idx: number, code: string, language: string) => {
+    const lang: CodeLanguage = language === "python" ? "python" : language === "sql" ? "sql" : "javascript";
+    const result = await runCode(code, lang);
+    setCodeBlockResults(prev => ({ ...prev, [idx]: { output: result.output, error: result.error } }));
+  }, []);
+
+  // Feature 4: Sharing handler
+  const handleSharingChange = useCallback((updates: Partial<SharingConfig>) => {
+    const updated = { ...sharing, ...updates };
+    if (updates.isPublic && !sharing.publicId) updated.publicId = `pub_${Date.now().toString(36)}`;
+    setSharing(updated); saveSharing(name, updated);
+  }, [sharing, name]);
 
   // Filtered test output with guardrails applied
   const filteredTestOutput = useMemo(() => {
@@ -754,7 +894,20 @@ export default function AgentDetailPage() {
                 <ModelSelect value={testModel} onChange={setTestModel} className="h-8 text-xs" />
               </div>
               <textarea value={testInput} onChange={(e) => setTestInput(e.target.value)} rows={3} spellCheck={false} placeholder={isEmailAgent ? "Type a message or click Run to process emails" : "What would you like this agent to do?"} className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />
+              {testFiles.length > 0 && (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {testFiles.map((f, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-2 py-1 text-[10px] text-zinc-300">
+                      <Paperclip className="h-2.5 w-2.5" /> {f.name}
+                      <button onClick={() => setTestFiles(prev => prev.filter((_, j) => j !== i))} className="ml-0.5 text-zinc-500 hover:text-red-400"><X className="h-2.5 w-2.5" /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="mt-2 flex items-center gap-2">
+                <button onClick={() => handleFileAttach(setTestFiles)} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:bg-surface-3" title="Attach file">
+                  <Paperclip className="h-3 w-3" /> Attach
+                </button>
                 {isEmailAgent && gmailConnected && (
                   <button onClick={handleFetchEmails} disabled={fetchingEmails || testRunning} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/30 px-3.5 py-1.5 text-xs font-medium text-indigo-400 hover:bg-indigo-500/10 disabled:opacity-50">
                     {fetchingEmails ? <Loader2 className="h-3 w-3 animate-spin" /> : <Mail className="h-3 w-3" />} {fetchingEmails ? "Fetching..." : "Fetch Emails"}
@@ -825,6 +978,26 @@ export default function AgentDetailPage() {
               </div>
             )}
 
+            {/* Code Sandbox (Feature 3) */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-300"><Code2 className="h-4 w-4 text-cyan-400" /> Code Sandbox</h3>
+              <div className="mb-2 flex items-center gap-2">
+                <label className="text-xs text-zinc-500">Language:</label>
+                <select value={sandboxLang} onChange={(e) => setSandboxLang(e.target.value as CodeLanguage)} className="rounded-lg border border-zinc-800 bg-surface-0 px-2 py-1 text-xs text-zinc-100 outline-none">
+                  <option value="javascript">JavaScript</option><option value="python">Python</option><option value="sql">SQL</option>
+                </select>
+              </div>
+              <textarea value={sandboxCode} onChange={(e) => setSandboxCode(e.target.value)} rows={4} spellCheck={false} placeholder={sandboxLang === "javascript" ? 'console.log("Hello, world!");' : sandboxLang === "python" ? 'print("Hello, world!")' : "SELECT * FROM users LIMIT 10;"} className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-cyan-500/50" />
+              <button onClick={handleRunSandbox} disabled={sandboxRunning || !sandboxCode.trim()} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-cyan-500 disabled:opacity-50">
+                {sandboxRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />} Run
+              </button>
+              {sandboxOutput && (
+                <div className="mt-2 rounded-lg border border-zinc-800 bg-surface-0 p-3">
+                  <pre className="whitespace-pre-wrap font-mono text-xs text-zinc-300">{sandboxOutput}</pre>
+                </div>
+              )}
+            </div>
+
             {/* Agent Health Dashboard */}
             {healthStats.total > 0 && (
               <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
@@ -869,6 +1042,85 @@ export default function AgentDetailPage() {
                   <pre className="whitespace-pre-wrap text-xs leading-relaxed text-zinc-300 font-sans">{agentDocs}</pre>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* CHAT TAB (Feature 1) */}
+        {activeTab === "chat" && (
+          <div className="flex h-[calc(100vh-260px)] flex-col">
+            {/* Chat header */}
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-medium text-zinc-300">Conversation</h3>
+                {isEmailAgent && (
+                  <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-zinc-500">
+                    <button type="button" role="switch" aria-checked={chatIncludeEmails} onClick={() => setChatIncludeEmails(!chatIncludeEmails)} className={clsx("relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors", chatIncludeEmails ? "bg-indigo-500" : "bg-zinc-700")}>
+                      <span className={clsx("inline-block h-2.5 w-2.5 rounded-full bg-white transition-transform", chatIncludeEmails ? "translate-x-3.5" : "translate-x-0.5")} />
+                    </button>
+                    <Mail className="h-3 w-3" /> Include emails
+                  </label>
+                )}
+              </div>
+              <button onClick={() => { setChatMessages([]); saveChat(name, []); toast.success("Conversation cleared"); }} className="text-[11px] text-zinc-500 hover:text-red-400">Clear conversation</button>
+            </div>
+
+            {/* Message list */}
+            <div className="flex-1 overflow-auto rounded-xl border border-zinc-800 bg-surface-0 p-4 space-y-3">
+              {chatMessages.length === 0 && !chatStreaming && (
+                <div className="flex h-full items-center justify-center"><p className="text-sm text-zinc-600">Start a conversation with {name}</p></div>
+              )}
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={clsx("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
+                  <div className={clsx("max-w-[80%] rounded-xl px-3.5 py-2.5 text-sm", msg.role === "user" ? "bg-lantern-500/20 text-zinc-200" : "bg-surface-2 text-zinc-300")}>
+                    <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                    {/* Code block run buttons in assistant messages */}
+                    {msg.role === "assistant" && extractCodeBlocks(msg.content).map((block, bi) => (
+                      <div key={bi} className="mt-2">
+                        <button onClick={() => handleRunCodeBlock(i * 100 + bi, block.code, block.language)} className="inline-flex items-center gap-1 rounded bg-surface-3 px-2 py-0.5 text-[10px] text-cyan-400 hover:bg-surface-2">
+                          <Play className="h-2.5 w-2.5" /> Run {block.language}
+                        </button>
+                        {codeBlockResults[i * 100 + bi] && (
+                          <pre className={clsx("mt-1 rounded bg-surface-1 p-2 text-[10px]", codeBlockResults[i * 100 + bi].error ? "text-red-400" : "text-zinc-400")}>{codeBlockResults[i * 100 + bi].output}</pre>
+                        )}
+                      </div>
+                    ))}
+                    <p className="mt-1 text-[9px] text-zinc-600">{new Date(msg.timestamp).toLocaleTimeString()}</p>
+                  </div>
+                </div>
+              ))}
+              {chatStreaming && (
+                <div className="flex justify-start">
+                  <div className="rounded-xl bg-surface-2 px-3.5 py-2.5"><div className="flex items-center gap-1.5"><div className="h-2 w-2 animate-pulse rounded-full bg-lantern-400" /><span className="text-xs text-zinc-500">Thinking...</span></div></div>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Chat input */}
+            {chatFiles.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {chatFiles.map((f, i) => (
+                  <span key={i} className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-2 py-1 text-[10px] text-zinc-300">
+                    <Paperclip className="h-2.5 w-2.5" /> {f.name}
+                    <button onClick={() => setChatFiles(prev => prev.filter((_, j) => j !== i))} className="ml-0.5 text-zinc-500 hover:text-red-400"><X className="h-2.5 w-2.5" /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="mt-3 flex items-center gap-2">
+              <button onClick={() => handleFileAttach(setChatFiles)} className="rounded-lg border border-zinc-700 p-2 text-zinc-500 hover:bg-surface-3 hover:text-zinc-300" title="Attach file">
+                <Paperclip className="h-4 w-4" />
+              </button>
+              <input
+                type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }}
+                placeholder="Type a message..." disabled={chatStreaming}
+                className="flex-1 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 disabled:opacity-50"
+              />
+              <button onClick={handleChatSend} disabled={chatStreaming || (!chatInput.trim() && chatFiles.length === 0)} className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2.5 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50">
+                {chatStreaming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+              </button>
             </div>
           </div>
         )}
@@ -1274,6 +1526,45 @@ export default function AgentDetailPage() {
             <button onClick={handleSaveSettings} disabled={savingSettings} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-sm font-medium text-white hover:bg-lantern-400 disabled:opacity-50">
               {savingSettings ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving...</> : "Save Settings"}
             </button>
+
+            {/* Sharing (Feature 4) */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-200"><Share2 className="h-4 w-4 text-violet-400" /> Sharing</h3>
+                <button type="button" role="switch" aria-checked={sharing.isPublic} onClick={() => handleSharingChange({ isPublic: !sharing.isPublic })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", sharing.isPublic ? "bg-lantern-500" : "bg-zinc-700")}>
+                  <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", sharing.isPublic ? "translate-x-4" : "translate-x-0.5")} />
+                </button>
+              </div>
+              <p className="text-[10px] text-zinc-500">{sharing.isPublic ? "Anyone with the link can access this agent" : "This agent is private"}</p>
+              {sharing.isPublic && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-400">Access level</label>
+                    <select value={sharing.accessLevel} onChange={(e) => handleSharingChange({ accessLevel: e.target.value as SharingConfig["accessLevel"] })} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500/50">
+                      <option value="view">View only</option>
+                      <option value="run">Can run</option>
+                      <option value="fork">Can fork</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-400">Shareable URL</label>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 truncate rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-400 select-all">https://lantern.run/agents/public/{sharing.publicId}</code>
+                      <button onClick={() => { navigator.clipboard.writeText(`https://lantern.run/agents/public/${sharing.publicId}`); toast.success("Link copied"); }} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">
+                        <Copy className="h-3 w-3" /> Copy
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 rounded-lg bg-surface-0 px-3 py-2.5">
+                    <Link className="h-4 w-4 text-violet-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-zinc-300">Public ID: {sharing.publicId}</p>
+                      <p className="text-[10px] text-zinc-500">Access: {sharing.accessLevel === "view" ? "View only" : sharing.accessLevel === "run" ? "Can run" : "Can fork"}</p>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
 
             {/* Danger Zone */}
             <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-5 space-y-3">
