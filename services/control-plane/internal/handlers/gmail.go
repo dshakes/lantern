@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -55,9 +56,10 @@ func FetchGmailViaAPI(accessToken string, maxResults int) ([]GmailMessage, error
 	}
 
 	// List messages.
+	query := url.QueryEscape("newer_than:1d")
 	listURL := fmt.Sprintf(
-		"https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=%d&q=is:unread newer_than:1d",
-		maxResults,
+		"https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=%d&q=%s",
+		maxResults, query,
 	)
 	req, err := http.NewRequest("GET", listURL, nil)
 	if err != nil {
