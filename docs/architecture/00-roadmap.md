@@ -15,9 +15,9 @@
 |---|---|
 | README, CLAUDE.md, AGENT.md | ✅ |
 | Provider research (`docs/research/01-providers.md`) | ✅ |
-| Architecture overview (`01-overview.md`) | 🟡 |
-| Component reference (`02-components.md`) | 🟡 |
-| Data model (`03-data-model.md`) | 🟡 |
+| Architecture overview (`01-overview.md`) | ✅ |
+| Component reference (`02-components.md`) | ✅ |
+| Data model (`03-data-model.md`) | ✅ |
 | Runtime isolation deep dive (`04-runtime-isolation.md`) | 🟡 |
 | Workflow engine deep dive (`05-workflow-engine.md`) | 🟡 |
 | Model router (`06-model-router.md`) | 🟡 |
@@ -26,25 +26,25 @@
 | Observability (`09-observability.md`) | 🟡 |
 | Security & multi-tenancy (`10-security.md`) | 🟡 |
 | Testing strategy (`11-testing.md`) | 🟡 |
-| ADRs 0001–0010 | 🟡 |
+| ADRs 0001–0010 | ✅ |
 
 ## API surface
 
 | Item | Status |
 |---|---|
-| OpenAPI 3.1 spec (`docs/api/openapi.yaml`) | 🟡 |
-| gRPC protos (`packages/proto/`) | 🟡 |
+| OpenAPI 3.1 spec (`docs/api/openapi.yaml`) | ✅ |
+| gRPC protos (`packages/proto/`) | ✅ |
 | AsyncAPI for streams/events (`docs/api/asyncapi.yaml`) | 🟡 |
 
 ## Services
 
 | Service | Language | Status |
 |---|---|---|
-| `control-plane` | Go | 🟡 spike — agents/runs CRUD, gRPC server, Postgres schema |
+| `control-plane` | Go | ✅ — agents/runs CRUD, auth (email+password, Google OAuth, JWT), API keys, LLM provider management, deployments, data planes, Postgres schema with RLS |
 | `workflow-engine` | Go | 🟡 spike — step journaling, replay loop, in-memory queue |
 | `runtime-manager` | Rust | 🟡 spike — K8s Job runtime, Firecracker integration seam |
 | `gateway` | Rust | 🟡 spike — Axum, JWT auth, SSE streaming proxy, rate limiting |
-| `model-router` | Rust | 🟡 spike — OpenAI + Anthropic providers, streaming, response cache, big/small heuristic |
+| `model-router` | Rust | ✅ — multi-provider (OpenAI, Anthropic, Google), streaming, capability-based routing, per-tenant key management, inline completions from control-plane |
 | `memory` | Go | ⬜ stub |
 | `notifier` | Go | ⬜ stub |
 | `billing` | Go | ⬜ stub |
@@ -81,8 +81,8 @@
 | `sdk-ts` | 🟡 spike — `agent()`, `step()`, `step.map`, streaming |
 | `sdk-python` | ⬜ stub |
 | `sdk-go` | ⬜ stub |
-| `cli` (Go) | 🟡 spike — `init`, `build`, `deploy`, `run`, `logs`, `replay` commands |
-| `proto` | 🟡 spike — agents.proto, runs.proto, events.proto |
+| `cli` (Go) | ✅ — `init`, `build`, `deploy`, `run`, `logs`, `replay` commands |
+| `proto` | ✅ — agents.proto, runs.proto, events.proto, models.proto, engine.proto |
 | `shared-types` | ⬜ stub |
 | `ui-kit` | ⬜ stub |
 
@@ -90,9 +90,9 @@
 
 | App | Status |
 |---|---|
-| `web` (Next.js dashboard) | 🟡 spike — agents list, agent detail, runs list, run inspector with event stream, settings |
+| `web` (Next.js dashboard) | ✅ — agents CRUD, agent detail (settings, versions, deployments, runs), runs list + detail with event stream, playground with live LLM streaming, settings (API keys, LLM providers, team, billing), connectors, surfaces, Google OAuth login, demo mode fallback |
 | `docs-site` | 🟡 spike — Nextra-style scaffold |
-| `landing` (YC-style) | 🟡 spike — landing + pitch deck |
+| `landing` (YC-style) | ✅ — landing page with feature sections, pricing, pitch deck |
 
 ## Infra
 
@@ -120,10 +120,12 @@
 
 | Item | Status |
 |---|---|
-| `make dev` (full stack) | 🟡 spike — docker-compose with Postgres, Redis, MinIO, all services |
-| `make dev-infra` (infra only) | 🟡 spike — run services individually against shared infra |
+| `make dev` (full stack) | ✅ — docker-compose with Postgres, Redis, MinIO, all services |
+| `make dev-infra` (infra only) | ✅ — run services individually against shared infra |
+| `make run-api` (control-plane) | ✅ — Go API server with auto-migration, dev seed data |
+| `make dashboard-dev` (Next.js) | ✅ — hot-reload dashboard on :3000 |
 | `make ci-local` (lint + test + audit) | 🟡 spike — same matrix as CI |
-| `make proto` (codegen) | 🟡 spike — Go + TS generation from protos |
+| `make proto` (codegen) | ✅ — Go + TS generation from protos |
 
 ## Tests
 

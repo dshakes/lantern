@@ -80,12 +80,10 @@ const agentExamples: Record<
 export default function PlaygroundPage() {
   const { isDemoMode } = useAuth();
 
-  // Input state
-  const [selectedAgent, setSelectedAgent] = useState("research-agent");
+  // Input state — default will be updated once agents load
+  const [selectedAgent, setSelectedAgent] = useState("");
   const [selectedModel, setSelectedModel] = useState("auto");
-  const [inputText, setInputText] = useState(
-    JSON.stringify(agentExamples["research-agent"]?.input ?? {}, null, 2),
-  );
+  const [inputText, setInputText] = useState("{}");
 
   // Run state
   const [isRunning, setIsRunning] = useState(false);
@@ -121,20 +119,33 @@ export default function PlaygroundPage() {
   const outputRef = useRef<HTMLDivElement>(null);
   const startTimeRef = useRef<number>(0);
 
-  // Load agents from API (with mock fallback)
-  const [agents, setAgents] = useState(mockAgents);
+  // Load agents from API; fall back to mock agents with "(demo)" suffix
+  const [agents, setAgents] = useState<typeof mockAgents>([]);
   useEffect(() => {
     (async () => {
       try {
         const realAgents = await api.listAgents();
-        if (realAgents.length > 0) {
-          setAgents(realAgents);
-        }
+        setAgents(realAgents);
       } catch {
-        // Keep mock agents
+        // API unavailable — show mock agents with demo suffix
+        setAgents(
+          mockAgents.map((a) => ({ ...a, name: `${a.name} (demo)` })),
+        );
       }
     })();
   }, []);
+
+  // Select first active agent once agents load
+  useEffect(() => {
+    if (agents.length > 0 && !selectedAgent) {
+      const first = agents.find((a) => a.status === "active") ?? agents[0];
+      setSelectedAgent(first.name);
+      const example = agentExamples[first.name];
+      if (example) {
+        setInputText(JSON.stringify(example.input, null, 2));
+      }
+    }
+  }, [agents, selectedAgent]);
 
   // Auto-scroll output
   useEffect(() => {

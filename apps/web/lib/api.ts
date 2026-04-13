@@ -372,14 +372,7 @@ class LanternAPI {
   // ---- Agents -------------------------------------------------------------
 
   async listAgents(): Promise<Agent[]> {
-    try {
-      return await this.request<Agent[]>("/v1/agents");
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for listAgents, using mock data",
-      );
-      return [...mockAgents];
-    }
+    return await this.request<Agent[]>("/v1/agents");
   }
 
   async getAgent(name: string): Promise<Agent> {
@@ -471,42 +464,16 @@ class LanternAPI {
   // ---- Runs ---------------------------------------------------------------
 
   async listRuns(filters?: RunFilters): Promise<Run[]> {
-    try {
-      const params = new URLSearchParams();
-      if (filters?.agentName && filters.agentName !== "all")
-        params.set("agent", filters.agentName);
-      if (filters?.status && filters.status !== "all")
-        params.set("status", filters.status);
-      if (filters?.search) params.set("q", filters.search);
-      const qs = params.toString();
-      return await this.request<Run[]>(
-        `/v1/runs${qs ? `?${qs}` : ""}`,
-      );
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for listRuns, using mock data",
-      );
-      let result = [...mockRuns];
-      if (filters?.agentName && filters.agentName !== "all") {
-        result = result.filter(
-          (r) => r.agentName === filters.agentName,
-        );
-      }
-      if (filters?.status && filters.status !== "all") {
-        result = result.filter(
-          (r) => r.status === filters.status,
-        );
-      }
-      if (filters?.search) {
-        const q = filters.search.toLowerCase();
-        result = result.filter(
-          (r) =>
-            r.id.toLowerCase().includes(q) ||
-            r.agentName.toLowerCase().includes(q),
-        );
-      }
-      return result;
-    }
+    const params = new URLSearchParams();
+    if (filters?.agentName && filters.agentName !== "all")
+      params.set("agent", filters.agentName);
+    if (filters?.status && filters.status !== "all")
+      params.set("status", filters.status);
+    if (filters?.search) params.set("q", filters.search);
+    const qs = params.toString();
+    return await this.request<Run[]>(
+      `/v1/runs${qs ? `?${qs}` : ""}`,
+    );
   }
 
   async getRun(id: string): Promise<Run> {

@@ -19,7 +19,7 @@ import {
   ToggleRight,
 } from "lucide-react";
 import clsx from "clsx";
-import { apiKeys as initialApiKeys, teamMembers as initialMembers } from "@/lib/mock-data";
+// Mock data imports removed — settings start with empty state when API is available
 import { ProviderCard, type ProviderStatus } from "@/components/settings/provider-card";
 import { ApiKeyModal, type CreatedApiKey } from "@/components/settings/api-key-modal";
 import { InviteModal, type InvitedMember } from "@/components/settings/invite-modal";
@@ -107,11 +107,11 @@ const defaultProviders: ProviderSettings = { openai: { key: "", status: "not_con
 const defaultBilling: BillingSettings = { plan: "Team", budgetLimit: "100", hardLimit: false };
 
 function defaultApiKeysList(): StoredApiKey[] {
-  return initialApiKeys.map((k) => ({ id: k.id, name: k.name, prefix: k.prefix, scopes: k.scopes, createdAt: k.createdAt.toISOString(), lastUsed: "2026-04-11", status: "active" as const }));
+  return [];
 }
 
 function defaultMembersList(): StoredMember[] {
-  return initialMembers.map((m) => ({ id: m.id, name: m.name, email: m.email, role: m.role, joinedAt: "2026-03-01" }));
+  return [];
 }
 
 const roleBadgeColors: Record<string, string> = { owner: "bg-lantern-500/10 text-lantern-500", admin: "bg-purple-500/10 text-purple-400", member: "bg-blue-500/10 text-blue-400", viewer: "bg-zinc-500/10 text-zinc-400" };

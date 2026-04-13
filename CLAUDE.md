@@ -68,9 +68,14 @@ make dev-infra
 
 # Run the control-plane locally against dev infra
 make run-api
+
+# Run the Next.js dashboard in dev mode (port 3000, proxies to :8080)
+make dashboard-dev
 ```
 
 `make run-api` sets the correct env vars (`DATABASE_URL`, `REDIS_URL`, `S3_ENDPOINT`, `LOG_LEVEL`) for connecting to the Dockerized Postgres/Redis/MinIO. Do not run `go run ./cmd/server` bare -- it defaults to your OS user for Postgres auth and will fail.
+
+For typical local development, run `make dev-infra`, then `make run-api` in one terminal, and `make dashboard-dev` in another.
 
 ### Dev credentials
 
@@ -79,8 +84,23 @@ make run-api
 | PostgreSQL | `postgres://lantern:lantern@localhost:5432/lantern` |
 | Redis | `redis://localhost:6379` |
 | MinIO | `lantern:lanternsecret` at `localhost:9000` (console `:9001`) |
-| Dashboard login | `admin@lantern.dev` / `lantern` |
+| Dashboard login | `admin@lantern.dev` / `lantern` (email+password) |
 | JWT secret | `lantern-dev-jwt-secret-do-not-use-in-production` |
+
+### Google OAuth (optional)
+
+To enable "Sign in with Google" locally:
+
+1. Create a Google Cloud OAuth 2.0 Client ID at [console.cloud.google.com](https://console.cloud.google.com/apis/credentials).
+2. Set authorized redirect URI to `http://localhost:8080/auth/oauth/google/callback`.
+3. Export the credentials before running the API:
+   ```bash
+   export GOOGLE_CLIENT_ID="your-client-id"
+   export GOOGLE_CLIENT_SECRET="your-client-secret"
+   make run-api
+   ```
+
+Without these env vars, Google OAuth is disabled and the sign-in button will show an error. Email+password login always works.
 
 ### Frontend dev
 
