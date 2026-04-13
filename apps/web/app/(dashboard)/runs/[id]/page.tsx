@@ -361,6 +361,42 @@ export default function RunDetailPage() {
                 streaming={displayStreaming}
                 streamingText={displayStreamingText}
               />
+            ) : run.status === "succeeded" && run.output ? (
+              <div className="flex h-full flex-col overflow-auto p-6">
+                <div className="mb-4">
+                  <h3 className="text-sm font-medium text-zinc-300">Agent Output</h3>
+                  <div className="mt-1 h-px bg-zinc-800" />
+                </div>
+                <div className="flex-1">
+                  <div className="whitespace-pre-wrap rounded-lg border border-zinc-800 bg-surface-2 p-4 font-mono text-sm leading-relaxed text-zinc-200">
+                    {typeof run.output === "string"
+                      ? run.output
+                      : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>)
+                        ? String((run.output as Record<string, unknown>).result)
+                        : JSON.stringify(run.output, null, 2)}
+                  </div>
+                </div>
+              </div>
+            ) : run.status === "failed" && run.error ? (
+              <div className="flex h-full items-center justify-center p-6">
+                <div className="w-full max-w-md rounded-lg border border-red-500/20 bg-red-500/5 p-5">
+                  <div className="flex items-center gap-2 text-sm font-medium text-red-400">
+                    <XCircle className="h-4 w-4" />
+                    Run Failed
+                  </div>
+                  <p className="mt-2 text-sm font-medium text-red-300">
+                    {run.error.code}
+                  </p>
+                  <p className="mt-1 text-sm text-red-300/70">
+                    {run.error.message}
+                  </p>
+                  {run.error.stepId && (
+                    <p className="mt-2 font-mono text-xs text-red-300/50">
+                      Failed at step: {run.error.stepId}
+                    </p>
+                  )}
+                </div>
+              </div>
             ) : (
               <div className="flex h-full items-center justify-center">
                 <div className="text-center">
@@ -384,7 +420,7 @@ export default function RunDetailPage() {
                     <>
                       <Loader2 className="mx-auto h-8 w-8 animate-spin text-lantern-500" />
                       <p className="mt-3 text-sm text-zinc-600">
-                        Connecting to event stream...
+                        Processing...
                       </p>
                     </>
                   ) : (
@@ -534,7 +570,49 @@ export default function RunDetailPage() {
               </section>
             )}
 
-            {/* Input / Output */}
+            {/* Output — prominent when run succeeded */}
+            {run.status === "succeeded" && run.output !== undefined && run.output !== null && (
+              <section>
+                <h3 className="mb-3 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-emerald-500">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Output
+                </h3>
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-zinc-200">
+                    {typeof run.output === "string"
+                      ? run.output
+                      : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>)
+                        ? String((run.output as Record<string, unknown>).result)
+                        : JSON.stringify(run.output, null, 2)}
+                  </pre>
+                </div>
+              </section>
+            )}
+
+            {/* Error — prominent when run failed */}
+            {run.status === "failed" && run.error && (
+              <section>
+                <h3 className="mb-3 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-red-500">
+                  <XCircle className="h-3.5 w-3.5" />
+                  Error
+                </h3>
+                <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                  <p className="text-xs font-medium text-red-400">
+                    {run.error.code}
+                  </p>
+                  <p className="mt-1 text-xs text-red-300/70">
+                    {run.error.message}
+                  </p>
+                  {run.error.stepId && (
+                    <p className="mt-1 font-mono text-[11px] text-red-300/50">
+                      Step: {run.error.stepId}
+                    </p>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {/* Input / Output details */}
             <section>
               <h3 className="mb-3 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-zinc-500">
                 <Hash className="h-3.5 w-3.5" />
@@ -543,9 +621,9 @@ export default function RunDetailPage() {
               <div className="space-y-2">
                 <JsonViewer data={run.input} label="Input" defaultOpen />
                 {run.output !== undefined && run.output !== null ? (
-                  <JsonViewer data={run.output} label="Output" />
+                  <JsonViewer data={run.output} label="Output (raw)" />
                 ) : null}
-                {run.error && (
+                {run.error && run.status !== "failed" && (
                   <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
                     <p className="text-xs font-medium text-red-400">
                       {run.error.code}

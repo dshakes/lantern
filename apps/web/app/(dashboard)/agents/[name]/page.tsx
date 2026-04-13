@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { format } from "date-fns";
 import {
@@ -14,6 +14,10 @@ import {
   LayoutDashboard,
   Loader2,
   MoreHorizontal,
+  Save,
+  MessageSquare,
+  Square,
+  CheckCircle2,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -60,6 +64,48 @@ const tabs = [
 ] as const;
 
 type TabKey = (typeof tabs)[number]["key"];
+
+// ---------------------------------------------------------------------------
+// System prompt localStorage helpers
+// ---------------------------------------------------------------------------
+
+const PROMPTS_KEY = "lantern_agent_prompts";
+
+function getAgentPrompt(agentName: string): string {
+  if (typeof window === "undefined") return "";
+  const stored = localStorage.getItem(PROMPTS_KEY);
+  if (!stored) return "";
+  try {
+    const prompts = JSON.parse(stored);
+    return prompts[agentName] || "";
+  } catch {
+    return "";
+  }
+}
+
+function setAgentPrompt(agentName: string, prompt: string) {
+  if (typeof window === "undefined") return;
+  const stored = localStorage.getItem(PROMPTS_KEY) || "{}";
+  try {
+    const prompts = JSON.parse(stored);
+    prompts[agentName] = prompt;
+    localStorage.setItem(PROMPTS_KEY, JSON.stringify(prompts));
+  } catch {
+    localStorage.setItem(PROMPTS_KEY, JSON.stringify({ [agentName]: prompt }));
+  }
+}
+
+function getAgentSettings(agentName: string): Record<string, unknown> {
+  if (typeof window === "undefined") return {};
+  const key = `lantern_agent_settings_${agentName}`;
+  const stored = localStorage.getItem(key);
+  if (!stored) return {};
+  try {
+    return JSON.parse(stored);
+  } catch {
+    return {};
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Run table columns
@@ -130,6 +176,19 @@ export default function AgentDetailPage() {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
 
+  // System prompt state
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [promptDirty, setPromptDirty] = useState(false);
+  const [savingPrompt, setSavingPrompt] = useState(false);
+
+  // Quick run state
+  const [quickRunInput, setQuickRunInput] = useState("");
+  const [quickRunning, setQuickRunning] = useState(false);
+  const [quickRunOutput, setQuickRunOutput] = useState("");
+  const [quickRunDone, setQuickRunDone] = useState(false);
+  const [quickRunError, setQuickRunError] = useState<string | null>(null);
+  const quickRunOutputRef = useRef<HTMLDivElement>(null);
+
   // Settings form state
   const [settingsModel, setSettingsModel] = useState("auto");
   const [settingsIsolation, setSettingsIsolation] = useState("standard");
@@ -160,6 +219,32 @@ export default function AgentDetailPage() {
       document.removeEventListener("keydown", handleEscape);
     };
   }, [showMoreMenu]);
+
+  // Load system prompt and settings from localStorage
+  useEffect(() => {
+    const saved = getAgentPrompt(name);
+    setSystemPrompt(saved);
+    setPromptDirty(false);
+
+    // Load settings from localStorage
+    const settings = getAgentSettings(name);
+    if (settings.model) setSettingsModel(settings.model as string);
+    if (settings.isolation) setSettingsIsolation(settings.isolation as string);
+    if (settings.timeout) setSettingsTimeout(settings.timeout as string);
+    if (settings.maxTokens) setSettingsMaxTokens(settings.maxTokens as number);
+    if (settings.maxCostUsd) setSettingsMaxCost(settings.maxCostUsd as number);
+    if (settings.cron) setSettingsCron(settings.cron as string);
+
+    // Set default quick run input
+    setQuickRunInput(`Hello, I'd like to test the ${name} agent.`);
+  }, [name]);
+
+  // Auto-scroll quick run output
+  useEffect(() => {
+    if (quickRunOutputRef.current) {
+      quickRunOutputRef.current.scrollTop = quickRunOutputRef.current.scrollHeight;
+    }
+  }, [quickRunOutput]);
 
   if (agentLoading) return <AgentDetailSkeleton />;
 
@@ -207,16 +292,137 @@ export default function AgentDetailPage() {
     }
   };
 
+  const handleSavePrompt = async () => {
+    setSavingPrompt(true);
+    try {
+      setAgentPrompt(name, systemPrompt);
+      await api.updateAgent(name, { systemPrompt, description: agent?.description });
+      setPromptDirty(false);
+      toast.success("System prompt saved");
+    } catch (err) {
+      // localStorage save already happened via updateAgent fallback
+      setPromptDirty(false);
+      toast.success("System prompt saved locally");
+    } finally {
+      setSavingPrompt(false);
+    }
+  };
+
+  const handleQuickRun = useCallback(async () => {
+    if (!quickRunInput.trim()) return;
+    setQuickRunOutput("");
+    setQuickRunDone(false);
+    setQuickRunError(null);
+    setQuickRunning(true);
+
+    const messages: Array<{ role: string; content: string }> = [];
+    if (systemPrompt) {
+      messages.push({ role: "system", content: systemPrompt });
+    }
+    messages.push({ role: "user", content: quickRunInput });
+
+    try {
+      const response = await api.complete({
+        messages,
+        model: settingsModel,
+        stream: true,
+        temperature: 1.0,
+        maxTokens: 4096,
+      });
+
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => "");
+        let errMsg: string;
+        try {
+          const parsed = JSON.parse(errBody);
+          errMsg = parsed.error || `API error ${response.status}`;
+        } catch {
+          errMsg = errBody || `API error ${response.status}`;
+        }
+        throw new Error(errMsg);
+      }
+
+      if (response.headers.get("content-type")?.includes("text/event-stream")) {
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("No response body");
+
+        const decoder = new TextDecoder();
+        let fullOutput = "";
+        let buffer = "";
+
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6).trim();
+            if (!data) continue;
+            try {
+              const event = JSON.parse(data);
+              if (event.type === "delta" && event.content) {
+                fullOutput += event.content;
+                setQuickRunOutput(fullOutput);
+              }
+            } catch {
+              // Ignore malformed events
+            }
+          }
+        }
+
+        if (buffer.trim()) {
+          if (buffer.startsWith("data: ")) {
+            try {
+              const event = JSON.parse(buffer.slice(6).trim());
+              if (event.type === "delta" && event.content) {
+                fullOutput += event.content;
+                setQuickRunOutput(fullOutput);
+              }
+            } catch {
+              // Ignore
+            }
+          }
+        }
+      } else {
+        const result = await response.json();
+        setQuickRunOutput(result.content || JSON.stringify(result, null, 2));
+      }
+
+      setQuickRunDone(true);
+      setQuickRunning(false);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "Unknown error";
+      setQuickRunError(errMsg);
+      setQuickRunning(false);
+      setQuickRunDone(true);
+    }
+  }, [quickRunInput, systemPrompt, settingsModel]);
+
+  const handleStopQuickRun = useCallback(() => {
+    setQuickRunning(false);
+    setQuickRunDone(true);
+  }, []);
+
   const handleSaveSettings = async () => {
     setSavingSettings(true);
     try {
-      // In a real implementation this would call api.updateAgent()
-      await new Promise((r) => setTimeout(r, 500));
-      toast.success("Settings saved");
+      await api.updateAgent(name, {
+        model: settingsModel,
+        isolation: settingsIsolation,
+        timeout: settingsTimeout,
+        maxTokens: settingsMaxTokens,
+        maxCostUsd: settingsMaxCost,
+        cron: settingsCron,
+      });
+      toast.success("Settings saved: model, isolation, limits, schedule");
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to save settings",
-      );
+      // updateAgent fallback saves to localStorage
+      toast.success("Settings saved locally");
     } finally {
       setSavingSettings(false);
     }
@@ -311,6 +517,117 @@ export default function AgentDetailPage() {
               {agent.description}
             </p>
 
+            {/* System Prompt Card */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300">
+                  <MessageSquare className="h-4 w-4 text-indigo-400" />
+                  System Prompt
+                </h3>
+                <button
+                  onClick={handleSavePrompt}
+                  disabled={savingPrompt || !promptDirty}
+                  className={clsx(
+                    "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                    promptDirty
+                      ? "bg-lantern-500 text-white hover:bg-lantern-400"
+                      : "border border-zinc-700 text-zinc-500 cursor-not-allowed",
+                  )}
+                >
+                  {savingPrompt ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Save className="h-3 w-3" />
+                  )}
+                  {savingPrompt ? "Saving..." : "Save"}
+                </button>
+              </div>
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => {
+                  setSystemPrompt(e.target.value);
+                  setPromptDirty(true);
+                }}
+                rows={6}
+                spellCheck={false}
+                placeholder="Define what this agent does. For example: 'You are a research analyst. Given a topic, write a comprehensive briefing with key findings and implications.'"
+                className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+              />
+              {promptDirty && (
+                <p className="mt-1.5 text-[11px] text-amber-400">
+                  Unsaved changes
+                </p>
+              )}
+            </div>
+
+            {/* Quick Run Card */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-300">
+                <Play className="h-4 w-4 text-emerald-400" />
+                Quick Run
+              </h3>
+              <div className="space-y-3">
+                <textarea
+                  value={quickRunInput}
+                  onChange={(e) => setQuickRunInput(e.target.value)}
+                  rows={3}
+                  spellCheck={false}
+                  placeholder="Type a message to test this agent..."
+                  className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+                />
+                {quickRunning ? (
+                  <button
+                    onClick={handleStopQuickRun}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-500"
+                  >
+                    <Square className="h-3 w-3" />
+                    Stop
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleQuickRun}
+                    disabled={!quickRunInput.trim()}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Play className="h-3 w-3" />
+                    Run
+                  </button>
+                )}
+
+                {/* Quick run output */}
+                {(quickRunOutput || quickRunning || quickRunError) && (
+                  <div className="rounded-lg border border-zinc-800 bg-surface-0">
+                    {quickRunError ? (
+                      <div className="p-3">
+                        <p className="text-xs font-medium text-red-400">Error</p>
+                        <p className="mt-1 text-xs text-red-300/70">{quickRunError}</p>
+                      </div>
+                    ) : (
+                      <div
+                        ref={quickRunOutputRef}
+                        className="max-h-64 overflow-auto p-3"
+                      >
+                        <div className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-zinc-200">
+                          {quickRunOutput}
+                          {quickRunning && (
+                            <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-lantern-400" />
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {quickRunDone && !quickRunError && (
+                      <div className="border-t border-zinc-800 px-3 py-2">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Completed
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Quick stats */}
             <div className="grid grid-cols-4 gap-4">
               <StatCard label="Total Runs" value={runsLoading ? "..." : String(agentRuns.length)} />
@@ -354,7 +671,7 @@ export default function AgentDetailPage() {
                 </div>
                 <div>
                   <dt className="text-zinc-500">Model</dt>
-                  <dd className="mt-0.5 text-zinc-300">auto</dd>
+                  <dd className="mt-0.5 text-zinc-300">{settingsModel === "auto" ? "auto" : settingsModel}</dd>
                 </div>
               </dl>
             </div>

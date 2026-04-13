@@ -81,18 +81,30 @@ export function RunDialog({
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to create run";
+
+      // Try to extract the actual error from the API response
+      // The error format from api.ts is "API <status>: <body>"
+      let displayError = message;
+      const apiMatch = message.match(/^API \d+:\s*(.+)$/);
+      if (apiMatch) {
+        try {
+          const parsed = JSON.parse(apiMatch[1]);
+          displayError = parsed.error || parsed.message || apiMatch[1];
+        } catch {
+          displayError = apiMatch[1];
+        }
+      }
+
       if (
         message.includes("fetch") ||
-        message.includes("Failed") ||
         message.includes("ECONNREFUSED") ||
-        message.includes("API") ||
         err instanceof TypeError
       ) {
         setSubmitError(
           "Could not create run: API unavailable. Use the Playground to test interactively, or start the API with: make run-api",
         );
       } else {
-        setSubmitError(message);
+        setSubmitError(displayError);
       }
     } finally {
       setSubmitting(false);

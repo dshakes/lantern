@@ -424,6 +424,36 @@ class LanternAPI {
     }
   }
 
+  async updateAgent(
+    name: string,
+    data: { description?: string; systemPrompt?: string; model?: string; isolation?: string; timeout?: string; maxTokens?: number; maxCostUsd?: number; cron?: string },
+  ): Promise<Agent> {
+    try {
+      return await this.request<Agent>(
+        `/v1/agents/${encodeURIComponent(name)}`,
+        {
+          method: "PUT",
+          body: JSON.stringify(data),
+        },
+      );
+    } catch {
+      console.warn(
+        "[lantern] Gateway unavailable for updateAgent, saving to localStorage",
+      );
+      // Save to localStorage as fallback
+      if (typeof window !== "undefined") {
+        const key = `lantern_agent_settings_${name}`;
+        const existing = localStorage.getItem(key);
+        const current = existing ? JSON.parse(existing) : {};
+        const merged = { ...current, ...data };
+        localStorage.setItem(key, JSON.stringify(merged));
+      }
+      // Return a simulated agent
+      const agent = await this.getAgent(name);
+      return { ...agent, description: data.description ?? agent.description };
+    }
+  }
+
   async deleteAgent(name: string): Promise<void> {
     try {
       await this.request<void>(

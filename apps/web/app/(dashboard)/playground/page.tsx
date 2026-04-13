@@ -93,6 +93,7 @@ export default function PlaygroundPage() {
   const [streamDone, setStreamDone] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [demoMode, setDemoMode] = useState(false);
+  const [savedRunId, setSavedRunId] = useState<string | null>(null);
   const [runMeta, setRunMeta] = useState<{
     tokensIn: number;
     tokensOut: number;
@@ -175,6 +176,7 @@ export default function PlaygroundPage() {
     setRunMeta(null);
     setDemoMode(false);
     setDemoEvents([]);
+    setSavedRunId(null);
     resetDemo();
     setIsRunning(true);
     startTimeRef.current = Date.now();
@@ -326,6 +328,17 @@ export default function PlaygroundPage() {
         });
         setStreamDone(true);
         setIsRunning(false);
+
+        // Try to save as a run record
+        try {
+          const savedRun = await api.createRun({
+            agentName: selectedAgent,
+            input: JSON.parse(inputText),
+          });
+          setSavedRunId(savedRun.id);
+        } catch {
+          // Run saving is optional -- don't block the UI
+        }
       } else {
         // Non-streaming JSON response
         const result = await response.json();
@@ -342,6 +355,17 @@ export default function PlaygroundPage() {
         });
         setStreamDone(true);
         setIsRunning(false);
+
+        // Try to save as a run record
+        try {
+          const savedRun = await api.createRun({
+            agentName: selectedAgent,
+            input: JSON.parse(inputText),
+          });
+          setSavedRunId(savedRun.id);
+        } catch {
+          // Run saving is optional -- don't block the UI
+        }
       }
     } catch (err) {
       const errorMessage =
@@ -604,6 +628,14 @@ export default function PlaygroundPage() {
                           <Coins className="h-3 w-3" />
                           {formatCost(runMeta.costUsd)}
                         </div>
+                        {savedRunId && (
+                          <a
+                            href={`/runs/${savedRunId}`}
+                            className="text-[11px] font-medium text-indigo-400 transition-colors hover:text-indigo-300"
+                          >
+                            Saved as {savedRunId.slice(0, 12)}...
+                          </a>
+                        )}
                       </div>
                       <button
                         onClick={handleRun}
