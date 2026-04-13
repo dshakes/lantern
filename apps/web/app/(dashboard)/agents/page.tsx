@@ -240,8 +240,11 @@ export default function AgentsPage() {
                       </span>
                     </div>
 
-                    {/* Hover actions */}
-                    <div className="absolute right-3 top-3 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                    {/* Hover actions — stay visible when menu is open */}
+                    <div className={clsx(
+                      "absolute right-3 top-3 flex items-center gap-1 transition-opacity",
+                      openMenu === agent.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    )}>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
