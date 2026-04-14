@@ -1,18 +1,14 @@
 @import "tailwindcss";
 
 @theme {
-  --color-amber-400: #fbbf24;
-  --color-amber-500: #f59e0b;
-  --color-amber-600: #d97706;
-
-  --color-stone-50: #fafaf9;
-  --color-stone-400: #a8a29e;
-  --color-stone-800: #292524;
-  --color-stone-900: #1c1917;
-  --color-stone-950: #0c0a09;
+  --color-bg: #000000;
+  --color-surface: #111111;
+  --color-border: #222222;
+  --color-text: #ededed;
+  --color-muted: #888888;
+  --color-accent: #8b5cf6;
 
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
-  --font-serif: "Instrument Serif", Georgia, serif;
   --font-mono: "JetBrains Mono", "Fira Code", monospace;
 }
 
@@ -22,94 +18,14 @@ html {
 }
 
 body {
-  background: #0c0a09;
-  color: #fafaf9;
+  background: #000;
+  color: #ededed;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 ::selection {
-  background: rgba(245, 158, 11, 0.3);
+  background: rgba(139, 92, 246, 0.3);
   color: #fff;
-}
-
-/* ── Hero glow ────────────────────────────────────── */
-
-@keyframes glow-pulse {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
-}
-
-.hero-glow {
-  background: radial-gradient(ellipse at 50% 0%, rgba(245, 158, 11, 0.12) 0%, transparent 60%);
-  animation: glow-pulse 6s ease-in-out infinite;
-}
-
-/* ── Feature card ─────────────────────────────────── */
-
-.feature-card {
-  background: #1c1917;
-  border: none;
-  border-radius: 12px;
-  padding: 24px;
-  transition: all 0.2s ease;
-  position: relative;
-  overflow: hidden;
-}
-.feature-card::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 12px;
-  bottom: 12px;
-  width: 3px;
-  background: #f59e0b;
-  border-radius: 3px;
-}
-.feature-card:hover {
-  background: #1f1c1a;
-  transform: translateY(-1px);
-}
-
-/* ── Terminal block ───────────────────────────────── */
-
-.terminal-block {
-  background: #1c1917;
-  border: 1px solid #292524;
-  border-radius: 12px;
-}
-
-/* ── Blinking cursor ──────────────────────────────── */
-
-@keyframes blink-cursor {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-.terminal-cursor::after {
-  content: "\2588";
-  animation: blink-cursor 1s step-end infinite;
-  color: #f59e0b;
-}
-
-/* ── Dashboard mock ───────────────────────────────── */
-
-.dashboard-mock {
-  background: linear-gradient(135deg, #1c1917, #0c0a09);
-  border: 1px solid #292524;
-  border-radius: 16px;
-}
-
-/* ── Pricing card ─────────────────────────────────── */
-
-.pricing-card {
-  background: #1c1917;
-  border: 1px solid #292524;
-  border-radius: 12px;
-  padding: 28px;
-  transition: all 0.2s ease;
-}
-.pricing-card-active {
-  border-color: #f59e0b;
-  background: #1f1c1a;
 }
