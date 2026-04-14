@@ -51,6 +51,7 @@ import {
   Code2,
   Share2,
   Cloud,
+  Download,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -1148,9 +1149,17 @@ export default function AgentDetailPage() {
                       <p className="mt-1 text-xs text-red-300/70">{testError}</p>
                     </div>
                   ) : (
-                    <div ref={testRef} className="max-h-80 overflow-auto p-3">
-                      <div className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-zinc-200">
-                        {filteredTestOutput.text || testOutput}
+                    <div ref={testRef} className="max-h-80 overflow-auto p-4">
+                      <div className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200 font-sans">
+                        {(() => {
+                          const raw = filteredTestOutput.text || testOutput;
+                          // Clean markdown: bold → plain, headers → plain, bullets → •
+                          return raw
+                            .replace(/\*\*(.*?)\*\*/g, "$1")
+                            .replace(/^#{1,3}\s+/gm, "")
+                            .replace(/^- /gm, "  • ")
+                            .replace(/^\d+\.\s+\*\*(.*?)\*\*/gm, (_, t) => `• ${t}`);
+                        })()}
                         {testRunning && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-lantern-400" />}
                       </div>
                       {filteredTestOutput.warnings.length > 0 && (
@@ -1165,7 +1174,6 @@ export default function AgentDetailPage() {
                   {testDone && !testError && (
                     <div className="flex items-center gap-3 border-t border-zinc-800 px-3 py-2">
                       <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Completed</span>
-                      {filteredTestOutput.blocked && <span className="text-[11px] font-medium text-red-400">Blocked by guardrails</span>}
                       {testMeta && (
                         <>
                           <span className="text-[11px] text-zinc-500">{testMeta.model}</span>
@@ -1174,6 +1182,27 @@ export default function AgentDetailPage() {
                           <span className="text-[11px] text-zinc-500">{formatDuration(testMeta.duration)}</span>
                         </>
                       )}
+                      {/* Share / Download */}
+                      <div className="ml-auto flex items-center gap-1.5">
+                        <button onClick={() => { navigator.clipboard.writeText(testOutput); toast.success("Copied to clipboard"); }} className="rounded px-2 py-1 text-[10px] text-zinc-500 hover:bg-surface-3 hover:text-zinc-300" title="Copy">
+                          <Copy className="h-3 w-3" />
+                        </button>
+                        <button onClick={() => {
+                          const blob = new Blob([testOutput], { type: "text/plain" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a"); a.href = url; a.download = `${name}-output.txt`; a.click();
+                          URL.revokeObjectURL(url);
+                          toast.success("Downloaded");
+                        }} className="rounded px-2 py-1 text-[10px] text-zinc-500 hover:bg-surface-3 hover:text-zinc-300" title="Download">
+                          <Download className="h-3 w-3" />
+                        </button>
+                        <button onClick={() => {
+                          if (navigator.share) { navigator.share({ title: `${name} output`, text: testOutput }); }
+                          else { navigator.clipboard.writeText(testOutput); toast.success("Copied to clipboard (share not supported in this browser)"); }
+                        }} className="rounded px-2 py-1 text-[10px] text-zinc-500 hover:bg-surface-3 hover:text-zinc-300" title="Share">
+                          <Share2 className="h-3 w-3" />
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
