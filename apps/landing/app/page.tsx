@@ -55,7 +55,7 @@ function Section({
   id?: string;
 }) {
   return (
-    <section id={id} className={`px-6 py-24 md:py-32 ${className}`}>
+    <section id={id} className={`px-6 py-16 md:py-20 ${className}`}>
       <div className="mx-auto max-w-5xl">{children}</div>
     </section>
   );
@@ -232,7 +232,7 @@ export default function LandingPage() {
       {/* ── How It Works ─────────────────────────────── */}
       <Section id="how-it-works">
         <FadeIn>
-          <h2 className="font-serif text-3xl md:text-5xl tracking-[-0.03em] text-center">
+          <h2 className="font-serif text-2xl md:text-4xl tracking-[-0.02em] text-center">
             Three steps. That&apos;s it.
           </h2>
         </FadeIn>
@@ -257,17 +257,17 @@ export default function LandingPage() {
       {/* ── Features ─────────────────────────────────── */}
       <Section id="features">
         <FadeIn>
-          <h2 className="font-serif text-3xl md:text-5xl tracking-[-0.03em] text-center">
+          <h2 className="font-serif text-2xl md:text-4xl tracking-[-0.02em] text-center">
             Everything agents need.
           </h2>
           <p className="mt-4 text-center text-[#a8a29e]">
             Built for production from day one.
           </p>
         </FadeIn>
-        <div className="mt-16 grid gap-5 md:grid-cols-2">
+        <div className="mt-10 grid gap-3 md:grid-cols-2">
           {features.map((f, i) => (
             <FadeIn key={f.title} delay={i * 0.06}>
-              <div className="feature-card p-6">
+              <div className="feature-card">
                 <div className="flex items-start gap-4">
                   <f.icon size={20} className="mt-0.5 shrink-0 text-[#f59e0b]" />
                   <div>
@@ -286,7 +286,7 @@ export default function LandingPage() {
       {/* ── Product Demo ─────────────────────────────── */}
       <Section>
         <FadeIn>
-          <h2 className="font-serif text-3xl md:text-5xl tracking-[-0.03em] text-center">
+          <h2 className="font-serif text-2xl md:text-4xl tracking-[-0.02em] text-center">
             See it in action.
           </h2>
         </FadeIn>
@@ -346,11 +346,12 @@ export default function LandingPage() {
       {/* ── Pricing ──────────────────────────────────── */}
       <Section id="pricing">
         <FadeIn>
-          <h2 className="font-serif text-3xl md:text-5xl tracking-[-0.03em] text-center">
-            Simple pricing.
+          <h2 className="font-serif text-2xl md:text-3xl tracking-[-0.02em] text-center">
+            Pricing
           </h2>
+          <p className="mt-2 text-center text-sm text-[#a8a29e]">Free during alpha. No credit card required.</p>
         </FadeIn>
-        <div className="mt-16 grid gap-6 md:grid-cols-3">
+        <div className="mt-8 grid gap-4 md:grid-cols-3">
           <FadeIn delay={0}>
             <div className="pricing-card pricing-card-active p-8">
               <p className="text-xs font-mono uppercase tracking-wider text-[#f59e0b]">
@@ -411,10 +412,11 @@ export default function LandingPage() {
       <Section>
         <FadeIn>
           <div className="text-center">
-            <h2 className="font-serif text-3xl md:text-5xl tracking-[-0.03em]">
+            <h2 className="font-serif text-2xl md:text-4xl tracking-[-0.02em]">
               Ship your first agent today.
             </h2>
-            <div className="mt-8">
+            <p className="mt-3 text-sm text-[#a8a29e]">No credit card required. Free during alpha.</p>
+            <div className="mt-6">
               <a
                 href="https://docs.lantern.run/quickstart"
                 className="inline-flex items-center gap-2 rounded-lg bg-[#f59e0b] px-8 py-3.5 text-sm font-semibold text-[#0c0a09] transition-all hover:bg-[#fbbf24] hover:shadow-[0_0_24px_rgba(245,158,11,0.25)]"

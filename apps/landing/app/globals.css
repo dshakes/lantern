@@ -49,18 +49,27 @@ body {
 /* ── Feature card ─────────────────────────────────── */
 
 .feature-card {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid #292524;
-  border-left: 3px solid #f59e0b;
+  background: #1c1917;
+  border: none;
   border-radius: 12px;
-  transition: all 0.3s ease;
+  padding: 24px;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+.feature-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  background: #f59e0b;
+  border-radius: 3px;
 }
 .feature-card:hover {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: #292524;
-  border-left-color: #fbbf24;
-  box-shadow: 0 0 40px rgba(245, 158, 11, 0.05);
-  transform: translateY(-2px);
+  background: #1f1c1a;
+  transform: translateY(-1px);
 }
 
 /* ── Terminal block ───────────────────────────────── */
@@ -94,12 +103,13 @@ body {
 /* ── Pricing card ─────────────────────────────────── */
 
 .pricing-card {
-  background: rgba(255, 255, 255, 0.02);
+  background: #1c1917;
   border: 1px solid #292524;
-  border-radius: 16px;
-  transition: all 0.3s ease;
+  border-radius: 12px;
+  padding: 28px;
+  transition: all 0.2s ease;
 }
 .pricing-card-active {
   border-color: #f59e0b;
-  box-shadow: 0 0 60px rgba(245, 158, 11, 0.06);
+  background: #1f1c1a;
 }
