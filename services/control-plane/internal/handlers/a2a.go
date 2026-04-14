@@ -235,13 +235,16 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify agent exists.
+	// Look up the agent across ALL tenants (cross-tenant discovery for A2A).
+	// The caller is authenticated but the target agent may belong to a
+	// different tenant — this is intentional for the marketplace.
 	ctx := r.Context()
-	var agentID string
+	var agentID, agentTenantID string
 	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT id FROM agents
-		WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL
-	`, claims.TenantID, name).Scan(&agentID)
+		SELECT id, tenant_id FROM agents
+		WHERE name = $1 AND archived_at IS NULL
+		LIMIT 1
+	`, name).Scan(&agentID, &agentTenantID)
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
@@ -251,6 +254,12 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to look up agent"})
 		return
 	}
+
+	h.logger().Info("a2a invoke",
+		zap.String("agent", name),
+		zap.String("agentTenant", agentTenantID),
+		zap.String("callerTenant", claims.TenantID),
+	)
 
 	// In the spike, we return a simulated A2A response. In production, this
 	// would create a real run via the workflow engine and return the result.

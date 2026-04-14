@@ -384,8 +384,9 @@ func (h *DeploymentHandler) RemoveDataPlane(w http.ResponseWriter, r *http.Reque
 // ---------- Deploy to cloud ----------
 
 // DeployAgent handles POST /v1/agents/{name}/deploy.
-// In the spike, this marks the agent as deployed and returns a public URL.
-// Real hosting comes with the data plane integration.
+// This provisions the agent for A2A access: ensures a version exists,
+// marks the agent as deployed, creates a deployment record, and returns
+// the live A2A invoke URL.
 func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) {
 	ctx, tenantID, err := h.contextWithTenant(r)
 	if err != nil {
@@ -401,10 +402,11 @@ func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) 
 
 	// Verify the agent exists.
 	var agentID string
+	var currentVersionID *string
 	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT id FROM agents
+		SELECT id, current_version_id FROM agents
 		WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL
-	`, tenantID, name).Scan(&agentID)
+	`, tenantID, name).Scan(&agentID, &currentVersionID)
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
@@ -415,10 +417,40 @@ func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Ensure the agent has a version (auto-create if needed).
+	if currentVersionID == nil {
+		var versionID string
+		err = h.srv.Pool.QueryRow(ctx, `
+			INSERT INTO agent_versions (agent_id, version, digest, bundle_uri, manifest, promoted_at)
+			VALUES ($1, '0.1.0', decode(md5($2), 'hex'), 'local://deployed', '{"entrypoint":"index.ts"}'::jsonb, now())
+			ON CONFLICT (agent_id, version) DO UPDATE SET promoted_at = now()
+			RETURNING id
+		`, agentID, agentID+"-deploy").Scan(&versionID)
+		if err != nil {
+			h.logger().Warn("auto-create version for deploy failed", zap.Error(err))
+		} else {
+			_, _ = h.srv.Pool.Exec(ctx, `UPDATE agents SET current_version_id = $1 WHERE id = $2`, versionID, agentID)
+		}
+	}
+
+	// Mark agent as deployed via labels.
+	_, _ = h.srv.Pool.Exec(ctx, `
+		UPDATE agents SET labels = labels || '{"deployed": "true"}'::jsonb
+		WHERE id = $1
+	`, agentID)
+
+	// Stop any existing live deployment for this agent before creating a new one.
+	_, _ = h.srv.Pool.Exec(ctx, `
+		UPDATE deployments SET status = 'replaced', finished_at = now()
+		WHERE tenant_id = $1 AND agent_name = $2 AND environment = 'cloud' AND status = 'live'
+	`, tenantID, name)
+
 	// Create a deployment record with status "live" for the cloud deploy.
 	initialLogs, _ := json.Marshal([]string{
 		"Deploying " + name + " to Lantern Cloud...",
-		"Provisioning microVM...",
+		"Ensuring agent version exists...",
+		"Agent marked as deployed",
+		"A2A invoke endpoint active",
 		"Agent deployed successfully",
 	})
 
@@ -435,7 +467,15 @@ func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	publicURL := "https://agents.lantern.run/" + name
+	h.logger().Info("agent deployed",
+		zap.String("agent", name),
+		zap.String("deployId", deployID),
+		zap.String("tenant", tenantID),
+	)
+
+	// The "deployed" URL is the A2A invoke endpoint. In local dev, this is
+	// the control-plane HTTP server. In production, it would be the gateway.
+	publicURL := "http://localhost:8080/v1/agents/" + name + "/a2a/invoke"
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":           deployID,
@@ -525,7 +565,7 @@ func (h *DeploymentHandler) GetCloudDeployment(w http.ResponseWriter, r *http.Re
 		"tenantId":    tenantID,
 		"agentName":   name,
 		"status":      status,
-		"url":         "https://agents.lantern.run/" + name,
+		"url":         "http://localhost:8080/v1/agents/" + name + "/a2a/invoke",
 		"environment": "cloud",
 		"deployedAt":  createdAt,
 	}

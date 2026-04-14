@@ -519,14 +519,35 @@ export function EditorCanvas({
 
   // ---- Save / Deploy / Test handlers ----------------------------------------
 
-  const handleSave = useCallback(() => {
-    // In production this would persist via gRPC to control-plane
-    if (rfInstance) {
-      const flow = rfInstance.toObject();
-      // eslint-disable-next-line no-console
-      console.log("[editor] Saved workflow:", flow);
+  const handleSave = useCallback(async () => {
+    const workflow = getCurrentWorkflow();
+
+    // Save to localStorage as immediate fallback
+    try {
+      localStorage.setItem(`lantern_workflow_${agentName}`, JSON.stringify(workflow));
+    } catch {
+      // localStorage full or unavailable
     }
-  }, [rfInstance]);
+
+    // Save to backend API
+    try {
+      const { api } = await import("@/lib/api");
+      await api.saveWorkflow(agentName, workflow);
+      // Show success notification
+      const el = document.createElement("div");
+      el.className = "fixed top-4 right-4 z-[100] rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 shadow-xl backdrop-blur-sm";
+      el.textContent = "Workflow saved";
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 2000);
+    } catch {
+      // Backend unavailable — localStorage save is the fallback
+      const el = document.createElement("div");
+      el.className = "fixed top-4 right-4 z-[100] rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300 shadow-xl backdrop-blur-sm";
+      el.textContent = "Saved locally (backend unavailable)";
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 3000);
+    }
+  }, [agentName, getCurrentWorkflow]);
 
   const handleDeploy = useCallback(() => {
     setDeployModalOpen(true);

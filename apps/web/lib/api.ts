@@ -1447,6 +1447,28 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     }
   }
 
+  // ---- Workflow persistence (visual editor) -----------------------------------
+
+  async saveWorkflow(agentName: string, workflow: unknown): Promise<{ status: string }> {
+    try {
+      return await this.request(`/v1/agents/${encodeURIComponent(agentName)}/workflow`, {
+        method: "PUT",
+        body: JSON.stringify(workflow),
+      });
+    } catch {
+      console.warn("[lantern] saveWorkflow failed, saving to localStorage only");
+      return { status: "saved_locally" };
+    }
+  }
+
+  async getWorkflow(agentName: string): Promise<unknown | null> {
+    try {
+      return await this.request(`/v1/agents/${encodeURIComponent(agentName)}/workflow`);
+    } catch {
+      return null;
+    }
+  }
+
   // ---- Cloud Deploy (Gap 5: Managed Hosting) --------------------------------
 
   async deployAgent(agentName: string): Promise<{
@@ -1464,12 +1486,15 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       });
     } catch {
       console.warn("[lantern] deployAgent failed, simulating locally");
+      const deployUrl = typeof window !== "undefined" && window.location.hostname === "localhost"
+        ? `http://localhost:8080/v1/agents/${agentName}/a2a/invoke`
+        : `https://agents.lantern.run/${agentName}`;
       return {
         id: `dep_${Date.now()}`,
         tenantId: "t_acme",
         agentName,
         status: "live",
-        url: `https://agents.lantern.run/${agentName}`,
+        url: deployUrl,
         environment: "cloud",
         deployedAt: new Date().toISOString(),
       };

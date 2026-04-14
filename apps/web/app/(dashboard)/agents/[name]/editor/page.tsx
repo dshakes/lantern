@@ -6,6 +6,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { EditorCanvas } from "@/components/editor/editor-canvas";
 import { TemplatePicker } from "@/components/editor/template-picker";
 import { getSampleWorkflow, workflowTemplates } from "@/lib/sample-workflows";
+import { api } from "@/lib/api";
 import type { WorkflowDefinition, WorkflowNode, WorkflowEdge } from "@/lib/workflow-types";
 import type { WorkflowTemplate } from "@/lib/sample-workflows";
 
@@ -116,16 +117,48 @@ export default function EditorPage() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    const sample = getSampleWorkflow(name);
-    if (sample) {
-      setSelectedWorkflow(sample);
-    } else {
-      const generated = buildWorkflowFromAgent(name);
-      if (generated) {
-        setSelectedWorkflow(generated);
+    async function loadWorkflow() {
+      // 1) Try loading from backend API
+      try {
+        const backendWorkflow = await api.getWorkflow(name);
+        if (backendWorkflow && typeof backendWorkflow === "object" && "nodes" in (backendWorkflow as Record<string, unknown>)) {
+          setSelectedWorkflow(backendWorkflow as WorkflowDefinition);
+          setLoaded(true);
+          return;
+        }
+      } catch {
+        // Backend unavailable, continue to fallbacks
       }
+
+      // 2) Try loading from localStorage
+      try {
+        const localRaw = typeof window !== "undefined" ? localStorage.getItem(`lantern_workflow_${name}`) : null;
+        if (localRaw) {
+          const localWorkflow = JSON.parse(localRaw) as WorkflowDefinition;
+          if (localWorkflow.nodes && localWorkflow.nodes.length > 0) {
+            setSelectedWorkflow(localWorkflow);
+            setLoaded(true);
+            return;
+          }
+        }
+      } catch {
+        // Invalid localStorage data, continue
+      }
+
+      // 3) Try sample workflow
+      const sample = getSampleWorkflow(name);
+      if (sample) {
+        setSelectedWorkflow(sample);
+      } else {
+        // 4) Generate from agent config
+        const generated = buildWorkflowFromAgent(name);
+        if (generated) {
+          setSelectedWorkflow(generated);
+        }
+      }
+      setLoaded(true);
     }
-    setLoaded(true);
+    loadWorkflow();
   }, [name]);
 
   function handleTemplateSelect(template: WorkflowTemplate) {

@@ -372,4 +372,17 @@ var migrations = []string{
 
 	`CREATE INDEX IF NOT EXISTS sessions_tenant_agent_idx
 		ON sessions (tenant_id, agent_name, updated_at DESC)`,
+
+	// ---------------------------------------------------------------
+	// Add workflow JSONB column to agents (visual editor persistence)
+	// ---------------------------------------------------------------
+	`DO $$
+	BEGIN
+		IF NOT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'agents' AND column_name = 'workflow'
+		) THEN
+			ALTER TABLE agents ADD COLUMN workflow JSONB;
+		END IF;
+	END$$`,
 }

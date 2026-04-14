@@ -649,7 +649,7 @@ export default function DeploymentsPage() {
                 const newAgent: HostedAgent = {
                   name: deployAgentName,
                   status: "live",
-                  url: `https://agents.lantern.run/${deployAgentName}`,
+                  url: typeof window !== "undefined" && window.location.hostname === "localhost" ? `http://localhost:8080/v1/agents/${deployAgentName}/a2a/invoke` : `https://agents.lantern.run/${deployAgentName}`,
                   sessions: 0,
                   tokens: "0",
                   costUsd: "0.00",

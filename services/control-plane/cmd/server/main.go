@@ -227,6 +227,10 @@ func main() {
 	httpMux.HandleFunc("POST /v1/agents/{name}/a2a/invoke", a2aHandler.InvokeAgent)
 	httpMux.HandleFunc("GET /.well-known/agent.json", a2aHandler.AgentDirectory)
 
+	// Workflow persistence endpoints (visual editor).
+	httpMux.HandleFunc("PUT /v1/agents/{name}/workflow", restHandler.SaveWorkflow)
+	httpMux.HandleFunc("GET /v1/agents/{name}/workflow", restHandler.GetWorkflow)
+
 	// Schedule endpoints.
 	httpMux.HandleFunc("POST /v1/schedules", restHandler.CreateSchedule)
 	httpMux.HandleFunc("GET /v1/schedules", restHandler.ListSchedules)

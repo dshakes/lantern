@@ -350,6 +350,23 @@ export default function SurfacesPage() {
   data-theme="dark">
 </script>`;
 
+  // Check WhatsApp bridge status for display on the card
+  const [whatsappBridgeRunning, setWhatsappBridgeRunning] = useState<boolean | null>(null);
+  useEffect(() => {
+    async function checkWhatsAppBridge() {
+      try {
+        const res = await fetch("http://localhost:3100/health", { signal: AbortSignal.timeout(3000) });
+        setWhatsappBridgeRunning(res.ok);
+      } catch {
+        setWhatsappBridgeRunning(false);
+      }
+    }
+    checkWhatsAppBridge();
+    // Re-check every 30 seconds
+    const interval = setInterval(checkWhatsAppBridge, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   const connectedCount = Object.values(configs).filter((c) => c.connected).length;
 
   if (loading) {
@@ -407,6 +424,28 @@ export default function SurfacesPage() {
                 </div>
                 <h3 className="mt-3 text-sm font-semibold text-zinc-100">{surface.name}</h3>
                 <p className="mt-1 text-xs text-zinc-500 leading-relaxed">{surface.description}</p>
+                {surface.id === "whatsapp" && (
+                  <div className="mt-2">
+                    {whatsappBridgeRunning === true && (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-400">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Bridge running
+                      </span>
+                    )}
+                    {whatsappBridgeRunning === false && (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-400">
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                        Bridge not running &mdash; <code className="text-zinc-400">make run-whatsapp</code>
+                      </span>
+                    )}
+                    {whatsappBridgeRunning === null && (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Checking bridge...
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div className="mt-4 flex items-center gap-2">
                   <button
                     onClick={() => openConfig(surface)}

@@ -853,6 +853,108 @@ func (h *RESTHandler) tryRefreshGmailToken(ctx context.Context, tenantID string)
 	return newAccessToken, nil
 }
 
+// ---------- Workflow persistence (visual editor) ----------
+
+// SaveWorkflow handles PUT /v1/agents/{name}/workflow.
+// Stores the visual workflow JSON in the agents table's workflow JSONB column.
+func (h *RESTHandler) SaveWorkflow(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	ctx, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent name is required"})
+		return
+	}
+
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+
+	// Read the raw workflow JSON from the request body.
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MB max
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to read body"})
+		return
+	}
+
+	// Validate it's valid JSON.
+	if !json.Valid(body) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	tag, err := h.srv.Pool.Exec(ctx, `
+		UPDATE agents SET workflow = $1::jsonb
+		WHERE tenant_id = $2 AND name = $3 AND archived_at IS NULL
+	`, string(body), tenantID, name)
+	if err != nil {
+		h.logger().Error("save workflow failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save workflow"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
+// GetWorkflow handles GET /v1/agents/{name}/workflow.
+// Returns the stored visual workflow JSON for the agent.
+func (h *RESTHandler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	ctx, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent name is required"})
+		return
+	}
+
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+
+	var workflow []byte
+	err = h.srv.Pool.QueryRow(ctx, `
+		SELECT workflow FROM agents
+		WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL
+	`, tenantID, name).Scan(&workflow)
+	if err == pgx.ErrNoRows {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+		return
+	}
+	if err != nil {
+		h.logger().Error("get workflow failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get workflow"})
+		return
+	}
+
+	if workflow == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no workflow saved"})
+		return
+	}
+
+	// Return the raw JSON directly.
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(workflow) //nolint:errcheck
+}
+
 // autoCreateVersion creates a default agent version and promotes it.
 // This is a convenience for the spike — in production, versions come from
 // `lantern deploy`.

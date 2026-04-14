@@ -1923,7 +1923,7 @@ export default function AgentDetailPage() {
               </div>
               <p className="text-[10px] text-zinc-500">Deploy this agent to Lantern Cloud for managed hosting with usage-based billing. No infrastructure to manage.</p>
               {cloudDeployStatus === "not_deployed" && (
-                <button onClick={async () => { setDeploying(true); try { const result = await api.deployAgent(name); setCloudDeployStatus(result.status); setCloudDeployUrl(result.url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: result.status, url: result.url })); toast.success("Agent deployed to Lantern Cloud"); } catch { setCloudDeployStatus("live"); const url = `https://agents.lantern.run/${name}`; setCloudDeployUrl(url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: "live", url })); toast.success("Agent deployed (demo mode)"); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50">
+                <button onClick={async () => { setDeploying(true); try { const result = await api.deployAgent(name); setCloudDeployStatus(result.status); setCloudDeployUrl(result.url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: result.status, url: result.url })); toast.success("Agent deployed to Lantern Cloud"); } catch { setCloudDeployStatus("live"); const url = typeof window !== "undefined" && window.location.hostname === "localhost" ? `http://localhost:8080/v1/agents/${name}/a2a/invoke` : `https://agents.lantern.run/${name}`; setCloudDeployUrl(url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: "live", url })); toast.success("Agent deployed (demo mode)"); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50">
                   {deploying ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Deploying...</> : <><Cloud className="h-3.5 w-3.5" /> Deploy to Cloud</>}
                 </button>
               )}
@@ -1932,7 +1932,7 @@ export default function AgentDetailPage() {
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Live URL</label>
                     <div className="flex items-center gap-2">
-                      <code className="flex-1 truncate rounded-lg border border-emerald-500/20 bg-surface-0 px-3 py-2 font-mono text-xs text-emerald-400 select-all">{cloudDeployUrl || `https://agents.lantern.run/${name}`}</code>
+                      <code className="flex-1 truncate rounded-lg border border-emerald-500/20 bg-surface-0 px-3 py-2 font-mono text-xs text-emerald-400 select-all">{cloudDeployUrl || (typeof window !== "undefined" && window.location.hostname === "localhost" ? `http://localhost:8080/v1/agents/${name}/a2a/invoke` : `https://agents.lantern.run/${name}`)}</code>
                       <button onClick={() => { navigator.clipboard.writeText(cloudDeployUrl || `https://agents.lantern.run/${name}`); toast.success("URL copied"); }} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">
                         <Copy className="h-3 w-3" /> Copy
                       </button>
