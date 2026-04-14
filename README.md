@@ -13,7 +13,13 @@ Lantern is an open-source platform for building, running, and managing productio
 ## Key features
 
 - **Managed sessions** -- Interactive, durable, multi-turn agent sessions with SSE streaming. Users send messages, agents respond in real time, and sessions persist across restarts.
-- **Smart model routing** -- Capability-based addressing (`auto`, `reasoning-large`, `code-large`) with intelligent scoring across Claude Opus/Sonnet/Haiku, GPT-4o/4o-mini, and Gemini. Router scores models on quality (40%), speed (30%), cost (30%). Strategies: `balanced`, `cheap`, `quality`, `fast` via `LANTERN_ROUTE_STRATEGY`.
+- **Smart model routing** -- Capability-based addressing (`auto`, `reasoning-large`, `code-large`) with intelligent scoring across Claude Opus/Sonnet/Haiku, GPT-4o/4o-mini, and Gemini. Router scores models on quality (40%), speed (30%), cost (30%). Four strategies: `balanced`, `cheap`, `quality`, `fast` via `LANTERN_ROUTE_STRATEGY`.
+- **A2A Agent Cards** -- Cross-platform agent discovery and interop via the Agent-to-Agent protocol. Publish your agent's capabilities as a standard Agent Card at `/.well-known/agent.json` so other platforms can discover, invoke, and compose with your agents.
+- **Agent Marketplace** -- Discover and fork public agents built by the community. Browse by category, preview agent capabilities, and deploy a copy to your tenant with one click.
+- **Managed Cloud Hosting** -- One-click deploy with usage-based billing. Push your agent to Lantern Cloud and get a production URL, autoscaling, and per-run cost tracking without managing infrastructure.
+- **Evaluations dashboard** -- Track agent success rate, cost attribution, latency percentiles, and model usage over time. Compare performance across agent versions and identify regressions.
+- **MCP Marketplace** -- Add any Model Context Protocol server as a connector. Browse a registry of community and first-party MCP servers and install them into your agent with a single click.
+- **Python SDK at full parity** -- The Python SDK now matches the TypeScript SDK: managed sessions, connector access, model routing, streaming, and all CRUD operations.
 - **17 real connector APIs** -- Gmail, Google Calendar, Google Drive, Google Sheets, Slack, Discord, Telegram, Twilio, GitHub, Linear, Jira, Sentry, Vercel, Notion, HubSpot, Salesforce, Stripe. OAuth and API-key auth, live API calls.
 - **Visual workflow editor** -- Drag-and-drop React Flow editor for building agent workflows with triggers, LLM steps, tool calls, conditionals, and output nodes.
 - **AI-assisted agent creation** -- Describe what you want in plain English; the platform generates agent name, description, system prompt, and instructions automatically.
@@ -56,24 +62,25 @@ From there you can create agents, start interactive sessions, connect APIs, sche
      Dashboard           |  (Go, :8080)       |
                          +---------+----------+
                                    |
-               +-------------------+-------------------+
-               v                   v                   v
-     +------------------+  +--------------+   +----------------+
-     |  Control Plane   |  | LLM Proxy    |   |   Scheduler    |
-     |  agents, runs,   |  | multi-model  |   |   cron jobs    |
-     |  sessions, auth  |  | routing      |   |   email notify |
-     +--------+---------+  +--------------+   +----------------+
-              |
-              |  Postgres (pgvector), Redis, S3/MinIO
-              |
-     +--------+---------+----------+-----------+
-     |  Connectors      | Sessions | Surfaces  |
-     |  17 real APIs    | SSE/RT   | webhooks  |
-     +------------------+----------+-----------+
+          +------------+-----------+-----------+------------+
+          v            v           v           v            v
+ +---------------+ +----------+ +----------+ +----------+ +-----------+
+ | Control Plane | | LLM Proxy| | Scheduler| | A2A /    | | Managed   |
+ | agents, runs, | | model    | | cron,    | | Agent    | | Cloud     |
+ | sessions,     | | routing, | | email    | | Cards,   | | deploy,   |
+ | evals, auth   | | 4 strats | | notify   | | interop  | | billing   |
+ +-------+-------+ +----------+ +----------+ +----------+ +-----------+
+         |
+         |  Postgres (pgvector), Redis, S3/MinIO
+         |
+ +-------+--------+----------+-----------+-----------+-----------+
+ | Connectors     | Sessions | Surfaces  | Evals     | Market-   |
+ | 17 APIs + MCP  | SSE/RT   | webhooks  | metrics   | place     |
+ +----------------+----------+-----------+-----------+-----------+
 
                     | gRPC tunnel (outbound-only)
  ==========================================
-     DATA PLANE (customer VPC)
+     DATA PLANE (customer VPC / Lantern Cloud)
 
           +---------+----------+
           | Workflow Engine     |   Runtime Manager
@@ -81,7 +88,7 @@ From there you can create agents, start interactive sessions, connect APIs, sche
           +--------------------+-------------------+
 ```
 
-The control plane manages agents, sessions, connectors, scheduling, and LLM routing. The data plane (optional, for hybrid deployments) runs agent code in customer infrastructure with Firecracker microVM isolation.
+The control plane manages agents, sessions, connectors, scheduling, evaluations, marketplace, A2A interop, and LLM routing. The data plane (optional, for hybrid deployments or Lantern Cloud) runs agent code in customer infrastructure or managed cloud with Firecracker microVM isolation.
 
 ---
 
@@ -102,12 +109,13 @@ lantern/
     billing/              Go    -- usage metering, cost attribution
   packages/
     sdk-ts/               TS    -- primary SDK: agent(), step(), tools
-    sdk-python/           Py    -- secondary SDK
+    sdk-python/           Py    -- secondary SDK (full parity: sessions, connectors, routing)
     cli/                  Go    -- `lantern` CLI (Cobra)
     proto/                proto -- gRPC definitions
     ui-kit/               TS    -- shared React component library
   apps/
     web/                  TS    -- Next.js 15 dashboard (RSC + streaming)
+    docs/                 TS    -- documentation site (Next.js)
     landing/              TS    -- marketing site
   infra/
     docker/                     -- docker-compose dev stack

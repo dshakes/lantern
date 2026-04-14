@@ -8,7 +8,7 @@ If you are an AI assistant: read this top-to-bottom before your first edit. Then
 
 ## Project in one sentence
 
-Lantern is a **production runtime for AI agents** -- multi-LLM routing, managed sessions, 17 real connector APIs, visual workflow editor, cron scheduling, and guardrails, with a control-plane/data-plane split for customer-cloud deployments.
+Lantern is a **production runtime for AI agents** -- multi-LLM routing (4 strategies), managed sessions, 17 real connector APIs, MCP marketplace, A2A agent cards, agent marketplace, evaluations dashboard, visual workflow editor, cron scheduling, managed cloud hosting, Python SDK at full parity, and guardrails, with a control-plane/data-plane split for customer-cloud or managed-cloud deployments.
 
 For the full vision read `README.md`. For the architecture read `docs/architecture/01-overview.md`.
 
@@ -118,6 +118,30 @@ Without these env vars, Google OAuth is disabled and the sign-in button will sho
 make dashboard-dev    # Next.js dashboard at localhost:3000
 make landing-dev      # Landing page
 ```
+
+### Dashboard sidebar (8 items)
+
+The dashboard sidebar (`apps/web/components/sidebar.tsx`) has these navigation items:
+
+1. Agents
+2. Runs
+3. Surfaces
+4. Connectors
+5. Deployments
+6. Marketplace
+7. Evaluations
+8. Settings
+
+Dashboard pages live in `apps/web/app/(dashboard)/`. Key pages include:
+
+- `/agents` -- agent list + create + detail with sessions, runs, workflow editor
+- `/runs` -- run list + detail with event stream
+- `/surfaces` -- surface configuration (WhatsApp, Slack, Telegram, webchat)
+- `/connectors` -- connector installation and management
+- `/deployments` -- deployment tracking and data-plane management
+- `/marketplace` -- discover and fork public agents, browse MCP servers
+- `/evaluations` -- agent performance metrics, cost attribution, model usage
+- `/settings` -- LLM providers, API keys, team management
 
 ---
 
@@ -232,9 +256,16 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 | `POST` | `/v1/deployments` | Create deployment |
 | `GET` | `/v1/deployments` | List deployments |
 | `GET` | `/v1/deployments/{id}` | Get deployment |
+| `POST` | `/v1/agents/{name}/deploy` | One-click managed cloud deploy |
 | `POST` | `/v1/data-planes` | Register data plane |
 | `GET` | `/v1/data-planes` | List data planes |
 | `DELETE` | `/v1/data-planes/{id}` | Remove data plane |
+
+### A2A (Agent-to-Agent)
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/agents/{name}/card` | Get agent's A2A card |
+| `GET` | `/.well-known/agent.json` | Well-known A2A discovery endpoint |
 
 ---
 

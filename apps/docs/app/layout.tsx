@@ -7,6 +7,7 @@ import clsx from "clsx";
 import {
   BookOpen, Rocket, Bot, Plug, MessageSquare, Brain,
   Clock, Shield, Cloud, Code, FileCode, ExternalLink,
+  Store, BarChart3,
 } from "lucide-react";
 
 interface NavItem { href: string; label: string; icon: typeof BookOpen; subs?: { href: string; label: string }[] }
@@ -44,6 +45,12 @@ const sections: NavSection[] = [
     ]},
     { href: "/deployment", label: "Deployment", icon: Cloud, subs: [
       { href: "/deployment#architecture", label: "CP/DP split" }, { href: "/deployment#helm", label: "Helm charts" }, { href: "/deployment#terraform", label: "Terraform" }, { href: "/deployment#docker", label: "Docker Compose" },
+    ]},
+    { href: "/marketplace", label: "Marketplace", icon: Store, subs: [
+      { href: "/marketplace#what", label: "What is the Marketplace" }, { href: "/marketplace#a2a", label: "A2A Agent Cards" }, { href: "/marketplace#publishing", label: "Publishing agents" }, { href: "/marketplace#discovering", label: "Discovering & forking" }, { href: "/marketplace#interop", label: "Cross-platform interop" },
+    ]},
+    { href: "/evaluations", label: "Evaluations", icon: BarChart3, subs: [
+      { href: "/evaluations#metrics", label: "Performance metrics" }, { href: "/evaluations#cost", label: "Cost attribution" }, { href: "/evaluations#model-usage", label: "Model usage" }, { href: "/evaluations#quality", label: "Quality signals" }, { href: "/evaluations#alerts", label: "Alerts (future)" },
     ]},
   ]},
   { label: "Reference", items: [
