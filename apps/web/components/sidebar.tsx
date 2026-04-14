@@ -8,6 +8,7 @@ import {
   MessageSquare,
   Plug,
   Cloud,
+  BarChart3,
   Settings,
   User,
   ChevronsUpDown,
@@ -25,7 +26,8 @@ const navItems = [
   { href: "/surfaces", label: "Surfaces", icon: MessageSquare, shortcut: "3" },
   { href: "/connectors", label: "Connectors", icon: Plug, shortcut: "4" },
   { href: "/deployments", label: "Deployments", icon: Cloud, shortcut: "5" },
-  { href: "/settings", label: "Settings", icon: Settings, shortcut: "6" },
+  { href: "/evaluations", label: "Evaluations", icon: BarChart3, shortcut: "6" },
+  { href: "/settings", label: "Settings", icon: Settings, shortcut: "7" },
 ] as const;
 
 export function Sidebar() {

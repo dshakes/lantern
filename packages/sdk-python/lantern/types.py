@@ -98,6 +98,21 @@ class MessageRole(StrEnum):
     TOOL = "tool"
 
 
+class PrivacyLevel(StrEnum):
+    STANDARD = "standard"
+    PRIVATE = "private"
+    AUDIT = "audit"
+
+
+class RouteStrategy(StrEnum):
+    AUTO = "auto"
+    CHEAPEST = "cheapest"
+    FASTEST = "fastest"
+    BEST = "best"
+    ROUND_ROBIN = "round-robin"
+    FAILOVER = "failover"
+
+
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
@@ -277,6 +292,79 @@ class BuiltContext(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Session, Guardrail, and Connector config models
+# ---------------------------------------------------------------------------
+
+
+class SessionConfig(BaseModel):
+    """Configuration for interactive multi-turn sessions."""
+
+    enabled: bool = True
+    max_messages: int | None = None
+    idle_timeout: str | None = None
+    durable: bool = True
+
+
+class GuardrailConfig(BaseModel):
+    """Configuration for PII blocking, content filtering, and topic restrictions."""
+
+    block_pii: bool = False
+    content_filter: bool = False
+    blocked_topics: list[str] = Field(default_factory=list)
+
+
+class SessionMessage(BaseModel):
+    """A message in a session."""
+
+    id: str
+    session_id: str
+    role: MessageRole
+    content: str
+    created_at: datetime
+
+
+class Session(BaseModel):
+    """A multi-turn interactive session."""
+
+    id: str
+    agent_id: str
+    tenant_id: str
+    status: str = "active"
+    messages: list[SessionMessage] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class ConnectorAction(BaseModel):
+    """A single action exposed by a connector."""
+
+    id: str
+    name: str
+    description: str = ""
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConnectorInfo(BaseModel):
+    """Metadata about an installed connector."""
+
+    id: str
+    connector_id: str
+    display_name: str
+    status: str = "active"
+    actions: list[ConnectorAction] = Field(default_factory=list)
+    installed_at: datetime | None = None
+
+
+class ConnectorResult(BaseModel):
+    """Result of executing a connector action."""
+
+    success: bool
+    data: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # LLM option models
 # ---------------------------------------------------------------------------
 
@@ -316,6 +404,12 @@ class AgentConfig(BaseModel):
     limits: ResourceLimits | None = None
     isolation: IsolationConfig | None = None
     labels: dict[str, str] = Field(default_factory=dict)
+    instructions: str | None = None
+    system_prompt: str | None = None
+    guardrails: GuardrailConfig | None = None
+    privacy: PrivacyLevel | None = None
+    session: SessionConfig | None = None
+    connectors: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------

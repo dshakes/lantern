@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Search, Mail, Github, Calendar, FileText, MessageSquare, Phone, CreditCard, BarChart3, Bug, Trello, Database, Globe, X, Loader2, Plug, Eye, EyeOff, AlertCircle, CheckCircle2, RefreshCw, ExternalLink } from "lucide-react";
+import { Search, Mail, Github, Calendar, FileText, MessageSquare, Phone, CreditCard, BarChart3, Bug, Trello, Database, Globe, X, Loader2, Plug, Eye, EyeOff, AlertCircle, CheckCircle2, RefreshCw, ExternalLink, Plus, Server, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { useToast } from "@/components/toast";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
@@ -70,6 +70,21 @@ const connectors: ConnectorDef[] = [
 
 const categories = ["All", "Communication", "Email & Calendar", "Docs & Storage", "Dev Tools", "CRM & Sales", "Commerce"];
 const STORAGE_KEY = "lantern_connectors";
+const MCP_STORAGE_KEY = "lantern_mcp_servers";
+
+interface McpServer {
+  id: string;
+  name: string;
+  url: string;
+  description: string;
+  addedAt: string;
+}
+
+function loadMcpServers(): McpServer[] {
+  if (typeof window === "undefined") return [];
+  try { const r = localStorage.getItem(MCP_STORAGE_KEY); if (!r) return []; return JSON.parse(r) as McpServer[]; } catch { return []; }
+}
+function saveMcpServers(servers: McpServer[]) { if (typeof window !== "undefined") localStorage.setItem(MCP_STORAGE_KEY, JSON.stringify(servers)); }
 
 function loadStates(): Record<string, ConnectorState> {
   if (typeof window === "undefined") return {};
@@ -120,6 +135,13 @@ export default function ConnectorsPage() {
   const [disconnecting, setDisconnecting] = useState(false);
   const [oauthErr, setOauthErr] = useState("");
 
+  // MCP Marketplace
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+  const [showMcpModal, setShowMcpModal] = useState(false);
+  const [mcpForm, setMcpForm] = useState({ url: "", name: "", description: "" });
+  const [mcpErrors, setMcpErrors] = useState<Record<string, string>>({});
+  const [mcpSearch, setMcpSearch] = useState("");
+
   const loadData = useCallback(async () => {
     try {
       const installed = await api.listConnectors();
@@ -133,11 +155,16 @@ export default function ConnectorsPage() {
     setUsingApi(false); setStates(loadStates()); setLoading(false);
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { loadData(); setMcpServers(loadMcpServers()); }, [loadData]);
   useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape" && mc) setMc(null); };
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (showMcpModal) setShowMcpModal(false);
+        else if (mc) setMc(null);
+      }
+    };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
-  }, [mc]);
+  }, [mc, showMcpModal]);
 
   // Listen for OAuth popup completion.
   useEffect(() => {
@@ -226,6 +253,45 @@ export default function ConnectorsPage() {
     const up = { ...states }; delete up[mc.id]; setStates(up); saveStates(up); setDisconnecting(false); setMc(null); toast.info(`${mc.name} disconnected`);
   };
 
+  const filteredMcpServers = useMemo(() => {
+    if (!mcpSearch.trim()) return mcpServers;
+    const q = mcpSearch.toLowerCase();
+    return mcpServers.filter((s) => s.name.toLowerCase().includes(q) || s.url.toLowerCase().includes(q) || s.description.toLowerCase().includes(q));
+  }, [mcpServers, mcpSearch]);
+
+  const handleAddMcp = () => {
+    const errs: Record<string, string> = {};
+    if (!mcpForm.url.trim()) errs.url = "Server URL is required";
+    else if (!/^https?:\/\/.+/.test(mcpForm.url.trim())) errs.url = "Must be a valid HTTP(S) URL";
+    if (!mcpForm.name.trim()) errs.name = "Name is required";
+    if (mcpServers.some((s) => s.url === mcpForm.url.trim())) errs.url = "This server URL is already added";
+    setMcpErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+
+    const server: McpServer = {
+      id: `mcp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: mcpForm.name.trim(),
+      url: mcpForm.url.trim(),
+      description: mcpForm.description.trim(),
+      addedAt: new Date().toISOString(),
+    };
+    const updated = [...mcpServers, server];
+    setMcpServers(updated);
+    saveMcpServers(updated);
+    setShowMcpModal(false);
+    setMcpForm({ url: "", name: "", description: "" });
+    setMcpErrors({});
+    toast.success(`MCP server "${server.name}" added -- its tools are now available to agents`);
+  };
+
+  const handleRemoveMcp = (id: string) => {
+    const server = mcpServers.find((s) => s.id === id);
+    const updated = mcpServers.filter((s) => s.id !== id);
+    setMcpServers(updated);
+    saveMcpServers(updated);
+    toast.info(`${server?.name ?? "MCP server"} removed`);
+  };
+
   if (loading) return (
     <div className="flex flex-1 flex-col overflow-auto"><HeaderSkeleton /><div className="p-8"><Skeleton className="mb-6 h-10 w-full max-w-md rounded-lg" />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -244,6 +310,69 @@ export default function ConnectorsPage() {
       </div>
 
       <div className="flex-1 p-8">
+        {/* MCP Marketplace Section */}
+        <div className="mb-8 rounded-xl border border-zinc-800 bg-surface-1 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lantern-500/10">
+                <Server className="h-5 w-5 text-lantern-400" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-100">MCP Marketplace</h2>
+                <p className="text-xs text-zinc-500">Connect any MCP server to use its tools in your agents</p>
+              </div>
+            </div>
+            <button
+              onClick={() => { setShowMcpModal(true); setMcpForm({ url: "", name: "", description: "" }); setMcpErrors({}); }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add MCP Server
+            </button>
+          </div>
+
+          {mcpServers.length > 0 && (
+            <div className="mb-3 relative max-w-sm">
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
+              <input type="text" value={mcpSearch} onChange={(e) => setMcpSearch(e.target.value)} placeholder="Search MCP servers..."
+                className="w-full rounded-lg border border-zinc-800 bg-surface-0 py-1.5 pl-8 pr-3 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/30" />
+            </div>
+          )}
+
+          {mcpServers.length === 0 ? (
+            <div className="flex flex-col items-center py-6">
+              <Server className="mb-2 h-8 w-8 text-zinc-700" />
+              <p className="text-xs text-zinc-500">No MCP servers added yet. Add one to make its tools available to your agents.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {filteredMcpServers.map((server) => (
+                <div key={server.id} className="group rounded-xl border border-zinc-800 bg-surface-0 p-4 transition-colors hover:border-zinc-700">
+                  <div className="flex items-start justify-between">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500/10">
+                      <Server className="h-4 w-4 text-lantern-400" />
+                    </div>
+                    <button
+                      onClick={() => handleRemoveMcp(server.id)}
+                      className="rounded p-1 text-zinc-600 opacity-0 transition-all hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
+                      title="Remove server"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <h3 className="mt-2 text-sm font-medium text-zinc-200 truncate">{server.name}</h3>
+                  <p className="mt-0.5 text-[11px] text-zinc-500 truncate">{server.url}</p>
+                  {server.description && <p className="mt-1 text-[11px] text-zinc-600 line-clamp-2">{server.description}</p>}
+                  <div className="mt-2 flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    <span className="text-[10px] text-emerald-400/70">Connected</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Search */}
         <div className="mb-6 relative max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
@@ -284,7 +413,66 @@ export default function ConnectorsPage() {
         {filtered.length === 0 && <div className="flex flex-col items-center justify-center py-16"><Plug className="mb-3 h-10 w-10 text-zinc-600" /><p className="text-sm text-zinc-500">No connectors match your search</p></div>}
       </div>
 
-      {/* Modal */}
+      {/* MCP Add Server Modal */}
+      {showMcpModal && (
+        <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowMcpModal(false)}>
+          <div className="modal-content w-full max-w-lg rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500/10"><Server className="h-4 w-4 text-lantern-400" /></div>
+                <div>
+                  <h2 className="text-lg font-semibold text-zinc-100">Add MCP Server</h2>
+                  <p className="text-xs text-zinc-500">Point at any MCP-compatible server to use its tools</p>
+                </div>
+              </div>
+              <button onClick={() => setShowMcpModal(false)} className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div>
+                <label className="mb-1.5 flex items-center gap-1 text-sm font-medium text-zinc-300">Server URL <span className="text-red-400">*</span></label>
+                <input
+                  type="text"
+                  value={mcpForm.url}
+                  onChange={(e) => { setMcpForm((p) => ({ ...p, url: e.target.value })); setMcpErrors((p) => { const n = { ...p }; delete n.url; return n; }); }}
+                  placeholder="https://mcp.example.com/sse"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+                />
+                {mcpErrors.url && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{mcpErrors.url}</p>}
+                <p className="mt-1 text-[11px] text-zinc-600">The SSE or WebSocket endpoint of the MCP server</p>
+              </div>
+              <div>
+                <label className="mb-1.5 flex items-center gap-1 text-sm font-medium text-zinc-300">Name <span className="text-red-400">*</span></label>
+                <input
+                  type="text"
+                  value={mcpForm.name}
+                  onChange={(e) => { setMcpForm((p) => ({ ...p, name: e.target.value })); setMcpErrors((p) => { const n = { ...p }; delete n.name; return n; }); }}
+                  placeholder="e.g. My Custom Tools"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+                />
+                {mcpErrors.name && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{mcpErrors.name}</p>}
+              </div>
+              <div>
+                <label className="mb-1.5 text-sm font-medium text-zinc-300">Description</label>
+                <input
+                  type="text"
+                  value={mcpForm.description}
+                  onChange={(e) => setMcpForm((p) => ({ ...p, description: e.target.value }))}
+                  placeholder="What tools does this server provide?"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-6 py-4">
+              <button onClick={() => setShowMcpModal(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">Cancel</button>
+              <button onClick={handleAddMcp} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400">
+                <Plus className="h-3.5 w-3.5" />Add Server
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Connector Modal */}
       {mc && (
         <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setMc(null)}>
           <div className="modal-content w-full max-w-lg rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>

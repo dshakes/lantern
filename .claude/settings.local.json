@@ -75,7 +75,11 @@
       "Bash(sed -i '' 's/<h3>Instructions and system prompt<\\\\/h3>/<h3 id=\"instructions\">Instructions and system prompt<\\\\/h3>/' apps/docs/app/agents/page.tsx)",
       "Bash(sed -i '' 's/<h2>Testing an agent<\\\\/h2>/<h2 id=\"testing\">Testing an agent<\\\\/h2>/' apps/docs/app/agents/page.tsx)",
       "Bash(sed -i '' 's/<h2>Running agents<\\\\/h2>/<h2 id=\"chat\">Running agents<\\\\/h2>/' apps/docs/app/agents/page.tsx)",
-      "Bash(sed -i '' 's/<h2>Scheduling agents<\\\\/h2>/<h2 id=\"visual\">Scheduling agents<\\\\/h2>/' apps/docs/app/agents/page.tsx)"
+      "Bash(sed -i '' 's/<h2>Scheduling agents<\\\\/h2>/<h2 id=\"visual\">Scheduling agents<\\\\/h2>/' apps/docs/app/agents/page.tsx)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('packages/sdk-python/lantern/types.py'\\).read\\(\\)\\); print\\('types.py: OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('packages/sdk-python/lantern/client.py'\\).read\\(\\)\\); print\\('client.py: OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('packages/sdk-python/lantern/__init__.py'\\).read\\(\\)\\); print\\('__init__.py: OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('packages/sdk-python/examples/email_agent.py'\\).read\\(\\)\\); print\\('email_agent.py: OK'\\)\")"
     ]
   }
 }

@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from lantern.errors import LanternApiError
-from lantern.types import AgentInfo, Run, StreamEvent
+from lantern.types import AgentInfo, ConnectorInfo, ConnectorResult, Run, Session, SessionMessage, StreamEvent
 
 
 class LanternClient:
@@ -31,6 +31,7 @@ class LanternClient:
         api_key: str | None = None,
         *,
         timeout: float = 30.0,
+        route_strategy: str | None = None,
     ) -> None:
         self.base_url = (
             base_url
@@ -39,11 +40,18 @@ class LanternClient:
         ).rstrip("/")
         self._api_key = api_key or os.environ.get("LANTERN_API_KEY") or ""
         self._timeout = timeout
+        self._route_strategy = (
+            route_strategy
+            or os.environ.get("LANTERN_ROUTE_STRATEGY")
+            or "auto"
+        )
         self._client: httpx.AsyncClient | None = None
 
         # Bind sub-resource namespaces
         self.agents = self._Agents(self)
         self.runs = self._Runs(self)
+        self.sessions = self._Sessions(self)
+        self.connectors = self._Connectors(self)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -77,6 +85,8 @@ class LanternClient:
         h: dict[str, str] = {"Content-Type": "application/json"}
         if self._api_key:
             h["Authorization"] = f"Bearer {self._api_key}"
+        if self._route_strategy and self._route_strategy != "auto":
+            h["X-Lantern-Route-Strategy"] = self._route_strategy
         return h
 
     async def _request(
@@ -263,6 +273,136 @@ class LanternClient:
                 body={"value": value},
             )
 
+    # ------------------------------------------------------------------
+    # sessions namespace
+    # ------------------------------------------------------------------
+
+    class _Sessions:
+        def __init__(self, client: LanternClient) -> None:
+            self._c = client
+
+        async def create(
+            self,
+            *,
+            agent: str,
+            metadata: dict[str, Any] | None = None,
+        ) -> Session:
+            """Create a new interactive session for an agent."""
+            data = await self._c._request("POST", "/v1/sessions", body={
+                "agent_name": agent,
+                "metadata": metadata or {},
+            })
+            return Session.model_validate(data)
+
+        async def get(self, session_id: str) -> Session:
+            """Retrieve a session by ID."""
+            data = await self._c._request("GET", f"/v1/sessions/{session_id}")
+            return Session.model_validate(data)
+
+        async def list(
+            self,
+            *,
+            agent: str | None = None,
+            status: str | None = None,
+            page_size: int = 50,
+            page_token: str | None = None,
+        ) -> SessionListResponse:
+            """List sessions, optionally filtered by agent or status."""
+            data = await self._c._request("GET", "/v1/sessions", params={
+                "agent": agent,
+                "status": status,
+                "pageSize": page_size,
+                "pageToken": page_token,
+            })
+            sessions = [Session.model_validate(s) for s in data.get("sessions", [])]
+            return SessionListResponse(sessions=sessions, next_page_token=data.get("nextPageToken"))
+
+        async def send_message(
+            self,
+            session_id: str,
+            *,
+            content: str,
+            role: str = "user",
+        ) -> SessionMessage:
+            """Send a message to a session and get the agent's response."""
+            data = await self._c._request(
+                "POST",
+                f"/v1/sessions/{session_id}/messages",
+                body={"content": content, "role": role},
+            )
+            return SessionMessage.model_validate(data)
+
+        def stream_events(
+            self,
+            session_id: str,
+            *,
+            from_seq: int = 0,
+        ) -> AsyncIterator[StreamEvent]:
+            """Stream events from a session (SSE)."""
+            return self._c._sse_stream(
+                "GET",
+                f"/v1/sessions/{session_id}/events",
+                params={"from_seq": from_seq},
+            )
+
+        async def close(self, session_id: str) -> None:
+            """Close a session."""
+            await self._c._request("POST", f"/v1/sessions/{session_id}/close")
+
+    # ------------------------------------------------------------------
+    # connectors namespace
+    # ------------------------------------------------------------------
+
+    class _Connectors:
+        def __init__(self, client: LanternClient) -> None:
+            self._c = client
+
+        async def list(
+            self,
+            *,
+            page_size: int = 50,
+            page_token: str | None = None,
+        ) -> ConnectorListResponse:
+            """List installed connectors."""
+            data = await self._c._request("GET", "/v1/connectors", params={
+                "pageSize": page_size,
+                "pageToken": page_token,
+            })
+            items = [ConnectorInfo.model_validate(c) for c in data.get("connectors", [])]
+            return ConnectorListResponse(connectors=items, next_page_token=data.get("nextPageToken"))
+
+        async def get(self, connector_id: str) -> ConnectorInfo:
+            """Get details for an installed connector."""
+            data = await self._c._request("GET", f"/v1/connectors/{connector_id}")
+            return ConnectorInfo.model_validate(data)
+
+        async def execute(
+            self,
+            connector_id: str,
+            action: str,
+            params: dict[str, Any] | None = None,
+        ) -> ConnectorResult:
+            """Execute a connector action.
+
+            Example::
+
+                result = await client.connectors.execute(
+                    "slack", "send_message",
+                    params={"channel": "#general", "text": "Hello from Lantern!"},
+                )
+            """
+            data = await self._c._request(
+                "POST",
+                f"/v1/connectors/{connector_id}/actions/{action}",
+                body={"params": params or {}},
+            )
+            return ConnectorResult.model_validate(data)
+
+        async def list_actions(self, connector_id: str) -> list[dict[str, Any]]:
+            """List available actions for a connector."""
+            data = await self._c._request("GET", f"/v1/connectors/{connector_id}/actions")
+            return data.get("actions", [])
+
 
 # ---------------------------------------------------------------------------
 # Response wrappers
@@ -281,4 +421,20 @@ class RunListResponse:
 
     def __init__(self, runs: list[Run], next_page_token: str | None = None) -> None:
         self.runs = runs
+        self.next_page_token = next_page_token
+
+
+class SessionListResponse:
+    __slots__ = ("sessions", "next_page_token")
+
+    def __init__(self, sessions: list[Session], next_page_token: str | None = None) -> None:
+        self.sessions = sessions
+        self.next_page_token = next_page_token
+
+
+class ConnectorListResponse:
+    __slots__ = ("connectors", "next_page_token")
+
+    def __init__(self, connectors: list[ConnectorInfo], next_page_token: str | None = None) -> None:
+        self.connectors = connectors
         self.next_page_token = next_page_token
