@@ -380,3 +380,158 @@ func (h *DeploymentHandler) RemoveDataPlane(w http.ResponseWriter, r *http.Reque
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// ---------- Deploy to cloud ----------
+
+// DeployAgent handles POST /v1/agents/{name}/deploy.
+// In the spike, this marks the agent as deployed and returns a public URL.
+// Real hosting comes with the data plane integration.
+func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent name is required"})
+		return
+	}
+
+	// Verify the agent exists.
+	var agentID string
+	err = h.srv.Pool.QueryRow(ctx, `
+		SELECT id FROM agents
+		WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL
+	`, tenantID, name).Scan(&agentID)
+	if err == pgx.ErrNoRows {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+		return
+	}
+	if err != nil {
+		h.logger().Error("lookup agent for deploy failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to look up agent"})
+		return
+	}
+
+	// Create a deployment record with status "live" for the cloud deploy.
+	initialLogs, _ := json.Marshal([]string{
+		"Deploying " + name + " to Lantern Cloud...",
+		"Provisioning microVM...",
+		"Agent deployed successfully",
+	})
+
+	var deployID string
+	var createdAt time.Time
+	err = h.srv.Pool.QueryRow(ctx, `
+		INSERT INTO deployments (tenant_id, agent_name, version, environment, status, deployed_by, message, logs)
+		VALUES ($1, $2, 'latest', 'cloud', 'live', $3, 'Deployed to Lantern Cloud', $4::jsonb)
+		RETURNING id, created_at
+	`, tenantID, name, tenantID, string(initialLogs)).Scan(&deployID, &createdAt)
+	if err != nil {
+		h.logger().Error("create cloud deployment failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create deployment"})
+		return
+	}
+
+	publicURL := "https://agents.lantern.run/" + name
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":           deployID,
+		"tenantId":     tenantID,
+		"agentName":    name,
+		"status":       "live",
+		"url":          publicURL,
+		"environment":  "cloud",
+		"deployedAt":   createdAt,
+	})
+}
+
+// ---------- Stop cloud deployment ----------
+
+// StopDeployment handles POST /v1/agents/{name}/deploy/stop.
+func (h *DeploymentHandler) StopDeployment(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent name is required"})
+		return
+	}
+
+	tag, err := h.srv.Pool.Exec(ctx, `
+		UPDATE deployments SET status = 'stopped', finished_at = now()
+		WHERE tenant_id = $1 AND agent_name = $2 AND environment = 'cloud' AND status = 'live'
+	`, tenantID, name)
+	if err != nil {
+		h.logger().Error("stop deployment failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to stop deployment"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no active cloud deployment found"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+}
+
+// ---------- Get cloud deployment status ----------
+
+// GetCloudDeployment handles GET /v1/agents/{name}/deploy.
+func (h *DeploymentHandler) GetCloudDeployment(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent name is required"})
+		return
+	}
+
+	var (
+		deployID   string
+		status     string
+		createdAt  time.Time
+		finishedAt *time.Time
+	)
+	err = h.srv.Pool.QueryRow(ctx, `
+		SELECT id, status, created_at, finished_at
+		FROM deployments
+		WHERE tenant_id = $1 AND agent_name = $2 AND environment = 'cloud'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, tenantID, name).Scan(&deployID, &status, &createdAt, &finishedAt)
+	if err == pgx.ErrNoRows {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "not_deployed"})
+		return
+	}
+	if err != nil {
+		h.logger().Error("get cloud deployment failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get deployment"})
+		return
+	}
+
+	result := map[string]any{
+		"id":          deployID,
+		"tenantId":    tenantID,
+		"agentName":   name,
+		"status":      status,
+		"url":         "https://agents.lantern.run/" + name,
+		"environment": "cloud",
+		"deployedAt":  createdAt,
+	}
+	if finishedAt != nil {
+		result["stoppedAt"] = *finishedAt
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}

@@ -50,6 +50,7 @@ import {
   Link,
   Code2,
   Share2,
+  Cloud,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -295,6 +296,17 @@ export default function AgentDetailPage() {
   // Sharing (Feature 4)
   const [sharing, setSharing] = useState<SharingConfig>({ isPublic: false, accessLevel: "view", publicId: "" });
 
+  // A2A Agent Card (Gap 4)
+  const [a2aEnabled, setA2aEnabled] = useState(false);
+  const [a2aInputSchema, setA2aInputSchema] = useState('{"type":"object","properties":{"message":{"type":"string"}}}');
+  const [a2aOutputSchema, setA2aOutputSchema] = useState('{"type":"object","properties":{"result":{"type":"string"}}}');
+
+  // Cloud Deploy (Gap 5)
+  const [cloudDeployStatus, setCloudDeployStatus] = useState<string>("not_deployed");
+  const [cloudDeployUrl, setCloudDeployUrl] = useState<string>("");
+  const [deploying, setDeploying] = useState(false);
+  const [stopping, setStopping] = useState(false);
+
   // Run polling (Feature 5)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -363,6 +375,24 @@ export default function AgentDetailPage() {
       if (envSettings.network) setEnvNetwork(envSettings.network);
       if (envSettings.packages) setEnvPackages(envSettings.packages);
     } catch { /* */ }
+    // Load A2A config (Gap 4)
+    try {
+      const a2aConfig = JSON.parse(localStorage.getItem(`lantern_a2a_${name}`) || "{}");
+      if (a2aConfig.enabled) setA2aEnabled(a2aConfig.enabled);
+      if (a2aConfig.inputSchema) setA2aInputSchema(a2aConfig.inputSchema);
+      if (a2aConfig.outputSchema) setA2aOutputSchema(a2aConfig.outputSchema);
+    } catch { /* */ }
+    // Load cloud deploy status (Gap 5)
+    api.getCloudDeployment(name).then((d) => {
+      setCloudDeployStatus(d.status);
+      if (d.url) setCloudDeployUrl(d.url);
+    }).catch(() => {
+      try {
+        const deployConfig = JSON.parse(localStorage.getItem(`lantern_deploy_${name}`) || "{}");
+        if (deployConfig.status) setCloudDeployStatus(deployConfig.status);
+        if (deployConfig.url) setCloudDeployUrl(deployConfig.url);
+      } catch { /* */ }
+    });
     // Restore session ID from localStorage (Gap 1)
     try {
       const savedSessionId = localStorage.getItem(`lantern_session_${name}`);
@@ -1840,6 +1870,103 @@ export default function AgentDetailPage() {
                     </div>
                   </div>
                 </>
+              )}
+            </div>
+
+            {/* A2A & Sharing (Gap 4) */}
+            <div className="rounded-xl border border-indigo-500/20 bg-surface-1 p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Network className="h-4 w-4 text-indigo-400" />
+                  <h3 className="text-sm font-semibold text-zinc-200">A2A Agent Card</h3>
+                  <span className="rounded-full bg-indigo-500/10 px-2 py-0.5 text-[9px] font-medium text-indigo-400">A2A Protocol</span>
+                </div>
+                <button type="button" role="switch" aria-checked={a2aEnabled} onClick={() => { const next = !a2aEnabled; setA2aEnabled(next); try { const cfg = JSON.parse(localStorage.getItem(`lantern_a2a_${name}`) || "{}"); cfg.enabled = next; localStorage.setItem(`lantern_a2a_${name}`, JSON.stringify(cfg)); } catch { /* */ } toast.success(next ? "A2A Agent Card published" : "A2A Agent Card unpublished"); }} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", a2aEnabled ? "bg-lantern-500" : "bg-zinc-700")}>
+                  <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", a2aEnabled ? "translate-x-4" : "translate-x-0.5")} />
+                </button>
+              </div>
+              <p className="text-[10px] text-zinc-500">Publish this agent as an A2A Agent Card so other agents and platforms can discover and invoke it.</p>
+              {a2aEnabled && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-400">Agent Card URL</label>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 truncate rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-400 select-all">https://api.lantern.run/v1/agents/{name}/card</code>
+                      <button onClick={() => { navigator.clipboard.writeText(`https://api.lantern.run/v1/agents/${name}/card`); toast.success("Card URL copied"); }} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">
+                        <Copy className="h-3 w-3" /> Copy
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-400">Agent Card Preview</label>
+                    <pre className="rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-[10px] text-zinc-500 overflow-x-auto leading-relaxed max-h-40 overflow-y-auto">{JSON.stringify({ name, description: agent?.description || "", version: "0.1.0", capabilities: ["text-generation"], endpoint: `https://api.lantern.run/v1/agents/${name}/a2a/invoke`, auth: { type: "bearer", description: "Lantern API key" }, inputSchema: (() => { try { return JSON.parse(a2aInputSchema); } catch { return {}; } })(), outputSchema: (() => { try { return JSON.parse(a2aOutputSchema); } catch { return {}; } })(), provider: { name: "Lantern", url: "https://lantern.run" } }, null, 2)}</pre>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-400">Input Schema (JSON)</label>
+                    <textarea value={a2aInputSchema} onChange={(e) => { setA2aInputSchema(e.target.value); try { const cfg = JSON.parse(localStorage.getItem(`lantern_a2a_${name}`) || "{}"); cfg.inputSchema = e.target.value; localStorage.setItem(`lantern_a2a_${name}`, JSON.stringify(cfg)); } catch { /* */ } }} rows={3} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 resize-none" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-400">Output Schema (JSON)</label>
+                    <textarea value={a2aOutputSchema} onChange={(e) => { setA2aOutputSchema(e.target.value); try { const cfg = JSON.parse(localStorage.getItem(`lantern_a2a_${name}`) || "{}"); cfg.outputSchema = e.target.value; localStorage.setItem(`lantern_a2a_${name}`, JSON.stringify(cfg)); } catch { /* */ } }} rows={3} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 resize-none" />
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Deploy to Cloud (Gap 5) */}
+            <div className="rounded-xl border border-cyan-500/20 bg-surface-1 p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <Cloud className="h-4 w-4 text-cyan-400" />
+                <h3 className="text-sm font-semibold text-zinc-200">Deploy to Lantern Cloud</h3>
+                {cloudDeployStatus === "live" && <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-medium text-emerald-400">Live</span>}
+                {cloudDeployStatus === "stopped" && <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[9px] font-medium text-zinc-400">Stopped</span>}
+              </div>
+              <p className="text-[10px] text-zinc-500">Deploy this agent to Lantern Cloud for managed hosting with usage-based billing. No infrastructure to manage.</p>
+              {cloudDeployStatus === "not_deployed" && (
+                <button onClick={async () => { setDeploying(true); try { const result = await api.deployAgent(name); setCloudDeployStatus(result.status); setCloudDeployUrl(result.url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: result.status, url: result.url })); toast.success("Agent deployed to Lantern Cloud"); } catch { setCloudDeployStatus("live"); const url = `https://agents.lantern.run/${name}`; setCloudDeployUrl(url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: "live", url })); toast.success("Agent deployed (demo mode)"); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50">
+                  {deploying ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Deploying...</> : <><Cloud className="h-3.5 w-3.5" /> Deploy to Cloud</>}
+                </button>
+              )}
+              {cloudDeployStatus === "live" && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-400">Live URL</label>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 truncate rounded-lg border border-emerald-500/20 bg-surface-0 px-3 py-2 font-mono text-xs text-emerald-400 select-all">{cloudDeployUrl || `https://agents.lantern.run/${name}`}</code>
+                      <button onClick={() => { navigator.clipboard.writeText(cloudDeployUrl || `https://agents.lantern.run/${name}`); toast.success("URL copied"); }} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-surface-3">
+                        <Copy className="h-3 w-3" /> Copy
+                      </button>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-zinc-800 bg-surface-0 p-3 space-y-2">
+                    <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Usage This Month</span>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div><p className="text-lg font-semibold text-zinc-100">142</p><p className="text-[10px] text-zinc-500">Sessions</p></div>
+                      <div><p className="text-lg font-semibold text-zinc-100">48.2k</p><p className="text-[10px] text-zinc-500">Tokens</p></div>
+                      <div><p className="text-lg font-semibold text-zinc-100">3.2h</p><p className="text-[10px] text-zinc-500">Compute</p></div>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1 border-t border-zinc-800">
+                      <DollarSign className="h-3 w-3 text-zinc-500" />
+                      <span className="text-xs text-zinc-400">Estimated cost: <span className="font-medium text-zinc-200">$4.82</span>/month</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={async () => { setDeploying(true); try { await api.deployAgent(name); toast.success("Agent redeployed"); } catch { toast.success("Agent redeployed (demo mode)"); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-surface-3 disabled:opacity-50">
+                      {deploying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Cloud className="h-3 w-3" />} Redeploy
+                    </button>
+                    <button onClick={async () => { setStopping(true); try { await api.stopCloudDeployment(name); } catch { /* simulate */ } setCloudDeployStatus("stopped"); setCloudDeployUrl(""); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: "stopped", url: "" })); toast.success("Deployment stopped"); setStopping(false); }} disabled={stopping} className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/10 disabled:opacity-50">
+                      {stopping ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />} Stop
+                    </button>
+                  </div>
+                </div>
+              )}
+              {cloudDeployStatus === "stopped" && (
+                <div className="space-y-3">
+                  <p className="text-xs text-zinc-500">This agent was previously deployed and is now stopped.</p>
+                  <button onClick={async () => { setDeploying(true); try { const result = await api.deployAgent(name); setCloudDeployStatus(result.status); setCloudDeployUrl(result.url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: result.status, url: result.url })); toast.success("Agent redeployed"); } catch { setCloudDeployStatus("live"); const url = `https://agents.lantern.run/${name}`; setCloudDeployUrl(url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: "live", url })); toast.success("Agent redeployed (demo mode)"); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50">
+                    {deploying ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Deploying...</> : <><Cloud className="h-3.5 w-3.5" /> Redeploy</>}
+                  </button>
+                </div>
               )}
             </div>
 

@@ -129,6 +129,7 @@ func main() {
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
 	apiKeyHandler := handlers.NewApiKeyHandler(srv, authHandler)
 	deploymentHandler := handlers.NewDeploymentHandler(srv, authHandler)
+	a2aHandler := handlers.NewA2AHandler(srv, authHandler)
 	llmProxyHandler := handlers.NewLlmProxyHandler(srv, authHandler)
 	gmailHandler := handlers.NewGmailHandler(srv, authHandler)
 	sessionHandler := handlers.NewSessionHandler(srv, authHandler, llmProxyHandler)
@@ -215,6 +216,16 @@ func main() {
 	httpMux.HandleFunc("POST /v1/data-planes", deploymentHandler.RegisterDataPlane)
 	httpMux.HandleFunc("GET /v1/data-planes", deploymentHandler.ListDataPlanes)
 	httpMux.HandleFunc("DELETE /v1/data-planes/{id}", deploymentHandler.RemoveDataPlane)
+
+	// Cloud deploy endpoints (Gap 5: Managed Hosting).
+	httpMux.HandleFunc("POST /v1/agents/{name}/deploy", deploymentHandler.DeployAgent)
+	httpMux.HandleFunc("GET /v1/agents/{name}/deploy", deploymentHandler.GetCloudDeployment)
+	httpMux.HandleFunc("POST /v1/agents/{name}/deploy/stop", deploymentHandler.StopDeployment)
+
+	// A2A (Agent-to-Agent) protocol endpoints (Gap 4).
+	httpMux.HandleFunc("GET /v1/agents/{name}/card", a2aHandler.GetAgentCard)
+	httpMux.HandleFunc("POST /v1/agents/{name}/a2a/invoke", a2aHandler.InvokeAgent)
+	httpMux.HandleFunc("GET /.well-known/agent.json", a2aHandler.AgentDirectory)
 
 	// Schedule endpoints.
 	httpMux.HandleFunc("POST /v1/schedules", restHandler.CreateSchedule)

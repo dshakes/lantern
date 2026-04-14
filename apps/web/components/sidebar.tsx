@@ -15,6 +15,7 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeft,
+  Store,
 } from "lucide-react";
 import clsx from "clsx";
 import { useState, useEffect, useRef } from "react";
@@ -26,8 +27,9 @@ const navItems = [
   { href: "/surfaces", label: "Surfaces", icon: MessageSquare, shortcut: "3" },
   { href: "/connectors", label: "Connectors", icon: Plug, shortcut: "4" },
   { href: "/deployments", label: "Deployments", icon: Cloud, shortcut: "5" },
-  { href: "/evaluations", label: "Evaluations", icon: BarChart3, shortcut: "6" },
-  { href: "/settings", label: "Settings", icon: Settings, shortcut: "7" },
+  { href: "/marketplace", label: "Marketplace", icon: Store, shortcut: "6" },
+  { href: "/evaluations", label: "Evaluations", icon: BarChart3, shortcut: "7" },
+  { href: "/settings", label: "Settings", icon: Settings, shortcut: "8" },
 ] as const;
 
 export function Sidebar() {
