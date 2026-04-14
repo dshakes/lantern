@@ -237,6 +237,7 @@ export default function AgentDetailPage() {
   // Instructions (separated from system prompt)
   const [instructions, setInstructions] = useState("");
   const [instructionsDirty, setInstructionsDirty] = useState(false);
+  const [generatingInstructions, setGeneratingInstructions] = useState(false);
 
   // MCP Servers
   const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
@@ -872,20 +873,37 @@ export default function AgentDetailPage() {
             </div>
 
             {/* Instructions (what the agent does) */}
-            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
-              <div className="mb-3 flex items-center justify-between">
+            <div className="rounded-xl border border-teal-500/10 bg-surface-1 p-5">
+              <div className="mb-2 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><BookOpen className="h-4 w-4 text-teal-400" /> Instructions</h3>
-                <span className="text-[10px] text-zinc-600">What the agent does -- task goals, constraints, scope</span>
+                <div className="flex items-center gap-2">
+                  {instructionsDirty && <span className="text-[10px] text-amber-400">Unsaved</span>}
+                  <button
+                    disabled={generatingInstructions}
+                    onClick={async () => {
+                      setGeneratingInstructions(true);
+                      try {
+                        const resp = await api.complete({ messages: [{ role: "user", content: `Generate clear instructions for an AI agent called "${name}". Description: "${agent.description || name}". Write 3-5 concise bullet points: goals, constraints, data sources, expected behavior. Return ONLY the text.` }], model: "auto", stream: false });
+                        if (resp.ok) { const d = await resp.json(); const g = typeof d.content === "string" ? d.content.trim() : ""; if (g) { setInstructions(g); setInstructionsDirty(true); toast.success("Instructions generated"); } }
+                      } catch { toast.error("LLM unavailable"); }
+                      setGeneratingInstructions(false);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md bg-teal-500/10 px-2 py-1 text-[10px] font-medium text-teal-400 hover:bg-teal-500/20 disabled:opacity-50"
+                  >
+                    {generatingInstructions ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Sparkles className="h-2.5 w-2.5" />}
+                    {generatingInstructions ? "Generating..." : "Generate with AI"}
+                  </button>
+                </div>
               </div>
+              <p className="mb-2 text-[10px] text-zinc-600">Define what this agent does — its goals, constraints, and scope.</p>
               <textarea
                 value={instructions}
                 onChange={(e) => { setInstructions(e.target.value); setInstructionsDirty(true); }}
-                rows={4}
+                rows={instructions ? 4 : 3}
                 spellCheck={false}
-                placeholder="Define what this agent should accomplish. What are its goals? What data sources should it use? What constraints apply?"
+                placeholder={"Example:\n• Summarize unread emails from the last 24 hours\n• Group by priority: urgent, action required, informational\n• Never include email body text, only subjects and senders\n• Keep the summary under 500 words"}
                 className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20"
               />
-              {instructionsDirty && <p className="mt-1.5 text-[11px] text-amber-400">Unsaved changes</p>}
             </div>
 
             {/* System Prompt (how the agent behaves) */}
