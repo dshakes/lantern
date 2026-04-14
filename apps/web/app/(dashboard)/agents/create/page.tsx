@@ -414,13 +414,16 @@ function CreatePage() {
 
             {/* Quick Test — optional */}
             <div className="rounded-xl border border-dashed border-zinc-700 bg-surface-1/50 p-5">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-2">
                 <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-400"><Play className="h-4 w-4 text-zinc-500" /> Quick Test <span className="text-[10px] text-zinc-600">(optional)</span></h3>
-                <ModelSelect value={testModel} onChange={setTestModel} className="h-7 w-48 text-[11px]" />
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-zinc-600">Model:</span>
+                  <ModelSelect value={testModel} onChange={setTestModel} className="h-7 w-44 text-[11px]" />
+                </div>
               </div>
-              <p className="text-[11px] text-zinc-600 mb-3">Test your agent before creating. You can always test later from the agent&apos;s Build tab.</p>
+              <p className="text-[11px] text-zinc-600 mb-3">Skip this step or type a message to verify your agent works. You can always test later.</p>
               <textarea value={testInput} onChange={(e) => setTestInput(e.target.value)} rows={2}
-                placeholder={description.toLowerCase().includes("email") ? "Summarize my recent emails" : description.toLowerCase().includes("code") ? "Review this code for security issues" : description.toLowerCase().includes("research") ? "Research the latest trends in AI agents" : `Test the ${name || "agent"}: ask it something relevant`}
+                placeholder={description ? `e.g., "${description.slice(0, 60)}${description.length > 60 ? "..." : ""}"` : "Type a test message (or skip and create the agent directly)"}
                 className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />
               <div className="mt-2 flex items-center gap-2">
                 {testRunning ? (<button onClick={() => { setTestRunning(false); setTestDone(true); }} className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-red-500"><Square className="h-3 w-3" /> Stop</button>
