@@ -536,7 +536,8 @@ export default function AgentDetailPage() {
   }, [name, agent?.description, toast]);
 
   const handleTestRun = useCallback(async () => {
-    if (!testInput.trim()) return;
+    // For email agents, auto-fetch emails even if input is empty
+    if (!testInput.trim() && !isEmailAgent) return;
     setTestOutput(""); setTestDone(false); setTestError(null); setTestMeta(null); setTestRunning(true);
     const startTime = Date.now();
     const messages: Array<{ role: string; content: string }> = [];
@@ -544,18 +545,23 @@ export default function AgentDetailPage() {
     if (effectivePrompt.trim()) messages.push({ role: "system", content: effectivePrompt });
 
     if (isEmailAgent) {
+      // Auto-fetch emails and include them
       try {
         const cs = JSON.parse(localStorage.getItem("lantern_connectors") || "{}");
         if (cs.gmail?.installed && cs.gmail?.credentials) await api.installConnector({ connectorId: "gmail", displayName: "Gmail", config: cs.gmail.credentials }).catch(() => {});
+        setTestOutput("Fetching emails...\n");
         const raw = await api.executeConnector("gmail", "list_messages", { limit: 15 });
         const data = raw as unknown as { messages?: Array<{ from: string; subject: string; snippet: string; date: string }> };
         if (data.messages?.length) {
+          setTestOutput(`Fetched ${data.messages.length} emails. Processing...\n`);
           const list = data.messages.map((m, i) => `${i + 1}. From: ${m.from}\n   Subject: ${m.subject}\n   Preview: ${m.snippet}\n   Date: ${m.date}`).join("\n\n");
-          messages.push({ role: "user", content: `${testInput}\n\nHere are my actual recent emails:\n\n${list}` });
-        } else { messages.push({ role: "user", content: testInput + "\n\nNo emails found." }); }
+          const userMsg = testInput.trim() || "Summarize these emails and highlight anything urgent.";
+          messages.push({ role: "user", content: `${userMsg}\n\nHere are my actual recent emails:\n\n${list}` });
+        } else { messages.push({ role: "user", content: (testInput.trim() || "Summarize my emails.") + "\n\nNo emails found in inbox." }); }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setTestOutput(`Error fetching emails: ${msg}`); setTestDone(true); setTestRunning(false); return;
+        let display = msg; try { const m = msg.match(/API \d+: (.*)/); if (m) { const p = JSON.parse(m[1]); display = p.error || msg; } } catch { /* */ }
+        setTestOutput(`Error fetching emails: ${display}\n\nTroubleshooting:\n• Go to Connectors → Gmail to verify connection\n• If using OAuth, ensure Gmail API is enabled`); setTestDone(true); setTestRunning(false); return;
       }
     } else {
       let userContent = testInput;
