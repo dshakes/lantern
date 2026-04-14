@@ -2,36 +2,22 @@
 
 import { motion, useInView, animate, useMotionValue, useTransform } from "framer-motion";
 import {
-  Zap,
-  Shield,
-  Globe,
-  Brain,
-  Workflow,
-  Smartphone,
-  Cpu,
   ArrowRight,
   Check,
   X,
-  Terminal,
   Lock,
-  Gauge,
   Flame,
   Cloud,
-  MessageSquare,
   Mail,
-  Phone,
-  Users,
-  Search,
-  Bot,
-  ShieldCheck,
   Headphones,
-  DollarSign,
   Github,
   ExternalLink,
   RotateCcw,
   GitBranch,
-  ArrowDownCircle,
-  RefreshCw,
+  Store,
+  BarChart3,
+  Network,
+  Database,
 } from "lucide-react";
 import { useRef, useEffect, useState } from "react";
 
@@ -110,22 +96,6 @@ function AnimatedCounter({
 /* ───────────────────────────────────────────────────── */
 /*  Animated Feature Icons                               */
 /* ───────────────────────────────────────────────────── */
-function AnimatedDurableIcon() {
-  return (
-    <motion.div
-      className="w-10 h-10 rounded-xl bg-lantern-600/10 flex items-center justify-center"
-      whileHover={{ scale: 1.1 }}
-    >
-      <motion.div
-        animate={{ rotate: 360 }}
-        transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-      >
-        <RotateCcw className="w-5 h-5 text-lantern-500" />
-      </motion.div>
-    </motion.div>
-  );
-}
-
 function AnimatedRoutingIcon() {
   return (
     <motion.div
@@ -142,7 +112,23 @@ function AnimatedRoutingIcon() {
   );
 }
 
-function AnimatedShieldIcon() {
+function AnimatedSessionIcon() {
+  return (
+    <motion.div
+      className="w-10 h-10 rounded-xl bg-lantern-600/10 flex items-center justify-center"
+      whileHover={{ scale: 1.1 }}
+    >
+      <motion.div
+        animate={{ rotate: 360 }}
+        transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+      >
+        <RotateCcw className="w-5 h-5 text-lantern-500" />
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function AnimatedA2AIcon() {
   return (
     <motion.div
       className="w-10 h-10 rounded-xl bg-lantern-600/10 flex items-center justify-center"
@@ -152,13 +138,45 @@ function AnimatedShieldIcon() {
         animate={{ scale: [1, 1.1, 1] }}
         transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
       >
-        <Shield className="w-5 h-5 text-lantern-500" />
+        <Network className="w-5 h-5 text-lantern-500" />
       </motion.div>
     </motion.div>
   );
 }
 
-function AnimatedCloudIcon() {
+function AnimatedMarketplaceIcon() {
+  return (
+    <motion.div
+      className="w-10 h-10 rounded-xl bg-lantern-600/10 flex items-center justify-center"
+      whileHover={{ scale: 1.1 }}
+    >
+      <motion.div
+        animate={{ scale: [1, 0.9, 1.1, 1] }}
+        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+      >
+        <Store className="w-5 h-5 text-lantern-500" />
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function AnimatedEvalsIcon() {
+  return (
+    <motion.div
+      className="w-10 h-10 rounded-xl bg-lantern-600/10 flex items-center justify-center"
+      whileHover={{ scale: 1.1 }}
+    >
+      <motion.div
+        animate={{ y: [0, 3, 0] }}
+        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+      >
+        <BarChart3 className="w-5 h-5 text-lantern-500" />
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function AnimatedDeployIcon() {
   return (
     <motion.div
       className="w-10 h-10 rounded-xl bg-lantern-600/10 flex items-center justify-center"
@@ -174,55 +192,23 @@ function AnimatedCloudIcon() {
   );
 }
 
-function AnimatedMessagingIcon() {
-  return (
-    <motion.div
-      className="w-10 h-10 rounded-xl bg-lantern-600/10 flex items-center justify-center"
-      whileHover={{ scale: 1.1 }}
-    >
-      <motion.div
-        animate={{ scale: [1, 0.9, 1.1, 1] }}
-        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-      >
-        <MessageSquare className="w-5 h-5 text-lantern-500" />
-      </motion.div>
-    </motion.div>
-  );
-}
-
-function AnimatedCostIcon() {
-  return (
-    <motion.div
-      className="w-10 h-10 rounded-xl bg-lantern-600/10 flex items-center justify-center"
-      whileHover={{ scale: 1.1 }}
-    >
-      <motion.div
-        animate={{ y: [0, 3, 0] }}
-        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-      >
-        <ArrowDownCircle className="w-5 h-5 text-lantern-500" />
-      </motion.div>
-    </motion.div>
-  );
-}
-
 const featureIcons = [
-  AnimatedDurableIcon,
   AnimatedRoutingIcon,
-  AnimatedShieldIcon,
-  AnimatedCloudIcon,
-  AnimatedMessagingIcon,
-  AnimatedCostIcon,
+  AnimatedSessionIcon,
+  AnimatedA2AIcon,
+  AnimatedMarketplaceIcon,
+  AnimatedEvalsIcon,
+  AnimatedDeployIcon,
 ];
 
 /* ───────────────────────────────────────────────────── */
 /*  Animated Terminal Preview                            */
 /* ───────────────────────────────────────────────────── */
 const terminalLines = [
-  { text: "$ lantern init research-agent --template research", type: "command" as const },
+  { text: "$ npx create-lantern-agent research-agent", type: "command" as const },
   { text: "\u2713 Created research-agent/", type: "success" as const },
-  { text: "$ lantern run research-agent --input '{\"topic\": \"quantum computing\"}'", type: "command" as const },
-  { text: "\u25C9 Running... streaming events", type: "info" as const },
+  { text: "$ lantern dev", type: "command" as const },
+  { text: "\u25C9 Session started... streaming via SSE", type: "info" as const },
   { text: "\u25B8 step: generate-queries \u2713 (0.8s)", type: "step" as const },
   { text: "\u25B8 step: search [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2591\u2591] 4/5", type: "step" as const },
   { text: "\u25B8 step: synthesize (streaming...)", type: "step" as const },
@@ -379,8 +365,8 @@ function Hero() {
 
         <FadeIn delay={0.2}>
           <p className="text-sm sm:text-base text-zinc-500 max-w-md mx-auto mb-8 leading-relaxed">
-            One platform to build, deploy, and operate autonomous agents
-            across any model and any cloud. Open source.
+            Managed sessions, multi-model routing, A2A interop, and
+            deploy anywhere — one open-source platform for production agents.
           </p>
         </FadeIn>
 
@@ -420,10 +406,10 @@ function StatsBar() {
       <div className="relative max-w-6xl mx-auto">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
           {[
-            { value: 150, suffix: "ms", label: "Warm start via Firecracker" },
+            { value: 4, suffix: "", label: "Model routing strategies" },
             { value: 60, suffix: "%", label: "Avg. cost savings with auto-routing" },
-            { prefix: "<", value: 20, suffix: "ms", label: "Streaming overhead E2E" },
-            { value: 11, suffix: "", label: "Built-in communication surfaces" },
+            { prefix: "<", value: 20, suffix: "ms", label: "SSE streaming overhead E2E" },
+            { value: 3, suffix: "", label: "Deploy targets (Cloud, VPC, self-hosted)" },
           ].map((stat, i) => (
             <FadeIn key={stat.label} delay={i * 0.1}>
               <div className="text-center">
@@ -449,12 +435,12 @@ function StatsBar() {
 /* ───────────────────────────────────────────────────── */
 const comparisonCapabilities = [
   "Multi-LLM routing",
-  "Durable execution",
-  "MicroVM isolation",
+  "Managed sessions",
+  "A2A interop",
   "Self-hostable",
-  "Omnichannel surfaces",
+  "Evals dashboard",
   "Streaming E2E",
-  "Free personal tier",
+  "Marketplace",
   "Open source",
 ];
 
@@ -465,23 +451,23 @@ const competitors: {
 }[] = [
   {
     name: "Claude / OpenAI Agents",
-    tagline: "Locked to one LLM. No durability. No self-hosting.",
+    tagline: "Locked to one LLM. No durability. No A2A.",
     scores: [false, false, false, false, false, true, false, false],
   },
   {
     name: "Google Vertex AI Agents",
-    tagline: "GCP-only. No omnichannel. No personal tier.",
-    scores: [false, true, false, false, false, true, false, false],
+    tagline: "GCP-only. No marketplace. No self-hosting.",
+    scores: [false, true, false, false, true, true, false, false],
   },
   {
     name: "AWS Bedrock Agents",
-    tagline: "Complex. AWS-locked. No streaming.",
+    tagline: "Complex. AWS-locked. No streaming. No A2A.",
     scores: [true, false, false, false, false, false, false, false],
   },
   {
-    name: "AutoGen / Semantic Kernel",
-    tagline: "Framework, not a platform. No infra. No isolation.",
-    scores: [true, false, false, false, false, false, true, true],
+    name: "AutoGen / CrewAI",
+    tagline: "Framework, not a platform. No managed infra. No evals.",
+    scores: [true, false, false, false, false, false, false, true],
   },
   {
     name: "Lantern",
@@ -608,79 +594,87 @@ const featureCards: {
   snippet: string;
 }[] = [
   {
-    title: "Durable Execution",
-    desc: "Like Temporal, but for AI. Steps survive crashes, replay on resume. Every side-effect is journaled and idempotent.",
-    snippet: `const plan = await step("plan", async () => {
+    title: "Smart Model Routing",
+    desc: "4 routing strategies across Claude, GPT, and Gemini. Say model: \"auto\" and Lantern picks the best provider at the best price. Failover is automatic.",
+    snippet: `// 4 strategies: auto, cost, latency, quality
+model: "auto"             // best per step
+model: "reasoning-large"  // Opus / GPT-4 / Gemini
+model: "reasoning-small"  // Haiku / GPT-4o-mini
+model: "code"             // code-specialized
+// Failover across Claude, GPT, Gemini
+// automatically — zero config.`,
+  },
+  {
+    title: "Managed Sessions",
+    desc: "Durable, interactive sessions with SSE streaming. Steps survive crashes, replay on resume. Every side-effect is journaled and idempotent.",
+    snippet: `const session = await ctx.session.create({
+  ttl: "24h",
+  stream: true,  // SSE streaming built in
+});
+const plan = await step("plan", async () => {
   return ctx.llm.json({
-    capability: "reasoning-small",
     prompt: \`Plan for: \${input.topic}\`,
   });
 });
-// If the process crashes here, it resumes
-// from the next step — not the beginning.`,
+// Session survives crashes — resumes
+// from the last completed step.`,
   },
   {
-    title: "Route by Capability, Not Model",
-    desc: 'Say model: "auto", get the best model at the best price. Failover between providers is automatic and invisible.',
-    snippet: `model: "auto"          // best for each step
-model: "reasoning-large"  // GPT-5 / Opus / etc.
-model: "reasoning-small"  // Haiku / GPT-4o-mini
-model: "code"             // code-specialized
-model: "vision"           // image understanding
-// The Spectrum maps to concrete models
-// and fails over across vendors.`,
+    title: "A2A Agent Cards",
+    desc: "Cross-platform agent discovery and interop via the Agent-to-Agent protocol. Publish an Agent Card and let any A2A-compatible system call your agent.",
+    snippet: `// .well-known/agent.json
+{
+  "name": "research-agent",
+  "url": "https://acme.lantern.run/a2a",
+  "capabilities": ["research", "summarize"],
+  "inputSchema": { ... },
+  "authentication": { "type": "bearer" }
+}
+// Any A2A client discovers and calls
+// your agent automatically.`,
   },
   {
-    title: "MicroVM Sandboxing",
-    desc: "Every agent run gets its own Firecracker microVM. 150ms warm start. Real isolation, not just containers.",
-    snippet: `┌─────────────────────────────┐
-│  Your Agent Code            │
-│  ┌───────────────────────┐  │
-│  │  Firecracker MicroVM  │  │
-│  │  seccomp · egress     │  │
-│  │  150ms warm start     │  │
-│  │  signed bundles       │  │
-│  └───────────────────────┘  │
-│  Snapshot / Restore         │
-└─────────────────────────────┘`,
-  },
-  {
-    title: "Deploy Into Your Cloud",
-    desc: "Control plane hosted by us. Data plane runs in YOUR AWS/GCP/Azure. Agent data never leaves your VPC.",
-    snippet: `┌─────────────────────────────┐
-│  Lantern SaaS (Control)     │
-│  scheduling · routing · UI  │
-└──────────┬──────────────────┘
-           │ gRPC tunnel (mTLS)
-┌──────────▼──────────────────┐
-│  Your VPC (Data Plane)      │
-│  Firecracker · K8s · data   │
-│  ← secrets never leave here │
-└─────────────────────────────┘`,
-  },
-  {
-    title: "Drive Agents from Anywhere",
-    desc: "WhatsApp. iMessage. Slack. Discord. Voice calls. Email. SMS. Telegram. Web. CLI. API. First-class, not bolted on.",
-    snippet: `// 11 built-in surfaces
-WhatsApp  iMessage  Slack
-Discord   Telegram  Email
-SMS       Voice     Web
-CLI       REST API
-// Two-way — agents reply in the
-// same channel you messaged from.`,
-  },
-  {
-    title: "Cost Intelligence",
-    desc: "Routes cheap prompts to small models. Escalates only when needed. Customers save 60% on LLM costs versus fixed-model.",
-    snippet: `// Before Lantern:
-//   All prompts → GPT-4   $0.42/run
+    title: "Agent Marketplace",
+    desc: "Discover community agents, fork and customize them, or publish your own. One-click deploy from the marketplace to your cloud.",
+    snippet: `$ lantern marketplace search "code review"
+  code-reviewer    ★ 4.8  by @acme
+  pr-guardian      ★ 4.6  by @devtools
 
-// After Lantern (auto routing):
-//   Triage    → Haiku     $0.002
-//   Search    → GPT-4o-m  $0.01
-//   Synthesis → Opus      $0.08
-//   Total:                $0.092
-//   Savings:              -78%`,
+$ lantern marketplace fork code-reviewer
+✓ Forked to ./code-reviewer
+
+$ lantern deploy
+✓ Live at acme.lantern.run/code-reviewer`,
+  },
+  {
+    title: "Evaluations Dashboard",
+    desc: "Track success rate, cost per run, and P95 latency across all your agents. Compare model performance and spot regressions before users do.",
+    snippet: `┌─ Evals Dashboard ────────────┐
+│                              │
+│  Success rate   94.2% ↑ 3%  │
+│  Avg cost/run   $0.09 ↓12%  │
+│  P95 latency    1.2s  ↓ 8%  │
+│                              │
+│  Model breakdown:            │
+│  Claude Haiku   48% of runs  │
+│  GPT-4o-mini    31% of runs  │
+│  Gemini Flash   21% of runs  │
+└──────────────────────────────┘`,
+  },
+  {
+    title: "Deploy Anywhere",
+    desc: "Run on Lantern Cloud for zero-ops, or deploy the data plane into your own AWS, GCP, or Azure VPC. Your secrets never leave your infrastructure.",
+    snippet: `# Option A: Lantern Cloud (zero-ops)
+$ lantern deploy
+
+# Option B: Your cloud
+$ lantern deploy --cloud aws --region us-east-1
+
+# Option C: Self-hosted
+$ lantern deploy --self-hosted --kubeconfig ./k8s
+
+✓ All options get the same dashboard,
+  routing, and streaming.`,
   },
 ];
 
@@ -1134,8 +1128,8 @@ function Architecture() {
           {[
             { value: 150, suffix: "ms", label: "Warm cold start via Firecracker snapshot/restore" },
             { value: 60, suffix: "%", label: "Avg. cost savings with auto-routing" },
-            { prefix: "<", value: 20, suffix: "ms", label: "Streaming overhead end-to-end" },
-            { value: 11, suffix: "", label: "Built-in surfaces" },
+            { prefix: "<", value: 20, suffix: "ms", label: "SSE streaming overhead end-to-end" },
+            { value: 3, suffix: "", label: "Cloud providers supported" },
           ].map((item, i) => (
             <FadeIn key={item.label} delay={0.1 * i}>
               <div className="text-center p-6">
@@ -1185,14 +1179,14 @@ function DeployCommands() {
                   1
                 </div>
                 <span className="text-xs text-zinc-500">
-                  Scaffold from a template
+                  Create a new agent
                 </span>
               </div>
               <pre className="px-5 py-4 text-sm sm:text-base font-mono overflow-x-auto">
                 <span className="text-zinc-500">$</span>{" "}
-                <span className="text-lantern-400">lantern</span>{" "}
+                <span className="text-lantern-400">npx</span>{" "}
                 <span className="text-zinc-300">
-                  init my-agent --template research
+                  create-lantern-agent my-agent
                 </span>
               </pre>
             </div>
@@ -1211,9 +1205,7 @@ function DeployCommands() {
                 <span className="text-zinc-500">$</span>{" "}
                 <span className="text-lantern-400">lantern</span>{" "}
                 <span className="text-zinc-300">
-                  run my-agent --input &apos;{"{"}
-                  &quot;topic&quot;: &quot;quantum computing&quot;{"}"}
-                  &apos;
+                  dev
                 </span>
               </pre>
             </div>
@@ -1225,14 +1217,14 @@ function DeployCommands() {
                   3
                 </div>
                 <span className="text-xs text-zinc-500">
-                  Ship to your cloud in one line
+                  Deploy to Lantern Cloud or your own
                 </span>
               </div>
               <pre className="px-5 py-4 text-sm sm:text-base font-mono overflow-x-auto">
                 <span className="text-zinc-500">$</span>{" "}
                 <span className="text-lantern-400">lantern</span>{" "}
                 <span className="text-zinc-300">
-                  deploy --cloud aws --region us-east-1
+                  deploy
                 </span>
                 {"\n"}
                 <span className="text-emerald-400">
@@ -1387,29 +1379,29 @@ function Pricing() {
 /*  Use Case Showcase                                    */
 /* ───────────────────────────────────────────────────── */
 const useCases: {
-  icon: typeof Search;
+  icon: typeof Mail;
   title: string;
   desc: string;
 }[] = [
   {
-    icon: Search,
-    title: "AI Talent Search",
-    desc: "Find and engage top AI candidates across LinkedIn, GitHub, and academic papers. Durable workflows that run for days without losing state.",
+    icon: Mail,
+    title: "Email Triage Agent",
+    desc: "Auto-summarize your inbox daily. Categorize, prioritize, and draft replies. Runs on a schedule with durable sessions so nothing gets lost.",
   },
   {
-    icon: Smartphone,
-    title: "Personal WhatsApp Assistant",
-    desc: "Manage your calendar, email, and tasks from WhatsApp. E2E encrypted. Runs on your phone as the remote.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "CI/CD Guardian",
-    desc: "Analyze every deploy for risk. Auto-approve safe changes. Block and notify on risky ones. Human-in-the-loop built in.",
+    icon: GitBranch,
+    title: "Code Review Agent",
+    desc: "Triggers on every PR push. Reviews diffs for bugs, style, and security. Posts inline comments and approves safe changes automatically.",
   },
   {
     icon: Headphones,
-    title: "Customer Support",
-    desc: "Handle tickets with memory, approval gates, and human-in-the-loop escalation. Resolves 70% autonomously, escalates the rest.",
+    title: "Customer Support Agent",
+    desc: "Handle tickets with session memory and human-in-the-loop escalation. Resolves 70% autonomously, routes the rest to the right team.",
+  },
+  {
+    icon: Database,
+    title: "Data Pipeline Agent",
+    desc: "Scheduled ETL with built-in connectors. Pull from APIs, transform with LLMs, load into your warehouse. Retries and checkpoints included.",
   },
 ];
 
