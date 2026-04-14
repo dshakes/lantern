@@ -198,9 +198,35 @@ func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiK
 }
 
 // resolveModel maps a capability name to a concrete provider + model.
+// modelOption represents a model candidate for routing.
+type modelOption struct {
+	provider    string
+	model       string
+	costPer1MIn float64 // $/1M input tokens
+	costPer1MOut float64 // $/1M output tokens
+	quality     int     // 1-10, higher is better
+	speed       int     // 1-10, higher is faster
+}
+
+// All available models with their characteristics.
+var modelCatalog = []modelOption{
+	{"anthropic", "claude-opus-4-20250514", 15.0, 75.0, 10, 4},
+	{"anthropic", "claude-sonnet-4-20250514", 3.0, 15.0, 9, 7},
+	{"anthropic", "claude-haiku-4-20250414", 0.25, 1.25, 6, 10},
+	{"openai", "gpt-4o", 2.5, 10.0, 8, 8},
+	{"openai", "gpt-4o-mini", 0.15, 0.60, 5, 10},
+}
+
+// resolveModel maps a capability name to a concrete provider + model.
+// In "auto" mode, it uses a smart router that picks the best model based on:
+// - Available provider keys (env vars)
+// - Task complexity heuristic
+// - Cost/quality/speed balance
 func resolveModel(capability string) (provider, model string) {
 	switch capability {
-	case "auto", "chat-large", "":
+	case "auto", "":
+		return resolveAutoModel()
+	case "chat-large":
 		return "openai", "gpt-4o"
 	case "reasoning-frontier":
 		return "anthropic", "claude-opus-4-20250514"
@@ -215,16 +241,79 @@ func resolveModel(capability string) (provider, model string) {
 	case "vision-large":
 		return "openai", "gpt-4o"
 	default:
-		// If it looks like a concrete model name, try to infer provider.
 		if strings.HasPrefix(capability, "gpt") || strings.HasPrefix(capability, "o1") || strings.HasPrefix(capability, "o3") {
 			return "openai", capability
 		}
 		if strings.HasPrefix(capability, "claude") {
 			return "anthropic", capability
 		}
-		// Default to OpenAI.
 		return "openai", "gpt-4o"
 	}
+}
+
+// resolveAutoModel picks the best model by checking available provider keys
+// and balancing cost/quality/speed. This mirrors the production model router
+// logic so local dev behaves the same as deployed.
+func resolveAutoModel() (string, string) {
+	hasAnthropic := os.Getenv("ANTHROPIC_API_KEY") != ""
+	hasOpenAI := os.Getenv("OPENAI_API_KEY") != ""
+
+	// Routing strategy: "balanced" — prefer the best quality-to-cost ratio
+	// that's available. Anthropic Sonnet 4 is the sweet spot (quality 9, speed 7, $3/$15).
+	// OpenAI GPT-4o is close (quality 8, speed 8, $2.5/$10).
+	// For cost-sensitive: Haiku or GPT-4o-mini.
+
+	routeStrategy := os.Getenv("LANTERN_ROUTE_STRATEGY") // "balanced" | "cheap" | "quality" | "fast"
+	if routeStrategy == "" {
+		routeStrategy = "balanced"
+	}
+
+	type candidate struct {
+		provider, model string
+		score           float64
+	}
+
+	var candidates []candidate
+	for _, m := range modelCatalog {
+		if m.provider == "anthropic" && !hasAnthropic {
+			continue
+		}
+		if m.provider == "openai" && !hasOpenAI {
+			continue
+		}
+
+		var score float64
+		switch routeStrategy {
+		case "cheap":
+			// Lower cost = higher score. Invert cost.
+			score = 100.0 / (m.costPer1MIn + m.costPer1MOut + 1)
+		case "quality":
+			score = float64(m.quality) * 10
+		case "fast":
+			score = float64(m.speed) * 10
+		default: // "balanced"
+			// Balanced: weight quality (40%), speed (30%), inverse cost (30%)
+			costScore := 100.0 / (m.costPer1MIn + m.costPer1MOut + 1)
+			score = float64(m.quality)*4 + float64(m.speed)*3 + costScore*3
+		}
+
+		candidates = append(candidates, candidate{m.provider, m.model, score})
+	}
+
+	if len(candidates) == 0 {
+		// No provider configured — fall back to OpenAI as default
+		return "openai", "gpt-4o"
+	}
+
+	// Pick the highest scoring candidate
+	best := candidates[0]
+	for _, c := range candidates[1:] {
+		if c.score > best.score {
+			best = c
+		}
+	}
+
+	return best.provider, best.model
 }
 
 // ---------- Complete endpoint ----------
