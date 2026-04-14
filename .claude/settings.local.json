@@ -79,7 +79,19 @@
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('packages/sdk-python/lantern/types.py'\\).read\\(\\)\\); print\\('types.py: OK'\\)\")",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('packages/sdk-python/lantern/client.py'\\).read\\(\\)\\); print\\('client.py: OK'\\)\")",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('packages/sdk-python/lantern/__init__.py'\\).read\\(\\)\\); print\\('__init__.py: OK'\\)\")",
-      "Bash(python3 -c \"import ast; ast.parse\\(open\\('packages/sdk-python/examples/email_agent.py'\\).read\\(\\)\\); print\\('email_agent.py: OK'\\)\")"
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('packages/sdk-python/examples/email_agent.py'\\).read\\(\\)\\); print\\('email_agent.py: OK'\\)\")",
+      "WebFetch(domain:vercel.com)",
+      "WebFetch(domain:seedflip.co)",
+      "WebFetch(domain:fontofweb.com)",
+      "WebFetch(domain:hero.gallery)",
+      "WebFetch(domain:www.loftlyy.com)",
+      "WebFetch(domain:codepal.ai)",
+      "WebFetch(domain:geist-ui.dev)",
+      "WebFetch(domain:designsystems.surf)",
+      "WebFetch(domain:theme-ui-preset-geist.vercel.app)",
+      "WebFetch(domain:blakecrosley.com)",
+      "WebFetch(domain:playbooks.com)",
+      "WebFetch(domain:syntaxide.ai)"
     ]
   }
 }

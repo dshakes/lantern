@@ -4,11 +4,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Lantern — AI Agents for Production",
   description:
-    "Build, test, and ship AI agents across Claude, GPT, and Gemini. Open source. Durable execution, multi-model routing, microVM isolation, and zero ops.",
+    "Build, test, and deploy autonomous agents across Claude, GPT, and Gemini. Durable execution. Smart routing. Open source.",
   openGraph: {
     title: "Lantern — AI Agents for Production",
     description:
-      "Build, test, and ship AI agents across Claude, GPT, and Gemini. Open source.",
+      "Build, test, and deploy autonomous agents across Claude, GPT, and Gemini. Open source.",
     type: "website",
     url: "https://lantern.run",
   },
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Lantern — AI Agents for Production",
     description:
-      "Build, test, and ship AI agents across Claude, GPT, and Gemini. Open source.",
+      "Build, test, and deploy autonomous agents across Claude, GPT, and Gemini. Open source.",
   },
 };
 

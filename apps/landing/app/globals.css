@@ -1,14 +1,16 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #000000;
-  --color-surface: #111111;
-  --color-border: #222222;
-  --color-text: #ededed;
-  --color-muted: #888888;
-  --color-accent: #8b5cf6;
+  --color-bg: #09090b;
+  --color-surface: #111113;
+  --color-surface-2: #18181b;
+  --color-text: #fafafa;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #71717a;
+  --color-accent: #818cf8;
+  --color-accent-hover: #6366f1;
 
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-sans: "Inter", -apple-system, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", monospace;
 }
 
@@ -18,14 +20,22 @@ html {
 }
 
 body {
-  background: #000;
-  color: #ededed;
+  background: #09090b;
+  color: #fafafa;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 ::selection {
-  background: rgba(139, 92, 246, 0.3);
+  background: rgba(129, 140, 248, 0.3);
   color: #fff;
+}
+
+.hero-glow {
+  background: radial-gradient(
+    ellipse at 50% -20%,
+    rgba(129, 140, 248, 0.08) 0%,
+    transparent 60%
+  );
 }
