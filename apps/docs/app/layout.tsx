@@ -9,25 +9,50 @@ import {
   Clock, Shield, Cloud, Code, FileCode, ExternalLink,
 } from "lucide-react";
 
-const sections = [
+interface NavItem { href: string; label: string; icon: typeof BookOpen; subs?: { href: string; label: string }[] }
+interface NavSection { label: string; items: NavItem[] }
+
+const sections: NavSection[] = [
   { label: "Overview", items: [
-    { href: "/", label: "Getting Started", icon: BookOpen },
-    { href: "/quickstart", label: "Quick Start", icon: Rocket },
+    { href: "/", label: "Getting Started", icon: BookOpen, subs: [
+      { href: "/#what", label: "What is Lantern?" }, { href: "/#who", label: "Who is it for?" }, { href: "/#concepts", label: "Core concepts" }, { href: "/#architecture", label: "Architecture" },
+    ]},
+    { href: "/quickstart", label: "Quick Start", icon: Rocket, subs: [
+      { href: "/quickstart#prerequisites", label: "Prerequisites" }, { href: "/quickstart#infra", label: "Start infrastructure" }, { href: "/quickstart#api", label: "Start API" }, { href: "/quickstart#agent", label: "Create first agent" },
+    ]},
   ]},
   { label: "Build", items: [
-    { href: "/agents", label: "Agents", icon: Bot },
-    { href: "/connectors", label: "Connectors", icon: Plug },
-    { href: "/surfaces", label: "Surfaces", icon: MessageSquare },
-    { href: "/models", label: "Models", icon: Brain },
-    { href: "/scheduling", label: "Scheduling", icon: Clock },
+    { href: "/agents", label: "Agents", icon: Bot, subs: [
+      { href: "/agents#create", label: "Creating agents" }, { href: "/agents#instructions", label: "Instructions & prompts" }, { href: "/agents#testing", label: "Testing" }, { href: "/agents#chat", label: "Conversations" }, { href: "/agents#visual", label: "Visual editor" },
+    ]},
+    { href: "/connectors", label: "Connectors", icon: Plug, subs: [
+      { href: "/connectors#gmail", label: "Gmail" }, { href: "/connectors#slack", label: "Slack" }, { href: "/connectors#github", label: "GitHub" }, { href: "/connectors#per-agent", label: "Per-agent assignment" },
+    ]},
+    { href: "/surfaces", label: "Surfaces", icon: MessageSquare, subs: [
+      { href: "/surfaces#whatsapp", label: "WhatsApp" }, { href: "/surfaces#slack", label: "Slack" }, { href: "/surfaces#telegram", label: "Telegram" }, { href: "/surfaces#webchat", label: "Web Chat" },
+    ]},
+    { href: "/models", label: "Models", icon: Brain, subs: [
+      { href: "/models#providers", label: "Providers" }, { href: "/models#routing", label: "Capability routing" }, { href: "/models#auto", label: "Auto mode" }, { href: "/models#keys", label: "API keys" },
+    ]},
+    { href: "/scheduling", label: "Scheduling", icon: Clock, subs: [
+      { href: "/scheduling#cron", label: "Cron expressions" }, { href: "/scheduling#ai", label: "AI-assisted cron" }, { href: "/scheduling#email", label: "Email delivery" }, { href: "/scheduling#webhooks", label: "Webhooks" },
+    ]},
   ]},
   { label: "Platform", items: [
-    { href: "/security", label: "Security", icon: Shield },
-    { href: "/deployment", label: "Deployment", icon: Cloud },
+    { href: "/security", label: "Security", icon: Shield, subs: [
+      { href: "/security#privacy", label: "Privacy levels" }, { href: "/security#guardrails", label: "Guardrails" }, { href: "/security#encryption", label: "Encryption" }, { href: "/security#audit", label: "Audit logging" },
+    ]},
+    { href: "/deployment", label: "Deployment", icon: Cloud, subs: [
+      { href: "/deployment#architecture", label: "CP/DP split" }, { href: "/deployment#helm", label: "Helm charts" }, { href: "/deployment#terraform", label: "Terraform" }, { href: "/deployment#docker", label: "Docker Compose" },
+    ]},
   ]},
   { label: "Reference", items: [
-    { href: "/api", label: "API Reference", icon: Code },
-    { href: "/sdk", label: "SDK Reference", icon: FileCode },
+    { href: "/api", label: "API Reference", icon: Code, subs: [
+      { href: "/api#auth", label: "Authentication" }, { href: "/api#agents", label: "Agents" }, { href: "/api#runs", label: "Runs" }, { href: "/api#sessions", label: "Sessions" }, { href: "/api#connectors", label: "Connectors" },
+    ]},
+    { href: "/sdk", label: "SDK Reference", icon: FileCode, subs: [
+      { href: "/sdk#typescript", label: "TypeScript" }, { href: "/sdk#python", label: "Python" }, { href: "/sdk#cli", label: "CLI" },
+    ]},
   ]},
 ];
 
@@ -67,16 +92,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     {section.items.map((item) => {
                       const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
                       return (
-                        <Link key={item.href} href={item.href}
-                          className={clsx(
-                            "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors",
-                            isActive
-                              ? "bg-lantern-500/10 text-lantern-400 font-medium"
-                              : "text-zinc-400 hover:bg-surface-1 hover:text-zinc-200"
-                          )}>
-                          <item.icon className="w-3.5 h-3.5 shrink-0" />
-                          {item.label}
-                        </Link>
+                        <div key={item.href}>
+                          <Link href={item.href}
+                            className={clsx(
+                              "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors",
+                              isActive
+                                ? "bg-lantern-500/10 text-lantern-400 font-medium"
+                                : "text-zinc-400 hover:bg-surface-1 hover:text-zinc-200"
+                            )}>
+                            <item.icon className="w-3.5 h-3.5 shrink-0" />
+                            {item.label}
+                          </Link>
+                          {/* Sub-items — shown when page is active */}
+                          {isActive && item.subs && item.subs.length > 0 && (
+                            <div className="ml-6 mt-0.5 mb-1 space-y-0.5 border-l border-zinc-800 pl-3">
+                              {item.subs.map((sub) => (
+                                <a key={sub.href} href={sub.href}
+                                  className="block py-1 text-[11px] text-zinc-500 transition-colors hover:text-lantern-400">
+                                  {sub.label}
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
