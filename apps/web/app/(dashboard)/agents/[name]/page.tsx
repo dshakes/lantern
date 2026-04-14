@@ -320,7 +320,20 @@ export default function AgentDetailPage() {
     if (s.cron) setSettingsCron(s.cron as string);
     try { const c = JSON.parse(localStorage.getItem("lantern_connectors") || "{}"); setGmailConnected(c.gmail?.installed === true); } catch { /* */ }
     const isEmail = name.toLowerCase().includes("gmail") || name.toLowerCase().includes("email");
-    setTestInput(isEmail ? "Summarize my recent emails and highlight anything urgent." : `Hello, I'd like to test the ${name} agent.`);
+    // Set smart default test input based on agent name
+    const n = name.toLowerCase();
+    const defaultInput = isEmail ? "Summarize my recent emails and highlight anything urgent."
+      : n.includes("recruit") ? "Find senior ML engineers with 5+ years of PyTorch experience."
+      : n.includes("code") || n.includes("review") ? "Review this code for security and performance issues."
+      : n.includes("research") ? "Research the latest trends in AI agent platforms."
+      : n.includes("support") || n.includes("customer") ? "A customer reports they can't reset their password after changing their email."
+      : n.includes("meeting") || n.includes("notes") ? "Summarize the key decisions and action items from today's standup."
+      : n.includes("content") || n.includes("write") ? "Write a blog post about the future of AI agents in enterprise."
+      : n.includes("data") || n.includes("analy") ? "Analyze the Q1 sales data and identify trends."
+      : n.includes("security") || n.includes("scan") ? "Scan the authentication module for OWASP top 10 vulnerabilities."
+      : n.includes("calendar") ? "What meetings do I have this week?"
+      : "";
+    setTestInput(defaultInput);
     // Load guardrails
     setGuardrails(getGuardrailConfig(name));
     setBlockedTopicsInput(getGuardrailConfig(name).blockedTopics.join(", "));
@@ -1068,6 +1081,7 @@ export default function AgentDetailPage() {
               <div className="mb-3 flex items-center gap-2">
                 <label className="text-xs text-zinc-500">Model:</label>
                 <ModelSelect value={testModel} onChange={setTestModel} className="h-8 text-xs" />
+                {testModel === "auto" && <span className="text-[10px] text-zinc-600">Routes to the best available model based on your configured providers</span>}
               </div>
               <textarea value={testInput} onChange={(e) => setTestInput(e.target.value)} rows={3} spellCheck={false} placeholder={isEmailAgent ? "Type a message or click Run to process emails" : "What would you like this agent to do?"} className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />
               {testFiles.length > 0 && (
