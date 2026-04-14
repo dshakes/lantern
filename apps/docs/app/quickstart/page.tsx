@@ -4,21 +4,6 @@ export default function QuickStartPage() {
       <h1>Quick Start</h1>
       <p>Get Lantern running locally and create your first agent in 5 minutes.</p>
 
-      {/* Table of contents */}
-      <div className="toc">
-        <p className="toc-title">On this page</p>
-        <ul>
-          <li><a href="#prerequisites">Prerequisites</a></li>
-          <li><a href="#clone">1. Clone the repository</a></li>
-          <li><a href="#infra">2. Start infrastructure</a></li>
-          <li><a href="#api">3. Start the API server</a></li>
-          <li><a href="#dashboard">4. Start the dashboard</a></li>
-          <li><a href="#signup">5. Create your account</a></li>
-          <li><a href="#llm">6. Add an LLM provider</a></li>
-          <li><a href="#agent">7. Create your first agent</a></li>
-          <li><a href="#next">What&apos;s next</a></li>
-        </ul>
-      </div>
 
       <h2 id="prerequisites">Prerequisites</h2>
       <table>

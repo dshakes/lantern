@@ -8,7 +8,7 @@ export default function SecurityPage() {
         architecture, from the microVM runtime to the model router.
       </p>
 
-      <h2>Privacy levels</h2>
+      <h2 id="privacy">Privacy levels</h2>
       <p>
         Every agent has a configurable <strong>privacy level</strong> that
         controls how data is handled:
@@ -38,7 +38,7 @@ export default function SecurityPage() {
         rules to all data flowing through that connector.
       </div>
 
-      <h2>Guardrails</h2>
+      <h2 id="guardrails">Guardrails</h2>
       <p>
         Guardrails are rules that constrain what an agent can do. They are
         enforced at the runtime level, not by the LLM -- so they cannot be
@@ -112,7 +112,7 @@ export default function SecurityPage() {
         the &quot;paranoid&quot; privacy level and your own compliance controls.
       </div>
 
-      <h2>Data encryption</h2>
+      <h2 id="encryption">Data encryption</h2>
 
       <h3>At rest</h3>
       <ul>
@@ -150,7 +150,7 @@ export default function SecurityPage() {
         with your key, giving you full control over data access.
       </p>
 
-      <h2>Audit logging</h2>
+      <h2 id="audit">Audit logging</h2>
       <p>
         Every significant action is recorded in an immutable audit log:
       </p>

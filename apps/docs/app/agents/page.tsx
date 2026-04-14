@@ -9,7 +9,7 @@ export default function AgentsPage() {
         how to create, configure, test, run, and schedule agents.
       </p>
 
-      <h2>Creating an agent</h2>
+      <h2 id="create">Creating an agent</h2>
       <p>
         There are three ways to create an agent from the dashboard:
       </p>
@@ -78,7 +78,7 @@ lantern init my-agent --template research`}</code>
 
       <h2>Configuring an agent</h2>
 
-      <h3>Instructions and system prompt</h3>
+      <h3 id="instructions">Instructions and system prompt</h3>
       <p>
         The system prompt is the most important configuration. It tells the LLM
         what role to play, what tools it has access to, and how to behave. Write
@@ -133,7 +133,7 @@ say so rather than making things up.`}</code>
         how to configure providers.
       </p>
 
-      <h2>Testing an agent</h2>
+      <h2 id="testing">Testing an agent</h2>
       <p>
         Every agent has a <strong>Playground</strong> tab in the dashboard. The
         playground lets you:
@@ -153,7 +153,7 @@ say so rather than making things up.`}</code>
   --stream`}</code>
       </pre>
 
-      <h2>Running agents</h2>
+      <h2 id="chat">Running agents</h2>
       <p>Agents can be triggered in several ways:</p>
       <ul>
         <li>
@@ -178,7 +178,7 @@ say so rather than making things up.`}</code>
         </li>
       </ul>
 
-      <h2>Scheduling agents</h2>
+      <h2 id="visual">Scheduling agents</h2>
       <p>
         You can schedule agents to run on a cron expression. See the{" "}
         <a href="/scheduling">Scheduling</a> page for details on cron syntax,

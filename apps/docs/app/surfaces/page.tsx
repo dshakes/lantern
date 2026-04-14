@@ -8,7 +8,7 @@ export default function SurfacesPage() {
         agents reply in the same channel you messaged from.
       </p>
 
-      <h2>Available surfaces</h2>
+      <h2 id="whatsapp">Available surfaces</h2>
 
       <h3>WhatsApp</h3>
       <p>

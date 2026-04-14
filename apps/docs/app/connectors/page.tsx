@@ -9,7 +9,7 @@ export default function ConnectorsPage() {
         posting Slack messages, and more.
       </p>
 
-      <h2>Available connectors</h2>
+      <h2 id="gmail">Available connectors</h2>
       <p>Lantern ships with built-in connectors for:</p>
       <ul>
         <li>
@@ -49,7 +49,7 @@ export default function ConnectorsPage() {
         the connector interface. See the SDK reference for details.
       </div>
 
-      <h2>Setting up a connector</h2>
+      <h2 id="slack">Setting up a connector</h2>
 
       <h3>OAuth-based connectors</h3>
       <p>
@@ -101,7 +101,7 @@ export default function ConnectorsPage() {
         time inside the microVM.
       </div>
 
-      <h2>Per-agent connector assignment</h2>
+      <h2 id="per-agent">Per-agent connector assignment</h2>
       <p>
         Connectors are enabled at the account level but assigned per agent. This
         means:

@@ -8,7 +8,7 @@ export default function ApiReferencePage() {
         <code>https://api.lantern.run/v1</code> (or your self-hosted domain).
       </p>
 
-      <h2>Authentication</h2>
+      <h2 id="auth">Authentication</h2>
       <p>
         All API requests require a Bearer token in the{" "}
         <code>Authorization</code> header:
@@ -22,7 +22,7 @@ export default function ApiReferencePage() {
         agents or full account access.
       </p>
 
-      <h2>Agents</h2>
+      <h2 id="agents">Agents</h2>
 
       <h3>List agents</h3>
       <pre>
@@ -114,7 +114,7 @@ Response: 200 OK`}</code>
 Response: 204 No Content`}</code>
       </pre>
 
-      <h2>Runs</h2>
+      <h2 id="runs">Runs</h2>
 
       <h3>Create a run</h3>
       <pre>
@@ -208,7 +208,7 @@ Response: 200 OK
 }`}</code>
       </pre>
 
-      <h2>Connectors</h2>
+      <h2 id="connectors">Connectors</h2>
 
       <h3>List connectors</h3>
       <pre>

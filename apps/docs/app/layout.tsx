@@ -48,10 +48,10 @@ const sections: NavSection[] = [
   ]},
   { label: "Reference", items: [
     { href: "/api", label: "API Reference", icon: Code, subs: [
-      { href: "/api#auth", label: "Authentication" }, { href: "/api#agents", label: "Agents" }, { href: "/api#runs", label: "Runs" }, { href: "/api#sessions", label: "Sessions" }, { href: "/api#connectors", label: "Connectors" },
+      { href: "/api#auth", label: "Authentication" }, { href: "/api#agents", label: "Agents" }, { href: "/api#runs", label: "Runs" }, { href: "/api#connectors", label: "Connectors" },
     ]},
     { href: "/sdk", label: "SDK Reference", icon: FileCode, subs: [
-      { href: "/sdk#typescript", label: "TypeScript" }, { href: "/sdk#python", label: "Python" }, { href: "/sdk#cli", label: "CLI" },
+      { href: "/sdk#typescript", label: "TypeScript" }, { href: "/sdk#python", label: "Python" },
     ]},
   ]},
 ];

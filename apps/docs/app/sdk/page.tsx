@@ -8,7 +8,7 @@ export default function SdkReferencePage() {
         streaming -- all with built-in retry logic and error handling.
       </p>
 
-      <h2>TypeScript SDK</h2>
+      <h2 id="typescript">TypeScript SDK</h2>
 
       <h3>Installation</h3>
       <pre>
@@ -164,7 +164,7 @@ for await (const event of run.stream()) {
 const result = await run.result();`}</code>
       </pre>
 
-      <h2>Python SDK</h2>
+      <h2 id="python">Python SDK</h2>
 
       <h3>Installation</h3>
       <pre>

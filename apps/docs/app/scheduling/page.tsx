@@ -8,7 +8,7 @@ export default function SchedulingPage() {
         results via email or webhooks after each run.
       </p>
 
-      <h2>Cron expressions</h2>
+      <h2 id="cron">Cron expressions</h2>
       <p>
         Schedules use standard cron syntax with five fields:
       </p>
@@ -48,7 +48,7 @@ export default function SchedulingPage() {
       </ol>
       <p>[Screenshot: Schedule configuration with cron builder]</p>
 
-      <h2>AI-assisted cron</h2>
+      <h2 id="ai">AI-assisted cron</h2>
       <p>
         Not sure about cron syntax? Describe your schedule in plain English and
         Lantern will generate the cron expression for you:
@@ -70,7 +70,7 @@ export default function SchedulingPage() {
         saving.
       </div>
 
-      <h2>Email delivery</h2>
+      <h2 id="email">Email delivery</h2>
       <p>
         Agents can email their results after each scheduled run. This is useful
         for daily digests, reports, and monitoring alerts.
@@ -107,7 +107,7 @@ export default function SchedulingPage() {
         <a href="/connectors">Connectors</a> for setup instructions.
       </div>
 
-      <h2>Webhook triggers</h2>
+      <h2 id="webhooks">Webhook triggers</h2>
       <p>
         In addition to cron-based scheduling, agents can be triggered by
         external webhooks. This is useful for event-driven workflows:

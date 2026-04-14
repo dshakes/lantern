@@ -10,7 +10,7 @@ export default function ModelsPage() {
         runtime.
       </p>
 
-      <h2>Supported providers</h2>
+      <h2 id="providers">Supported providers</h2>
       <p>
         Lantern supports the following LLM providers out of the box:
       </p>
@@ -32,7 +32,7 @@ export default function ModelsPage() {
         via the SDK.
       </div>
 
-      <h2>Capability routing</h2>
+      <h2 id="routing">Capability routing</h2>
       <p>
         Instead of specifying <code>&quot;gpt-4&quot;</code> or{" "}
         <code>&quot;claude-3-opus&quot;</code>, you specify a capability:
@@ -77,7 +77,7 @@ export default function ModelsPage() {
         for everything. Most agent steps are simple enough for a small model.
       </div>
 
-      <h2>Adding API keys</h2>
+      <h2 id="keys">Adding API keys</h2>
       <p>
         To use a provider, add your API key in the dashboard:
       </p>

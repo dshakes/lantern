@@ -10,7 +10,7 @@ export default function DeploymentPage() {
         VPC.
       </p>
 
-      <h2>Architecture overview</h2>
+      <h2 id="architecture">Architecture overview</h2>
       <pre>
         <code>{`┌─────────────────────────────────┐
 │  Control Plane (Lantern SaaS)   │
@@ -82,7 +82,7 @@ export default function DeploymentPage() {
         capacity before choosing this option.
       </div>
 
-      <h2>Helm charts</h2>
+      <h2 id="helm">Helm charts</h2>
       <p>
         Lantern provides Helm charts for Kubernetes deployment:
       </p>
@@ -135,7 +135,7 @@ ingress:
     enabled: true`}</code>
       </pre>
 
-      <h2>Terraform modules</h2>
+      <h2 id="terraform">Terraform modules</h2>
       <p>
         For infrastructure provisioning, Lantern provides Terraform modules for
         AWS, GCP, and Azure:
@@ -199,7 +199,7 @@ ingress:
 }`}</code>
       </pre>
 
-      <h2>Docker Compose</h2>
+      <h2 id="docker">Docker Compose</h2>
       <p>
         For local development and small deployments, use Docker Compose:
       </p>

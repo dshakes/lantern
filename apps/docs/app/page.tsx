@@ -4,16 +4,6 @@ export default function DocsHome() {
       <h1>Lantern Documentation</h1>
       <p>Lantern is an open-source platform for building, deploying, and operating AI agents in production. Multi-model, crash-proof, deployed in your cloud.</p>
 
-      <div className="toc">
-        <p className="toc-title">On this page</p>
-        <ul>
-          <li><a href="#what">What is Lantern?</a></li>
-          <li><a href="#who">Who is it for?</a></li>
-          <li><a href="#concepts">Core concepts</a></li>
-          <li><a href="#architecture">Architecture</a></li>
-          <li><a href="#next">Get started</a></li>
-        </ul>
-      </div>
 
       <h2 id="what">What is Lantern?</h2>
       <p>Lantern lets you build AI agents that:</p>
