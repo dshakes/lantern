@@ -49,32 +49,67 @@ export default function ModelsPage() {
 | "embedding"         | Text embeddings                          | text-embedding-3, embed-v4        |`}</code>
       </pre>
 
-      <h3>How &quot;auto&quot; works</h3>
+      <h3 id="auto">How &quot;auto&quot; works</h3>
       <p>
-        When you set <code>model: &quot;auto&quot;</code>, the model router
-        analyzes each step at runtime:
+        When you set <code>model: &quot;auto&quot;</code>, the smart router
+        scores every available model and picks the best one. The scoring considers:
       </p>
-      <ol>
-        <li>
-          <strong>Complexity estimation</strong> -- the router examines the
-          prompt length, instruction complexity, and required output format
-        </li>
-        <li>
-          <strong>Cost optimization</strong> -- simple tasks (classification,
-          extraction, short answers) route to cheap models; complex tasks
-          (multi-step reasoning, synthesis) route to powerful models
-        </li>
-        <li>
-          <strong>Provider availability</strong> -- if the primary provider is
-          experiencing latency or errors, the router fails over to an
-          alternative
-        </li>
-      </ol>
+      <ul>
+        <li><strong>Quality</strong> (40%) — how capable the model is for complex reasoning</li>
+        <li><strong>Speed</strong> (30%) — response latency</li>
+        <li><strong>Cost efficiency</strong> (30%) — inverse of token pricing</li>
+      </ul>
+
+      <h3>Model scoring table</h3>
+      <table>
+        <thead>
+          <tr><th>Model</th><th>Provider</th><th>Quality</th><th>Speed</th><th>Cost (in/out per 1M)</th><th>Balanced Score</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Claude Opus 4</td><td>Anthropic</td><td>10</td><td>4</td><td>$15 / $75</td><td>53.4</td></tr>
+          <tr><td><strong>Claude Sonnet 4</strong></td><td>Anthropic</td><td>9</td><td>7</td><td>$3 / $15</td><td>62.7</td></tr>
+          <tr><td>Claude Haiku 4</td><td>Anthropic</td><td>6</td><td>10</td><td>$0.25 / $1.25</td><td>94.5</td></tr>
+          <tr><td><strong>GPT-4o</strong></td><td>OpenAI</td><td>8</td><td>8</td><td>$2.50 / $10</td><td>63.9</td></tr>
+          <tr><td>GPT-4o Mini</td><td>OpenAI</td><td>5</td><td>10</td><td>$0.15 / $0.60</td><td>155.3</td></tr>
+        </tbody>
+      </table>
+
+      <div className="callout callout-info">
+        <strong>Note:</strong> The router only considers models whose provider API key you have configured. If you only have an Anthropic key, it picks from Claude models only.
+      </div>
+
+      <h3>Routing strategies</h3>
+      <p>
+        You can control the routing strategy via environment variable:
+      </p>
+      <pre><code>{`# Default — best balance of quality, speed, and cost
+LANTERN_ROUTE_STRATEGY=balanced make run-api
+
+# Cheapest available model (Haiku or GPT-4o-mini)
+LANTERN_ROUTE_STRATEGY=cheap make run-api
+
+# Highest quality regardless of cost (Opus 4 or GPT-4o)
+LANTERN_ROUTE_STRATEGY=quality make run-api
+
+# Fastest response time (Haiku or GPT-4o-mini)
+LANTERN_ROUTE_STRATEGY=fast make run-api`}</code></pre>
+
+      <table>
+        <thead>
+          <tr><th>Strategy</th><th>Formula</th><th>Best for</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>balanced</code></td><td>Quality×4 + Speed×3 + CostEfficiency×3</td><td>Production workloads</td></tr>
+          <tr><td><code>cheap</code></td><td>100 / (costIn + costOut + 1)</td><td>High-volume, cost-sensitive</td></tr>
+          <tr><td><code>quality</code></td><td>Quality × 10</td><td>Complex analysis, reasoning</td></tr>
+          <tr><td><code>fast</code></td><td>Speed × 10</td><td>Real-time chat, low latency</td></tr>
+        </tbody>
+      </table>
 
       <div className="callout callout-tip">
-        <strong>Tip:</strong> In practice, &quot;auto&quot; routing saves
-        customers 40-60% on LLM costs compared to using a single powerful model
-        for everything. Most agent steps are simple enough for a small model.
+        <strong>Tip:</strong> In practice, &quot;auto&quot; with balanced routing saves
+        40-60% on LLM costs compared to always using the most powerful model.
+        Most agent steps are simple enough for a smaller, faster model.
       </div>
 
       <h2 id="keys">Adding API keys</h2>

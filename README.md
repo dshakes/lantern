@@ -13,7 +13,7 @@ Lantern is an open-source platform for building, running, and managing productio
 ## Key features
 
 - **Managed sessions** -- Interactive, durable, multi-turn agent sessions with SSE streaming. Users send messages, agents respond in real time, and sessions persist across restarts.
-- **Multi-LLM routing** -- Capability-based model addressing (`auto`, `reasoning-large`, `code-large`) across Claude Opus/Sonnet/Haiku, GPT-4o/4o-mini, and Gemini 2.5 Pro. Automatic failover and cost optimization.
+- **Smart model routing** -- Capability-based addressing (`auto`, `reasoning-large`, `code-large`) with intelligent scoring across Claude Opus/Sonnet/Haiku, GPT-4o/4o-mini, and Gemini. Router scores models on quality (40%), speed (30%), cost (30%). Strategies: `balanced`, `cheap`, `quality`, `fast` via `LANTERN_ROUTE_STRATEGY`.
 - **17 real connector APIs** -- Gmail, Google Calendar, Google Drive, Google Sheets, Slack, Discord, Telegram, Twilio, GitHub, Linear, Jira, Sentry, Vercel, Notion, HubSpot, Salesforce, Stripe. OAuth and API-key auth, live API calls.
 - **Visual workflow editor** -- Drag-and-drop React Flow editor for building agent workflows with triggers, LLM steps, tool calls, conditionals, and output nodes.
 - **AI-assisted agent creation** -- Describe what you want in plain English; the platform generates agent name, description, system prompt, and instructions automatically.
