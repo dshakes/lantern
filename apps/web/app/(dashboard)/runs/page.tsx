@@ -10,7 +10,6 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
-  Activity,
   Trash2,
 } from "lucide-react";
 import clsx from "clsx";
@@ -23,6 +22,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { ExecutionLog, deduplicateSteps } from "@/components/execution-log";
 import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
+import { PageHeader, CountBadge, DemoBadge } from "@/components/page-header";
 
 const RUNS_PER_PAGE = 15;
 const statusOptions: Array<{ value: RunStatus | "all"; label: string }> = [
@@ -70,16 +70,16 @@ export default function RunsPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      {/* Header */}
-      <div className="border-b border-zinc-800 bg-surface-1 px-8 py-5">
-        <div className="flex items-center gap-3">
-          <Activity className="h-5 w-5 text-zinc-400" />
-          <h1 className="text-xl font-semibold text-zinc-100">Runs</h1>
-          <span className="rounded-full bg-surface-3 px-2.5 py-0.5 text-xs font-medium text-zinc-400">{filtered.length}</span>
-          {isDemo && <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">Demo data</span>}
-        </div>
-        <p className="mt-1 text-sm text-zinc-500">Monitor all agent runs across your workspace.</p>
-      </div>
+      <PageHeader
+        title="Runs"
+        description="Every agent run across your workspace. Expand a row to see steps, output, and cost."
+        badge={
+          <>
+            {filtered.length > 0 && <CountBadge count={filtered.length} />}
+            {isDemo && <DemoBadge />}
+          </>
+        }
+      />
 
       {/* Filters */}
       <div className="border-b border-zinc-800 bg-surface-1/50 px-8 py-3">

@@ -385,4 +385,226 @@ var migrations = []string{
 			ALTER TABLE agents ADD COLUMN workflow JSONB;
 		END IF;
 	END$$`,
+
+	// ---------------------------------------------------------------
+	// Add system_prompt TEXT column to agents for session/chat wiring.
+	// ---------------------------------------------------------------
+	`DO $$
+	BEGIN
+		IF NOT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'agents' AND column_name = 'system_prompt'
+		) THEN
+			ALTER TABLE agents ADD COLUMN system_prompt TEXT;
+		END IF;
+	END$$`,
+
+	// ---------------------------------------------------------------
+	// Agent budgets — policy-as-code per-tool rate + cost limits.
+	// Enforced at step-executor before any LLM call or tool dispatch.
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS agent_budgets (
+		id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id                UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_name               TEXT NOT NULL,
+		max_cost_usd_per_day     NUMERIC(12,4),
+		max_cost_usd_per_run     NUMERIC(12,4),
+		max_tokens_per_day       BIGINT,
+		max_runs_per_day         INTEGER,
+		tool_limits              JSONB NOT NULL DEFAULT '{}'::jsonb,
+		hard_fail                BOOLEAN NOT NULL DEFAULT true,
+		notify_at_pct            INTEGER NOT NULL DEFAULT 80 CHECK (notify_at_pct BETWEEN 1 AND 100),
+		created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+		UNIQUE (tenant_id, agent_name)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS agent_budgets_tenant_idx
+		ON agent_budgets (tenant_id, agent_name)`,
+
+	// ---------------------------------------------------------------
+	// Cost forecasts — pre-run predictions, kept for calibration.
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS cost_forecasts (
+		id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id           UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_name          TEXT NOT NULL,
+		run_id              UUID,
+		estimated_tokens_in BIGINT NOT NULL,
+		estimated_tokens_out BIGINT NOT NULL,
+		estimated_cost_usd  NUMERIC(12,4) NOT NULL,
+		actual_cost_usd     NUMERIC(12,4),
+		confidence          NUMERIC(4,2) NOT NULL,
+		reasoning           JSONB NOT NULL DEFAULT '{}'::jsonb,
+		blocked_by_budget   BOOLEAN NOT NULL DEFAULT false,
+		created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS cost_forecasts_agent_idx
+		ON cost_forecasts (tenant_id, agent_name, created_at DESC)`,
+
+	// ---------------------------------------------------------------
+	// Marketplace — publicly published agents available for forking.
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS marketplace_agents (
+		id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		slug                 TEXT NOT NULL UNIQUE,
+		source_tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		source_agent_id      UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+		name                 TEXT NOT NULL,
+		description          TEXT NOT NULL,
+		category             TEXT NOT NULL DEFAULT 'general',
+		tags                 TEXT[] NOT NULL DEFAULT '{}',
+		manifest             JSONB NOT NULL,
+		card                 JSONB NOT NULL,
+		readme               TEXT,
+		forks_count          INTEGER NOT NULL DEFAULT 0,
+		stars_count          INTEGER NOT NULL DEFAULT 0,
+		published_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+		unpublished_at       TIMESTAMPTZ
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS marketplace_agents_category_idx
+		ON marketplace_agents (category) WHERE unpublished_at IS NULL`,
+
+	`CREATE TABLE IF NOT EXISTS marketplace_stars (
+		tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		marketplace_id  UUID NOT NULL REFERENCES marketplace_agents(id) ON DELETE CASCADE,
+		starred_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (tenant_id, marketplace_id)
+	)`,
+
+	// ---------------------------------------------------------------
+	// MCP server registry — browsable catalog of MCP servers.
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS mcp_servers (
+		id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		slug         TEXT NOT NULL UNIQUE,
+		name         TEXT NOT NULL,
+		description  TEXT NOT NULL,
+		category     TEXT NOT NULL DEFAULT 'general',
+		transport    TEXT NOT NULL DEFAULT 'stdio',
+		url          TEXT,
+		command      TEXT,
+		auth_type    TEXT NOT NULL DEFAULT 'none',
+		manifest     JSONB NOT NULL DEFAULT '{}'::jsonb,
+		tags         TEXT[] NOT NULL DEFAULT '{}',
+		official     BOOLEAN NOT NULL DEFAULT false,
+		installs_count INTEGER NOT NULL DEFAULT 0,
+		created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE TABLE IF NOT EXISTS agent_mcp_attachments (
+		tenant_id      UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_name     TEXT NOT NULL,
+		mcp_server_id  UUID NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+		config         JSONB NOT NULL DEFAULT '{}'::jsonb,
+		attached_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (tenant_id, agent_name, mcp_server_id)
+	)`,
+
+	// Seed the MCP registry with curated first-party entries.
+	`INSERT INTO mcp_servers (slug, name, description, category, transport, command, auth_type, official, tags) VALUES
+		('filesystem', 'Filesystem', 'Read and write files with scoped paths. First-party.', 'core', 'stdio', 'npx -y @modelcontextprotocol/server-filesystem', 'none', true, ARRAY['files','io']),
+		('github', 'GitHub', 'Query issues, PRs, code, and create comments.', 'devtools', 'stdio', 'npx -y @modelcontextprotocol/server-github', 'bearer', true, ARRAY['git','code','reviews']),
+		('postgres', 'Postgres', 'Read-only Postgres queries over schema and tables.', 'data', 'stdio', 'npx -y @modelcontextprotocol/server-postgres', 'connection-string', true, ARRAY['sql','database']),
+		('slack', 'Slack', 'Search channels, post messages, read threads.', 'communication', 'stdio', 'npx -y @modelcontextprotocol/server-slack', 'bearer', true, ARRAY['chat','team']),
+		('brave-search', 'Brave Search', 'Web search over Brave''s API.', 'research', 'stdio', 'npx -y @modelcontextprotocol/server-brave-search', 'api-key', true, ARRAY['web','search']),
+		('puppeteer', 'Puppeteer', 'Headless Chrome browsing, screenshots, scraping.', 'automation', 'stdio', 'npx -y @modelcontextprotocol/server-puppeteer', 'none', true, ARRAY['browser','web']),
+		('memory', 'Memory', 'Persistent knowledge graph across agent runs.', 'core', 'stdio', 'npx -y @modelcontextprotocol/server-memory', 'none', true, ARRAY['memory','kv']),
+		('sqlite', 'SQLite', 'Embedded SQLite database access.', 'data', 'stdio', 'npx -y @modelcontextprotocol/server-sqlite', 'none', true, ARRAY['sql','embedded'])
+	ON CONFLICT (slug) DO NOTHING`,
+
+	// ---------------------------------------------------------------
+	// Eval suites + runs + baselines (eval-in-CI).
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS eval_suites (
+		id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_name   TEXT NOT NULL,
+		name         TEXT NOT NULL,
+		description  TEXT,
+		cases        JSONB NOT NULL,
+		created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		UNIQUE (tenant_id, agent_name, name)
+	)`,
+
+	`CREATE TABLE IF NOT EXISTS eval_runs (
+		id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id        UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		suite_id         UUID NOT NULL REFERENCES eval_suites(id) ON DELETE CASCADE,
+		agent_name       TEXT NOT NULL,
+		agent_version    TEXT,
+		commit_sha       TEXT,
+		branch           TEXT,
+		passed           BOOLEAN NOT NULL,
+		score            NUMERIC(5,4) NOT NULL,
+		cases_total      INTEGER NOT NULL,
+		cases_passed     INTEGER NOT NULL,
+		cases_result     JSONB NOT NULL DEFAULT '[]'::jsonb,
+		duration_ms      BIGINT NOT NULL DEFAULT 0,
+		total_cost_usd   NUMERIC(12,4) NOT NULL DEFAULT 0,
+		created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS eval_runs_suite_idx
+		ON eval_runs (suite_id, created_at DESC)`,
+
+	`CREATE INDEX IF NOT EXISTS eval_runs_branch_idx
+		ON eval_runs (tenant_id, agent_name, branch, created_at DESC)`,
+
+	`CREATE TABLE IF NOT EXISTS eval_baselines (
+		tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_name    TEXT NOT NULL,
+		branch        TEXT NOT NULL,
+		eval_run_id   UUID NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
+		set_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+		set_by        TEXT,
+		PRIMARY KEY (tenant_id, agent_name, branch)
+	)`,
+
+	// ---------------------------------------------------------------
+	// A/B experiments — traffic splitting with auto-promotion.
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS agent_experiments (
+		id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id             UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_name            TEXT NOT NULL,
+		name                  TEXT NOT NULL,
+		variant_a_version     TEXT NOT NULL,
+		variant_b_version     TEXT NOT NULL,
+		traffic_split_b       INTEGER NOT NULL CHECK (traffic_split_b BETWEEN 0 AND 100),
+		eval_suite_id         UUID REFERENCES eval_suites(id) ON DELETE SET NULL,
+		auto_promote          BOOLEAN NOT NULL DEFAULT false,
+		min_runs_to_promote   INTEGER NOT NULL DEFAULT 100,
+		status                TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','paused','concluded')),
+		winner                TEXT CHECK (winner IS NULL OR winner IN ('a','b','tie')),
+		a_runs                INTEGER NOT NULL DEFAULT 0,
+		b_runs                INTEGER NOT NULL DEFAULT 0,
+		a_score               NUMERIC(5,4),
+		b_score               NUMERIC(5,4),
+		started_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+		concluded_at          TIMESTAMPTZ,
+		UNIQUE (tenant_id, agent_name, name)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS agent_experiments_active_idx
+		ON agent_experiments (tenant_id, agent_name)
+		WHERE status = 'running'`,
+
+	// ---------------------------------------------------------------
+	// Daily usage rollups — fast budget enforcement.
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS agent_usage_daily (
+		tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_name    TEXT NOT NULL,
+		usage_date    DATE NOT NULL,
+		runs_count    INTEGER NOT NULL DEFAULT 0,
+		tokens_in     BIGINT NOT NULL DEFAULT 0,
+		tokens_out    BIGINT NOT NULL DEFAULT 0,
+		cost_usd      NUMERIC(12,4) NOT NULL DEFAULT 0,
+		tool_counts   JSONB NOT NULL DEFAULT '{}'::jsonb,
+		PRIMARY KEY (tenant_id, agent_name, usage_date)
+	)`,
 }

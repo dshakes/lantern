@@ -5,6 +5,7 @@ import { Search, Mail, Github, Calendar, FileText, MessageSquare, Phone, CreditC
 import clsx from "clsx";
 import { useToast } from "@/components/toast";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
+import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -302,12 +303,18 @@ export default function ConnectorsPage() {
   return (
     <div className="flex flex-1 flex-col overflow-auto">
       {/* Header */}
-      <div className="border-b border-zinc-800 bg-surface-1 px-8 py-5">
-        <div className="flex items-center justify-between">
-          <div><h1 className="text-xl font-semibold text-zinc-100">Connectors</h1><p className="mt-1 text-sm text-zinc-500">Connect your agents to the tools you already use</p></div>
-          <span className="rounded-full bg-lantern-500/10 px-3 py-1 text-xs font-medium text-lantern-400">{installed} connected</span>
-        </div>
-      </div>
+      <PageHeader
+        title="Connectors"
+        description="OAuth or API-key integrations your agents can call. Secrets are encrypted per-tenant — agents get access via a ref, never the raw value."
+        badge={
+          installed > 0 ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              {installed} connected
+            </span>
+          ) : null
+        }
+      />
 
       <div className="flex-1 p-8">
         {/* MCP Marketplace Section */}

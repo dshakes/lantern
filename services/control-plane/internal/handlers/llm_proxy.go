@@ -103,6 +103,39 @@ func (h *LlmProxyHandler) resolveProviderKey(ctx context.Context, tenantID, prov
 	return "", fmt.Errorf("no API key configured for provider %q", provider)
 }
 
+// providerAvailable reports whether the tenant has an active key for the
+// given provider (DB-configured in Settings, or in the process env as fallback).
+func (h *LlmProxyHandler) providerAvailable(ctx context.Context, tenantID, provider string) bool {
+	var count int
+	_ = h.srv.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM llm_provider_configs
+		WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
+	`, tenantID, provider).Scan(&count)
+	if count > 0 {
+		return true
+	}
+	switch provider {
+	case "openai":
+		return os.Getenv("OPENAI_API_KEY") != ""
+	case "anthropic":
+		return os.Getenv("ANTHROPIC_API_KEY") != ""
+	}
+	return false
+}
+
+// resolveModelForTenant is the tenant-aware version of resolveModel. It maps
+// "auto" against the tenant's actually-configured providers so the router
+// picks from what the user set up in Settings, not just the process env.
+func (h *LlmProxyHandler) resolveModelForTenant(ctx context.Context, tenantID, capability string) (string, string) {
+	if capability == "auto" || capability == "" {
+		return resolveAutoModel(
+			h.providerAvailable(ctx, tenantID, "anthropic"),
+			h.providerAvailable(ctx, tenantID, "openai"),
+		)
+	}
+	return resolveModel(capability)
+}
+
 // callLLMSync makes a synchronous (non-streaming) LLM call and returns the
 // result text along with usage metrics. Used by the inline run executor.
 func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiKey, prompt string) (result string, tokensIn, tokensOut int64, costUsd float64, err error) {
@@ -218,14 +251,16 @@ var modelCatalog = []modelOption{
 }
 
 // resolveModel maps a capability name to a concrete provider + model.
-// In "auto" mode, it uses a smart router that picks the best model based on:
-// - Available provider keys (env vars)
-// - Task complexity heuristic
-// - Cost/quality/speed balance
+// "auto" requires tenant context so we can consult llm_provider_configs — use
+// (*LlmProxyHandler).resolveModelForTenant for that case. This plain form
+// handles only named capabilities and delegates "auto" to an env-only default.
 func resolveModel(capability string) (provider, model string) {
 	switch capability {
 	case "auto", "":
-		return resolveAutoModel()
+		return resolveAutoModel(
+			os.Getenv("ANTHROPIC_API_KEY") != "",
+			os.Getenv("OPENAI_API_KEY") != "",
+		)
 	case "chat-large":
 		return "openai", "gpt-4o"
 	case "reasoning-frontier":
@@ -251,13 +286,11 @@ func resolveModel(capability string) (provider, model string) {
 	}
 }
 
-// resolveAutoModel picks the best model by checking available provider keys
-// and balancing cost/quality/speed. This mirrors the production model router
-// logic so local dev behaves the same as deployed.
-func resolveAutoModel() (string, string) {
-	hasAnthropic := os.Getenv("ANTHROPIC_API_KEY") != ""
-	hasOpenAI := os.Getenv("OPENAI_API_KEY") != ""
-
+// resolveAutoModel picks the best model given which providers have a key
+// available. Caller is responsible for determining availability (DB +
+// env-var fallback) so we can pick from what the specific tenant has
+// configured rather than only what's in the control-plane process env.
+func resolveAutoModel(hasAnthropic, hasOpenAI bool) (string, string) {
 	// Routing strategy: "balanced" — prefer the best quality-to-cost ratio
 	// that's available. Anthropic Sonnet 4 is the sweet spot (quality 9, speed 7, $3/$15).
 	// OpenAI GPT-4o is close (quality 8, speed 8, $2.5/$10).
@@ -337,7 +370,7 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider, model := resolveModel(req.Model)
+	provider, model := h.resolveModelForTenant(ctx, tenantID, req.Model)
 
 	// Try to get key for resolved provider; if not available, try the other one.
 	apiKey, err := h.resolveProviderKey(ctx, tenantID, provider)
@@ -1029,7 +1062,7 @@ Generate a thoughtful, well-structured agent with appropriate steps for the task
 		Stream: false,
 	}
 
-	provider, model := resolveModel(completionReq.Model)
+	provider, model := h.resolveModelForTenant(ctx, tenantID, completionReq.Model)
 
 	apiKey, err := h.resolveProviderKey(ctx, tenantID, provider)
 	if err != nil {
@@ -1130,7 +1163,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
 		Stream: false,
 	}
 
-	provider, model := resolveModel(completionReq.Model)
+	provider, model := h.resolveModelForTenant(ctx, tenantID, completionReq.Model)
 
 	apiKey, err := h.resolveProviderKey(ctx, tenantID, provider)
 	if err != nil {

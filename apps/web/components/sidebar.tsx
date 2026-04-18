@@ -16,6 +16,9 @@ import {
   PanelLeftClose,
   PanelLeft,
   Store,
+  Shield,
+  FlaskConical,
+  BookCheck,
 } from "lucide-react";
 import clsx from "clsx";
 import { useState, useEffect, useRef } from "react";
@@ -27,9 +30,12 @@ const navItems = [
   { href: "/surfaces", label: "Surfaces", icon: MessageSquare, shortcut: "3" },
   { href: "/connectors", label: "Connectors", icon: Plug, shortcut: "4" },
   { href: "/deployments", label: "Deployments", icon: Cloud, shortcut: "5" },
-  { href: "/marketplace", label: "Marketplace", icon: Store, shortcut: "6" },
-  { href: "/evaluations", label: "Evaluations", icon: BarChart3, shortcut: "7" },
-  { href: "/settings", label: "Settings", icon: Settings, shortcut: "8" },
+  { href: "/budgets", label: "Budgets", icon: Shield, shortcut: "6" },
+  { href: "/experiments", label: "Experiments", icon: FlaskConical, shortcut: "7" },
+  { href: "/eval-suites", label: "Eval Suites", icon: BookCheck, shortcut: "8" },
+  { href: "/marketplace", label: "Marketplace", icon: Store, shortcut: "9" },
+  { href: "/evaluations", label: "Analytics", icon: BarChart3, shortcut: "0" },
+  { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
 export function Sidebar() {
@@ -79,10 +85,10 @@ export function Sidebar() {
       // Don't trigger if modifier keys are held
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-      const index = parseInt(e.key, 10);
-      if (index >= 1 && index <= navItems.length) {
+      const match = navItems.find((n) => "shortcut" in n && n.shortcut === e.key);
+      if (match) {
         e.preventDefault();
-        router.push(navItems[index - 1].href);
+        router.push(match.href);
       }
     };
     window.addEventListener("keydown", handler);
@@ -146,9 +152,11 @@ export function Sidebar() {
               {!collapsed && (
                 <>
                   <span className="flex-1">{item.label}</span>
-                  <kbd className="hidden xl:inline-flex h-5 min-w-[20px] items-center justify-center rounded border border-zinc-800 bg-surface-2 px-1 text-[10px] font-medium text-zinc-600">
-                    {item.shortcut}
-                  </kbd>
+                  {"shortcut" in item && item.shortcut && (
+                    <kbd className="hidden xl:inline-flex h-5 min-w-[20px] items-center justify-center rounded border border-zinc-800 bg-surface-2 px-1 text-[10px] font-medium text-zinc-600">
+                      {item.shortcut}
+                    </kbd>
+                  )}
                 </>
               )}
             </Link>

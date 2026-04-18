@@ -1,262 +1,569 @@
 "use client";
 
-import { useRef } from "react";
-import { motion, useInView } from "framer-motion";
-import { Route, Shield, Zap, Workflow, Eye, Globe } from "lucide-react";
+import { motion } from "framer-motion";
+import {
+  Shield,
+  Gauge,
+  GitBranch,
+  Terminal,
+  Github,
+  ArrowRight,
+  Sparkles,
+  Server,
+  Lock,
+  Zap,
+  Check,
+  BookOpen,
+} from "lucide-react";
+import Link from "next/link";
 
-function FadeIn({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  const ref = useRef(null);
-  const inView = useInView(ref, { once: true, margin: "-40px" });
-  return (
-    <motion.div
-      ref={ref}
-      initial={{ opacity: 0, y: 20 }}
-      animate={inView ? { opacity: 1, y: 0 } : {}}
-      transition={{ duration: 0.5 }}
-      className={className}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
-const features = [
-  { icon: Route, title: "Smart Model Routing", desc: "Address models by capability, not name. The router picks Claude, GPT, or Gemini based on cost, latency, and task." },
-  { icon: Workflow, title: "Durable Execution", desc: "Every LLM call is a replayable step. Agents survive crashes, redeploys, and network failures automatically." },
-  { icon: Shield, title: "MicroVM Isolation", desc: "Untrusted code runs in Firecracker microVMs. Sub-second cold starts with full sandboxing." },
-  { icon: Zap, title: "Streaming-First", desc: "Token streams flow end-to-end with zero buffering. From runtime to gateway to SDK to dashboard." },
-  { icon: Eye, title: "Full Observability", desc: "OpenTelemetry traces on every run with tenant, agent, and step-level granularity. Built in, not bolted on." },
-  { icon: Globe, title: "Deploy Anywhere", desc: "Your cloud, our cloud, or self-hosted on Kubernetes. Single binary CLI, no vendor lock-in." },
-];
-
-const steps = [
-  { num: "01", title: "Define", desc: "Write your agent in TypeScript. Declare steps, models, and connectors.", code: `import { agent } from "@lantern/sdk"\n\nexport default agent({\n  name: "research-bot",\n  model: "auto",\n})` },
-  { num: "02", title: "Test", desc: "Run locally with real LLM calls. Step-by-step traces in your terminal.", code: `$ lantern dev\n\n▸ research-bot running\n▸ step/fetch    1.2s  ✓\n▸ step/analyze  2.8s  ✓\n▸ done          4.0s` },
-  { num: "03", title: "Deploy", desc: "One command to production. Zero-downtime deploys with automatic rollback.", code: `$ lantern deploy --prod\n\n✓ Built in 3.2s\n✓ Deployed to us-east-1\n✓ https://research-bot.lantern.run` },
-];
+// -----------------------------------------------------------------------------
+// Landing page — wedge is predictable cost, eval-in-CI, and VPC-local data plane.
+// No marketing fluff. Three pillars, one ten-line example each, and exit.
+// -----------------------------------------------------------------------------
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen">
-      {/* Nav */}
-      <nav className="fixed top-0 z-50 w-full bg-[#09090b]/80 backdrop-blur-lg border-b border-white/[0.06]">
-        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-6">
-          <a href="/" className="text-lg font-semibold text-white">Lantern</a>
-          <div className="flex items-center gap-6">
-            <a href="#features" className="text-sm text-[#a1a1aa] transition-colors hover:text-white">Features</a>
-            <a href="https://docs.lantern.run" className="text-sm text-[#a1a1aa] transition-colors hover:text-white">Docs</a>
-            <a href="https://github.com/lantern-run/lantern" className="text-sm text-[#a1a1aa] transition-colors hover:text-white">GitHub</a>
-            <a href="https://docs.lantern.run/quickstart" className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-black transition-opacity hover:opacity-90">Get started</a>
-          </div>
-        </div>
-      </nav>
-
-      {/* Hero */}
-      <section className="hero-glow pt-32 pb-20">
-        <div className="mx-auto max-w-3xl px-6 text-center">
-          <FadeIn>
-            <h1 className="text-[56px] font-bold leading-[1.1] tracking-[-0.03em] text-white md:text-[72px]">
-              AI agents for production.
-            </h1>
-          </FadeIn>
-          <FadeIn>
-            <p className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-[#a1a1aa]">
-              Build, test, and deploy autonomous agents across Claude, GPT, and Gemini. Durable execution. Smart routing. Open source.
-            </p>
-          </FadeIn>
-          <FadeIn>
-            <div className="mt-8 flex items-center justify-center gap-4">
-              <a href="https://docs.lantern.run/quickstart" className="rounded-lg bg-white px-5 py-2.5 text-sm font-medium text-black transition-opacity hover:opacity-90">Get started</a>
-              <a href="https://github.com/lantern-run/lantern" className="rounded-lg border border-white/10 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:border-white/20">View on GitHub</a>
-            </div>
-          </FadeIn>
-          <FadeIn>
-            <div className="mx-auto mt-14 max-w-2xl overflow-hidden rounded-xl border border-white/[0.06] bg-[#111113] text-left">
-              <div className="border-b border-white/[0.06] px-4 py-2.5">
-                <span className="font-mono text-xs text-[#71717a]">agent.ts</span>
-              </div>
-              <pre className="overflow-x-auto p-5 font-mono text-sm leading-relaxed">
-                <code>
-                  <span className="text-[#818cf8]">import</span>
-                  <span className="text-[#e4e4e7]">{" { agent, step } "}</span>
-                  <span className="text-[#818cf8]">from</span>
-                  <span className="text-[#34d399]">{' "@lantern/sdk"'}</span>
-                  <span className="text-[#e4e4e7]">;</span>
-                  {"\n\n"}
-                  <span className="text-[#818cf8]">export default</span>
-                  <span className="text-[#e4e4e7]">{" agent({"}</span>
-                  {"\n"}
-                  <span className="text-[#e4e4e7]">{"  name: "}</span>
-                  <span className="text-[#34d399]">{'"email-digest"'}</span>
-                  <span className="text-[#e4e4e7]">,</span>
-                  {"\n"}
-                  <span className="text-[#e4e4e7]">{"  model: "}</span>
-                  <span className="text-[#34d399]">{'"auto"'}</span>
-                  <span className="text-[#e4e4e7]">,</span>
-                  {"\n\n"}
-                  <span className="text-[#e4e4e7]">{"  "}</span>
-                  <span className="text-[#818cf8]">async</span>
-                  <span className="text-[#e4e4e7]">{" run({ ctx }) {"}</span>
-                  {"\n"}
-                  <span className="text-[#e4e4e7]">{"    "}</span>
-                  <span className="text-[#818cf8]">const</span>
-                  <span className="text-[#e4e4e7]">{" emails = "}</span>
-                  <span className="text-[#818cf8]">await</span>
-                  <span className="text-[#e4e4e7]">{" step("}</span>
-                  <span className="text-[#34d399]">{'"fetch"'}</span>
-                  <span className="text-[#e4e4e7]">{", () =>"}</span>
-                  {"\n"}
-                  <span className="text-[#e4e4e7]">{"      ctx.connectors.gmail.listMessages({ limit: 20 })"}</span>
-                  {"\n"}
-                  <span className="text-[#e4e4e7]">{"    );"}</span>
-                  {"\n\n"}
-                  <span className="text-[#e4e4e7]">{"    "}</span>
-                  <span className="text-[#818cf8]">return</span>
-                  <span className="text-[#e4e4e7]">{" step("}</span>
-                  <span className="text-[#34d399]">{'"summarize"'}</span>
-                  <span className="text-[#e4e4e7]">{", () =>"}</span>
-                  {"\n"}
-                  <span className="text-[#e4e4e7]">{"      ctx.llm.complete({"}</span>
-                  {"\n"}
-                  <span className="text-[#e4e4e7]">{"        prompt: "}</span>
-                  <span className="text-[#34d399]">{"`Summarize these ${emails.length} emails`"}</span>
-                  <span className="text-[#e4e4e7]">,</span>
-                  {"\n"}
-                  <span className="text-[#e4e4e7]">{"      })"}</span>
-                  {"\n"}
-                  <span className="text-[#e4e4e7]">{"    );"}</span>
-                  {"\n"}
-                  <span className="text-[#e4e4e7]">{"  },"}</span>
-                  {"\n"}
-                  <span className="text-[#e4e4e7]">{"});"}</span>
-                </code>
-              </pre>
-            </div>
-          </FadeIn>
-        </div>
-      </section>
-
-      {/* How It Works */}
-      <section className="py-24 px-6">
-        <div className="mx-auto max-w-5xl">
-          <FadeIn><h2 className="text-center text-4xl font-semibold tracking-[-0.02em] text-white md:text-5xl">Three steps to production.</h2></FadeIn>
-          <div className="mt-16 grid gap-8 md:grid-cols-3">
-            {steps.map((s) => (
-              <FadeIn key={s.num}>
-                <div>
-                  <span className="font-mono text-sm font-medium text-[#818cf8]">{s.num}</span>
-                  <h3 className="mt-3 text-base font-medium text-white">{s.title}</h3>
-                  <p className="mt-2 text-sm leading-relaxed text-[#a1a1aa]">{s.desc}</p>
-                  <pre className="mt-4 overflow-x-auto rounded-lg border border-white/[0.06] bg-[#111113] p-4 font-mono text-xs leading-relaxed text-[#a1a1aa]">{s.code}</pre>
-                </div>
-              </FadeIn>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Features */}
-      <section id="features" className="py-24 px-6">
-        <div className="mx-auto max-w-5xl">
-          <FadeIn><h2 className="text-center text-4xl font-semibold tracking-[-0.02em] text-white md:text-5xl">Built for production.</h2></FadeIn>
-          <div className="mt-16 grid gap-6 md:grid-cols-2">
-            {features.map((f) => (
-              <FadeIn key={f.title}>
-                <div className="rounded-xl border border-white/[0.06] bg-[#111113] p-6 transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.12]">
-                  <f.icon className="h-5 w-5 text-[#818cf8]" />
-                  <h3 className="mt-4 text-base font-medium text-white">{f.title}</h3>
-                  <p className="mt-2 text-sm leading-relaxed text-[#a1a1aa]">{f.desc}</p>
-                </div>
-              </FadeIn>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Product Preview */}
-      <section className="py-24 px-6">
-        <div className="mx-auto max-w-5xl">
-          <FadeIn>
-            <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-[#111113]">
-              <div className="flex items-center justify-between border-b border-white/[0.06] px-6 py-4">
-                <span className="font-mono text-sm text-white">email-digest</span>
-                <span className="flex items-center gap-2 text-xs text-emerald-400">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  Running
-                </span>
-              </div>
-              <div className="px-6 py-5">
-                <p className="text-sm leading-relaxed text-[#e4e4e7]">
-                  Here&apos;s your daily summary: 12 new emails. 3 require action &mdash; invoice from Acme Corp, PR review request from Sarah, and meeting reschedule from the design team.
-                </p>
-                <div className="mt-5 flex gap-6 border-t border-white/[0.06] pt-4 font-mono text-xs text-[#71717a]">
-                  <span>claude-sonnet</span>
-                  <span>847 tokens</span>
-                  <span>1.6s</span>
-                  <span>3 steps</span>
-                </div>
-              </div>
-            </div>
-          </FadeIn>
-        </div>
-      </section>
-
-      {/* Pricing */}
-      <section className="py-24 px-6">
-        <div className="mx-auto max-w-5xl">
-          <FadeIn><h2 className="text-center text-4xl font-semibold tracking-[-0.02em] text-white md:text-5xl">Simple pricing.</h2></FadeIn>
-          <FadeIn>
-            <div className="mx-auto mt-16 max-w-2xl divide-y divide-white/[0.06]">
-              <div className="flex items-center justify-between py-5">
-                <span className="text-sm font-medium text-white">Alpha</span>
-                <div className="flex items-center gap-8">
-                  <span className="text-sm text-white">Free</span>
-                  <a href="https://docs.lantern.run/quickstart" className="text-sm font-medium text-[#818cf8] transition-colors hover:text-[#6366f1]">Get started &rarr;</a>
-                </div>
-              </div>
-              <div className="flex items-center justify-between py-5">
-                <span className="text-sm font-medium text-white">Team</span>
-                <div className="flex items-center gap-8">
-                  <span className="text-sm text-[#a1a1aa]">$29/seat</span>
-                  <span className="text-sm text-[#71717a]">Coming soon</span>
-                </div>
-              </div>
-              <div className="flex items-center justify-between py-5">
-                <span className="text-sm font-medium text-white">Enterprise</span>
-                <div className="flex items-center gap-8">
-                  <span className="text-sm text-[#a1a1aa]">Custom</span>
-                  <a href="mailto:hello@lantern.run" className="text-sm font-medium text-[#818cf8] transition-colors hover:text-[#6366f1]">Contact &rarr;</a>
-                </div>
-              </div>
-            </div>
-          </FadeIn>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="py-24 px-6">
-        <div className="mx-auto max-w-5xl text-center">
-          <FadeIn>
-            <h2 className="text-4xl font-semibold tracking-[-0.02em] text-white md:text-5xl">Start building.</h2>
-            <p className="mt-4 text-lg text-[#a1a1aa]">Free during alpha. No credit card.</p>
-            <div className="mt-8">
-              <a href="https://docs.lantern.run/quickstart" className="rounded-lg bg-white px-6 py-3 text-sm font-medium text-black transition-opacity hover:opacity-90">Get started</a>
-            </div>
-          </FadeIn>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="border-t border-white/[0.06] px-6 py-8">
-        <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <span className="text-sm text-[#71717a]">&copy; 2026 Lantern</span>
-          <div className="flex items-center gap-6">
-            <a href="https://docs.lantern.run" className="text-sm text-[#71717a] transition-colors hover:text-white">Docs</a>
-            <a href="https://github.com/lantern-run/lantern" className="text-sm text-[#71717a] transition-colors hover:text-white">GitHub</a>
-            <a href="https://twitter.com/lanternrun" className="text-sm text-[#71717a] transition-colors hover:text-white">Twitter</a>
-          </div>
-        </div>
-      </footer>
+    <div className="relative min-h-screen bg-[#060609] text-[#f0f0f5] grain">
+      <Nav />
+      <Hero />
+      <TrustRow />
+      <Pillars />
+      <CodeStory />
+      <CostForecastDemo />
+      <EvalCIDemo />
+      <VPCDemo />
+      <Stack />
+      <Compare />
+      <OSS />
+      <CTA />
+      <Footer />
     </div>
   );
+}
+
+// ─── Nav ────────────────────────────────────────────────────────────────────
+function Nav() {
+  return (
+    <header className="fixed top-0 inset-x-0 z-40 backdrop-blur-md border-b border-white/5 bg-[#060609]/60">
+      <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
+          <span className="text-glow text-xl">◆</span>
+          <span className="text-[15px]">lantern</span>
+        </Link>
+        <nav className="hidden md:flex items-center gap-1 text-sm text-[#9898a8]">
+          <a href="#pillars" className="nav-pill px-3 py-1.5 rounded-md">Product</a>
+          <a href="#stack" className="nav-pill px-3 py-1.5 rounded-md">Stack</a>
+          <a href="#compare" className="nav-pill px-3 py-1.5 rounded-md">vs alternatives</a>
+          <a href="https://github.com/dshakes/lantern" className="nav-pill px-3 py-1.5 rounded-md">GitHub</a>
+          <a href="https://docs.lantern.dev" className="nav-pill px-3 py-1.5 rounded-md">Docs</a>
+        </nav>
+        <div className="flex items-center gap-2">
+          <a href="https://app.lantern.run" className="hidden md:inline-flex text-sm text-[#9898a8] hover:text-white nav-pill px-3 py-1.5 rounded-md">Sign in</a>
+          <a href="https://app.lantern.run/signup" className="btn-primary text-sm font-medium px-3.5 py-1.5 rounded-md text-white inline-flex items-center gap-1.5">
+            Start free <ArrowRight className="w-3.5 h-3.5" />
+          </a>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// ─── Hero ──────────────────────────────────────────────────────────────────
+function Hero() {
+  return (
+    <section className="mesh-bg relative pt-36 pb-20 px-6">
+      <div className="max-w-5xl mx-auto relative z-10 text-center">
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-teal-400/20 bg-teal-400/5 text-xs text-teal-300 mb-6"
+        >
+          <Sparkles className="w-3 h-3" /> Apache 2.0 · v0.4 shipping · agents that don't blow your budget
+        </motion.div>
+        <motion.h1
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.1 }}
+          className="text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight leading-[1.05]"
+        >
+          Production AI agents,
+          <br />
+          <span className="text-glow">without the surprises.</span>
+        </motion.h1>
+        <motion.p
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+          className="mt-6 text-lg md:text-xl text-[#9898a8] max-w-2xl mx-auto leading-relaxed"
+        >
+          Forecast what every run costs <em>before</em> it runs. Catch regressions in CI. Deploy in your own VPC. Open-source, provider-agnostic, zero feature gates.
+        </motion.p>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.3 }}
+          className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-3"
+        >
+          <a href="https://app.lantern.run/signup" className="btn-primary px-5 py-3 rounded-lg font-semibold text-white inline-flex items-center gap-2">
+            Start free <ArrowRight className="w-4 h-4" />
+          </a>
+          <a href="https://github.com/dshakes/lantern" className="px-5 py-3 rounded-lg border border-white/10 hover:bg-white/5 font-medium inline-flex items-center gap-2 text-[#e8e8f0]">
+            <Github className="w-4 h-4" /> View source
+          </a>
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.8, delay: 0.5 }}
+          className="mt-10 inline-flex items-center gap-3 px-4 py-2 rounded-full border border-white/5 bg-[#0d0d12] text-xs text-[#55556a] font-mono"
+        >
+          <span className="text-emerald-400">$</span> curl -fsSL lantern.run/install.sh | sh
+        </motion.div>
+      </div>
+    </section>
+  );
+}
+
+function TrustRow() {
+  return (
+    <section className="py-10 border-y border-white/5 bg-[#08080d]/60">
+      <div className="max-w-6xl mx-auto px-6 flex flex-wrap items-center justify-center gap-x-12 gap-y-3 text-xs uppercase tracking-[0.2em] text-[#55556a]">
+        <span>Apache 2.0</span>
+        <span>·</span>
+        <span>Provider-agnostic</span>
+        <span>·</span>
+        <span>Self-host or managed</span>
+        <span>·</span>
+        <span>Your VPC, your data</span>
+        <span>·</span>
+        <span>Postgres + Redis + S3</span>
+      </div>
+    </section>
+  );
+}
+
+// ─── Three pillars ─────────────────────────────────────────────────────────
+const PILLARS = [
+  {
+    icon: Gauge,
+    tag: "Cost",
+    title: "Forecast before you dispatch.",
+    body: "Every agent framework tells you what a run cost afterwards. Lantern tells you before. A single POST returns estimated tokens, dollars, and confidence — grounded in your own 30-day run history. Hard-fail the run if it would blow your budget.",
+    ringFrom: "#2dd4bf",
+    ringTo: "#38bdf8",
+  },
+  {
+    icon: GitBranch,
+    tag: "Quality",
+    title: "Eval-in-CI, not eval-in-dashboard.",
+    body: "Define eval suites declaratively. Pin a baseline per branch. Run `lantern test --against=last-green` in your CI. If the score drops, the build fails. Your agents stop silently getting worse between Monday and Friday.",
+    ringFrom: "#818cf8",
+    ringTo: "#ec4899",
+  },
+  {
+    icon: Shield,
+    tag: "Trust",
+    title: "Data plane in your VPC.",
+    body: "Prompts, tokens, and customer data never leave your cloud. The control plane orchestrates; the data plane executes — in your EKS/GKE/AKS. Firecracker microVM isolation. Outbound-only mTLS tunnel. SOC2-friendly by architecture, not by checkbox.",
+    ringFrom: "#fb923c",
+    ringTo: "#f472b6",
+  },
+];
+
+function Pillars() {
+  return (
+    <section id="pillars" className="py-24 px-6">
+      <div className="max-w-6xl mx-auto">
+        <header className="mb-14 max-w-2xl">
+          <p className="text-sm text-teal-300 uppercase tracking-[0.2em] mb-3">Why Lantern</p>
+          <h2 className="text-4xl md:text-5xl font-bold tracking-tight">Three things other frameworks hand-wave.</h2>
+        </header>
+        <div className="grid md:grid-cols-3 gap-5">
+          {PILLARS.map((p) => (
+            <div key={p.tag} className="card-glow rounded-2xl p-7 group">
+              <div
+                className="icon-ring mb-5"
+                style={{ ["--ring-from" as never]: p.ringFrom, ["--ring-to" as never]: p.ringTo }}
+              >
+                <p.icon className="w-5 h-5 text-[#e8e8f0]" />
+              </div>
+              <p className="text-[11px] tracking-[0.2em] text-[#55556a] uppercase mb-2">{p.tag}</p>
+              <h3 className="text-xl font-semibold mb-3">{p.title}</h3>
+              <p className="text-sm text-[#9898a8] leading-relaxed">{p.body}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Code demo (end-to-end) ────────────────────────────────────────────────
+function CodeStory() {
+  const code = `import { LanternClient } from "@lantern/sdk";
+
+const lantern = new LanternClient({ apiKey: process.env.LANTERN_API_KEY });
+
+// Hard budget — never spend more than $25/day on this agent.
+await lantern.budgets.upsert("triage", {
+  maxCostUsdPerDay: 25,
+  maxCostUsdPerRun: 0.10,
+  hardFail: true,
+});
+
+// Forecast a run BEFORE dispatching it.
+const f = await lantern.runs.forecast({
+  agentName: "triage",
+  input: customerEmail,
+});
+if (f.wouldExceedBudget) throw new Error(f.blockReason);
+
+// Dispatch — routed via your provider keys, executed in your VPC.
+const run = await lantern.runs.create({
+  agentName: "triage",
+  input: { email: customerEmail },
+});
+
+// In CI:  $ lantern test --agent=triage --suite=core --against=last-green
+//         exits non-zero if the new version regresses.`;
+
+  return (
+    <section className="py-24 px-6 relative">
+      <div className="max-w-6xl mx-auto">
+        <header className="mb-10 max-w-2xl">
+          <p className="text-sm text-teal-300 uppercase tracking-[0.2em] mb-3">End-to-end</p>
+          <h2 className="text-4xl md:text-5xl font-bold tracking-tight">30 lines. Production agent.</h2>
+          <p className="mt-4 text-[#9898a8] text-lg">
+            Budget, forecast, run, and regression-guard — in one file. No vendor-specific SDKs, no hand-rolled retry loops, no silent cost spirals.
+          </p>
+        </header>
+        <div className="code-window rounded-xl border border-white/5 overflow-hidden">
+          <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-white/5 bg-[#0a0a0f]">
+            <div className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
+            <div className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
+            <div className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
+            <span className="ml-3 text-xs text-[#55556a] font-mono">triage-agent.ts</span>
+          </div>
+          <pre className="px-6 py-5 text-sm font-mono leading-[1.7] overflow-x-auto text-[#cbd5e1]">
+            <code dangerouslySetInnerHTML={{ __html: syntax(code) }} />
+          </pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Cost forecast interactive ─────────────────────────────────────────────
+function CostForecastDemo() {
+  return (
+    <section className="py-20 px-6 border-t border-white/5 bg-[#08080d]">
+      <div className="max-w-6xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
+        <div>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-teal-400/20 bg-teal-400/5 text-xs text-teal-300 mb-4">
+            <Gauge className="w-3 h-3" /> Forecaster
+          </div>
+          <h3 className="text-3xl md:text-4xl font-bold tracking-tight">
+            Before-the-fact cost. Every run.
+          </h3>
+          <p className="mt-4 text-[#9898a8] leading-relaxed">
+            The forecaster blends your last 30 days of actual runs with an input-size heuristic. Confidence scales with sample size, asymptoting toward 0.95 as history grows. If a configured budget would break, the API returns HTTP 402 and blocks the run at dispatch.
+          </p>
+          <ul className="mt-6 space-y-2 text-sm text-[#cbd5e1]">
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-teal-400 mt-0.5 shrink-0" /> Blended: historical baseline + heuristic, no black box</li>
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-teal-400 mt-0.5 shrink-0" /> Enforces per-day, per-run, and per-tool limits</li>
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-teal-400 mt-0.5 shrink-0" /> Persists predictions for continuous calibration</li>
+          </ul>
+        </div>
+        <div className="code-window rounded-xl border border-white/5 overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-white/5 bg-[#0a0a0f] text-xs font-mono text-[#55556a]">
+            POST /v1/runs/forecast
+          </div>
+          <pre className="px-5 py-4 text-[13px] font-mono leading-[1.7] text-[#cbd5e1] overflow-x-auto">
+{`{
+  "agentName": "triage",
+  "model": "auto",
+  "provider": "anthropic",
+  "estimatedTokensIn": 1428,
+  "estimatedTokensOut": 612,
+  "estimatedCostUsd": 0.0193,
+  "confidence": 0.82,
+  "budget": {
+    "maxCostUsdPerDay": 25,
+    "spentTodayUsd": 18.47,
+    "remainingTodayUsd": 6.53,
+    "hardFail": true
+  },
+  "wouldExceedBudget": false
+}`}
+          </pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Eval-in-CI demo ───────────────────────────────────────────────────────
+function EvalCIDemo() {
+  return (
+    <section className="py-20 px-6 border-t border-white/5">
+      <div className="max-w-6xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
+        <div className="code-window rounded-xl border border-white/5 overflow-hidden order-2 lg:order-1">
+          <div className="px-4 py-2.5 border-b border-white/5 bg-[#0a0a0f] text-xs font-mono text-[#55556a]">
+            .github/workflows/agents.yml
+          </div>
+          <pre className="px-5 py-4 text-[13px] font-mono leading-[1.7] text-[#cbd5e1] overflow-x-auto">
+{`- name: Regression-check agent
+  run: |
+    lantern test \\
+      --agent=triage \\
+      --suite=golden \\
+      --against=last-green
+
+# Output on regression:
+# [FAIL] handles-refund-request   score=0.42  980ms
+# [PASS] parses-attachment        score=1.00  412ms
+# Score: 0.78  (14/16 cases)
+# Baseline (main): 0.92  delta -0.14
+# Error: regression vs. baseline on main`}
+          </pre>
+        </div>
+        <div className="order-1 lg:order-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-indigo-400/20 bg-indigo-400/5 text-xs text-indigo-300 mb-4">
+            <GitBranch className="w-3 h-3" /> Eval-in-CI
+          </div>
+          <h3 className="text-3xl md:text-4xl font-bold tracking-tight">
+            Agents that can't get quietly worse.
+          </h3>
+          <p className="mt-4 text-[#9898a8] leading-relaxed">
+            Every merge runs your eval suite against the new agent version. Lantern compares the score to the branch's baseline — the last run you pinned as green. Below baseline, the API returns 422 and your pipeline fails.
+          </p>
+          <ul className="mt-6 space-y-2 text-sm text-[#cbd5e1]">
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" /> Baselines pinned per branch (main, staging, feature/*)</li>
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" /> Pluggable assertions (contains, regex, JSON-path, LLM-judge)</li>
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" /> A/B experiments auto-promote the winning variant on &gt;2% lift</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── VPC / data plane ──────────────────────────────────────────────────────
+function VPCDemo() {
+  return (
+    <section className="py-20 px-6 border-t border-white/5 bg-[#08080d]">
+      <div className="max-w-6xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
+        <div>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-orange-400/20 bg-orange-400/5 text-xs text-orange-300 mb-4">
+            <Lock className="w-3 h-3" /> VPC data plane
+          </div>
+          <h3 className="text-3xl md:text-4xl font-bold tracking-tight">
+            Your data plane. Your cloud. Your call.
+          </h3>
+          <p className="mt-4 text-[#9898a8] leading-relaxed">
+            The control plane is the brains — state, orchestration, routing decisions. The data plane is the hands — running user code, calling LLMs, touching customer data. Put the hands inside your VPC. The tunnel is outbound-only and metadata-only.
+          </p>
+          <ul className="mt-6 space-y-2 text-sm text-[#cbd5e1]">
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-orange-400 mt-0.5 shrink-0" /> Deploys to EKS, GKE, AKS, or bare Kubernetes</li>
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-orange-400 mt-0.5 shrink-0" /> Firecracker / Kata microVM per run, untrusted code never touches a shared pod</li>
+            <li className="flex items-start gap-2"><Check className="w-4 h-4 text-orange-400 mt-0.5 shrink-0" /> Managed cloud when you don't want to operate it yourself — same code, one click</li>
+          </ul>
+        </div>
+        <div className="code-window rounded-xl border border-white/5 p-5 font-mono text-[12px] text-[#cbd5e1]">
+          <div className="flex flex-col gap-3">
+            <div className="rounded-md border border-white/5 bg-[#0a0a0f] p-4">
+              <div className="text-[#55556a] mb-1">Control plane — Lantern managed</div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                <span>• REST/gRPC</span>
+                <span>• Postgres · Redis</span>
+                <span>• Forecaster · Budgets · Evals</span>
+                <span>• Marketplace · MCP · A/B</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-[#55556a] text-[11px]">
+              <span>mTLS tunnel</span>
+              <div className="flex-1 beam-line" />
+              <span>outbound-only · metadata</span>
+            </div>
+            <div className="rounded-md border border-orange-400/20 bg-orange-400/5 p-4">
+              <div className="text-orange-300 mb-1">Data plane — your VPC (EKS / GKE / AKS)</div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                <span>• Workflow engine</span>
+                <span>• Runtime manager</span>
+                <span>• Firecracker microVM</span>
+                <span>• Your provider keys</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Stack feature list ────────────────────────────────────────────────────
+function Stack() {
+  const rows = [
+    { icon: Zap, t: "Multi-LLM routing", d: "Bring your own keys. Capability-addressed models (auto, reasoning-large, code-large). Swap providers without code changes." },
+    { icon: Server, t: "Managed sessions", d: "Interactive, multi-turn, durable. SSE streaming. Survives control-plane restarts." },
+    { icon: Terminal, t: "Real connector APIs", d: "Gmail, GCal, Drive, Slack, GitHub, Linear, Jira, Stripe, and 9 more — OAuth and API-key, actually calling live APIs." },
+    { icon: BookOpen, t: "A2A + agent cards", d: "Publish a standard Agent Card at /.well-known/agent.json. Other platforms discover and compose with your agent." },
+    { icon: Sparkles, t: "Forkable marketplace", d: "Publish agents for your team or the world. Star, fork, customize — tenant-isolated." },
+    { icon: Lock, t: "Guardrails", d: "PII blocking, content filtering, topic blocking. Policy-as-code budgets per tool, per day." },
+  ];
+  return (
+    <section id="stack" className="py-24 px-6">
+      <div className="max-w-6xl mx-auto">
+        <header className="mb-12 max-w-2xl">
+          <p className="text-sm text-teal-300 uppercase tracking-[0.2em] mb-3">Full stack</p>
+          <h2 className="text-4xl md:text-5xl font-bold tracking-tight">Everything you need. Nothing you won't.</h2>
+        </header>
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {rows.map((r) => (
+            <div key={r.t} className="card-glow rounded-xl p-6">
+              <r.icon className="w-5 h-5 text-teal-300 mb-4" />
+              <h3 className="text-base font-semibold mb-1.5">{r.t}</h3>
+              <p className="text-sm text-[#9898a8] leading-relaxed">{r.d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Comparison ────────────────────────────────────────────────────────────
+function Compare() {
+  const rows = [
+    ["Pre-run cost forecast", true, false, false, false],
+    ["Policy-as-code per-tool budgets", true, false, false, false],
+    ["Eval-in-CI with branch baselines", true, false, false, false],
+    ["A/B + auto-promotion", true, false, false, false],
+    ["Deploy in your VPC", true, false, false, true],
+    ["Provider-agnostic by default", true, true, false, true],
+    ["Forkable marketplace", true, false, false, false],
+    ["Apache 2.0 core (no feature gate)", true, true, true, true],
+  ];
+  const cols = ["Lantern", "LangGraph", "Mastra", "Inngest"];
+  return (
+    <section id="compare" className="py-20 px-6 border-t border-white/5 bg-[#08080d]">
+      <div className="max-w-5xl mx-auto">
+        <header className="mb-10 max-w-2xl">
+          <p className="text-sm text-teal-300 uppercase tracking-[0.2em] mb-3">vs alternatives</p>
+          <h2 className="text-3xl md:text-4xl font-bold tracking-tight">Where Lantern is actually different.</h2>
+        </header>
+        <div className="rounded-xl border border-white/5 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-[#0d0d12]">
+              <tr>
+                <th className="text-left font-medium text-[#9898a8] py-3 px-4">Capability</th>
+                {cols.map((c, i) => (
+                  <th key={c} className={`text-center font-medium py-3 px-4 ${i === 0 ? "text-teal-300" : "text-[#9898a8]"}`}>{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className="border-t border-white/5">
+                  <td className="py-3 px-4 text-[#e8e8f0]">{r[0] as string}</td>
+                  {(r.slice(1) as boolean[]).map((v, j) => (
+                    <td key={j} className="py-3 px-4 text-center">
+                      {v ? (
+                        <Check className="w-4 h-4 text-teal-400 inline" />
+                      ) : (
+                        <span className="text-[#55556a]">—</span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-4 text-xs text-[#55556a]">As of v0.4. Feature matrices change; we'll keep this honest.</p>
+      </div>
+    </section>
+  );
+}
+
+// ─── OSS ───────────────────────────────────────────────────────────────────
+function OSS() {
+  return (
+    <section className="py-20 px-6">
+      <div className="max-w-4xl mx-auto text-center">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 text-xs text-[#cbd5e1] mb-4">
+          <Github className="w-3 h-3" /> Fully open source
+        </div>
+        <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
+          Apache 2.0. No feature gates. Your choice of provider.
+        </h2>
+        <p className="mt-4 text-[#9898a8] leading-relaxed">
+          The forecaster, the budgets, the evals, the marketplace, the VPC data plane — all in the main repo. The managed cloud sells convenience (one-click deploy, billing, autoscaling), not unlocked features. Pick your LLMs, pick your smart gateway, pick your cloud.
+        </p>
+        <div className="mt-8 flex flex-wrap justify-center gap-3">
+          <a href="https://github.com/dshakes/lantern" className="px-5 py-3 rounded-lg border border-white/10 hover:bg-white/5 font-medium inline-flex items-center gap-2 text-[#e8e8f0]">
+            <Github className="w-4 h-4" /> Star on GitHub
+          </a>
+          <a href="https://docs.lantern.dev" className="px-5 py-3 rounded-lg border border-white/10 hover:bg-white/5 font-medium inline-flex items-center gap-2 text-[#e8e8f0]">
+            <BookOpen className="w-4 h-4" /> Read the docs
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── CTA ───────────────────────────────────────────────────────────────────
+function CTA() {
+  return (
+    <section className="py-28 px-6 relative overflow-hidden border-t border-white/5">
+      <div className="aurora-wave absolute inset-0 pointer-events-none" />
+      <div className="max-w-3xl mx-auto text-center relative z-10">
+        <h2 className="text-4xl md:text-5xl font-bold tracking-tight">
+          Ship agents you can actually bill customers for.
+        </h2>
+        <p className="mt-4 text-[#9898a8] text-lg">Free tier on managed cloud. Self-host the whole thing. No credit card, no seat minimums.</p>
+        <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
+          <a href="https://app.lantern.run/signup" className="btn-primary px-6 py-3 rounded-lg font-semibold text-white inline-flex items-center gap-2">
+            Start free <ArrowRight className="w-4 h-4" />
+          </a>
+          <a href="https://github.com/dshakes/lantern" className="px-6 py-3 rounded-lg border border-white/10 hover:bg-white/5 font-medium inline-flex items-center gap-2 text-[#e8e8f0]">
+            <Github className="w-4 h-4" /> github.com/dshakes/lantern
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Footer ────────────────────────────────────────────────────────────────
+function Footer() {
+  return (
+    <footer className="py-10 px-6 border-t border-white/5 bg-[#060609]">
+      <div className="max-w-6xl mx-auto flex flex-col md:flex-row gap-4 md:items-center md:justify-between text-xs text-[#55556a]">
+        <div className="flex items-center gap-2">
+          <span className="text-glow text-base">◆</span>
+          <span>Lantern · Apache 2.0 · made with care</span>
+        </div>
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          <a href="https://github.com/dshakes/lantern" className="hover:text-white">GitHub</a>
+          <a href="https://docs.lantern.dev" className="hover:text-white">Docs</a>
+          <a href="https://discord.gg/lantern" className="hover:text-white">Discord</a>
+          <a href="mailto:hi@lantern.run" className="hover:text-white">hi@lantern.run</a>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+// ─── minimal syntax highlighter ─────────────────────────────────────────────
+function syntax(s: string) {
+  return s
+    .replace(/(\/\/[^\n]*)/g, '<span style="color:#55556a">$1</span>')
+    .replace(/(["'`])((?:\\.|(?!\1).)*)\1/g, '<span style="color:#a5e8d8">$1$2$1</span>')
+    .replace(/\b(import|from|const|let|await|async|if|throw|new|return)\b/g, '<span style="color:#c4b5fd">$1</span>')
+    .replace(/\b(true|false|null|undefined)\b/g, '<span style="color:#fb923c">$1</span>')
+    .replace(/\b(LanternClient|process)\b/g, '<span style="color:#38bdf8">$1</span>');
 }

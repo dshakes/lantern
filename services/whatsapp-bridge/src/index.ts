@@ -20,6 +20,13 @@ app.use(express.json());
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
 
+logger.info(
+  { agentEnabled: !!process.env.LANTERN_API_TOKEN },
+  process.env.LANTERN_API_TOKEN
+    ? "Agent auto-reply enabled"
+    : "Agent auto-reply disabled (set LANTERN_API_TOKEN to enable)"
+);
+
 // Store active sessions by tenant
 const sessions = new Map<string, WhatsAppSession>();
 
@@ -71,6 +78,117 @@ app.post("/session/:tenantId/disconnect", async (req, res) => {
     sessions.delete(req.params.tenantId);
   }
   res.json({ status: "disconnected" });
+});
+
+// GET /session/:tenantId/bot -- current bot mute/pause state
+app.get("/session/:tenantId/bot", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.status(404).json({ error: "No session" });
+    return;
+  }
+  res.json(session.getBotState());
+});
+
+// POST /session/:tenantId/bot/mute -- global mute
+app.post("/session/:tenantId/bot/mute", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.status(404).json({ error: "No session" });
+    return;
+  }
+  session.setMuted(true);
+  res.json(session.getBotState());
+});
+
+// POST /session/:tenantId/bot/unmute -- clear global mute
+app.post("/session/:tenantId/bot/unmute", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.status(404).json({ error: "No session" });
+    return;
+  }
+  session.setMuted(false);
+  res.json(session.getBotState());
+});
+
+// POST /session/:tenantId/bot/pause -- pause a specific contact
+// body: { jid: string, ttlMs?: number }
+app.post("/session/:tenantId/bot/pause", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.status(404).json({ error: "No session" });
+    return;
+  }
+  const { jid, ttlMs } = req.body as { jid?: string; ttlMs?: number };
+  if (!jid) {
+    res.status(400).json({ error: "Missing 'jid' field" });
+    return;
+  }
+  session.pauseContact(jid, ttlMs);
+  res.json(session.getBotState());
+});
+
+// POST /session/:tenantId/bot/resume -- resume a specific contact
+// body: { jid: string }
+app.post("/session/:tenantId/bot/resume", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.status(404).json({ error: "No session" });
+    return;
+  }
+  const { jid } = req.body as { jid?: string };
+  if (!jid) {
+    res.status(400).json({ error: "Missing 'jid' field" });
+    return;
+  }
+  session.resumeContact(jid);
+  res.json(session.getBotState());
+});
+
+// POST /session/:tenantId/bot/group/monitor -- opt a group in to the agent
+// body: { jid: string }
+app.post("/session/:tenantId/bot/group/monitor", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.status(404).json({ error: "No session" });
+    return;
+  }
+  const { jid } = req.body as { jid?: string };
+  if (!jid || !jid.endsWith("@g.us")) {
+    res.status(400).json({ error: "jid must be a group JID (ending in @g.us)" });
+    return;
+  }
+  session.monitorGroup(jid);
+  res.json(session.getBotState());
+});
+
+// POST /session/:tenantId/bot/group/unmonitor -- remove a group from the agent
+// body: { jid: string }
+app.post("/session/:tenantId/bot/group/unmonitor", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.status(404).json({ error: "No session" });
+    return;
+  }
+  const { jid } = req.body as { jid?: string };
+  if (!jid) {
+    res.status(400).json({ error: "Missing 'jid' field" });
+    return;
+  }
+  session.unmonitorGroup(jid);
+  res.json(session.getBotState());
+});
+
+// POST /session/:tenantId/bot/resume-all -- clear all per-contact pauses
+app.post("/session/:tenantId/bot/resume-all", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.status(404).json({ error: "No session" });
+    return;
+  }
+  const cleared = session.resumeAll();
+  res.json({ ...session.getBotState(), cleared });
 });
 
 // POST /session/:tenantId/send -- send a message

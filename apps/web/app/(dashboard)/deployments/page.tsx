@@ -23,6 +23,8 @@ import clsx from "clsx";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
+import { PageHeader } from "@/components/page-header";
+import { Button } from "@/components/button";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -307,21 +309,26 @@ export default function DeploymentsPage() {
   return (
     <div className="flex flex-1 flex-col overflow-auto">
       {/* Header */}
-      <div className="border-b border-zinc-800 bg-surface-1 px-8 py-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-zinc-100">Deployments</h1>
-            <p className="mt-1 text-sm text-zinc-500">
-              {hasInfrastructure ? "Manage your infrastructure and deployments" : "Connect your cloud infrastructure to run agents in your own VPC"}
-            </p>
-          </div>
-          {hasInfrastructure && (
-            <button onClick={() => setShowAddPlane(true)} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400">
-              <Plus className="h-3.5 w-3.5" />Connect Data Plane
-            </button>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        title="Deployments"
+        description={
+          hasInfrastructure
+            ? "Agents deployed to your data planes (EKS/GKE/AKS) and to Lantern Cloud."
+            : "Connect your own Kubernetes cluster to run agents inside your VPC — prompts and customer data never leave your cloud."
+        }
+        action={
+          hasInfrastructure ? (
+            <Button
+              variant="primary"
+              size="md"
+              icon={<Plus className="h-3.5 w-3.5" />}
+              onClick={() => setShowAddPlane(true)}
+            >
+              Connect data plane
+            </Button>
+          ) : null
+        }
+      />
 
       <div className="flex-1 space-y-8 p-8">
         {/* Lantern Cloud section (Gap 5) */}

@@ -52,3 +52,17 @@ services/runtime-manager/target/
 # Go
 services/control-plane/control-plane
 services/workflow-engine/workflow-engine
+
+# TypeScript incremental build
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# WhatsApp bridge runtime state (contains session keys)
+services/whatsapp-bridge/auth_sessions/
+
+# Local Claude Code overrides
+.claude/settings.local.json

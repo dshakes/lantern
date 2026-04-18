@@ -119,7 +119,7 @@ make dashboard-dev    # Next.js dashboard at localhost:3000
 make landing-dev      # Landing page
 ```
 
-### Dashboard sidebar (8 items)
+### Dashboard sidebar (11 items)
 
 The dashboard sidebar (`apps/web/components/sidebar.tsx`) has these navigation items:
 
@@ -128,19 +128,40 @@ The dashboard sidebar (`apps/web/components/sidebar.tsx`) has these navigation i
 3. Surfaces
 4. Connectors
 5. Deployments
-6. Marketplace
-7. Evaluations
-8. Settings
+6. Budgets
+7. Experiments
+8. Eval Suites
+9. Marketplace
+10. Analytics (backed by `/evaluations`)
+11. Settings
+
+### Dashboard UX primitives
+
+When editing dashboard pages, **reuse these primitives** instead of hand-rolling page chrome. Consistency is the reason the dashboard feels Vercel-quality — do not inline yet another `<div className="border-b px-8 py-5">` header or yet another modal backdrop.
+
+| Component | Purpose |
+|---|---|
+| `components/page-header.tsx` | `<PageHeader title description badge action secondaryAction />` — every page uses this. Exports `CountBadge`, `DemoBadge` helpers. |
+| `components/modal.tsx` | `<Modal open onClose title description size footer>` with Escape handler and body scroll-lock. Exports `ModalField` for labelled form rows. |
+| `components/button.tsx` | `<Button variant size icon loading>` (primary/secondary/ghost/danger × sm/md/lg) and `<LinkButton>` for Next.js routing. Both are `forwardRef`. |
+| `components/empty-state.tsx` | `<EmptyState icon title description actionLabel onAction actionHref />` for zero-states. |
+| `components/skeleton.tsx` | `<Skeleton>` and `<HeaderSkeleton>` for loading states — use during the initial fetch of every page. |
+| `components/toast.tsx` | `useToast()` → `.success/.error/.warning/.info`. Mount `<ToastProvider>` once at layout level. |
+
+Rule: if you're writing Tailwind classes like `rounded-xl border border-zinc-800 bg-surface-1 px-5 py-4` for header/modal/button chrome, stop and use the primitive.
 
 Dashboard pages live in `apps/web/app/(dashboard)/`. Key pages include:
 
-- `/agents` -- agent list + create + detail with sessions, runs, workflow editor
+- `/agents` -- agent list + create + detail with sessions, runs, workflow editor, cost-forecast badge on the Run tab
 - `/runs` -- run list + detail with event stream
 - `/surfaces` -- surface configuration (WhatsApp, Slack, Telegram, webchat)
 - `/connectors` -- connector installation and management
 - `/deployments` -- deployment tracking and data-plane management
-- `/marketplace` -- discover and fork public agents, browse MCP servers
-- `/evaluations` -- agent performance metrics, cost attribution, model usage
+- `/budgets` -- policy-as-code per-agent limits (cost/day, cost/run, tokens/day, runs/day, per-tool rate limits). Hard-fail blocks runs with HTTP 402
+- `/experiments` -- A/B traffic splits backed by `agent_experiments` with deterministic FNV-1a hash bucketing; auto-promotion on &gt;2% lift
+- `/eval-suites` -- declarative suites, run history, pin-as-baseline. Regressions in CI return HTTP 422
+- `/marketplace` -- publish / fork / star public agents, backed by `/v1/marketplace` (no sample data fallbacks)
+- `/evaluations` -- analytics: performance metrics, cost attribution, model usage
 - `/settings` -- LLM providers, API keys, team management
 
 ---
@@ -172,6 +193,17 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `deployments` | Deployment tracking | `tenant_id`, `agent_name`, `version`, `environment`, `status` |
 | `data_planes` | Registered data planes | `tenant_id`, `cloud`, `region`, `status`, `last_heartbeat` |
 | `llm_provider_configs` | LLM API keys per tenant | `tenant_id`, `provider`, `api_key_encrypted` |
+| `agent_budgets` | Policy-as-code spend + rate limits | `tenant_id`, `agent_name`, `max_cost_usd_per_day`, `max_cost_usd_per_run`, `tool_limits` (JSONB), `hard_fail` |
+| `agent_usage_daily` | Daily rollup for budget enforcement | `tenant_id`, `agent_name`, `usage_date`, `cost_usd`, `runs_count`, `tool_counts` (JSONB) |
+| `cost_forecasts` | Pre-run cost forecast audit trail | `tenant_id`, `agent_name`, `estimated_tokens_in/out`, `estimated_cost_usd`, `confidence` |
+| `marketplace_agents` | Public marketplace entries | `slug`, `source_tenant_id`, `source_agent_id`, `category`, `tags`, `manifest`, `card`, `stars_count`, `forks_count` |
+| `marketplace_stars` | Star relation | `tenant_id`, `marketplace_id` (PK pair) |
+| `mcp_servers` | Curated MCP server registry | `slug`, `name`, `category`, `endpoint`, `tools` (JSONB), `installs_count` |
+| `agent_mcp_attachments` | Agent-MCP attachments | `tenant_id`, `agent_name`, `mcp_slug`, `config` (JSONB) |
+| `eval_suites` | Declarative eval test cases | `tenant_id`, `agent_name`, `name`, `cases` (JSONB) |
+| `eval_runs` | One execution of a suite | `tenant_id`, `suite_id`, `agent_version`, `commit_sha`, `branch`, `passed`, `score`, `cases_result` (JSONB) |
+| `eval_baselines` | Branch pinned baseline | `tenant_id`, `agent_name`, `branch`, `eval_run_id` |
+| `agent_experiments` | A/B traffic splits with auto-promotion | `tenant_id`, `agent_name`, `variant_a_version`, `variant_b_version`, `traffic_split_b`, `auto_promote`, `a_score`, `b_score` |
 
 Row-Level Security is enabled on `agents` and `runs` with tenant isolation policies.
 
@@ -266,6 +298,56 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 |---|---|---|
 | `GET` | `/v1/agents/{name}/card` | Get agent's A2A card |
 | `GET` | `/.well-known/agent.json` | Well-known A2A discovery endpoint |
+
+### Cost forecast + budgets (wedge #1)
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/runs/forecast` | Forecast tokens/cost/confidence for a prospective run. Returns `wouldExceedBudget` + block reason |
+| `PUT` | `/v1/agents/{name}/budget` | Upsert per-agent budget (cost/day, cost/run, tokens/day, runs/day, per-tool limits, hard-fail) |
+| `GET` | `/v1/agents/{name}/budget` | Get agent budget |
+| `DELETE` | `/v1/agents/{name}/budget` | Remove budget |
+| `GET` | `/v1/budgets` | List all tenant budgets |
+
+### Eval suites + CI gating (wedge #2)
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/eval-suites` | Upsert suite (by `tenant_id, agent_name, name`) |
+| `GET` | `/v1/eval-suites` | List suites (optional `?agentName=`) |
+| `GET` | `/v1/eval-suites/{id}` | Get suite |
+| `DELETE` | `/v1/eval-suites/{id}` | Delete suite |
+| `POST` | `/v1/eval-runs` | Record a run's case results. Returns HTTP 422 if regressed vs. branch baseline |
+| `GET` | `/v1/eval-runs` | List runs (`?suiteId=`, `?agentName=`, `?branch=`) |
+| `POST` | `/v1/eval-baselines` | Pin a run as the baseline for `(agent, branch)` |
+| `GET` | `/v1/eval-baselines?agentName=&branch=` | Get baseline |
+
+### A/B experiments
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/experiments` | Create experiment with deterministic FNV-1a traffic split |
+| `GET` | `/v1/experiments` | List |
+| `GET` | `/v1/experiments/{id}` | Get |
+| `POST` | `/v1/experiments/{id}/record` | Record a variant outcome (score 0..1). Auto-promotes on >2% lift + min-runs/arm |
+| `POST` | `/v1/experiments/{id}/conclude` | Manually conclude + optionally promote winner |
+
+### Marketplace
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/marketplace` | List public agents (`?category=`, `?q=`) |
+| `POST` | `/v1/marketplace/publish` | Publish a tenant-local agent to the marketplace |
+| `GET` | `/v1/marketplace/{slug}` | Get marketplace entry |
+| `DELETE` | `/v1/marketplace/{slug}` | Unpublish |
+| `POST` | `/v1/marketplace/{slug}/fork` | Fork into caller's tenant |
+| `POST` | `/v1/marketplace/{slug}/star` | Star |
+| `DELETE` | `/v1/marketplace/{slug}/star` | Unstar |
+
+### MCP server registry
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/mcp/servers` | List curated MCP servers (`?category=`, `?q=`) |
+| `GET` | `/v1/mcp/servers/{slug}` | Get one |
+| `POST` | `/v1/agents/{name}/mcp-servers` | Attach an MCP server to an agent |
+| `GET` | `/v1/agents/{name}/mcp-servers` | List attachments |
+| `DELETE` | `/v1/agents/{name}/mcp-servers/{slug}` | Detach |
 
 ---
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -778,7 +779,8 @@ func (h *AuthHandler) ValidateToken(tokenStr string) (*LanternClaims, error) {
 	return claims, nil
 }
 
-// validateRequest extracts and validates the JWT from the Authorization header.
+// validateRequest extracts and validates credentials from the Authorization
+// header. Accepts either a JWT or a long-lived API key (prefix hlx_live_).
 func (h *AuthHandler) validateRequest(r *http.Request) (*LanternClaims, error) {
 	auth := r.Header.Get("Authorization")
 	if auth == "" {
@@ -790,7 +792,37 @@ func (h *AuthHandler) validateRequest(r *http.Request) (*LanternClaims, error) {
 		return nil, fmt.Errorf("invalid authorization header format")
 	}
 
-	return h.ValidateToken(parts[1])
+	token := parts[1]
+	if strings.HasPrefix(token, "hlx_live_") {
+		return h.validateAPIKey(r.Context(), token)
+	}
+	return h.ValidateToken(token)
+}
+
+// validateAPIKey looks up an API key by its SHA-256 hash and returns synthetic
+// claims with the owning tenant. API keys don't expire unless revoked or
+// explicitly given an expires_at.
+func (h *AuthHandler) validateAPIKey(ctx context.Context, rawKey string) (*LanternClaims, error) {
+	hash := sha256.Sum256([]byte(rawKey))
+	keyHash := hex.EncodeToString(hash[:])
+
+	var tenantID, keyID string
+	err := h.srv.Pool.QueryRow(ctx, `
+		SELECT id, tenant_id FROM api_keys
+		WHERE key_hash = $1 AND revoked_at IS NULL
+		AND (expires_at IS NULL OR expires_at > now())
+	`, keyHash).Scan(&keyID, &tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid API key")
+	}
+
+	// Best-effort last-used update.
+	_, _ = h.srv.Pool.Exec(ctx, `UPDATE api_keys SET last_used_at = now() WHERE id = $1`, keyID)
+
+	return &LanternClaims{
+		TenantID: tenantID,
+		Role:     "service",
+	}, nil
 }
 
 // ---------- util ----------

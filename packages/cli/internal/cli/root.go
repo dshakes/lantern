@@ -56,6 +56,8 @@ and deploy agent code from your terminal.`,
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newDeployCommand())
 	root.AddCommand(newInfraCommand())
+	root.AddCommand(newTestCommand())
+	root.AddCommand(newDevCommand())
 
 	// Auth commands.
 	root.AddCommand(newLoginCommand())

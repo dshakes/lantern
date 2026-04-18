@@ -229,13 +229,22 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		"status": "Processing your message...",
 	})
 
-	// Build the prompt from message history.
-	// The first system message is the agent's prompt from localStorage (the
-	// frontend injects it as the first user message context).
+	// Resolve system prompt from the agent row; fall back to a sensible
+	// default if none has been configured.
+	var storedPrompt *string
+	_ = h.srv.Pool.QueryRow(ctx, `
+		SELECT system_prompt FROM agents WHERE name = $1 AND tenant_id = $2
+	`, agentName, tenantID).Scan(&storedPrompt)
+
+	systemPrompt := fmt.Sprintf("You are the agent '%s'. You are in an interactive session. Respond helpfully and concisely.", agentName)
+	if storedPrompt != nil && *storedPrompt != "" {
+		systemPrompt = *storedPrompt
+	}
+
 	var promptMessages []map[string]string
 	promptMessages = append(promptMessages, map[string]string{
 		"role":    "system",
-		"content": fmt.Sprintf("You are the agent '%s'. You are in an interactive session. Respond helpfully and concisely.", agentName),
+		"content": systemPrompt,
 	})
 	for _, m := range messages {
 		promptMessages = append(promptMessages, map[string]string{
@@ -244,17 +253,33 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		})
 	}
 
-	// Resolve model and API key.
-	provider, model := resolveModel("auto")
+	// Resolve model and API key. Consult the tenant's configured providers
+	// (dashboard Settings) so auto-routing reflects what the user actually
+	// set up. Fall back to the alternate provider if the first key is missing.
+	provider, model := h.llmProxy.resolveModelForTenant(ctx, tenantID, "auto")
 	apiKey, err := h.llmProxy.resolveProviderKey(ctx, tenantID, provider)
 	if err != nil {
-		h.logger().Warn("session: no LLM key", zap.Error(err))
-		h.appendAssistantMessage(ctx, sessionID, "I'm unable to process your request right now. Please configure an LLM provider in Settings.")
-		h.publishEvent(sessionID, "agent.message", map[string]string{
-			"content": "I'm unable to process your request right now. Please configure an LLM provider in Settings.",
-		})
-		h.publishEvent(sessionID, "session.status_idle", map[string]string{})
-		return
+		altProvider := "anthropic"
+		if provider == "anthropic" {
+			altProvider = "openai"
+		}
+		if altKey, altErr := h.llmProxy.resolveProviderKey(ctx, tenantID, altProvider); altErr == nil {
+			provider = altProvider
+			apiKey = altKey
+			if provider == "openai" {
+				model = "gpt-4o"
+			} else {
+				model = "claude-sonnet-4-20250514"
+			}
+		} else {
+			h.logger().Warn("session: no LLM key", zap.Error(err))
+			h.appendAssistantMessage(ctx, sessionID, "I'm unable to process your request right now. Please configure an LLM provider in Settings.")
+			h.publishEvent(sessionID, "agent.message", map[string]string{
+				"content": "I'm unable to process your request right now. Please configure an LLM provider in Settings.",
+			})
+			h.publishEvent(sessionID, "session.status_idle", map[string]string{})
+			return
+		}
 	}
 
 	// Call LLM with full message history.

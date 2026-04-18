@@ -23,6 +23,8 @@ import { useAgents, useRuns } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
 import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
+import { PageHeader, CountBadge, DemoBadge } from "@/components/page-header";
+import { Button } from "@/components/button";
 import type { Agent, Run } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
@@ -127,31 +129,26 @@ export default function AgentsPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      {/* Header */}
-      <div className="border-b border-zinc-800 bg-surface-1 px-8 py-5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold text-zinc-100">Agents</h1>
-            {agents.length > 0 && (
-              <span className="inline-flex items-center justify-center rounded-full bg-surface-3 px-2.5 py-0.5 text-xs font-medium text-zinc-400">
-                {agents.length}
-              </span>
-            )}
-            {isDemo && (
-              <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">
-                Demo data
-              </span>
-            )}
-          </div>
-          <button
+      <PageHeader
+        title="Agents"
+        description="Every agent you create. Click into one for sessions, runs, budgets, and deployments."
+        badge={
+          <>
+            {agents.length > 0 && <CountBadge count={agents.length} />}
+            {isDemo && <DemoBadge />}
+          </>
+        }
+        action={
+          <Button
+            variant="primary"
+            size="md"
+            icon={<Plus className="h-4 w-4" />}
             onClick={() => router.push("/agents/create")}
-            className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400"
           >
-            <Plus className="h-4 w-4" />
-            Create Agent
-          </button>
-        </div>
-      </div>
+            Create agent
+          </Button>
+        }
+      />
 
       <div className="flex-1 p-8">
         {agents.length === 0 ? (

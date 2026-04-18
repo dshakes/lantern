@@ -1537,6 +1537,371 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     const url = `${this.baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/events`;
     return new EventSource(this._token ? `${url}?token=${this._token}` : url);
   }
+
+  // ---- Marketplace (real /v1/marketplace backend) --------------------------
+
+  async listMarketplaceAgents(opts?: {
+    category?: string;
+    q?: string;
+  }): Promise<MarketplaceAgent[]> {
+    const qs = new URLSearchParams();
+    if (opts?.category) qs.set("category", opts.category);
+    if (opts?.q) qs.set("q", opts.q);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return this.request<MarketplaceAgent[]>(`/v1/marketplace${suffix}`);
+  }
+
+  async getMarketplaceAgent(slug: string): Promise<MarketplaceAgent> {
+    return this.request<MarketplaceAgent>(`/v1/marketplace/${encodeURIComponent(slug)}`);
+  }
+
+  async publishMarketplaceAgent(body: {
+    agentName: string;
+    description: string;
+    category?: string;
+    tags?: string[];
+    readme?: string;
+  }): Promise<{ id: string; slug: string; url: string }> {
+    return this.request(`/v1/marketplace/publish`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async unpublishMarketplaceAgent(slug: string): Promise<{ status: string }> {
+    return this.request(`/v1/marketplace/${encodeURIComponent(slug)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async forkMarketplaceAgent(
+    slug: string,
+    newName?: string,
+  ): Promise<{ agentId: string; agentName: string }> {
+    return this.request(`/v1/marketplace/${encodeURIComponent(slug)}/fork`, {
+      method: "POST",
+      body: JSON.stringify({ newName: newName ?? "" }),
+    });
+  }
+
+  async starMarketplaceAgent(slug: string): Promise<{ starred: boolean }> {
+    return this.request(`/v1/marketplace/${encodeURIComponent(slug)}/star`, {
+      method: "POST",
+    });
+  }
+
+  async unstarMarketplaceAgent(slug: string): Promise<{ starred: boolean }> {
+    return this.request(`/v1/marketplace/${encodeURIComponent(slug)}/star`, {
+      method: "DELETE",
+    });
+  }
+
+  // ---- Budgets (policy-as-code) --------------------------------------------
+
+  async getBudget(agentName: string): Promise<Budget | null> {
+    try {
+      return await this.request<Budget>(
+        `/v1/agents/${encodeURIComponent(agentName)}/budget`,
+      );
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("API 404")) return null;
+      throw err;
+    }
+  }
+
+  async upsertBudget(agentName: string, budget: BudgetInput): Promise<{ status: string }> {
+    return this.request(`/v1/agents/${encodeURIComponent(agentName)}/budget`, {
+      method: "PUT",
+      body: JSON.stringify(budget),
+    });
+  }
+
+  async deleteBudget(agentName: string): Promise<{ status: string }> {
+    return this.request(`/v1/agents/${encodeURIComponent(agentName)}/budget`, {
+      method: "DELETE",
+    });
+  }
+
+  async listBudgets(): Promise<Budget[]> {
+    return this.request<Budget[]>(`/v1/budgets`);
+  }
+
+  // ---- Forecast (pre-run cost) ---------------------------------------------
+
+  async forecastRun(body: {
+    agentName: string;
+    input: string;
+    model?: string;
+  }): Promise<ForecastResult> {
+    return this.request<ForecastResult>(`/v1/runs/forecast`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  // ---- Eval suites + runs + baselines --------------------------------------
+
+  async listEvalSuites(agentName?: string): Promise<EvalSuite[]> {
+    const qs = agentName ? `?agentName=${encodeURIComponent(agentName)}` : "";
+    return this.request<EvalSuite[]>(`/v1/eval-suites${qs}`);
+  }
+
+  async upsertEvalSuite(suite: EvalSuiteInput): Promise<{ id: string }> {
+    return this.request(`/v1/eval-suites`, {
+      method: "POST",
+      body: JSON.stringify(suite),
+    });
+  }
+
+  async deleteEvalSuite(id: string): Promise<{ status: string }> {
+    return this.request(`/v1/eval-suites/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async listEvalRuns(opts?: {
+    agentName?: string;
+    suiteId?: string;
+    branch?: string;
+  }): Promise<EvalRun[]> {
+    const qs = new URLSearchParams();
+    if (opts?.agentName) qs.set("agentName", opts.agentName);
+    if (opts?.suiteId) qs.set("suiteId", opts.suiteId);
+    if (opts?.branch) qs.set("branch", opts.branch);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return this.request<EvalRun[]>(`/v1/eval-runs${suffix}`);
+  }
+
+  async setEvalBaseline(body: {
+    agentName: string;
+    branch: string;
+    evalRunId: string;
+  }): Promise<{ status: string }> {
+    return this.request(`/v1/eval-baselines`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async getEvalBaseline(
+    agentName: string,
+    branch: string,
+  ): Promise<EvalBaseline | null> {
+    const qs = `agentName=${encodeURIComponent(agentName)}&branch=${encodeURIComponent(branch)}`;
+    try {
+      return await this.request<EvalBaseline>(`/v1/eval-baselines?${qs}`);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("API 404")) return null;
+      throw err;
+    }
+  }
+
+  // ---- A/B experiments -----------------------------------------------------
+
+  async listExperiments(agentName?: string): Promise<Experiment[]> {
+    const qs = agentName ? `?agentName=${encodeURIComponent(agentName)}` : "";
+    return this.request<Experiment[]>(`/v1/experiments${qs}`);
+  }
+
+  async getExperiment(id: string): Promise<Experiment> {
+    return this.request<Experiment>(`/v1/experiments/${encodeURIComponent(id)}`);
+  }
+
+  async createExperiment(body: ExperimentInput): Promise<Experiment> {
+    return this.request<Experiment>(`/v1/experiments`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async concludeExperiment(
+    id: string,
+    body: { winner: "a" | "b"; promote: boolean },
+  ): Promise<{ status: string }> {
+    return this.request(`/v1/experiments/${encodeURIComponent(id)}/conclude`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  // ---- MCP server registry -------------------------------------------------
+
+  async listMcpServers(opts?: { category?: string; q?: string }): Promise<McpServer[]> {
+    const qs = new URLSearchParams();
+    if (opts?.category) qs.set("category", opts.category);
+    if (opts?.q) qs.set("q", opts.q);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return this.request<McpServer[]>(`/v1/mcp/servers${suffix}`);
+  }
+
+  async attachMcpServer(
+    agentName: string,
+    body: { slug: string; config?: Record<string, unknown> },
+  ): Promise<{ status: string }> {
+    return this.request(`/v1/agents/${encodeURIComponent(agentName)}/mcp-servers`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async listAgentMcpServers(agentName: string): Promise<McpServer[]> {
+    return this.request<McpServer[]>(
+      `/v1/agents/${encodeURIComponent(agentName)}/mcp-servers`,
+    );
+  }
+
+  async detachMcpServer(agentName: string, slug: string): Promise<{ status: string }> {
+    return this.request(
+      `/v1/agents/${encodeURIComponent(agentName)}/mcp-servers/${encodeURIComponent(slug)}`,
+      { method: "DELETE" },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Types for the new backends
+// ---------------------------------------------------------------------------
+
+export interface MarketplaceAgent {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  tags: string[];
+  manifest: Record<string, unknown>;
+  card: Record<string, unknown>;
+  readme?: string;
+  forksCount: number;
+  starsCount: number;
+  starred: boolean;
+  publishedAt: string;
+  author: string;
+}
+
+export interface Budget {
+  agentName: string;
+  maxCostUsdPerDay?: number;
+  maxCostUsdPerRun?: number;
+  maxTokensPerDay?: number;
+  maxRunsPerDay?: number;
+  toolLimits?: Record<string, number>;
+  hardFail: boolean;
+  notifyAtPct: number;
+  updatedAt?: string;
+}
+
+export type BudgetInput = Omit<Budget, "updatedAt">;
+
+export interface ForecastResult {
+  agentName: string;
+  model: string;
+  provider: string;
+  estimatedTokensIn: number;
+  estimatedTokensOut: number;
+  estimatedCostUsd: number;
+  confidence: number;
+  reasoning: Record<string, unknown>;
+  budget?: {
+    maxCostUsdPerDay?: number;
+    maxCostUsdPerRun?: number;
+    spentTodayUsd: number;
+    remainingTodayUsd: number;
+    runsToday: number;
+    maxRunsPerDay?: number;
+    notifyAtPct: number;
+    hardFail: boolean;
+  };
+  wouldExceedBudget: boolean;
+  blockReason?: string;
+}
+
+export interface EvalCase {
+  name: string;
+  input: string;
+  expected?: string;
+  assert?: Record<string, unknown>;
+  weight?: number;
+}
+
+export interface EvalSuite {
+  id: string;
+  agentName: string;
+  name: string;
+  description?: string;
+  cases: EvalCase[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type EvalSuiteInput = Omit<EvalSuite, "id" | "createdAt" | "updatedAt">;
+
+export interface EvalRun {
+  id: string;
+  suiteId: string;
+  agentName: string;
+  agentVersion?: string;
+  commitSha?: string;
+  branch?: string;
+  passed: boolean;
+  score: number;
+  casesTotal: number;
+  casesPassed: number;
+  durationMs: number;
+  totalCostUsd: number;
+  createdAt: string;
+  baselineScore?: number | null;
+  regressed?: boolean;
+}
+
+export interface EvalBaseline {
+  agentName: string;
+  branch: string;
+  evalRunId: string;
+  score: number;
+  setAt: string;
+}
+
+export interface Experiment {
+  id: string;
+  agentName: string;
+  name: string;
+  variantAVersion: string;
+  variantBVersion: string;
+  trafficSplitB: number;
+  evalSuiteId?: string;
+  autoPromote: boolean;
+  minRunsToPromote: number;
+  status: string;
+  winner?: string;
+  aRuns: number;
+  bRuns: number;
+  aScore?: number | null;
+  bScore?: number | null;
+  startedAt: string;
+  concludedAt?: string;
+}
+
+export interface ExperimentInput {
+  agentName: string;
+  name: string;
+  variantAVersion: string;
+  variantBVersion: string;
+  trafficSplitB: number;
+  evalSuiteId?: string;
+  autoPromote: boolean;
+  minRunsToPromote: number;
+}
+
+export interface McpServer {
+  id?: string;
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  endpoint?: string;
+  tools?: string[];
+  installsCount?: number;
 }
 
 export const api = new LanternAPI();

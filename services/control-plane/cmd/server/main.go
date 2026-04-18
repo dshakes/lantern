@@ -135,6 +135,15 @@ func main() {
 	sessionHandler := handlers.NewSessionHandler(srv, authHandler, llmProxyHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
 
+	// Futuristic surface: cost forecasting, policy budgets, marketplace,
+	// MCP registry, eval-in-CI, A/B experiments.
+	forecastHandler := handlers.NewForecastHandler(srv, authHandler)
+	budgetHandler := handlers.NewBudgetHandler(srv, authHandler)
+	marketplaceHandler := handlers.NewMarketplaceHandler(srv, authHandler)
+	mcpHandler := handlers.NewMCPHandler(srv, authHandler)
+	evalHandler := handlers.NewEvalHandler(srv, authHandler)
+	experimentHandler := handlers.NewExperimentHandler(srv, authHandler)
+
 	// --- HTTP server (health + auth + REST API) ---
 	httpMux := http.NewServeMux()
 	httpMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -165,6 +174,7 @@ func main() {
 	httpMux.HandleFunc("GET /v1/agents", restHandler.ListAgents)
 	httpMux.HandleFunc("POST /v1/agents", restHandler.CreateAgent)
 	httpMux.HandleFunc("GET /v1/agents/{name}", restHandler.GetAgent)
+	httpMux.HandleFunc("PATCH /v1/agents/{name}", restHandler.UpdateAgent)
 	httpMux.HandleFunc("DELETE /v1/agents/{name}", restHandler.DeleteAgent)
 	httpMux.HandleFunc("GET /v1/runs", restHandler.ListRuns)
 	httpMux.HandleFunc("POST /v1/runs", restHandler.CreateRun)
@@ -245,6 +255,49 @@ func main() {
 	httpMux.HandleFunc("POST /v1/sessions/{id}/stop", sessionHandler.StopSession)
 	httpMux.HandleFunc("DELETE /v1/sessions/{id}", sessionHandler.DeleteSession)
 	httpMux.HandleFunc("GET /v1/sessions/{id}", sessionHandler.GetSession)
+
+	// Pre-run cost forecaster.
+	httpMux.HandleFunc("POST /v1/runs/forecast", forecastHandler.Forecast)
+
+	// Policy-as-code budgets (per-agent cost + per-tool rate limits).
+	httpMux.HandleFunc("PUT /v1/agents/{name}/budget", budgetHandler.UpsertBudget)
+	httpMux.HandleFunc("GET /v1/agents/{name}/budget", budgetHandler.GetBudget)
+	httpMux.HandleFunc("DELETE /v1/agents/{name}/budget", budgetHandler.DeleteBudget)
+	httpMux.HandleFunc("GET /v1/budgets", budgetHandler.ListBudgets)
+
+	// Marketplace — publish, fork, star agents.
+	httpMux.HandleFunc("GET /v1/marketplace", marketplaceHandler.List)
+	httpMux.HandleFunc("POST /v1/marketplace/publish", marketplaceHandler.Publish)
+	httpMux.HandleFunc("GET /v1/marketplace/{slug}", marketplaceHandler.Get)
+	httpMux.HandleFunc("DELETE /v1/marketplace/{slug}", marketplaceHandler.Unpublish)
+	httpMux.HandleFunc("POST /v1/marketplace/{slug}/fork", marketplaceHandler.Fork)
+	httpMux.HandleFunc("POST /v1/marketplace/{slug}/star", marketplaceHandler.Star)
+	httpMux.HandleFunc("DELETE /v1/marketplace/{slug}/star", marketplaceHandler.Star)
+
+	// MCP server registry + per-agent attachments.
+	httpMux.HandleFunc("GET /v1/mcp/servers", mcpHandler.ListServers)
+	httpMux.HandleFunc("GET /v1/mcp/servers/{slug}", mcpHandler.GetServer)
+	httpMux.HandleFunc("POST /v1/agents/{name}/mcp-servers", mcpHandler.AttachToAgent)
+	httpMux.HandleFunc("GET /v1/agents/{name}/mcp-servers", mcpHandler.ListAttachments)
+	httpMux.HandleFunc("DELETE /v1/agents/{name}/mcp-servers/{slug}", mcpHandler.DetachFromAgent)
+
+	// Eval suites + runs + baselines (foundation for lantern test --against=last-green).
+	httpMux.HandleFunc("POST /v1/eval-suites", evalHandler.UpsertSuite)
+	httpMux.HandleFunc("GET /v1/eval-suites", evalHandler.ListSuites)
+	httpMux.HandleFunc("GET /v1/eval-suites/{id}", evalHandler.GetSuite)
+	httpMux.HandleFunc("DELETE /v1/eval-suites/{id}", evalHandler.DeleteSuite)
+	httpMux.HandleFunc("POST /v1/eval-runs", evalHandler.RecordRun)
+	httpMux.HandleFunc("GET /v1/eval-runs", evalHandler.ListRuns)
+	httpMux.HandleFunc("GET /v1/eval-runs/{id}", evalHandler.GetRun)
+	httpMux.HandleFunc("POST /v1/eval-baselines", evalHandler.SetBaseline)
+	httpMux.HandleFunc("GET /v1/eval-baselines", evalHandler.GetBaseline)
+
+	// A/B experiments with auto-promotion.
+	httpMux.HandleFunc("POST /v1/experiments", experimentHandler.Create)
+	httpMux.HandleFunc("GET /v1/experiments", experimentHandler.List)
+	httpMux.HandleFunc("GET /v1/experiments/{id}", experimentHandler.Get)
+	httpMux.HandleFunc("POST /v1/experiments/{id}/record", experimentHandler.RecordOutcome)
+	httpMux.HandleFunc("POST /v1/experiments/{id}/conclude", experimentHandler.Conclude)
 
 	httpServer := &http.Server{
 		Addr:              ":8080",

@@ -59,6 +59,7 @@ import { AiAssistButton } from "@/components/ai-assist";
 import { useAgent, useAgentRuns } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
 import { StatusBadge } from "@/components/status-badge";
+import { CostForecastBadge } from "@/components/cost-forecast-badge";
 import { ExecutionLog, deduplicateSteps } from "@/components/execution-log";
 import { AgentDetailSkeleton } from "@/components/skeleton";
 import { formatCost, formatDuration } from "@/lib/mock-data";
@@ -1418,28 +1419,31 @@ export default function AgentDetailPage() {
         {/* RUNS TAB */}
         {activeTab === "runs" && (
           <div className="space-y-4">
-            <button
-              onClick={async () => {
-                setTestRunning(true);
-                try {
-                  const agentConf = JSON.parse(localStorage.getItem(`lantern_agent_settings_${name}`) || "{}");
-                  const run = await api.createRun({ agentName: name, input: { connectors: agentConf.connectors || [] } });
-                  toast.success(`Run started: ${run.id.slice(0, 12)}...`);
-                  // Refresh runs list after a delay
-                  setTimeout(() => refreshRuns(), 3000);
-                  setTimeout(() => refreshRuns(), 8000);
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : "Failed to create run";
-                  toast.error(msg);
-                } finally {
-                  setTestRunning(false);
-                }
-              }}
-              disabled={testRunning}
-              className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50"
-            >
-              {testRunning ? <><Loader2 className="h-3 w-3 animate-spin" /> Running...</> : <><Play className="h-3 w-3" /> Run Now</>}
-            </button>
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={async () => {
+                  setTestRunning(true);
+                  try {
+                    const agentConf = JSON.parse(localStorage.getItem(`lantern_agent_settings_${name}`) || "{}");
+                    const run = await api.createRun({ agentName: name, input: { connectors: agentConf.connectors || [] } });
+                    toast.success(`Run started: ${run.id.slice(0, 12)}...`);
+                    // Refresh runs list after a delay
+                    setTimeout(() => refreshRuns(), 3000);
+                    setTimeout(() => refreshRuns(), 8000);
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : "Failed to create run";
+                    toast.error(msg);
+                  } finally {
+                    setTestRunning(false);
+                  }
+                }}
+                disabled={testRunning}
+                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50"
+              >
+                {testRunning ? <><Loader2 className="h-3 w-3 animate-spin" /> Running...</> : <><Play className="h-3 w-3" /> Run Now</>}
+              </button>
+              <CostForecastBadge agentName={name} />
+            </div>
             {agentRuns.length >= 2 && (
               <button onClick={() => { setCompareMode(!compareMode); setCompareIds([null, null]); }} className={clsx("inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-medium", compareMode ? "border-indigo-500/50 bg-indigo-500/10 text-indigo-400" : "border-zinc-700 text-zinc-400 hover:bg-surface-3")}>
                 <GitCompare className="h-3 w-3" /> {compareMode ? "Exit Compare" : "Compare Runs"}

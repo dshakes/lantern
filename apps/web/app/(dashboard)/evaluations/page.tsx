@@ -19,6 +19,7 @@ import {
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
+import { PageHeader } from "@/components/page-header";
 import type { Run, Agent } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
@@ -282,21 +283,17 @@ export default function EvaluationsPage() {
   return (
     <div className="flex flex-1 flex-col overflow-auto">
       {/* Header */}
-      <div className="border-b border-zinc-800 bg-surface-1 px-8 py-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-zinc-100">Evaluations</h1>
-            <p className="mt-1 text-sm text-zinc-500">
-              Agent performance, cost attribution, and quality signals
-            </p>
-          </div>
+      <PageHeader
+        title="Analytics"
+        description="Performance, cost attribution, and quality signals across every run."
+        action={
           <div className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-surface-0 p-0.5">
             {(["7d", "30d", "all"] as const).map((range) => (
               <button
                 key={range}
                 onClick={() => setTimeRange(range)}
                 className={clsx(
-                  "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                  "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
                   timeRange === range
                     ? "bg-surface-3 text-zinc-100"
                     : "text-zinc-500 hover:text-zinc-300",
@@ -306,8 +303,8 @@ export default function EvaluationsPage() {
               </button>
             ))}
           </div>
-        </div>
-      </div>
+        }
+      />
 
       <div className="flex-1 space-y-8 p-8">
         {/* Global stats */}

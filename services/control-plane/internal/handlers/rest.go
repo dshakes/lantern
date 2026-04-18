@@ -240,6 +240,54 @@ func (h *RESTHandler) DeleteAgent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// UpdateAgent handles PATCH /v1/agents/{name}. Currently supports updating
+// the system prompt used by interactive sessions and the chat surfaces.
+func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	ctx, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+
+	var body struct {
+		SystemPrompt *string `json:"systemPrompt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if body.SystemPrompt != nil {
+		tag, err := h.srv.Pool.Exec(ctx, `
+			UPDATE agents SET system_prompt = $1
+			WHERE name = $2 AND tenant_id = $3
+		`, *body.SystemPrompt, name, tenantID)
+		if err != nil {
+			h.logger().Error("UpdateAgent systemPrompt failed", zap.Error(err))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "updated": true})
+}
+
 // ---------- Run REST endpoints ----------
 
 // ListRuns handles GET /v1/runs.
@@ -641,17 +689,32 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	}
 	} // end isEmailAgent
 
-	// 3. Call the LLM.
+	// 3. Call the LLM. Use the tenant-aware resolver so auto-routing picks
+	// from providers configured in Settings, not just the process env.
 	logStep("call_llm", "running", "Sending to AI model for processing")
-	provider, model := resolveModel("auto")
+	provider, model := h.llmProxy.resolveModelForTenant(ctx, tenantID, "auto")
 	apiKey, err := h.llmProxy.resolveProviderKey(ctx, tenantID, provider)
 	if err != nil {
-		h.logger().Warn("inline executor: no LLM key, marking failed", zap.Error(err))
-		_, _ = h.srv.Pool.Exec(ctx,
-			`UPDATE runs SET status = 'failed', finished_at = now(), error = $2 WHERE id = $1`,
-			runID, fmt.Sprintf(`{"code":"no_llm","message":"%s"}`, err.Error()),
-		)
-		return
+		altProvider := "anthropic"
+		if provider == "anthropic" {
+			altProvider = "openai"
+		}
+		if altKey, altErr := h.llmProxy.resolveProviderKey(ctx, tenantID, altProvider); altErr == nil {
+			provider = altProvider
+			apiKey = altKey
+			if provider == "openai" {
+				model = "gpt-4o"
+			} else {
+				model = "claude-sonnet-4-20250514"
+			}
+		} else {
+			h.logger().Warn("inline executor: no LLM key, marking failed", zap.Error(err))
+			_, _ = h.srv.Pool.Exec(ctx,
+				`UPDATE runs SET status = 'failed', finished_at = now(), error = $2 WHERE id = $1`,
+				runID, fmt.Sprintf(`{"code":"no_llm","message":"%s"}`, err.Error()),
+			)
+			return
+		}
 	}
 
 	result, tokensIn, tokensOut, costUsd, llmErr := h.llmProxy.callLLMSync(ctx, provider, model, apiKey, prompt)

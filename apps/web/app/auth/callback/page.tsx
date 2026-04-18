@@ -22,7 +22,9 @@ function AuthCallbackInner() {
 
     if (token) {
       api.setToken(token);
-      router.replace("/agents");
+      // Full reload so AuthProvider re-runs its mount effect and fetches
+      // /auth/me with the new token. router.replace keeps the stale user.
+      window.location.replace("/agents");
     } else {
       setError("No token received");
       setTimeout(() => router.replace("/login"), 3000);

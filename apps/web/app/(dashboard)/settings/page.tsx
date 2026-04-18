@@ -26,6 +26,7 @@ import { InviteModal, type InvitedMember } from "@/components/settings/invite-mo
 import { ConfirmDialog } from "@/components/settings/confirm-dialog";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/settings/toast";
+import { PageHeader } from "@/components/page-header";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -309,10 +310,10 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-1 flex-col overflow-auto">
       {/* Header */}
-      <div className="border-b border-zinc-800 bg-surface-1 px-8 py-5">
-        <h1 className="text-xl font-semibold text-zinc-100">Settings</h1>
-        <p className="mt-1 text-sm text-zinc-500">Manage your workspace, API keys, providers, team, and billing.</p>
-      </div>
+      <PageHeader
+        title="Settings"
+        description="Workspace preferences, API keys, LLM providers, team access, and billing."
+      />
 
       {/* Tab bar */}
       <div className="border-b border-zinc-800 bg-surface-1 px-8">
