@@ -12,6 +12,11 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
 import type { Logger } from "pino";
 import { AgentClient } from "./agent.js";
 import { AttentionClassifier } from "./attention.js";
+import type { BotState } from "./types.js";
+
+// Display name for the bot-owner used in attention prompts and log lines.
+// Configurable so the classifier doesn't hardcode a single user's name.
+const OWNER_NAME = process.env.LANTERN_OWNER_NAME || "the owner";
 
 const PAUSE_TTL_MS =
   Math.max(1, Number(process.env.LANTERN_AGENT_PAUSE_MIN) || 60) * 60_000;
@@ -46,9 +51,13 @@ export class WhatsAppSession {
   // opted-in groups the agent runs the attention classifier on every message
   // and auto-replies only when the owner is @mentioned or quoted.
   private monitoredGroups: Set<string> = new Set();
-  // msg.key.id of messages we just sent via the bridge — so we can ignore
-  // the echo that comes back through messages.upsert (fromMe=true).
-  private bridgeSentIds: Set<string> = new Set();
+  // msg.key.id -> epoch_ms when the id was added. We suppress the echo that
+  // comes back through messages.upsert (fromMe=true) for messages we sent
+  // from the bridge. Stored with a timestamp so we can GC entries whose
+  // echo never arrived — otherwise this Set would grow forever.
+  private bridgeSentIds: Map<string, number> = new Map();
+  private static readonly BRIDGE_SENT_TTL_MS = 5 * 60_000;
+  private gcTimer: NodeJS.Timeout | null = null;
 
   constructor(tenantId: string, logger: Logger) {
     this.tenantId = tenantId;
@@ -59,6 +68,17 @@ export class WhatsAppSession {
     this.attention = new AttentionClassifier(this.logger);
     this.stateFile = join(this.authDir, "agent_state.json");
     this.loadState();
+    // GC stale bridgeSentIds every minute so a missed echo doesn't leak mem.
+    this.gcTimer = setInterval(() => this.gcBridgeSentIds(), 60_000);
+    // unref so the timer doesn't keep the process alive on shutdown.
+    this.gcTimer.unref?.();
+  }
+
+  private gcBridgeSentIds() {
+    const cutoff = Date.now() - WhatsAppSession.BRIDGE_SENT_TTL_MS;
+    for (const [id, ts] of this.bridgeSentIds) {
+      if (ts < cutoff) this.bridgeSentIds.delete(id);
+    }
   }
 
   async start() {
@@ -246,9 +266,13 @@ export class WhatsAppSession {
     // Ensure the JID format is correct
     const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
     const sent = await this.socket.sendMessage(jid, { text });
-    if (sent?.key?.id) this.bridgeSentIds.add(sent.key.id);
+    if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
   }
 
+  /**
+   * True if the agent is currently paused for this JID. Expired pauses are
+   * cleaned up lazily here — no background timer needed.
+   */
   isPaused(jid: string): boolean {
     const until = this.pausedUntil.get(jid);
     if (!until) return false;
@@ -260,10 +284,15 @@ export class WhatsAppSession {
     return true;
   }
 
+  /** True if the global mute is on. */
   isMuted() {
     return this.muted;
   }
 
+  /**
+   * Set the global mute. Persists to disk so restarts pick up the same
+   * state. No-op (and no disk write) when the value doesn't change.
+   */
   setMuted(value: boolean) {
     if (this.muted === value) return;
     this.muted = value;
@@ -271,15 +300,25 @@ export class WhatsAppSession {
     this.logger.info({ muted: value }, "bot mute toggled");
   }
 
+  /**
+   * Pause agent auto-replies for one contact until now + ttlMs. Default TTL
+   * is LANTERN_AGENT_PAUSE_MIN (60 min) which matches the "owner took over"
+   * heuristic; callers can pass INDEFINITE_MS for an explicit indefinite pause.
+   */
   pauseContact(jid: string, ttlMs: number = PAUSE_TTL_MS) {
     this.pausedUntil.set(jid, Date.now() + ttlMs);
     this.saveState();
   }
 
+  /** Clear the pause for a single JID. No-op if the JID wasn't paused. */
   resumeContact(jid: string) {
     if (this.pausedUntil.delete(jid)) this.saveState();
   }
 
+  /**
+   * Clear every per-contact pause. Returns the number of pauses cleared so
+   * the UI can surface "resumed N contacts". Does NOT affect the global mute.
+   */
   resumeAll(): number {
     const count = this.pausedUntil.size;
     if (count === 0) return 0;
@@ -289,6 +328,11 @@ export class WhatsAppSession {
     return count;
   }
 
+  /**
+   * Opt a group in to monitoring. Silently refuses non-group JIDs — groups
+   * are the only thing with an explicit opt-in because auto-replying in
+   * every group the owner is in would be a disaster.
+   */
   monitorGroup(jid: string) {
     if (!this.isGroupJid(jid)) return;
     if (this.monitoredGroups.has(jid)) return;
@@ -297,15 +341,21 @@ export class WhatsAppSession {
     this.logger.info({ jid }, "started monitoring group");
   }
 
+  /** Remove a group from the monitored set. No-op if not present. */
   unmonitorGroup(jid: string) {
     if (this.monitoredGroups.delete(jid)) this.saveState();
   }
 
+  /** True if we're currently monitoring this group. */
   isMonitoredGroup(jid: string) {
     return this.monitoredGroups.has(jid);
   }
 
-  getBotState() {
+  /**
+   * Snapshot of everything the dashboard / commands need to render.
+   * Expired pauses are filtered out before publishing.
+   */
+  getBotState(): BotState {
     const paused: Record<string, number> = {};
     const now = Date.now();
     for (const [jid, until] of this.pausedUntil) {
@@ -548,7 +598,7 @@ export class WhatsAppSession {
     if (!own || !this.socket) return;
     try {
       const sent = await this.socket.sendMessage(own, { text });
-      if (sent?.key?.id) this.bridgeSentIds.add(sent.key.id);
+      if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
     } catch (err) {
       this.logger.warn({ err }, "could not send confirmation to self");
     }
@@ -583,7 +633,7 @@ export class WhatsAppSession {
 
     try {
       const sent = await this.socket.sendMessage(own, { text: body });
-      if (sent?.key?.id) this.bridgeSentIds.add(sent.key.id);
+      if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
       this.attention.markNotified(from);
       this.logger.info(
         { from, reason: verdict.reason },
@@ -630,6 +680,10 @@ export class WhatsAppSession {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.gcTimer) {
+      clearInterval(this.gcTimer);
+      this.gcTimer = null;
     }
     if (this.socket) {
       this.socket.end(undefined);

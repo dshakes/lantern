@@ -12,6 +12,18 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 
+// Optional bridge shared-token. When set (via NEXT_PUBLIC_LANTERN_BRIDGE_TOKEN),
+// every request to the bridge carries `Authorization: Bearer <token>`. The
+// bridge itself only enforces this when LANTERN_BRIDGE_TOKEN is set on its
+// side, so the two values must match in that case.
+const BRIDGE_TOKEN = process.env.NEXT_PUBLIC_LANTERN_BRIDGE_TOKEN || "";
+
+function authHeaders(extra?: HeadersInit): HeadersInit {
+  const h: Record<string, string> = { ...(extra as Record<string, string> | undefined) };
+  if (BRIDGE_TOKEN) h["Authorization"] = `Bearer ${BRIDGE_TOKEN}`;
+  return h;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -29,6 +41,15 @@ interface WhatsAppPairingProps {
   bridgeUrl?: string;
   onConnected?: (info: { phoneNumber: string; name: string }) => void;
   onDisconnected?: () => void;
+}
+
+// Mirror of BotState from services/whatsapp-bridge/src/types.ts. Duplicated
+// here (rather than imported) so the dashboard doesn't pull in any bridge
+// runtime code. Keep in sync.
+interface BotState {
+  muted: boolean;
+  paused: Record<string, number>;
+  monitoredGroups?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -59,13 +80,10 @@ export function WhatsAppPairing({
     try {
       const res = await fetch(`${bridgeUrl}/session/${tenantId}/bot`, {
         signal: AbortSignal.timeout(3000),
+        headers: authHeaders(),
       });
       if (!res.ok) return;
-      const data = (await res.json()) as {
-        muted: boolean;
-        paused: Record<string, number>;
-        monitoredGroups?: string[];
-      };
+      const data = (await res.json()) as BotState;
       setBotMuted(data.muted);
       setPausedCount(Object.keys(data.paused ?? {}).length);
       setMonitoredGroups(data.monitoredGroups ?? []);
@@ -81,16 +99,12 @@ export function WhatsAppPairing({
         `${bridgeUrl}/session/${tenantId}/bot/group/unmonitor`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ jid }),
         }
       );
       if (res.ok) {
-        const data = (await res.json()) as {
-          muted: boolean;
-          paused: Record<string, number>;
-          monitoredGroups?: string[];
-        };
+        const data = (await res.json()) as BotState;
         setBotMuted(data.muted);
         setPausedCount(Object.keys(data.paused ?? {}).length);
         setMonitoredGroups(data.monitoredGroups ?? []);
@@ -107,14 +121,10 @@ export function WhatsAppPairing({
     try {
       const res = await fetch(
         `${bridgeUrl}/session/${tenantId}/bot/resume-all`,
-        { method: "POST" }
+        { method: "POST", headers: authHeaders() }
       );
       if (res.ok) {
-        const data = (await res.json()) as {
-          muted: boolean;
-          paused: Record<string, number>;
-          monitoredGroups?: string[];
-        };
+        const data = (await res.json()) as BotState;
         setBotMuted(data.muted);
         setPausedCount(Object.keys(data.paused ?? {}).length);
         setMonitoredGroups(data.monitoredGroups ?? []);
@@ -132,14 +142,10 @@ export function WhatsAppPairing({
     try {
       const res = await fetch(
         `${bridgeUrl}/session/${tenantId}/bot/${path}`,
-        { method: "POST" }
+        { method: "POST", headers: authHeaders() }
       );
       if (res.ok) {
-        const data = (await res.json()) as {
-          muted: boolean;
-          paused: Record<string, number>;
-          monitoredGroups?: string[];
-        };
+        const data = (await res.json()) as BotState;
         setBotMuted(data.muted);
         setPausedCount(Object.keys(data.paused ?? {}).length);
         setMonitoredGroups(data.monitoredGroups ?? []);
@@ -162,7 +168,7 @@ export function WhatsAppPairing({
         try {
           const statusRes = await fetch(
             `${bridgeUrl}/session/${tenantId}/status`,
-            { signal: AbortSignal.timeout(3000) }
+            { signal: AbortSignal.timeout(3000), headers: authHeaders() }
           );
           if (statusRes.ok) {
             const s = (await statusRes.json()) as {
@@ -206,7 +212,9 @@ export function WhatsAppPairing({
 
   const connectWebSocket = useCallback(() => {
     const wsUrl = bridgeUrl.replace(/^http/, "ws");
-    const ws = new WebSocket(`${wsUrl}/ws?tenantId=${tenantId}`);
+    const qs = new URLSearchParams({ tenantId });
+    if (BRIDGE_TOKEN) qs.set("token", BRIDGE_TOKEN);
+    const ws = new WebSocket(`${wsUrl}/ws?${qs.toString()}`);
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
@@ -265,7 +273,7 @@ export function WhatsAppPairing({
     try {
       const res = await fetch(
         `${bridgeUrl}/session/${tenantId}/start`,
-        { method: "POST" }
+        { method: "POST", headers: authHeaders() }
       );
       if (!res.ok) {
         throw new Error(`Bridge returned ${res.status}`);
@@ -285,6 +293,7 @@ export function WhatsAppPairing({
     try {
       await fetch(`${bridgeUrl}/session/${tenantId}/disconnect`, {
         method: "POST",
+        headers: authHeaders(),
       });
     } catch {
       // Best effort
