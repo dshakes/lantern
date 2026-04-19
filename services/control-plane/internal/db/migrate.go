@@ -607,4 +607,39 @@ var migrations = []string{
 		tool_counts   JSONB NOT NULL DEFAULT '{}'::jsonb,
 		PRIMARY KEY (tenant_id, agent_name, usage_date)
 	)`,
+
+	// ---------------------------------------------------------------
+	// Verifiable execution receipts (HMAC-signed run summaries).
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS run_receipts (
+		tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		run_id      UUID NOT NULL PRIMARY KEY,
+		signature   TEXT NOT NULL,
+		payload     JSONB NOT NULL,
+		issued_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS run_receipts_tenant_idx
+		ON run_receipts (tenant_id, issued_at DESC)`,
+
+	// ---------------------------------------------------------------
+	// Run feedback (RLHF: per-run human reactions + preferred outputs).
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS run_feedback (
+		id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		run_id            UUID NOT NULL,
+		agent_name        TEXT,
+		score             INTEGER NOT NULL CHECK (score BETWEEN 1 AND 5),
+		comment           TEXT,
+		preferred_output  TEXT,
+		source            TEXT NOT NULL DEFAULT 'dashboard',
+		created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS run_feedback_run_idx
+		ON run_feedback (run_id, created_at DESC)`,
+
+	`CREATE INDEX IF NOT EXISTS run_feedback_agent_idx
+		ON run_feedback (tenant_id, agent_name, created_at DESC)`,
 }

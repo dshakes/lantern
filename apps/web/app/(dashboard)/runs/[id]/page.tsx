@@ -19,6 +19,8 @@ import { formatCost, formatTokens, formatDuration } from "@/lib/mock-data";
 import { StatusBadge } from "@/components/status-badge";
 import { JsonViewer } from "@/components/json-viewer";
 import { RunDetailSkeleton } from "@/components/skeleton";
+import { FeedbackWidget } from "@/components/feedback-widget";
+import { ReceiptCard } from "@/components/receipt-card";
 
 export default function RunDetailPage() {
   const params = useParams();
@@ -226,6 +228,26 @@ export default function RunDetailPage() {
                 <InfoRow label="Cost"><span className="font-mono text-sm font-medium text-lantern-500">{formatCost(run.costUsd)}</span></InfoRow>
               </dl>
             </section>
+
+            {/* Feedback (RLHF loop) — only after run reached a terminal state */}
+            {(effectiveStatus === "succeeded" || effectiveStatus === "failed") && (
+              <section>
+                <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                  Feedback
+                </h3>
+                <FeedbackWidget runId={run.id} />
+              </section>
+            )}
+
+            {/* Verifiable receipt — only for completed runs */}
+            {(effectiveStatus === "succeeded" || effectiveStatus === "failed") && (
+              <section>
+                <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                  Verification
+                </h3>
+                <ReceiptCard runId={run.id} />
+              </section>
+            )}
 
             {/* Input / Output raw data */}
             <section>

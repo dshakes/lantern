@@ -144,6 +144,12 @@ func main() {
 	evalHandler := handlers.NewEvalHandler(srv, authHandler)
 	experimentHandler := handlers.NewExperimentHandler(srv, authHandler)
 
+	// Frontier surface: verifiable receipts, RLHF feedback loop,
+	// rehearsal of past failures against new agent versions.
+	receiptHandler := handlers.NewReceiptHandler(srv, authHandler)
+	feedbackHandler := handlers.NewFeedbackHandler(srv, authHandler)
+	rehearseHandler := handlers.NewRehearseHandler(srv, authHandler)
+
 	// --- HTTP server (health + auth + REST API) ---
 	httpMux := http.NewServeMux()
 	httpMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -298,6 +304,19 @@ func main() {
 	httpMux.HandleFunc("GET /v1/experiments/{id}", experimentHandler.Get)
 	httpMux.HandleFunc("POST /v1/experiments/{id}/record", experimentHandler.RecordOutcome)
 	httpMux.HandleFunc("POST /v1/experiments/{id}/conclude", experimentHandler.Conclude)
+
+	// Verifiable execution receipts — HMAC-signed, journal-bound run summaries.
+	httpMux.HandleFunc("POST /v1/runs/{id}/receipt", receiptHandler.IssueReceipt)
+	httpMux.HandleFunc("POST /v1/runs/receipts/verify", receiptHandler.VerifyReceipt)
+	httpMux.HandleFunc("GET /.well-known/lantern-receipts", receiptHandler.WellKnown)
+
+	// RLHF feedback loop — per-run thumbs + preferred-output capture.
+	httpMux.HandleFunc("POST /v1/runs/{id}/feedback", feedbackHandler.SubmitFeedback)
+	httpMux.HandleFunc("GET /v1/runs/{id}/feedback", feedbackHandler.ListFeedback)
+	httpMux.HandleFunc("GET /v1/agents/{name}/feedback", feedbackHandler.AgentSummary)
+
+	// Rehearsals — replay past failures against a candidate agent version.
+	httpMux.HandleFunc("POST /v1/runs/rehearse", rehearseHandler.Rehearse)
 
 	httpServer := &http.Server{
 		Addr:              ":8080",

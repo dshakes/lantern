@@ -204,6 +204,8 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `eval_runs` | One execution of a suite | `tenant_id`, `suite_id`, `agent_version`, `commit_sha`, `branch`, `passed`, `score`, `cases_result` (JSONB) |
 | `eval_baselines` | Branch pinned baseline | `tenant_id`, `agent_name`, `branch`, `eval_run_id` |
 | `agent_experiments` | A/B traffic splits with auto-promotion | `tenant_id`, `agent_name`, `variant_a_version`, `variant_b_version`, `traffic_split_b`, `auto_promote`, `a_score`, `b_score` |
+| `run_receipts` | HMAC-signed verifiable execution receipts | `run_id` (PK), `tenant_id`, `signature`, `payload` (JSONB), `issued_at` |
+| `run_feedback` | Per-run RLHF reactions | `run_id`, `tenant_id`, `score` (1-5), `comment`, `preferred_output`, `source` |
 
 Row-Level Security is enabled on `agents` and `runs` with tenant isolation policies.
 
@@ -348,6 +350,38 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 | `POST` | `/v1/agents/{name}/mcp-servers` | Attach an MCP server to an agent |
 | `GET` | `/v1/agents/{name}/mcp-servers` | List attachments |
 | `DELETE` | `/v1/agents/{name}/mcp-servers/{slug}` | Detach |
+
+### Verifiable receipts
+Tamper-evident HMAC-SHA256-signed proof of execution. Every receipt includes
+the SHA-256 of the run's `journal_events` stream so any post-hoc tampering
+invalidates the signature. Self-hosted deployments expose the signing key
+fingerprint via `/.well-known/lantern-receipts` for external verifiers.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/runs/{id}/receipt` | Issue + persist a signed receipt for a completed run |
+| `POST` | `/v1/runs/receipts/verify` | Verify a receipt signature (no auth required) |
+| `GET` | `/.well-known/lantern-receipts` | Signing algorithm + key fingerprint |
+
+### Run feedback (RLHF loop)
+Per-run human reactions feed the eval suite as positive examples and the
+rehearsal queue as failures to replay. Score is 1..5; 4-5 is "thumbs up", 1-2
+is "thumbs down".
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/runs/{id}/feedback` | Submit score (1-5), optional comment + preferred output |
+| `GET` | `/v1/runs/{id}/feedback` | List per-run feedback history |
+| `GET` | `/v1/agents/{name}/feedback` | Aggregate summary (avg score, thumbs up/down, 7-day trend) |
+
+### Rehearsals
+Replay past production failures (status=failed OR feedback score <= 2) as
+synthetic test cases against a candidate agent version BEFORE traffic flips.
+Reuses the eval-in-CI baseline machinery to gate merges.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/runs/rehearse` | Pull synthetic test cases from past failed/low-score runs (`window`, `limit`, filters) |
 
 ---
 

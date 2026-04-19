@@ -18,6 +18,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import clsx from "clsx";
+import { api } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Templates (same 6 as the create modal)
@@ -123,54 +124,86 @@ export default function OnboardingPage() {
     if (tmpl) setInputJson(tmpl.defaultInput);
   }, [selectedTemplate]);
 
-  // Provider test
+  // Provider test — saves the key, then asks the backend to round-trip
+  // a noop completion. Marks "ok" only on a real success; otherwise "error".
   const handleTestProvider = useCallback(
     async (provider: "openai" | "anthropic") => {
       const key = provider === "openai" ? openaiKey : anthropicKey;
       if (!key.trim()) return;
       setTestingProvider(provider);
-      await new Promise((r) => setTimeout(r, 1200));
-      const success = key.length >= 10;
-      setProviderStatus((prev) => ({
-        ...prev,
-        [provider]: success ? "ok" : "error",
-      }));
-      setTestingProvider(null);
+      try {
+        await api.saveLlmProvider(provider, key);
+        const result = await api.testLlmProvider(provider);
+        setProviderStatus((prev) => ({
+          ...prev,
+          [provider]: result.success ? "ok" : "error",
+        }));
+      } catch {
+        setProviderStatus((prev) => ({ ...prev, [provider]: "error" }));
+      } finally {
+        setTestingProvider(null);
+      }
     },
     [openaiKey, anthropicKey]
   );
 
-  // Create agent
+  // Create the user's first agent against the real backend.
   const handleCreateAgent = async () => {
     if (!agentName.trim()) return;
     setCreatingAgent(true);
-    await new Promise((r) => setTimeout(r, 800));
-    setCreatingAgent(false);
-    setAgentCreated(true);
+    const tmpl = templates.find((t) => t.id === selectedTemplate);
+    try {
+      await api.createAgent({
+        name: agentName.trim().toLowerCase().replace(/\s+/g, "-"),
+        description: tmpl?.desc ?? "Created from onboarding",
+        template: selectedTemplate,
+      });
+      setAgentCreated(true);
+    } catch {
+      // Non-fatal — surface page handles the error state. We still let the
+      // user advance so they can poke around even if the API is unreachable.
+      setAgentCreated(true);
+    } finally {
+      setCreatingAgent(false);
+    }
   };
 
-  // Run agent
+  // Kick off a real run, then bounce to the agents dashboard.
   const handleRun = async () => {
     setRunning(true);
-    await new Promise((r) => setTimeout(r, 1200));
-
-    // Save onboarding complete flag
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(inputJson);
+    } catch {
+      parsed = { input: inputJson };
+    }
+    try {
+      await api.createRun({
+        agentName: agentName.trim().toLowerCase().replace(/\s+/g, "-"),
+        input: parsed,
+      });
+    } catch {
+      // Swallow — onboarding completes even if the backend rejects it.
+    }
     if (typeof window !== "undefined") {
       localStorage.setItem("lantern_onboarding_complete", "true");
     }
-
-    // Navigate to the agents dashboard
     router.push("/agents");
   };
 
-  // Proceed to next step from step 2 (provider config)
-  const handleProviderContinue = () => {
-    // Save provider keys if entered
+  // Persist provider keys on continue. Saving here as well as in Test catches
+  // the "user typed a key but didn't click Test" case.
+  const handleProviderContinue = async () => {
+    try {
+      if (openaiKey.trim()) await api.saveLlmProvider("openai", openaiKey);
+      if (anthropicKey.trim()) await api.saveLlmProvider("anthropic", anthropicKey);
+    } catch {
+      // Non-fatal — settings page can retry later.
+    }
     if (typeof window !== "undefined") {
       const providers = {
-        openai: { key: openaiKey, status: openaiKey ? "connected" : "not_configured" },
-        anthropic: { key: anthropicKey, status: anthropicKey ? "connected" : "not_configured" },
-        google: { key: "", status: "not_configured" },
+        openai: { configured: !!openaiKey },
+        anthropic: { configured: !!anthropicKey },
       };
       localStorage.setItem("lantern_settings_providers", JSON.stringify(providers));
     }

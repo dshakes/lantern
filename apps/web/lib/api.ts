@@ -1756,6 +1756,71 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       { method: "DELETE" },
     );
   }
+
+  // ---- Verifiable receipts -------------------------------------------------
+
+  async issueReceipt(runId: string): Promise<SignedReceipt> {
+    return this.request<SignedReceipt>(`/v1/runs/${encodeURIComponent(runId)}/receipt`, {
+      method: "POST",
+    });
+  }
+
+  async verifyReceipt(receipt: SignedReceipt): Promise<{
+    valid: boolean;
+    reason?: string;
+    runId?: string;
+    issuedAt?: string;
+    tenantId?: string;
+  }> {
+    return this.request(`/v1/runs/receipts/verify`, {
+      method: "POST",
+      body: JSON.stringify(receipt),
+    });
+  }
+
+  // ---- Run feedback (RLHF) -------------------------------------------------
+
+  async submitRunFeedback(
+    runId: string,
+    body: {
+      score: number;
+      comment?: string;
+      preferredOutput?: string;
+      source?: "dashboard" | "sdk" | "surface";
+    },
+  ): Promise<{ status: string }> {
+    return this.request(`/v1/runs/${encodeURIComponent(runId)}/feedback`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async listRunFeedback(runId: string): Promise<RunFeedback[]> {
+    return this.request<RunFeedback[]>(
+      `/v1/runs/${encodeURIComponent(runId)}/feedback`,
+    );
+  }
+
+  async getAgentFeedbackSummary(agentName: string): Promise<FeedbackSummary> {
+    return this.request<FeedbackSummary>(
+      `/v1/agents/${encodeURIComponent(agentName)}/feedback`,
+    );
+  }
+
+  // ---- Rehearsals (replay past failures) -----------------------------------
+
+  async rehearse(body: {
+    agentName: string;
+    window?: string;
+    includeFailures?: boolean;
+    includeLowScore?: boolean;
+    limit?: number;
+  }): Promise<RehearseResponse> {
+    return this.request<RehearseResponse>(`/v1/runs/rehearse`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1902,6 +1967,67 @@ export interface McpServer {
   endpoint?: string;
   tools?: string[];
   installsCount?: number;
+}
+
+export interface ReceiptPayload {
+  runId: string;
+  tenantId: string;
+  agentName: string;
+  agentVersion?: string;
+  model?: string;
+  provider?: string;
+  status: string;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  journalHash: string;
+  issuedAt: string;
+  version: number;
+}
+
+export interface SignedReceipt {
+  payload: ReceiptPayload;
+  signature: string;
+  algorithm: string;
+}
+
+export interface RunFeedback {
+  runId: string;
+  agentName?: string;
+  score: number;
+  comment?: string;
+  preferredOutput?: string;
+  source: string;
+  createdAt: string;
+}
+
+export interface FeedbackSummary {
+  agentName: string;
+  totalFeedback: number;
+  avgScore: number;
+  thumbsUp: number;
+  thumbsDown: number;
+  runsWithPreferredOutput: number;
+  last7DaysAvgScore: number;
+}
+
+export interface RehearseCase {
+  originalRunId: string;
+  originalAgentVersion?: string;
+  originalStatus: string;
+  originalScore?: number | null;
+  input: unknown;
+  expectedOutput?: unknown;
+  originalCostUsd: number;
+  originalAt: string;
+}
+
+export interface RehearseResponse {
+  agentName: string;
+  window: string;
+  cases: RehearseCase[];
+  count: number;
+  reason?: string;
 }
 
 export const api = new LanternAPI();

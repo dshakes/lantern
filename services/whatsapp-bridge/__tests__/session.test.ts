@@ -119,6 +119,145 @@ describe("WhatsAppSession: pause state", () => {
     const state = s.getBotState();
     expect(Object.keys(state.paused)).toEqual([bob]);
   });
+
+  it("pauseContact accepts a pushName and exposes it via internal entry", () => {
+    const s = makeSession();
+    s.pauseContact(alice, 60_000, "Alice");
+    const entry = (s as unknown as {
+      pausedUntil: Map<string, { pushName?: string; warned: boolean }>;
+    }).pausedUntil.get(alice);
+    expect(entry?.pushName).toBe("Alice");
+    expect(entry?.warned).toBe(false);
+  });
+
+  it("pauseContact preserves pushName across re-pauses without explicit name", () => {
+    const s = makeSession();
+    s.pauseContact(alice, 60_000, "Alice");
+    s.pauseContact(alice, 120_000); // rolling extension, no pushName
+    const entry = (s as unknown as {
+      pausedUntil: Map<string, { pushName?: string; warned: boolean }>;
+    }).pausedUntil.get(alice);
+    expect(entry?.pushName).toBe("Alice");
+    expect(entry?.warned).toBe(false); // reset on every pause call
+  });
+
+  it("pauseContact re-pause resets warned flag", () => {
+    const s = makeSession();
+    s.pauseContact(alice, 60_000);
+    const map = (s as unknown as {
+      pausedUntil: Map<string, { warned: boolean }>;
+    }).pausedUntil;
+    const entry = map.get(alice)!;
+    entry.warned = true; // simulate a prior warning
+    s.pauseContact(alice, 60_000);
+    expect(map.get(alice)!.warned).toBe(false);
+  });
+
+  it("pause state (with pushName) round-trips through disk", async () => {
+    const s1 = makeSession();
+    s1.pauseContact(alice, 60_000, "Alice");
+    await s1.disconnect();
+
+    const s2 = makeSession();
+    const entry = (s2 as unknown as {
+      pausedUntil: Map<string, { pushName?: string; warned: boolean }>;
+    }).pausedUntil.get(alice);
+    expect(entry?.pushName).toBe("Alice");
+    expect(s2.isPaused(alice)).toBe(true);
+  });
+
+  it("loadState migrates legacy numeric pausedUntil entries", async () => {
+    // Write a state file in the v1 (number) shape and confirm a fresh
+    // session picks it up as a PauseEntry with warned=false.
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const authDir = join(process.cwd(), "auth_sessions", "test-tenant");
+    mkdirSync(authDir, { recursive: true });
+    const until = Date.now() + 60_000;
+    writeFileSync(
+      join(authDir, "agent_state.json"),
+      JSON.stringify({
+        muted: false,
+        pausedUntil: { [alice]: until },
+        monitoredGroups: [],
+      })
+    );
+    const s = makeSession();
+    expect(s.isPaused(alice)).toBe(true);
+    const entry = (s as unknown as {
+      pausedUntil: Map<string, { until: number; warned: boolean }>;
+    }).pausedUntil.get(alice);
+    expect(entry?.until).toBe(until);
+    expect(entry?.warned).toBe(false);
+  });
+});
+
+describe("WhatsAppSession: grace-period pause-expiry warnings", () => {
+  const alice = "15551111111@s.whatsapp.net";
+  const bob = "15552222222@s.whatsapp.net";
+  const carol = "15553333333@s.whatsapp.net";
+
+  // Reach in to the private ticker + buffer for deterministic tests.
+  // We don't await the real 30s timers — we drive them by hand.
+  function tick(s: WhatsAppSession) {
+    (s as unknown as { checkPauseExpiries: () => void }).checkPauseExpiries();
+  }
+  function pending(s: WhatsAppSession) {
+    return (s as unknown as {
+      pendingWarnings: Array<{ jid: string; pushName?: string }>;
+    }).pendingWarnings;
+  }
+
+  it("ticker does not warn when pause is comfortably in the future", () => {
+    const s = makeSession();
+    s.pauseContact(alice, 60 * 60_000); // 1 hour out
+    tick(s);
+    expect(pending(s)).toHaveLength(0);
+  });
+
+  it("ticker warns once when pause is within 5 minutes of expiring", () => {
+    const s = makeSession();
+    s.pauseContact(alice, 4 * 60_000, "Alice"); // 4 min — inside the 5-min lead
+    tick(s);
+    expect(pending(s).map((w) => w.jid)).toEqual([alice]);
+    tick(s); // second tick: already warned, no dup
+    expect(pending(s)).toHaveLength(1);
+  });
+
+  it("re-pausing a contact clears `warned` so the next near-expiry warns again", () => {
+    const s = makeSession();
+    s.pauseContact(alice, 4 * 60_000, "Alice");
+    tick(s);
+    expect(pending(s)).toHaveLength(1);
+    // Drain the buffer as if flushWarnings ran.
+    (s as unknown as {
+      pendingWarnings: Array<unknown>;
+    }).pendingWarnings = [];
+    // Owner replies again → pause extended → warned resets.
+    s.pauseContact(alice, 4 * 60_000);
+    tick(s);
+    expect(pending(s)).toHaveLength(1);
+  });
+
+  it("ticker drops expired entries and warns on near-expiry in same pass", () => {
+    const s = makeSession();
+    s.pauseContact(alice, 1); // will be expired by the time tick runs
+    s.pauseContact(bob, 2 * 60_000, "Bob");
+    // busy-wait micro-sleep to guarantee expiry for alice
+    const stop = Date.now() + 15;
+    while (Date.now() < stop) {
+      /* spin */
+    }
+    tick(s);
+    expect(s.isPaused(alice)).toBe(false);
+    expect(pending(s).map((w) => w.jid)).toEqual([bob]);
+  });
+
+  it("indefinite pauses (e.g. /bot off for a contact) never hit the warn window", () => {
+    const s = makeSession();
+    s.pauseContact(alice, 365 * 24 * 60 * 60_000); // 1 year
+    tick(s);
+    expect(pending(s)).toHaveLength(0);
+  });
 });
 
 describe("WhatsAppSession: monitored groups", () => {

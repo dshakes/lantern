@@ -268,6 +268,279 @@ func (c *Client) SetEvalBaseline(ctx context.Context, agentName, branch, evalRun
 	}, nil)
 }
 
+// ---------- A/B experiments ----------
+
+// Experiment is an A/B test between two agent versions with optional auto-promotion.
+type Experiment struct {
+	ID                string     `json:"id,omitempty"`
+	AgentName         string     `json:"agentName"`
+	Name              string     `json:"name"`
+	VariantAVersion   string     `json:"variantAVersion"`
+	VariantBVersion   string     `json:"variantBVersion"`
+	TrafficSplitB     int        `json:"trafficSplitB"`
+	EvalSuiteID       string     `json:"evalSuiteId,omitempty"`
+	AutoPromote       bool       `json:"autoPromote"`
+	MinRunsToPromote  int        `json:"minRunsToPromote,omitempty"`
+	Status            string     `json:"status,omitempty"`
+	Winner            string     `json:"winner,omitempty"`
+	ARuns             int        `json:"aRuns,omitempty"`
+	BRuns             int        `json:"bRuns,omitempty"`
+	AScore            *float64   `json:"aScore,omitempty"`
+	BScore            *float64   `json:"bScore,omitempty"`
+	StartedAt         time.Time  `json:"startedAt,omitempty"`
+	ConcludedAt       *time.Time `json:"concludedAt,omitempty"`
+}
+
+// CreateExperiment starts a new A/B experiment.
+func (c *Client) CreateExperiment(ctx context.Context, e Experiment) (*Experiment, error) {
+	var out Experiment
+	err := c.do(ctx, http.MethodPost, "/v1/experiments", e, &out)
+	return &out, err
+}
+
+// RecordExperimentOutcome reports a per-run score (0..1) for one variant.
+// The control plane updates rolling stats and may auto-promote a winner.
+func (c *Client) RecordExperimentOutcome(ctx context.Context, id, variant string, score float64) error {
+	return c.do(ctx, http.MethodPost, "/v1/experiments/"+id+"/record", map[string]any{
+		"variant": variant, "score": score,
+	}, nil)
+}
+
+// ConcludeExperiment manually ends an experiment and optionally promotes the winner.
+func (c *Client) ConcludeExperiment(ctx context.Context, id, winner string, promote bool) error {
+	return c.do(ctx, http.MethodPost, "/v1/experiments/"+id+"/conclude", map[string]any{
+		"winner": winner, "promote": promote,
+	}, nil)
+}
+
+// ---------- Marketplace ----------
+
+// MarketplaceAgent is a publicly published agent available for forking.
+type MarketplaceAgent struct {
+	Slug         string         `json:"slug"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	Category     string         `json:"category"`
+	Tags         []string       `json:"tags,omitempty"`
+	StarsCount   int            `json:"starsCount"`
+	ForksCount   int            `json:"forksCount"`
+	Author       string         `json:"author,omitempty"`
+	Manifest     map[string]any `json:"manifest,omitempty"`
+	PublishedAt  time.Time      `json:"publishedAt"`
+}
+
+// ListMarketplace returns published agents matching the optional category/query filters.
+func (c *Client) ListMarketplace(ctx context.Context, category, query string) ([]MarketplaceAgent, error) {
+	path := "/v1/marketplace"
+	first := true
+	if category != "" {
+		path += "?category=" + category
+		first = false
+	}
+	if query != "" {
+		sep := "?"
+		if !first {
+			sep = "&"
+		}
+		path += sep + "q=" + query
+	}
+	var out []MarketplaceAgent
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+// PublishAgent publishes a tenant-local agent to the marketplace under the given slug.
+func (c *Client) PublishAgent(ctx context.Context, agentName, slug, category string, tags []string) (*MarketplaceAgent, error) {
+	var out MarketplaceAgent
+	err := c.do(ctx, http.MethodPost, "/v1/marketplace/publish", map[string]any{
+		"agentName": agentName,
+		"slug":      slug,
+		"category":  category,
+		"tags":      tags,
+	}, &out)
+	return &out, err
+}
+
+// ForkAgent forks a marketplace agent into the caller's tenant.
+func (c *Client) ForkAgent(ctx context.Context, slug, newName string) (*Agent, error) {
+	var out Agent
+	err := c.do(ctx, http.MethodPost, "/v1/marketplace/"+slug+"/fork", map[string]string{
+		"name": newName,
+	}, &out)
+	return &out, err
+}
+
+// ---------- MCP servers ----------
+
+// MCPServer is an entry in the curated MCP server registry.
+type MCPServer struct {
+	Slug          string   `json:"slug"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description"`
+	Category      string   `json:"category"`
+	Transport     string   `json:"transport,omitempty"`
+	URL           string   `json:"url,omitempty"`
+	Command       string   `json:"command,omitempty"`
+	AuthType      string   `json:"authType,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	Official      bool     `json:"official"`
+	InstallsCount int      `json:"installsCount"`
+}
+
+// ListMCPServers returns the registry of MCP servers.
+func (c *Client) ListMCPServers(ctx context.Context) ([]MCPServer, error) {
+	var out []MCPServer
+	err := c.do(ctx, http.MethodGet, "/v1/mcp/servers", nil, &out)
+	return out, err
+}
+
+// AttachMCPServer wires an MCP server to an agent with optional config.
+func (c *Client) AttachMCPServer(ctx context.Context, agentName, slug string, config map[string]any) error {
+	return c.do(ctx, http.MethodPost, "/v1/agents/"+agentName+"/mcp-servers", map[string]any{
+		"slug": slug, "config": config,
+	}, nil)
+}
+
+// DetachMCPServer removes a previously attached MCP server from an agent.
+func (c *Client) DetachMCPServer(ctx context.Context, agentName, slug string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/agents/"+agentName+"/mcp-servers/"+slug, nil, nil)
+}
+
+// ---------- Verifiable receipts ----------
+
+// ReceiptPayload is the canonical payload covered by the receipt signature.
+type ReceiptPayload struct {
+	RunID        string    `json:"runId"`
+	TenantID     string    `json:"tenantId"`
+	AgentName    string    `json:"agentName"`
+	AgentVersion string    `json:"agentVersion,omitempty"`
+	Model        string    `json:"model,omitempty"`
+	Provider     string    `json:"provider,omitempty"`
+	Status       string    `json:"status"`
+	TokensIn     int64     `json:"tokensIn"`
+	TokensOut    int64     `json:"tokensOut"`
+	CostUsd      float64   `json:"costUsd"`
+	JournalHash  string    `json:"journalHash"`
+	IssuedAt     time.Time `json:"issuedAt"`
+	Version      int       `json:"version"`
+}
+
+// SignedReceipt is a tamper-evident proof of execution.
+type SignedReceipt struct {
+	Payload   ReceiptPayload `json:"payload"`
+	Signature string         `json:"signature"`
+	Algorithm string         `json:"algorithm"`
+}
+
+// IssueReceipt asks the control plane to sign and persist a receipt for a completed run.
+func (c *Client) IssueReceipt(ctx context.Context, runID string) (*SignedReceipt, error) {
+	var out SignedReceipt
+	err := c.do(ctx, http.MethodPost, "/v1/runs/"+runID+"/receipt", nil, &out)
+	return &out, err
+}
+
+// VerifyReceiptResult is what the verifier returns.
+type VerifyReceiptResult struct {
+	Valid    bool      `json:"valid"`
+	Reason   string    `json:"reason,omitempty"`
+	RunID    string    `json:"runId,omitempty"`
+	IssuedAt time.Time `json:"issuedAt,omitempty"`
+	TenantID string    `json:"tenantId,omitempty"`
+}
+
+// VerifyReceipt confirms a receipt's signature against the well-known signing key.
+func (c *Client) VerifyReceipt(ctx context.Context, r SignedReceipt) (*VerifyReceiptResult, error) {
+	var out VerifyReceiptResult
+	err := c.do(ctx, http.MethodPost, "/v1/runs/receipts/verify", r, &out)
+	return &out, err
+}
+
+// ---------- Run feedback (RLHF) ----------
+
+// FeedbackInput captures a per-run human reaction.
+type FeedbackInput struct {
+	Score           int    `json:"score"` // 1..5
+	Comment         string `json:"comment,omitempty"`
+	PreferredOutput string `json:"preferredOutput,omitempty"`
+	Source          string `json:"source,omitempty"` // dashboard|sdk|surface
+}
+
+// SubmitRunFeedback records human feedback against a run.
+func (c *Client) SubmitRunFeedback(ctx context.Context, runID string, fb FeedbackInput) error {
+	if fb.Source == "" {
+		fb.Source = "sdk"
+	}
+	return c.do(ctx, http.MethodPost, "/v1/runs/"+runID+"/feedback", fb, nil)
+}
+
+// FeedbackSummary is the rollup returned for an agent.
+type FeedbackSummary struct {
+	AgentName               string  `json:"agentName"`
+	TotalFeedback           int     `json:"totalFeedback"`
+	AvgScore                float64 `json:"avgScore"`
+	ThumbsUp                int     `json:"thumbsUp"`
+	ThumbsDown              int     `json:"thumbsDown"`
+	RunsWithPreferredOutput int     `json:"runsWithPreferredOutput"`
+	Last7DaysAvgScore       float64 `json:"last7DaysAvgScore"`
+}
+
+// GetAgentFeedbackSummary fetches the rollup of human feedback for an agent.
+func (c *Client) GetAgentFeedbackSummary(ctx context.Context, agentName string) (*FeedbackSummary, error) {
+	var out FeedbackSummary
+	err := c.do(ctx, http.MethodGet, "/v1/agents/"+agentName+"/feedback", nil, &out)
+	return &out, err
+}
+
+// ---------- Rehearsals ----------
+
+// RehearseCase is a synthetic test case derived from past production traffic.
+type RehearseCase struct {
+	OriginalRunID        string          `json:"originalRunId"`
+	OriginalAgentVersion string          `json:"originalAgentVersion,omitempty"`
+	OriginalStatus       string          `json:"originalStatus"`
+	OriginalScore        *int            `json:"originalScore,omitempty"`
+	Input                json.RawMessage `json:"input"`
+	ExpectedOutput       json.RawMessage `json:"expectedOutput,omitempty"`
+	OriginalCostUsd      float64         `json:"originalCostUsd"`
+	OriginalAt           time.Time       `json:"originalAt"`
+}
+
+// RehearseResponse is the synthetic test set returned for rehearsal.
+type RehearseResponse struct {
+	AgentName string         `json:"agentName"`
+	Window    string         `json:"window"`
+	Cases     []RehearseCase `json:"cases"`
+	Count     int            `json:"count"`
+	Reason    string         `json:"reason,omitempty"`
+}
+
+// RehearseOptions configures Rehearse.
+type RehearseOptions struct {
+	Window          string `json:"window,omitempty"`
+	IncludeFailures bool   `json:"includeFailures,omitempty"`
+	IncludeLowScore bool   `json:"includeLowScore,omitempty"`
+	Limit           int    `json:"limit,omitempty"`
+}
+
+// Rehearse pulls past failed/low-score runs as synthetic test cases that the
+// caller (typically `lantern test --rehearse`) replays against a candidate
+// agent version. The resulting case scores can be posted back to /v1/eval-runs
+// to gate merges through the existing baseline machinery.
+func (c *Client) Rehearse(ctx context.Context, agentName string, opts RehearseOptions) (*RehearseResponse, error) {
+	body := map[string]any{"agentName": agentName}
+	if opts.Window != "" {
+		body["window"] = opts.Window
+	}
+	body["includeFailures"] = opts.IncludeFailures
+	body["includeLowScore"] = opts.IncludeLowScore
+	if opts.Limit > 0 {
+		body["limit"] = opts.Limit
+	}
+	var out RehearseResponse
+	err := c.do(ctx, http.MethodPost, "/v1/runs/rehearse", body, &out)
+	return &out, err
+}
+
 // ---------- internals ----------
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {

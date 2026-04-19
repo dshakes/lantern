@@ -24,6 +24,36 @@ const PAUSE_TTL_MS =
 // effectively indefinite until the owner sends `/bot on` there.
 const INDEFINITE_MS = 365 * 24 * 60 * 60_000;
 
+// Grace-period notification tuning. When a takeover pause is about to expire
+// and the agent is about to resume auto-replying, we DM the owner at
+// `until - PAUSE_WARN_LEAD_MS` so they can reply again (extending the pause)
+// or type `/bot off` (converting to indefinite) before the agent kicks back
+// in. The ticker fires on a fixed interval and buffers fires into a single
+// batched message so a burst of concurrent expiries becomes one DM, not N.
+const PAUSE_WARN_LEAD_MS = 5 * 60_000;
+const PAUSE_WARN_FLUSH_MS = 30_000;
+const PAUSE_TICK_MS = 30_000;
+
+/**
+ * Per-contact pause metadata. Kept richer than a bare epoch-ms so we can
+ * render friendly names in grace-period warnings and avoid re-warning the
+ * same pause twice. `warned` is reset every time the pause is extended.
+ */
+type PauseEntry = {
+  until: number;
+  pushName?: string;
+  warned: boolean;
+};
+
+// Render a small list of names with an overflow tail so the DM never becomes
+// a wall of text. 3 names stay inline; everything beyond becomes "(+N more)".
+function formatNameList(names: string[]): string {
+  if (names.length <= 3) return names.join(", ");
+  const head = names.slice(0, 3).join(", ");
+  const extra = names.length - 3;
+  return `${head} (+${extra} more)`;
+}
+
 export class WhatsAppSession {
   private tenantId: string;
   private logger: Logger;
@@ -39,10 +69,11 @@ export class WhatsAppSession {
   private authDir: string;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectAttempts = 0;
-  // jid -> epoch_ms when pause expires. Set whenever the owner types into
-  // a thread from their own phone; suppresses the agent until it expires or
-  // the owner sends "/bot on".
-  private pausedUntil: Map<string, number> = new Map();
+  // jid -> PauseEntry. Set whenever the owner types into a thread from their
+  // own phone; suppresses the agent until it expires or the owner sends
+  // "/bot on". We keep pushName on the entry so we can render friendly
+  // grace-period warnings without relying on a separate contact cache.
+  private pausedUntil: Map<string, PauseEntry> = new Map();
   // Global kill switch. Toggled via self-chat `/bot off`/`/bot on`,
   // via dashboard, or via REST.
   private muted = false;
@@ -58,6 +89,19 @@ export class WhatsAppSession {
   private bridgeSentIds: Map<string, number> = new Map();
   private static readonly BRIDGE_SENT_TTL_MS = 5 * 60_000;
   private gcTimer: NodeJS.Timeout | null = null;
+  // Ticker that looks for pauses near expiry and buffers warnings; the
+  // flush timer is armed lazily when the first warning lands so an empty
+  // buffer never wakes us up.
+  private pauseTickerTimer: NodeJS.Timeout | null = null;
+  private warningFlushTimer: NodeJS.Timeout | null = null;
+  private pendingWarnings: Array<{ jid: string; pushName?: string }> = [];
+  // jid -> last-seen display name for DMs. Populated from incoming
+  // (non-fromMe) messages so that when the owner takes over a thread
+  // manually — where msg.pushName is the owner's own name, not the
+  // contact's — we can still address the grace-period warning by name.
+  // Capped in size; the cap is generous (most users message <1k contacts).
+  private contactNames: Map<string, string> = new Map();
+  private static readonly CONTACT_NAMES_MAX = 5_000;
 
   constructor(tenantId: string, logger: Logger) {
     this.tenantId = tenantId;
@@ -72,6 +116,11 @@ export class WhatsAppSession {
     this.gcTimer = setInterval(() => this.gcBridgeSentIds(), 60_000);
     // unref so the timer doesn't keep the process alive on shutdown.
     this.gcTimer.unref?.();
+    this.pauseTickerTimer = setInterval(
+      () => this.checkPauseExpiries(),
+      PAUSE_TICK_MS
+    );
+    this.pauseTickerTimer.unref?.();
   }
 
   private gcBridgeSentIds() {
@@ -204,6 +253,14 @@ export class WhatsAppSession {
             continue;
           }
 
+          // Remember the sender's display name for later — we'll use it in
+          // the grace-period warning DM, where we only have the JID and no
+          // fresh message context. Non-DM JIDs (groups) are skipped; we
+          // never pause groups so we'd never read from that slot.
+          if (!isGroup && msg.pushName) {
+            this.rememberContactName(from, msg.pushName);
+          }
+
           if (m.type !== "notify" || !text) continue;
 
           // Groups are opt-in: silently skip anything not on the monitor list.
@@ -271,12 +328,13 @@ export class WhatsAppSession {
 
   /**
    * True if the agent is currently paused for this JID. Expired pauses are
-   * cleaned up lazily here — no background timer needed.
+   * cleaned up lazily here; the background ticker is only responsible for
+   * delivering the grace-period heads-up DM, not for expiring state.
    */
   isPaused(jid: string): boolean {
-    const until = this.pausedUntil.get(jid);
-    if (!until) return false;
-    if (Date.now() >= until) {
+    const entry = this.pausedUntil.get(jid);
+    if (!entry) return false;
+    if (Date.now() >= entry.until) {
       this.pausedUntil.delete(jid);
       this.saveState();
       return false;
@@ -304,10 +362,33 @@ export class WhatsAppSession {
    * Pause agent auto-replies for one contact until now + ttlMs. Default TTL
    * is LANTERN_AGENT_PAUSE_MIN (60 min) which matches the "owner took over"
    * heuristic; callers can pass INDEFINITE_MS for an explicit indefinite pause.
+   *
+   * pushName for the grace-period warning is resolved in priority order:
+   * explicit argument > previous entry's pushName > contactNames cache
+   * (populated from inbound messages). `warned` is always reset to false so
+   * a rolling takeover triggers a fresh warning near the new expiry.
    */
-  pauseContact(jid: string, ttlMs: number = PAUSE_TTL_MS) {
-    this.pausedUntil.set(jid, Date.now() + ttlMs);
+  pauseContact(jid: string, ttlMs: number = PAUSE_TTL_MS, pushName?: string) {
+    const prev = this.pausedUntil.get(jid);
+    const resolvedName =
+      pushName || prev?.pushName || this.contactNames.get(jid);
+    this.pausedUntil.set(jid, {
+      until: Date.now() + ttlMs,
+      pushName: resolvedName,
+      warned: false,
+    });
     this.saveState();
+  }
+
+  private rememberContactName(jid: string, name: string) {
+    // Basic bound — if we've learned too many names, drop the oldest
+    // (insertion-order) until we're back under the cap.
+    this.contactNames.set(jid, name);
+    while (this.contactNames.size > WhatsAppSession.CONTACT_NAMES_MAX) {
+      const oldest = this.contactNames.keys().next().value;
+      if (oldest === undefined) break;
+      this.contactNames.delete(oldest);
+    }
   }
 
   /** Clear the pause for a single JID. No-op if the JID wasn't paused. */
@@ -353,13 +434,16 @@ export class WhatsAppSession {
 
   /**
    * Snapshot of everything the dashboard / commands need to render.
-   * Expired pauses are filtered out before publishing.
+   * Expired pauses are filtered out before publishing. The wire format
+   * keeps `paused` as a plain `jid -> until_ms` map so existing clients
+   * (dashboard, CLI) don't have to care about the internal pushName/warned
+   * bookkeeping.
    */
   getBotState(): BotState {
     const paused: Record<string, number> = {};
     const now = Date.now();
-    for (const [jid, until] of this.pausedUntil) {
-      if (until > now) paused[jid] = until;
+    for (const [jid, entry] of this.pausedUntil) {
+      if (entry.until > now) paused[jid] = entry.until;
     }
     return {
       muted: this.muted,
@@ -371,20 +455,25 @@ export class WhatsAppSession {
   private loadState() {
     // Load new unified state file if present; otherwise migrate from
     // the legacy agent_paused.json (which held just the pause map).
+    //
+    // pausedUntil has two on-disk shapes:
+    //   (a) number          — v1 (pre-PauseEntry). Migrated transparently.
+    //   (b) { until, ... }  — current. pushName/warned preserved.
     const legacyFile = join(this.authDir, "agent_paused.json");
     let loaded = false;
     if (existsSync(this.stateFile)) {
       try {
         const raw = JSON.parse(readFileSync(this.stateFile, "utf8")) as {
           muted?: boolean;
-          pausedUntil?: Record<string, number>;
+          pausedUntil?: Record<string, unknown>;
           monitoredGroups?: string[];
         };
         this.muted = !!raw.muted;
         const now = Date.now();
-        for (const [jid, until] of Object.entries(raw.pausedUntil ?? {})) {
-          if (typeof until === "number" && until > now) {
-            this.pausedUntil.set(jid, until);
+        for (const [jid, v] of Object.entries(raw.pausedUntil ?? {})) {
+          const entry = this.coercePauseEntry(v);
+          if (entry && entry.until > now) {
+            this.pausedUntil.set(jid, entry);
           }
         }
         for (const g of raw.monitoredGroups ?? []) {
@@ -404,7 +493,7 @@ export class WhatsAppSession {
         const now = Date.now();
         for (const [jid, until] of Object.entries(raw)) {
           if (typeof until === "number" && until > now) {
-            this.pausedUntil.set(jid, until);
+            this.pausedUntil.set(jid, { until, warned: false });
           }
         }
         this.saveState();
@@ -414,11 +503,29 @@ export class WhatsAppSession {
     }
   }
 
+  private coercePauseEntry(v: unknown): PauseEntry | null {
+    if (typeof v === "number" && Number.isFinite(v)) {
+      return { until: v, warned: false };
+    }
+    if (v && typeof v === "object") {
+      const o = v as { until?: unknown; pushName?: unknown; warned?: unknown };
+      if (typeof o.until !== "number" || !Number.isFinite(o.until)) return null;
+      return {
+        until: o.until,
+        pushName: typeof o.pushName === "string" ? o.pushName : undefined,
+        warned: o.warned === true,
+      };
+    }
+    return null;
+  }
+
   private saveState() {
     try {
+      const pausedUntil: Record<string, PauseEntry> = {};
+      for (const [jid, entry] of this.pausedUntil) pausedUntil[jid] = entry;
       const payload = {
         muted: this.muted,
-        pausedUntil: Object.fromEntries(this.pausedUntil),
+        pausedUntil,
         monitoredGroups: [...this.monitoredGroups],
       };
       writeFileSync(this.stateFile, JSON.stringify(payload, null, 2));
@@ -608,6 +715,91 @@ export class WhatsAppSession {
     return jid.endsWith("@g.us");
   }
 
+  // Scan pauses on every tick. For each entry:
+  //  - if it's already expired, drop it.
+  //  - if the owner hasn't been warned yet AND we're inside the lead window
+  //    (`until - now <= PAUSE_WARN_LEAD_MS`), mark warned and buffer a DM.
+  // Entries deep in the future are ignored. An indefinite pause (`/bot off`
+  // for a contact) never hits the lead window so no warning fires for it,
+  // which is exactly what we want.
+  private checkPauseExpiries() {
+    const now = Date.now();
+    let buffered = false;
+    for (const [jid, entry] of this.pausedUntil) {
+      if (entry.until <= now) {
+        this.pausedUntil.delete(jid);
+        continue;
+      }
+      if (entry.warned) continue;
+      const remaining = entry.until - now;
+      if (remaining > PAUSE_WARN_LEAD_MS) continue;
+      entry.warned = true;
+      this.pendingWarnings.push({ jid, pushName: entry.pushName });
+      buffered = true;
+    }
+    if (buffered) {
+      this.saveState();
+      this.scheduleWarningFlush();
+    }
+  }
+
+  private scheduleWarningFlush() {
+    if (this.warningFlushTimer) return;
+    this.warningFlushTimer = setTimeout(() => {
+      this.warningFlushTimer = null;
+      void this.flushWarnings();
+    }, PAUSE_WARN_FLUSH_MS);
+    this.warningFlushTimer.unref?.();
+  }
+
+  // Emit a single batched DM for every pause that crossed the warn lead
+  // threshold in this flush window. We filter against the current pause map
+  // to skip jids the owner resumed (`/bot on`) or re-paused explicitly —
+  // either action already replaced the warning with an authoritative signal.
+  private async flushWarnings() {
+    const drained = this.pendingWarnings;
+    this.pendingWarnings = [];
+    if (drained.length === 0) return;
+
+    const live = drained.filter((w) => this.pausedUntil.has(w.jid));
+    if (live.length === 0) return;
+
+    const names = live.map(
+      (w) => w.pushName || `+${w.jid.split("@")[0]}`
+    );
+    const leadMin = Math.round(PAUSE_WARN_LEAD_MS / 60_000);
+    const body =
+      live.length === 1
+        ? `⏰ auto-replies resume in ~${leadMin}m for ${names[0]}.\nreply there to extend, or type \`/bot off\` in their thread to keep the bot off.`
+        : `⏰ auto-replies resume in ~${leadMin}m for: ${formatNameList(names)}.\nreply in each thread to extend, or type \`/bot off\` to keep the bot off.`;
+
+    const own = this.ownJid();
+    if (!own || !this.socket) {
+      // No self-chat yet (not paired) — silently drop; a fresh warning will
+      // fire on the next tick if the pauses are still in the window.
+      for (const w of live) {
+        const entry = this.pausedUntil.get(w.jid);
+        if (entry) entry.warned = false;
+      }
+      return;
+    }
+
+    try {
+      const sent = await this.socket.sendMessage(own, { text: body });
+      if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
+      this.logger.info({ count: live.length }, "pause expiry warning sent");
+    } catch (err) {
+      this.logger.warn({ err }, "could not send pause expiry warning");
+      // On send failure, un-warn so the next tick re-tries once (we stop
+      // re-trying after the pause actually expires because expired entries
+      // are dropped in checkPauseExpiries before re-warning).
+      for (const w of live) {
+        const entry = this.pausedUntil.get(w.jid);
+        if (entry) entry.warned = false;
+      }
+    }
+  }
+
   private async checkAttention(
     from: string,
     text: string,
@@ -684,6 +876,14 @@ export class WhatsAppSession {
     if (this.gcTimer) {
       clearInterval(this.gcTimer);
       this.gcTimer = null;
+    }
+    if (this.pauseTickerTimer) {
+      clearInterval(this.pauseTickerTimer);
+      this.pauseTickerTimer = null;
+    }
+    if (this.warningFlushTimer) {
+      clearTimeout(this.warningFlushTimer);
+      this.warningFlushTimer = null;
     }
     if (this.socket) {
       this.socket.end(undefined);

@@ -1,8 +1,10 @@
 import { type LucideIcon } from "lucide-react";
 import Link from "next/link";
+import { type ReactNode } from "react";
 
 interface EmptyStateProps {
-  icon: LucideIcon;
+  icon?: LucideIcon;
+  illustration?: ReactNode;
   title: string;
   description: string;
   actionLabel?: string;
@@ -15,6 +17,7 @@ interface EmptyStateProps {
 
 export function EmptyState({
   icon: Icon,
+  illustration,
   title,
   description,
   actionLabel,
@@ -26,9 +29,13 @@ export function EmptyState({
 }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-700/60 bg-surface-1 px-8 py-20 text-center">
-      <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-3/60">
-        <Icon className="h-7 w-7 text-zinc-500" />
-      </div>
+      {illustration ? (
+        <div className="mb-6">{illustration}</div>
+      ) : Icon ? (
+        <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-3/60">
+          <Icon className="h-7 w-7 text-zinc-500" />
+        </div>
+      ) : null}
       <h3 className="mb-1.5 text-sm font-semibold text-zinc-200">{title}</h3>
       <p className="mb-8 max-w-xs text-sm leading-relaxed text-zinc-500">
         {description}

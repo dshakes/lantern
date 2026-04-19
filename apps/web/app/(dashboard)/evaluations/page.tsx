@@ -20,6 +20,7 @@ import clsx from "clsx";
 import { api } from "@/lib/api";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
 import { PageHeader } from "@/components/page-header";
+import { LineChart, type LineSeries } from "@/components/charts/line-chart";
 import type { Run, Agent } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
@@ -242,6 +243,51 @@ export default function EvaluationsPage() {
   const agentMetrics = useMemo(() => computeAgentMetrics(filteredRuns, agents), [filteredRuns, agents]);
   const modelMetrics = useMemo(() => computeModelMetrics(filteredRuns), [filteredRuns]);
 
+  // Daily aggregates for the trend chart. Buckets each run by UTC date,
+  // then walks forward over the chosen window so empty days render as zero.
+  const { dailyLabels, dailySeries } = useMemo<{
+    dailyLabels: string[];
+    dailySeries: LineSeries[];
+  }>(() => {
+    const days = timeRange === "7d" ? 7 : timeRange === "30d" ? 30 : 30;
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    const labels: string[] = [];
+    const runsByDay: number[] = [];
+    const costByDay: number[] = [];
+    const dayKeys: string[] = [];
+
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(today);
+      d.setUTCDate(today.getUTCDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      dayKeys.push(key);
+      labels.push(d.toLocaleDateString(undefined, { month: "short", day: "numeric" }));
+      runsByDay.push(0);
+      costByDay.push(0);
+    }
+
+    const idxByKey = new Map(dayKeys.map((k, i) => [k, i]));
+    for (const r of filteredRuns) {
+      const k = new Date(r.createdAt).toISOString().slice(0, 10);
+      const i = idxByKey.get(k);
+      if (i === undefined) continue;
+      runsByDay[i]! += 1;
+      costByDay[i]! += r.costUsd ?? 0;
+    }
+
+    return {
+      dailyLabels: labels,
+      dailySeries: [
+        { name: "Runs", values: runsByDay, color: "#a78bfa" },
+        // Scale cost x100 so $0.42 and 42 runs visually coexist; tooltip
+        // formatter undoes the scale below.
+        { name: "Cost (¢)", values: costByDay.map((c) => c * 100), color: "#fbbf24" },
+      ],
+    };
+  }, [filteredRuns, timeRange]);
+
   // Global stats
   const totalRuns = filteredRuns.length;
   const totalSucceeded = filteredRuns.filter((r) => r.status === "succeeded").length;
@@ -343,6 +389,28 @@ export default function EvaluationsPage() {
             iconBg="bg-red-500/10"
             trend={totalFailed === 0 ? "up" : "down"}
           />
+        </div>
+
+        {/* Daily trend chart */}
+        <div>
+          <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-zinc-200">
+            <TrendingUp className="h-4 w-4 text-zinc-500" />
+            Activity over time
+          </h2>
+          <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+            {totalRuns === 0 ? (
+              <div className="flex h-[240px] items-center justify-center text-sm text-zinc-500">
+                No runs in this window yet.
+              </div>
+            ) : (
+              <LineChart
+                series={dailySeries}
+                labels={dailyLabels}
+                height={240}
+                formatY={(n) => fmt(n, 0)}
+              />
+            )}
+          </div>
         </div>
 
         {/* Agent performance table */}
