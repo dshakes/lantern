@@ -349,18 +349,18 @@ function BudgetRow({
   onDelete: () => void;
 }) {
   return (
-    <div className="group rounded-(--radius-lg) border border-zinc-800 bg-surface-1 p-5 transition-all duration-(--motion-fast) hover:border-zinc-700 hover:shadow-(--elev-2)">
+    <div className="group rounded-xl border border-zinc-800 bg-surface-1 p-5 transition-all duration-150 hover:border-zinc-700 hover:shadow-md">
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
           <AgentAvatar name={budget.agentName} size="md" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <p className="truncate text-(--text-sm) font-semibold text-zinc-100">
+              <p className="truncate text-xs font-semibold text-zinc-100">
                 {budget.agentName}
               </p>
               <span
                 className={clsx(
-                  "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-(--text-xs) font-medium",
+                  "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium",
                   budget.hardFail
                     ? "bg-red-500/10 text-red-300"
                     : "bg-amber-500/10 text-amber-300",

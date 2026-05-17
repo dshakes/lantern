@@ -122,9 +122,9 @@ export default function RunsPage() {
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/10 ring-1 ring-red-500/20">
               <Trash2 className="h-5 w-5 text-red-300" />
             </div>
-            <h3 className="mt-4 text-(--text-base) font-semibold text-zinc-100">Couldn&apos;t load runs</h3>
-            <p className="mt-1 max-w-sm text-center text-(--text-sm) text-zinc-500">{error.message}. Check that the control-plane API is reachable.</p>
-            <code className="mt-3 rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-(--text-xs) text-zinc-300">lantern dev</code>
+            <h3 className="mt-4 text-sm font-semibold text-zinc-100">Couldn&apos;t load runs</h3>
+            <p className="mt-1 max-w-sm text-center text-xs text-zinc-500">{error.message}. Check that the control-plane API is reachable.</p>
+            <code className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-[11px] text-zinc-300">lantern dev</code>
           </div>
         ) : filtered.length === 0 ? (
           <EmptyState
@@ -154,17 +154,17 @@ export default function RunsPage() {
               const confirming = deletingRunId === `confirm_${run.id}`;
 
               return (
-                <div key={run.id} className="group rounded-(--radius-md) border border-zinc-800 bg-surface-1 transition-colors duration-(--motion-fast) hover:border-zinc-700">
+                <div key={run.id} className="group rounded-lg border border-zinc-800 bg-surface-1 transition-colors duration-150 hover:border-zinc-700">
                   <div className="flex items-center">
-                    <button onClick={() => setExpandedRunId(expanded ? null : run.id)} className="flex flex-1 items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-surface-2 rounded-l-(--radius-md)">
+                    <button onClick={() => setExpandedRunId(expanded ? null : run.id)} className="flex flex-1 items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-surface-2 rounded-l-lg">
                       {expanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />}
                       <AgentAvatar name={run.agentName} status={run.status} size="sm" />
-                      <button onClick={(e) => { e.stopPropagation(); router.push(`/agents/${run.agentName}`); }} className="text-(--text-sm) font-medium text-zinc-200 hover:text-white">{run.agentName}</button>
+                      <button onClick={(e) => { e.stopPropagation(); router.push(`/agents/${run.agentName}`); }} className="text-xs font-medium text-zinc-200 hover:text-white">{run.agentName}</button>
                       <StatusBadge status={run.status} />
-                      <span className="font-mono text-(--text-xs) text-zinc-600 hidden sm:inline">{run.id.slice(0, 12)}</span>
-                      <span className="ml-auto text-(--text-xs) text-zinc-400 tabular-nums">{dur}</span>
-                      <span className="font-mono text-(--text-xs) text-zinc-500 tabular-nums">{formatCost(run.costUsd)}</span>
-                      <span className="text-(--text-xs) text-zinc-600 hidden md:inline tabular-nums">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
+                      <span className="font-mono text-[11px] text-zinc-600 hidden sm:inline">{run.id.slice(0, 12)}</span>
+                      <span className="ml-auto text-[11px] text-zinc-400 tabular-nums">{dur}</span>
+                      <span className="font-mono text-[11px] text-zinc-500 tabular-nums">{formatCost(run.costUsd)}</span>
+                      <span className="text-[11px] text-zinc-600 hidden md:inline tabular-nums">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
                     </button>
                     {/* Delete */}
                     <div className={clsx("flex items-center pr-2", confirming ? "opacity-100" : "opacity-0 group-hover:opacity-100 transition-opacity")}>

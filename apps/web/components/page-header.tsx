@@ -40,13 +40,13 @@ export function PageHeader({
       <div className="flex items-start justify-between gap-6">
         <div className="min-w-0">
           <div className="flex items-center gap-3">
-            <h1 className="text-(--text-xl) font-semibold tracking-tight text-zinc-100">
+            <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">
               {title}
             </h1>
             {badge}
           </div>
           {description && (
-            <p className="mt-1 max-w-3xl text-(--text-sm) leading-(--leading-relaxed) text-zinc-500">
+            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-zinc-500">
               {description}
             </p>
           )}

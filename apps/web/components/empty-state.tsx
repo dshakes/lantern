@@ -41,7 +41,7 @@ export function EmptyState({
     <div
       className={clsx(
         "relative isolate flex flex-col items-center justify-center overflow-hidden text-center",
-        "rounded-(--radius-xl) border border-dashed border-zinc-700/60 bg-surface-1",
+        "rounded-2xl border border-dashed border-zinc-700/60 bg-surface-1",
         isHero ? "px-8 py-20" : "px-6 py-10"
       )}
     >
@@ -66,9 +66,9 @@ export function EmptyState({
           <Icon className={clsx("text-zinc-400", isHero ? "h-6 w-6" : "h-5 w-5")} />
         </div>
       ) : null}
-      <h3 className="mb-1.5 text-(--text-base) font-semibold text-zinc-100">{title}</h3>
+      <h3 className="mb-1.5 text-sm font-semibold text-zinc-100">{title}</h3>
       <p className={clsx(
-        "max-w-sm text-(--text-sm) leading-(--leading-relaxed) text-zinc-500",
+        "max-w-sm text-xs leading-relaxed text-zinc-500",
         (actionLabel || secondaryActionLabel || suggestions) && "mb-7"
       )}>
         {description}
@@ -79,7 +79,7 @@ export function EmptyState({
             {actionLabel && actionHref && !onAction && (
               <Link
                 href={actionHref}
-                className="inline-flex items-center gap-2 rounded-(--radius-md) bg-lantern-500 px-5 py-2.5 text-(--text-sm) font-medium text-white shadow-(--elev-1) transition-all duration-(--motion-fast) hover:bg-lantern-400 hover:shadow-(--elev-2) active:scale-[0.98]"
+                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md active:scale-[0.98]"
               >
                 {actionLabel}
               </Link>
@@ -87,7 +87,7 @@ export function EmptyState({
             {actionLabel && onAction && (
               <button
                 onClick={onAction}
-                className="inline-flex items-center gap-2 rounded-(--radius-md) bg-lantern-500 px-5 py-2.5 text-(--text-sm) font-medium text-white shadow-(--elev-1) transition-all duration-(--motion-fast) hover:bg-lantern-400 hover:shadow-(--elev-2) active:scale-[0.98]"
+                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md active:scale-[0.98]"
               >
                 {actionLabel}
               </button>
@@ -95,7 +95,7 @@ export function EmptyState({
             {secondaryActionLabel && secondaryActionHref && !onSecondaryAction && (
               <Link
                 href={secondaryActionHref}
-                className="inline-flex items-center gap-2 rounded-(--radius-md) border border-zinc-700 px-5 py-2.5 text-(--text-sm) font-medium text-zinc-300 transition-colors duration-(--motion-fast) hover:bg-surface-3 hover:text-zinc-100"
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-5 py-2.5 text-xs font-medium text-zinc-300 transition-colors duration-150 hover:bg-surface-3 hover:text-zinc-100"
               >
                 {secondaryActionLabel}
               </Link>
@@ -103,7 +103,7 @@ export function EmptyState({
             {secondaryActionLabel && onSecondaryAction && (
               <button
                 onClick={onSecondaryAction}
-                className="inline-flex items-center gap-2 rounded-(--radius-md) border border-zinc-700 px-5 py-2.5 text-(--text-sm) font-medium text-zinc-300 transition-colors duration-(--motion-fast) hover:bg-surface-3 hover:text-zinc-100"
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-5 py-2.5 text-xs font-medium text-zinc-300 transition-colors duration-150 hover:bg-surface-3 hover:text-zinc-100"
               >
                 {secondaryActionLabel}
               </button>
@@ -114,7 +114,7 @@ export function EmptyState({
           <div className="flex flex-wrap items-center justify-center gap-1.5">
             {suggestions.map((s, i) => {
               const cls =
-                "rounded-full border border-zinc-800 bg-surface-1 px-3 py-1 text-(--text-xs) text-zinc-400 transition-colors duration-(--motion-fast) hover:border-lantern-500/40 hover:bg-lantern-500/5 hover:text-lantern-200";
+                "rounded-full border border-zinc-800 bg-surface-1 px-3 py-1 text-[11px] text-zinc-400 transition-colors duration-150 hover:border-lantern-500/40 hover:bg-lantern-500/5 hover:text-lantern-200";
               if (s.href) {
                 return (
                   <Link key={i} href={s.href} className={cls}>

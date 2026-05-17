@@ -36,18 +36,18 @@ export default function AgentWhatsAppPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      <div className="mx-auto w-full max-w-(--page-max-w) px-6 py-(--page-pad-y) md:px-8">
+      <div className="mx-auto w-full max-w-[1400px] px-6 py-6 md:px-8">
         <Link
           href={`/agents/${encodeURIComponent(name)}/channels`}
-          className="mb-4 inline-flex items-center gap-1 text-(--text-xs) text-zinc-500 transition-colors duration-(--motion-fast) hover:text-zinc-300"
+          className="mb-4 inline-flex items-center gap-1 text-[11px] text-zinc-500 transition-colors duration-150 hover:text-zinc-300"
         >
           <ArrowLeft className="h-3 w-3" />
           Channels
         </Link>
         <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-(--text-xl) font-semibold text-zinc-100">WhatsApp</h1>
-            <p className="mt-1 max-w-2xl text-(--text-sm) text-zinc-500">
+            <h1 className="text-2xl font-semibold text-zinc-100">WhatsApp</h1>
+            <p className="mt-1 max-w-2xl text-xs text-zinc-500">
               Pair your personal WhatsApp by scanning a QR code. The natural-reply layer
               paces messages, mirrors thumbs to acks, and refuses to sound like a chatbot.
             </p>

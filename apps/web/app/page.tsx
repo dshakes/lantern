@@ -90,18 +90,18 @@ export default function HomePage() {
       <div className="flex flex-col items-center gap-4">
         <div
           aria-hidden
-          className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-lantern-400 to-lantern-600 shadow-(--elev-3)"
+          className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-lantern-400 to-lantern-600 shadow-xl"
         >
-          <span className="text-(--text-lg) font-bold text-white">L</span>
+          <span className="text-xl font-bold text-white">L</span>
         </div>
         {status === "deciding" ? (
-          <p className="text-(--text-sm) text-zinc-500">Loading your workspace…</p>
+          <p className="text-xs text-zinc-500">Loading your workspace…</p>
         ) : (
           <div className="text-center">
-            <p className="text-(--text-base) font-semibold text-zinc-200">
+            <p className="text-sm font-semibold text-zinc-200">
               Lantern API offline
             </p>
-            <p className="mt-1 max-w-sm text-(--text-sm) text-zinc-500">
+            <p className="mt-1 max-w-sm text-xs text-zinc-500">
               The control-plane isn&apos;t reachable. If you&apos;re running locally,
               start it with{" "}
               <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-zinc-300">
@@ -111,7 +111,7 @@ export default function HomePage() {
             </p>
             <button
               onClick={() => window.location.reload()}
-              className="mt-4 rounded-(--radius-md) border border-zinc-700 bg-surface-1 px-4 py-2 text-(--text-sm) font-medium text-zinc-300 transition-colors duration-(--motion-fast) hover:bg-surface-2 hover:text-zinc-100"
+              className="mt-4 rounded-lg border border-zinc-700 bg-surface-1 px-4 py-2 text-xs font-medium text-zinc-300 transition-colors duration-150 hover:bg-surface-2 hover:text-zinc-100"
             >
               Retry
             </button>

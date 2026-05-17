@@ -76,8 +76,8 @@ export function ConnectorChips({ description }: { description: string }) {
   if (detected.length === 0) return null;
 
   return (
-    <div className="rounded-(--radius-md) border border-zinc-800/60 bg-surface-1/50 p-3">
-      <p className="mb-2 text-(--text-xs) text-zinc-500">
+    <div className="rounded-lg border border-zinc-800/60 bg-surface-1/50 p-3">
+      <p className="mb-2 text-[11px] text-zinc-500">
         Detected references — these connect once at the workspace level, every agent can use them:
       </p>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -97,7 +97,7 @@ export function ConnectorChips({ description }: { description: string }) {
               key={d.id}
               href={href}
               className={clsx(
-                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-(--text-xs) font-medium transition-colors duration-(--motion-fast)",
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors duration-150",
                 ok
                   ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15"
                   : "border-zinc-700 bg-surface-2 text-zinc-300 hover:border-lantern-500/40 hover:bg-lantern-500/5 hover:text-lantern-200"

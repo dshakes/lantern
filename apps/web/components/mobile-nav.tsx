@@ -53,7 +53,7 @@ export function MobileNav() {
               }}
               aria-current={isActive ? "page" : undefined}
               className={clsx(
-                "relative flex flex-1 flex-col items-center justify-center gap-0.5 transition-colors duration-(--motion-fast)",
+                "relative flex flex-1 flex-col items-center justify-center gap-0.5 transition-colors duration-150",
                 isActive ? "text-lantern-300" : "text-zinc-500 active:text-zinc-200"
               )}
             >

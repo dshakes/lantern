@@ -167,13 +167,13 @@ export default function AgentsPage() {
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/10 ring-1 ring-red-500/20">
           <AlertCircle className="h-5 w-5 text-red-300" />
         </div>
-        <h3 className="mt-4 text-(--text-base) font-semibold text-zinc-100">
+        <h3 className="mt-4 text-sm font-semibold text-zinc-100">
           Couldn&apos;t load agents
         </h3>
-        <p className="mt-1 max-w-sm text-center text-(--text-sm) text-zinc-500">
+        <p className="mt-1 max-w-sm text-center text-xs text-zinc-500">
           {error.message}. Make sure the control-plane API is reachable.
         </p>
-        <code className="mt-3 rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-(--text-xs) text-zinc-300">
+        <code className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-[11px] text-zinc-300">
           lantern dev
         </code>
         <Button
@@ -291,9 +291,9 @@ export default function AgentsPage() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search agents by name or description…"
-                  className="w-full rounded-(--radius-md) border border-zinc-800 bg-surface-1 py-2 pl-9 pr-16 text-(--text-sm) text-zinc-100 placeholder:text-zinc-600 outline-none transition-all duration-(--motion-fast) focus:border-lantern-500/60 focus:bg-surface-2 focus:ring-2 focus:ring-(--color-accent-soft)"
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-1 py-2 pl-9 pr-16 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none transition-all duration-150 focus:border-lantern-500/60 focus:bg-surface-2 focus:ring-2 focus:ring-lantern-500/30"
                 />
-                <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-(--radius-sm) border border-zinc-700 bg-surface-2 px-1.5 py-0.5 font-mono text-(--text-xs) text-zinc-500">
+                <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md border border-zinc-700 bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-zinc-500">
                   /
                 </kbd>
               </div>
@@ -310,7 +310,7 @@ export default function AgentsPage() {
                 return (
                   <div
                     key={agent.id}
-                    className="group relative cursor-pointer rounded-(--radius-lg) border border-zinc-800 bg-surface-1 p-4 transition-all duration-(--motion-fast) hover:border-zinc-700 hover:bg-surface-2/50 hover:shadow-(--elev-2)"
+                    className="group relative cursor-pointer rounded-xl border border-zinc-800 bg-surface-1 p-4 transition-all duration-150 hover:border-zinc-700 hover:bg-surface-2/50 hover:shadow-md"
                     onClick={() => router.push(`/agents/${agent.name}`)}
                     role="button"
                     tabIndex={0}
@@ -327,10 +327,10 @@ export default function AgentsPage() {
                         size="md"
                       />
                       <div className="min-w-0 flex-1">
-                        <h3 className="truncate text-(--text-sm) font-semibold text-zinc-100 group-hover:text-white">
+                        <h3 className="truncate text-xs font-semibold text-zinc-100 group-hover:text-white">
                           {agent.name}
                         </h3>
-                        <span className={clsx("mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-(--text-xs) font-medium", sc.bg, sc.text)}>
+                        <span className={clsx("mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium", sc.bg, sc.text)}>
                           <span className={clsx("h-1.5 w-1.5 rounded-full", sc.dot)} />
                           {sc.label}
                         </span>
@@ -338,13 +338,13 @@ export default function AgentsPage() {
                     </div>
 
                     {/* Description — 2 lines max, leading-relaxed. */}
-                    <p className="mt-3 line-clamp-2 text-(--text-xs) leading-(--leading-relaxed) text-zinc-400">
+                    <p className="mt-3 line-clamp-2 text-[11px] leading-relaxed text-zinc-400">
                       {agent.description}
                     </p>
 
                     {/* Stats footer — pinned right after description, not the
                         card bottom. Dimmer separator + inline stats. */}
-                    <div className="mt-3 flex items-center justify-between border-t border-zinc-800/60 pt-2.5 text-(--text-xs)">
+                    <div className="mt-3 flex items-center justify-between border-t border-zinc-800/60 pt-2.5 text-[11px]">
                       <div className="flex items-center gap-3 text-zinc-500">
                         <span className="inline-flex items-center gap-1 tabular-nums">
                           <Play className="h-3 w-3" />
@@ -495,7 +495,7 @@ export default function AgentsPage() {
         }
       >
         {confirmDelete && (
-          <div className="rounded-(--radius-md) border border-red-500/20 bg-red-500/5 p-3 text-(--text-xs) text-red-300">
+          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-[11px] text-red-300">
             Type <code className="rounded bg-surface-0 px-1 font-mono text-red-200">{confirmDelete.name}</code> in your head one more time before clicking Delete agent.
           </div>
         )}
@@ -525,7 +525,7 @@ function Stat({
   return (
     <div
       className={clsx(
-        "group relative overflow-hidden rounded-(--radius-lg) border bg-surface-1 p-4 transition-all duration-(--motion-fast)",
+        "group relative overflow-hidden rounded-xl border bg-surface-1 p-4 transition-all duration-150",
         isDanger
           ? "border-red-500/30 hover:border-red-500/50"
           : "border-zinc-800 hover:border-zinc-700"
@@ -533,7 +533,7 @@ function Stat({
     >
       {/* Subtle gradient sheen on hover — glassy feel. Red on danger tiles. */}
       <div
-        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-(--motion-normal) group-hover:opacity-100"
+        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
         style={{
           background: isDanger
             ? "linear-gradient(135deg, rgba(248,113,113,0.08), transparent 60%)"
@@ -541,10 +541,10 @@ function Stat({
         }}
       />
       <div className="relative">
-        <p className="flex items-center gap-1.5 text-(--text-xs) font-medium uppercase tracking-wider text-zinc-500">
+        <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
           {label}
           {live && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-lantern-500/15 px-1.5 py-0 text-(--text-xs) font-medium text-lantern-300">
+            <span className="inline-flex items-center gap-1 rounded-full bg-lantern-500/15 px-1.5 py-0 text-[11px] font-medium text-lantern-300">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-lantern-400" />
               live
             </span>
@@ -552,14 +552,14 @@ function Stat({
         </p>
         <p
           className={clsx(
-            "mt-1.5 text-(--text-lg) font-semibold tabular-nums",
+            "mt-1.5 text-xl font-semibold tabular-nums",
             isDanger ? "text-red-300" : "text-zinc-100"
           )}
         >
           {value}
         </p>
         {hint && (
-          <p className="mt-0.5 text-(--text-xs) text-zinc-500">{hint}</p>
+          <p className="mt-0.5 text-[11px] text-zinc-500">{hint}</p>
         )}
       </div>
     </div>

@@ -103,10 +103,10 @@ export default function AgentChannelsPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      <div className="mx-auto w-full max-w-(--page-max-w) px-6 py-(--page-pad-y) md:px-8">
+      <div className="mx-auto w-full max-w-[1400px] px-6 py-6 md:px-8">
         <header className="mb-6">
-          <h1 className="text-(--text-xl) font-semibold text-zinc-100">Channels</h1>
-          <p className="mt-1 max-w-2xl text-(--text-sm) text-zinc-500">
+          <h1 className="text-2xl font-semibold text-zinc-100">Channels</h1>
+          <p className="mt-1 max-w-2xl text-xs text-zinc-500">
             Surfaces this agent can be reached on. Pick a channel to configure it.
           </p>
         </header>
@@ -127,9 +127,9 @@ function ChannelTile({ card }: { card: ChannelCard }) {
     <Link
       href={card.href}
       className={clsx(
-        "group flex flex-col rounded-(--radius-lg) border border-zinc-800 bg-surface-1 p-5",
-        "transition-all duration-(--motion-fast)",
-        "hover:border-zinc-700 hover:bg-surface-2 hover:shadow-(--elev-2)"
+        "group flex flex-col rounded-xl border border-zinc-800 bg-surface-1 p-5",
+        "transition-all duration-150",
+        "hover:border-zinc-700 hover:bg-surface-2 hover:shadow-md"
       )}
     >
       <div className="mb-4 flex items-start justify-between">
@@ -137,18 +137,18 @@ function ChannelTile({ card }: { card: ChannelCard }) {
           <Icon className={clsx("h-5 w-5", card.iconColor)} />
         </div>
         {card.status && (
-          <span className="rounded-full bg-surface-3 px-2 py-0.5 text-(--text-xs) font-medium text-zinc-400">
+          <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-medium text-zinc-400">
             {card.status}
           </span>
         )}
       </div>
-      <h3 className="mb-1 text-(--text-base) font-semibold text-zinc-100">{card.name}</h3>
-      <p className="flex-1 text-(--text-xs) leading-(--leading-relaxed) text-zinc-500">
+      <h3 className="mb-1 text-sm font-semibold text-zinc-100">{card.name}</h3>
+      <p className="flex-1 text-[11px] leading-relaxed text-zinc-500">
         {card.description}
       </p>
-      <div className="mt-4 inline-flex items-center gap-1.5 text-(--text-xs) font-medium text-lantern-400 transition-colors duration-(--motion-fast) group-hover:text-lantern-300">
+      <div className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-medium text-lantern-400 transition-colors duration-150 group-hover:text-lantern-300">
         Configure
-        <ArrowRight className="h-3 w-3 transition-transform duration-(--motion-fast) group-hover:translate-x-0.5" />
+        <ArrowRight className="h-3 w-3 transition-transform duration-150 group-hover:translate-x-0.5" />
       </div>
     </Link>
   );

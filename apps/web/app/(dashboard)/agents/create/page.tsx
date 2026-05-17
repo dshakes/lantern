@@ -201,7 +201,7 @@ function CreatePage() {
 
             <div className="my-8 flex items-center gap-3">
               <span className="h-px flex-1 bg-zinc-800" />
-              <span className="text-(--text-xs) uppercase tracking-wider text-zinc-600">
+              <span className="text-[11px] uppercase tracking-wider text-zinc-600">
                 or start from scratch
               </span>
               <span className="h-px flex-1 bg-zinc-800" />

@@ -123,18 +123,18 @@ export function KeyboardShortcuts() {
       onClick={() => setOpen(false)}
     >
       <div
-        className="w-full max-w-md overflow-hidden rounded-(--radius-xl) border border-zinc-800 bg-surface-1 shadow-(--elev-4)"
+        className="w-full max-w-md overflow-hidden rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
-          <h2 id="kbd-help-title" className="inline-flex items-center gap-2 text-(--text-base) font-semibold text-zinc-100">
+          <h2 id="kbd-help-title" className="inline-flex items-center gap-2 text-sm font-semibold text-zinc-100">
             <CommandIcon className="h-4 w-4 text-zinc-500" />
             Keyboard shortcuts
           </h2>
           <button
             onClick={() => setOpen(false)}
             aria-label="Close"
-            className="rounded-md p-1 text-zinc-500 transition-colors duration-(--motion-fast) hover:bg-surface-3 hover:text-zinc-200"
+            className="rounded-md p-1 text-zinc-500 transition-colors duration-150 hover:bg-surface-3 hover:text-zinc-200"
           >
             <X className="h-4 w-4" />
           </button>
@@ -145,14 +145,14 @@ export function KeyboardShortcuts() {
             if (items.length === 0) return null;
             return (
               <section key={group} className="px-5 py-4">
-                <h3 className="mb-2 text-(--text-xs) font-medium uppercase tracking-wider text-zinc-500">
+                <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
                   {group}
                 </h3>
                 <ul className="space-y-1.5">
                   {items.map((s) => (
                     <li key={s.combo} className="flex items-center justify-between gap-3">
-                      <span className="text-(--text-sm) text-zinc-300">{s.description}</span>
-                      <kbd className="rounded-(--radius-sm) border border-zinc-700 bg-surface-2 px-2 py-0.5 font-mono text-(--text-xs) text-zinc-300">
+                      <span className="text-xs text-zinc-300">{s.description}</span>
+                      <kbd className="rounded-md border border-zinc-700 bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-zinc-300">
                         {s.combo}
                       </kbd>
                     </li>
@@ -162,7 +162,7 @@ export function KeyboardShortcuts() {
             );
           })}
         </div>
-        <div className="border-t border-zinc-800 px-5 py-2.5 text-(--text-xs) text-zinc-500">
+        <div className="border-t border-zinc-800 px-5 py-2.5 text-[11px] text-zinc-500">
           Press <kbd className="rounded border border-zinc-700 bg-surface-2 px-1.5 text-zinc-300">?</kbd> anywhere to open this.
         </div>
       </div>

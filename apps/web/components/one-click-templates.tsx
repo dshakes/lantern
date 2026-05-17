@@ -137,10 +137,10 @@ export function OneClickTemplates() {
     <section>
       <div className="mb-4 flex items-center gap-2">
         <Sparkles className="h-4 w-4 text-lantern-400" />
-        <h2 className="text-(--text-base) font-semibold text-zinc-100">
+        <h2 className="text-sm font-semibold text-zinc-100">
           One-click recipes
         </h2>
-        <span className="text-(--text-xs) text-zinc-500">
+        <span className="text-[11px] text-zinc-500">
           · agent + schedule + budget, configured atomically
         </span>
       </div>
@@ -155,31 +155,31 @@ export function OneClickTemplates() {
           return (
             <article
               key={t.id}
-              className="group flex flex-col rounded-(--radius-lg) border border-zinc-800 bg-surface-1 p-5 transition-all duration-(--motion-fast) hover:border-lantern-500/40 hover:shadow-(--elev-2)"
+              className="group flex flex-col rounded-xl border border-zinc-800 bg-surface-1 p-5 transition-all duration-150 hover:border-lantern-500/40 hover:shadow-md"
             >
               <div className="mb-3 flex items-start justify-between gap-3">
                 <div className={clsx("flex h-10 w-10 items-center justify-center rounded-xl", visual.bg)}>
                   <Icon className={clsx("h-5 w-5", visual.tint)} />
                 </div>
-                <span className="rounded-full bg-surface-3 px-2 py-0.5 text-(--text-xs) font-medium text-zinc-400">
+                <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-medium text-zinc-400">
                   {t.cronExpr}
                 </span>
               </div>
-              <h3 className="text-(--text-base) font-semibold text-zinc-100">{t.name}</h3>
-              <p className="mt-1 flex-1 text-(--text-xs) leading-(--leading-relaxed) text-zinc-500">
+              <h3 className="text-sm font-semibold text-zinc-100">{t.name}</h3>
+              <p className="mt-1 flex-1 text-[11px] leading-relaxed text-zinc-500">
                 {t.description}
               </p>
 
               {/* Required connectors with live install state. */}
               <div className="mt-4 flex flex-wrap items-center gap-1.5">
-                <span className="text-(--text-xs) text-zinc-600">needs:</span>
+                <span className="text-[11px] text-zinc-600">needs:</span>
                 {t.connectors.map((c) => {
                   const ok = installed.has(c);
                   return (
                     <span
                       key={c}
                       className={clsx(
-                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-(--text-xs) font-medium",
+                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
                         ok
                           ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
                           : "border-zinc-700 bg-surface-2 text-zinc-400"
@@ -193,7 +193,7 @@ export function OneClickTemplates() {
                 {t.surfaces.map((s) => (
                   <span
                     key={s}
-                    className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-surface-2 px-2 py-0.5 text-(--text-xs) font-medium text-zinc-400"
+                    className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-zinc-400"
                   >
                     {s}
                   </span>
@@ -203,18 +203,18 @@ export function OneClickTemplates() {
               <button
                 onClick={() => apply(t)}
                 disabled={!!applying}
-                className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-(--radius-md) bg-lantern-500 px-3 py-2 text-(--text-sm) font-medium text-white shadow-(--elev-1) transition-all duration-(--motion-fast) hover:bg-lantern-400 hover:shadow-(--elev-2) disabled:opacity-50"
+                className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-2 text-xs font-medium text-white shadow-sm transition-all duration-150 hover:bg-lantern-400 hover:shadow-md disabled:opacity-50"
               >
                 {applying === t.id ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
                   <>
                     Use this recipe
-                    <ChevronRight className="h-3.5 w-3.5 transition-transform duration-(--motion-fast) group-hover:translate-x-0.5" />
+                    <ChevronRight className="h-3.5 w-3.5 transition-transform duration-150 group-hover:translate-x-0.5" />
                   </>
                 )}
               </button>
-              <p className="mt-2 text-(--text-xs) text-zinc-600">
+              <p className="mt-2 text-[11px] text-zinc-600">
                 creates the agent + ${t.maxCostUsdDay.toFixed(2)}/day hard-cap budget + the cron
               </p>
             </article>

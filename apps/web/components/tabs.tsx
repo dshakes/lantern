@@ -159,7 +159,7 @@ export function Tabs({
           </>
         );
         const baseCls = clsx(
-          "relative inline-flex items-center gap-1.5 transition-colors duration-(--motion-fast)",
+          "relative inline-flex items-center gap-1.5 transition-colors duration-150",
           size === "sm" ? "h-7 px-2.5 text-[11px]" : "h-9 px-3 text-[12px]",
           "font-medium",
           tab.disabled && "cursor-not-allowed opacity-40",
@@ -170,7 +170,7 @@ export function Tabs({
             : clsx(
                 "rounded-md",
                 isActive
-                  ? "bg-surface-0 text-zinc-100 shadow-(--elev-1)"
+                  ? "bg-surface-0 text-zinc-100 shadow-sm"
                   : "text-zinc-400 hover:text-zinc-200"
               )
         );
@@ -197,7 +197,7 @@ export function Tabs({
               {variant === "underline" && (
                 <span
                   className={clsx(
-                    "absolute inset-x-0 -bottom-px h-0.5 transition-opacity duration-(--motion-fast)",
+                    "absolute inset-x-0 -bottom-px h-0.5 transition-opacity duration-150",
                     isActive ? "bg-lantern-400 opacity-100" : "opacity-0"
                   )}
                 />
@@ -220,7 +220,7 @@ export function Tabs({
             {variant === "underline" && (
               <span
                 className={clsx(
-                  "absolute inset-x-0 -bottom-px h-0.5 transition-opacity duration-(--motion-fast)",
+                  "absolute inset-x-0 -bottom-px h-0.5 transition-opacity duration-150",
                   isActive ? "bg-lantern-400 opacity-100" : "opacity-0"
                 )}
               />

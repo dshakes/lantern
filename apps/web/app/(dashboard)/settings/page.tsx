@@ -329,10 +329,10 @@ export default function SettingsPage() {
             background: "radial-gradient(circle, var(--color-accent), transparent 70%)",
           }}
         />
-        <h1 className="text-(--text-xl) font-semibold tracking-tight text-zinc-100">
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">
           Settings
         </h1>
-        <p className="mt-1 max-w-3xl text-(--text-sm) text-zinc-500">
+        <p className="mt-1 max-w-3xl text-xs text-zinc-500">
           Workspace preferences, API keys, LLM providers, team access, and billing.
         </p>
         <div className="mt-5 -mx-1">
@@ -382,7 +382,7 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
             type="text"
             value={general.workspaceName}
             onChange={(e) => setGeneral({ ...general, workspaceName: e.target.value })}
-            className="w-full rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-2 text-(--text-sm) text-zinc-100 outline-none transition-colors duration-(--motion-fast) focus:border-lantern-500/60"
+            className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-xs text-zinc-100 outline-none transition-colors duration-150 focus:border-lantern-500/60"
           />
         </Field>
         <Field label="Workspace ID" hint="Read-only — provisioned at tenant creation.">
@@ -391,7 +391,7 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
               type="text"
               value={general.workspaceId}
               readOnly
-              className="flex-1 rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-(--text-sm) text-zinc-400 outline-none cursor-default"
+              className="flex-1 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-xs text-zinc-400 outline-none cursor-default"
             />
             <Button
               variant="secondary"
@@ -417,7 +417,7 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
             <select
               value={general.defaultModel}
               onChange={(e) => setGeneral({ ...general, defaultModel: e.target.value })}
-              className="w-full rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-2 text-(--text-sm) text-zinc-100 outline-none focus:border-lantern-500/60"
+              className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-lantern-500/60"
             >
               <option value="auto">Auto (recommended)</option>
               <option value="reasoning-large">Reasoning Large</option>
@@ -434,7 +434,7 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
             <select
               value={general.defaultIsolation}
               onChange={(e) => setGeneral({ ...general, defaultIsolation: e.target.value })}
-              className="w-full rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-2 text-(--text-sm) text-zinc-100 outline-none focus:border-lantern-500/60"
+              className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-xs text-zinc-100 outline-none focus:border-lantern-500/60"
             >
               <option value="trusted">Trusted — shared namespace</option>
               <option value="standard">Standard — isolated pod</option>
@@ -466,11 +466,11 @@ function SettingsSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-(--radius-lg) border border-zinc-800 bg-surface-1 p-5 md:p-6">
+    <section className="rounded-xl border border-zinc-800 bg-surface-1 p-5 md:p-6">
       <header className="mb-4">
-        <h3 className="text-(--text-base) font-semibold text-zinc-100">{title}</h3>
+        <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
         {description && (
-          <p className="mt-0.5 text-(--text-xs) leading-(--leading-relaxed) text-zinc-500">
+          <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
             {description}
           </p>
         )}
@@ -491,11 +491,11 @@ function Field({
 }) {
   return (
     <div>
-      <label className="mb-1.5 block text-(--text-sm) font-medium text-zinc-300">
+      <label className="mb-1.5 block text-xs font-medium text-zinc-300">
         {label}
       </label>
       {children}
-      {hint && <p className="mt-1 text-(--text-xs) text-zinc-500">{hint}</p>}
+      {hint && <p className="mt-1 text-[11px] text-zinc-500">{hint}</p>}
     </div>
   );
 }
@@ -503,8 +503,8 @@ function Field({
 function StickySaveBar({ saving, onSave }: { saving: boolean; onSave: () => void }) {
   return (
     <div className="pointer-events-none sticky bottom-0 -mx-6 mt-6 flex justify-end px-6 pb-4 md:-mx-8 md:px-8">
-      <div className="pointer-events-auto inline-flex items-center gap-3 rounded-(--radius-lg) border border-zinc-800 bg-surface-1/95 px-4 py-2 shadow-(--elev-3) backdrop-blur-md">
-        <span className="text-(--text-xs) text-zinc-500">Unsaved changes</span>
+      <div className="pointer-events-auto inline-flex items-center gap-3 rounded-xl border border-zinc-800 bg-surface-1/95 px-4 py-2 shadow-xl backdrop-blur-md">
+        <span className="text-[11px] text-zinc-500">Unsaved changes</span>
         <Button
           variant="primary"
           size="md"

@@ -15,20 +15,20 @@ type Size = "sm" | "md" | "lg";
 // without touching this file.
 const VARIANT: Record<Variant, string> = {
   primary:
-    "bg-(--color-accent) text-white hover:bg-(--color-accent-hover) active:scale-[0.98] shadow-(--elev-1) hover:shadow-(--elev-2)",
+    "bg-lantern-400 text-white hover:bg-lantern-300 active:scale-[0.98] shadow-sm hover:shadow-md",
   secondary:
-    "border border-(--color-border-default) bg-surface-1 text-zinc-200 hover:bg-surface-3 hover:border-(--color-border-strong)",
+    "border border-zinc-700 bg-surface-1 text-zinc-200 hover:bg-surface-3 hover:border-zinc-600",
   ghost:
-    "text-(--color-text-tertiary) hover:text-(--color-text-primary) hover:bg-surface-3",
+    "text-zinc-400 hover:text-zinc-100 hover:bg-surface-3",
   danger:
-    "bg-(--color-danger-soft) text-red-300 border border-red-500/20 hover:bg-red-500/20",
+    "bg-red-500/10 text-red-300 border border-red-500/20 hover:bg-red-500/20",
 };
 
 // Sizes read from --text-* + --radius-* so the type scale evolves in one place.
 const SIZE: Record<Size, string> = {
-  sm: "h-7 px-2.5 text-(--text-xs) gap-1 rounded-(--radius-sm)",
-  md: "h-8 px-3 text-(--text-sm) gap-1.5 rounded-(--radius-md)",
-  lg: "h-10 px-4 text-(--text-base) gap-2 rounded-(--radius-md)",
+  sm: "h-7 px-2.5 text-[11px] gap-1 rounded-md",
+  md: "h-8 px-3 text-xs gap-1.5 rounded-lg",
+  lg: "h-10 px-4 text-sm gap-2 rounded-lg",
 };
 
 interface CommonProps {
@@ -43,7 +43,7 @@ interface CommonProps {
 type ButtonProps = CommonProps & ButtonHTMLAttributes<HTMLButtonElement>;
 
 const BASE =
-  "inline-flex items-center justify-center font-medium transition-all duration-(--motion-fast) disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:ring-2 focus-visible:ring-(--color-accent-soft) focus-visible:ring-offset-0";
+  "inline-flex items-center justify-center font-medium transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:ring-2 focus-visible:ring-lantern-500/30 focus-visible:ring-offset-0";
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   function Button(

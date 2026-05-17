@@ -41,9 +41,9 @@ export function initialsForAgent(name: string): string {
 type Size = "sm" | "md" | "lg";
 
 const SIZE_CLS: Record<Size, string> = {
-  sm: "h-7 w-7 text-(--text-xs)",
-  md: "h-8 w-8 text-(--text-xs)",
-  lg: "h-10 w-10 text-(--text-sm)",
+  sm: "h-7 w-7 text-[11px]",
+  md: "h-8 w-8 text-[11px]",
+  lg: "h-10 w-10 text-xs",
 };
 
 const DOT_CLS: Record<Size, string> = {
@@ -75,7 +75,7 @@ export function AgentAvatar({
     <div className={clsx("relative shrink-0", className)}>
       <div
         className={clsx(
-          "flex items-center justify-center rounded-(--radius-md) font-semibold ring-1 transition-opacity duration-(--motion-fast)",
+          "flex items-center justify-center rounded-lg font-semibold ring-1 transition-opacity duration-150",
           SIZE_CLS[size],
           palette.bg,
           palette.text,
