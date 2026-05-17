@@ -1196,6 +1196,98 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     });
   }
 
+  // ---- Voice (W11d) -----------------------------------------------------------
+
+  async listVoiceNumbers(): Promise<unknown[]> {
+    try {
+      const data = await this.request<unknown[]>("/v1/voice/numbers");
+      return Array.isArray(data) ? data : [];
+    } catch (err) {
+      notifySimulated("listVoiceNumbers", err);
+      return [];
+    }
+  }
+
+  async createVoiceNumber(payload: {
+    agentName: string;
+    provider: string;
+    phoneNumber: string;
+    displayName?: string;
+    providerConfig: Record<string, string>;
+    greeting?: string;
+  }): Promise<unknown> {
+    return this.request("/v1/voice/numbers", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async deleteVoiceNumber(id: string): Promise<void> {
+    await this.request<void>(`/v1/voice/numbers/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async listVoiceCalls(): Promise<unknown[]> {
+    try {
+      const data = await this.request<unknown[]>("/v1/voice/calls");
+      return Array.isArray(data) ? data : [];
+    } catch (err) {
+      notifySimulated("listVoiceCalls", err);
+      return [];
+    }
+  }
+
+  // ---- Takeover (W11a) --------------------------------------------------------
+
+  async listTakeovers(runId: string): Promise<unknown[]> {
+    try {
+      const data = await this.request<unknown[]>(
+        `/v1/runs/${encodeURIComponent(runId)}/takeover`
+      );
+      return Array.isArray(data) ? data : [];
+    } catch (err) {
+      notifySimulated("listTakeovers", err);
+      return [];
+    }
+  }
+
+  async grantTakeover(runId: string, takeoverId: string, notes?: string): Promise<unknown> {
+    return this.request(
+      `/v1/runs/${encodeURIComponent(runId)}/takeover/${encodeURIComponent(takeoverId)}/grant`,
+      {
+        method: "POST",
+        body: JSON.stringify({ notes }),
+      }
+    );
+  }
+
+  async releaseTakeover(runId: string, takeoverId: string): Promise<unknown> {
+    return this.request(
+      `/v1/runs/${encodeURIComponent(runId)}/takeover/${encodeURIComponent(takeoverId)}/release`,
+      { method: "POST" }
+    );
+  }
+
+  // ---- Marketplace invocations (W11c) -----------------------------------------
+
+  async listMarketplaceInvocations(role: "buyer" | "seller" = "buyer"): Promise<unknown[]> {
+    try {
+      const data = await this.request<unknown[]>(`/v1/marketplace/invocations?role=${role}`);
+      return Array.isArray(data) ? data : [];
+    } catch (err) {
+      notifySimulated("listMarketplaceInvocations", err);
+      return [];
+    }
+  }
+
+  async invokeMarketplaceAgent(slug: string, input: Record<string, unknown>): Promise<unknown> {
+    return this.request(`/v1/marketplace/${encodeURIComponent(slug)}/invoke`, {
+      method: "POST",
+      body: JSON.stringify({ input }),
+    });
+  }
+
   // ---- Schedules --------------------------------------------------------------
 
   async createSchedule(data: {

@@ -88,9 +88,9 @@ function Hero() {
           transition={{ duration: 0.6, delay: 0.1 }}
           className="text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight leading-[1.05]"
         >
-          Production AI agents,
+          Agents that ship to
           <br />
-          <span className="text-glow">without the surprises.</span>
+          <span className="text-glow">real channels.</span>
         </motion.h1>
         <motion.p
           initial={{ opacity: 0, y: 10 }}
@@ -98,7 +98,7 @@ function Hero() {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="mt-6 text-lg md:text-xl text-[#9898a8] max-w-2xl mx-auto leading-relaxed"
         >
-          Forecast what every run costs <em>before</em> it runs. Catch regressions in CI. Deploy in your own VPC. Open-source, provider-agnostic, zero feature gates.
+          Pair your WhatsApp, embed a webchat widget, plug in a voice number — your agent talks on the surfaces your users already use. Cost-forecasted, eval-gated, signed-receipted, deployed in your VPC. One command to boot, open-source under Apache 2.0.
         </motion.p>
         <motion.div
           initial={{ opacity: 0, y: 10 }}
@@ -119,7 +119,7 @@ function Hero() {
           transition={{ duration: 0.8, delay: 0.5 }}
           className="mt-10 inline-flex items-center gap-3 px-4 py-2 rounded-full border border-white/5 bg-[#0d0d12] text-xs text-[#55556a] font-mono"
         >
-          <span className="text-emerald-400">$</span> curl -fsSL lantern.run/install.sh | sh
+          <span className="text-emerald-400">$</span> lantern dev <span className="text-[#3a3a47]"># boots the entire stack with hot reload</span>
         </motion.div>
       </div>
     </section>
@@ -129,23 +129,35 @@ function Hero() {
 function TrustRow() {
   return (
     <section className="py-10 border-y border-white/5 bg-[#08080d]/60">
-      <div className="max-w-6xl mx-auto px-6 flex flex-wrap items-center justify-center gap-x-12 gap-y-3 text-xs uppercase tracking-[0.2em] text-[#55556a]">
+      <div className="max-w-6xl mx-auto px-6 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-xs uppercase tracking-[0.2em] text-[#55556a]">
+        <span>WhatsApp</span>
+        <span>·</span>
+        <span>Slack</span>
+        <span>·</span>
+        <span>Webchat</span>
+        <span>·</span>
+        <span>Voice</span>
+        <span>·</span>
+        <span>Email</span>
+        <span>·</span>
         <span>Apache 2.0</span>
         <span>·</span>
-        <span>Provider-agnostic</span>
-        <span>·</span>
-        <span>Self-host or managed</span>
-        <span>·</span>
         <span>Your VPC, your data</span>
-        <span>·</span>
-        <span>Postgres + Redis + S3</span>
       </div>
     </section>
   );
 }
 
-// ─── Three pillars ─────────────────────────────────────────────────────────
+// ─── Four pillars ──────────────────────────────────────────────────────────
 const PILLARS = [
+  {
+    icon: Zap,
+    tag: "Reach",
+    title: "Real channels, not just chat.",
+    body: "Pair your WhatsApp by scanning a QR. Embed a one-line webchat widget. Plug in a voice number. The natural communication layer paces replies, mirrors thumbs to acks, splits long answers into burst messages, and refuses to sound like ChatGPT. Your friends will not know.",
+    ringFrom: "#22d3ee",
+    ringTo: "#a78bfa",
+  },
   {
     icon: Gauge,
     tag: "Cost",
@@ -157,16 +169,16 @@ const PILLARS = [
   {
     icon: GitBranch,
     tag: "Quality",
-    title: "Eval-in-CI, not eval-in-dashboard.",
-    body: "Define eval suites declaratively. Pin a baseline per branch. Run `lantern test --against=last-green` in your CI. If the score drops, the build fails. Your agents stop silently getting worse between Monday and Friday.",
+    title: "Eval-in-CI + replay past failures.",
+    body: "Define eval suites declaratively, pin a baseline per branch, run `lantern test --against=last-green` in CI. If the score drops, the build fails. Rehearsals replay the exact production failures that broke the previous version against the candidate. Agents stop silently getting worse.",
     ringFrom: "#818cf8",
     ringTo: "#ec4899",
   },
   {
     icon: Shield,
     tag: "Trust",
-    title: "Data plane in your VPC.",
-    body: "Prompts, tokens, and customer data never leave your cloud. The control plane orchestrates; the data plane executes — in your EKS/GKE/AKS. Firecracker microVM isolation. Outbound-only mTLS tunnel. SOC2-friendly by architecture, not by checkbox.",
+    title: "Signed receipts. Your VPC.",
+    body: "Every run can issue an HMAC-signed receipt over the journal-event hash — any third party verifies at /proof. Prompts and customer data stay in your EKS/GKE/AKS. Firecracker microVM isolation. Outbound-only mTLS tunnel. SOC2-friendly by architecture.",
     ringFrom: "#fb923c",
     ringTo: "#f472b6",
   },
@@ -178,9 +190,9 @@ function Pillars() {
       <div className="max-w-6xl mx-auto">
         <header className="mb-14 max-w-2xl">
           <p className="text-sm text-teal-300 uppercase tracking-[0.2em] mb-3">Why Lantern</p>
-          <h2 className="text-4xl md:text-5xl font-bold tracking-tight">Three things other frameworks hand-wave.</h2>
+          <h2 className="text-4xl md:text-5xl font-bold tracking-tight">Four things other frameworks hand-wave.</h2>
         </header>
-        <div className="grid md:grid-cols-3 gap-5">
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
           {PILLARS.map((p) => (
             <div key={p.tag} className="card-glow rounded-2xl p-7 group">
               <div

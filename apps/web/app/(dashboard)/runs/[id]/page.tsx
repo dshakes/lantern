@@ -23,6 +23,7 @@ import { FeedbackWidget } from "@/components/feedback-widget";
 import { ReceiptCard } from "@/components/receipt-card";
 import { RunWaterfall } from "@/components/run-waterfall";
 import { ViewCode, snippetsForGetRun, snippetsForCreateRun } from "@/components/view-code";
+import { TakeoverPanel } from "@/components/takeover-panel";
 
 export default function RunDetailPage() {
   const params = useParams();
@@ -255,6 +256,10 @@ export default function RunDetailPage() {
                 <InfoRow label="Cost"><span className="font-mono text-sm font-medium text-lantern-500">{formatCost(run.costUsd)}</span></InfoRow>
               </dl>
             </section>
+
+            {/* Human takeover panel — only renders when there are pending or
+                past takeover requests. Otherwise hides itself entirely. */}
+            <TakeoverPanel runId={run.id} />
 
             {/* Feedback (RLHF loop) — only after run reached a terminal state */}
             {(effectiveStatus === "succeeded" || effectiveStatus === "failed") && (

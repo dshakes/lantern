@@ -119,21 +119,29 @@ make dashboard-dev    # Next.js dashboard at localhost:3000
 make landing-dev      # Landing page
 ```
 
-### Dashboard sidebar (11 items)
+### Dashboard sidebar (4 primary + Workspace section)
 
-The dashboard sidebar (`apps/web/components/sidebar.tsx`) has these navigation items:
+The dashboard sidebar (`apps/web/components/sidebar.tsx`) groups nav into a
+short primary set (the daily-driver) and a collapsible Workspace section
+(everything else). Bookmarks + deep links to old top-level routes keep
+working — they live under Workspace now.
 
-1. Agents
-2. Runs
-3. Surfaces
-4. Connectors
-5. Deployments
-6. Budgets
-7. Experiments
-8. Eval Suites
-9. Marketplace
-10. Analytics (backed by `/evaluations`)
-11. Settings
+**Primary (always visible):**
+1. **Inbox** (`/inbox`) — cross-agent activity feed. Recent runs, runs
+   needing review, live runs in flight. New in W6.
+2. **Agents** (`/agents`)
+3. **Analytics** (`/evaluations`)
+4. **Settings** (`/settings`)
+
+**Workspace (collapsed by default, auto-opens on hit):**
+Runs · Channels (`/surfaces`) · Integrations (`/connectors`) · Deployments ·
+Budgets · Experiments · Eval Suites · Marketplace
+
+**Additional dashboard surfaces:**
+- `/embed` — webchat install center (W10)
+- `/proof` — public receipt verifier (W8) — *no auth required*
+
+Keyboard shortcuts: `1` = Inbox, `2` = Agents, `3` = Analytics, `4` = Settings.
 
 ### Dashboard UX primitives
 
@@ -383,6 +391,73 @@ Reuses the eval-in-CI baseline machinery to gate merges.
 |---|---|---|
 | `POST` | `/v1/runs/rehearse` | Pull synthetic test cases from past failed/low-score runs (`window`, `limit`, filters) |
 
+### Webchat embed (W10)
+Static JS widget served at `/widget.js` from the same origin. Embed with
+one `<script>` tag; talks to the same `/v1/sessions` endpoints the
+dashboard uses, so no parallel widget API to maintain.
+
+### Workflow runtime (W11b)
+When `agents.workflow` JSONB contains a graph saved by the visual editor,
+the inline run executor dispatches to the workflow interpreter at
+`services/control-plane/internal/workflow/interpreter.go`. Supported node
+types: `trigger`, `ai-step`, `tool`, `connector`, `condition`, `approval`,
+`end`. Loop / subagent are no-op pass-throughs (future wave). Every node
+emits `step_started` + `step_completed`/`step_failed` to `journal_events`
+so the run-detail waterfall renders the graph automatically.
+
+### Human takeover (W11a)
+Workflow `approval` nodes block on a `takeover_requests` row. Operators
+flip the row from `pending` → `granted` (optionally posting SDP for live
+WebRTC takeover) → `released` to resume the workflow. Real microVM video
+streaming is the last mile; the contract + persistence + workflow wait
+are fully wired today.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/runs/{id}/takeover/request` | Create a pending takeover row |
+| `GET` | `/v1/runs/{id}/takeover` | List takeover requests for a run |
+| `POST` | `/v1/runs/{id}/takeover/{id}/grant` | Operator approves; optional SDP offer |
+| `POST` | `/v1/runs/{id}/takeover/{id}/answer` | Browser-side SDP answer |
+| `POST` | `/v1/runs/{id}/takeover/{id}/release` | Workflow resumes |
+
+### Marketplace commerce (W11c)
+Cross-tenant agent invocations with HMAC-signed settlement. Buyer tenant
+invokes a published marketplace agent; the run executes on the seller's
+tenant (their LLM keys, their budgets); the buyer receives the output
+plus a signed receipt verifiable via the same `/proof` endpoint as run
+receipts.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/marketplace/{slug}/invoke` | Buyer invokes a seller agent. Returns output + HMAC-signed receipt |
+| `GET` | `/v1/marketplace/invocations?role=buyer\|seller` | List buyer- or seller-side history |
+
+### Voice channel (W11d)
+Phone numbers (purchased or BYO via SIP) route inbound calls to a
+Lantern agent. Provider-pluggable via the `VoiceProvider` interface in
+`services/control-plane/internal/handlers/voice.go`. Built-in: Twilio.
+Audio streaming + STT/TTS are the documented last-mile that ships when
+the user provides credentials.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/voice/numbers` | Link a phone number to an agent (provider + config) |
+| `GET` | `/v1/voice/numbers` | List linked numbers |
+| `DELETE` | `/v1/voice/numbers/{id}` | Unlink |
+| `GET` | `/v1/voice/calls` | Recent calls with duration + cost |
+| `POST` | `/v1/voice/webhook/{provider}` | Provider POSTs here on inbound call (TwiML response for Twilio) |
+
+### Bridge heartbeat (WhatsApp surface)
+Bridge POSTs its current pairing state to the control-plane every 30s so
+the dashboard can render status without depending on direct bridge
+reachability (matters in multi-host prod). Optional — when the bridge
+env vars are unset, dashboard falls back to direct bridge probe.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/surfaces/whatsapp/heartbeat` | Shared-token auth. Upserts pairing state per tenant |
+| `GET` | `/v1/surfaces/whatsapp/status` | JWT auth. Returns last-known pairing state with `stale` flag |
+
 ---
 
 ## What to do, and what NOT to do
@@ -433,14 +508,24 @@ Never hand-edit files under `gen/`. If a proto change breaks a service, fix the 
 
 ---
 
-## Key make targets
+## Preferred local-dev command
+
+```bash
+lantern dev   # boots Postgres+Redis+MinIO+API+dashboard+WhatsApp bridge
+```
+
+The four-Makefile-target dance below still works for power users, but
+`lantern dev` is the daily-driver.
+
+## Make targets (still supported)
 
 | Target | Purpose |
 |---|---|
-| `make dev` | Full docker-compose stack |
+| `make dev` | Full docker-compose stack (containerized API + dashboard) |
 | `make dev-infra` | Postgres + Redis + MinIO only |
-| `make run-api` | Control-plane with dev env vars on `:8080` |
-| `make dashboard-dev` | Next.js dashboard on `:3000` |
+| `make run-api` | Control-plane with dev env vars on `:8080` (host go run) |
+| `make dashboard-dev` | Next.js dashboard on `:3001` |
+| `make run-whatsapp-bridge` | WhatsApp bridge on `:3100` |
 | `make landing-dev` | Landing page dev server |
 | `make build` | Compile Go + Rust + TypeScript |
 | `make proto` | Regenerate from proto definitions |

@@ -36,6 +36,9 @@ import {
   BookCheck,
   Store,
   BarChart3,
+  Phone,
+  ArrowLeftRight,
+  Code2,
 } from "lucide-react";
 import clsx from "clsx";
 import { useState, useEffect, useRef } from "react";
@@ -55,12 +58,15 @@ const primaryNav = [
 const workspaceNav = [
   { href: "/runs", label: "Runs", icon: Play },
   { href: "/surfaces", label: "Channels", icon: MessageSquare },
+  { href: "/voice", label: "Voice", icon: Phone },
   { href: "/connectors", label: "Integrations", icon: Plug },
+  { href: "/embed", label: "Embed widget", icon: Code2 },
   { href: "/deployments", label: "Deployments", icon: Cloud },
   { href: "/budgets", label: "Budgets", icon: Shield },
   { href: "/experiments", label: "Experiments", icon: FlaskConical },
   { href: "/eval-suites", label: "Eval Suites", icon: BookCheck },
   { href: "/marketplace", label: "Marketplace", icon: Store },
+  { href: "/marketplace/invocations", label: "Invocations", icon: ArrowLeftRight },
 ] as const;
 
 export function Sidebar() {
