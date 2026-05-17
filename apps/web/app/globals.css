@@ -167,6 +167,37 @@ body {
   }
 }
 
+/* View Transitions API — browsers that support it (Chrome 111+, Edge 111+,
+   Safari 18+) get smooth cross-fade + crossfade-and-slide between routes
+   for free. Browsers that don't support it ignore @view-transition silently
+   and fall back to the `.page-transition` animation above.
+   No JS, no framer-motion bundle hit. */
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--motion-normal);
+  animation-timing-function: var(--easing-standard);
+}
+
+::view-transition-old(root) {
+  animation-name: vt-fade-out;
+}
+
+::view-transition-new(root) {
+  animation-name: vt-fade-in;
+}
+
+@keyframes vt-fade-out {
+  to { opacity: 0; }
+}
+@keyframes vt-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @keyframes float {
   0%, 100% { transform: translateY(0px); }
   50% { transform: translateY(-8px); }
