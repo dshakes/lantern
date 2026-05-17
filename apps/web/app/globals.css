@@ -282,9 +282,50 @@ button:active:not(:disabled) {
   transform: scale(0.98);
 }
 
-/* Input focus transition */
-input:focus, textarea:focus, select:focus {
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+/* Input focus transition — token-driven so swapping the accent token
+   reflows every focus glow across the dashboard in one line. */
+input, textarea, select {
+  transition:
+    border-color var(--motion-fast) var(--easing-standard),
+    box-shadow var(--motion-fast) var(--easing-standard),
+    background-color var(--motion-fast) var(--easing-standard);
+}
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: none;
+  border-color: rgba(124, 109, 248, 0.5);
+  box-shadow: 0 0 0 3px rgba(124, 109, 248, 0.18);
+}
+
+/* Card chrome — every .surface-card across the dashboard picks up the
+   same gradient-on-hover sheen + elevation lift. Single source of truth. */
+.surface-card, .connector-card {
+  position: relative;
+  isolation: isolate;
+}
+.surface-card::before, .connector-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(124, 109, 248, 0.05), transparent 60%);
+  opacity: 0;
+  transition: opacity var(--motion-normal) var(--easing-standard);
+  pointer-events: none;
+  z-index: -1;
+}
+.surface-card:hover::before, .connector-card:hover::before {
+  opacity: 1;
+}
+.surface-card:hover, .connector-card:hover {
+  box-shadow: var(--elev-2);
+  border-color: #3f3f46;
+  transform: translateY(-1px);
+}
+
+/* Section dividers — thinner + softer than border-zinc-800 for the
+   secondary level of hierarchy (within a card, between rows). */
+.divide-soft > * + * {
+  border-top: 1px solid rgba(63, 63, 70, 0.5);
 }
 
 /* Card hover lift */

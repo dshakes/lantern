@@ -9,14 +9,17 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bot, Inbox, BarChart3, Settings } from "lucide-react";
+import { Bot, Inbox, Plus, Settings } from "lucide-react";
 import clsx from "clsx";
 
+// Four destinations on mobile, mirroring the desktop sidebar's
+// minimalist structure: Agents (the unit), New (primary action),
+// Activity (Inbox), Settings.
 const PRIMARY = [
-  { href: "/inbox", label: "Inbox", icon: Inbox },
   { href: "/agents", label: "Agents", icon: Bot },
-  { href: "/evaluations", label: "Stats", icon: BarChart3 },
-  { href: "/settings", label: "More", icon: Settings },
+  { href: "/agents/create", label: "New", icon: Plus },
+  { href: "/inbox", label: "Activity", icon: Inbox },
+  { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
 export function MobileNav() {

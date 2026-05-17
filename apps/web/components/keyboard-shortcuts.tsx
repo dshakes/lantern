@@ -28,16 +28,13 @@ interface ShortcutDef {
 }
 
 const SHORTCUTS: ShortcutDef[] = [
-  { combo: "g i", description: "Go to Inbox", group: "Navigate", goToKey: "i", href: "/inbox" },
   { combo: "g a", description: "Go to Agents", group: "Navigate", goToKey: "a", href: "/agents" },
-  { combo: "g r", description: "Go to Runs", group: "Navigate", goToKey: "r", href: "/runs" },
+  { combo: "g i", description: "Go to Activity (Inbox)", group: "Navigate", goToKey: "i", href: "/inbox" },
   { combo: "g s", description: "Go to Settings", group: "Navigate", goToKey: "s", href: "/settings" },
-  { combo: "g c", description: "Go to Channels", group: "Navigate", goToKey: "c", href: "/surfaces" },
-  { combo: "g n", description: "Go to Integrations (connectors)", group: "Navigate", goToKey: "n", href: "/connectors" },
-  { combo: "g v", description: "Go to Voice", group: "Navigate", goToKey: "v", href: "/voice" },
-  { combo: "g e", description: "Go to Embed widget", group: "Navigate", goToKey: "e", href: "/embed" },
-  { combo: "g m", description: "Go to Marketplace", group: "Navigate", goToKey: "m", href: "/marketplace" },
-  { combo: "g b", description: "Go to Budgets", group: "Navigate", goToKey: "b", href: "/budgets" },
+  { combo: "g n", description: "New agent", group: "Navigate", goToKey: "n", href: "/agents/create" },
+  { combo: "g m", description: "Templates marketplace", group: "Navigate", goToKey: "m", href: "/marketplace" },
+  { combo: "g x", description: "Analytics", group: "Navigate", goToKey: "x", href: "/evaluations" },
+  { combo: "/", description: "Search agents", group: "Action" },
   { combo: "⌘K", description: "Open command palette", group: "Action" },
   { combo: "?", description: "Show this cheat sheet", group: "Help" },
   { combo: "Esc", description: "Close dialogs / cheat sheet", group: "Help" },
