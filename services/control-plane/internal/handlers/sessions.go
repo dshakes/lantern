@@ -144,6 +144,11 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Content     string   `json:"content"`
 		Attachments []string `json:"attachments"`
+		// SystemHint, when present, replaces the agent's stored system prompt
+		// for this turn only. Used by the WhatsApp bridge to inject a
+		// "you're texting as the owner, sound natural" persona with fresh
+		// per-thread style cues. Not persisted — strictly transient.
+		SystemHint string `json:"systemHint,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -215,13 +220,19 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		"status": "processing",
 	})
 
-	// Kick off LLM response in background.
-	go h.processMessage(sessionID, tenantID, agentName, messages)
+	// Kick off LLM response in background. The systemHint (if any) is passed
+	// through so it can override the agent's stored system prompt for this
+	// turn only — see processMessage.
+	go h.processMessage(sessionID, tenantID, agentName, messages, body.SystemHint)
 }
 
 // processMessage calls the LLM with the full message history and appends the
 // assistant response. Events are published to Redis as the processing happens.
-func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage) {
+//
+// systemHint, when non-empty, takes precedence over the agent's stored
+// system_prompt for this turn only. The bridge uses it to ship a fresh
+// "natural texting" persona per inbound — see whatsapp-bridge/src/natural.ts.
+func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage, systemHint string) {
 	ctx := context.Background()
 	ctx = middleware.InjectTenantID(ctx, tenantID)
 
@@ -229,8 +240,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		"status": "Processing your message...",
 	})
 
-	// Resolve system prompt from the agent row; fall back to a sensible
-	// default if none has been configured.
+	// Resolve system prompt: turn-level hint > stored agent prompt > default.
 	var storedPrompt *string
 	_ = h.srv.Pool.QueryRow(ctx, `
 		SELECT system_prompt FROM agents WHERE name = $1 AND tenant_id = $2
@@ -239,6 +249,9 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	systemPrompt := fmt.Sprintf("You are the agent '%s'. You are in an interactive session. Respond helpfully and concisely.", agentName)
 	if storedPrompt != nil && *storedPrompt != "" {
 		systemPrompt = *storedPrompt
+	}
+	if systemHint != "" {
+		systemPrompt = systemHint
 	}
 
 	var promptMessages []map[string]string

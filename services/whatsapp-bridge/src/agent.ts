@@ -28,12 +28,16 @@ export class AgentClient {
     return this.token !== "";
   }
 
-  async respondTo(jid: string, userText: string): Promise<string | null> {
+  async respondTo(
+    jid: string,
+    userText: string,
+    systemHint?: string
+  ): Promise<string | null> {
     if (!this.enabled()) return null;
 
     // Serialize per-contact so messages in quick succession don't race.
     const prev = this.inflight.get(jid) ?? Promise.resolve<string | null>(null);
-    const next = prev.then(() => this.runTurn(jid, userText)).catch((err) => {
+    const next = prev.then(() => this.runTurn(jid, userText, systemHint)).catch((err) => {
       this.logger.error({ err, jid }, "turn errored");
       return null;
     });
@@ -43,13 +47,23 @@ export class AgentClient {
     return reply;
   }
 
-  private async runTurn(jid: string, userText: string): Promise<string | null> {
+  private async runTurn(
+    jid: string,
+    userText: string,
+    systemHint?: string
+  ): Promise<string | null> {
     const sessionId = await this.ensureSession(jid);
     if (!sessionId) return null;
 
     // Open SSE first so we don't miss the response event.
     const sseCtrl = new AbortController();
     const ssePromise = this.waitForAgentMessage(sessionId, sseCtrl.signal);
+
+    // systemHint, when present, replaces the agent's stored system prompt
+    // for this turn only — used by the bridge to ship the natural-texting
+    // persona with thread-specific style cues.
+    const postBody: Record<string, unknown> = { content: userText };
+    if (systemHint) postBody.systemHint = systemHint;
 
     const postRes = await fetch(
       `${this.apiUrl}/v1/sessions/${sessionId}/messages`,
@@ -59,7 +73,7 @@ export class AgentClient {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.token}`,
         },
-        body: JSON.stringify({ content: userText }),
+        body: JSON.stringify(postBody),
       }
     );
 

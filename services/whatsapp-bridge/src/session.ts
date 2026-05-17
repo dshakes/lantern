@@ -12,6 +12,12 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
 import type { Logger } from "pino";
 import { AgentClient } from "./agent.js";
 import { AttentionClassifier } from "./attention.js";
+import {
+  agentPersonaPrompt,
+  inferStyle,
+  naturalize,
+  shouldRespond,
+} from "./natural.js";
 import type { BotState } from "./types.js";
 
 // Display name for the bot-owner used in attention prompts and log lines.
@@ -50,6 +56,17 @@ type PauseEntry = {
   pushName?: string;
   warned: boolean;
 };
+
+// Promise-returning setTimeout. Used by the natural-reply pacer to
+// space out burst messages and to honor the per-message typing delay.
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    // Don't keep the process alive solely for these — graceful shutdown
+    // can drop in-flight bursts safely; the next inbound retriggers.
+    t.unref?.();
+  });
+}
 
 // Render a small list of names with an overflow tail so the DM never becomes
 // a wall of text. 3 names stay inline; everything beyond becomes "(+N more)".
@@ -133,6 +150,13 @@ export class WhatsAppSession {
   // Capped in size; the cap is generous (most users message <1k contacts).
   private contactNames: Map<string, string> = new Map();
   private static readonly CONTACT_NAMES_MAX = 5_000;
+  // Rolling per-contact inbound history used to infer their conversational
+  // style (formality, lowercase, emojis, brevity). Keeps the last N raw
+  // texts only — no LLM, no PII beyond what they texted. We use this to
+  // seed the natural-texting persona prompt every turn so the agent
+  // sounds like a human matching their register.
+  private inboundHistory: Map<string, string[]> = new Map();
+  private static readonly INBOUND_HISTORY_PER_CONTACT = 12;
 
   constructor(tenantId: string, logger: Logger) {
     this.tenantId = tenantId;
@@ -388,6 +412,10 @@ export class WhatsAppSession {
           // Groups are opt-in: silently skip anything not on the monitor list.
           if (isGroup && !this.isMonitoredGroup(from)) continue;
 
+          // Track inbound for style inference. Groups share a single bucket
+          // because group register tends to be uniform; DMs are per-contact.
+          this.rememberInbound(from, text);
+
           this.logger.info(
             { from, isGroup, text: text.slice(0, 100) },
             "Incoming message"
@@ -427,7 +455,7 @@ export class WhatsAppSession {
             this.logger.info({ from }, "group message not addressed to owner");
             continue;
           }
-          this.handleAgentReply(from, text, { isGroup, senderName }).catch(
+          this.handleAgentReply(from, text, { isGroup, senderName, msgKey: msg.key }).catch(
             (err) => this.logger.error({ err, from }, "agent reply failed")
           );
         }
@@ -995,12 +1023,55 @@ export class WhatsAppSession {
   private async handleAgentReply(
     from: string,
     text: string,
-    opts: { isGroup?: boolean; senderName?: string } = {}
+    opts: {
+      isGroup?: boolean;
+      senderName?: string;
+      msgKey?: {
+        id?: string | null;
+        remoteJid?: string | null;
+        fromMe?: boolean | null;
+        participant?: string | null;
+      };
+    } = {}
   ) {
     if (!this.socket) return;
-    try {
-      await this.socket.sendPresenceUpdate("composing", from);
-    } catch {}
+
+    // First pass: maybe this doesn't deserve a full reply at all. Cheap
+    // text-only check — no LLM round-trip. If they sent "k" or "👍" we
+    // mirror back a reaction (or stay silent) instead of typing back a
+    // chatbot-style sentence. This is the single biggest "feel natural"
+    // lever in the whole pipeline.
+    const verdict = shouldRespond(text);
+    if (!verdict.respond) {
+      if (verdict.reaction && opts.msgKey?.id) {
+        await this.sendReaction(from, opts.msgKey, verdict.reaction);
+      }
+      this.broadcast({
+        type: "agent_reply",
+        data: {
+          to: from,
+          text: verdict.reaction ?? "(no reply — ack)",
+          reaction: verdict.reaction,
+          skipped: !verdict.reaction,
+          reason: verdict.reason,
+          timestamp: Date.now(),
+        },
+      });
+      return;
+    }
+
+    // Build the persona prompt from this contact's recent inbound style.
+    // Groups share a single style bucket — see rememberInbound.
+    const styleKey = opts.isGroup ? `group:${from}` : from;
+    const history = this.inboundHistory.get(styleKey) ?? [];
+    const style = inferStyle(history);
+    const ownerName =
+      this.displayName || process.env.LANTERN_OWNER_NAME || OWNER_NAME;
+    const systemHint = agentPersonaPrompt(
+      ownerName,
+      style,
+      !!opts.isGroup
+    );
 
     // In groups, annotate the user message so the agent knows it's in a group
     // and who sent it — otherwise the prompt has no way to tell 1-on-1 from
@@ -1009,19 +1080,105 @@ export class WhatsAppSession {
       ? `[group message from ${opts.senderName || "a participant"}]\n${text}`
       : text;
 
-    const reply = await this.agent.respondTo(from, userText);
+    // Send "composing…" immediately so the contact sees the human-style
+    // typing indicator while we wait on the LLM. We re-send it before each
+    // burst message to keep the indicator alive (Baileys flips it off
+    // after a few seconds of inactivity).
+    try {
+      await this.socket.sendPresenceUpdate("composing", from);
+    } catch {}
+
+    const draft = await this.agent.respondTo(from, userText, systemHint);
+
+    if (!draft) {
+      try {
+        await this.socket.sendPresenceUpdate("paused", from);
+      } catch {}
+      return;
+    }
+
+    // Naturalize: clean assistantisms, apply style, split into a burst,
+    // pace it. The result is the actual sequence of WhatsApp messages.
+    const burst = naturalize(draft, { inbound: text, style });
+    if (burst.length === 0) {
+      try {
+        await this.socket.sendPresenceUpdate("paused", from);
+      } catch {}
+      return;
+    }
+
+    for (let i = 0; i < burst.length; i++) {
+      const msg = burst[i];
+      // Delay before this message — for the first, that's the "read +
+      // think" lag; for subsequent ones it's the inter-burst gap. We've
+      // already sent the composing indicator once; refresh it for long waits.
+      if (msg.delayBeforeMs > 0) {
+        await sleep(msg.delayBeforeMs);
+      }
+      try {
+        await this.socket.sendPresenceUpdate("composing", from);
+      } catch {}
+      // Typing duration proportional to the message length.
+      if (msg.typingMs > 0) {
+        await sleep(msg.typingMs);
+      }
+      await this.sendMessage(from, msg.text);
+      this.broadcast({
+        type: "agent_reply",
+        data: {
+          to: from,
+          text: msg.text,
+          burstIndex: i,
+          burstSize: burst.length,
+          timestamp: Date.now(),
+        },
+      });
+    }
 
     try {
       await this.socket.sendPresenceUpdate("paused", from);
     } catch {}
+  }
 
-    if (!reply) return;
+  // Send a WhatsApp reaction to a specific message — used by the natural
+  // layer to mirror "k" / 👍 with a 👍 reaction instead of replying.
+  private async sendReaction(
+    jid: string,
+    key: {
+      id?: string | null;
+      remoteJid?: string | null;
+      fromMe?: boolean | null;
+      participant?: string | null;
+    },
+    emoji: string
+  ): Promise<void> {
+    if (!this.socket || !key.id) return;
+    const reactKey = {
+      remoteJid: key.remoteJid || jid,
+      fromMe: !!key.fromMe,
+      id: key.id,
+      ...(key.participant ? { participant: key.participant } : {}),
+    };
+    try {
+      await this.socket.sendMessage(jid, {
+        react: { text: emoji, key: reactKey as never },
+      });
+    } catch (err) {
+      this.logger.warn({ err, jid, emoji }, "reaction send failed");
+    }
+  }
 
-    await this.sendMessage(from, reply);
-    this.broadcast({
-      type: "agent_reply",
-      data: { to: from, text: reply, timestamp: Date.now() },
-    });
+  private rememberInbound(from: string, text: string) {
+    const key = this.isGroupJid(from) ? `group:${from}` : from;
+    let bucket = this.inboundHistory.get(key);
+    if (!bucket) {
+      bucket = [];
+      this.inboundHistory.set(key, bucket);
+    }
+    bucket.push(text);
+    if (bucket.length > WhatsAppSession.INBOUND_HISTORY_PER_CONTACT) {
+      bucket.splice(0, bucket.length - WhatsAppSession.INBOUND_HISTORY_PER_CONTACT);
+    }
   }
 
   async disconnect() {

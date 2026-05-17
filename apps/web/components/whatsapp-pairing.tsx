@@ -274,10 +274,29 @@ const ACTIVITY_ICON: Record<ActivityKind, { icon: typeof Bell; cls: string }> = 
   system: { icon: HelpCircle, cls: "text-zinc-500" },
 };
 
-function ActivityRow({ event, now }: { event: ActivityEvent; now: number }) {
+function ActivityRow({
+  event,
+  now,
+  onPauseContact,
+  pausing,
+}: {
+  event: ActivityEvent;
+  now: number;
+  onPauseContact?: (jid: string) => void;
+  pausing?: string | null;
+}) {
   const { icon: Icon, cls } = ACTIVITY_ICON[event.kind] ?? ACTIVITY_ICON.system;
+  // The "pause this contact" action only makes sense on inbound DMs — you
+  // can't pause the bot for a group, and pausing an outbound row is
+  // meaningless. We render the action inline (WATI pattern) on hover.
+  const showPause =
+    event.kind === "message_in" &&
+    !!event.jid &&
+    !event.jid.endsWith("@g.us") &&
+    !!onPauseContact;
+  const isPausing = pausing === event.jid;
   return (
-    <li className="flex items-start gap-2.5 px-3 py-2 hover:bg-surface-2">
+    <li className="group flex items-start gap-2.5 px-3 py-2 hover:bg-surface-2">
       <Icon className={clsx("mt-0.5 h-3.5 w-3.5 shrink-0", cls)} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] text-zinc-200">{event.summary}</p>
@@ -287,6 +306,23 @@ function ActivityRow({ event, now }: { event: ActivityEvent; now: number }) {
           </p>
         )}
       </div>
+      {showPause && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onPauseContact!(event.jid!);
+          }}
+          disabled={isPausing}
+          className="shrink-0 rounded-md border border-zinc-700/60 px-1.5 py-0.5 text-[10px] text-zinc-400 opacity-0 transition-all hover:border-amber-500/40 hover:text-amber-300 group-hover:opacity-100 disabled:opacity-50"
+          title="Pause auto-reply for this contact for 60 minutes"
+        >
+          {isPausing ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            "Pause"
+          )}
+        </button>
+      )}
       <span className="shrink-0 text-[10px] text-zinc-600 tabular-nums">
         {formatRelative(event.timestamp, now)}
       </span>
@@ -322,6 +358,7 @@ export function WhatsAppPairing({
   const [togglingMute, setTogglingMute] = useState(false);
   const [clearingPauses, setClearingPauses] = useState(false);
   const [unmonitoring, setUnmonitoring] = useState<string | null>(null);
+  const [pausingContact, setPausingContact] = useState<string | null>(null);
 
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -724,6 +761,33 @@ export function WhatsAppPairing({
     [bridgeUrl, tenantId]
   );
 
+  // Pause auto-reply for a single contact for 60 minutes — the WATI pattern.
+  // Triggered from the per-message "Pause" button in the activity feed,
+  // which is *where* the user notices they want the bot to stop replying
+  // ("my wife just texted, agent shouldn't take over").
+  const pauseContact = useCallback(
+    async (jid: string) => {
+      setPausingContact(jid);
+      try {
+        const res = await fetch(
+          `${bridgeUrl}/session/${tenantId}/bot/pause`,
+          {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ jid, ttlMs: 60 * 60 * 1000 }),
+          }
+        );
+        if (res.ok) {
+          setBotState(await res.json());
+          toast.success(`Paused auto-reply for ${jid.split("@")[0]} (60 min)`);
+        }
+      } finally {
+        setPausingContact(null);
+      }
+    },
+    [bridgeUrl, tenantId, toast]
+  );
+
   // ---- derived ----
 
   const stage = STATE_TO_STAGE[state];
@@ -737,6 +801,37 @@ export function WhatsAppPairing({
   const pausedCount = botState ? Object.keys(botState.paused).length : 0;
   const groups = botState?.monitoredGroups ?? [];
   const uptime = connectedAt ? now - connectedAt : 0;
+
+  // Liveness + latency derived from the activity stream. The bridge tags
+  // each agent_reply with a burstIndex so we can correlate the *first*
+  // reply of each burst with the preceding inbound to compute response
+  // time. Median over the last 10 pairs gives a stable badge value.
+  const lastActivityAt = useMemo(() => {
+    return activity.length > 0 ? activity[0].timestamp : null;
+  }, [activity]);
+
+  const medianLatencyMs = useMemo(() => {
+    const pairs: number[] = [];
+    // activity is newest-first; walk it pairing each agent_reply with the
+    // closest preceding (older) message_in event.
+    for (let i = 0; i < activity.length; i++) {
+      const ev = activity[i];
+      if (ev.kind !== "agent_reply") continue;
+      // Find the next-older message_in to this jid.
+      for (let j = i + 1; j < activity.length; j++) {
+        const prev = activity[j];
+        if (prev.kind !== "message_in") continue;
+        if (prev.jid && ev.jid && prev.jid !== ev.jid) continue;
+        const delta = ev.timestamp - prev.timestamp;
+        if (delta > 0 && delta < 5 * 60_000) pairs.push(delta);
+        break;
+      }
+      if (pairs.length >= 10) break;
+    }
+    if (pairs.length === 0) return null;
+    const sorted = pairs.slice().sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
+  }, [activity]);
 
   // ===========================================================================
   // Render
@@ -892,6 +987,8 @@ export function WhatsAppPairing({
           phoneNumber={phoneNumber}
           displayName={displayName}
           uptime={uptime}
+          lastActivityAt={lastActivityAt}
+          medianLatencyMs={medianLatencyMs}
           botState={botState}
           pausedCount={pausedCount}
           groups={groups}
@@ -900,10 +997,12 @@ export function WhatsAppPairing({
           togglingMute={togglingMute}
           clearingPauses={clearingPauses}
           unmonitoring={unmonitoring}
+          pausingContact={pausingContact}
           testMode={testMode}
           onToggleMute={toggleMute}
           onClearAll={clearAllPauses}
           onUnmonitor={unmonitorGroup}
+          onPauseContact={pauseContact}
           onDisconnect={handleDisconnect}
           onStartTest={() => setTestMode("waiting")}
           onClearTest={() => setTestMode("idle")}
@@ -1117,6 +1216,8 @@ function ConnectedPanel({
   phoneNumber,
   displayName,
   uptime,
+  lastActivityAt,
+  medianLatencyMs,
   botState,
   pausedCount,
   groups,
@@ -1125,10 +1226,12 @@ function ConnectedPanel({
   togglingMute,
   clearingPauses,
   unmonitoring,
+  pausingContact,
   testMode,
   onToggleMute,
   onClearAll,
   onUnmonitor,
+  onPauseContact,
   onDisconnect,
   onStartTest,
   onClearTest,
@@ -1136,6 +1239,8 @@ function ConnectedPanel({
   phoneNumber: string | null;
   displayName: string | null;
   uptime: number;
+  lastActivityAt: number | null;
+  medianLatencyMs: number | null;
   botState: BotState | null;
   pausedCount: number;
   groups: string[];
@@ -1144,10 +1249,12 @@ function ConnectedPanel({
   togglingMute: boolean;
   clearingPauses: boolean;
   unmonitoring: string | null;
+  pausingContact: string | null;
   testMode: "idle" | "waiting" | "received";
   onToggleMute: () => void;
   onClearAll: () => void;
   onUnmonitor: (jid: string) => void;
+  onPauseContact: (jid: string) => void;
   onDisconnect: () => void;
   onStartTest: () => void;
   onClearTest: () => void;
@@ -1157,10 +1264,20 @@ function ConnectedPanel({
     () => initialsFor(displayName, phoneNumber),
     [displayName, phoneNumber]
   );
+  // Latency badge — shown only after we have at least one inbound→reply
+  // pair. Sub-second times are rendered as "1.4s" not "1408ms" so the
+  // number reads at a glance.
+  const latencyLabel = medianLatencyMs != null
+    ? medianLatencyMs < 10_000
+      ? `${(medianLatencyMs / 1000).toFixed(1)}s`
+      : `${Math.round(medianLatencyMs / 1000)}s`
+    : null;
 
   return (
     <div className="space-y-4">
-      {/* Identity card */}
+      {/* Identity card — single line on desktop, wraps on mobile. The
+          row is built to compress: avatar | name+phone+uptime | latency
+          + last-active badges | disconnect. */}
       <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
@@ -1171,10 +1288,26 @@ function ConnectedPanel({
               <p className="truncate text-sm font-semibold text-zinc-100">
                 {displayName || "WhatsApp account"}
               </p>
-              <p className="text-[12px] text-zinc-400">
-                {phoneNumber ? `+${phoneNumber}` : "Phone number unavailable"}
-                <span className="mx-2 text-zinc-700">·</span>
-                paired {formatUptime(uptime)} ago
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-zinc-400">
+                <span>{phoneNumber ? `+${phoneNumber}` : "Phone number unavailable"}</span>
+                <span className="text-zinc-700">·</span>
+                <span>paired {formatUptime(uptime)} ago</span>
+                {latencyLabel && (
+                  <>
+                    <span className="text-zinc-700">·</span>
+                    <span title="Median reply latency (inbound → first agent reply)">
+                      reply p50 <span className="font-semibold text-zinc-200">{latencyLabel}</span>
+                    </span>
+                  </>
+                )}
+                {lastActivityAt && (
+                  <>
+                    <span className="text-zinc-700">·</span>
+                    <span title="Most recent message or agent action">
+                      last activity {formatRelative(lastActivityAt, now)}
+                    </span>
+                  </>
+                )}
               </p>
             </div>
           </div>
@@ -1331,7 +1464,13 @@ function ConnectedPanel({
         ) : (
           <ul className="max-h-72 divide-y divide-zinc-800 overflow-y-auto">
             {activity.map((ev) => (
-              <ActivityRow key={ev.id} event={ev} now={now} />
+              <ActivityRow
+                key={ev.id}
+                event={ev}
+                now={now}
+                onPauseContact={onPauseContact}
+                pausing={pausingContact}
+              />
             ))}
           </ul>
         )}
