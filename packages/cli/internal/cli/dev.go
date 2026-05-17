@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -316,7 +317,10 @@ func stopInfra(composeFile string) {
 // ---------- readiness probes ----------
 
 func waitForTCP(ctx context.Context, addr string, timeout time.Duration) error {
+	// Plain net.Dial — no shell-out, no `nc` dependency. We attempt a
+	// connect, and if it succeeds (peer accepted TCP), the port is ready.
 	deadline := time.Now().Add(timeout)
+	dialer := &net.Dialer{Timeout: 2 * time.Second}
 	for {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timeout waiting for %s", addr)
@@ -324,16 +328,11 @@ func waitForTCP(ctx context.Context, addr string, timeout time.Duration) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		conn, err := exec.Command("nc", "-z", strings.Replace(addr, ":", " ", 1)).CombinedOutput()
-		_ = conn
+		conn, err := dialer.DialContext(ctx, "tcp", addr)
 		if err == nil {
+			_ = conn.Close()
 			return nil
 		}
-		// Fallback: try a direct net.Dial via a probe Go subcommand if nc
-		// isn't installed. We do this by attempting a connect via docker
-		// exec on the postgres container's pg_isready — but to keep
-		// this simple and dependency-free, we sleep and let the next
-		// http probe catch real readiness.
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
