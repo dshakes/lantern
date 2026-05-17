@@ -38,6 +38,7 @@ import {
   PanelLeftClose,
   PanelLeft,
   Plus,
+  Plug,
   Search,
 } from "lucide-react";
 import clsx from "clsx";
@@ -238,7 +239,9 @@ export function Sidebar() {
         )}
       </nav>
 
-      {/* Secondary destinations — Activity (Inbox) + Settings. */}
+      {/* Secondary destinations. Connectors is workspace-level — connect
+          once, every agent can use them — so it sits alongside Activity
+          and Settings rather than buried in a menu. */}
       <div className="border-t border-zinc-800 px-2 py-2">
         <SecondaryLink
           href="/inbox"
@@ -246,6 +249,13 @@ export function Sidebar() {
           label="Activity"
           collapsed={collapsed}
           active={pathname === "/inbox"}
+        />
+        <SecondaryLink
+          href="/connectors"
+          icon={Plug}
+          label="Connectors"
+          collapsed={collapsed}
+          active={pathname === "/connectors" || pathname.startsWith("/connectors/")}
         />
         <SecondaryLink
           href="/settings"

@@ -327,42 +327,55 @@ export default function ConnectorsPage() {
         }
       />
 
-      <div className="flex-1 p-8">
-        {/* MCP Marketplace Section */}
-        <div className="mb-8 rounded-xl border border-zinc-800 bg-surface-1 p-6">
-          <div className="flex items-center justify-between mb-4">
+      <div className="mx-auto w-full max-w-[1400px] flex-1 p-6 md:p-8">
+        {/* MCP Marketplace — collapsed empty state. When 0 servers, it's
+            a single-line strip with a "+ Add" button; only the populated
+            grid expands the section. Previous design had a 400px-tall
+            empty card that screamed at the user. */}
+        {mcpServers.length === 0 ? (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-surface-1 px-4 py-3">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lantern-500/10">
-                <Server className="h-5 w-5 text-lantern-400" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500/10">
+                <Server className="h-4 w-4 text-lantern-400" />
               </div>
               <div>
-                <h2 className="text-sm font-semibold text-zinc-100">MCP Marketplace</h2>
-                <p className="text-xs text-zinc-500">Connect any MCP server to use its tools in your agents</p>
+                <p className="text-sm font-medium text-zinc-100">MCP servers</p>
+                <p className="text-xs text-zinc-500">Attach an MCP server to expose its tools to every agent in this workspace.</p>
               </div>
             </div>
             <button
               onClick={() => { setShowMcpModal(true); setMcpForm({ url: "", name: "", description: "" }); setMcpErrors({}); }}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-surface-2"
             >
-              <Plus className="h-3.5 w-3.5" />
-              Add MCP Server
+              <Plus className="h-3 w-3" />
+              Add MCP server
             </button>
           </div>
-
-          {mcpServers.length > 0 && (
-            <div className="mb-3 relative max-w-sm">
+        ) : (
+          <div className="mb-8 rounded-xl border border-zinc-800 bg-surface-1 p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-lantern-500/10">
+                  <Server className="h-4 w-4 text-lantern-400" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-100">MCP servers</h2>
+                  <p className="text-xs text-zinc-500">{mcpServers.length} attached · tools available to every agent</p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setShowMcpModal(true); setMcpForm({ url: "", name: "", description: "" }); setMcpErrors({}); }}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add server
+              </button>
+            </div>
+            <div className="relative mb-3 max-w-sm">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
               <input type="text" value={mcpSearch} onChange={(e) => setMcpSearch(e.target.value)} placeholder="Search MCP servers..."
                 className="w-full rounded-lg border border-zinc-800 bg-surface-0 py-1.5 pl-8 pr-3 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/30" />
             </div>
-          )}
-
-          {mcpServers.length === 0 ? (
-            <div className="flex flex-col items-center py-6">
-              <Server className="mb-2 h-8 w-8 text-zinc-700" />
-              <p className="text-xs text-zinc-500">No MCP servers added yet. Add one to make its tools available to your agents.</p>
-            </div>
-          ) : (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filteredMcpServers.map((server) => (
                 <div key={server.id} className="group rounded-xl border border-zinc-800 bg-surface-0 p-4 transition-colors hover:border-zinc-700">
@@ -388,14 +401,14 @@ export default function ConnectorsPage() {
                 </div>
               ))}
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Search */}
-        <div className="mb-6 relative max-w-md">
+        <div className="mb-5 relative max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
           <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search connectors..."
-            className="w-full rounded-lg border border-zinc-800 bg-surface-0 py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/30" />
+            className="w-full rounded-lg border border-zinc-800 bg-surface-1 py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/30" />
         </div>
         {/* Category tabs */}
         <div className="mb-6 flex gap-1 overflow-x-auto pb-1">
