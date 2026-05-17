@@ -15,6 +15,7 @@ import {
   Calendar,
   TrendingUp,
   AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import clsx from "clsx";
@@ -25,6 +26,8 @@ import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
 import { PageHeader, CountBadge, DemoBadge } from "@/components/page-header";
 import { Button } from "@/components/button";
+import { AgentAvatar } from "@/components/agent-avatar";
+import { AgentsIllustration } from "@/components/illustrations";
 import type { Agent, Run } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
@@ -113,16 +116,28 @@ export default function AgentsPage() {
 
   if (error) {
     return (
-      <div className="flex flex-1 items-center justify-center">
-        <div className="text-center">
-          <p className="text-sm text-red-400">
-            Failed to load agents: {error.message}
-          </p>
-          <p className="mt-2 text-xs text-zinc-500">
-            Check that the API is running at localhost:8080, or refresh to use
-            demo data.
-          </p>
+      <div className="flex flex-1 flex-col items-center justify-center px-6">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/10 ring-1 ring-red-500/20">
+          <AlertCircle className="h-5 w-5 text-red-300" />
         </div>
+        <h3 className="mt-4 text-(--text-base) font-semibold text-zinc-100">
+          Couldn&apos;t load agents
+        </h3>
+        <p className="mt-1 max-w-sm text-center text-(--text-sm) text-zinc-500">
+          {error.message}. Make sure the control-plane API is reachable.
+        </p>
+        <code className="mt-3 rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-(--text-xs) text-zinc-300">
+          lantern dev
+        </code>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="mt-4"
+          icon={<RefreshCw className="h-3 w-3" />}
+          onClick={() => window.location.reload()}
+        >
+          Retry
+        </Button>
       </div>
     );
   }
@@ -153,11 +168,18 @@ export default function AgentsPage() {
       <div className="flex-1 p-8">
         {agents.length === 0 ? (
           <EmptyState
-            icon={Bot}
+            illustration={<AgentsIllustration size={120} />}
             title="No agents yet"
-            description="Create your first AI agent in 30 seconds. Describe what you want it to do and we will generate everything for you."
+            description="Describe what you want an agent to do — Lantern drafts the configuration, you review and ship. About 30 seconds end-to-end."
             actionLabel="Create Agent"
             onAction={() => router.push("/agents/create")}
+            secondaryActionLabel="Browse templates"
+            secondaryActionHref="/marketplace"
+            suggestions={[
+              { label: "Reply to my WhatsApp DMs", onClick: () => router.push("/agents/create?path=ai&seed=whatsapp") },
+              { label: "Triage GitHub issues", onClick: () => router.push("/agents/create?path=ai&seed=github") },
+              { label: "Summarize Slack daily", onClick: () => router.push("/agents/create?path=ai&seed=slack") },
+            ]}
           />
         ) : (
           <>
@@ -185,7 +207,7 @@ export default function AgentsPage() {
                 return (
                   <div
                     key={agent.id}
-                    className="card-hover group relative cursor-pointer rounded-xl border border-zinc-800 bg-surface-1 p-5 transition-all hover:border-zinc-700"
+                    className="card-hover group relative cursor-pointer rounded-(--radius-lg) border border-zinc-800 bg-surface-1 p-5 transition-all duration-(--motion-fast) hover:border-zinc-700 hover:shadow-(--elev-2)"
                     onClick={() => router.push(`/agents/${agent.name}`)}
                     role="button"
                     tabIndex={0}
@@ -194,23 +216,28 @@ export default function AgentsPage() {
                         router.push(`/agents/${agent.name}`);
                     }}
                   >
-                    {/* Top row: name + status badge */}
-                    <div className="mb-2 flex items-start justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <h3 className="text-sm font-semibold text-zinc-100 group-hover:text-white">
-                          {agent.name}
-                        </h3>
-                        <span className={clsx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium", sc.bg, sc.text)}>
-                          <span className={clsx("h-1.5 w-1.5 rounded-full", sc.dot)} />
-                          {sc.label}
-                        </span>
+                    {/* Identity row: avatar + name + status */}
+                    <div className="mb-3 flex items-start gap-3">
+                      <AgentAvatar
+                        name={agent.name}
+                        status={stats.lastRun?.status}
+                        size="md"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="truncate text-(--text-sm) font-semibold text-zinc-100 group-hover:text-white">
+                            {agent.name}
+                          </h3>
+                          <span className={clsx("inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-(--text-xs) font-medium", sc.bg, sc.text)}>
+                            <span className={clsx("h-1.5 w-1.5 rounded-full", sc.dot)} />
+                            {sc.label}
+                          </span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-(--text-xs) leading-(--leading-relaxed) text-zinc-500">
+                          {agent.description}
+                        </p>
                       </div>
                     </div>
-
-                    {/* Description */}
-                    <p className="mb-4 truncate text-xs leading-relaxed text-zinc-500">
-                      {agent.description}
-                    </p>
 
                     {/* Stats row */}
                     <div className="flex items-center justify-between text-[10px]">

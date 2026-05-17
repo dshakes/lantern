@@ -33,6 +33,7 @@ import type { Run, RunStatus } from "@/lib/mock-data";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/skeleton";
+import { AgentAvatar } from "@/components/agent-avatar";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -312,77 +313,6 @@ function RunRow({
         </div>
       </Link>
     </li>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Avatar + status dot
-// ---------------------------------------------------------------------------
-
-// Deterministic accent for an agent based on a stable hash of its name.
-// Picks from a curated palette so adjacent agents are unlikely to clash.
-const AVATAR_PALETTE = [
-  { bg: "bg-violet-500/15", text: "text-violet-300", ring: "ring-violet-500/30" },
-  { bg: "bg-sky-500/15", text: "text-sky-300", ring: "ring-sky-500/30" },
-  { bg: "bg-emerald-500/15", text: "text-emerald-300", ring: "ring-emerald-500/30" },
-  { bg: "bg-amber-500/15", text: "text-amber-300", ring: "ring-amber-500/30" },
-  { bg: "bg-rose-500/15", text: "text-rose-300", ring: "ring-rose-500/30" },
-  { bg: "bg-cyan-500/15", text: "text-cyan-300", ring: "ring-cyan-500/30" },
-  { bg: "bg-fuchsia-500/15", text: "text-fuchsia-300", ring: "ring-fuchsia-500/30" },
-  { bg: "bg-lime-500/15", text: "text-lime-300", ring: "ring-lime-500/30" },
-];
-
-function colorForName(name: string): (typeof AVATAR_PALETTE)[number] {
-  // Simple deterministic hash — same name always lands on the same color.
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
-}
-
-function initialsForAgent(name: string): string {
-  const parts = name.split(/[-_\s]+/).filter(Boolean);
-  if (parts.length === 0) return "??";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-function AgentAvatar({
-  name,
-  status,
-  dimmed,
-}: {
-  name: string;
-  status: RunStatus;
-  dimmed?: boolean;
-}) {
-  const palette = colorForName(name);
-  return (
-    <div className="relative shrink-0">
-      <div
-        className={clsx(
-          "flex h-8 w-8 items-center justify-center rounded-(--radius-md) text-(--text-xs) font-semibold ring-1 transition-opacity duration-(--motion-fast)",
-          palette.bg,
-          palette.text,
-          palette.ring,
-          dimmed && "opacity-40"
-        )}
-        aria-hidden
-      >
-        {initialsForAgent(name)}
-      </div>
-      {/* Status dot — small badge in the corner of the avatar. */}
-      <span
-        className={clsx(
-          "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface-1",
-          status === "succeeded" && "bg-emerald-400",
-          status === "failed" && "bg-red-400",
-          (status === "running" || status === "paused") && "bg-lantern-400 animate-pulse",
-          status === "queued" && "bg-zinc-500",
-          status === "cancelled" && "bg-zinc-500"
-        )}
-        aria-label={`status: ${status}`}
-      />
-    </div>
   );
 }
 

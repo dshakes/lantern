@@ -23,6 +23,8 @@ import { ExecutionLog, deduplicateSteps } from "@/components/execution-log";
 import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
 import { PageHeader, CountBadge, DemoBadge } from "@/components/page-header";
+import { AgentAvatar } from "@/components/agent-avatar";
+import { RunsIllustration } from "@/components/illustrations";
 
 const RUNS_PER_PAGE = 15;
 const statusOptions: Array<{ value: RunStatus | "all"; label: string }> = [
@@ -117,11 +119,23 @@ export default function RunsPage() {
       <div className="flex-1 p-8">
         {error ? (
           <div className="text-center py-12">
-            <p className="text-sm text-red-400">Failed to load runs: {error.message}</p>
-            <p className="mt-2 text-xs text-zinc-500">Check that the API server is running, or refresh the page to try again.</p>
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/10 ring-1 ring-red-500/20">
+              <Trash2 className="h-5 w-5 text-red-300" />
+            </div>
+            <h3 className="mt-4 text-(--text-base) font-semibold text-zinc-100">Couldn&apos;t load runs</h3>
+            <p className="mt-1 max-w-sm text-center text-(--text-sm) text-zinc-500">{error.message}. Check that the control-plane API is reachable.</p>
+            <code className="mt-3 rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-(--text-xs) text-zinc-300">lantern dev</code>
           </div>
         ) : filtered.length === 0 ? (
-          <EmptyState icon={Play} title="No runs yet" description="Runs appear here when you execute an agent. Go to an agent's Build tab and click Run to get started." actionLabel="View Agents" onAction={() => router.push("/agents")} />
+          <EmptyState
+            illustration={<RunsIllustration size={120} />}
+            title="No runs yet"
+            description="Runs appear here when you execute an agent. Open an agent and click Run, or trigger one from the API."
+            actionLabel="View Agents"
+            onAction={() => router.push("/agents")}
+            secondaryActionLabel="See examples"
+            secondaryActionHref="/marketplace"
+          />
         ) : (
           <div className="space-y-1">
             {/* Pagination header */}
@@ -140,16 +154,17 @@ export default function RunsPage() {
               const confirming = deletingRunId === `confirm_${run.id}`;
 
               return (
-                <div key={run.id} className="group rounded-lg border border-zinc-800 bg-surface-1">
+                <div key={run.id} className="group rounded-(--radius-md) border border-zinc-800 bg-surface-1 transition-colors duration-(--motion-fast) hover:border-zinc-700">
                   <div className="flex items-center">
-                    <button onClick={() => setExpandedRunId(expanded ? null : run.id)} className="flex flex-1 items-center gap-3 px-4 py-3 text-left text-sm hover:bg-surface-2 rounded-l-lg">
+                    <button onClick={() => setExpandedRunId(expanded ? null : run.id)} className="flex flex-1 items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-surface-2 rounded-l-(--radius-md)">
                       {expanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />}
+                      <AgentAvatar name={run.agentName} status={run.status} size="sm" />
+                      <button onClick={(e) => { e.stopPropagation(); router.push(`/agents/${run.agentName}`); }} className="text-(--text-sm) font-medium text-zinc-200 hover:text-white">{run.agentName}</button>
                       <StatusBadge status={run.status} />
-                      <button onClick={(e) => { e.stopPropagation(); router.push(`/agents/${run.agentName}`); }} className="text-xs font-medium text-zinc-300 hover:text-white">{run.agentName}</button>
-                      <span className="font-mono text-[10px] text-zinc-600 hidden sm:inline">{run.id.slice(0, 12)}</span>
-                      <span className="ml-auto text-xs text-zinc-400">{dur}</span>
-                      <span className="font-mono text-[11px] text-zinc-500">{formatCost(run.costUsd)}</span>
-                      <span className="text-[11px] text-zinc-600 hidden md:inline">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
+                      <span className="font-mono text-(--text-xs) text-zinc-600 hidden sm:inline">{run.id.slice(0, 12)}</span>
+                      <span className="ml-auto text-(--text-xs) text-zinc-400 tabular-nums">{dur}</span>
+                      <span className="font-mono text-(--text-xs) text-zinc-500 tabular-nums">{formatCost(run.costUsd)}</span>
+                      <span className="text-(--text-xs) text-zinc-600 hidden md:inline tabular-nums">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
                     </button>
                     {/* Delete */}
                     <div className={clsx("flex items-center pr-2", confirming ? "opacity-100" : "opacity-0 group-hover:opacity-100 transition-opacity")}>
