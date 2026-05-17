@@ -8,6 +8,7 @@ import { Notifications } from "@/components/notifications";
 import { CommandPalette } from "@/components/command-palette";
 import { DemoModeBanner } from "@/components/demo-mode-banner";
 import { MobileNav } from "@/components/mobile-nav";
+import { KeyboardShortcuts } from "@/components/keyboard-shortcuts";
 import { User, Search, AlertTriangle, Settings, LogOut, HelpCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useModels } from "@/lib/model-context";
@@ -165,6 +166,9 @@ export default function DashboardLayout({
 
       {/* Mobile bottom nav — only visible <md. */}
       <MobileNav />
+
+      {/* Global keyboard shortcuts: `g <key>` go-to combos, `?` cheat sheet. */}
+      <KeyboardShortcuts />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useMemo, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
 import {
   Search,
@@ -40,8 +40,18 @@ function cleanOutput(raw: string): string {
 
 export default function RunsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const toast = useToast();
-  const [agentFilter, setAgentFilter] = useState("all");
+  // Initialize the agent filter from ?agent=... so deep links from the
+  // per-agent workspace tabs land pre-scoped to that agent. Falls back
+  // to "all" when the URL doesn't carry the param.
+  const [agentFilter, setAgentFilter] = useState<string>(
+    () => searchParams.get("agent") ?? "all"
+  );
+  useEffect(() => {
+    const next = searchParams.get("agent") ?? "all";
+    setAgentFilter((prev) => (prev === next ? prev : next));
+  }, [searchParams]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);

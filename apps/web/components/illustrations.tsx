@@ -164,3 +164,54 @@ export function DeploymentsIllustration({ className, size = 120 }: IllustrationP
     </svg>
   );
 }
+
+// ── Inbox — empty tray with a sleeping z, signals "all clear". ──────────────
+export function InboxIllustration({ className, size = 120 }: IllustrationProps) {
+  return (
+    <svg viewBox="0 0 120 120" width={size} height={size} className={clsx(className)}>
+      <GradDef />
+      <rect x="22" y="44" width="76" height="44" rx="6" fill={grad} stroke={stroke} strokeWidth="1.5" />
+      <path d="M22 62 H46 L50 70 H70 L74 62 H98" fill="none" stroke={stroke} strokeWidth="1.5" />
+      <path d="M82 28 q4 -4 8 0 t8 0" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" />
+      <circle cx="92" cy="34" r="2.5" fill={stroke} />
+      <line x1="22" y1="100" x2="98" y2="100" stroke="rgb(63 63 70)" strokeWidth="1" strokeDasharray="3 3" />
+    </svg>
+  );
+}
+
+// ── Voice — phone handset with sound waves radiating from earpiece. ────────
+export function VoiceIllustration({ className, size = 120 }: IllustrationProps) {
+  return (
+    <svg viewBox="0 0 120 120" width={size} height={size} className={clsx(className)}>
+      <GradDef />
+      <path
+        d="M40 30 c0 -4 4 -8 8 -8 h12 c4 0 8 4 8 8 v12 l-8 6 c4 12 12 20 24 24 l6 -8 h12 c4 0 8 4 8 8 v12 c0 4 -4 8 -8 8 c-32 0 -62 -30 -62 -62 z"
+        fill={grad}
+        stroke={stroke}
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M86 38 q6 0 6 6" fill="none" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M86 30 q14 0 14 14" fill="none" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M86 22 q22 0 22 22" fill="none" stroke="rgb(168 85 247 / 0.4)" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// ── Takeover — a hand passes a baton to a robot silhouette. ────────────────
+export function TakeoverIllustration({ className, size = 120 }: IllustrationProps) {
+  return (
+    <svg viewBox="0 0 120 120" width={size} height={size} className={clsx(className)}>
+      <GradDef />
+      <rect x="64" y="32" width="32" height="32" rx="6" fill={grad} stroke={stroke} strokeWidth="1.5" />
+      <circle cx="74" cy="46" r="2" fill={stroke} />
+      <circle cx="86" cy="46" r="2" fill={stroke} />
+      <path d="M74 54 q6 4 12 0" fill="none" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="80" y1="32" x2="80" y2="24" stroke={stroke} strokeWidth="1.5" />
+      <circle cx="80" cy="22" r="2" fill={stroke} />
+      <path d="M22 84 q4 -8 14 -8 l24 0" fill="none" stroke="rgb(82 82 91)" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M52 76 q8 8 0 16 l-4 0" fill="none" stroke="rgb(82 82 91)" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="60" y1="84" x2="68" y2="84" stroke="rgb(168 85 247)" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
