@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -19,6 +20,7 @@ import (
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/lantern/services/control-plane/internal/workflow"
 )
 
 // resolveGmailToken looks up the Gmail OAuth access token for a tenant from
@@ -594,6 +596,14 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		return
 	}
 
+	// 1a. If the agent has a saved workflow graph, hand off to the workflow
+	// interpreter (W11b). Otherwise fall through to the simple single-LLM-
+	// call path below. Workflow execution emits journal_events per node so
+	// the RunWaterfall renders the full graph.
+	if h.runWorkflowIfPresent(ctx, runID, tenantID, agentName, input) {
+		return
+	}
+
 	// 2. Build a prompt from the input.
 	logStep("build_prompt", "running", "Building prompt from agent configuration")
 	inputJSON, _ := json.Marshal(input)
@@ -768,6 +778,151 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 				)
 			}
 		}()
+	}
+}
+
+// runWorkflowIfPresent loads agents.workflow for the given agent and, if a
+// valid graph is stored, runs it via the workflow interpreter. Returns
+// true if the workflow was executed (caller short-circuits the single-
+// LLM-call path); false if the agent has no workflow and should fall
+// through to the legacy executor.
+//
+// All side-effects (LLM, connector, tool, journal_events) are wired
+// through the shared resolveProviderKey + connector dispatch + writer
+// that the rest of the run pipeline uses — the interpreter doesn't
+// bypass auth, tenant-scoped keys, or audit logging.
+func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID, agentName string, input map[string]any) bool {
+	if h.llmProxy == nil {
+		return false
+	}
+	var wfRaw []byte
+	err := h.srv.Pool.QueryRow(ctx,
+		`SELECT COALESCE(workflow, '{}'::jsonb)::text::bytea FROM agents WHERE name = $1 AND tenant_id = $2`,
+		agentName, tenantID,
+	).Scan(&wfRaw)
+	if err != nil || len(wfRaw) == 0 {
+		return false
+	}
+	var def workflow.Definition
+	if err := json.Unmarshal(wfRaw, &def); err != nil || len(def.Nodes) == 0 {
+		return false
+	}
+
+	deps := workflow.Deps{
+		CallLLM: func(ctx context.Context, prompt, capability string) (string, error) {
+			provider, model := h.llmProxy.resolveModelForTenant(ctx, tenantID, capability)
+			apiKey, err := h.llmProxy.resolveProviderKey(ctx, tenantID, provider)
+			if err != nil {
+				return "", err
+			}
+			text, _, _, _, llmErr := h.llmProxy.callLLMSync(ctx, provider, model, apiKey, prompt)
+			return text, llmErr
+		},
+		CallConnector: func(ctx context.Context, connectorID, action string, params map[string]any) (any, error) {
+			// In-process dispatch matching the HTTP path in
+			// /v1/connectors/{id}/execute. We load credentials for the
+			// tenant + connector and call the same execute<Connector>
+			// helpers used elsewhere.
+			return dispatchConnectorInProc(ctx, h.srv.Pool, tenantID, connectorID, action, params)
+		},
+		CallTool: func(_ context.Context, tool string, params map[string]any) (any, error) {
+			// Built-in tools are still under-built (web.search etc. live
+			// in the runtime-manager). Return a structured "skipped"
+			// payload so the workflow proceeds — failing here would
+			// strand workflows that reference tools we haven't shipped.
+			return map[string]any{
+				"skipped": true,
+				"tool":    tool,
+				"params":  params,
+				"reason":  "tool runtime not wired into control-plane yet",
+			}, nil
+		},
+		EmitEvent: func(ctx context.Context, ev workflow.JournalEvent) error {
+			payload, _ := json.Marshal(ev.Payload)
+			_, err := h.srv.Pool.Exec(ctx,
+				`INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
+				 VALUES ($1, $2, $3, $4, $5, $6)
+				 ON CONFLICT (run_id, seq) DO NOTHING`,
+				runID, ev.Seq, ev.Kind, ev.StepID, ev.Attempt, payload,
+			)
+			return err
+		},
+	}
+
+	res, runErr := workflow.Run(ctx, runID, deps, def, input)
+	if runErr != nil {
+		errJSON, _ := json.Marshal(map[string]string{"code": "workflow_error", "message": runErr.Error()})
+		_, _ = h.srv.Pool.Exec(ctx,
+			`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
+			runID, string(errJSON),
+		)
+		return true
+	}
+	if res.Failed {
+		errJSON, _ := json.Marshal(map[string]any{
+			"code":    "workflow_step_failed",
+			"message": res.LastError,
+			"stepId":  res.FailedAt,
+		})
+		_, _ = h.srv.Pool.Exec(ctx,
+			`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
+			runID, string(errJSON),
+		)
+		return true
+	}
+
+	outputJSON, _ := json.Marshal(map[string]any{"result": res.Output, "stepsRan": res.StepsRan})
+	_, _ = h.srv.Pool.Exec(ctx,
+		`UPDATE runs SET status = 'succeeded', finished_at = now(), output = $2::jsonb WHERE id = $1`,
+		runID, string(outputJSON),
+	)
+	h.logger().Info("workflow run completed",
+		zap.String("run_id", runID),
+		zap.Int("steps_ran", res.StepsRan),
+	)
+	return true
+}
+
+// dispatchConnectorInProc is a slim wrapper that mirrors what the HTTP
+// connector-executor handler does, minus the request/response plumbing.
+// It loads the tenant's encrypted oauth token / connector config and
+// hands them to the same execute* helpers.
+func dispatchConnectorInProc(ctx context.Context, pool *pgxpool.Pool, tenantID, connectorID, action string, params map[string]any) (any, error) {
+	var configRaw, oauthRaw []byte
+	err := pool.QueryRow(ctx,
+		`SELECT COALESCE(config, '{}'::jsonb)::text::bytea,
+		        COALESCE(oauth_token_encrypted, '{}'::jsonb)::text::bytea
+		 FROM connector_installs
+		 WHERE tenant_id = $1 AND connector_id = $2 AND status = 'connected'`,
+		tenantID, connectorID,
+	).Scan(&configRaw, &oauthRaw)
+	if err != nil {
+		return nil, fmt.Errorf("connector %s not installed for this tenant", connectorID)
+	}
+	cfg := map[string]any{}
+	_ = json.Unmarshal(configRaw, &cfg)
+	if len(oauthRaw) > 0 {
+		var tok map[string]any
+		if json.Unmarshal(oauthRaw, &tok) == nil {
+			if at, ok := tok["access_token"].(string); ok && at != "" {
+				cfg["oauth_access_token"] = at
+				cfg["accessToken"] = at
+			}
+		}
+	}
+	switch connectorID {
+	case "gmail":
+		return executeGmail(cfg, action, params)
+	case "slack":
+		return executeSlack(cfg, action, params)
+	case "github":
+		return executeGitHub(cfg, action, params)
+	case "notion":
+		return executeNotion(cfg, action, params)
+	case "linear":
+		return executeLinear(cfg, action, params)
+	default:
+		return nil, fmt.Errorf("workflow-connector dispatch not yet wired for %s", connectorID)
 	}
 }
 
