@@ -13,7 +13,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { useRun } from "@/lib/hooks";
+import { useRun, useRunEvents } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
 import { formatCost, formatTokens, formatDuration } from "@/lib/mock-data";
 import { StatusBadge } from "@/components/status-badge";
@@ -21,6 +21,8 @@ import { JsonViewer } from "@/components/json-viewer";
 import { RunDetailSkeleton } from "@/components/skeleton";
 import { FeedbackWidget } from "@/components/feedback-widget";
 import { ReceiptCard } from "@/components/receipt-card";
+import { RunWaterfall } from "@/components/run-waterfall";
+import { ViewCode, snippetsForGetRun, snippetsForCreateRun } from "@/components/view-code";
 
 export default function RunDetailPage() {
   const params = useParams();
@@ -29,6 +31,7 @@ export default function RunDetailPage() {
   const id = params.id as string;
 
   const { run, loading, error, refresh } = useRun(id);
+  const { events } = useRunEvents(id);
 
   // Poll for status changes
   useEffect(() => {
@@ -104,16 +107,25 @@ export default function RunDetailPage() {
               <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
             )}
           </div>
-          {isRunning && !cancelled && (
-            <button
-              onClick={handleCancel}
-              disabled={cancelling}
-              className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-4 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
-              Cancel
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {/* View code: equivalent SDK call to fetch this run, plus a
+                template for creating new runs of the same agent. */}
+            <ViewCode title="Get this run from code" snippets={snippetsForGetRun(run.id)} />
+            <ViewCode
+              title={`Create a run for ${run.agentName}`}
+              snippets={snippetsForCreateRun(run.agentName)}
+            />
+            {isRunning && !cancelled && (
+              <button
+                onClick={handleCancel}
+                disabled={cancelling}
+                className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-4 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                Cancel
+              </button>
+            )}
+          </div>
         </div>
         <p className="mt-1 text-sm text-zinc-500">
           Agent:{" "}
@@ -128,8 +140,23 @@ export default function RunDetailPage() {
 
       {/* Content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: Output */}
+        {/* Left: Trace waterfall + Output. The waterfall sits above the
+            final output so the run reads top→bottom as a story: plan
+            (spans + sub-events), then result. */}
         <div className="flex flex-[2] flex-col overflow-hidden border-r border-zinc-800">
+          {events.length > 0 && (
+            <div className="border-b border-zinc-800 p-4">
+              <RunWaterfall
+                events={events}
+                running={isRunning}
+                totals={{
+                  costUsd: run.costUsd,
+                  tokensIn: run.tokensIn,
+                  tokensOut: run.tokensOut,
+                }}
+              />
+            </div>
+          )}
           <div className="flex-shrink-0 border-b border-zinc-800/50 bg-surface-1/50 px-6 py-3">
             <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">Output</h2>
           </div>
