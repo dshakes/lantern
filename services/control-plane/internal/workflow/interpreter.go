@@ -90,6 +90,18 @@ type Deps struct {
 	// EmitEvent writes a single journal_events row. The interpreter
 	// emits step_started + step_completed / step_failed per node.
 	EmitEvent func(ctx context.Context, ev JournalEvent) error
+
+	// WaitForApproval blocks until a human acks an approval node. Returns
+	// the takeover record's final disposition (granted / released / denied
+	// / expired). When nil, approval nodes auto-approve so workflows
+	// without a wired-up human-in-the-loop layer still complete.
+	WaitForApproval func(ctx context.Context, runID, stepID, reason string) (ApprovalDisposition, error)
+}
+
+// ApprovalDisposition reports what the human did with an approval step.
+type ApprovalDisposition struct {
+	Granted bool
+	Reason  string // human-supplied notes from the takeover grant/release flow
 }
 
 // JournalEvent matches the journal_events table layout (BYTEA payload).
@@ -195,7 +207,7 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 			"type": node.Type,
 		})
 
-		stepOutput, stepErr := executeNode(stepCtx, deps, node, vars)
+		stepOutput, stepErr := executeNode(stepCtx, runID, deps, node, vars)
 		cancel()
 		res.StepsRan++
 
@@ -246,7 +258,7 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 
 // ---- Per-node execution -----------------------------------------------------
 
-func executeNode(ctx context.Context, deps Deps, node Node, vars map[string]any) (any, error) {
+func executeNode(ctx context.Context, runID string, deps Deps, node Node, vars map[string]any) (any, error) {
 	switch node.Type {
 	case "trigger":
 		// Trigger is a no-op at runtime — it just marks the entry.
@@ -303,9 +315,20 @@ func executeNode(ctx context.Context, deps Deps, node Node, vars map[string]any)
 		return map[string]any{"skipped": "loop not yet implemented"}, nil
 
 	case "approval":
-		// TODO(w11a): cooperate with the human-takeover endpoint. For
-		// now, auto-approve so workflows complete instead of hanging.
-		return map[string]any{"approved": true, "note": "auto-approved (approval node not yet interactive)"}, nil
+		// W11a: block on the real human-takeover handshake when wired,
+		// auto-approve otherwise so older configurations still complete.
+		reason, _ := node.Data["reason"].(string)
+		if deps.WaitForApproval == nil {
+			return map[string]any{"approved": true, "note": "auto-approved (no human-takeover handler wired)"}, nil
+		}
+		disposition, err := deps.WaitForApproval(ctx, runID, node.ID, reason)
+		if err != nil {
+			return nil, fmt.Errorf("approval wait failed: %w", err)
+		}
+		if !disposition.Granted {
+			return nil, fmt.Errorf("approval denied or expired: %s", disposition.Reason)
+		}
+		return map[string]any{"approved": true, "note": disposition.Reason}, nil
 
 	case "subagent":
 		// TODO: invoke another agent via /v1/runs and wait for it.

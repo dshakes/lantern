@@ -291,6 +291,16 @@ func main() {
 	httpMux.HandleFunc("POST /v1/marketplace/{slug}/invoke", marketplaceHandler.Invoke)
 	httpMux.HandleFunc("GET /v1/marketplace/invocations", marketplaceHandler.ListInvocations)
 
+	// W11a: takeover handshake. Workflow approval nodes pause on these,
+	// the dashboard surfaces them, an operator grants → optionally
+	// exchanges WebRTC SDP → releases when done.
+	takeoverHandler := handlers.NewTakeoverHandler(srv, authHandler)
+	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/request", takeoverHandler.Request)
+	httpMux.HandleFunc("GET /v1/runs/{id}/takeover", takeoverHandler.ListForRun)
+	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/grant", takeoverHandler.Grant)
+	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/answer", takeoverHandler.Answer)
+	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/release", takeoverHandler.Release)
+
 	// MCP server registry + per-agent attachments.
 	httpMux.HandleFunc("GET /v1/mcp/servers", mcpHandler.ListServers)
 	httpMux.HandleFunc("GET /v1/mcp/servers/{slug}", mcpHandler.GetServer)

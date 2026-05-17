@@ -847,6 +847,56 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			)
 			return err
 		},
+		WaitForApproval: func(ctx context.Context, runID, stepID, reason string) (workflow.ApprovalDisposition, error) {
+			// W11a: open a takeover request and poll until a human flips
+			// its status. The dashboard surfaces pending requests and
+			// operators grant/release them. We poll once a second; for
+			// real production load this should switch to LISTEN/NOTIFY
+			// on a Postgres channel — punting that to a follow-up.
+			var takeoverID string
+			err := h.srv.Pool.QueryRow(ctx, `
+				INSERT INTO takeover_requests (run_id, tenant_id, step_id, reason, status, expires_at)
+				VALUES ($1, $2, $3, $4, 'pending', now() + interval '30 minutes')
+				RETURNING id::text
+			`, runID, tenantID, stepID, reason).Scan(&takeoverID)
+			if err != nil {
+				return workflow.ApprovalDisposition{}, fmt.Errorf("create takeover row: %w", err)
+			}
+
+			ticker := time.NewTicker(1 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return workflow.ApprovalDisposition{}, ctx.Err()
+				case <-ticker.C:
+					var status, notes string
+					var expiresAt *time.Time
+					err := h.srv.Pool.QueryRow(ctx, `
+						SELECT status, COALESCE(notes, ''), expires_at
+						FROM takeover_requests WHERE id = $1
+					`, takeoverID).Scan(&status, &notes, &expiresAt)
+					if err != nil {
+						continue
+					}
+					switch status {
+					case "released":
+						return workflow.ApprovalDisposition{Granted: true, Reason: notes}, nil
+					case "denied":
+						return workflow.ApprovalDisposition{Granted: false, Reason: notes}, nil
+					case "expired":
+						return workflow.ApprovalDisposition{Granted: false, Reason: "approval expired"}, nil
+					}
+					// Mark expired ourselves if the wall-clock passed.
+					if expiresAt != nil && time.Now().After(*expiresAt) {
+						_, _ = h.srv.Pool.Exec(ctx, `
+							UPDATE takeover_requests SET status = 'expired' WHERE id = $1
+						`, takeoverID)
+						return workflow.ApprovalDisposition{Granted: false, Reason: "approval timed out"}, nil
+					}
+				}
+			}
+		},
 	}
 
 	res, runErr := workflow.Run(ctx, runID, deps, def, input)

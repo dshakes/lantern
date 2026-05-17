@@ -675,6 +675,42 @@ var migrations = []string{
 		ON marketplace_invocations (seller_tenant_id, created_at DESC)`,
 
 	// ---------------------------------------------------------------
+	// Takeover requests — W11a. A workflow's approval / human_takeover
+	// step pauses the run until a human acknowledges; this table is the
+	// rendezvous point. Status transitions:
+	//   pending → granted → released  (normal happy path)
+	//   pending → denied              (request rejected)
+	//   pending → expired             (no human acted within deadline)
+	//
+	// sdp_offer + sdp_answer hold the WebRTC SDP exchange when a live
+	// VM stream is available (runtime-manager + Firecracker). Without a
+	// real microVM these stay NULL and the takeover is "approval-only".
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS takeover_requests (
+		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		run_id          UUID NOT NULL,
+		tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		step_id         TEXT,
+		reason          TEXT,
+		status          TEXT NOT NULL DEFAULT 'pending',
+		sdp_offer       TEXT,
+		sdp_answer      TEXT,
+		ice_candidates  JSONB DEFAULT '[]'::jsonb,
+		notes           TEXT,
+		expires_at      TIMESTAMPTZ,
+		created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		granted_at      TIMESTAMPTZ,
+		released_at     TIMESTAMPTZ
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS takeover_requests_run_idx
+		ON takeover_requests (run_id, created_at DESC)`,
+
+	`CREATE INDEX IF NOT EXISTS takeover_requests_tenant_open_idx
+		ON takeover_requests (tenant_id, status)
+		WHERE status = 'pending' OR status = 'granted'`,
+
+	// ---------------------------------------------------------------
 	// Surface heartbeat columns (additive — back-compat with existing DBs).
 	// The WhatsApp bridge pushes its current pairing state here every 30s
 	// so the control-plane (not just the bridge box) can answer
