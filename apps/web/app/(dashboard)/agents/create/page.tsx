@@ -210,10 +210,36 @@ function CreatePage() {
             </div>
             {path === "ai" && (
               <div className="mx-auto mt-8 max-w-xl space-y-3">
+                {/* Suggestion chips — empty-state nudges so users see what
+                    kinds of agents Lantern is good at without staring at
+                    a blank textarea. Click fills the description; user
+                    can edit before generating. */}
+                {!aiDescription && (
+                  <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                    <span className="text-zinc-600">Try:</span>
+                    {[
+                      "Reply to my WhatsApp DMs as me — casual, brief, like I'm texting",
+                      "Triage my GitHub issues every morning and draft responses",
+                      "Summarize my Slack channels each evening into a single digest",
+                      "Watch my Gmail for invoices and create Linear tasks for each",
+                    ].map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        onClick={() => setAiDescription(suggestion)}
+                        className="rounded-full border border-zinc-800 bg-surface-1 px-2.5 py-1 text-left text-[11px] text-zinc-400 transition-colors hover:border-indigo-500/40 hover:bg-indigo-500/5 hover:text-indigo-300"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <textarea value={aiDescription} onChange={(e) => setAiDescription(e.target.value)} rows={4} placeholder="Describe what your agent should do..." className="w-full resize-none rounded-xl border border-zinc-800 bg-surface-0 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-2 focus:ring-lantern-500/20" autoFocus onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAiGenerate(); }} />
                 <button onClick={handleAiGenerate} disabled={!aiDescription.trim() || aiGenerating} className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50">
                   {aiGenerating ? <><Loader2 className="h-4 w-4 animate-spin" /> Generating...</> : <><Sparkles className="h-4 w-4" /> Generate Agent</>}
                 </button>
+                <p className="text-center text-[11px] text-zinc-600">
+                  Lantern drafts the agent — you review and edit before saving. Nothing ships until you say so.
+                </p>
               </div>
             )}
             {path === "template" && (() => {
