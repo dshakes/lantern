@@ -1,21 +1,14 @@
 "use client";
 
+// Types only — we intentionally don't import any mock data runtime here.
+// Every method below either returns real API data, returns empty/null, or
+// throws. No fabricated rows leak into the UI as fake runs.
 import type {
   Agent,
   Run,
   RunStatus,
   StreamEvent,
   ApiKey,
-} from "@/lib/mock-data";
-import {
-  agents as mockAgents,
-  runs as mockRuns,
-  sampleRunEvents,
-  apiKeys as mockApiKeys,
-  getAgentByName,
-  getRunsForAgent,
-  getRunById,
-  getEventsForRun,
 } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
@@ -429,69 +422,30 @@ class LanternAPI {
   }
 
   async getAgent(name: string): Promise<Agent> {
-    try {
-      return await this.request<Agent>(`/v1/agents/${encodeURIComponent(name)}`);
-    } catch (err) {
-      notifySimulated("getAgent", err);
-      const agent = getAgentByName(name);
-      if (!agent) throw new Error(`Agent '${name}' not found`);
-      return agent;
-    }
+    // Real-only — no mock fallback. If the API is unreachable we want
+    // the UI to render an explicit "not found / offline" state, not a
+    // fake agent record that misleads the user.
+    return this.request<Agent>(`/v1/agents/${encodeURIComponent(name)}`);
   }
 
   async createAgent(data: CreateAgentInput): Promise<Agent> {
-    try {
-      return await this.request<Agent>("/v1/agents", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
-    } catch (err) {
-      notifySimulated("createAgent", err);
-      // Simulate agent creation with mock data
-      const agent: Agent = {
-        id: `ag_${Date.now()}`,
-        name: data.name
-          .trim()
-          .toLowerCase()
-          .replace(/\s+/g, "-"),
-        description:
-          data.description ||
-          `Agent created from ${data.template ?? "blank"} template`,
-        currentVersionId: "v_initial",
-        createdAt: new Date(),
-        labels: {},
-        status: "active",
-      };
-      return agent;
-    }
+    return this.request<Agent>("/v1/agents", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async updateAgent(
     name: string,
     data: { description?: string; systemPrompt?: string; model?: string; isolation?: string; timeout?: string; maxTokens?: number; maxCostUsd?: number; cron?: string },
   ): Promise<Agent> {
-    try {
-      return await this.request<Agent>(
-        `/v1/agents/${encodeURIComponent(name)}`,
-        {
-          method: "PUT",
-          body: JSON.stringify(data),
-        },
-      );
-    } catch (err) {
-      notifySimulated("updateAgent", err);
-      // Save to localStorage as fallback
-      if (typeof window !== "undefined") {
-        const key = `lantern_agent_settings_${name}`;
-        const existing = localStorage.getItem(key);
-        const current = existing ? JSON.parse(existing) : {};
-        const merged = { ...current, ...data };
-        localStorage.setItem(key, JSON.stringify(merged));
-      }
-      // Return a simulated agent
-      const agent = await this.getAgent(name);
-      return { ...agent, description: data.description ?? agent.description };
-    }
+    return this.request<Agent>(
+      `/v1/agents/${encodeURIComponent(name)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(data),
+      },
+    );
   }
 
   async deleteAgent(name: string): Promise<void> {
@@ -527,44 +481,26 @@ class LanternAPI {
   }
 
   async getRun(id: string): Promise<Run> {
-    try {
-      return await this.request<Run>(`/v1/runs/${encodeURIComponent(id)}`);
-    } catch (err) {
-      notifySimulated("getRun", err);
-      const run = getRunById(id);
-      if (!run) throw new Error(`Run '${id}' not found`);
-      return run;
-    }
+    // Real-only. A 404 from the API surfaces as a real "not found" page;
+    // a network failure surfaces as a real network error. Never fake a run.
+    return this.request<Run>(`/v1/runs/${encodeURIComponent(id)}`);
   }
 
   async createRun(data: CreateRunInput): Promise<Run> {
-    try {
-      return await this.request<Run>("/v1/runs", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
-    } catch (err) {
-      notifySimulated("createRun");
-      // Re-throw so the caller can handle it
-      throw err;
-    }
+    return this.request<Run>("/v1/runs", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async cancelRun(id: string, reason?: string): Promise<Run> {
-    try {
-      return await this.request<Run>(
-        `/v1/runs/${encodeURIComponent(id)}/cancel`,
-        {
-          method: "POST",
-          body: JSON.stringify({ reason }),
-        },
-      );
-    } catch (err) {
-      notifySimulated("cancelRun", err);
-      const run = getRunById(id);
-      if (!run) throw new Error(`Run '${id}' not found`);
-      return { ...run, status: "cancelled", finishedAt: new Date() };
-    }
+    return this.request<Run>(
+      `/v1/runs/${encodeURIComponent(id)}/cancel`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    );
   }
 
   async deleteRun(id: string): Promise<void> {
@@ -577,16 +513,17 @@ class LanternAPI {
     subscribe: (cb: (event: StreamEvent) => void) => void;
     close: () => void;
   } {
+    // Real SSE only — no mock event emitter. When the stream fails, the
+    // subscribe callback simply never fires, and consumer pages render
+    // their existing "empty / no events yet" state. We never inject
+    // fabricated step_started → step_completed events to fake activity.
     let onEvent: ((event: StreamEvent) => void) | null = null;
     let closed = false;
 
-    // Try real SSE first
+    let es: EventSource | null = null;
     try {
       const url = `${this.baseUrl}/v1/runs/${encodeURIComponent(runId)}/events`;
-      const es = new EventSource(
-        this._token ? `${url}?token=${this._token}` : url,
-      );
-
+      es = new EventSource(this._token ? `${url}?token=${this._token}` : url);
       es.onmessage = (msg) => {
         if (closed) return;
         try {
@@ -594,56 +531,24 @@ class LanternAPI {
           event.ts = new Date(event.ts);
           onEvent?.(event);
         } catch {
-          // Ignore malformed events
+          /* drop malformed frames */
         }
       };
-
       es.onerror = () => {
-        // If SSE fails, fall back to mock events
-        es.close();
-        if (!closed) {
-          notifySimulated("streamRunEvents");
-          emitMockEvents();
-        }
-      };
-
-      return {
-        subscribe: (cb) => {
-          onEvent = cb;
-        },
-        close: () => {
-          closed = true;
-          es.close();
-        },
+        if (es) es.close();
       };
     } catch {
-      // EventSource not supported or URL fails — use mock
-      notifySimulated("streamRunEvents");
+      // EventSource construction failed — leave es null; consumer never
+      // receives events, which is the correct empty-stream behavior.
     }
 
-    function emitMockEvents() {
-      // Use getEventsForRun to resolve mock events for any known mock run ID
-      const resolved = getEventsForRun(runId);
-      const events = resolved.length > 0 ? [...resolved] : [...sampleRunEvents];
-      let idx = 0;
-      const interval = setInterval(() => {
-        if (closed || idx >= events.length) {
-          clearInterval(interval);
-          return;
-        }
-        onEvent?.(events[idx]);
-        idx++;
-      }, 300);
-    }
-
-    // Fallback path
     return {
       subscribe: (cb) => {
         onEvent = cb;
-        emitMockEvents();
       },
       close: () => {
         closed = true;
+        if (es) es.close();
       },
     };
   }
@@ -651,13 +556,15 @@ class LanternAPI {
   // ---- Runs for a specific agent (helper) ---------------------------------
 
   async getRunsForAgent(agentName: string): Promise<Run[]> {
+    // Real API only. Returns empty list (not mock data) if the API call
+    // throws — the calling page renders a real "no runs yet" empty state.
     try {
       return await this.request<Run[]>(
         `/v1/runs?agent=${encodeURIComponent(agentName)}`,
       );
     } catch (err) {
       notifySimulated("getRunsForAgent", err);
-      return getRunsForAgent(agentName);
+      return [];
     }
   }
 
@@ -672,8 +579,7 @@ class LanternAPI {
       );
     } catch (err) {
       notifySimulated("getAgentVersions", err);
-      const { agentVersions } = await import("@/lib/mock-data");
-      return agentVersions[agentName] ?? [];
+      return [];
     }
   }
 
@@ -684,33 +590,23 @@ class LanternAPI {
       return await this.request<ApiKey[]>("/v1/settings/api-keys");
     } catch (err) {
       notifySimulated("listApiKeys", err);
-      return [...mockApiKeys];
+      return [];
     }
   }
 
   async createApiKey(
     data: CreateApiKeyInput,
   ): Promise<ApiKey & { secret: string }> {
-    try {
-      return await this.request<ApiKey & { secret: string }>(
-        "/v1/settings/api-keys",
-        {
-          method: "POST",
-          body: JSON.stringify(data),
-        },
-      );
-    } catch (err) {
-      notifySimulated("createApiKey", err);
-      const key: ApiKey & { secret: string } = {
-        id: `key_${Date.now()}`,
-        name: data.name,
-        prefix: `ltn_${Math.random().toString(36).slice(2, 6)}`,
-        scopes: data.scopes,
-        createdAt: new Date(),
-        secret: `ltn_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`,
-      };
-      return key;
-    }
+    // Real API only — never fabricate a key, even on network failure.
+    // A fake key would be uniquely dangerous: the user would copy it,
+    // hand it to a server, and that server would 401 forever.
+    return this.request<ApiKey & { secret: string }>(
+      "/v1/settings/api-keys",
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
   }
 
   async revokeApiKey(id: string): Promise<void> {
@@ -724,19 +620,14 @@ class LanternAPI {
     }
   }
 
-  async getUsage(): Promise<UsageData> {
+  async getUsage(): Promise<UsageData | null> {
+    // Returns null on API failure instead of fabricating "Pro · $12.47 · 348 runs"
+    // — the Settings page renders a real "Usage data unavailable" hint.
     try {
       return await this.request<UsageData>("/v1/settings/usage");
     } catch (err) {
       notifySimulated("getUsage", err);
-      return {
-        plan: "Pro",
-        planCostUsd: 49,
-        currentMonthCostUsd: 12.47,
-        currentMonthRuns: 348,
-        currentMonthTokens: 2_100_000,
-        paymentMethod: "Visa ending in 4242",
-      };
+      return null;
     }
   }
 
@@ -763,31 +654,12 @@ class LanternAPI {
   }
 
   async installConnector(data: InstallConnectorInput): Promise<ConnectorInstall> {
-    try {
-      return await this.request<ConnectorInstall>("/v1/connectors/install", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Only simulate locally for network errors (API completely down)
-      if (msg.includes("fetch") || msg.includes("ECONNREFUSED") || err instanceof TypeError) {
-        notifySimulated("installConnector");
-        return {
-          id: `ci_local_${Date.now()}`,
-          tenantId: DEMO_USER.tenantId,
-          connectorId: data.connectorId,
-          displayName: data.displayName,
-          status: "connected",
-          config: data.config ?? {},
-          scopes: data.scopes,
-          installedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-      }
-      // Re-throw real API errors
-      throw err;
-    }
+    // Real API only. Fabricating a "connected" connector here would lie:
+    // subsequent /execute calls against the fake install id will all 404.
+    return this.request<ConnectorInstall>("/v1/connectors/install", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async uninstallConnector(id: string): Promise<void> {

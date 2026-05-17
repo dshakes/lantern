@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
-import type { Run } from "@/lib/mock-data";
+import type { Run, RunStatus } from "@/lib/mock-data";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/skeleton";
@@ -188,33 +188,35 @@ function TabButton({
 }
 
 // ---------------------------------------------------------------------------
-// List
+// List — grouped by date with per-agent avatars
 // ---------------------------------------------------------------------------
 
 function RunList({ runs, emptyTab }: { runs: Run[]; emptyTab: Tab }) {
   if (runs.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-zinc-800 bg-surface-1 p-12 text-center">
-        <InboxIcon className="h-6 w-6 text-zinc-600" />
+      <div className="flex flex-col items-center justify-center gap-3 rounded-(--radius-xl) border border-dashed border-zinc-700/60 bg-surface-1 p-16 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-3/60 ring-1 ring-zinc-800">
+          <InboxIcon className="h-5 w-5 text-zinc-400" />
+        </div>
         <div>
-          <p className="text-sm font-medium text-zinc-300">
+          <p className="text-(--text-base) font-semibold text-zinc-100">
             {emptyTab === "needs_review"
               ? "Nothing to review"
               : emptyTab === "live"
                 ? "No runs in flight"
                 : "Your inbox is empty"}
           </p>
-          <p className="mt-1 text-[12px] text-zinc-500">
+          <p className="mt-1 max-w-sm text-(--text-sm) text-zinc-500">
             {emptyTab === "needs_review"
-              ? "Failed runs and low-feedback runs will land here."
+              ? "Failed runs and runs you flagged 👎 will land here."
               : emptyTab === "live"
-                ? "When an agent is actively running, you'll see it here."
-                : "Create an agent and trigger a run to see activity here."}
+                ? "When an agent is actively running, you'll see it here in real time."
+                : "Create an agent and trigger a run — every dispatch surfaces here."}
           </p>
         </div>
         <Link
           href="/agents"
-          className="mt-1 text-[12px] font-medium text-lantern-400 hover:text-lantern-300"
+          className="mt-1 inline-flex items-center gap-1 text-(--text-sm) font-medium text-lantern-400 transition-colors duration-(--motion-fast) hover:text-lantern-300"
         >
           Go to Agents →
         </Link>
@@ -222,59 +224,85 @@ function RunList({ runs, emptyTab }: { runs: Run[]; emptyTab: Tab }) {
     );
   }
 
+  // Bucket by relative date for human-scannable section headers. Within
+  // each bucket we further collapse consecutive runs of the same agent
+  // so the eye doesn't bounce across 10 identical rows.
+  const groups = groupByDate(runs);
+
   return (
-    <ul className="divide-y divide-zinc-800 overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
-      {runs.map((run) => (
-        <RunRow key={run.id} run={run} />
+    <div className="space-y-6">
+      {groups.map((g) => (
+        <section key={g.key}>
+          <h3 className="mb-2 px-1 text-(--text-xs) font-medium uppercase tracking-wider text-zinc-500">
+            {g.label}
+            <span className="ml-2 text-zinc-700">·</span>
+            <span className="ml-2 tabular-nums text-zinc-600">{g.runs.length}</span>
+          </h3>
+          <ul className="divide-y divide-zinc-800 overflow-hidden rounded-(--radius-lg) border border-zinc-800 bg-surface-1">
+            {g.runs.map((run, idx) => (
+              <RunRow
+                key={run.id}
+                run={run}
+                groupedWithPrev={idx > 0 && g.runs[idx - 1].agentName === run.agentName}
+              />
+            ))}
+          </ul>
+        </section>
       ))}
-    </ul>
+    </div>
   );
 }
 
-function RunRow({ run }: { run: Run }) {
-  const StatusIcon =
-    run.status === "succeeded"
-      ? CheckCircle2
-      : run.status === "failed"
-        ? XCircle
-        : run.status === "running" || run.status === "paused"
-          ? Loader2
-          : Clock;
+function RunRow({
+  run,
+  groupedWithPrev,
+}: {
+  run: Run;
+  groupedWithPrev: boolean;
+}) {
+  const summary = summarizeInput(run.input);
+  const StatusDot = statusDotFor(run.status);
 
   return (
     <li>
       <Link
         href={`/runs/${run.id}`}
-        className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
+        className="flex items-center gap-3 px-4 py-2.5 transition-colors duration-(--motion-fast) hover:bg-surface-2"
       >
-        <StatusIcon
-          className={clsx(
-            "h-4 w-4 shrink-0",
-            run.status === "succeeded" && "text-emerald-400",
-            run.status === "failed" && "text-red-400",
-            (run.status === "running" || run.status === "paused") && "animate-spin text-lantern-400",
-            run.status !== "succeeded" && run.status !== "failed" && run.status !== "running" && run.status !== "paused" && "text-zinc-500"
-          )}
+        {/* Avatar — colored initials per agent name. When consecutive rows
+            share an agent we dim/hide it so a burst from one agent reads
+            as a cluster, not a wall. */}
+        <AgentAvatar
+          name={run.agentName}
+          dimmed={groupedWithPrev}
+          status={run.status}
         />
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-zinc-100">
+            <span
+              className={clsx(
+                "truncate text-(--text-sm) font-medium",
+                groupedWithPrev ? "text-zinc-400" : "text-zinc-100"
+              )}
+            >
               {run.agentName}
             </span>
-            <StatusBadge status={run.status} />
+            <StatusDot />
             {run.labels?.trigger && (
-              <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-zinc-500">
+              <span className="rounded-(--radius-sm) bg-surface-3 px-1.5 py-0.5 text-(--text-xs) uppercase tracking-wider text-zinc-500">
                 {String(run.labels.trigger)}
               </span>
             )}
           </div>
-          <p className="mt-0.5 truncate text-[11px] text-zinc-500">
-            {summarizeInput(run.input)}
-          </p>
+          {summary ? (
+            <p className="mt-0.5 truncate text-(--text-xs) text-zinc-500">
+              {summary}
+            </p>
+          ) : null}
         </div>
 
-        <div className="flex shrink-0 items-center gap-3 text-[11px] text-zinc-500">
+        <div className="flex shrink-0 items-center gap-3 text-(--text-xs) text-zinc-500">
           {run.costUsd > 0 && (
             <span title="Cost in USD" className="tabular-nums">
               ${run.costUsd.toFixed(4)}
@@ -288,24 +316,170 @@ function RunRow({ run }: { run: Run }) {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Avatar + status dot
 // ---------------------------------------------------------------------------
 
-function summarizeInput(input: unknown): string {
-  if (input == null) return "—";
-  if (typeof input === "string") return input.slice(0, 120);
+// Deterministic accent for an agent based on a stable hash of its name.
+// Picks from a curated palette so adjacent agents are unlikely to clash.
+const AVATAR_PALETTE = [
+  { bg: "bg-violet-500/15", text: "text-violet-300", ring: "ring-violet-500/30" },
+  { bg: "bg-sky-500/15", text: "text-sky-300", ring: "ring-sky-500/30" },
+  { bg: "bg-emerald-500/15", text: "text-emerald-300", ring: "ring-emerald-500/30" },
+  { bg: "bg-amber-500/15", text: "text-amber-300", ring: "ring-amber-500/30" },
+  { bg: "bg-rose-500/15", text: "text-rose-300", ring: "ring-rose-500/30" },
+  { bg: "bg-cyan-500/15", text: "text-cyan-300", ring: "ring-cyan-500/30" },
+  { bg: "bg-fuchsia-500/15", text: "text-fuchsia-300", ring: "ring-fuchsia-500/30" },
+  { bg: "bg-lime-500/15", text: "text-lime-300", ring: "ring-lime-500/30" },
+];
+
+function colorForName(name: string): (typeof AVATAR_PALETTE)[number] {
+  // Simple deterministic hash — same name always lands on the same color.
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
+}
+
+function initialsForAgent(name: string): string {
+  const parts = name.split(/[-_\s]+/).filter(Boolean);
+  if (parts.length === 0) return "??";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function AgentAvatar({
+  name,
+  status,
+  dimmed,
+}: {
+  name: string;
+  status: RunStatus;
+  dimmed?: boolean;
+}) {
+  const palette = colorForName(name);
+  return (
+    <div className="relative shrink-0">
+      <div
+        className={clsx(
+          "flex h-8 w-8 items-center justify-center rounded-(--radius-md) text-(--text-xs) font-semibold ring-1 transition-opacity duration-(--motion-fast)",
+          palette.bg,
+          palette.text,
+          palette.ring,
+          dimmed && "opacity-40"
+        )}
+        aria-hidden
+      >
+        {initialsForAgent(name)}
+      </div>
+      {/* Status dot — small badge in the corner of the avatar. */}
+      <span
+        className={clsx(
+          "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface-1",
+          status === "succeeded" && "bg-emerald-400",
+          status === "failed" && "bg-red-400",
+          (status === "running" || status === "paused") && "bg-lantern-400 animate-pulse",
+          status === "queued" && "bg-zinc-500",
+          status === "cancelled" && "bg-zinc-500"
+        )}
+        aria-label={`status: ${status}`}
+      />
+    </div>
+  );
+}
+
+// Small inline pill for the run row's main line — quieter than StatusBadge.
+function statusDotFor(status: RunStatus) {
+  // Returns a component (not JSX) so the call site keeps the var name lowercase
+  // and avoids re-renders on every parent tick.
+  const map: Record<string, { label: string; cls: string }> = {
+    succeeded: { label: "✓", cls: "text-emerald-400" },
+    failed: { label: "✕", cls: "text-red-400" },
+    running: { label: "●", cls: "text-lantern-400 animate-pulse" },
+    paused: { label: "◐", cls: "text-amber-400" },
+    queued: { label: "○", cls: "text-zinc-500" },
+    cancelled: { label: "—", cls: "text-zinc-500" },
+  };
+  const v = map[status] ?? map.queued;
+  return function StatusDot() {
+    return <span className={clsx("text-(--text-xs)", v.cls)}>{v.label}</span>;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Date grouping
+// ---------------------------------------------------------------------------
+
+function groupByDate(runs: Run[]): Array<{ key: string; label: string; runs: Run[] }> {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const oneDay = 24 * 60 * 60 * 1000;
+  const yesterday = today - oneDay;
+  const sevenDaysAgo = today - 7 * oneDay;
+  const thirtyDaysAgo = today - 30 * oneDay;
+
+  const buckets: Record<string, { label: string; runs: Run[] }> = {
+    today: { label: "Today", runs: [] },
+    yesterday: { label: "Yesterday", runs: [] },
+    week: { label: "This week", runs: [] },
+    month: { label: "This month", runs: [] },
+    older: { label: "Older", runs: [] },
+  };
+
+  for (const run of runs) {
+    const ts = new Date(run.createdAt).getTime();
+    if (ts >= today) buckets.today.runs.push(run);
+    else if (ts >= yesterday) buckets.yesterday.runs.push(run);
+    else if (ts >= sevenDaysAgo) buckets.week.runs.push(run);
+    else if (ts >= thirtyDaysAgo) buckets.month.runs.push(run);
+    else buckets.older.runs.push(run);
+  }
+
+  return Object.entries(buckets)
+    .filter(([, v]) => v.runs.length > 0)
+    .map(([key, v]) => ({ key, label: v.label, runs: v.runs }));
+}
+
+// ---------------------------------------------------------------------------
+// Input summarizer — returns null when there's nothing real to show.
+// Prevents the previous "{}" / '{"connectors":[]}' visual noise.
+// ---------------------------------------------------------------------------
+
+function summarizeInput(input: unknown): string | null {
+  if (input == null) return null;
+  if (typeof input === "string") {
+    const t = input.trim();
+    return t.length > 0 ? t.slice(0, 120) : null;
+  }
   if (typeof input === "object") {
     const obj = input as Record<string, unknown>;
     // Common shapes: { message }, { content }, { input }, { text }, { prompt }.
-    for (const key of ["message", "content", "input", "text", "prompt"]) {
+    for (const key of ["message", "content", "input", "text", "prompt", "email", "query"]) {
       const val = obj[key];
-      if (typeof val === "string") return val.slice(0, 120);
+      if (typeof val === "string" && val.trim().length > 0) return val.trim().slice(0, 120);
     }
-    try {
-      return JSON.stringify(input).slice(0, 120);
-    } catch {
-      return "—";
-    }
+    // Empty object → nothing useful to show. Hide instead of rendering "{}".
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return null;
+    // Object with only empty values → also hide.
+    const hasContent = keys.some((k) => {
+      const v = obj[k];
+      if (v == null) return false;
+      if (typeof v === "string") return v.trim().length > 0;
+      if (Array.isArray(v)) return v.length > 0;
+      if (typeof v === "object") return Object.keys(v as object).length > 0;
+      return true;
+    });
+    if (!hasContent) return null;
+    // Otherwise render the most useful key inline (e.g. "connectors: gmail, slack").
+    const summary = keys
+      .map((k) => {
+        const v = obj[k];
+        if (typeof v === "string") return `${k}: ${v}`;
+        if (Array.isArray(v)) return v.length > 0 ? `${k}: ${v.length}` : null;
+        return null;
+      })
+      .filter(Boolean)
+      .join(" · ");
+    return summary.length > 0 ? summary.slice(0, 120) : null;
   }
   return String(input);
 }

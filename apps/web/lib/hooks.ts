@@ -1,11 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { api, type RunFilters } from "@/lib/api";
-import {
-  agents as mockAgents,
-  runs as mockRuns,
-} from "@/lib/mock-data";
+import { api, type RunFilters, notifySimulated } from "@/lib/api";
+// Types only — every hook below treats the API as the single source of truth.
+// On failure we surface an explicit error / empty state, never mock data.
 import type { Agent, Run, StreamEvent, ApiKey, AgentVersion } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
@@ -29,11 +27,14 @@ export function useAgents() {
       const data = await api.listAgents();
       setAgents(data);
       setIsDemo(false);
-    } catch {
-      // API unavailable — fall back to mock data so the UI isn't empty
-      console.warn("[lantern] API unavailable for listAgents, using mock data");
-      setAgents([...mockAgents]);
-      setIsDemo(true);
+    } catch (err) {
+      // API unavailable — surface the error explicitly + render an
+      // empty list. The page's empty state handles "no agents yet"
+      // vs. "agents existed but we couldn't fetch them" via the
+      // `error` field, not by injecting fake rows.
+      notifySimulated("listAgents", err);
+      setError(err instanceof Error ? err : new Error(String(err)));
+      setAgents([]);
     } finally {
       setLoading(false);
     }
@@ -156,26 +157,13 @@ export function useRuns(filters?: RunFilters) {
       const data = await api.listRuns(filters);
       setRuns(data);
       setIsDemo(false);
-    } catch {
-      // API unavailable — fall back to mock data
-      console.warn("[lantern] API unavailable for listRuns, using mock data");
-      let result = [...mockRuns];
-      if (filters?.agentName && filters.agentName !== "all") {
-        result = result.filter((r) => r.agentName === filters.agentName);
-      }
-      if (filters?.status && filters.status !== "all") {
-        result = result.filter((r) => r.status === filters.status);
-      }
-      if (filters?.search) {
-        const q = filters.search.toLowerCase();
-        result = result.filter(
-          (r) =>
-            r.id.toLowerCase().includes(q) ||
-            r.agentName.toLowerCase().includes(q),
-        );
-      }
-      setRuns(result);
-      setIsDemo(true);
+    } catch (err) {
+      // API unavailable — empty list + surface the error. Consumers
+      // (Runs page, Inbox) show their real empty/error state instead
+      // of a wall of mock rows that look indistinguishable from real.
+      notifySimulated("listRuns", err);
+      setError(err instanceof Error ? err : new Error(String(err)));
+      setRuns([]);
     } finally {
       setLoading(false);
     }
