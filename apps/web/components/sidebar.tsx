@@ -1,41 +1,66 @@
 "use client";
 
+// Lantern dashboard sidebar.
+//
+// Information architecture (post-W6):
+//   Primary  -- the four daily-driver destinations:
+//                 Inbox · Agents · Analytics · Settings
+//   Workspace -- expandable section for less-frequent destinations
+//                (Runs, Surfaces, Connectors, Deployments, Budgets,
+//                Experiments, Eval Suites, Marketplace) that will
+//                eventually fold into per-agent tabs.
+//
+// The Workspace section stays available so deep links + bookmarks keep
+// working while individual pages get pulled inside the agent shell. As
+// each one migrates, its entry can be removed from this list.
+
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Bot,
+  Inbox,
+  Settings,
+  User,
+  ChevronsUpDown,
+  ChevronDown,
+  ChevronRight,
+  LogOut,
+  PanelLeftClose,
+  PanelLeft,
   Play,
   MessageSquare,
   Plug,
   Cloud,
-  BarChart3,
-  Settings,
-  User,
-  ChevronsUpDown,
-  LogOut,
-  PanelLeftClose,
-  PanelLeft,
-  Store,
   Shield,
   FlaskConical,
   BookCheck,
+  Store,
+  BarChart3,
 } from "lucide-react";
 import clsx from "clsx";
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/lib/auth";
 
-const navItems = [
-  { href: "/agents", label: "Agents", icon: Bot, shortcut: "1" },
-  { href: "/runs", label: "Runs", icon: Play, shortcut: "2" },
-  { href: "/surfaces", label: "Surfaces", icon: MessageSquare, shortcut: "3" },
-  { href: "/connectors", label: "Connectors", icon: Plug, shortcut: "4" },
-  { href: "/deployments", label: "Deployments", icon: Cloud, shortcut: "5" },
-  { href: "/budgets", label: "Budgets", icon: Shield, shortcut: "6" },
-  { href: "/experiments", label: "Experiments", icon: FlaskConical, shortcut: "7" },
-  { href: "/eval-suites", label: "Eval Suites", icon: BookCheck, shortcut: "8" },
-  { href: "/marketplace", label: "Marketplace", icon: Store, shortcut: "9" },
-  { href: "/evaluations", label: "Analytics", icon: BarChart3, shortcut: "0" },
-  { href: "/settings", label: "Settings", icon: Settings },
+// Primary nav — the four destinations a daily user lives in.
+const primaryNav = [
+  { href: "/inbox", label: "Inbox", icon: Inbox, shortcut: "1" },
+  { href: "/agents", label: "Agents", icon: Bot, shortcut: "2" },
+  { href: "/evaluations", label: "Analytics", icon: BarChart3, shortcut: "3" },
+  { href: "/settings", label: "Settings", icon: Settings, shortcut: "4" },
+] as const;
+
+// Workspace nav — everything that's still real and reachable but no
+// longer competes for the daily-driver top slot. Will collapse into
+// per-agent tabs over time; for now this is the bridge.
+const workspaceNav = [
+  { href: "/runs", label: "Runs", icon: Play },
+  { href: "/surfaces", label: "Channels", icon: MessageSquare },
+  { href: "/connectors", label: "Integrations", icon: Plug },
+  { href: "/deployments", label: "Deployments", icon: Cloud },
+  { href: "/budgets", label: "Budgets", icon: Shield },
+  { href: "/experiments", label: "Experiments", icon: FlaskConical },
+  { href: "/eval-suites", label: "Eval Suites", icon: BookCheck },
+  { href: "/marketplace", label: "Marketplace", icon: Store },
 ] as const;
 
 export function Sidebar() {
@@ -44,6 +69,11 @@ export function Sidebar() {
   const { user, isDemoMode, logout } = useAuth();
   const [showMenu, setShowMenu] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  // The Workspace section auto-expands when the user is currently on one
+  // of its routes, so we don't strand them inside a closed accordion.
+  const [workspaceOpen, setWorkspaceOpen] = useState(() =>
+    workspaceNav.some((n) => pathname === n.href || pathname.startsWith(n.href + "/"))
+  );
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Click-outside handler for user dropdown
@@ -70,7 +100,7 @@ export function Sidebar() {
     router.push("/login");
   };
 
-  // Keyboard shortcuts: press 1-7 to navigate (when not in an input)
+  // Keyboard shortcuts: 1-4 for the primary destinations.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -82,10 +112,9 @@ export function Sidebar() {
       ) {
         return;
       }
-      // Don't trigger if modifier keys are held
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-      const match = navItems.find((n) => "shortcut" in n && n.shortcut === e.key);
+      const match = primaryNav.find((n) => n.shortcut === e.key);
       if (match) {
         e.preventDefault();
         router.push(match.href);
@@ -94,6 +123,39 @@ export function Sidebar() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [router]);
+
+  const navLink = (
+    href: string,
+    label: string,
+    Icon: typeof Bot,
+    shortcut?: string
+  ) => {
+    const isActive = pathname === href || pathname.startsWith(href + "/");
+    return (
+      <Link
+        key={href}
+        href={href}
+        className={clsx(
+          "sidebar-item",
+          isActive && "active",
+          collapsed && "justify-center px-0",
+        )}
+        title={collapsed ? label : undefined}
+      >
+        <Icon className="h-4.5 w-4.5 shrink-0" />
+        {!collapsed && (
+          <>
+            <span className="flex-1">{label}</span>
+            {shortcut && (
+              <kbd className="hidden xl:inline-flex h-5 min-w-[20px] items-center justify-center rounded border border-zinc-800 bg-surface-2 px-1 text-[10px] font-medium text-zinc-600">
+                {shortcut}
+              </kbd>
+            )}
+          </>
+        )}
+      </Link>
+    );
+  };
 
   return (
     <aside
@@ -118,7 +180,6 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Collapse toggle */}
       <div className={clsx("px-3 mb-1", collapsed && "flex justify-center")}>
         <button
           onClick={() => setCollapsed(!collapsed)}
@@ -133,35 +194,38 @@ export function Sidebar() {
         </button>
       </div>
 
-      <nav className="flex-1 space-y-1 px-3 py-2">
-        {navItems.map((item) => {
-          const isActive =
-            pathname === item.href || pathname.startsWith(item.href + "/");
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={clsx(
-                "sidebar-item",
-                isActive && "active",
-                collapsed && "justify-center px-0",
-              )}
-              title={collapsed ? item.label : undefined}
+      <nav className="flex-1 overflow-y-auto px-3 py-2">
+        <div className="space-y-1">
+          {primaryNav.map((item) => navLink(item.href, item.label, item.icon, item.shortcut))}
+        </div>
+
+        {/* Workspace section — collapsed by default, auto-opens when the
+            user is on one of its pages. Hidden entirely in collapsed
+            sidebar mode (icon-only) since the section header doesn't
+            make sense there. */}
+        {!collapsed && (
+          <>
+            <button
+              onClick={() => setWorkspaceOpen((v) => !v)}
+              className="mt-5 flex w-full items-center gap-1.5 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-600 transition-colors hover:text-zinc-400"
             >
-              <item.icon className="h-4.5 w-4.5 shrink-0" />
-              {!collapsed && (
-                <>
-                  <span className="flex-1">{item.label}</span>
-                  {"shortcut" in item && item.shortcut && (
-                    <kbd className="hidden xl:inline-flex h-5 min-w-[20px] items-center justify-center rounded border border-zinc-800 bg-surface-2 px-1 text-[10px] font-medium text-zinc-600">
-                      {item.shortcut}
-                    </kbd>
-                  )}
-                </>
+              {workspaceOpen ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
               )}
-            </Link>
-          );
-        })}
+              Workspace
+            </button>
+            {workspaceOpen && (
+              <div className="mt-1 space-y-1">
+                {workspaceNav.map((item) => navLink(item.href, item.label, item.icon))}
+              </div>
+            )}
+          </>
+        )}
+
+        {collapsed &&
+          workspaceNav.map((item) => navLink(item.href, item.label, item.icon))}
       </nav>
 
       <div className="relative border-t border-zinc-800 px-3 py-3" ref={menuRef}>
@@ -190,7 +254,6 @@ export function Sidebar() {
           )}
         </button>
 
-        {/* Dropdown menu */}
         {showMenu && (
           <div className="modal-content absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-lg border border-zinc-800 bg-surface-2 shadow-xl">
             <div className="px-3 py-2.5">
