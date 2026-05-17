@@ -21,20 +21,33 @@ export function PageHeader({
   return (
     <div
       className={clsx(
-        "border-b border-zinc-800 bg-surface-1 px-8 py-5",
+        // Subtle glass effect — backdrop-blur on a translucent surface
+        // gives every page header a consistent "floating" feel against
+        // scrolling content. Sticky so it stays visible on long pages.
+        "sticky top-0 z-10 border-b border-zinc-800 bg-surface-1/85 px-6 py-5 backdrop-blur-md md:px-8",
+        // Soft gradient sheen behind the title — pure CSS, no asset.
+        "relative isolate overflow-hidden",
         className,
       )}
     >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -left-12 -top-12 -z-10 h-48 w-96 rounded-full opacity-[0.07]"
+        style={{
+          background:
+            "radial-gradient(circle, var(--color-accent), transparent 70%)",
+        }}
+      />
       <div className="flex items-start justify-between gap-6">
         <div className="min-w-0">
           <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold tracking-tight text-zinc-100">
+            <h1 className="text-(--text-xl) font-semibold tracking-tight text-zinc-100">
               {title}
             </h1>
             {badge}
           </div>
           {description && (
-            <p className="mt-1 text-sm leading-relaxed text-zinc-500">
+            <p className="mt-1 max-w-3xl text-(--text-sm) leading-(--leading-relaxed) text-zinc-500">
               {description}
             </p>
           )}

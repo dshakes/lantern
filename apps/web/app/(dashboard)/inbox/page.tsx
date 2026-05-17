@@ -164,22 +164,22 @@ function TabButton({
     <button
       onClick={onClick}
       className={clsx(
-        "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors",
+        "group relative inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-(--text-sm) font-medium transition-all duration-(--motion-fast)",
         active
           ? tone === "warn"
-            ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+            ? "border-amber-500/40 bg-amber-500/10 text-amber-200 shadow-(--elev-1)"
             : tone === "info"
-              ? "border-lantern-500/40 bg-lantern-500/10 text-lantern-200"
-              : "border-zinc-700 bg-surface-2 text-zinc-100"
-          : "border-zinc-800 bg-surface-1 text-zinc-400 hover:text-zinc-200"
+              ? "border-lantern-500/40 bg-lantern-500/10 text-lantern-200 shadow-(--elev-1)"
+              : "border-zinc-700 bg-surface-2 text-zinc-100 shadow-(--elev-1)"
+          : "border-zinc-800 bg-surface-1 text-zinc-400 hover:border-zinc-700 hover:bg-surface-2 hover:text-zinc-200"
       )}
     >
       {icon}
       <span>{label}</span>
       <span
         className={clsx(
-          "rounded-full px-1.5 text-[10px] font-semibold tabular-nums",
-          active ? "bg-black/30 text-white/90" : "bg-surface-3 text-zinc-500"
+          "rounded-full px-1.5 py-0.5 text-(--text-xs) font-semibold tabular-nums transition-colors duration-(--motion-fast)",
+          active ? "bg-black/30 text-white/90" : "bg-surface-3 text-zinc-500 group-hover:text-zinc-300"
         )}
       >
         {count}
