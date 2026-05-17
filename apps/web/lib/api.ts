@@ -205,9 +205,13 @@ export interface SettingsInput {
 }
 
 // ---------------------------------------------------------------------------
-// Demo user (used when gateway is unavailable)
+// Demo user + simulated-data telemetry
 // ---------------------------------------------------------------------------
 
+// DEMO_USER is the synthetic identity used when the gateway is unreachable.
+// Its tenantId is also the canonical sentinel for every "fallback path" in
+// this module — never inline the literal string; reference DEMO_USER.tenantId
+// so the demo footprint is grep-able from one place.
 export const DEMO_USER: User = {
   id: "usr_demo",
   email: "demo@lantern.dev",
@@ -215,6 +219,57 @@ export const DEMO_USER: User = {
   tenantId: "t_acme",
   role: "owner",
 };
+
+// ApiUnavailableError marks an upstream gateway failure. Components can
+// catch it to render an explicit "service offline" state instead of the
+// generic Error string. We continue to fall back to mock data inside the
+// API methods (to keep the dashboard explorable offline), but every fall-
+// back fires `notifySimulated` so the dashboard surfaces a "Demo data"
+// banner — the data is no longer silently wrong.
+export class ApiUnavailableError extends Error {
+  readonly operation: string;
+  readonly cause?: unknown;
+  constructor(operation: string, cause?: unknown) {
+    super(`Lantern API unavailable for ${operation}`);
+    this.name = "ApiUnavailableError";
+    this.operation = operation;
+    this.cause = cause;
+  }
+}
+
+// Module-scoped "simulated data was returned recently" state. Subscribers
+// (the dashboard banner) re-render when notifySimulated fires. We keep the
+// last 25 operations so we can show the user *what* is being faked, not
+// just "something is."
+type SimulatedEvent = { operation: string; at: number };
+const simulatedListeners = new Set<(events: SimulatedEvent[]) => void>();
+const simulatedHistory: SimulatedEvent[] = [];
+const SIMULATED_HISTORY_MAX = 25;
+
+export function notifySimulated(operation: string, cause?: unknown): void {
+  // Keep the warning in the console for devs, but make it scannable.
+  if (typeof console !== "undefined") {
+    console.warn(`[lantern] Simulated: ${operation}`, cause);
+  }
+  simulatedHistory.unshift({ operation, at: Date.now() });
+  if (simulatedHistory.length > SIMULATED_HISTORY_MAX) {
+    simulatedHistory.length = SIMULATED_HISTORY_MAX;
+  }
+  for (const fn of simulatedListeners) fn(simulatedHistory.slice());
+}
+
+export function subscribeSimulated(
+  fn: (events: SimulatedEvent[]) => void
+): () => void {
+  simulatedListeners.add(fn);
+  // Replay current state so newly-mounted listeners see history.
+  fn(simulatedHistory.slice());
+  return () => simulatedListeners.delete(fn);
+}
+
+export function getSimulatedHistory(): SimulatedEvent[] {
+  return simulatedHistory.slice();
+}
 
 // ---------------------------------------------------------------------------
 // LanternAPI
@@ -343,10 +398,8 @@ class LanternAPI {
       );
       this.setToken(data.token);
       return data;
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable, using demo login",
-      );
+    } catch (err) {
+      notifySimulated("login", err);
       // Demo mode fallback
       if (email === "demo@lantern.dev" || password === "demo") {
         const demoToken = "demo_token_" + Date.now();
@@ -378,10 +431,8 @@ class LanternAPI {
   async getAgent(name: string): Promise<Agent> {
     try {
       return await this.request<Agent>(`/v1/agents/${encodeURIComponent(name)}`);
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for getAgent, using mock data",
-      );
+    } catch (err) {
+      notifySimulated("getAgent", err);
       const agent = getAgentByName(name);
       if (!agent) throw new Error(`Agent '${name}' not found`);
       return agent;
@@ -394,10 +445,8 @@ class LanternAPI {
         method: "POST",
         body: JSON.stringify(data),
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for createAgent, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("createAgent", err);
       // Simulate agent creation with mock data
       const agent: Agent = {
         id: `ag_${Date.now()}`,
@@ -429,10 +478,8 @@ class LanternAPI {
           body: JSON.stringify(data),
         },
       );
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for updateAgent, saving to localStorage",
-      );
+    } catch (err) {
+      notifySimulated("updateAgent", err);
       // Save to localStorage as fallback
       if (typeof window !== "undefined") {
         const key = `lantern_agent_settings_${name}`;
@@ -457,7 +504,7 @@ class LanternAPI {
       const msg = err instanceof Error ? err.message : String(err);
       // Only swallow network errors (API down). Re-throw real API errors.
       if (msg.includes("fetch") || msg.includes("ECONNREFUSED") || err instanceof TypeError) {
-        console.warn("[lantern] API unavailable for deleteAgent");
+        notifySimulated("deleteAgent");
         return; // silent success in demo mode
       }
       throw err;
@@ -482,10 +529,8 @@ class LanternAPI {
   async getRun(id: string): Promise<Run> {
     try {
       return await this.request<Run>(`/v1/runs/${encodeURIComponent(id)}`);
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for getRun, using mock data",
-      );
+    } catch (err) {
+      notifySimulated("getRun", err);
       const run = getRunById(id);
       if (!run) throw new Error(`Run '${id}' not found`);
       return run;
@@ -499,7 +544,7 @@ class LanternAPI {
         body: JSON.stringify(data),
       });
     } catch (err) {
-      console.warn("[lantern] createRun failed:", err);
+      notifySimulated("createRun");
       // Re-throw so the caller can handle it
       throw err;
     }
@@ -514,10 +559,8 @@ class LanternAPI {
           body: JSON.stringify({ reason }),
         },
       );
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for cancelRun, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("cancelRun", err);
       const run = getRunById(id);
       if (!run) throw new Error(`Run '${id}' not found`);
       return { ...run, status: "cancelled", finishedAt: new Date() };
@@ -559,9 +602,7 @@ class LanternAPI {
         // If SSE fails, fall back to mock events
         es.close();
         if (!closed) {
-          console.warn(
-            "[lantern] SSE unavailable, falling back to mock events",
-          );
+          notifySimulated("streamRunEvents");
           emitMockEvents();
         }
       };
@@ -577,9 +618,7 @@ class LanternAPI {
       };
     } catch {
       // EventSource not supported or URL fails — use mock
-      console.warn(
-        "[lantern] SSE unavailable, falling back to mock events",
-      );
+      notifySimulated("streamRunEvents");
     }
 
     function emitMockEvents() {
@@ -616,10 +655,8 @@ class LanternAPI {
       return await this.request<Run[]>(
         `/v1/runs?agent=${encodeURIComponent(agentName)}`,
       );
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for getRunsForAgent, using mock data",
-      );
+    } catch (err) {
+      notifySimulated("getRunsForAgent", err);
       return getRunsForAgent(agentName);
     }
   }
@@ -633,10 +670,8 @@ class LanternAPI {
       return await this.request<import("@/lib/mock-data").AgentVersion[]>(
         `/v1/agents/${encodeURIComponent(agentName)}/versions`,
       );
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for getAgentVersions, using mock data",
-      );
+    } catch (err) {
+      notifySimulated("getAgentVersions", err);
       const { agentVersions } = await import("@/lib/mock-data");
       return agentVersions[agentName] ?? [];
     }
@@ -647,10 +682,8 @@ class LanternAPI {
   async listApiKeys(): Promise<ApiKey[]> {
     try {
       return await this.request<ApiKey[]>("/v1/settings/api-keys");
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for listApiKeys, using mock data",
-      );
+    } catch (err) {
+      notifySimulated("listApiKeys", err);
       return [...mockApiKeys];
     }
   }
@@ -666,10 +699,8 @@ class LanternAPI {
           body: JSON.stringify(data),
         },
       );
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for createApiKey, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("createApiKey", err);
       const key: ApiKey & { secret: string } = {
         id: `key_${Date.now()}`,
         name: data.name,
@@ -688,20 +719,16 @@ class LanternAPI {
         `/v1/settings/api-keys/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       );
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for revokeApiKey, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("revokeApiKey", err);
     }
   }
 
   async getUsage(): Promise<UsageData> {
     try {
       return await this.request<UsageData>("/v1/settings/usage");
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for getUsage, using mock data",
-      );
+    } catch (err) {
+      notifySimulated("getUsage", err);
       return {
         plan: "Pro",
         planCostUsd: 49,
@@ -719,10 +746,8 @@ class LanternAPI {
         method: "PATCH",
         body: JSON.stringify(data),
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for updateSettings, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("updateSettings", err);
     }
   }
 
@@ -731,10 +756,8 @@ class LanternAPI {
   async listConnectors(): Promise<ConnectorInstall[]> {
     try {
       return await this.request<ConnectorInstall[]>("/v1/connectors");
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for listConnectors, using localStorage fallback",
-      );
+    } catch (err) {
+      notifySimulated("listConnectors", err);
       return [];
     }
   }
@@ -749,10 +772,10 @@ class LanternAPI {
       const msg = err instanceof Error ? err.message : String(err);
       // Only simulate locally for network errors (API completely down)
       if (msg.includes("fetch") || msg.includes("ECONNREFUSED") || err instanceof TypeError) {
-        console.warn("[lantern] API unavailable for installConnector, saving locally only");
+        notifySimulated("installConnector");
         return {
           id: `ci_local_${Date.now()}`,
-          tenantId: "local",
+          tenantId: DEMO_USER.tenantId,
           connectorId: data.connectorId,
           displayName: data.displayName,
           status: "connected",
@@ -772,10 +795,8 @@ class LanternAPI {
       await this.request<void>(`/v1/connectors/${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for uninstallConnector, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("uninstallConnector", err);
     }
   }
 
@@ -785,10 +806,8 @@ class LanternAPI {
         `/v1/connectors/${encodeURIComponent(id)}/test`,
         { method: "POST" },
       );
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for testConnector, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("testConnector", err);
       return { success: true, message: "Connection verified (simulated)" };
     }
   }
@@ -813,10 +832,8 @@ class LanternAPI {
   async listSurfaces(): Promise<SurfaceConfigRecord[]> {
     try {
       return await this.request<SurfaceConfigRecord[]>("/v1/surfaces");
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for listSurfaces, using localStorage fallback",
-      );
+    } catch (err) {
+      notifySimulated("listSurfaces", err);
       return [];
     }
   }
@@ -827,13 +844,11 @@ class LanternAPI {
         method: "POST",
         body: JSON.stringify(data),
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for configureSurface, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("configureSurface", err);
       return {
         id: `sc_${Date.now()}`,
-        tenantId: "t_acme",
+        tenantId: DEMO_USER.tenantId,
         surfaceId: data.surfaceId,
         displayName: data.displayName,
         status: "connected",
@@ -854,13 +869,11 @@ class LanternAPI {
           body: JSON.stringify(data),
         },
       );
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for updateSurface, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("updateSurface", err);
       return {
         id,
-        tenantId: "t_acme",
+        tenantId: DEMO_USER.tenantId,
         surfaceId: "unknown",
         displayName: data.displayName ?? "Surface",
         status: "connected",
@@ -876,10 +889,8 @@ class LanternAPI {
       await this.request<void>(`/v1/surfaces/${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for removeSurface, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("removeSurface", err);
     }
   }
 
@@ -889,10 +900,8 @@ class LanternAPI {
         `/v1/surfaces/${encodeURIComponent(id)}/test`,
         { method: "POST" },
       );
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for testSurface, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("testSurface", err);
       return { success: true, message: "Test message sent (simulated)" };
     }
   }
@@ -911,10 +920,8 @@ class LanternAPI {
   }>> {
     try {
       return await this.request("/v1/api-keys");
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for listApiKeysReal, falling back",
-      );
+    } catch (err) {
+      notifySimulated("listApiKeysReal", err);
       throw new Error("API unavailable");
     }
   }
@@ -928,10 +935,8 @@ class LanternAPI {
         method: "POST",
         body: JSON.stringify(data),
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for createApiKeyReal, falling back",
-      );
+    } catch (err) {
+      notifySimulated("createApiKeyReal", err);
       throw new Error("API unavailable");
     }
   }
@@ -941,10 +946,8 @@ class LanternAPI {
       await this.request<void>(`/v1/api-keys/${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for revokeApiKeyReal, falling back",
-      );
+    } catch (err) {
+      notifySimulated("revokeApiKeyReal", err);
       throw new Error("API unavailable");
     }
   }
@@ -954,10 +957,8 @@ class LanternAPI {
   async listDeployments(): Promise<Deployment[]> {
     try {
       return await this.request<Deployment[]>("/v1/deployments");
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for listDeployments, using localStorage fallback",
-      );
+    } catch (err) {
+      notifySimulated("listDeployments", err);
       return [];
     }
   }
@@ -968,13 +969,11 @@ class LanternAPI {
         method: "POST",
         body: JSON.stringify(data),
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for createDeployment, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("createDeployment", err);
       return {
         id: `dep_${Date.now()}`,
-        tenantId: "t_acme",
+        tenantId: DEMO_USER.tenantId,
         agentName: data.agentName,
         version: data.version,
         environment: data.environment ?? "development",
@@ -993,10 +992,8 @@ class LanternAPI {
   async listDataPlanes(): Promise<DataPlane[]> {
     try {
       return await this.request<DataPlane[]>("/v1/data-planes");
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for listDataPlanes, using localStorage fallback",
-      );
+    } catch (err) {
+      notifySimulated("listDataPlanes", err);
       return [];
     }
   }
@@ -1007,13 +1004,11 @@ class LanternAPI {
         method: "POST",
         body: JSON.stringify(data),
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for registerDataPlane, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("registerDataPlane", err);
       return {
         id: `dp_${Date.now()}`,
-        tenantId: "t_acme",
+        tenantId: DEMO_USER.tenantId,
         name: data.name,
         cloud: data.cloud,
         region: data.region,
@@ -1030,10 +1025,8 @@ class LanternAPI {
       await this.request<void>(`/v1/data-planes/${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
-    } catch {
-      console.warn(
-        "[lantern] Gateway unavailable for removeDataPlane, simulating locally",
-      );
+    } catch (err) {
+      notifySimulated("removeDataPlane", err);
     }
   }
 
@@ -1225,7 +1218,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
         body: JSON.stringify(data),
       });
     } catch (err) {
-      console.warn("[lantern] createSchedule failed:", err);
+      notifySimulated("createSchedule");
       throw err;
     }
   }
@@ -1248,7 +1241,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     try {
       return await this.request("/v1/schedules");
     } catch {
-      console.warn("[lantern] listSchedules failed, returning empty");
+      notifySimulated("listSchedules");
       return [];
     }
   }
@@ -1269,7 +1262,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
         method: "DELETE",
       });
     } catch {
-      console.warn("[lantern] deleteSchedule failed");
+      notifySimulated("deleteSchedule");
     }
   }
 
@@ -1351,7 +1344,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     try {
       return await this.request("/v1/sessions");
     } catch {
-      console.warn("[lantern] listSessions failed, returning empty");
+      notifySimulated("listSessions");
       return [];
     }
   }
@@ -1384,7 +1377,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     try {
       return await this.request(`/v1/agents/${encodeURIComponent(agentName)}/card`);
     } catch {
-      console.warn("[lantern] getAgentCard failed, returning default card");
+      notifySimulated("getAgentCard");
       return {
         name: agentName,
         description: "Agent card unavailable",
@@ -1416,7 +1409,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     try {
       return await this.request("/.well-known/agent.json");
     } catch {
-      console.warn("[lantern] getAgentDirectory failed, returning empty");
+      notifySimulated("getAgentDirectory");
       return { agents: [], provider: { name: "Lantern", url: "https://lantern.run" } };
     }
   }
@@ -1434,8 +1427,8 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
         method: "POST",
         body: JSON.stringify({ message }),
       });
-    } catch {
-      console.warn("[lantern] invokeAgentA2A failed, simulating locally");
+    } catch (err) {
+      notifySimulated("invokeAgentA2A", err);
       return {
         id: `a2a_${Date.now()}`,
         agentName,
@@ -1456,7 +1449,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
         body: JSON.stringify(workflow),
       });
     } catch {
-      console.warn("[lantern] saveWorkflow failed, saving to localStorage only");
+      notifySimulated("saveWorkflow");
       return { status: "saved_locally" };
     }
   }
@@ -1485,13 +1478,13 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
         method: "POST",
       });
     } catch {
-      console.warn("[lantern] deployAgent failed, simulating locally");
+      notifySimulated("deployAgent");
       const deployUrl = typeof window !== "undefined" && window.location.hostname === "localhost"
         ? `http://localhost:8080/v1/agents/${agentName}/a2a/invoke`
         : `https://agents.lantern.run/${agentName}`;
       return {
         id: `dep_${Date.now()}`,
-        tenantId: "t_acme",
+        tenantId: DEMO_USER.tenantId,
         agentName,
         status: "live",
         url: deployUrl,
@@ -1514,7 +1507,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     try {
       return await this.request(`/v1/agents/${encodeURIComponent(agentName)}/deploy`);
     } catch {
-      console.warn("[lantern] getCloudDeployment failed");
+      notifySimulated("getCloudDeployment");
       return { status: "not_deployed" };
     }
   }
@@ -1525,7 +1518,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
         method: "POST",
       });
     } catch {
-      console.warn("[lantern] stopCloudDeployment failed, simulating locally");
+      notifySimulated("stopCloudDeployment");
     }
   }
 

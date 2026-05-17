@@ -25,11 +25,27 @@ import express, { type NextFunction, type Request, type Response } from "express
 import cors from "cors";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { WhatsAppSession } from "./session.js";
 import { isValidJid, isValidGroupJid, timingSafeEqual } from "./validation.js";
 import pino from "pino";
 
 const logger = pino({ level: process.env.LOG_LEVEL || "info" });
+
+// Resolve the bridge's package version once at boot so /diagnostics can
+// report it. Failing the read is non-fatal — diagnostics is best-effort.
+const SERVICE_VERSION = (() => {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8"));
+    return typeof pkg?.version === "string" ? pkg.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+})();
+const SERVICE_STARTED_AT = Date.now();
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -39,6 +55,19 @@ const PORT = parseInt(process.env.PORT || "3100", 10);
 const BIND = process.env.LANTERN_BRIDGE_BIND || "127.0.0.1";
 const BRIDGE_TOKEN = process.env.LANTERN_BRIDGE_TOKEN || "";
 const CORS_ORIGIN = process.env.LANTERN_BRIDGE_ORIGIN || "*";
+
+// Optional control-plane heartbeat. When both LANTERN_CONTROL_PLANE_URL
+// and LANTERN_BRIDGE_HEARTBEAT_TOKEN are set, the bridge POSTs the current
+// pairing state for every active session to the control-plane every 30s.
+// This is what flips pairing-state from "lives only on the bridge box" to
+// "queryable from anywhere" — important for prod where the dashboard is
+// not on the same host as the bridge. In dev (no env vars) it is a no-op.
+const CONTROL_PLANE_URL = (process.env.LANTERN_CONTROL_PLANE_URL || "").replace(
+  /\/$/,
+  ""
+);
+const HEARTBEAT_TOKEN = process.env.LANTERN_BRIDGE_HEARTBEAT_TOKEN || "";
+const HEARTBEAT_INTERVAL_MS = 30_000;
 
 const isLoopback = BIND === "127.0.0.1" || BIND === "::1" || BIND === "localhost";
 if (!isLoopback && !BRIDGE_TOKEN) {
@@ -102,11 +131,43 @@ function requireToken(req: Request, res: Response, next: NextFunction) {
 // /health is unauthenticated so the dashboard can probe reachability before
 // asking the user for a token.
 app.get("/health", (_, res) => {
-  res.json({ status: "ok", authRequired: !!BRIDGE_TOKEN });
+  res.json({
+    status: "ok",
+    authRequired: !!BRIDGE_TOKEN,
+    version: SERVICE_VERSION,
+  });
+});
+
+// /diagnostics is also unauthenticated (read-only, no secrets in the body)
+// so the dashboard's "Trouble pairing?" expander can render even when the
+// bridge token check is failing. Per-session diagnostics are gated by
+// auth via /session/:tenantId/diagnostics below.
+app.get("/diagnostics", (_, res) => {
+  res.json({
+    version: SERVICE_VERSION,
+    startedAt: SERVICE_STARTED_AT,
+    uptimeMs: Date.now() - SERVICE_STARTED_AT,
+    bind: BIND,
+    port: PORT,
+    authRequired: !!BRIDGE_TOKEN,
+    controlPlaneHeartbeat: !!(CONTROL_PLANE_URL && HEARTBEAT_TOKEN),
+    agentEnabled: !!process.env.LANTERN_API_TOKEN,
+    activeSessions: [...sessions.keys()],
+  });
 });
 
 // All /session/* routes require auth when a token is configured.
 app.use("/session", requireToken);
+
+// GET /session/:tenantId/diagnostics -- per-session snapshot
+app.get("/session/:tenantId/diagnostics", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.json({ state: "idle", paired: false, present: false });
+    return;
+  }
+  res.json({ ...session.getDiagnostics(), present: true });
+});
 
 // GET /session/:tenantId/status -- check if a session exists and is connected
 app.get("/session/:tenantId/status", (req, res) => {
@@ -315,9 +376,34 @@ wss.on("connection", (ws, req) => {
   if (session) {
     session.addListener(ws);
 
+    // Replay enough state that a freshly-attached dashboard tab can render
+    // the right view without a round-trip:
+    //   1. connection_state — drives the stepper UI
+    //   2. qr — if a pairing QR is currently live
+    //   3. connected — if we're already paired
+    ws.send(
+      JSON.stringify({
+        type: "connection_state",
+        data: {
+          state: session.getConnectionState(),
+          since: Date.now(),
+          attempt: 0,
+          reason: null,
+        },
+      })
+    );
+
     const currentQR = session.getCurrentQR();
+    const qrIssuedAt = session.getQRIssuedAt();
     if (currentQR) {
-      ws.send(JSON.stringify({ type: "qr", data: currentQR }));
+      ws.send(
+        JSON.stringify({
+          type: "qr",
+          data: currentQR,
+          issuedAt: qrIssuedAt,
+          expiresInMs: 20_000,
+        })
+      );
     }
 
     if (session.isConnected()) {
@@ -327,6 +413,7 @@ wss.on("connection", (ws, req) => {
           data: {
             phoneNumber: session.getPhoneNumber(),
             name: session.getName(),
+            connectedAt: Date.now(),
           },
         })
       );
@@ -340,6 +427,61 @@ wss.on("connection", (ws, req) => {
 });
 
 // ---------------------------------------------------------------------------
+// Control-plane heartbeat (optional)
+// ---------------------------------------------------------------------------
+
+// Push pairing state for every active session up to the control-plane on a
+// fixed cadence. Best-effort: failures are logged at debug level and never
+// disturb the bridge's own lifecycle. The control-plane is the system of
+// record for "is tenant X paired right now" in multi-host deployments.
+async function sendHeartbeat() {
+  if (!CONTROL_PLANE_URL || !HEARTBEAT_TOKEN) return;
+  const payload = {
+    bridgeVersion: SERVICE_VERSION,
+    timestamp: Date.now(),
+    sessions: [...sessions.entries()].map(([tenantId, session]) => {
+      const d = session.getDiagnostics();
+      return {
+        tenantId,
+        state: d.state,
+        paired: d.paired,
+        connected: d.connected,
+        phoneNumber: d.phoneNumber,
+        displayName: d.displayName,
+        lastConnectionEventAt: d.lastConnectionEventAt,
+        lastError: d.lastError,
+      };
+    }),
+  };
+  try {
+    const res = await fetch(`${CONTROL_PLANE_URL}/v1/surfaces/whatsapp/heartbeat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${HEARTBEAT_TOKEN}`,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) {
+      logger.debug({ status: res.status }, "heartbeat rejected by control-plane");
+    }
+  } catch (err) {
+    logger.debug({ err }, "heartbeat failed");
+  }
+}
+
+let heartbeatTimer: NodeJS.Timeout | null = null;
+if (CONTROL_PLANE_URL && HEARTBEAT_TOKEN) {
+  heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+  heartbeatTimer.unref?.();
+  logger.info(
+    { url: CONTROL_PLANE_URL, intervalMs: HEARTBEAT_INTERVAL_MS },
+    "control-plane heartbeat enabled"
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 
@@ -351,6 +493,7 @@ server.listen(PORT, BIND, () => {
 // clean disconnect and the next reconnect doesn't race a half-open socket.
 function shutdown(signal: string) {
   logger.info({ signal }, "shutting down bridge");
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
   const closes = [...sessions.values()].map((s) => s.disconnect().catch(() => {}));
   Promise.all(closes).finally(() => {
     server.close(() => process.exit(0));

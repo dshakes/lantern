@@ -25,6 +25,11 @@ import { WebChatWidget } from "@/components/web-chat-widget";
 import { QRCode, buildQRLink, generatePairingToken } from "@/components/qr-code";
 import { WhatsAppPairing } from "@/components/whatsapp-pairing";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+
+// Fallback tenant when there's no authenticated user (demo / unauthenticated
+// dev). Bridge maps "default" to the seeded dev tenant on its end.
+const FALLBACK_TENANT = "default";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -204,6 +209,8 @@ function validateFields(fields: Record<string, string>, definitions: ConfigField
 
 export default function SurfacesPage() {
   const toast = useToast();
+  const { user } = useAuth();
+  const whatsappTenantId = user?.tenantId ?? FALLBACK_TENANT;
   const [configs, setConfigs] = useState<Record<string, SurfaceConfig>>({});
   const [loading, setLoading] = useState(true);
   const [configModal, setConfigModal] = useState<SurfaceDefinition | null>(null);
@@ -526,7 +533,7 @@ export default function SurfacesPage() {
                       <p className="text-[11px] text-zinc-500 leading-relaxed">
                         Pair your personal WhatsApp by scanning a QR code. Great for development and testing.
                       </p>
-                      <WhatsAppPairing tenantId="default" />
+                      <WhatsAppPairing tenantId={whatsappTenantId} />
                     </div>
                   )}
                 </div>

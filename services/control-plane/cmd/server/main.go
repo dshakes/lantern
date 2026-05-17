@@ -204,6 +204,10 @@ func main() {
 	// Surface endpoints.
 	httpMux.HandleFunc("POST /v1/surfaces", surfaceHandler.ConfigureSurface)
 	httpMux.HandleFunc("GET /v1/surfaces", surfaceHandler.ListSurfaces)
+	// WhatsApp-specific routes are registered before the generic /{id}
+	// matchers so they're not shadowed.
+	httpMux.HandleFunc("POST /v1/surfaces/whatsapp/heartbeat", surfaceHandler.BridgeHeartbeat)
+	httpMux.HandleFunc("GET /v1/surfaces/whatsapp/status", surfaceHandler.WhatsAppStatus)
 	httpMux.HandleFunc("PUT /v1/surfaces/{id}", surfaceHandler.UpdateSurface)
 	httpMux.HandleFunc("DELETE /v1/surfaces/{id}", surfaceHandler.RemoveSurface)
 	httpMux.HandleFunc("POST /v1/surfaces/{id}/test", surfaceHandler.TestSurface)

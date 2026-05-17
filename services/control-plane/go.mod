@@ -14,7 +14,10 @@ require (
 	google.golang.org/protobuf v1.36.6
 )
 
-require github.com/dshakes/lantern/gen/go v0.0.0
+require (
+	github.com/dshakes/lantern/gen/go v0.0.0
+	github.com/google/uuid v1.6.0
+)
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

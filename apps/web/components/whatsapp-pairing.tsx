@@ -1,21 +1,129 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  Loader2,
-  CheckCircle2,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
   AlertCircle,
+  AlertTriangle,
+  Bell,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  HelpCircle,
+  Loader2,
+  LogOut,
+  MessageSquare,
+  Pause,
+  Play,
+  Power,
   RefreshCw,
+  ShieldAlert,
   Smartphone,
-  Wifi,
+  UserMinus,
   WifiOff,
+  Zap,
 } from "lucide-react";
 import clsx from "clsx";
+import { Button } from "@/components/button";
+import { useToast } from "@/components/toast";
 
-// Optional bridge shared-token. When set (via NEXT_PUBLIC_LANTERN_BRIDGE_TOKEN),
-// every request to the bridge carries `Authorization: Bearer <token>`. The
-// bridge itself only enforces this when LANTERN_BRIDGE_TOKEN is set on its
-// side, so the two values must match in that case.
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+// Mirror of the bridge's `ConnectionState` union (see session.ts). Two extra
+// dashboard-only states sit out front of the wire states:
+//   - `unknown`         — initial mount, before bridge probe has answered.
+//   - `bridge_offline`  — bridge unreachable on this host.
+//   - `auth_required`   — bridge reachable but the shared token is wrong.
+// Everything below `idle` is what the bridge emits over the connection_state
+// WebSocket event.
+type ConnectionState =
+  | "unknown"
+  | "bridge_offline"
+  | "auth_required"
+  | "idle"
+  | "starting"
+  | "qr_ready"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "logged_out"
+  | "error";
+
+// Stepper stages — the four "wide" milestones the user walks through.
+type Stage = "bridge" | "auth" | "pairing" | "connected";
+
+const STATE_TO_STAGE: Record<ConnectionState, Stage> = {
+  unknown: "bridge",
+  bridge_offline: "bridge",
+  auth_required: "auth",
+  idle: "auth",
+  starting: "pairing",
+  qr_ready: "pairing",
+  connecting: "pairing",
+  connected: "connected",
+  reconnecting: "connected",
+  logged_out: "pairing",
+  error: "pairing",
+};
+
+interface BotState {
+  muted: boolean;
+  paused: Record<string, number>;
+  monitoredGroups?: string[];
+}
+
+// Live activity feed entries — derived from `message`, `agent_reply`, and
+// `activity` WS events. We keep them flattened in one timeline so the user
+// sees the full conversation context (who messaged, what the bot did, etc.).
+type ActivityKind =
+  | "bot_on"
+  | "bot_off"
+  | "monitor_on"
+  | "monitor_off"
+  | "contact_paused"
+  | "contact_resumed"
+  | "attention_dm"
+  | "agent_skipped"
+  | "message_in"
+  | "agent_reply"
+  | "system";
+
+interface ActivityEvent {
+  id: string;
+  kind: ActivityKind;
+  summary: string;
+  detail?: string;
+  jid?: string;
+  pushName?: string;
+  timestamp: number;
+}
+
+interface WhatsAppPairingProps {
+  // Real tenant UUID. Bridge keys `auth_sessions/` by this string, so it
+  // must match between dashboard and bridge — otherwise pairing happens
+  // against an empty auth dir every time.
+  tenantId: string;
+  bridgeUrl?: string;
+  onConnected?: (info: { phoneNumber: string; name: string }) => void;
+  onDisconnected?: () => void;
+}
+
+// ---------------------------------------------------------------------------
+// Auth helpers
+// ---------------------------------------------------------------------------
+
+// Optional shared token sent on every bridge request. The bridge enforces
+// it iff LANTERN_BRIDGE_TOKEN is set on its side; both must match. We do
+// NOT inline it into the WS URL when empty so the URL stays clean.
 const BRIDGE_TOKEN = process.env.NEXT_PUBLIC_LANTERN_BRIDGE_TOKEN || "";
 
 function authHeaders(extra?: HeadersInit): HeadersInit {
@@ -25,35 +133,169 @@ function authHeaders(extra?: HeadersInit): HeadersInit {
 }
 
 // ---------------------------------------------------------------------------
-// Types
+// Small presentational helpers
 // ---------------------------------------------------------------------------
 
-type PairingStatus =
-  | "idle"
-  | "starting"
-  | "waiting_qr"
-  | "connected"
-  | "disconnected"
-  | "error";
+const STAGE_ORDER: Stage[] = ["bridge", "auth", "pairing", "connected"];
+const STAGE_LABEL: Record<Stage, string> = {
+  bridge: "Bridge",
+  auth: "Auth",
+  pairing: "Pairing",
+  connected: "Connected",
+};
 
-interface WhatsAppPairingProps {
-  tenantId: string;
-  bridgeUrl?: string;
-  onConnected?: (info: { phoneNumber: string; name: string }) => void;
-  onDisconnected?: () => void;
+function Stepper({ stage, error }: { stage: Stage; error?: boolean }) {
+  const activeIdx = STAGE_ORDER.indexOf(stage);
+  return (
+    <div className="flex items-center gap-2 text-[11px]">
+      {STAGE_ORDER.map((s, idx) => {
+        const isActive = idx === activeIdx;
+        const isDone = idx < activeIdx;
+        return (
+          <div key={s} className="flex items-center gap-2">
+            <span
+              className={clsx(
+                "flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold transition-colors",
+                isDone && "bg-emerald-500/15 text-emerald-400",
+                isActive && !error && "bg-lantern-500/20 text-lantern-300 ring-2 ring-lantern-500/30",
+                isActive && error && "bg-red-500/20 text-red-300 ring-2 ring-red-500/30",
+                !isDone && !isActive && "bg-surface-2 text-zinc-600"
+              )}
+            >
+              {isDone ? <Check className="h-3 w-3" /> : idx + 1}
+            </span>
+            <span
+              className={clsx(
+                "font-medium transition-colors",
+                isActive ? "text-zinc-200" : isDone ? "text-zinc-400" : "text-zinc-600"
+              )}
+            >
+              {STAGE_LABEL[s]}
+            </span>
+            {idx < STAGE_ORDER.length - 1 && (
+              <span className="mx-1 h-px w-6 bg-zinc-800" />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
-// Mirror of BotState from services/whatsapp-bridge/src/types.ts. Duplicated
-// here (rather than imported) so the dashboard doesn't pull in any bridge
-// runtime code. Keep in sync.
-interface BotState {
-  muted: boolean;
-  paused: Record<string, number>;
-  monitoredGroups?: string[];
+function StatePill({ state }: { state: ConnectionState }) {
+  const map: Record<
+    ConnectionState,
+    { label: string; cls: string; dot: string }
+  > = {
+    unknown: { label: "Checking", cls: "bg-zinc-500/10 text-zinc-400", dot: "bg-zinc-500" },
+    bridge_offline: { label: "Bridge offline", cls: "bg-red-500/10 text-red-300", dot: "bg-red-500" },
+    auth_required: { label: "Auth required", cls: "bg-amber-500/10 text-amber-300", dot: "bg-amber-500" },
+    idle: { label: "Ready", cls: "bg-zinc-500/10 text-zinc-300", dot: "bg-zinc-400" },
+    starting: { label: "Starting", cls: "bg-lantern-500/10 text-lantern-300", dot: "bg-lantern-400 animate-pulse" },
+    qr_ready: { label: "Scan QR", cls: "bg-lantern-500/10 text-lantern-300", dot: "bg-lantern-400 animate-pulse" },
+    connecting: { label: "Connecting", cls: "bg-lantern-500/10 text-lantern-300", dot: "bg-lantern-400 animate-pulse" },
+    connected: { label: "Connected", cls: "bg-emerald-500/10 text-emerald-300", dot: "bg-emerald-400" },
+    reconnecting: { label: "Reconnecting", cls: "bg-amber-500/10 text-amber-300", dot: "bg-amber-400 animate-pulse" },
+    logged_out: { label: "Unlinked", cls: "bg-red-500/10 text-red-300", dot: "bg-red-500" },
+    error: { label: "Error", cls: "bg-red-500/10 text-red-300", dot: "bg-red-500" },
+  };
+  const v = map[state];
+  return (
+    <span
+      className={clsx(
+        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium",
+        v.cls
+      )}
+    >
+      <span className={clsx("h-1.5 w-1.5 rounded-full", v.dot)} />
+      {v.label}
+    </span>
+  );
+}
+
+function formatUptime(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+function formatRelative(ts: number, now: number): string {
+  const diff = Math.max(0, now - ts);
+  if (diff < 5_000) return "just now";
+  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  return `${Math.floor(diff / 3_600_000)}h ago`;
+}
+
+function initialsFor(name: string | null, phone: string | null): string {
+  const src = (name || phone || "?").trim();
+  if (!src) return "?";
+  const parts = src.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function CopyableCommand({ cmd }: { cmd: string }) {
+  const toast = useToast();
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(cmd);
+        toast.success("Copied to clipboard");
+      }}
+      className="group inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-surface-0 px-2 py-1 font-mono text-[11px] text-zinc-300 transition-colors hover:border-zinc-700 hover:text-zinc-100"
+    >
+      <span className="truncate">{cmd}</span>
+      <Copy className="h-3 w-3 shrink-0 text-zinc-500 group-hover:text-zinc-300" />
+    </button>
+  );
 }
 
 // ---------------------------------------------------------------------------
-// WhatsAppPairing component
+// Activity feed row
+// ---------------------------------------------------------------------------
+
+const ACTIVITY_ICON: Record<ActivityKind, { icon: typeof Bell; cls: string }> = {
+  bot_on: { icon: Play, cls: "text-emerald-400" },
+  bot_off: { icon: Pause, cls: "text-zinc-500" },
+  monitor_on: { icon: Bell, cls: "text-sky-400" },
+  monitor_off: { icon: Bell, cls: "text-zinc-500" },
+  contact_paused: { icon: UserMinus, cls: "text-amber-400" },
+  contact_resumed: { icon: Play, cls: "text-emerald-400" },
+  attention_dm: { icon: AlertTriangle, cls: "text-amber-300" },
+  agent_skipped: { icon: ChevronRight, cls: "text-zinc-500" },
+  message_in: { icon: MessageSquare, cls: "text-zinc-400" },
+  agent_reply: { icon: Zap, cls: "text-lantern-400" },
+  system: { icon: HelpCircle, cls: "text-zinc-500" },
+};
+
+function ActivityRow({ event, now }: { event: ActivityEvent; now: number }) {
+  const { icon: Icon, cls } = ACTIVITY_ICON[event.kind] ?? ACTIVITY_ICON.system;
+  return (
+    <li className="flex items-start gap-2.5 px-3 py-2 hover:bg-surface-2">
+      <Icon className={clsx("mt-0.5 h-3.5 w-3.5 shrink-0", cls)} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[12px] text-zinc-200">{event.summary}</p>
+        {event.detail && (
+          <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-zinc-500">
+            {event.detail}
+          </p>
+        )}
+      </div>
+      <span className="shrink-0 text-[10px] text-zinc-600 tabular-nums">
+        {formatRelative(event.timestamp, now)}
+      </span>
+    </li>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
 // ---------------------------------------------------------------------------
 
 export function WhatsAppPairing({
@@ -62,19 +304,66 @@ export function WhatsAppPairing({
   onConnected,
   onDisconnected,
 }: WhatsAppPairingProps) {
-  const [status, setStatus] = useState<PairingStatus>("idle");
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const toast = useToast();
+
+  const [state, setState] = useState<ConnectionState>("unknown");
+  const [stateReason, setStateReason] = useState<string | null>(null);
   const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [bridgeAvailable, setBridgeAvailable] = useState<boolean | null>(null);
-  const [botMuted, setBotMuted] = useState<boolean | null>(null);
-  const [pausedCount, setPausedCount] = useState(0);
+  const [connectedAt, setConnectedAt] = useState<number | null>(null);
+
+  // QR data + expiry. issuedAt + expiresInMs come from the bridge so we
+  // can show a countdown and refresh hint without any client-side polling.
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [qrIssuedAt, setQrIssuedAt] = useState<number | null>(null);
+  const [qrExpiresInMs, setQrExpiresInMs] = useState<number>(20_000);
+
+  const [botState, setBotState] = useState<BotState | null>(null);
   const [togglingMute, setTogglingMute] = useState(false);
   const [clearingPauses, setClearingPauses] = useState(false);
-  const [monitoredGroups, setMonitoredGroups] = useState<string[]>([]);
   const [unmonitoring, setUnmonitoring] = useState<string | null>(null);
+
+  const [activity, setActivity] = useState<ActivityEvent[]>([]);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [serviceDiagnostics, setServiceDiagnostics] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  const [sessionDiagnostics, setSessionDiagnostics] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+
+  // Quick test: prompts the user to send a message from their phone and
+  // watches the activity feed for the first inbound message.
+  const [testMode, setTestMode] = useState<"idle" | "waiting" | "received">(
+    "idle"
+  );
+
+  // Wall-clock ticker so countdowns and "just now" labels update without
+  // re-mounting children. 500ms is smooth enough; lower has no benefit.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, []);
+
   const wsRef = useRef<WebSocket | null>(null);
+  const testModeRef = useRef(testMode);
+  testModeRef.current = testMode;
+
+  // ---- activity helpers ----
+
+  const pushActivity = useCallback((event: Omit<ActivityEvent, "id">) => {
+    setActivity((prev) => {
+      const id = `${event.timestamp}-${Math.random().toString(36).slice(2, 8)}`;
+      const next = [{ ...event, id }, ...prev];
+      // Cap at 50; the feed is for context, not full history.
+      return next.slice(0, 50);
+    });
+  }, []);
+
+  // ---- bridge HTTP helpers ----
 
   const refreshBotState = useCallback(async () => {
     try {
@@ -84,123 +373,94 @@ export function WhatsAppPairing({
       });
       if (!res.ok) return;
       const data = (await res.json()) as BotState;
-      setBotMuted(data.muted);
-      setPausedCount(Object.keys(data.paused ?? {}).length);
-      setMonitoredGroups(data.monitoredGroups ?? []);
+      setBotState(data);
     } catch {
-      // Bridge unreachable — leave state as is
+      // bridge unreachable — leave state as is, user can hit "refresh"
     }
   }, [bridgeUrl, tenantId]);
 
-  const unmonitorGroup = async (jid: string) => {
-    setUnmonitoring(jid);
+  const refreshDiagnostics = useCallback(async () => {
     try {
-      const res = await fetch(
-        `${bridgeUrl}/session/${tenantId}/bot/group/unmonitor`,
-        {
-          method: "POST",
-          headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({ jid }),
-        }
-      );
-      if (res.ok) {
-        const data = (await res.json()) as BotState;
-        setBotMuted(data.muted);
-        setPausedCount(Object.keys(data.paused ?? {}).length);
-        setMonitoredGroups(data.monitoredGroups ?? []);
-      }
+      const [svc, sess] = await Promise.all([
+        fetch(`${bridgeUrl}/diagnostics`, {
+          signal: AbortSignal.timeout(3000),
+        }).then((r) => (r.ok ? r.json() : null)),
+        fetch(`${bridgeUrl}/session/${tenantId}/diagnostics`, {
+          signal: AbortSignal.timeout(3000),
+          headers: authHeaders(),
+        }).then((r) => (r.ok ? r.json() : null)),
+      ]);
+      setServiceDiagnostics(svc);
+      setSessionDiagnostics(sess);
     } catch {
-      // Best effort
+      // best effort
     }
-    setUnmonitoring(null);
-  };
+  }, [bridgeUrl, tenantId]);
 
-  const clearAllPauses = async () => {
-    if (pausedCount === 0) return;
-    setClearingPauses(true);
+  // Probe the bridge on mount. Distinguishes:
+  //   - bridge unreachable      → bridge_offline
+  //   - bridge says auth required and our token is missing/wrong → auth_required
+  //   - bridge already paired   → connected (replay from /status)
+  //   - bridge reachable, idle  → idle
+  const probeBridge = useCallback(async () => {
+    setState("unknown");
     try {
-      const res = await fetch(
-        `${bridgeUrl}/session/${tenantId}/bot/resume-all`,
-        { method: "POST", headers: authHeaders() }
-      );
-      if (res.ok) {
-        const data = (await res.json()) as BotState;
-        setBotMuted(data.muted);
-        setPausedCount(Object.keys(data.paused ?? {}).length);
-        setMonitoredGroups(data.monitoredGroups ?? []);
-      }
-    } catch {
-      // Best effort; stale state will recover on next refresh
-    }
-    setClearingPauses(false);
-  };
-
-  const toggleMute = async () => {
-    if (botMuted === null) return;
-    setTogglingMute(true);
-    const path = botMuted ? "unmute" : "mute";
-    try {
-      const res = await fetch(
-        `${bridgeUrl}/session/${tenantId}/bot/${path}`,
-        { method: "POST", headers: authHeaders() }
-      );
-      if (res.ok) {
-        const data = (await res.json()) as BotState;
-        setBotMuted(data.muted);
-        setPausedCount(Object.keys(data.paused ?? {}).length);
-        setMonitoredGroups(data.monitoredGroups ?? []);
-      }
-    } catch {
-      // Show nothing; user will see stale state and can retry
-    }
-    setTogglingMute(false);
-  };
-
-  // Check if bridge service is running; if already paired, restore the
-  // connected view so the user doesn't have to re-scan on reload.
-  const checkBridge = useCallback(async () => {
-    try {
-      const res = await fetch(`${bridgeUrl}/health`, {
+      const healthRes = await fetch(`${bridgeUrl}/health`, {
         signal: AbortSignal.timeout(3000),
       });
-      if (res.ok) {
-        setBridgeAvailable(true);
-        try {
-          const statusRes = await fetch(
-            `${bridgeUrl}/session/${tenantId}/status`,
-            { signal: AbortSignal.timeout(3000), headers: authHeaders() }
-          );
-          if (statusRes.ok) {
-            const s = (await statusRes.json()) as {
-              status: string;
-              paired: boolean;
-              phoneNumber?: string | null;
-              name?: string | null;
-            };
-            if (s.paired && s.status === "connected") {
-              setStatus("connected");
-              setPhoneNumber(s.phoneNumber ?? null);
-              setDisplayName(s.name ?? null);
-              refreshBotState();
-            }
-          }
-        } catch {
-          // Bridge reachable but status probe failed — leave idle
-        }
-        return true;
+      if (!healthRes.ok) {
+        setState("bridge_offline");
+        return;
       }
+      const health = (await healthRes.json()) as { authRequired?: boolean };
+      if (health.authRequired && !BRIDGE_TOKEN) {
+        setState("auth_required");
+        setStateReason(
+          "Bridge requires NEXT_PUBLIC_LANTERN_BRIDGE_TOKEN to match its LANTERN_BRIDGE_TOKEN."
+        );
+        return;
+      }
+
+      // Probe per-session status. Treat a 401 as auth_required (wrong token).
+      const statusRes = await fetch(
+        `${bridgeUrl}/session/${tenantId}/status`,
+        { signal: AbortSignal.timeout(3000), headers: authHeaders() }
+      );
+      if (statusRes.status === 401) {
+        setState("auth_required");
+        setStateReason("Bridge rejected the shared token.");
+        return;
+      }
+      if (!statusRes.ok) {
+        setState("idle");
+        return;
+      }
+      const s = (await statusRes.json()) as {
+        status: string;
+        paired: boolean;
+        phoneNumber?: string | null;
+        name?: string | null;
+      };
+      if (s.paired && s.status === "connected") {
+        setState("connected");
+        setPhoneNumber(s.phoneNumber ?? null);
+        setDisplayName(s.name ?? null);
+        setConnectedAt(Date.now());
+        refreshBotState();
+      } else {
+        setState("idle");
+      }
+      refreshDiagnostics();
     } catch {
-      // Bridge not running
+      setState("bridge_offline");
     }
-    setBridgeAvailable(false);
-    return false;
-  }, [bridgeUrl, tenantId, refreshBotState]);
+  }, [bridgeUrl, tenantId, refreshBotState, refreshDiagnostics]);
 
   useEffect(() => {
-    checkBridge();
-  }, [checkBridge]);
+    probeBridge();
+  }, [probeBridge]);
 
-  // Cleanup WebSocket on unmount
+  // Cleanup WS on unmount or tenant change.
   useEffect(() => {
     return () => {
       if (wsRef.current) {
@@ -208,9 +468,15 @@ export function WhatsAppPairing({
         wsRef.current = null;
       }
     };
-  }, []);
+  }, [tenantId]);
+
+  // ---- WS event handling ----
 
   const connectWebSocket = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
     const wsUrl = bridgeUrl.replace(/^http/, "ws");
     const qs = new URLSearchParams({ tenantId });
     if (BRIDGE_TOKEN) qs.set("token", BRIDGE_TOKEN);
@@ -220,243 +486,777 @@ export function WhatsAppPairing({
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-
         switch (msg.type) {
-          case "qr":
-            setStatus("waiting_qr");
-            setQrDataUrl(msg.data);
+          case "connection_state": {
+            const next = msg.data?.state as ConnectionState | undefined;
+            if (next) {
+              setState(next);
+              setStateReason(msg.data?.reason ?? null);
+            }
             break;
-
-          case "connected":
-            setStatus("connected");
+          }
+          case "qr": {
+            setState("qr_ready");
+            setQrDataUrl(typeof msg.data === "string" ? msg.data : null);
+            setQrIssuedAt(typeof msg.issuedAt === "number" ? msg.issuedAt : Date.now());
+            setQrExpiresInMs(
+              typeof msg.expiresInMs === "number" ? msg.expiresInMs : 20_000
+            );
+            break;
+          }
+          case "connected": {
+            setState("connected");
             setQrDataUrl(null);
-            setPhoneNumber(msg.data.phoneNumber);
-            setDisplayName(msg.data.name);
+            setQrIssuedAt(null);
+            setPhoneNumber(msg.data?.phoneNumber ?? null);
+            setDisplayName(msg.data?.name ?? null);
+            setConnectedAt(
+              typeof msg.data?.connectedAt === "number"
+                ? msg.data.connectedAt
+                : Date.now()
+            );
             refreshBotState();
-            onConnected?.(msg.data);
+            refreshDiagnostics();
+            pushActivity({
+              kind: "system",
+              summary: "Connected to WhatsApp",
+              timestamp: Date.now(),
+            });
+            onConnected?.({
+              phoneNumber: msg.data?.phoneNumber ?? "",
+              name: msg.data?.name ?? "",
+            });
             break;
-
-          case "disconnected":
-            setStatus("disconnected");
-            setQrDataUrl(null);
+          }
+          case "disconnected": {
+            // logged_out is a terminal state; reconnects are transient.
+            if (msg.data?.loggedOut) {
+              setState("logged_out");
+              setStateReason(
+                "WhatsApp on your phone unlinked this device. Pair again to continue."
+              );
+            } else {
+              setState((curr) => (curr === "connected" ? "reconnecting" : curr));
+            }
             onDisconnected?.();
             break;
-
-          case "error":
-            setStatus("error");
-            setErrorMessage(msg.data.message);
+          }
+          case "error": {
+            setState("error");
+            setStateReason(msg.data?.message ?? "Bridge returned an error");
             break;
+          }
+          case "message": {
+            const text: string = msg.data?.text ?? "";
+            const from: string = msg.data?.from ?? "";
+            const push: string | undefined = msg.data?.pushName;
+            pushActivity({
+              kind: "message_in",
+              summary: `${push || from.split("@")[0]} → you`,
+              detail: text,
+              jid: from,
+              pushName: push,
+              timestamp:
+                typeof msg.data?.timestamp === "number"
+                  ? msg.data.timestamp * 1000
+                  : Date.now(),
+            });
+            if (testModeRef.current === "waiting") setTestMode("received");
+            break;
+          }
+          case "agent_reply": {
+            const text: string = msg.data?.text ?? "";
+            const to: string = msg.data?.to ?? "";
+            pushActivity({
+              kind: "agent_reply",
+              summary: `Agent replied to ${to.split("@")[0]}`,
+              detail: text,
+              jid: to,
+              timestamp:
+                typeof msg.data?.timestamp === "number"
+                  ? msg.data.timestamp
+                  : Date.now(),
+            });
+            break;
+          }
+          case "activity": {
+            const kind = (msg.data?.kind as ActivityKind) ?? "system";
+            pushActivity({
+              kind,
+              summary: msg.data?.summary ?? "Activity",
+              jid: msg.data?.jid,
+              pushName: msg.data?.pushName,
+              timestamp: msg.data?.timestamp ?? Date.now(),
+            });
+            // Bot toggles change the BotState — refresh.
+            if (
+              kind === "bot_on" ||
+              kind === "bot_off" ||
+              kind === "monitor_on" ||
+              kind === "monitor_off" ||
+              kind === "contact_paused" ||
+              kind === "contact_resumed"
+            ) {
+              refreshBotState();
+            }
+            break;
+          }
         }
       } catch {
-        // Ignore malformed messages
+        // malformed event — ignore rather than crash the feed
       }
     };
 
     ws.onerror = () => {
-      setStatus("error");
-      setErrorMessage("WebSocket connection failed");
+      setState((curr) =>
+        curr === "connected" || curr === "qr_ready" || curr === "starting"
+          ? "error"
+          : curr
+      );
+      setStateReason("WebSocket dropped — bridge may have restarted.");
     };
 
     ws.onclose = () => {
-      // Only set disconnected if we were previously connected
-      if (wsRef.current === ws) {
-        wsRef.current = null;
-      }
+      if (wsRef.current === ws) wsRef.current = null;
     };
-  }, [bridgeUrl, tenantId, onConnected, onDisconnected]);
+  }, [bridgeUrl, tenantId, refreshBotState, refreshDiagnostics, onConnected, onDisconnected, pushActivity]);
 
-  const startPairing = async () => {
-    setStatus("starting");
-    setErrorMessage(null);
+  // ---- actions ----
+
+  const startPairing = useCallback(async () => {
+    setState("starting");
+    setStateReason(null);
     setQrDataUrl(null);
-
     try {
-      const res = await fetch(
-        `${bridgeUrl}/session/${tenantId}/start`,
-        { method: "POST", headers: authHeaders() }
-      );
-      if (!res.ok) {
-        throw new Error(`Bridge returned ${res.status}`);
+      const res = await fetch(`${bridgeUrl}/session/${tenantId}/start`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      if (res.status === 401) {
+        setState("auth_required");
+        setStateReason("Bridge rejected the shared token.");
+        return;
       }
-
-      // Connect WebSocket to receive QR and events
+      if (!res.ok) {
+        setState("error");
+        setStateReason(`Bridge returned ${res.status}`);
+        return;
+      }
       connectWebSocket();
     } catch (err) {
-      setStatus("error");
-      setErrorMessage(
-        err instanceof Error ? err.message : "Failed to start session"
-      );
+      setState("error");
+      setStateReason(err instanceof Error ? err.message : "Failed to start session");
     }
-  };
+  }, [bridgeUrl, tenantId, connectWebSocket]);
 
-  const handleDisconnect = async () => {
+  const handleDisconnect = useCallback(async () => {
     try {
       await fetch(`${bridgeUrl}/session/${tenantId}/disconnect`, {
         method: "POST",
         headers: authHeaders(),
       });
     } catch {
-      // Best effort
+      // best effort
     }
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    setStatus("disconnected");
+    wsRef.current?.close();
+    wsRef.current = null;
+    setState("idle");
     setQrDataUrl(null);
     setPhoneNumber(null);
     setDisplayName(null);
+    setConnectedAt(null);
+    setBotState(null);
+    setActivity([]);
     onDisconnected?.();
-  };
+    toast.info("Disconnected from WhatsApp");
+  }, [bridgeUrl, tenantId, onDisconnected, toast]);
 
-  const handleRetry = () => {
-    setStatus("idle");
-    setErrorMessage(null);
-    startPairing();
-  };
+  const toggleMute = useCallback(async () => {
+    if (!botState) return;
+    setTogglingMute(true);
+    const path = botState.muted ? "unmute" : "mute";
+    try {
+      const res = await fetch(
+        `${bridgeUrl}/session/${tenantId}/bot/${path}`,
+        { method: "POST", headers: authHeaders() }
+      );
+      if (res.ok) setBotState(await res.json());
+    } finally {
+      setTogglingMute(false);
+    }
+  }, [bridgeUrl, tenantId, botState]);
 
-  // Bridge not available
-  if (bridgeAvailable === false) {
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
-          <WifiOff className="h-4 w-4 shrink-0 text-amber-400" />
-          <div>
-            <p className="text-xs font-medium text-amber-300">
-              WhatsApp bridge not running
-            </p>
-            <p className="mt-0.5 text-[11px] text-zinc-500">
-              Start it with:{" "}
-              <code className="rounded bg-surface-2 px-1 text-zinc-400">
-                make run-whatsapp-bridge
-              </code>
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={checkBridge}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"
-        >
-          <RefreshCw className="h-3 w-3" />
-          Check again
-        </button>
+  const clearAllPauses = useCallback(async () => {
+    if (!botState || Object.keys(botState.paused).length === 0) return;
+    setClearingPauses(true);
+    try {
+      const res = await fetch(
+        `${bridgeUrl}/session/${tenantId}/bot/resume-all`,
+        { method: "POST", headers: authHeaders() }
+      );
+      if (res.ok) {
+        const data = (await res.json()) as BotState & { cleared?: number };
+        setBotState(data);
+        if (data.cleared) toast.success(`Resumed ${data.cleared} paused contacts`);
+      }
+    } finally {
+      setClearingPauses(false);
+    }
+  }, [bridgeUrl, tenantId, botState, toast]);
+
+  const unmonitorGroup = useCallback(
+    async (jid: string) => {
+      setUnmonitoring(jid);
+      try {
+        const res = await fetch(
+          `${bridgeUrl}/session/${tenantId}/bot/group/unmonitor`,
+          {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ jid }),
+          }
+        );
+        if (res.ok) setBotState(await res.json());
+      } finally {
+        setUnmonitoring(null);
+      }
+    },
+    [bridgeUrl, tenantId]
+  );
+
+  // ---- derived ----
+
+  const stage = STATE_TO_STAGE[state];
+  const qrExpiresAt = qrIssuedAt ? qrIssuedAt + qrExpiresInMs : null;
+  const qrRemainingMs = qrExpiresAt ? Math.max(0, qrExpiresAt - now) : 0;
+  const qrRemainingSec = Math.ceil(qrRemainingMs / 1000);
+  const qrProgress = qrExpiresAt
+    ? Math.min(1, Math.max(0, (qrExpiresAt - now) / qrExpiresInMs))
+    : 0;
+
+  const pausedCount = botState ? Object.keys(botState.paused).length : 0;
+  const groups = botState?.monitoredGroups ?? [];
+  const uptime = connectedAt ? now - connectedAt : 0;
+
+  // ===========================================================================
+  // Render
+  // ===========================================================================
+
+  return (
+    <div className="space-y-4">
+      {/* Stepper header */}
+      <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-surface-1 px-4 py-3">
+        <Stepper stage={stage} error={state === "error" || state === "logged_out"} />
+        <StatePill state={state} />
       </div>
-    );
-  }
 
-  // Still checking
-  if (bridgeAvailable === null) {
-    return (
-      <div className="flex items-center gap-2 py-4">
-        <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
-        <span className="text-xs text-zinc-500">
-          Checking WhatsApp bridge...
-        </span>
-      </div>
-    );
-  }
-
-  // Connected state
-  if (status === "connected") {
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
-          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
-          <div>
-            <p className="text-sm font-medium text-emerald-300">
-              Connected to WhatsApp
-            </p>
-            <p className="mt-0.5 text-xs text-zinc-400">
-              {displayName ? `${displayName} ` : ""}
-              {phoneNumber ? `+${phoneNumber}` : ""}
-            </p>
-          </div>
+      {/* State-specific body */}
+      {state === "unknown" && (
+        <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-surface-1 p-4">
+          <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
+          <p className="text-xs text-zinc-500">Checking WhatsApp bridge…</p>
         </div>
+      )}
 
-        {/* Bot auto-reply toggle */}
-        {botMuted !== null && (
-          <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-surface-2 p-3">
-            <div className="min-w-0 pr-3">
-              <p className="text-xs font-medium text-zinc-200">
-                Auto-reply{" "}
-                <span
-                  className={clsx(
-                    "ml-1 rounded px-1.5 py-0.5 text-[10px] font-semibold",
-                    botMuted
-                      ? "bg-zinc-500/10 text-zinc-400"
-                      : "bg-emerald-500/10 text-emerald-400"
-                  )}
-                >
-                  {botMuted ? "OFF" : "ON"}
-                </span>
+      {state === "bridge_offline" && (
+        <div className="space-y-3 rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+          <div className="flex items-start gap-3">
+            <WifiOff className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-red-200">
+                WhatsApp bridge isn&apos;t running on{" "}
+                <code className="rounded bg-surface-0 px-1 text-zinc-300">{bridgeUrl}</code>
               </p>
-              <p className="mt-0.5 text-[11px] text-zinc-500">
-                {botMuted
-                  ? "Bot is silent for every contact."
-                  : pausedCount > 0
-                    ? `Bot is replying — paused for ${pausedCount} contact${pausedCount === 1 ? "" : "s"}.`
-                    : "Bot replies to every inbound DM."}
+              <p className="text-[12px] leading-relaxed text-zinc-400">
+                Start the bridge service in a terminal from the repo root:
               </p>
-              {pausedCount > 0 && (
-                <button
-                  onClick={clearAllPauses}
-                  disabled={clearingPauses}
-                  className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-0.5 text-[10px] font-medium text-amber-300 transition-colors hover:bg-amber-500/10 disabled:opacity-50"
-                >
-                  {clearingPauses ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : null}
-                  Resume all {pausedCount} paused
-                </button>
+              <CopyableCommand cmd="make run-whatsapp-bridge" />
+              <p className="text-[11px] leading-relaxed text-zinc-500">
+                The bridge listens on <code className="text-zinc-400">:3100</code> and runs on
+                your machine — your WhatsApp credentials never leave this host.
+              </p>
+            </div>
+          </div>
+          <Button onClick={probeBridge} icon={<RefreshCw className="h-3 w-3" />} size="sm">
+            Check again
+          </Button>
+        </div>
+      )}
+
+      {state === "auth_required" && (
+        <div className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-amber-200">Bridge requires a shared token</p>
+              <p className="text-[12px] leading-relaxed text-zinc-400">
+                {stateReason ?? "Add the token to your dashboard env and reload."}
+              </p>
+              <CopyableCommand cmd="NEXT_PUBLIC_LANTERN_BRIDGE_TOKEN=<same as bridge LANTERN_BRIDGE_TOKEN>" />
+            </div>
+          </div>
+          <Button onClick={probeBridge} icon={<RefreshCw className="h-3 w-3" />} size="sm">
+            Check again
+          </Button>
+        </div>
+      )}
+
+      {state === "idle" && (
+        <div className="space-y-3 rounded-xl border border-zinc-800 bg-surface-1 p-5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10">
+              <Smartphone className="h-4 w-4 text-emerald-400" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-zinc-100">
+                Pair your WhatsApp to start
+              </p>
+              <p className="text-[12px] leading-relaxed text-zinc-400">
+                Generates a QR code you scan from your phone — same flow as WhatsApp Web.
+                Auth stays local in <code className="text-zinc-300">auth_sessions/{tenantId}/</code>.
+              </p>
+            </div>
+          </div>
+          <Button
+            onClick={startPairing}
+            variant="primary"
+            size="md"
+            icon={<Smartphone className="h-3.5 w-3.5" />}
+          >
+            Pair with QR code
+          </Button>
+        </div>
+      )}
+
+      {(state === "starting" || state === "qr_ready" || state === "connecting") && (
+        <PairingPanel
+          state={state}
+          qrDataUrl={qrDataUrl}
+          qrRemainingSec={qrRemainingSec}
+          qrProgress={qrProgress}
+          onCancel={handleDisconnect}
+          onRestart={startPairing}
+          tenantId={tenantId}
+        />
+      )}
+
+      {state === "reconnecting" && (
+        <div className="space-y-2 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
+            <p className="text-sm font-medium text-amber-200">Reconnecting to WhatsApp…</p>
+          </div>
+          {stateReason && (
+            <p className="text-[11px] text-zinc-500">{stateReason}</p>
+          )}
+        </div>
+      )}
+
+      {state === "logged_out" && (
+        <div className="space-y-3 rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+          <div className="flex items-start gap-3">
+            <LogOut className="mt-0.5 h-4 w-4 shrink-0 text-red-300" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-red-200">Device unlinked from WhatsApp</p>
+              <p className="text-[12px] leading-relaxed text-zinc-400">
+                {stateReason ??
+                  "Your phone unlinked this Linked Device. Pair again to continue."}
+              </p>
+            </div>
+          </div>
+          <Button onClick={startPairing} variant="primary" size="sm" icon={<RefreshCw className="h-3 w-3" />}>
+            Pair again
+          </Button>
+        </div>
+      )}
+
+      {state === "error" && (
+        <div className="space-y-3 rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-red-200">Connection failed</p>
+              {stateReason && (
+                <p className="break-words text-[12px] text-zinc-400">{stateReason}</p>
               )}
             </div>
+          </div>
+          <Button onClick={startPairing} icon={<RefreshCw className="h-3 w-3" />} size="sm">
+            Try again
+          </Button>
+        </div>
+      )}
+
+      {state === "connected" && (
+        <ConnectedPanel
+          phoneNumber={phoneNumber}
+          displayName={displayName}
+          uptime={uptime}
+          botState={botState}
+          pausedCount={pausedCount}
+          groups={groups}
+          activity={activity}
+          now={now}
+          togglingMute={togglingMute}
+          clearingPauses={clearingPauses}
+          unmonitoring={unmonitoring}
+          testMode={testMode}
+          onToggleMute={toggleMute}
+          onClearAll={clearAllPauses}
+          onUnmonitor={unmonitorGroup}
+          onDisconnect={handleDisconnect}
+          onStartTest={() => setTestMode("waiting")}
+          onClearTest={() => setTestMode("idle")}
+        />
+      )}
+
+      {/* Diagnostics expander — always available so support can grab data
+          even from the success path. */}
+      <details
+        open={diagnosticsOpen}
+        onToggle={(e) => {
+          const open = (e.target as HTMLDetailsElement).open;
+          setDiagnosticsOpen(open);
+          if (open) refreshDiagnostics();
+        }}
+        className="rounded-xl border border-zinc-800 bg-surface-1"
+      >
+        <summary className="flex cursor-pointer items-center justify-between px-4 py-2.5 text-[12px] text-zinc-400 hover:text-zinc-200">
+          <span className="inline-flex items-center gap-2">
+            {diagnosticsOpen ? (
+              <ChevronDown className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" />
+            )}
+            Diagnostics
+          </span>
+          <span className="text-[11px] text-zinc-600">
+            tenant <code className="text-zinc-400">{tenantId.slice(0, 8)}…</code>
+          </span>
+        </summary>
+        <div className="space-y-2 border-t border-zinc-800 px-4 py-3 text-[11px] text-zinc-400">
+          <DiagRow label="Bridge URL" value={bridgeUrl} />
+          <DiagRow label="State" value={`${state}${stateReason ? ` — ${stateReason}` : ""}`} />
+          <DiagRow
+            label="Bridge version"
+            value={(serviceDiagnostics?.version as string | undefined) ?? "?"}
+          />
+          <DiagRow
+            label="Bridge uptime"
+            value={
+              serviceDiagnostics?.uptimeMs != null
+                ? formatUptime(Number(serviceDiagnostics.uptimeMs))
+                : "?"
+            }
+          />
+          <DiagRow
+            label="Token required"
+            value={
+              serviceDiagnostics?.authRequired
+                ? `yes ${BRIDGE_TOKEN ? "(configured)" : "(missing in dashboard)"}`
+                : "no"
+            }
+          />
+          <DiagRow
+            label="Control-plane heartbeat"
+            value={serviceDiagnostics?.controlPlaneHeartbeat ? "enabled" : "disabled"}
+          />
+          <DiagRow
+            label="Agent auto-reply"
+            value={serviceDiagnostics?.agentEnabled ? "enabled" : "disabled (set LANTERN_API_TOKEN on bridge)"}
+          />
+          {sessionDiagnostics?.lastError ? (
+            <DiagRow
+              label="Last error"
+              value={String(sessionDiagnostics.lastError)}
+            />
+          ) : null}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sub-panels
+// ---------------------------------------------------------------------------
+
+function DiagRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-zinc-500">{label}</span>
+      <span className="text-right text-zinc-300 break-words">{value}</span>
+    </div>
+  );
+}
+
+function PairingPanel({
+  state,
+  qrDataUrl,
+  qrRemainingSec,
+  qrProgress,
+  onCancel,
+  onRestart,
+  tenantId,
+}: {
+  state: ConnectionState;
+  qrDataUrl: string | null;
+  qrRemainingSec: number;
+  qrProgress: number;
+  onCancel: () => void;
+  onRestart: () => void;
+  tenantId: string;
+}) {
+  const radius = 22;
+  const circumference = 2 * Math.PI * radius;
+  const dash = circumference * qrProgress;
+
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+      <div className="flex flex-col gap-6 sm:flex-row sm:items-start">
+        {/* QR / spinner */}
+        <div className="flex shrink-0 flex-col items-center gap-2">
+          <div className="relative">
+            <div className="rounded-2xl border border-zinc-800 bg-white p-3">
+              {qrDataUrl && state === "qr_ready" ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={qrDataUrl}
+                  alt="WhatsApp pairing QR code"
+                  width={224}
+                  height={224}
+                  className="block h-56 w-56"
+                />
+              ) : (
+                <div className="flex h-56 w-56 flex-col items-center justify-center gap-2 text-zinc-500">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                  <span className="text-[11px]">
+                    {state === "connecting" ? "Finishing up…" : "Generating QR…"}
+                  </span>
+                </div>
+              )}
+              {state === "qr_ready" && qrRemainingSec > 0 && (
+                <div className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white">
+                  <svg width="14" height="14" viewBox="0 0 50 50" className="-rotate-90">
+                    <circle
+                      cx="25"
+                      cy="25"
+                      r={radius}
+                      fill="none"
+                      stroke="rgba(255,255,255,0.2)"
+                      strokeWidth="4"
+                    />
+                    <circle
+                      cx="25"
+                      cy="25"
+                      r={radius}
+                      fill="none"
+                      stroke="#a78bfa"
+                      strokeWidth="4"
+                      strokeDasharray={circumference}
+                      strokeDashoffset={circumference - dash}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  {qrRemainingSec}s
+                </div>
+              )}
+            </div>
+          </div>
+          <p className="text-[10px] text-zinc-500">
+            Auto-refreshes if the code expires
+          </p>
+        </div>
+
+        {/* Instructions */}
+        <div className="min-w-0 flex-1 space-y-3">
+          <h3 className="text-sm font-semibold text-zinc-100">
+            Scan with your phone
+          </h3>
+          <ol className="space-y-2 text-[12px] leading-relaxed text-zinc-300">
+            <li className="flex gap-2">
+              <span className="font-semibold text-lantern-400">1.</span>
+              Open <span className="font-medium">WhatsApp</span> on your phone.
+            </li>
+            <li className="flex gap-2">
+              <span className="font-semibold text-lantern-400">2.</span>
+              Tap <span className="font-medium">⋮</span> or{" "}
+              <span className="font-medium">Settings</span>, then{" "}
+              <span className="font-medium">Linked devices</span>.
+            </li>
+            <li className="flex gap-2">
+              <span className="font-semibold text-lantern-400">3.</span>
+              Tap <span className="font-medium">Link a device</span> and point your camera here.
+            </li>
+          </ol>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<RefreshCw className="h-3 w-3" />}
+              onClick={onRestart}
+            >
+              Refresh code
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+          </div>
+          <p className="pt-2 text-[11px] leading-relaxed text-zinc-500">
+            Pairing creates a Linked Device under your WhatsApp account — same as
+            WhatsApp Web. You can unlink it at any time from your phone or with
+            the Disconnect button after pairing.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConnectedPanel({
+  phoneNumber,
+  displayName,
+  uptime,
+  botState,
+  pausedCount,
+  groups,
+  activity,
+  now,
+  togglingMute,
+  clearingPauses,
+  unmonitoring,
+  testMode,
+  onToggleMute,
+  onClearAll,
+  onUnmonitor,
+  onDisconnect,
+  onStartTest,
+  onClearTest,
+}: {
+  phoneNumber: string | null;
+  displayName: string | null;
+  uptime: number;
+  botState: BotState | null;
+  pausedCount: number;
+  groups: string[];
+  activity: ActivityEvent[];
+  now: number;
+  togglingMute: boolean;
+  clearingPauses: boolean;
+  unmonitoring: string | null;
+  testMode: "idle" | "waiting" | "received";
+  onToggleMute: () => void;
+  onClearAll: () => void;
+  onUnmonitor: (jid: string) => void;
+  onDisconnect: () => void;
+  onStartTest: () => void;
+  onClearTest: () => void;
+}) {
+  const muted = botState?.muted ?? false;
+  const initials = useMemo(
+    () => initialsFor(displayName, phoneNumber),
+    [displayName, phoneNumber]
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Identity card */}
+      <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-sm font-semibold text-emerald-300">
+              {initials}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-zinc-100">
+                {displayName || "WhatsApp account"}
+              </p>
+              <p className="text-[12px] text-zinc-400">
+                {phoneNumber ? `+${phoneNumber}` : "Phone number unavailable"}
+                <span className="mx-2 text-zinc-700">·</span>
+                paired {formatUptime(uptime)} ago
+              </p>
+            </div>
+          </div>
+          <Button
+            onClick={onDisconnect}
+            variant="danger"
+            size="sm"
+            icon={<Power className="h-3 w-3" />}
+          >
+            Disconnect
+          </Button>
+        </div>
+      </div>
+
+      {/* Bot controls + monitored groups side-by-side on wider screens */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[12px] font-semibold text-zinc-200">Auto-reply</p>
+              <p className="mt-0.5 text-[11px] text-zinc-500">
+                {muted
+                  ? "Silent for every contact."
+                  : pausedCount > 0
+                    ? `Active — paused for ${pausedCount} contact${pausedCount === 1 ? "" : "s"}.`
+                    : "Replying to every inbound DM."}
+              </p>
+            </div>
             <button
-              onClick={toggleMute}
+              onClick={onToggleMute}
               disabled={togglingMute}
               className={clsx(
                 "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50",
-                botMuted ? "bg-zinc-700" : "bg-emerald-500"
+                muted ? "bg-zinc-700" : "bg-emerald-500"
               )}
-              title={botMuted ? "Turn auto-reply on" : "Turn auto-reply off"}
+              aria-label={muted ? "Turn auto-reply on" : "Turn auto-reply off"}
             >
               <span
                 className={clsx(
                   "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
-                  botMuted ? "translate-x-1" : "translate-x-6"
+                  muted ? "translate-x-1" : "translate-x-6"
                 )}
               />
             </button>
           </div>
-        )}
+          {pausedCount > 0 && (
+            <Button
+              onClick={onClearAll}
+              loading={clearingPauses}
+              size="sm"
+              variant="secondary"
+              className="mt-3"
+              icon={<Play className="h-3 w-3" />}
+            >
+              Resume all {pausedCount} paused
+            </Button>
+          )}
+        </div>
 
-        {/* Monitored groups */}
-        <div className="rounded-lg border border-zinc-800 bg-surface-2 p-3">
+        <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-zinc-200">
-              Monitored groups
-              <span className="ml-2 rounded bg-zinc-700/50 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400">
-                {monitoredGroups.length}
-              </span>
-            </p>
+            <p className="text-[12px] font-semibold text-zinc-200">Monitored groups</p>
+            <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400">
+              {groups.length}
+            </span>
           </div>
-          {monitoredGroups.length === 0 ? (
-            <p className="mt-1 text-[11px] text-zinc-500">
+          {groups.length === 0 ? (
+            <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
               Groups are off by default. Send{" "}
-              <code className="rounded bg-surface-3 px-1 text-zinc-300">/bot monitor on</code>{" "}
-              inside any group from your phone to enable it.
+              <code className="rounded bg-surface-0 px-1 text-zinc-300">/bot monitor on</code>{" "}
+              from your phone inside any group to enable.
             </p>
           ) : (
             <ul className="mt-2 space-y-1.5">
-              {monitoredGroups.map((jid) => (
+              {groups.map((jid) => (
                 <li
                   key={jid}
-                  className="flex items-center justify-between gap-2 rounded-md bg-surface-3 px-2 py-1.5"
+                  className="flex items-center justify-between gap-2 rounded-md bg-surface-0 px-2 py-1.5"
                 >
-                  <code className="truncate text-[11px] text-zinc-300">
-                    {jid.split("@")[0]}
-                  </code>
+                  <code className="truncate text-[11px] text-zinc-300">{jid.split("@")[0]}</code>
                   <button
-                    onClick={() => unmonitorGroup(jid)}
+                    onClick={() => onUnmonitor(jid)}
                     disabled={unmonitoring === jid}
                     className="shrink-0 rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400 transition-colors hover:bg-surface-2 disabled:opacity-50"
                   >
@@ -470,149 +1270,99 @@ export function WhatsAppPairing({
               ))}
             </ul>
           )}
-          <p className="mt-2 text-[11px] text-zinc-500 leading-relaxed">
-            In monitored groups: urgent messages DM you; auto-replies fire only
-            when you&apos;re @mentioned or quoted.
-          </p>
         </div>
-
-        <div className="rounded-lg border border-zinc-800 bg-surface-0 p-3 text-[11px] text-zinc-500 leading-relaxed">
-          <p className="font-medium text-zinc-400 mb-1">Quick commands</p>
-          <p>
-            From your phone&apos;s WhatsApp:
-            <br />• In <b>Message Yourself</b>:{" "}
-            <code className="rounded bg-surface-2 px-1 text-zinc-300">/bot off</code>
-            {" / "}
-            <code className="rounded bg-surface-2 px-1 text-zinc-300">/bot on</code>
-            {" / "}
-            <code className="rounded bg-surface-2 px-1 text-zinc-300">/bot status</code>{" "}
-            — global toggle.
-            <br />• In any friend&apos;s thread:{" "}
-            <code className="rounded bg-surface-2 px-1 text-zinc-300">/bot off</code>
-            {" / "}
-            <code className="rounded bg-surface-2 px-1 text-zinc-300">/bot on</code>{" "}
-            — per-contact (command auto-deleted). Typing any reply auto-pauses
-            the bot for that contact for 60 min.
-            <br />• In any group:{" "}
-            <code className="rounded bg-surface-2 px-1 text-zinc-300">/bot monitor on</code>
-            {" / "}
-            <code className="rounded bg-surface-2 px-1 text-zinc-300">/bot monitor off</code>{" "}
-            — opt the group in/out (command auto-deleted).
-          </p>
-        </div>
-
-        <button
-          onClick={handleDisconnect}
-          className="rounded-lg border border-red-500/30 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10"
-        >
-          Disconnect
-        </button>
       </div>
-    );
-  }
 
-  // Error state
-  if (status === "error") {
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-          <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
-          <div>
-            <p className="text-xs font-medium text-red-300">
-              Connection failed
+      {/* Send-test card — sticks until first inbound message arrives */}
+      <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-[12px] font-semibold text-zinc-200">Send a test message</p>
+            <p className="text-[11px] leading-relaxed text-zinc-500">
+              {testMode === "idle" &&
+                "Send any message to your own WhatsApp number to confirm the bridge is receiving."}
+              {testMode === "waiting" && (
+                <>
+                  Send <code className="rounded bg-surface-0 px-1 text-zinc-300">/bot status</code>{" "}
+                  to <span className="font-medium text-zinc-300">Message Yourself</span> in
+                  WhatsApp — I&apos;ll watch for it.
+                </>
+              )}
+              {testMode === "received" && (
+                <span className="text-emerald-300">
+                  Got it — message received end-to-end.
+                </span>
+              )}
             </p>
-            {errorMessage && (
-              <p className="mt-0.5 text-[11px] text-zinc-500">
-                {errorMessage}
-              </p>
-            )}
           </div>
+          {testMode === "idle" && (
+            <Button size="sm" variant="secondary" onClick={onStartTest}>
+              Start
+            </Button>
+          )}
+          {testMode === "waiting" && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-lantern-500/10 px-2 py-1 text-[11px] font-medium text-lantern-300">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Waiting
+            </span>
+          )}
+          {testMode === "received" && (
+            <Button size="sm" variant="ghost" onClick={onClearTest}>
+              Done
+            </Button>
+          )}
         </div>
-        <button
-          onClick={handleRetry}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3"
-        >
-          <RefreshCw className="h-3 w-3" />
-          Try again
-        </button>
       </div>
-    );
-  }
 
-  // Disconnected state (after being connected)
-  if (status === "disconnected") {
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-surface-2 p-3">
-          <WifiOff className="h-4 w-4 shrink-0 text-zinc-500" />
-          <p className="text-xs text-zinc-400">Disconnected from WhatsApp</p>
+      {/* Activity feed */}
+      <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
+        <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2.5">
+          <p className="text-[12px] font-semibold text-zinc-200">Live activity</p>
+          <span className="text-[10px] text-zinc-600">
+            Streaming · last {activity.length}
+          </span>
         </div>
-        <button
-          onClick={handleRetry}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400"
-        >
-          <RefreshCw className="h-3 w-3" />
-          Reconnect
-        </button>
+        {activity.length === 0 ? (
+          <div className="px-4 py-8 text-center">
+            <p className="text-[12px] text-zinc-500">
+              No activity yet — messages, agent replies, and bot commands will appear here.
+            </p>
+          </div>
+        ) : (
+          <ul className="max-h-72 divide-y divide-zinc-800 overflow-y-auto">
+            {activity.map((ev) => (
+              <ActivityRow key={ev.id} event={ev} now={now} />
+            ))}
+          </ul>
+        )}
       </div>
-    );
-  }
 
-  // Waiting for QR / Scanning
-  if (status === "waiting_qr" && qrDataUrl) {
-    return (
-      <div className="flex flex-col items-center space-y-3">
-        <div className="rounded-2xl border border-zinc-800 bg-surface-0 p-4">
-          <img
-            src={qrDataUrl}
-            alt="WhatsApp QR Code"
-            width={256}
-            height={256}
-            className="rounded-lg"
-          />
-        </div>
-        <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-          <Smartphone className="h-3.5 w-3.5" />
-          <span>Open WhatsApp on your phone and scan this code</span>
-        </div>
-        <p className="max-w-[260px] text-center text-[11px] text-zinc-600 leading-relaxed">
-          Go to Settings &gt; Linked Devices &gt; Link a Device, then point your camera at this QR code.
-        </p>
-      </div>
-    );
-  }
-
-  // Starting state
-  if (status === "starting") {
-    return (
-      <div className="flex flex-col items-center gap-2 py-6">
-        <Loader2 className="h-6 w-6 animate-spin text-lantern-400" />
-        <p className="text-xs text-zinc-500">Starting WhatsApp session...</p>
-      </div>
-    );
-  }
-
-  // Idle state -- show start button
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-surface-0 p-3">
-        <Wifi className="h-4 w-4 shrink-0 text-green-400" />
-        <div>
-          <p className="text-xs font-medium text-zinc-300">
-            Bridge service running
+      {/* Cheat sheet — small, foldable */}
+      <details className="rounded-xl border border-zinc-800 bg-surface-1">
+        <summary className="cursor-pointer px-4 py-2.5 text-[12px] text-zinc-400 hover:text-zinc-200">
+          Quick commands (from your phone)
+        </summary>
+        <div className="space-y-1.5 border-t border-zinc-800 px-4 py-3 text-[11px] leading-relaxed text-zinc-400">
+          <p>
+            In <span className="font-medium text-zinc-300">Message Yourself</span>:{" "}
+            <code className="rounded bg-surface-0 px-1 text-zinc-300">/bot off</code> ·{" "}
+            <code className="rounded bg-surface-0 px-1 text-zinc-300">/bot on</code> ·{" "}
+            <code className="rounded bg-surface-0 px-1 text-zinc-300">/bot status</code>
           </p>
-          <p className="mt-0.5 text-[11px] text-zinc-500">
-            Click below to generate a QR code and pair your WhatsApp
+          <p>
+            In any friend&apos;s thread:{" "}
+            <code className="rounded bg-surface-0 px-1 text-zinc-300">/bot off</code> ·{" "}
+            <code className="rounded bg-surface-0 px-1 text-zinc-300">/bot on</code>{" "}
+            (per-contact). Typing any reply auto-pauses the bot for that contact for 60 min.
+          </p>
+          <p>
+            In any group:{" "}
+            <code className="rounded bg-surface-0 px-1 text-zinc-300">/bot monitor on</code>{" "}
+            ·{" "}
+            <code className="rounded bg-surface-0 px-1 text-zinc-300">/bot monitor off</code>
           </p>
         </div>
-      </div>
-      <button
-        onClick={startPairing}
-        className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-green-500"
-      >
-        <Smartphone className="h-3.5 w-3.5" />
-        Pair with QR Code
-      </button>
+      </details>
     </div>
   );
 }

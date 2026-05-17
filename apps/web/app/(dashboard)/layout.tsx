@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/sidebar";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { Notifications } from "@/components/notifications";
 import { CommandPalette } from "@/components/command-palette";
+import { DemoModeBanner } from "@/components/demo-mode-banner";
 import { User, Search, AlertTriangle, Settings, LogOut, HelpCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useModels } from "@/lib/model-context";
@@ -126,6 +127,10 @@ export default function DashboardLayout({
             </div>
           </div>
         </header>
+
+        {/* "Some data is simulated" banner — fires when api.ts catches fall
+            back to mock data so the dashboard never silently lies. */}
+        <DemoModeBanner />
 
         {/* LLM Provider banner */}
         {!modelsLoading && !isConfigured && (

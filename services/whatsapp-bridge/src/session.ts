@@ -18,6 +18,12 @@ import type { BotState } from "./types.js";
 // Configurable so the classifier doesn't hardcode a single user's name.
 const OWNER_NAME = process.env.LANTERN_OWNER_NAME || "the owner";
 
+// Conservative estimate of how long a Baileys-issued QR stays scannable
+// before WhatsApp's server rotates it. Baileys re-emits a new QR string
+// when the previous one expires, so this is purely a UI hint for the
+// dashboard's countdown ring; the bridge does not enforce it.
+const QR_VALID_MS = 20_000;
+
 const PAUSE_TTL_MS =
   Math.max(1, Number(process.env.LANTERN_AGENT_PAUSE_MIN) || 60) * 60_000;
 // Explicit `/bot off` in a contact thread pauses that contact for a year —
@@ -54,6 +60,19 @@ function formatNameList(names: string[]): string {
   return `${head} (+${extra} more)`;
 }
 
+// Named connection states surfaced to the dashboard. The bridge owns the
+// transitions; the dashboard renders them. Keep this list in sync with the
+// `ConnectionState` type in apps/web/components/whatsapp-pairing.tsx.
+export type ConnectionState =
+  | "idle"
+  | "starting"
+  | "qr_ready"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "logged_out"
+  | "error";
+
 export class WhatsAppSession {
   private tenantId: string;
   private logger: Logger;
@@ -62,6 +81,9 @@ export class WhatsAppSession {
   private socket: ReturnType<typeof makeWASocket> | null = null;
   private listeners: Set<WebSocket> = new Set();
   private currentQR: string | null = null;
+  // Wall-clock at which currentQR was generated; used so the dashboard
+  // can render a countdown ring without having to ping for refreshes.
+  private qrIssuedAt: number | null = null;
   private connected = false;
   private paired = false;
   private phoneNumber: string | null = null;
@@ -69,6 +91,15 @@ export class WhatsAppSession {
   private authDir: string;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectAttempts = 0;
+  // Lifecycle telemetry surfaced via getDiagnostics() and the WS
+  // `connection_state` event. lastError carries the most recent failure
+  // reason (close code, exception message) so the dashboard can show a
+  // specific recovery hint rather than a generic "connection failed".
+  private startedAt = Date.now();
+  private connectionState: ConnectionState = "idle";
+  private lastStateChangeAt = Date.now();
+  private lastError: string | null = null;
+  private lastConnectionEventAt: number | null = null;
   // jid -> PauseEntry. Set whenever the owner types into a thread from their
   // own phone; suppresses the agent until it expires or the owner sends
   // "/bot on". We keep pushName on the entry so we can render friendly
@@ -130,7 +161,56 @@ export class WhatsAppSession {
     }
   }
 
+  // Transition the named connection state and broadcast. Idempotent — a
+  // repeated transition to the same state is a no-op so we don't spam the
+  // dashboard with redundant events. `reason` is surfaced to the UI for
+  // states that benefit from it (e.g. `reconnecting` includes the close
+  // code, `error` includes the exception message).
+  private setConnectionState(state: ConnectionState, reason?: string) {
+    if (this.connectionState === state && !reason) return;
+    this.connectionState = state;
+    this.lastStateChangeAt = Date.now();
+    if (reason) this.lastError = reason;
+    this.broadcast({
+      type: "connection_state",
+      data: {
+        state,
+        since: this.lastStateChangeAt,
+        attempt: this.reconnectAttempts,
+        reason: reason ?? null,
+      },
+    });
+  }
+
+  // Structured activity event used by the dashboard's live feed. Every
+  // entry is a human-readable summary plus a kind code so the dashboard
+  // can group/icon them consistently.
+  private logActivity(
+    kind:
+      | "bot_on"
+      | "bot_off"
+      | "monitor_on"
+      | "monitor_off"
+      | "contact_paused"
+      | "contact_resumed"
+      | "attention_dm"
+      | "agent_skipped",
+    summary: string,
+    extra?: { jid?: string; pushName?: string; scope?: "self" | "contact" | "group" }
+  ) {
+    this.broadcast({
+      type: "activity",
+      data: {
+        kind,
+        summary,
+        timestamp: Date.now(),
+        ...extra,
+      },
+    });
+  }
+
   async start() {
+    this.setConnectionState("starting");
     try {
       const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
       const { version } = await fetchLatestBaileysVersion();
@@ -163,15 +243,34 @@ export class WhatsAppSession {
             color: { dark: "#000000", light: "#ffffff" },
           });
           this.currentQR = qrDataUrl;
-          this.broadcast({ type: "qr", data: qrDataUrl });
+          this.qrIssuedAt = Date.now();
+          // `data` stays a plain dataUrl for backwards compatibility with
+          // older dashboard builds; new fields are sibling keys.
+          this.broadcast({
+            type: "qr",
+            data: qrDataUrl,
+            issuedAt: this.qrIssuedAt,
+            expiresInMs: QR_VALID_MS,
+          });
+          this.setConnectionState("qr_ready");
           this.logger.info("QR code generated -- scan with WhatsApp");
+        }
+
+        if (connection === "connecting") {
+          // Baileys flips to "connecting" after we authenticate via QR and
+          // before the socket is fully open. Surface that as a distinct
+          // state so the dashboard can swap the QR view for a spinner.
+          if (!this.connected) this.setConnectionState("connecting");
         }
 
         if (connection === "open") {
           this.connected = true;
           this.paired = true;
           this.currentQR = null;
+          this.qrIssuedAt = null;
           this.reconnectAttempts = 0;
+          this.lastConnectionEventAt = Date.now();
+          this.lastError = null;
 
           // Get user info
           const user = this.socket?.user;
@@ -187,22 +286,29 @@ export class WhatsAppSession {
             data: {
               phoneNumber: this.phoneNumber,
               name: this.displayName,
+              connectedAt: this.lastConnectionEventAt,
             },
           });
+          this.setConnectionState("connected");
         }
 
         if (connection === "close") {
           this.connected = false;
           const statusCode = (lastDisconnect?.error as Boom)?.output
             ?.statusCode;
-          const shouldReconnect =
-            statusCode !== DisconnectReason.loggedOut;
+          const reason = (lastDisconnect?.error as Error | undefined)?.message;
+          const loggedOut = statusCode === DisconnectReason.loggedOut;
+          const shouldReconnect = !loggedOut;
+          this.lastConnectionEventAt = Date.now();
 
           this.logger.info(
             { statusCode, shouldReconnect },
             "WhatsApp disconnected"
           );
-          this.broadcast({ type: "disconnected", data: { statusCode } });
+          this.broadcast({
+            type: "disconnected",
+            data: { statusCode, reason: reason ?? null, loggedOut },
+          });
 
           try {
             this.socket?.ev.removeAllListeners("connection.update");
@@ -211,11 +317,27 @@ export class WhatsAppSession {
           } catch {}
           this.socket = null;
 
+          if (loggedOut) {
+            // Phone unlinked us — auth dir is now useless; pairing must
+            // start over. Surface this as a terminal state so the dashboard
+            // can prompt for a fresh QR rather than spin forever.
+            this.paired = false;
+            this.setConnectionState(
+              "logged_out",
+              "WhatsApp on your phone unlinked this device"
+            );
+            return;
+          }
+
           if (shouldReconnect && !this.reconnectTimer) {
             this.reconnectAttempts += 1;
             const delay = Math.min(
               30_000,
               1_000 * 2 ** Math.min(this.reconnectAttempts, 5)
+            );
+            this.setConnectionState(
+              "reconnecting",
+              reason ?? (statusCode ? `close ${statusCode}` : undefined)
             );
             this.reconnectTimer = setTimeout(() => {
               this.reconnectTimer = null;
@@ -312,7 +434,9 @@ export class WhatsAppSession {
       });
     } catch (err) {
       this.logger.error({ err }, "Failed to start WhatsApp session");
-      this.broadcast({ type: "error", data: { message: String(err) } });
+      const message = err instanceof Error ? err.message : String(err);
+      this.broadcast({ type: "error", data: { message } });
+      this.setConnectionState("error", message);
     }
   }
 
@@ -611,12 +735,20 @@ export class WhatsAppSession {
       await this.confirmToSelf(
         `👀 monitoring this group — I'll flag urgent msgs and auto-reply when you're @mentioned or quoted.`
       );
+      this.logActivity("monitor_on", `Started monitoring group ${jid.split("@")[0]}`, {
+        jid,
+        scope: "group",
+      });
       return;
     }
     if (group && trimmed === "/bot monitor off") {
       this.unmonitorGroup(jid);
       await this.deleteCommand(jid, key, false);
       await this.confirmToSelf(`🙈 stopped monitoring this group.`);
+      this.logActivity("monitor_off", `Stopped monitoring group ${jid.split("@")[0]}`, {
+        jid,
+        scope: "group",
+      });
       return;
     }
 
@@ -628,6 +760,13 @@ export class WhatsAppSession {
         self
           ? "🔇 bot off — I won't auto-reply to anyone until `/bot on`."
           : `🔇 bot off for ${jid.split("@")[0]}.`
+      );
+      this.logActivity(
+        "bot_off",
+        self
+          ? "Auto-reply turned off (global)"
+          : `Auto-reply turned off for ${jid.split("@")[0]}`,
+        { jid: self ? undefined : jid, scope: self ? "self" : "contact" }
       );
       return;
     }
@@ -643,6 +782,13 @@ export class WhatsAppSession {
         self
           ? "🔊 bot on — auto-reply resumed everywhere."
           : `🔊 bot on for ${jid.split("@")[0]}.`
+      );
+      this.logActivity(
+        "bot_on",
+        self
+          ? "Auto-reply turned on (global)"
+          : `Auto-reply turned on for ${jid.split("@")[0]}`,
+        { jid: self ? undefined : jid, scope: self ? "self" : "contact" }
       );
       return;
     }
@@ -665,6 +811,11 @@ export class WhatsAppSession {
       this.logger.info(
         { from: jid, ttlMs: PAUSE_TTL_MS },
         "agent paused — owner took over"
+      );
+      this.logActivity(
+        "contact_paused",
+        `You took over the thread with ${jid.split("@")[0]} — auto-reply paused 60m`,
+        { jid, scope: "contact" }
       );
     }
   }
@@ -831,6 +982,11 @@ export class WhatsAppSession {
         { from, reason: verdict.reason },
         "attention DM sent to owner"
       );
+      this.logActivity(
+        "attention_dm",
+        `Flagged urgent message from ${pushName || from.split("@")[0]}`,
+        { jid: from, pushName, scope: isGroup ? "group" : "contact" }
+      );
     } catch (err) {
       this.logger.warn({ err }, "could not DM attention notice");
     }
@@ -908,6 +1064,38 @@ export class WhatsAppSession {
   getCurrentQR() {
     return this.currentQR;
   }
+  getQRIssuedAt() {
+    return this.qrIssuedAt;
+  }
+  getConnectionState(): ConnectionState {
+    return this.connectionState;
+  }
+
+  /**
+   * Full diagnostic snapshot for the dashboard's "trouble pairing" expander
+   * and any future support tooling. Cheap to compute; safe to call from a
+   * health probe loop.
+   */
+  getDiagnostics() {
+    return {
+      tenantId: this.tenantId,
+      state: this.connectionState,
+      connected: this.connected,
+      paired: this.paired,
+      phoneNumber: this.phoneNumber,
+      displayName: this.displayName,
+      startedAt: this.startedAt,
+      uptimeMs: Date.now() - this.startedAt,
+      lastStateChangeAt: this.lastStateChangeAt,
+      lastConnectionEventAt: this.lastConnectionEventAt,
+      lastError: this.lastError,
+      reconnectAttempts: this.reconnectAttempts,
+      qrIssuedAt: this.qrIssuedAt,
+      qrValidMs: QR_VALID_MS,
+      authDirPresent: existsSync(this.authDir),
+      listeners: this.listeners.size,
+    };
+  }
 
   addListener(ws: WebSocket) {
     this.listeners.add(ws);
@@ -916,7 +1104,11 @@ export class WhatsAppSession {
     this.listeners.delete(ws);
   }
 
-  private broadcast(event: { type: string; data: unknown }) {
+  // Wire event for the dashboard's WebSocket stream. `type` and `data` are
+  // the required core fields; additional sibling keys (e.g. `issuedAt` on
+  // a `qr` event) are forwarded as-is to give clients enough metadata to
+  // render countdowns and timing without a follow-up fetch.
+  private broadcast(event: { type: string; data: unknown } & Record<string, unknown>) {
     const msg = JSON.stringify(event);
     for (const ws of this.listeners) {
       if (ws.readyState === WebSocket.OPEN) {

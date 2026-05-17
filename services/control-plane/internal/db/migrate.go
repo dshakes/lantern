@@ -642,4 +642,19 @@ var migrations = []string{
 
 	`CREATE INDEX IF NOT EXISTS run_feedback_agent_idx
 		ON run_feedback (tenant_id, agent_name, created_at DESC)`,
+
+	// ---------------------------------------------------------------
+	// Surface heartbeat columns (additive — back-compat with existing DBs).
+	// The WhatsApp bridge pushes its current pairing state here every 30s
+	// so the control-plane (not just the bridge box) can answer
+	// "is tenant X paired right now" — which is what the dashboard needs
+	// when bridge and dashboard run on different hosts (prod).
+	// ---------------------------------------------------------------
+	`ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS phone_number TEXT`,
+	`ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS display_handle TEXT`,
+	`ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS bridge_state TEXT`,
+	`ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS bridge_version TEXT`,
+	`ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ`,
+	`ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS last_connection_event_at TIMESTAMPTZ`,
+	`ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS last_error TEXT`,
 }
