@@ -7,11 +7,12 @@
 //   - Workflow    /agents/[name]/editor           (existing visual editor)
 //   - (future)    /agents/[name]/runs, /memory, /budget, /receipts
 //
-// This is a Server Component on purpose — it streams the shell while the
-// Client child pages hydrate behind it.
+// Also records the slug as "last visited agent" so the home page can route
+// the user straight back here on next visit.
 
 import type { ReactNode } from "react";
 import { AgentTabsBar } from "@/components/agent-tabs-bar";
+import { RememberAgentVisit } from "@/components/remember-agent-visit";
 
 export default function AgentLayout({
   children,
@@ -22,6 +23,7 @@ export default function AgentLayout({
 }) {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
+      <RememberAgentVisit name={params.name} />
       {/* Sticky tab strip — sits beneath the dashboard top-bar; never scrolls. */}
       <AgentTabsBar name={params.name} />
       <div className="flex flex-1 flex-col overflow-hidden">{children}</div>

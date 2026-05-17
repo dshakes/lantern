@@ -29,6 +29,7 @@ import { PageHeader, CountBadge, DemoBadge } from "@/components/page-header";
 import { Button } from "@/components/button";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentsIllustration } from "@/components/illustrations";
+import { getLastAgent, clearLastAgent } from "@/lib/last-agent";
 import type { Agent, Run } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
@@ -133,6 +134,10 @@ export default function AgentsPage() {
     try {
       await api.deleteAgent(agent.name);
       setAgents((prev) => prev.filter((a) => a.id !== agent.id));
+      // If the user just deleted the agent the home page caches as
+      // "last visited", drop that cache so the next "/" hit doesn't
+      // 404 trying to reopen it.
+      if (getLastAgent() === agent.name) clearLastAgent();
       toast.success(`Agent "${agent.name}" deleted`);
     } catch (err) {
       toast.error(

@@ -103,14 +103,28 @@ export function Sidebar() {
         collapsed ? "w-16" : "w-64"
       )}
     >
-      {/* Brand + collapse */}
+      {/* Brand + collapse — the brand block is a Link to "/", which
+          re-routes to the most-recent agent. Standard webapp pattern:
+          clicking the logo goes home. */}
       <div className={clsx("flex items-center px-4 pt-4", collapsed ? "justify-center" : "gap-3")}>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-lantern-400 to-lantern-600 shadow-(--elev-2)">
-          <span className="text-(--text-sm) font-bold text-white leading-none">L</span>
-        </div>
+        <Link
+          href="/"
+          className={clsx(
+            "group flex items-center gap-3 rounded-(--radius-md) -mx-1 px-1 py-0.5 transition-colors duration-(--motion-fast) hover:bg-surface-3/60",
+            collapsed && "mx-0 px-0"
+          )}
+          aria-label="Home"
+        >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-lantern-400 to-lantern-600 shadow-(--elev-2) transition-transform duration-(--motion-fast) group-hover:scale-105">
+            <span className="text-(--text-sm) font-bold text-white leading-none">L</span>
+          </div>
+          {!collapsed && (
+            <span className="text-(--text-md) font-semibold tracking-tight text-white">Lantern</span>
+          )}
+        </Link>
         {!collapsed && (
           <>
-            <span className="flex-1 text-(--text-md) font-semibold tracking-tight text-white">Lantern</span>
+            <span className="flex-1" />
             {isDemoMode && (
               <span className="rounded-full bg-lantern-500/10 px-2 py-0.5 text-(--text-xs) font-medium text-lantern-300">
                 demo
