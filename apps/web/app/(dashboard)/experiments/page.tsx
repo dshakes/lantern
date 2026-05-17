@@ -23,6 +23,7 @@ import { PageHeader, CountBadge } from "@/components/page-header";
 import { Button } from "@/components/button";
 import { Modal, ModalField } from "@/components/modal";
 import { EmptyState } from "@/components/empty-state";
+import { ExperimentsIllustration } from "@/components/illustrations";
 import type { Agent } from "@/lib/mock-data";
 
 function emptyDraft(agentName: string): ExperimentInput {
@@ -129,7 +130,7 @@ export default function ExperimentsPage() {
           </div>
         ) : experiments.length === 0 ? (
           <EmptyState
-            icon={FlaskConical}
+            illustration={<ExperimentsIllustration size={120} />}
             title={canCreate ? "No experiments yet" : "No agents yet"}
             description={
               canCreate

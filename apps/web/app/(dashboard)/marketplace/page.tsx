@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/skeleton";
 import { PageHeader } from "@/components/page-header";
 import { LinkButton, Button } from "@/components/button";
 import { EmptyState } from "@/components/empty-state";
+import { MarketplaceIllustration } from "@/components/illustrations";
 
 const CATEGORIES = [
   "general",
@@ -157,7 +158,7 @@ export default function MarketplacePage() {
           </div>
         ) : agents.length === 0 ? (
           <EmptyState
-            icon={Store}
+            illustration={<MarketplaceIllustration size={120} />}
             title={search || category ? "No matches" : "Marketplace is empty"}
             description={
               search || category

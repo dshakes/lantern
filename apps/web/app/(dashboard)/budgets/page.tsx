@@ -19,6 +19,8 @@ import { PageHeader, CountBadge } from "@/components/page-header";
 import { Button } from "@/components/button";
 import { Modal, ModalField } from "@/components/modal";
 import { EmptyState } from "@/components/empty-state";
+import { BudgetsIllustration } from "@/components/illustrations";
+import { AgentAvatar } from "@/components/agent-avatar";
 import type { Agent } from "@/lib/mock-data";
 
 interface DraftBudget extends BudgetInput {
@@ -161,7 +163,7 @@ export default function BudgetsPage() {
           </div>
         ) : budgets.length === 0 ? (
           <EmptyState
-            icon={Shield}
+            illustration={<BudgetsIllustration size={120} />}
             title={canCreate ? "No budgets configured" : "No agents yet"}
             description={
               canCreate
@@ -347,37 +349,29 @@ function BudgetRow({
   onDelete: () => void;
 }) {
   return (
-    <div className="group rounded-xl border border-zinc-800 bg-surface-1 p-5 transition-colors hover:border-zinc-700">
+    <div className="group rounded-(--radius-lg) border border-zinc-800 bg-surface-1 p-5 transition-all duration-(--motion-fast) hover:border-zinc-700 hover:shadow-(--elev-2)">
       <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 items-start gap-4">
-          <div
-            className={clsx(
-              "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
-              budget.hardFail
-                ? "bg-red-500/10 text-red-400"
-                : "bg-amber-500/10 text-amber-400",
-            )}
-          >
-            {budget.hardFail ? (
-              <ShieldAlert className="h-4 w-4" />
-            ) : (
-              <Shield className="h-4 w-4" />
-            )}
-          </div>
+        <div className="flex min-w-0 items-start gap-3">
+          <AgentAvatar name={budget.agentName} size="md" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <p className="truncate text-sm font-semibold text-zinc-100">
+              <p className="truncate text-(--text-sm) font-semibold text-zinc-100">
                 {budget.agentName}
               </p>
               <span
                 className={clsx(
-                  "rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                  "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-(--text-xs) font-medium",
                   budget.hardFail
-                    ? "bg-red-500/10 text-red-400"
-                    : "bg-amber-500/10 text-amber-400",
+                    ? "bg-red-500/10 text-red-300"
+                    : "bg-amber-500/10 text-amber-300",
                 )}
               >
-                {budget.hardFail ? "Hard cap" : "Soft cap"}
+                {budget.hardFail ? (
+                  <ShieldAlert className="h-3 w-3" />
+                ) : (
+                  <Shield className="h-3 w-3" />
+                )}
+                {budget.hardFail ? "hard" : "soft"}
               </span>
             </div>
             <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono text-zinc-400">

@@ -27,6 +27,7 @@ import { PageHeader, CountBadge } from "@/components/page-header";
 import { Button } from "@/components/button";
 import { Modal, ModalField } from "@/components/modal";
 import { EmptyState } from "@/components/empty-state";
+import { EvalIllustration } from "@/components/illustrations";
 import type { Agent } from "@/lib/mock-data";
 
 function emptyDraft(agentName: string): EvalSuiteInput {
@@ -154,7 +155,7 @@ export default function EvalSuitesPage() {
             <Skeleton className="h-20 w-full" />
           ) : suites.length === 0 ? (
             <EmptyState
-              icon={BookCheck}
+              illustration={<EvalIllustration size={120} />}
               title={canCreate ? "No eval suites yet" : "No agents yet"}
               description={
                 canCreate
