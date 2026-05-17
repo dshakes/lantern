@@ -225,21 +225,26 @@ export default function SurfacesPage() {
 
   const loadData = useCallback(async () => {
     try {
+      // Real API only. We no longer fall back to a localStorage cache of
+      // previously-seen configs — that previously surfaced stale rows as
+      // if they were live, masking real API outages.
       const surfaceList = await api.listSurfaces();
-      if (surfaceList && surfaceList.length >= 0) {
-        setUsingApi(true);
-        const configMap: Record<string, SurfaceConfig> = {};
-        for (const sc of surfaceList) {
-          configMap[sc.surfaceId] = { connected: sc.status === "connected", fields: (sc.config as Record<string, string>) ?? {}, backendId: sc.id };
-        }
-        setConfigs(configMap);
-        saveSurfaceConfigs(configMap);
-        setLoading(false);
-        return;
+      const configMap: Record<string, SurfaceConfig> = {};
+      for (const sc of (surfaceList ?? [])) {
+        configMap[sc.surfaceId] = {
+          connected: sc.status === "connected",
+          fields: (sc.config as Record<string, string>) ?? {},
+          backendId: sc.id,
+        };
       }
-    } catch { /* API unavailable */ }
-    setUsingApi(false);
-    setConfigs(loadSurfaceConfigs());
+      setConfigs(configMap);
+      setUsingApi(true);
+    } catch {
+      // API unreachable — render with no configurations + the demo banner
+      // surfaces the error globally. Don't hydrate from a stale cache.
+      setConfigs({});
+      setUsingApi(false);
+    }
     setLoading(false);
   }, []);
 

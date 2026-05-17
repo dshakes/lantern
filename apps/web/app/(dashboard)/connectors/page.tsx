@@ -144,16 +144,27 @@ export default function ConnectorsPage() {
   const [mcpSearch, setMcpSearch] = useState("");
 
   const loadData = useCallback(async () => {
+    // Real API only — no localStorage fallback. When the API is down we
+    // render with no installs and the global DemoModeBanner surfaces the
+    // failure, instead of a cached snapshot pretending we're connected.
     try {
       const installed = await api.listConnectors();
-      if (installed && installed.length >= 0) {
-        setUsingApi(true);
-        const m: Record<string, ConnectorState> = {};
-        for (const ci of installed) m[ci.connectorId] = { installed: true, connectedAccount: ci.displayName, installedAt: ci.installedAt, backendId: ci.id };
-        setStates(m); saveStates(m); setLoading(false); return;
+      const m: Record<string, ConnectorState> = {};
+      for (const ci of installed ?? []) {
+        m[ci.connectorId] = {
+          installed: true,
+          connectedAccount: ci.displayName,
+          installedAt: ci.installedAt,
+          backendId: ci.id,
+        };
       }
-    } catch { /* API unavailable */ }
-    setUsingApi(false); setStates(loadStates()); setLoading(false);
+      setStates(m);
+      setUsingApi(true);
+    } catch {
+      setStates({});
+      setUsingApi(false);
+    }
+    setLoading(false);
   }, []);
 
   useEffect(() => { loadData(); setMcpServers(loadMcpServers()); }, [loadData]);
