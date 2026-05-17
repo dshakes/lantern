@@ -37,6 +37,38 @@ interface Template {
   surfaces: string[];
 }
 
+// Client-side fallback: same template metadata the backend's
+// handlers/templates.go ships. Used when the API is unreachable so the
+// tiles always render. The descriptions / cron / budget here MUST stay
+// in sync with the backend — the backend is the source of truth at
+// apply-time but the UI needs SOMETHING to show offline.
+const FALLBACK_TEMPLATES: Template[] = [
+  {
+    id: "inbox-concierge",
+    name: "inbox-concierge",
+    description:
+      "Reads your Gmail every morning and texts a 3-bucket summary to your WhatsApp. Reply to it to draft, archive, snooze — all from your phone.",
+    model: "auto",
+    cronExpr: "0 8 * * *",
+    maxCostUsdDay: 1.0,
+    maxCostUsdPerRun: 0.1,
+    connectors: ["gmail"],
+    surfaces: ["whatsapp"],
+  },
+  {
+    id: "morning-brief",
+    name: "morning-brief",
+    description:
+      "Texts you 3 bullets every weekday at 8am about what needs your attention across GitHub PRs/issues and Linear tickets.",
+    model: "auto",
+    cronExpr: "0 8 * * 1-5",
+    maxCostUsdDay: 1.0,
+    maxCostUsdPerRun: 0.05,
+    connectors: ["github", "linear"],
+    surfaces: ["whatsapp"],
+  },
+];
+
 // Per-template visual identity. Lookups, not a prop on the template
 // itself — the template metadata stays pure data.
 const TEMPLATE_VISUALS: Record<string, { icon: typeof Inbox; tint: string; bg: string }> = {
@@ -59,7 +91,10 @@ export function OneClickTemplates() {
         api.listConnectors().catch(() => [] as unknown[]),
       ]);
       if (cancelled) return;
-      setTemplates(t);
+      // If the API returned templates, use them. Otherwise fall back to
+      // the hardcoded client-side list so the tiles ALWAYS render — the
+      // user can still browse + read descriptions even when offline.
+      setTemplates(t && t.length > 0 ? t : FALLBACK_TEMPLATES);
       const ids = new Set<string>();
       for (const ci of c as Array<{ connectorId: string }>) {
         if (ci?.connectorId) ids.add(ci.connectorId);
@@ -71,14 +106,10 @@ export function OneClickTemplates() {
     };
   }, []);
 
-  if (templates === null) {
-    return (
-      <div className="rounded-(--radius-lg) border border-zinc-800 bg-surface-1 p-6">
-        <Loader2 className="mx-auto h-4 w-4 animate-spin text-zinc-500" />
-      </div>
-    );
-  }
-  if (templates.length === 0) return null;
+  // While templates haven't loaded yet, show the fallback tiles in a
+  // dimmed state — better than a blank section. Once the API responds
+  // we swap in the live data.
+  const tiles = templates ?? FALLBACK_TEMPLATES;
 
   const apply = async (t: Template) => {
     setApplying(t.id);
@@ -114,7 +145,7 @@ export function OneClickTemplates() {
         </span>
       </div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        {templates.map((t) => {
+        {tiles.map((t) => {
           const visual = TEMPLATE_VISUALS[t.id] ?? {
             icon: Sparkles,
             tint: "text-lantern-300",

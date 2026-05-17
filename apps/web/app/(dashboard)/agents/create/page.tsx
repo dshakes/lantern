@@ -9,6 +9,7 @@ import { AiAssistButton } from "@/components/ai-assist";
 import { useToast } from "@/components/toast";
 import { OneClickTemplates } from "@/components/one-click-templates";
 import { ConnectorChips } from "@/components/connector-chips";
+import { AvailableConnectors } from "@/components/available-connectors";
 
 const PRIVACY_LEVELS = [
   { value: "standard", label: "Standard", badge: "", desc: "Data encrypted at rest" },
@@ -189,6 +190,10 @@ function CreatePage() {
       <div className="flex-1 p-8">
         {step === "choose" && (
           <div className="mx-auto max-w-3xl">
+            {/* Always-visible connector grid. Reinforces that connectors
+                are workspace-level (connect once, every agent uses them). */}
+            <AvailableConnectors />
+
             {/* One-click recipes — atomic agent + budget + schedule. The
                 tiles show the user up-front which connectors they'll need
                 and whether those are already installed. */}
