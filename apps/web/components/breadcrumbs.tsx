@@ -28,6 +28,9 @@ export function Breadcrumbs() {
   const segments = pathname.split("/").filter(Boolean);
 
   if (segments.length === 0) return null;
+  // Hide on top-level pages — the PageHeader below already shows the same
+  // word in large type, no point repeating it tiny in the top bar.
+  if (segments.length === 1) return null;
 
   const crumbs = segments.map((segment, i) => {
     const href = "/" + segments.slice(0, i + 1).join("/");

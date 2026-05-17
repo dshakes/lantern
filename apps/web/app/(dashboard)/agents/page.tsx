@@ -21,7 +21,6 @@ import { formatDistanceToNow } from "date-fns";
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import { useAgents, useRuns } from "@/lib/hooks";
-import { useAuth } from "@/lib/auth";
 import { useToast } from "@/components/toast";
 import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
@@ -69,7 +68,6 @@ function getAgentStats(agent: Agent, allRuns: Run[]) {
 export default function AgentsPage() {
   const router = useRouter();
   const toast = useToast();
-  const { user } = useAuth();
   const { agents, setAgents, loading, error, isDemo } = useAgents();
   const { runs } = useRuns({});
 
@@ -100,6 +98,7 @@ export default function AgentsPage() {
     const today = Date.now() - 24 * 3600_000;
     const runsToday = runs.filter((r) => new Date(r.createdAt).getTime() >= today);
     const succeededToday = runsToday.filter((r) => r.status === "succeeded").length;
+    const failedToday = runsToday.filter((r) => r.status === "failed").length;
     const live = runs.filter((r) => r.status === "running" || r.status === "paused").length;
     const totalCostToday = runsToday.reduce((s, r) => s + (r.costUsd ?? 0), 0);
     const successRateToday =
@@ -108,6 +107,7 @@ export default function AgentsPage() {
       total: agents.length,
       live,
       runsToday: runsToday.length,
+      failedToday,
       totalCostToday,
       successRateToday,
     };
@@ -263,10 +263,16 @@ export default function AgentsPage() {
                 }
               />
               <Stat
-                label="Workspace"
-                value={user?.tenantId ? user.tenantId.slice(0, 8) + "…" : "—"}
-                hint="tenant id"
-                mono
+                label="Failed today"
+                value={String(aggregate.failedToday)}
+                hint={
+                  aggregate.failedToday > 0
+                    ? "click to filter"
+                    : aggregate.runsToday > 0
+                      ? "all clean"
+                      : "no runs yet"
+                }
+                tone={aggregate.failedToday > 0 ? "danger" : undefined}
               />
             </div>
 
@@ -460,22 +466,31 @@ function Stat({
   value,
   hint,
   live,
-  mono,
+  tone,
 }: {
   label: string;
   value: string;
   hint?: string;
   live?: boolean;
-  mono?: boolean;
+  tone?: "danger";
 }) {
+  const isDanger = tone === "danger";
   return (
-    <div className="group relative overflow-hidden rounded-(--radius-lg) border border-zinc-800 bg-surface-1 p-4 transition-all duration-(--motion-fast) hover:border-zinc-700">
-      {/* Subtle gradient sheen on hover — gives the tile a glassy feel. */}
+    <div
+      className={clsx(
+        "group relative overflow-hidden rounded-(--radius-lg) border bg-surface-1 p-4 transition-all duration-(--motion-fast)",
+        isDanger
+          ? "border-red-500/30 hover:border-red-500/50"
+          : "border-zinc-800 hover:border-zinc-700"
+      )}
+    >
+      {/* Subtle gradient sheen on hover — glassy feel. Red on danger tiles. */}
       <div
         className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-(--motion-normal) group-hover:opacity-100"
         style={{
-          background:
-            "linear-gradient(135deg, rgba(124,109,248,0.06), transparent 60%)",
+          background: isDanger
+            ? "linear-gradient(135deg, rgba(248,113,113,0.08), transparent 60%)"
+            : "linear-gradient(135deg, rgba(124,109,248,0.06), transparent 60%)",
         }}
       />
       <div className="relative">
@@ -490,8 +505,8 @@ function Stat({
         </p>
         <p
           className={clsx(
-            "mt-1.5 text-(--text-lg) font-semibold tabular-nums text-zinc-100",
-            mono && "font-mono text-(--text-base)"
+            "mt-1.5 text-(--text-lg) font-semibold tabular-nums",
+            isDanger ? "text-red-300" : "text-zinc-100"
           )}
         >
           {value}

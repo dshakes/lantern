@@ -21,12 +21,11 @@ export function PageHeader({
   return (
     <div
       className={clsx(
-        // Subtle glass effect — backdrop-blur on a translucent surface
-        // gives every page header a consistent "floating" feel against
-        // scrolling content. Sticky so it stays visible on long pages.
-        "sticky top-0 z-10 border-b border-zinc-800 bg-surface-1/85 px-6 py-5 backdrop-blur-md md:px-8",
+        // Solid header — fully opaque so content scrolling past doesn't
+        // bleed through under the title. We tried sticky+blur but the
+        // description text was visibly showing behind stats tiles.
         // Soft gradient sheen behind the title — pure CSS, no asset.
-        "relative isolate overflow-hidden",
+        "relative isolate overflow-hidden border-b border-zinc-800 bg-surface-1 px-6 py-5 md:px-8",
         className,
       )}
     >
