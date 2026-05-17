@@ -711,6 +711,54 @@ var migrations = []string{
 		WHERE status = 'pending' OR status = 'granted'`,
 
 	// ---------------------------------------------------------------
+	// Voice channel — W11d. Phone numbers a tenant has linked (either
+	// purchased through a provider or BYO via SIP trunk import) that
+	// route inbound calls to a Lantern agent. The provider column
+	// selects which adapter handles transport (twilio | livekit |
+	// vapi). Per-call state lives in voice_calls below.
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS voice_numbers (
+		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_name      TEXT NOT NULL,
+		provider        TEXT NOT NULL,            -- twilio | livekit | vapi | sip
+		phone_number    TEXT NOT NULL,            -- E.164 (+15551234567)
+		display_name    TEXT,
+		provider_config JSONB NOT NULL DEFAULT '{}'::jsonb,  -- per-provider keys/SIDs/URLs
+		voice_id        TEXT,                     -- TTS voice handle (provider-specific)
+		greeting        TEXT,                     -- spoken on pickup
+		status          TEXT NOT NULL DEFAULT 'inactive',  -- inactive | active | error
+		last_error      TEXT,
+		created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		UNIQUE (tenant_id, phone_number)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS voice_numbers_tenant_idx
+		ON voice_numbers (tenant_id)`,
+
+	`CREATE TABLE IF NOT EXISTS voice_calls (
+		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		voice_number_id UUID NOT NULL REFERENCES voice_numbers(id) ON DELETE CASCADE,
+		agent_name      TEXT NOT NULL,
+		direction       TEXT NOT NULL DEFAULT 'inbound',
+		from_number     TEXT,
+		to_number       TEXT,
+		provider_call_id TEXT,
+		session_id      TEXT,        -- maps to sessions.id if a session was created
+		status          TEXT NOT NULL DEFAULT 'ringing',  -- ringing | active | completed | failed
+		duration_ms     BIGINT,
+		transcript      JSONB DEFAULT '[]'::jsonb,
+		cost_usd        DOUBLE PRECISION NOT NULL DEFAULT 0,
+		started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		ended_at        TIMESTAMPTZ
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS voice_calls_tenant_started_idx
+		ON voice_calls (tenant_id, started_at DESC)`,
+
+	// ---------------------------------------------------------------
 	// Surface heartbeat columns (additive — back-compat with existing DBs).
 	// The WhatsApp bridge pushes its current pairing state here every 30s
 	// so the control-plane (not just the bridge box) can answer

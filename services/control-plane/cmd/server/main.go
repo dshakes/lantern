@@ -301,6 +301,15 @@ func main() {
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/answer", takeoverHandler.Answer)
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/release", takeoverHandler.Release)
 
+	// W11d: voice channel. Phone-number management + provider webhooks
+	// (Twilio today; LiveKit / Vapi pluggable via VoiceProvider).
+	voiceHandler := handlers.NewVoiceHandler(srv, authHandler)
+	httpMux.HandleFunc("POST /v1/voice/numbers", voiceHandler.CreateNumber)
+	httpMux.HandleFunc("GET /v1/voice/numbers", voiceHandler.ListNumbers)
+	httpMux.HandleFunc("DELETE /v1/voice/numbers/{id}", voiceHandler.DeleteNumber)
+	httpMux.HandleFunc("GET /v1/voice/calls", voiceHandler.ListCalls)
+	httpMux.HandleFunc("POST /v1/voice/webhook/{provider}", voiceHandler.Webhook)
+
 	// MCP server registry + per-agent attachments.
 	httpMux.HandleFunc("GET /v1/mcp/servers", mcpHandler.ListServers)
 	httpMux.HandleFunc("GET /v1/mcp/servers/{slug}", mcpHandler.GetServer)
