@@ -7,6 +7,8 @@ import clsx from "clsx";
 import { api } from "@/lib/api";
 import { AiAssistButton } from "@/components/ai-assist";
 import { useToast } from "@/components/toast";
+import { OneClickTemplates } from "@/components/one-click-templates";
+import { ConnectorChips } from "@/components/connector-chips";
 
 const PRIVACY_LEVELS = [
   { value: "standard", label: "Standard", badge: "", desc: "Data encrypted at rest" },
@@ -187,6 +189,19 @@ function CreatePage() {
       <div className="flex-1 p-8">
         {step === "choose" && (
           <div className="mx-auto max-w-3xl">
+            {/* One-click recipes — atomic agent + budget + schedule. The
+                tiles show the user up-front which connectors they'll need
+                and whether those are already installed. */}
+            <OneClickTemplates />
+
+            <div className="my-8 flex items-center gap-3">
+              <span className="h-px flex-1 bg-zinc-800" />
+              <span className="text-(--text-xs) uppercase tracking-wider text-zinc-600">
+                or start from scratch
+              </span>
+              <span className="h-px flex-1 bg-zinc-800" />
+            </div>
+
             <h2 className="mb-6 text-center text-xl font-semibold text-zinc-100">How do you want to create?</h2>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="flex flex-col rounded-xl border border-zinc-800 bg-surface-1 p-6 hover:border-indigo-500/50">
@@ -234,6 +249,13 @@ function CreatePage() {
                   </div>
                 )}
                 <textarea value={aiDescription} onChange={(e) => setAiDescription(e.target.value)} rows={4} placeholder="Describe what your agent should do..." className="w-full resize-none rounded-xl border border-zinc-800 bg-surface-0 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-2 focus:ring-lantern-500/20" autoFocus onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAiGenerate(); }} />
+
+                {/* Context-aware connector chips. Detects keywords in the
+                    user's description (gmail, github, slack, …) and shows
+                    each one's install status. Click an uninstalled chip to
+                    jump to the install flow without losing the draft. */}
+                <ConnectorChips description={aiDescription} />
+
                 <button onClick={handleAiGenerate} disabled={!aiDescription.trim() || aiGenerating} className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50">
                   {aiGenerating ? <><Loader2 className="h-4 w-4 animate-spin" /> Generating...</> : <><Sparkles className="h-4 w-4" /> Generate Agent</>}
                 </button>

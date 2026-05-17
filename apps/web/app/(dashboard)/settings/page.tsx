@@ -27,6 +27,8 @@ import { ConfirmDialog } from "@/components/settings/confirm-dialog";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/settings/toast";
 import { PageHeader } from "@/components/page-header";
+import { Tabs } from "@/components/tabs";
+import { Button } from "@/components/button";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -307,34 +309,52 @@ export default function SettingsPage() {
     toast("success", next.hardLimit ? "Hard limit enabled" : "Hard limit disabled");
   };
 
+  // Tabs primitive driven by our route-agnostic state. The strip
+  // sits inside the PageHeader so there's no double-bar of chrome.
+  const tabDefs = TABS.map((t) => ({
+    id: t.id,
+    label: t.label,
+    icon: t.icon,
+  }));
+
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      {/* Header */}
-      <PageHeader
-        title="Settings"
-        description="Workspace preferences, API keys, LLM providers, team access, and billing."
-      />
-
-      {/* Tab bar */}
-      <div className="border-b border-zinc-800 bg-surface-1 px-8">
-        <nav className="flex gap-1">
-          {TABS.map((tab) => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={clsx("inline-flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors",
-                activeTab === tab.id ? "border-lantern-500 text-lantern-400" : "border-transparent text-zinc-500 hover:text-zinc-300")}>
-              <tab.icon className="h-4 w-4" />{tab.label}
-            </button>
-          ))}
-        </nav>
+      {/* Header — title + description + tab strip, all in one bar so the
+          visual hierarchy reads top-to-bottom without a separate tab row. */}
+      <div className="relative isolate overflow-hidden border-b border-zinc-800 bg-surface-1 px-6 pt-6 md:px-8">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -left-12 -top-12 -z-10 h-48 w-96 rounded-full opacity-[0.07]"
+          style={{
+            background: "radial-gradient(circle, var(--color-accent), transparent 70%)",
+          }}
+        />
+        <h1 className="text-(--text-xl) font-semibold tracking-tight text-zinc-100">
+          Settings
+        </h1>
+        <p className="mt-1 max-w-3xl text-(--text-sm) text-zinc-500">
+          Workspace preferences, API keys, LLM providers, team access, and billing.
+        </p>
+        <div className="mt-5 -mx-1">
+          <Tabs
+            tabs={tabDefs}
+            value={activeTab}
+            onChange={(id) => setActiveTab(id as TabId)}
+            variant="underline"
+          />
+        </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 p-8">
-        {activeTab === "general" && <GeneralTab general={general} setGeneral={setGeneral} saving={generalSaving} onSave={handleSaveGeneral} />}
-        {activeTab === "api-keys" && <ApiKeysTab keys={keys} copiedKeyId={copiedKeyId} onCreateClick={() => setShowCreateKey(true)} onCopyPrefix={handleCopyPrefix} onRevokeClick={setRevokeTarget} />}
-        {activeTab === "providers" && <ProvidersTab providers={providers} saving={providersSaving} onKeyChange={updateProvider} onTest={testProvider} onSave={handleSaveProviders} />}
-        {activeTab === "team" && <TeamTab members={members} onInviteClick={() => setShowInvite(true)} onChangeRole={handleChangeRole} onRemoveClick={setRemoveTarget} />}
-        {activeTab === "billing" && <BillingTab billing={billing} setBilling={setBilling} onSetBudget={handleSetBudget} onToggleHardLimit={handleToggleHardLimit} />}
+      {/* Content — wider container so two-column form fields can breathe.
+          mx-auto keeps it centered on ultrawide displays. */}
+      <div className="flex-1 px-6 py-8 md:px-8">
+        <div className="mx-auto w-full max-w-3xl">
+          {activeTab === "general" && <GeneralTab general={general} setGeneral={setGeneral} saving={generalSaving} onSave={handleSaveGeneral} />}
+          {activeTab === "api-keys" && <ApiKeysTab keys={keys} copiedKeyId={copiedKeyId} onCreateClick={() => setShowCreateKey(true)} onCopyPrefix={handleCopyPrefix} onRevokeClick={setRevokeTarget} />}
+          {activeTab === "providers" && <ProvidersTab providers={providers} saving={providersSaving} onKeyChange={updateProvider} onTest={testProvider} onSave={handleSaveProviders} />}
+          {activeTab === "team" && <TeamTab members={members} onInviteClick={() => setShowInvite(true)} onChangeRole={handleChangeRole} onRemoveClick={setRemoveTarget} />}
+          {activeTab === "billing" && <BillingTab billing={billing} setBilling={setBilling} onSetBudget={handleSetBudget} onToggleHardLimit={handleToggleHardLimit} />}
+        </div>
       </div>
 
       {/* Modals */}
@@ -352,34 +372,53 @@ export default function SettingsPage() {
 
 function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralSettings; setGeneral: (g: GeneralSettings) => void; saving: boolean; onSave: () => void }) {
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      <div className="rounded-xl border border-zinc-800 bg-surface-1 p-6">
-        <h3 className="mb-4 text-sm font-semibold text-zinc-100">Workspace</h3>
-        <div className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-zinc-300">Workspace name</label>
-            <input type="text" value={general.workspaceName} onChange={(e) => setGeneral({ ...general, workspaceName: e.target.value })}
-              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
+    <div className="space-y-5 pb-24">
+      <SettingsSection
+        title="Workspace"
+        description="The label and ID for this workspace. The ID is referenced from SDKs and webhook payloads."
+      >
+        <Field label="Workspace name">
+          <input
+            type="text"
+            value={general.workspaceName}
+            onChange={(e) => setGeneral({ ...general, workspaceName: e.target.value })}
+            className="w-full rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-2 text-(--text-sm) text-zinc-100 outline-none transition-colors duration-(--motion-fast) focus:border-lantern-500/60"
+          />
+        </Field>
+        <Field label="Workspace ID" hint="Read-only — provisioned at tenant creation.">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={general.workspaceId}
+              readOnly
+              className="flex-1 rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-2 font-mono text-(--text-sm) text-zinc-400 outline-none cursor-default"
+            />
+            <Button
+              variant="secondary"
+              size="md"
+              icon={<Copy className="h-3.5 w-3.5" />}
+              onClick={() => { navigator.clipboard.writeText(general.workspaceId); }}
+            >
+              Copy
+            </Button>
           </div>
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-zinc-300">Workspace ID</label>
-            <div className="flex gap-2">
-              <input type="text" value={general.workspaceId} readOnly className="flex-1 rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-500 outline-none cursor-default font-mono" />
-              <button onClick={() => { navigator.clipboard.writeText(general.workspaceId); }} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition-colors hover:bg-surface-3">
-                <Copy className="h-3.5 w-3.5" />Copy
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+        </Field>
+      </SettingsSection>
 
-      <div className="rounded-xl border border-zinc-800 bg-surface-1 p-6">
-        <h3 className="mb-4 text-sm font-semibold text-zinc-100">Defaults</h3>
-        <div className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-zinc-300">Default model preference</label>
-            <select value={general.defaultModel} onChange={(e) => setGeneral({ ...general, defaultModel: e.target.value })}
-              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30">
+      <SettingsSection
+        title="Defaults"
+        description="Apply to every new agent unless overridden on the agent's own settings."
+      >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Field
+            label="Default model preference"
+            hint="The model router will use this unless overridden per-agent."
+          >
+            <select
+              value={general.defaultModel}
+              onChange={(e) => setGeneral({ ...general, defaultModel: e.target.value })}
+              className="w-full rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-2 text-(--text-sm) text-zinc-100 outline-none focus:border-lantern-500/60"
+            >
               <option value="auto">Auto (recommended)</option>
               <option value="reasoning-large">Reasoning Large</option>
               <option value="reasoning-small">Reasoning Small</option>
@@ -387,26 +426,94 @@ function GeneralTab({ general, setGeneral, saving, onSave }: { general: GeneralS
               <option value="chat-small">Chat Small</option>
               <option value="code-large">Code Large</option>
             </select>
-            <p className="mt-1 text-xs text-zinc-600">The model router will use this preference unless overridden per-agent.</p>
-          </div>
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-zinc-300">Default isolation class</label>
-            <select value={general.defaultIsolation} onChange={(e) => setGeneral({ ...general, defaultIsolation: e.target.value })}
-              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30">
-              <option value="trusted">Trusted -- runs in shared namespace</option>
-              <option value="standard">Standard -- runs in isolated pod</option>
-              <option value="untrusted">Untrusted -- runs in microVM (Firecracker)</option>
+          </Field>
+          <Field
+            label="Default isolation class"
+            hint="Untrusted code always runs in a microVM regardless of this setting."
+          >
+            <select
+              value={general.defaultIsolation}
+              onChange={(e) => setGeneral({ ...general, defaultIsolation: e.target.value })}
+              className="w-full rounded-(--radius-md) border border-zinc-800 bg-surface-0 px-3 py-2 text-(--text-sm) text-zinc-100 outline-none focus:border-lantern-500/60"
+            >
+              <option value="trusted">Trusted — shared namespace</option>
+              <option value="standard">Standard — isolated pod</option>
+              <option value="untrusted">Untrusted — microVM (Firecracker)</option>
             </select>
-            <p className="mt-1 text-xs text-zinc-600">Untrusted code always runs in a microVM regardless of this setting.</p>
-          </div>
+          </Field>
         </div>
-      </div>
+      </SettingsSection>
 
-      <div className="flex justify-end">
-        <button onClick={onSave} disabled={saving}
-          className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed">
-          {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Saving...</> : <><Save className="h-3.5 w-3.5" />Save Changes</>}
-        </button>
+      {/* Sticky save bar — pinned to the bottom of the viewport so it's
+          always reachable, never orphaned to the bottom-right of a card. */}
+      <StickySaveBar saving={saving} onSave={onSave} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared settings primitives — reused across every tab so the visual
+// rhythm is consistent.
+// ---------------------------------------------------------------------------
+
+function SettingsSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-(--radius-lg) border border-zinc-800 bg-surface-1 p-5 md:p-6">
+      <header className="mb-4">
+        <h3 className="text-(--text-base) font-semibold text-zinc-100">{title}</h3>
+        {description && (
+          <p className="mt-0.5 text-(--text-xs) leading-(--leading-relaxed) text-zinc-500">
+            {description}
+          </p>
+        )}
+      </header>
+      <div className="space-y-4">{children}</div>
+    </section>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-(--text-sm) font-medium text-zinc-300">
+        {label}
+      </label>
+      {children}
+      {hint && <p className="mt-1 text-(--text-xs) text-zinc-500">{hint}</p>}
+    </div>
+  );
+}
+
+function StickySaveBar({ saving, onSave }: { saving: boolean; onSave: () => void }) {
+  return (
+    <div className="pointer-events-none sticky bottom-0 -mx-6 mt-6 flex justify-end px-6 pb-4 md:-mx-8 md:px-8">
+      <div className="pointer-events-auto inline-flex items-center gap-3 rounded-(--radius-lg) border border-zinc-800 bg-surface-1/95 px-4 py-2 shadow-(--elev-3) backdrop-blur-md">
+        <span className="text-(--text-xs) text-zinc-500">Unsaved changes</span>
+        <Button
+          variant="primary"
+          size="md"
+          loading={saving}
+          icon={<Save className="h-3.5 w-3.5" />}
+          onClick={onSave}
+        >
+          Save changes
+        </Button>
       </div>
     </div>
   );

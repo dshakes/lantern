@@ -301,6 +301,13 @@ func main() {
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/answer", takeoverHandler.Answer)
 	httpMux.HandleFunc("POST /v1/runs/{id}/takeover/{takeoverId}/release", takeoverHandler.Release)
 
+	// Agent templates — one-click create-agent + budget + schedule for
+	// curated use cases (Inbox Concierge, Morning Brief). Borrows the
+	// REST handler for agentSvc + pool access.
+	templateHandler := handlers.NewTemplateHandler(restHandler, authHandler)
+	httpMux.HandleFunc("GET /v1/agents/templates", templateHandler.ListTemplates)
+	httpMux.HandleFunc("POST /v1/agents/from-template", templateHandler.Apply)
+
 	// W11d: voice channel. Phone-number management + provider webhooks
 	// (Twilio today; LiveKit / Vapi pluggable via VoiceProvider).
 	voiceHandler := handlers.NewVoiceHandler(srv, authHandler)

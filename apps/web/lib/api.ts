@@ -1160,6 +1160,39 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     });
   }
 
+  // ---- Agent templates --------------------------------------------------------
+
+  async listAgentTemplates(): Promise<Array<{
+    id: string;
+    name: string;
+    description: string;
+    model: string;
+    cronExpr: string;
+    maxCostUsdDay: number;
+    maxCostUsdPerRun: number;
+    connectors: string[];
+    surfaces: string[];
+  }>> {
+    try {
+      return await this.request("/v1/agents/templates");
+    } catch (err) {
+      notifySimulated("listAgentTemplates", err);
+      return [];
+    }
+  }
+
+  async createAgentFromTemplate(templateId: string, name?: string): Promise<{
+    agent: { id: string; name: string; description: string };
+    templateId: string;
+    appliedAt: string;
+    nextSteps: Array<{ kind: string; id: string; label: string }>;
+  }> {
+    return this.request("/v1/agents/from-template", {
+      method: "POST",
+      body: JSON.stringify({ templateId, name }),
+    });
+  }
+
   // ---- Schedules --------------------------------------------------------------
 
   async createSchedule(data: {

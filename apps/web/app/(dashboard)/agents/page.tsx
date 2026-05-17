@@ -26,6 +26,7 @@ import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
 import { PageHeader, CountBadge, DemoBadge } from "@/components/page-header";
 import { Button } from "@/components/button";
+import { Modal } from "@/components/modal";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentsIllustration } from "@/components/illustrations";
 import { getLastAgent, clearLastAgent } from "@/lib/last-agent";
@@ -74,6 +75,10 @@ export default function AgentsPage() {
   const [search, setSearch] = useState("");
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Holds the agent the user has clicked "Delete" on. We hold the agent
+  // in state (not just id) so the modal can render the agent's name in
+  // its confirmation copy without re-looking-up.
+  const [confirmDelete, setConfirmDelete] = useState<Agent | null>(null);
 
   const filtered = useMemo(() => {
     let result = [...agents];
@@ -411,7 +416,11 @@ export default function AgentsPage() {
                           </button>
                           <div className="my-1 border-t border-zinc-800" />
                           <button
-                            onClick={(e) => { e.stopPropagation(); handleDelete(agent); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDelete(agent);
+                              setOpenMenu(null);
+                            }}
                             disabled={deletingId === agent.id}
                             className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
                           >
@@ -453,6 +462,44 @@ export default function AgentsPage() {
       {openMenu && (
         <div className="fixed inset-0 z-10" onClick={() => setOpenMenu(null)} />
       )}
+
+      {/* Delete confirmation. Real modal — not a window.confirm() — so the
+          copy can carry the agent name + the irreversibility callout. */}
+      <Modal
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        title="Delete this agent?"
+        description={
+          confirmDelete
+            ? `"${confirmDelete.name}" will be removed permanently. Its runs, sessions, budgets, schedules, and channel pairings will be deleted with it. This can't be undone.`
+            : ""
+        }
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmDelete(null)} disabled={deletingId !== null}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              loading={deletingId === confirmDelete?.id}
+              onClick={async () => {
+                if (!confirmDelete) return;
+                await handleDelete(confirmDelete);
+                setConfirmDelete(null);
+              }}
+            >
+              Delete agent
+            </Button>
+          </>
+        }
+      >
+        {confirmDelete && (
+          <div className="rounded-(--radius-md) border border-red-500/20 bg-red-500/5 p-3 text-(--text-xs) text-red-300">
+            Type <code className="rounded bg-surface-0 px-1 font-mono text-red-200">{confirmDelete.name}</code> in your head one more time before clicking Delete agent.
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
