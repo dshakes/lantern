@@ -140,6 +140,10 @@ func main() {
 	forecastHandler := handlers.NewForecastHandler(srv, authHandler)
 	budgetHandler := handlers.NewBudgetHandler(srv, authHandler)
 	marketplaceHandler := handlers.NewMarketplaceHandler(srv, authHandler)
+	// W11c: marketplace.Invoke kicks off a seller-tenant run, so the
+	// handler needs the run service + inline executor. We wire them
+	// after construction to avoid a circular dependency in the imports.
+	marketplaceHandler.SetExecutionDeps(runSvc, restHandler)
 	mcpHandler := handlers.NewMCPHandler(srv, authHandler)
 	evalHandler := handlers.NewEvalHandler(srv, authHandler)
 	experimentHandler := handlers.NewExperimentHandler(srv, authHandler)
@@ -283,6 +287,9 @@ func main() {
 	httpMux.HandleFunc("POST /v1/marketplace/{slug}/fork", marketplaceHandler.Fork)
 	httpMux.HandleFunc("POST /v1/marketplace/{slug}/star", marketplaceHandler.Star)
 	httpMux.HandleFunc("DELETE /v1/marketplace/{slug}/star", marketplaceHandler.Star)
+	// W11c: cross-tenant invocations with HMAC-signed settlement.
+	httpMux.HandleFunc("POST /v1/marketplace/{slug}/invoke", marketplaceHandler.Invoke)
+	httpMux.HandleFunc("GET /v1/marketplace/invocations", marketplaceHandler.ListInvocations)
 
 	// MCP server registry + per-agent attachments.
 	httpMux.HandleFunc("GET /v1/mcp/servers", mcpHandler.ListServers)

@@ -644,6 +644,37 @@ var migrations = []string{
 		ON run_feedback (tenant_id, agent_name, created_at DESC)`,
 
 	// ---------------------------------------------------------------
+	// Marketplace invocations — W11c. Records every cross-tenant agent
+	// invocation that goes through the marketplace. Each row captures
+	// the buyer + seller tenants, the invocation payload, the seller's
+	// signed receipt (HMAC) for verifiable settlement, and the price
+	// agreed against the buyer's budget. The table is append-only —
+	// invocations are the unit of cross-tenant trust.
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS marketplace_invocations (
+		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		buyer_tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		seller_tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		marketplace_slug TEXT NOT NULL,
+		agent_name      TEXT NOT NULL,
+		input           JSONB NOT NULL DEFAULT '{}'::jsonb,
+		output          JSONB,
+		status          TEXT NOT NULL DEFAULT 'pending',
+		cost_usd        DOUBLE PRECISION NOT NULL DEFAULT 0,
+		signature       TEXT,
+		receipt         JSONB,
+		error_message   TEXT,
+		created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		completed_at    TIMESTAMPTZ
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS marketplace_invocations_buyer_idx
+		ON marketplace_invocations (buyer_tenant_id, created_at DESC)`,
+
+	`CREATE INDEX IF NOT EXISTS marketplace_invocations_seller_idx
+		ON marketplace_invocations (seller_tenant_id, created_at DESC)`,
+
+	// ---------------------------------------------------------------
 	// Surface heartbeat columns (additive — back-compat with existing DBs).
 	// The WhatsApp bridge pushes its current pairing state here every 30s
 	// so the control-plane (not just the bridge box) can answer

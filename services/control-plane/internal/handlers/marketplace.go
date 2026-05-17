@@ -19,13 +19,23 @@ import (
 
 // MarketplaceHandler owns /v1/marketplace/*.
 type MarketplaceHandler struct {
-	srv  *server.Server
-	auth *AuthHandler
+	srv    *server.Server
+	auth   *AuthHandler
+	runSvc *RunService // injected to support W11c marketplace.Invoke
+	rest   *RESTHandler // for kicking off inline execution after Invoke
 }
 
 // NewMarketplaceHandler creates a new marketplace handler.
 func NewMarketplaceHandler(srv *server.Server, auth *AuthHandler) *MarketplaceHandler {
 	return &MarketplaceHandler{srv: srv, auth: auth}
+}
+
+// SetExecutionDeps wires the run service + REST handler after construction
+// so the marketplace.Invoke path can kick off a real run on behalf of the
+// seller tenant. Optional — if unset, Invoke returns a clear 503.
+func (h *MarketplaceHandler) SetExecutionDeps(runSvc *RunService, rest *RESTHandler) {
+	h.runSvc = runSvc
+	h.rest = rest
 }
 
 func (h *MarketplaceHandler) logger() *zap.Logger {
