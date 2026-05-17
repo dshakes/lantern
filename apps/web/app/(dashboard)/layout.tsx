@@ -7,6 +7,7 @@ import { Breadcrumbs } from "@/components/breadcrumbs";
 import { Notifications } from "@/components/notifications";
 import { CommandPalette } from "@/components/command-palette";
 import { DemoModeBanner } from "@/components/demo-mode-banner";
+import { MobileNav } from "@/components/mobile-nav";
 import { User, Search, AlertTriangle, Settings, LogOut, HelpCircle } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useModels } from "@/lib/model-context";
@@ -38,8 +39,11 @@ export default function DashboardLayout({
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar />
-      <div className="flex flex-1 flex-col overflow-hidden">
+      {/* Desktop sidebar — hidden on mobile in favor of bottom nav. */}
+      <div className="hidden md:flex">
+        <Sidebar />
+      </div>
+      <div className="flex flex-1 flex-col overflow-hidden pb-14 md:pb-0">
         {/* Top bar */}
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 bg-surface-1 px-6">
           {/* Left: Breadcrumbs */}
@@ -158,6 +162,9 @@ export default function DashboardLayout({
 
       {/* Command palette (rendered at root) */}
       <CommandPalette />
+
+      {/* Mobile bottom nav — only visible <md. */}
+      <MobileNav />
     </div>
   );
 }
