@@ -653,7 +653,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	// than feeding it `{}` which it interprets as "input is empty".
 	userContent := string(inputJSON)
 	if len(input) == 0 || userContent == "{}" || userContent == "null" {
-		userContent = "Do what you were configured to do. Use any available connectors. Respond with your output."
+		userContent = "This is a Run Now invocation — execute the workflow described in your system prompt right now. Call the tools you have available; do not ask me for clarification or claim you can't access anything."
 	}
 	prompt := fmt.Sprintf("%s\n\n%s", systemPromptStr, userContent)
 
@@ -795,6 +795,28 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	if llmToolsErr != nil {
 		h.logger().Warn("inline executor: tools lookup failed",
 			zap.String("run_id", runID), zap.Error(llmToolsErr))
+	}
+	// When tools ARE attached, models still routinely refuse to call them
+	// because the system prompt's mention of e.g. 'the GitHub connector'
+	// reads to them as a requirement, not as the tools they actually have.
+	// Append a hard, explicit binding from prompt-vocabulary to tool-names
+	// to the system message so the model can't mistake the two.
+	if len(llmTools) > 0 {
+		availableNames := make([]string, 0, len(llmTools))
+		for _, t := range llmTools {
+			if fn, ok := t["function"].(map[string]any); ok {
+				if n, ok := fn["name"].(string); ok {
+					availableNames = append(availableNames, n)
+				}
+			}
+		}
+		systemPromptStr += fmt.Sprintf(`
+
+# Available tools (call these — they ARE the connectors)
+You currently have these tools attached and ready to call: %s.
+When the instructions above mention a 'GitHub connector', 'Linear connector',
+'Gmail connector', etc., they refer to the matching tools in this list.
+DO NOT respond with "I don't have access" — the tools are right here. Call them.`, strings.Join(availableNames, ", "))
 	}
 	// Tool-shy models (gpt-4o-mini, haiku) routinely refuse to call tools
 	// that ARE in the request, then lie 'I can't access the tools'. If we
