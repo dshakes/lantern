@@ -791,7 +791,36 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		// the system prompt as the user message body.
 		llmMessages[1] = map[string]any{"role": "user", "content": strings.TrimPrefix(prompt, systemPromptStr+"\n\n")}
 	}
-	llmTools, _ := toolsForTenant(ctx, h.srv.Pool, tenantID)
+	llmTools, llmToolsErr := toolsForTenant(ctx, h.srv.Pool, tenantID)
+	if llmToolsErr != nil {
+		h.logger().Warn("inline executor: tools lookup failed",
+			zap.String("run_id", runID), zap.Error(llmToolsErr))
+	}
+	{
+		// Surface the count + which connectors made it through the
+		// install filter. Without this it's invisible whether the model
+		// got 0, 3, or 10 tools — and tool-shy responses look identical
+		// to no-tools-attached responses.
+		names := make([]string, 0, len(llmTools))
+		for _, t := range llmTools {
+			if fn, ok := t["function"].(map[string]any); ok {
+				if n, ok := fn["name"].(string); ok {
+					names = append(names, n)
+				}
+			}
+		}
+		detail := fmt.Sprintf("%d tools attached", len(llmTools))
+		if len(names) > 0 {
+			detail = fmt.Sprintf("%d tools: %s", len(llmTools), strings.Join(names, ", "))
+		}
+		logStep("attach_tools", "completed", detail)
+		h.logger().Info("inline executor: tools attached",
+			zap.String("run_id", runID),
+			zap.String("tenant", tenantID),
+			zap.Int("count", len(llmTools)),
+			zap.Strings("tools", names),
+		)
+	}
 	llmDispatch := func(dctx context.Context, name string, args map[string]any) (any, error) {
 		return dispatchTool(dctx, h.srv.Pool, tenantID, name, args)
 	}
