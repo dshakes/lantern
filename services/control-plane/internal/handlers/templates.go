@@ -166,15 +166,17 @@ func (h *TemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		agentName = tpl.Name
 	}
 
-	// 1. Check for a name collision so we never overwrite an existing agent.
+	// 1. Block only if an ACTIVE agent with this name exists. A soft-deleted
+	//    (archived_at IS NOT NULL) row is fine — the underlying CreateAgent
+	//    upsert will restore it by clearing archived_at.
 	var existingID string
 	_ = h.rest.srv.Pool.QueryRow(ctx,
-		`SELECT id::text FROM agents WHERE tenant_id = $1 AND name = $2`,
+		`SELECT id::text FROM agents WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL`,
 		tenantID, agentName,
 	).Scan(&existingID)
 	if existingID != "" {
 		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": fmt.Sprintf("agent %q already exists; pick a different name", agentName),
+			"error":    fmt.Sprintf("agent %q already exists; pick a different name", agentName),
 			"existing": existingID,
 		})
 		return
@@ -191,10 +193,18 @@ func (h *TemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Set the system prompt + model on the agent row.
+	// 3. Set the system prompt + model on the agent row, and stamp the
+	//    template ID + required connectors/surfaces into labels JSONB so
+	//    the /setup gate can re-derive what's missing on a later visit.
+	labelsPatch, _ := json.Marshal(map[string]any{
+		"lantern.template":            tpl.ID,
+		"lantern.required_connectors": tpl.Connectors,
+		"lantern.required_surfaces":   tpl.Surfaces,
+	})
 	_, _ = h.rest.srv.Pool.Exec(ctx,
-		`UPDATE agents SET system_prompt = $1, model = $2 WHERE name = $3 AND tenant_id = $4`,
-		tpl.SystemPrompt, tpl.Model, agentName, tenantID,
+		`UPDATE agents SET system_prompt = $1, model = $2, labels = COALESCE(labels, '{}'::jsonb) || $5::jsonb
+		 WHERE name = $3 AND tenant_id = $4`,
+		tpl.SystemPrompt, tpl.Model, agentName, tenantID, string(labelsPatch),
 	)
 
 	// 4. Insert a budget row. Hard-cap so the template can never surprise.
@@ -255,6 +265,162 @@ func (h *TemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		"templateId":  tpl.ID,
 		"appliedAt":   time.Now().UTC(),
 		"nextSteps":   checklist,
+	})
+}
+
+// SetupStatus handles GET /v1/agents/{name}/setup.
+//
+// Reads the agent's labels JSONB for required connectors/surfaces (written by
+// Apply above), cross-references the tenant's connector_installs and
+// surface_configs rows, and returns a ready/not-ready verdict + checklist.
+// The frontend uses this both to render the /agents/{name}/setup gate page
+// and to disable Run on the agent detail page when ready=false.
+func (h *TemplateHandler) SetupStatus(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := authCtx(h.auth, r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing agent name"})
+		return
+	}
+
+	// Pull labels off the agent.
+	var labelsBytes []byte
+	err = h.rest.srv.Pool.QueryRow(ctx,
+		`SELECT COALESCE(labels, '{}'::jsonb)::text::bytea FROM agents
+		 WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL`,
+		tenantID, name,
+	).Scan(&labelsBytes)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+		return
+	}
+
+	var labels struct {
+		TemplateID         string   `json:"lantern.template"`
+		RequiredConnectors []string `json:"lantern.required_connectors"`
+		RequiredSurfaces   []string `json:"lantern.required_surfaces"`
+	}
+	_ = json.Unmarshal(labelsBytes, &labels)
+
+	// Back-fill from the static template registry when the agent was
+	// created before we started persisting required arrays into labels.
+	// Old agents will still gate correctly without forcing the user to
+	// delete + recreate.
+	if labels.TemplateID != "" && len(labels.RequiredConnectors) == 0 && len(labels.RequiredSurfaces) == 0 {
+		if tpl, ok := templates[labels.TemplateID]; ok {
+			labels.RequiredConnectors = tpl.Connectors
+			labels.RequiredSurfaces = tpl.Surfaces
+		}
+	}
+	// Second-line back-fill: agents created before *any* labels-patch (no
+	// templateId persisted) whose name matches a known template ID get
+	// gated on that template. The user's morning-brief from before today
+	// lands here.
+	if labels.TemplateID == "" {
+		if tpl, ok := templates[name]; ok {
+			labels.TemplateID = tpl.ID
+			labels.RequiredConnectors = tpl.Connectors
+			labels.RequiredSurfaces = tpl.Surfaces
+		}
+	}
+
+	// Fast path: agent has no template — nothing to gate on, ready.
+	if len(labels.RequiredConnectors) == 0 && len(labels.RequiredSurfaces) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"templateId": labels.TemplateID,
+			"required":   map[string][]string{"connectors": {}, "surfaces": {}},
+			"installed":  map[string][]string{"connectors": {}, "surfaces": {}},
+			"missing":    map[string][]string{"connectors": {}, "surfaces": {}},
+			"ready":      true,
+			"nextSteps":  []map[string]string{},
+		})
+		return
+	}
+
+	// Pull installed connectors for this tenant.
+	installedConnectors := map[string]bool{}
+	if rows, err := h.rest.srv.Pool.Query(ctx,
+		`SELECT connector_id FROM connector_installs WHERE tenant_id = $1 AND status = 'connected'`,
+		tenantID,
+	); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var c string
+			if err := rows.Scan(&c); err == nil {
+				installedConnectors[c] = true
+			}
+		}
+	}
+
+	// Pull configured surfaces for this tenant.
+	configuredSurfaces := map[string]bool{}
+	if rows, err := h.rest.srv.Pool.Query(ctx,
+		`SELECT surface_id FROM surface_configs WHERE tenant_id = $1 AND status = 'connected'`,
+		tenantID,
+	); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var s string
+			if err := rows.Scan(&s); err == nil {
+				configuredSurfaces[s] = true
+			}
+		}
+	}
+
+	// Diff.
+	installedC := []string{}
+	missingC := []string{}
+	for _, c := range labels.RequiredConnectors {
+		if installedConnectors[c] {
+			installedC = append(installedC, c)
+		} else {
+			missingC = append(missingC, c)
+		}
+	}
+	installedS := []string{}
+	missingS := []string{}
+	for _, s := range labels.RequiredSurfaces {
+		if configuredSurfaces[s] {
+			installedS = append(installedS, s)
+		} else {
+			missingS = append(missingS, s)
+		}
+	}
+
+	checklist := []map[string]string{}
+	for _, c := range missingC {
+		checklist = append(checklist, map[string]string{
+			"kind":  "install_connector",
+			"id":    c,
+			"label": fmt.Sprintf("Connect %s", c),
+			"href":  "/connectors",
+		})
+	}
+	for _, s := range missingS {
+		label := fmt.Sprintf("Set up %s", s)
+		if s == "whatsapp" {
+			label = "Pair WhatsApp"
+		}
+		checklist = append(checklist, map[string]string{
+			"kind":  "pair_surface",
+			"id":    s,
+			"label": label,
+			"href":  "/surfaces",
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"templateId": labels.TemplateID,
+		"required":   map[string][]string{"connectors": labels.RequiredConnectors, "surfaces": labels.RequiredSurfaces},
+		"installed":  map[string][]string{"connectors": installedC, "surfaces": installedS},
+		"missing":    map[string][]string{"connectors": missingC, "surfaces": missingS},
+		"ready":      len(missingC) == 0 && len(missingS) == 0,
+		"nextSteps":  checklist,
 	})
 }
 

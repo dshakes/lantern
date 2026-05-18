@@ -178,6 +178,26 @@ export default function AgentDetailPage() {
   const { agent, loading: agentLoading, error: agentError } = useAgent(name);
   const { runs: agentRuns, loading: runsLoading, refresh: refreshRuns } = useAgentRuns(name);
 
+  // Setup-gate status. ready=false means the agent has required connectors
+  // or surfaces that aren't connected — we banner the page and disable Run.
+  // Templated agents store their requirements in labels JSONB; non-template
+  // agents return ready=true with empty requirements, so this is a no-op
+  // for the common case.
+  type SetupStatus = Awaited<ReturnType<typeof api.getAgentSetupStatus>>;
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.getAgentSetupStatus(name).then(
+      (s) => { if (!cancelled) setSetupStatus(s); },
+      () => { /* non-fatal — page still works */ },
+    );
+    return () => { cancelled = true; };
+  }, [name]);
+  const setupReady = setupStatus?.ready ?? true; // optimistic until known
+  const missingCount =
+    (setupStatus?.missing.connectors.length ?? 0) +
+    (setupStatus?.missing.surfaces.length ?? 0);
+
   const initialTab = (searchParams.get("tab") as TabKey) || "build";
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [deleting, setDeleting] = useState(false);
@@ -661,17 +681,31 @@ export default function AgentDetailPage() {
   }, [name, newMcpName, newMcpUrl, newMcpAuth, newMcpToken, toast]);
 
   const handleTestMcpServer = useCallback(async (serverId: string) => {
+    const server = mcpServers.find((s) => s.id === serverId);
+    if (!server) return;
     setTestingMcpId(serverId);
-    // Simulate connection test
-    await new Promise(r => setTimeout(r, 1200));
-    const server = mcpServers.find(s => s.id === serverId);
-    if (server) {
-      const mockTools = ["read_file", "search", "execute_query", "list_resources"].slice(0, Math.floor(Math.random() * 3) + 1);
-      const updated = updateMcpServerStatus(name, serverId, "connected", mockTools);
-      setMcpServers(updated);
-      toast.success(`Connected to ${server.name} -- ${mockTools.length} tools available`);
+    try {
+      // Real probe: GET the MCP server URL. Any 2xx counts as reachable.
+      // We don't introspect tools here — that happens server-side when the
+      // workflow runtime actually invokes the MCP server. The point of this
+      // test is to confirm the URL + token combination works.
+      const resp = await fetch(server.url, {
+        headers: server.authToken
+          ? { Authorization: server.authType === "bearer" ? `Bearer ${server.authToken}` : server.authToken }
+          : undefined,
+      });
+      if (resp.ok) {
+        const updated = updateMcpServerStatus(name, serverId, "connected", []);
+        setMcpServers(updated);
+        toast.success(`Reached ${server.name}`);
+      } else {
+        toast.error(`${server.name} returned HTTP ${resp.status}`);
+      }
+    } catch (err) {
+      toast.error(`Could not reach ${server.name}: ${err instanceof Error ? err.message : "network error"}`);
+    } finally {
+      setTestingMcpId(null);
     }
-    setTestingMcpId(null);
   }, [name, mcpServers, toast]);
 
   const handleRemoveMcpServer = useCallback((serverId: string) => {
@@ -714,6 +748,14 @@ export default function AgentDetailPage() {
   const handleChatSend = useCallback(async () => {
     const text = chatInput.trim();
     if (!text && chatFiles.length === 0) return;
+    // Setup gate: if the agent's template declared required connectors or
+    // surfaces and they aren't all connected, divert to the setup page
+    // instead of letting the model babble "no connectors provided."
+    if (!setupReady) {
+      toast.warning("Finish setup first — this agent needs its tools connected.");
+      router.push(`/agents/${encodeURIComponent(name)}/setup`);
+      return;
+    }
     let content = text;
     for (const f of chatFiles) { content += `\n\n[Attached file: ${f.name}]\n<file-content>\n${f.content.slice(0, 5000)}\n</file-content>`; }
     const userMsg: ChatMessage = { role: "user", content, timestamp: new Date().toISOString() };
@@ -895,6 +937,27 @@ export default function AgentDetailPage() {
         </div>
       </div>
 
+      {/* Setup gate banner — only shown when the template-derived
+          requirements aren't satisfied. Linking to /setup keeps a single
+          place to finish wiring instead of scattering Connect buttons. */}
+      {!setupReady && setupStatus && (
+        <div className="border-b border-amber-500/20 bg-amber-500/[0.06] px-8 py-3">
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-xs text-amber-300">
+              <span className="font-semibold">Setup needed.</span>{" "}
+              {missingCount} item{missingCount === 1 ? "" : "s"} left before
+              this agent can run reliably.
+            </p>
+            <button
+              onClick={() => router.push(`/agents/${encodeURIComponent(name)}/setup`)}
+              className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200 transition-colors hover:bg-amber-500/20"
+            >
+              Finish setup →
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 p-8">
         {/* BUILD TAB */}
         {activeTab === "build" && (
@@ -1023,6 +1086,16 @@ export default function AgentDetailPage() {
               </div>
             </div>
 
+            {/* Advanced — collapsed by default. Sub-agents, persistent
+                memory, and auto-generated docs are useful for power users
+                but bury the daily-driver fields above. Closed by default
+                so the page lands clean. */}
+            <details className="group rounded-xl border border-zinc-800 bg-surface-1">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-3 text-xs font-semibold uppercase tracking-wider text-zinc-500 transition-colors hover:text-zinc-300 [&::-webkit-details-marker]:hidden">
+                <span>Advanced</span>
+                <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+              </summary>
+              <div className="space-y-5 border-t border-zinc-800 p-5">
             {/* Sub-agents / Agent Handoff */}
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
               <div className="mb-3 flex items-center justify-between">
@@ -1104,6 +1177,8 @@ export default function AgentDetailPage() {
                 </div>
               )}
             </div>
+              </div>
+            </details>
 
             {/* Visual Editor link */}
             <p className="text-sm text-zinc-500">
@@ -1113,126 +1188,29 @@ export default function AgentDetailPage() {
               </button>
             </p>
 
-            {/* Test Agent */}
-            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
-              <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-300"><Play className="h-4 w-4 text-emerald-400" /> Test Agent</h3>
-              <div className="mb-3 flex items-center gap-2">
-                <label className="text-xs text-zinc-500">Model:</label>
-                <ModelSelect value={testModel} onChange={setTestModel} className="h-8 text-xs" />
-                {testModel === "auto" && <span className="text-[10px] text-zinc-600">Routes to the best available model based on your configured providers</span>}
-              </div>
-              <textarea value={testInput} onChange={(e) => setTestInput(e.target.value)} rows={3} spellCheck={false} placeholder={isEmailAgent ? "Type a message or click Run to process emails" : "What would you like this agent to do?"} className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />
-              {testFiles.length > 0 && (
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {testFiles.map((f, i) => (
-                    <span key={i} className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-2 py-1 text-[10px] text-zinc-300">
-                      <Paperclip className="h-2.5 w-2.5" /> {f.name}
-                      <button onClick={() => setTestFiles(prev => prev.filter((_, j) => j !== i))} className="ml-0.5 text-zinc-500 hover:text-red-400"><X className="h-2.5 w-2.5" /></button>
-                    </span>
-                  ))}
+            {/* Try-it CTA — replaces the duplicate Test Agent panel that
+                lived here. The actual session-backed conversation now lives
+                on the Chat tab; this card just nudges the user there so we
+                don't ship two near-identical chat surfaces. */}
+            <button
+              onClick={() => setActiveTab("chat")}
+              className="group flex w-full items-center justify-between rounded-xl border border-zinc-800 bg-surface-1 p-5 text-left transition-colors hover:border-lantern-500/30 hover:bg-surface-2"
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-lantern-500/10">
+                  <MessageSquare className="h-5 w-5 text-lantern-400" />
                 </div>
-              )}
-              <div className="mt-2 flex items-center gap-2">
-                <button onClick={() => handleFileAttach(setTestFiles)} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-400 hover:bg-surface-3" title="Attach file">
-                  <Paperclip className="h-3 w-3" /> Attach
-                </button>
-                {isEmailAgent && gmailConnected && (
-                  <button onClick={handleFetchEmails} disabled={fetchingEmails || testRunning} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/30 px-3.5 py-1.5 text-xs font-medium text-indigo-400 hover:bg-indigo-500/10 disabled:opacity-50">
-                    {fetchingEmails ? <Loader2 className="h-3 w-3 animate-spin" /> : <Mail className="h-3 w-3" />} {fetchingEmails ? "Fetching..." : "Fetch Emails"}
-                  </button>
-                )}
-                {testRunning ? (
-                  <button onClick={() => { setTestRunning(false); setTestDone(true); }} className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-red-500"><Square className="h-3 w-3" /> Stop</button>
-                ) : (
-                  <button onClick={handleTestRun} disabled={!testInput.trim()} className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50"><Play className="h-3 w-3" /> Run</button>
-                )}
-              </div>
-
-              {(testOutput || testRunning || testError) && (
-                <div className="mt-3 rounded-lg border border-zinc-800 bg-surface-0">
-                  {testError ? (
-                    <div className="p-3">
-                      <div className="flex items-center gap-2 text-xs font-medium text-red-400"><AlertCircle className="h-3 w-3" /> Error</div>
-                      <p className="mt-1 text-xs text-red-300/70">{testError}</p>
-                    </div>
-                  ) : (
-                    <div ref={testRef} className="max-h-80 overflow-auto p-4">
-                      <div className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200 font-sans">
-                        {(() => {
-                          const raw = filteredTestOutput.text || testOutput;
-                          // Clean markdown: bold → plain, headers → plain, bullets → •
-                          return raw
-                            .replace(/\*\*(.*?)\*\*/g, "$1")
-                            .replace(/^#{1,3}\s+/gm, "")
-                            .replace(/^- /gm, "  • ")
-                            .replace(/^\d+\.\s+\*\*(.*?)\*\*/gm, (_, t) => `• ${t}`);
-                        })()}
-                        {testRunning && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-lantern-400" />}
-                      </div>
-                      {filteredTestOutput.warnings.length > 0 && (
-                        <div className="mt-2 space-y-1">
-                          {filteredTestOutput.warnings.map((w, i) => (
-                            <div key={i} className="flex items-center gap-1.5 text-[10px] text-amber-400"><ShieldAlert className="h-3 w-3 shrink-0" /> {w}</div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {testDone && !testError && (
-                    <div className="flex items-center gap-3 border-t border-zinc-800 px-3 py-2">
-                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400"><CheckCircle2 className="h-3 w-3" /> Completed</span>
-                      {testMeta && (
-                        <>
-                          <span className="text-[11px] text-zinc-500">{testMeta.model}</span>
-                          {testMeta.tokens > 0 && <span className="text-[11px] text-zinc-500">{testMeta.tokens.toLocaleString()} tokens</span>}
-                          {testMeta.cost > 0 && <span className="text-[11px] text-zinc-500">{formatCost(testMeta.cost)}</span>}
-                          <span className="text-[11px] text-zinc-500">{formatDuration(testMeta.duration)}</span>
-                        </>
-                      )}
-                      {/* Share / Download */}
-                      <div className="ml-auto flex items-center gap-1.5">
-                        <button onClick={() => { navigator.clipboard.writeText(testOutput); toast.success("Copied to clipboard"); }} className="rounded px-2 py-1 text-[10px] text-zinc-500 hover:bg-surface-3 hover:text-zinc-300" title="Copy">
-                          <Copy className="h-3 w-3" />
-                        </button>
-                        <button onClick={() => {
-                          const blob = new Blob([testOutput], { type: "text/plain" });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement("a"); a.href = url; a.download = `${name}-output.txt`; a.click();
-                          URL.revokeObjectURL(url);
-                          toast.success("Downloaded");
-                        }} className="rounded px-2 py-1 text-[10px] text-zinc-500 hover:bg-surface-3 hover:text-zinc-300" title="Download">
-                          <Download className="h-3 w-3" />
-                        </button>
-                        <button onClick={() => {
-                          if (navigator.share) { navigator.share({ title: `${name} output`, text: testOutput }); }
-                          else { navigator.clipboard.writeText(testOutput); toast.success("Copied to clipboard (share not supported in this browser)"); }
-                        }} className="rounded px-2 py-1 text-[10px] text-zinc-500 hover:bg-surface-3 hover:text-zinc-300" title="Share">
-                          <Share2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Smart Run Suggestions */}
-            {testDone && !testError && runSuggestions.length > 0 && (
-              <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4">
-                <h4 className="mb-2 flex items-center gap-2 text-xs font-medium text-indigo-400"><Lightbulb className="h-3.5 w-3.5" /> Suggestions</h4>
-                <div className="space-y-1.5">
-                  {runSuggestions.map((s, i) => <p key={i} className="text-xs text-zinc-400">{s}</p>)}
+                <div>
+                  <h3 className="text-sm font-semibold text-zinc-100">Try this agent</h3>
+                  <p className="mt-0.5 text-xs text-zinc-500">
+                    Send a message in the Chat tab — sessions persist server-side.
+                  </p>
                 </div>
               </div>
-            )}
-
-            {/* Cost Estimator */}
-            {testInput.trim() && !testRunning && !testDone && costEstimate && (
-              <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-                <DollarSign className="h-3 w-3" />
-                {formatEstimate(costEstimate)}
-              </div>
-            )}
+              <span className="text-xs font-medium text-lantern-400 transition-transform group-hover:translate-x-0.5">
+                Open Chat →
+              </span>
+            </button>
 
             {/* Agent Health Dashboard */}
             {healthStats.total > 0 && (
@@ -1409,7 +1387,12 @@ export default function AgentDetailPage() {
                 placeholder={chatStreaming && sessionConnected ? "Steer the agent -- send a follow-up..." : "Type a message..."}
                 className="flex-1 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50"
               />
-              <button onClick={handleChatSend} disabled={!chatInput.trim() && chatFiles.length === 0} className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2.5 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50">
+              <button
+                onClick={handleChatSend}
+                disabled={(!chatInput.trim() && chatFiles.length === 0) || !setupReady}
+                title={!setupReady ? "Finish setup before sending" : undefined}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-4 py-2.5 text-xs font-medium text-white hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 {chatStreaming && !sessionConnected ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
               </button>
             </div>

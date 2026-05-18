@@ -307,6 +307,7 @@ func main() {
 	templateHandler := handlers.NewTemplateHandler(restHandler, authHandler)
 	httpMux.HandleFunc("GET /v1/agents/templates", templateHandler.ListTemplates)
 	httpMux.HandleFunc("POST /v1/agents/from-template", templateHandler.Apply)
+	httpMux.HandleFunc("GET /v1/agents/{name}/setup", templateHandler.SetupStatus)
 
 	// W11d: voice channel. Phone-number management + provider webhooks
 	// (Twilio today; LiveKit / Vapi pluggable via VoiceProvider).

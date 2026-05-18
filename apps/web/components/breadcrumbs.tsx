@@ -8,7 +8,7 @@ import { ChevronRight } from "lucide-react";
 const segmentLabels: Record<string, string> = {
   agents: "Agents",
   runs: "Runs",
-  surfaces: "Surfaces",
+  surfaces: "Channels",
   connectors: "Connectors",
   deployments: "Deployments",
   settings: "Settings",

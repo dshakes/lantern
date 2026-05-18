@@ -190,58 +190,70 @@ function CreatePage() {
       <div className="flex-1 p-8">
         {step === "choose" && (
           <div className="mx-auto max-w-3xl">
-            {/* Always-visible connector grid. Reinforces that connectors
-                are workspace-level (connect once, every agent uses them). */}
-            <AvailableConnectors />
-
-            {/* One-click recipes — atomic agent + budget + schedule. The
-                tiles show the user up-front which connectors they'll need
-                and whether those are already installed. */}
+            {/* One-click recipes are the primary entry point — they create
+                agent + schedule + budget atomically and route to the setup
+                gate. Everything else is a fallback below. */}
             <OneClickTemplates />
 
             <div className="my-8 flex items-center gap-3">
               <span className="h-px flex-1 bg-zinc-800" />
               <span className="text-[11px] uppercase tracking-wider text-zinc-600">
-                or start from scratch
+                or build your own
               </span>
               <span className="h-px flex-1 bg-zinc-800" />
             </div>
 
-            <h2 className="mb-6 text-center text-xl font-semibold text-zinc-100">How do you want to create?</h2>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="flex flex-col rounded-xl border border-zinc-800 bg-surface-1 p-6 hover:border-indigo-500/50">
-                <Sparkles className="mb-3 h-6 w-6 text-indigo-400" />
-                <h3 className="mb-1 text-sm font-semibold text-zinc-100">AI Assisted</h3>
-                <p className="mb-4 flex-1 text-xs text-zinc-500">Describe what you want and AI builds it</p>
-                <button onClick={() => setPath("ai")} className="w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">Get started</button>
-              </div>
-              <div className="flex flex-col rounded-xl border border-zinc-800 bg-surface-1 p-6 hover:border-zinc-600">
-                <FileText className="mb-3 h-6 w-6 text-zinc-400" />
-                <h3 className="mb-1 text-sm font-semibold text-zinc-100">Manual</h3>
-                <p className="mb-4 flex-1 text-xs text-zinc-500">Configure from scratch with full control</p>
-                <button onClick={() => { setPath("manual"); setStep("configure"); }} className="w-full rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-surface-3">Get started</button>
-              </div>
-              <div className="flex flex-col rounded-xl border border-zinc-800 bg-surface-1 p-6 hover:border-zinc-600">
-                <Puzzle className="mb-3 h-6 w-6 text-teal-400" />
-                <h3 className="mb-1 text-sm font-semibold text-zinc-100">Template</h3>
-                <p className="mb-4 flex-1 text-xs text-zinc-500">Start from a pre-built template</p>
-                <button onClick={() => setPath("template")} className="w-full rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-surface-3">Browse</button>
-              </div>
+            {/* Two fallback paths. Both end in the same Configure step;
+                Describe with AI just pre-fills the fields. No 3-tile
+                chooser, no nested grids — just the two real options. */}
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <button
+                onClick={() => { setPath("manual"); setStep("configure"); }}
+                className="group flex items-start gap-4 rounded-xl border border-zinc-800 bg-surface-1 p-5 text-left transition-colors hover:border-zinc-700 hover:bg-surface-2"
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-3">
+                  <FileText className="h-5 w-5 text-zinc-400" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-zinc-100">Custom (blank)</h3>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Configure name, prompt, model, and connectors yourself.
+                  </p>
+                </div>
+              </button>
+              <button
+                onClick={() => setPath(path === "ai" ? null : "ai")}
+                className={clsx(
+                  "group flex items-start gap-4 rounded-xl border p-5 text-left transition-colors",
+                  path === "ai"
+                    ? "border-indigo-500/40 bg-indigo-500/5"
+                    : "border-zinc-800 bg-surface-1 hover:border-zinc-700 hover:bg-surface-2",
+                )}
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10">
+                  <Sparkles className="h-5 w-5 text-indigo-400" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-zinc-100">Describe with AI</h3>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Tell Lantern what you want; it drafts the agent for you.
+                  </p>
+                </div>
+              </button>
             </div>
+
+            {/* AI textarea reveals inline below the cards — no separate
+                screen, no path switch. */}
             {path === "ai" && (
-              <div className="mx-auto mt-8 max-w-xl space-y-3">
-                {/* Suggestion chips — empty-state nudges so users see what
-                    kinds of agents Lantern is good at without staring at
-                    a blank textarea. Click fills the description; user
-                    can edit before generating. */}
+              <div className="mt-6 space-y-3 rounded-xl border border-indigo-500/20 bg-indigo-500/[0.03] p-5">
                 {!aiDescription && (
                   <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
                     <span className="text-zinc-600">Try:</span>
                     {[
-                      "Reply to my WhatsApp DMs as me — casual, brief, like I'm texting",
-                      "Triage my GitHub issues every morning and draft responses",
-                      "Summarize my Slack channels each evening into a single digest",
-                      "Watch my Gmail for invoices and create Linear tasks for each",
+                      "Reply to my WhatsApp DMs as me — casual, brief",
+                      "Triage my GitHub issues each morning and draft responses",
+                      "Summarize my Slack channels into an evening digest",
+                      "Watch Gmail for invoices and file them in Linear",
                     ].map((suggestion) => (
                       <button
                         key={suggestion}
@@ -253,78 +265,29 @@ function CreatePage() {
                     ))}
                   </div>
                 )}
-                <textarea value={aiDescription} onChange={(e) => setAiDescription(e.target.value)} rows={4} placeholder="Describe what your agent should do..." className="w-full resize-none rounded-xl border border-zinc-800 bg-surface-0 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-2 focus:ring-lantern-500/20" autoFocus onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAiGenerate(); }} />
-
-                {/* Context-aware connector chips. Detects keywords in the
-                    user's description (gmail, github, slack, …) and shows
-                    each one's install status. Click an uninstalled chip to
-                    jump to the install flow without losing the draft. */}
+                <textarea
+                  value={aiDescription}
+                  onChange={(e) => setAiDescription(e.target.value)}
+                  rows={3}
+                  placeholder="Describe what your agent should do..."
+                  className="w-full resize-none rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20"
+                  autoFocus
+                  onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleAiGenerate(); }}
+                />
                 <ConnectorChips description={aiDescription} />
-
-                <button onClick={handleAiGenerate} disabled={!aiDescription.trim() || aiGenerating} className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50">
-                  {aiGenerating ? <><Loader2 className="h-4 w-4 animate-spin" /> Generating...</> : <><Sparkles className="h-4 w-4" /> Generate Agent</>}
+                <button
+                  onClick={handleAiGenerate}
+                  disabled={!aiDescription.trim() || aiGenerating}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {aiGenerating ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" /> Generating…</>
+                  ) : (
+                    <><Sparkles className="h-4 w-4" /> Generate</>
+                  )}
                 </button>
-                <p className="text-center text-[11px] text-zinc-600">
-                  Lantern drafts the agent — you review and edit before saving. Nothing ships until you say so.
-                </p>
               </div>
             )}
-            {path === "template" && (() => {
-              const ICON_MAP: Record<string, React.ComponentType<{className?: string}>> = { search: Search, headphones: Headphones, code: Code, mail: Mail, chart: BarChart3, pen: PenTool, clipboard: ClipboardList, shield: ShieldCheck };
-              const allTags = Array.from(new Set(TEMPLATES.flatMap(t => t.tags)));
-              const filtered = selectedTag ? TEMPLATES.filter(t => t.tags.includes(selectedTag)) : TEMPLATES;
-              return (
-                <div className="mt-8 space-y-4">
-                  {/* Tag filter */}
-                  <div className="flex flex-wrap gap-2">
-                    <button onClick={() => setSelectedTag(null)} className={clsx("rounded-full px-3 py-1 text-[11px] font-medium transition-colors", !selectedTag ? "bg-indigo-500/20 text-indigo-400" : "bg-surface-2 text-zinc-500 hover:text-zinc-300")}>All</button>
-                    {allTags.map(tag => (
-                      <button key={tag} onClick={() => setSelectedTag(selectedTag === tag ? null : tag)} className={clsx("rounded-full px-3 py-1 text-[11px] font-medium transition-colors", selectedTag === tag ? "bg-indigo-500/20 text-indigo-400" : "bg-surface-2 text-zinc-500 hover:text-zinc-300")}>{tag}</button>
-                    ))}
-                  </div>
-                  {/* Template cards */}
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    {filtered.map((tpl) => {
-                      const Icon = ICON_MAP[tpl.icon] || Puzzle;
-                      const isPreview = previewTemplate === tpl.id;
-                      return (
-                        <div key={tpl.id} className="group relative rounded-xl border border-zinc-800 bg-surface-1 p-4 hover:border-zinc-600 transition-all">
-                          <div className="flex items-start gap-3">
-                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-3">
-                              <Icon className="h-4 w-4 text-zinc-400" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <h4 className="text-sm font-medium text-zinc-200">{tpl.name}</h4>
-                                {tpl.popular && <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold text-amber-400"><Star className="h-2.5 w-2.5" /> Popular</span>}
-                              </div>
-                              <p className="mt-0.5 text-xs text-zinc-500">{tpl.description}</p>
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {tpl.tags.map(tag => <span key={tag} className="rounded bg-surface-3 px-1.5 py-0.5 text-[9px] font-medium text-zinc-400">{tag}</span>)}
-                                {tpl.connectors.length > 0 && (
-                                  <span className="inline-flex items-center gap-0.5 text-[9px] text-zinc-600"><Link2 className="h-2.5 w-2.5" /> {tpl.connectors.join(", ")}</span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                          {/* Preview prompt on click */}
-                          {isPreview && (
-                            <div className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 p-2">
-                              <p className="text-[10px] font-medium text-zinc-500 mb-1">System Prompt Preview</p>
-                              <p className="text-xs text-zinc-400 leading-relaxed">{tpl.prompt}</p>
-                            </div>
-                          )}
-                          <div className="mt-3 flex items-center gap-2">
-                            <button onClick={() => handleTemplateSelect(tpl)} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-indigo-500">Use Template</button>
-                            <button onClick={() => setPreviewTemplate(isPreview ? null : tpl.id)} className="rounded-lg border border-zinc-700 px-3 py-1.5 text-[11px] font-medium text-zinc-400 hover:bg-surface-3">{isPreview ? "Hide" : "Preview"}</button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
           </div>
         )}
 

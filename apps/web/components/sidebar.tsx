@@ -39,6 +39,7 @@ import {
   PanelLeft,
   Plus,
   Plug,
+  MessageSquare,
   Search,
 } from "lucide-react";
 import clsx from "clsx";
@@ -249,6 +250,13 @@ export function Sidebar() {
           label="Activity"
           collapsed={collapsed}
           active={pathname === "/inbox"}
+        />
+        <SecondaryLink
+          href="/surfaces"
+          icon={MessageSquare}
+          label="Channels"
+          collapsed={collapsed}
+          active={pathname === "/surfaces" || pathname.startsWith("/surfaces/")}
         />
         <SecondaryLink
           href="/connectors"

@@ -83,7 +83,7 @@ export function CommandPalette() {
       // Navigation
       { id: "nav-agents", label: "Go to Agents", section: "Navigation", icon: Bot, shortcut: "1", onSelect: () => router.push("/agents") },
       { id: "nav-runs", label: "Go to Runs", section: "Navigation", icon: Play, shortcut: "2", onSelect: () => router.push("/runs") },
-      { id: "nav-surfaces", label: "Go to Surfaces", section: "Navigation", icon: MessageSquare, shortcut: "3", onSelect: () => router.push("/surfaces") },
+      { id: "nav-surfaces", label: "Go to Channels", section: "Navigation", icon: MessageSquare, shortcut: "3", onSelect: () => router.push("/surfaces") },
       { id: "nav-connectors", label: "Go to Connectors", section: "Navigation", icon: Plug, shortcut: "4", onSelect: () => router.push("/connectors") },
       { id: "nav-deployments", label: "Go to Deployments", section: "Navigation", icon: Cloud, shortcut: "5", onSelect: () => router.push("/deployments") },
       { id: "nav-settings", label: "Go to Settings", section: "Navigation", icon: Settings, shortcut: "6", onSelect: () => router.push("/settings") },

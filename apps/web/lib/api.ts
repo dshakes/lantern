@@ -1193,6 +1193,21 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     });
   }
 
+  // Setup gate: reads required connectors+surfaces written by the template
+  // apply handler, diffs against installed connector_installs / surface_configs,
+  // returns ready=true when everything is connected. The /agents/{name}/setup
+  // page polls this; the agent detail page uses it to disable Run.
+  async getAgentSetupStatus(name: string): Promise<{
+    templateId: string;
+    required: { connectors: string[]; surfaces: string[] };
+    installed: { connectors: string[]; surfaces: string[] };
+    missing:   { connectors: string[]; surfaces: string[] };
+    ready: boolean;
+    nextSteps: Array<{ kind: string; id: string; label: string; href: string }>;
+  }> {
+    return this.request(`/v1/agents/${encodeURIComponent(name)}/setup`);
+  }
+
   // ---- Schedules --------------------------------------------------------------
 
   async createSchedule(data: {

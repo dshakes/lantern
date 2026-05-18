@@ -399,7 +399,7 @@ func uniqueAgentName(ctx context.Context, pool *pgxpool.Pool, tenantID, base str
 	name := base
 	for i := 2; i < 100; i++ {
 		var exists int
-		err := pool.QueryRow(ctx, `SELECT 1 FROM agents WHERE tenant_id = $1 AND name = $2`, tenantID, name).Scan(&exists)
+		err := pool.QueryRow(ctx, `SELECT 1 FROM agents WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL`, tenantID, name).Scan(&exists)
 		if err != nil {
 			return name
 		}

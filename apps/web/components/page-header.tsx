@@ -21,22 +21,25 @@ export function PageHeader({
   return (
     <div
       className={clsx(
-        // Solid header — fully opaque so content scrolling past doesn't
-        // bleed through under the title. We tried sticky+blur but the
-        // description text was visibly showing behind stats tiles.
-        // Soft gradient sheen behind the title — pure CSS, no asset.
-        "relative isolate overflow-hidden border-b border-zinc-800 bg-surface-1 px-6 py-5 md:px-8",
+        // Solid header — opaque so scrolling content doesn't bleed through.
+        // Gradient sheen is clipped to the header via a wrapper, not the
+        // header itself, so long descriptions never get vertically cropped.
+        "relative isolate border-b border-zinc-800 bg-surface-1 px-6 py-5 md:px-8",
         className,
       )}
     >
       <div
         aria-hidden
-        className="pointer-events-none absolute -left-12 -top-12 -z-10 h-48 w-96 rounded-full opacity-[0.07]"
-        style={{
-          background:
-            "radial-gradient(circle, var(--color-accent), transparent 70%)",
-        }}
-      />
+        className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
+      >
+        <div
+          className="absolute -left-12 -top-12 h-48 w-96 rounded-full opacity-[0.07]"
+          style={{
+            background:
+              "radial-gradient(circle, var(--color-accent), transparent 70%)",
+          }}
+        />
+      </div>
       <div className="flex items-start justify-between gap-6">
         <div className="min-w-0">
           <div className="flex items-center gap-3">

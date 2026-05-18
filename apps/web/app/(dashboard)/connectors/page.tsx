@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { Search, Mail, Github, Calendar, FileText, MessageSquare, Phone, CreditCard, BarChart3, Bug, Trello, Database, Globe, X, Loader2, Plug, Eye, EyeOff, AlertCircle, CheckCircle2, RefreshCw, ExternalLink, Plus, Server, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import { useToast } from "@/components/toast";
@@ -121,6 +122,7 @@ function SecretInput({ value, onChange, placeholder, isText }: { value: string; 
 
 export default function ConnectorsPage() {
   const toast = useToast();
+  const searchParams = useSearchParams();
   const [states, setStates] = useState<Record<string, ConnectorState>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -168,6 +170,23 @@ export default function ConnectorsPage() {
   }, []);
 
   useEffect(() => { loadData(); setMcpServers(loadMcpServers()); }, [loadData]);
+
+  // Deep-link auto-open: ?install=<id> opens the matching connector's
+  // install modal. Used by /agents/{name}/setup so users land directly
+  // on the GitHub install (or Gmail, Linear, …) instead of a generic page.
+  // Runs once after loading completes so the click feels instant.
+  useEffect(() => {
+    if (loading) return;
+    const target = searchParams.get("install");
+    if (!target) return;
+    const con = connectors.find((c) => c.id === target);
+    if (!con) return;
+    openModal(con);
+  // openModal is stable for the page's lifetime; we only want this to fire
+  // on the first ready render and again if the URL param changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, searchParams]);
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -328,6 +347,23 @@ export default function ConnectorsPage() {
       />
 
       <div className="mx-auto w-full max-w-[1400px] flex-1 p-6 md:p-8">
+        {/* Reverse cross-link — keeps users from hunting for WhatsApp/Slack
+            here. Mirrors the banner on /surfaces. */}
+        <a
+          href="/surfaces"
+          className="mb-5 flex items-center justify-between rounded-xl border border-zinc-800 bg-surface-1 px-4 py-3 text-xs text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-200"
+        >
+          <span>
+            Looking for <span className="text-zinc-200">WhatsApp</span>,{" "}
+            <span className="text-zinc-200">Slack</span>,{" "}
+            <span className="text-zinc-200">Discord</span>, or other inbound
+            channels? They live in{" "}
+            <span className="text-zinc-200">Channels</span> — Connectors are
+            tools the agent <em>uses</em>; Channels are how users{" "}
+            <em>reach</em> it.
+          </span>
+          <span className="ml-3 shrink-0 text-zinc-500">Go to Channels →</span>
+        </a>
         {/* MCP Marketplace — collapsed empty state. When 0 servers, it's
             a single-line strip with a "+ Add" button; only the populated
             grid expands the section. Previous design had a 400px-tall
@@ -425,7 +461,13 @@ export default function ConnectorsPage() {
           {filtered.map((con) => {
             const s = states[con.id]; const on = s?.installed ?? false; const I = con.icon;
             return (
-              <div key={con.id} className="connector-card card-hover group">
+              <button
+                key={con.id}
+                type="button"
+                onClick={() => openModal(con)}
+                aria-label={on ? `Configure ${con.name}` : `Connect ${con.name}`}
+                className="connector-card card-hover group text-left cursor-pointer"
+              >
                 <div className="flex items-start justify-between">
                   <div className={clsx("flex h-10 w-10 items-center justify-center rounded-xl", con.iconBg)}><I className={clsx("h-5 w-5", con.iconColor)} /></div>
                   {on && <span className="h-2 w-2 rounded-full bg-emerald-400" title="Connected" />}
@@ -433,11 +475,15 @@ export default function ConnectorsPage() {
                 <h3 className="mt-3 text-sm font-semibold text-zinc-100">{con.name}</h3>
                 <p className="mt-1 text-[11px] text-zinc-500 leading-relaxed line-clamp-2">{con.description}</p>
                 {on && s?.connectedAccount && <p className="mt-1.5 truncate text-[11px] text-emerald-400/70">{s.connectedAccount}</p>}
-                <button onClick={() => openModal(con)}
-                  className={clsx("mt-3 w-full rounded-lg px-3 py-1.5 text-xs font-medium transition-colors", on ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-white hover:bg-lantern-400")}>
+                <span
+                  className={clsx(
+                    "mt-3 inline-flex w-full items-center justify-center rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                    on ? "border border-zinc-700 text-zinc-300 group-hover:bg-surface-3" : "bg-lantern-500 text-white group-hover:bg-lantern-400",
+                  )}
+                >
                   {on ? "Configure" : "Connect"}
-                </button>
-              </div>
+                </span>
+              </button>
             );
           })}
         </div>

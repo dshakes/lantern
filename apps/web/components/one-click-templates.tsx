@@ -116,9 +116,11 @@ export function OneClickTemplates() {
     try {
       const res = await api.createAgentFromTemplate(t.id);
       toast.success(`Created "${res.agent.name}" — finish setup`);
-      // Land on the agent's Channels tab so the user immediately sees
-      // what to plug in next (Gmail token, WhatsApp pairing).
-      router.push(`/agents/${encodeURIComponent(res.agent.name)}/channels`);
+      // Land on the inline setup gate. It renders the live checklist
+      // (required connectors + surfaces) and gates Run until everything
+      // is green. Replaces the old /channels destination which buried the
+      // checklist behind a tab.
+      router.push(`/agents/${encodeURIComponent(res.agent.name)}/setup`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to apply template";
       // Common case: name collision (409) — point the user to the

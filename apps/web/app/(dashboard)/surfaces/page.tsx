@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   MessageSquare,
   Phone,
@@ -209,6 +210,7 @@ function validateFields(fields: Record<string, string>, definitions: ConfigField
 
 export default function SurfacesPage() {
   const toast = useToast();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const whatsappTenantId = user?.tenantId ?? FALLBACK_TENANT;
   const [configs, setConfigs] = useState<Record<string, SurfaceConfig>>({});
@@ -267,6 +269,18 @@ export default function SurfacesPage() {
     setTestMessage("");
     setConfigModal(surface);
   }, [configs]);
+
+  // Deep-link auto-open: ?setup=<id> opens the matching surface config
+  // modal. Used by /agents/{name}/setup so users land directly on the
+  // WhatsApp pairing flow instead of having to find it on the grid.
+  useEffect(() => {
+    if (loading) return;
+    const target = searchParams.get("setup");
+    if (!target) return;
+    const surface = surfaces.find((s) => s.id === target);
+    if (!surface) return;
+    openConfig(surface);
+  }, [loading, searchParams, openConfig]);
 
   const handleTest = async () => {
     if (!configModal) return;
@@ -404,8 +418,8 @@ export default function SurfacesPage() {
     <div className="flex flex-1 flex-col overflow-auto">
       {/* Header */}
       <PageHeader
-        title="Surfaces"
-        description="Connect WhatsApp, Telegram, Slack, email, or embed a web chat widget. One agent can serve all of them."
+        title="Channels"
+        description="How users talk to your agent. Connect WhatsApp, Telegram, Slack, Discord, email, or embed a web chat widget. One agent can serve all of them."
         badge={
           connectedCount > 0 ? (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
@@ -418,6 +432,23 @@ export default function SurfacesPage() {
 
       {/* Grid */}
       <div className="flex-1 p-8">
+        {/* Quiet pointer at tools like Gmail/GitHub — those live in Connectors,
+            not Surfaces. Surfaces = how users TALK to your agent;
+            Connectors = what your agent can DO. */}
+        <a
+          href="/connectors"
+          className="mb-5 flex items-center justify-between rounded-xl border border-zinc-800 bg-surface-1 px-4 py-3 text-xs text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-200"
+        >
+          <span>
+            Looking for <span className="text-zinc-200">Gmail</span>,{" "}
+            <span className="text-zinc-200">GitHub</span>,{" "}
+            <span className="text-zinc-200">Notion</span>, or other tools? They
+            live in <span className="text-zinc-200">Connectors</span> —
+            Channels are how users talk <em>to</em> the agent; Connectors are
+            what the agent uses to get things done.
+          </span>
+          <span className="ml-3 shrink-0 text-zinc-500">Go to Connectors →</span>
+        </a>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {surfaces.map((surface) => {
             const config = configs[surface.id];

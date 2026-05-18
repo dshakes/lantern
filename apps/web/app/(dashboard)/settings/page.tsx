@@ -319,23 +319,18 @@ export default function SettingsPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      {/* Header — title + description + tab strip, all in one bar so the
-          visual hierarchy reads top-to-bottom without a separate tab row. */}
-      <div className="relative isolate overflow-hidden border-b border-zinc-800 bg-surface-1 px-6 pt-6 md:px-8">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -left-12 -top-12 -z-10 h-48 w-96 rounded-full opacity-[0.07]"
-          style={{
-            background: "radial-gradient(circle, var(--color-accent), transparent 70%)",
-          }}
-        />
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">
-          Settings
-        </h1>
-        <p className="mt-1 max-w-3xl text-xs text-zinc-500">
-          Workspace preferences, API keys, LLM providers, team access, and billing.
-        </p>
-        <div className="mt-5 -mx-1">
+      {/* Use the shared PageHeader for guaranteed visibility — matches
+          every other page (Agents, Inbox, Connectors). */}
+      <PageHeader
+        title="Settings"
+        description="Workspace preferences, API keys, LLM providers, team access, and billing."
+      />
+
+      {/* Tab strip — sits as its own bordered band right below the header,
+          like GitHub's per-repo nav. The container clamp matches the
+          content below so they share the same left edge. */}
+      <div className="border-b border-zinc-800 bg-surface-1">
+        <div className="mx-auto w-full max-w-[1400px] px-6 md:px-8">
           <Tabs
             tabs={tabDefs}
             value={activeTab}
