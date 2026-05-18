@@ -613,13 +613,40 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	logStep("build_prompt", "running", "Building prompt from agent configuration")
 	inputJSON, _ := json.Marshal(input)
 	var storedSystemPrompt *string
+	var labelsJSON []byte
 	_ = h.srv.Pool.QueryRow(ctx,
-		`SELECT system_prompt FROM agents WHERE name = $1 AND tenant_id = $2`,
+		`SELECT system_prompt, COALESCE(labels, '{}'::jsonb)::text::bytea FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
-	).Scan(&storedSystemPrompt)
+	).Scan(&storedSystemPrompt, &labelsJSON)
 	systemPromptStr := fmt.Sprintf("You are the agent '%s'. Process the user's input and produce a useful result.", agentName)
 	if storedSystemPrompt != nil && *storedSystemPrompt != "" {
 		systemPromptStr = *storedSystemPrompt
+	} else {
+		// Lazy back-fill for agents created before templates.go started
+		// persisting system_prompt + labels. Re-derive the template by ID
+		// (from labels) or by name match against the static registry, then
+		// UPDATE the row so future runs read it from disk.
+		var lbl struct {
+			TemplateID string `json:"lantern.template"`
+		}
+		_ = json.Unmarshal(labelsJSON, &lbl)
+		var tpl templateDef
+		var found bool
+		if lbl.TemplateID != "" {
+			tpl, found = templates[lbl.TemplateID]
+		}
+		if !found {
+			tpl, found = templates[agentName]
+		}
+		if found && tpl.SystemPrompt != "" {
+			systemPromptStr = tpl.SystemPrompt
+			// Persist so we don't recompute every run.
+			_, _ = h.srv.Pool.Exec(ctx,
+				`UPDATE agents SET system_prompt = $1, model = COALESCE(NULLIF(model,''), $2) WHERE name = $3 AND tenant_id = $4`,
+				tpl.SystemPrompt, tpl.Model, agentName, tenantID,
+			)
+			logStep("backfill_prompt", "completed", fmt.Sprintf("Restored system prompt from template '%s'", tpl.ID))
+		}
 	}
 	// User-side content. When called via Run Now with no input, give the
 	// model a sensible default ask matching the template's intent rather
