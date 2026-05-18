@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
@@ -86,111 +88,20 @@ func (h *ConnectorExecutor) Execute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Load credentials from connector_installs.
-	var configJSON []byte
-	var oauthTokenJSON []byte
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT config, oauth_token_encrypted
-		FROM connector_installs
-		WHERE tenant_id = $1 AND connector_id = $2 AND status = 'connected'
-	`, tenantID, connectorID).Scan(&configJSON, &oauthTokenJSON)
-	if err != nil {
-		h.logger().Warn("connector not installed or not connected",
-			zap.String("connector", connectorID),
-			zap.String("tenant", tenantID),
-			zap.Error(err),
-		)
-		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error": fmt.Sprintf("Connector '%s' is not installed or not connected. Install it first on the Connectors page.", connectorID),
-		})
-		return
-	}
-
-	// Build a unified config map merging stored config and OAuth token data.
-	config := make(map[string]any)
-	if len(configJSON) > 0 {
-		json.Unmarshal(configJSON, &config) //nolint:errcheck
-	}
-	if len(oauthTokenJSON) > 0 {
-		var oauthData map[string]any
-		if err := json.Unmarshal(oauthTokenJSON, &oauthData); err == nil {
-			// Merge OAuth fields into config (e.g., access_token, refresh_token).
-			for k, v := range oauthData {
-				config["oauth_"+k] = v
-			}
-			// Also set a convenience accessToken key.
-			if at, ok := oauthData["access_token"].(string); ok {
-				config["accessToken"] = at
-			}
-		}
-	}
-
-	// If we have a refresh token, try to refresh the access token before use.
-	if rt, ok := config["oauth_refresh_token"].(string); ok && rt != "" {
-		newToken, refreshErr := refreshGoogleToken(rt)
-		if refreshErr == nil && newToken != "" {
-			config["accessToken"] = newToken
-			// Update the stored token in the database
-			updatedOAuth, _ := json.Marshal(map[string]any{
-				"access_token":  newToken,
-				"refresh_token": rt,
-				"token_type":    "Bearer",
-			})
-			_, _ = h.srv.Pool.Exec(ctx,
-				`UPDATE connector_installs SET oauth_token_encrypted = $1 WHERE tenant_id = $2 AND connector_id = $3`,
-				string(updatedOAuth), tenantID, connectorID,
-			)
-			h.logger().Info("refreshed OAuth token", zap.String("connector", connectorID))
-		}
-	}
-
-	// Dispatch to the right executor.
-	var result any
-	var execErr error
-
-	switch connectorID {
-	case "gmail":
-		result, execErr = executeGmail(config, action, params)
-	case "slack":
-		result, execErr = executeSlack(config, action, params)
-	case "github":
-		result, execErr = executeGitHub(config, action, params)
-	case "discord":
-		result, execErr = executeDiscord(config, action, params)
-	case "telegram":
-		result, execErr = executeTelegram(config, action, params)
-	case "twilio":
-		result, execErr = executeTwilio(config, action, params)
-	case "notion":
-		result, execErr = executeNotion(config, action, params)
-	case "linear":
-		result, execErr = executeLinear(config, action, params)
-	case "jira":
-		result, execErr = executeJira(config, action, params)
-	case "hubspot":
-		result, execErr = executeHubSpot(config, action, params)
-	case "stripe":
-		result, execErr = executeStripe(config, action, params)
-	case "sentry":
-		result, execErr = executeSentry(config, action, params)
-	case "vercel":
-		result, execErr = executeVercel(config, action, params)
-	case "salesforce":
-		result, execErr = executeSalesforce(config, action, params)
-	case "google-calendar":
-		result, execErr = executeGoogleCalendar(config, action, params)
-	case "google-drive":
-		result, execErr = executeGoogleDrive(config, action, params)
-	case "google-sheets":
-		result, execErr = executeGoogleSheets(config, action, params)
-	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("Unsupported connector: %s", connectorID),
-		})
-		return
-	}
-
+	// Delegate to the shared dispatcher so the in-process tool-call loop
+	// (sessions / completions) can reuse the same credential-loading,
+	// token-refresh, and execution paths.
+	result, execErr := executeConnectorAction(ctx, h.srv.Pool, tenantID, connectorID, action, params)
 	if execErr != nil {
+		// Map the not-installed sentinel to 404; everything else is 502.
+		if isConnectorNotInstalled(execErr) {
+			h.logger().Warn("connector not installed or not connected",
+				zap.String("connector", connectorID),
+				zap.String("tenant", tenantID),
+			)
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": execErr.Error()})
+			return
+		}
 		h.logger().Warn("connector execution failed",
 			zap.String("connector", connectorID),
 			zap.String("action", action),
@@ -209,6 +120,116 @@ func (h *ConnectorExecutor) Execute(w http.ResponseWriter, r *http.Request) {
 		"action":    action,
 		"data":      result,
 	})
+}
+
+// errConnectorNotInstalled is a sentinel wrapped via fmt.Errorf in
+// executeConnectorAction so HTTP can map it to 404 while tool dispatch can
+// surface it back to the model as "connector not installed".
+type errConnectorNotInstalled struct{ ConnectorID string }
+
+func (e *errConnectorNotInstalled) Error() string {
+	return fmt.Sprintf("Connector '%s' is not installed or not connected. Install it first on the Connectors page.", e.ConnectorID)
+}
+
+func isConnectorNotInstalled(err error) bool {
+	_, ok := err.(*errConnectorNotInstalled)
+	return ok
+}
+
+// executeConnectorAction loads credentials for (tenantID, connectorID),
+// refreshes OAuth tokens when possible, and dispatches to the right per-
+// connector executor function. Used by both the HTTP `/v1/connectors/.../execute`
+// endpoint and by the LLM tool-call loop in sessions.go.
+func executeConnectorAction(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	tenantID, connectorID, action string,
+	params map[string]any,
+) (any, error) {
+	if params == nil {
+		params = make(map[string]any)
+	}
+
+	var configJSON []byte
+	var oauthTokenJSON []byte
+	err := pool.QueryRow(ctx, `
+		SELECT config, oauth_token_encrypted
+		FROM connector_installs
+		WHERE tenant_id = $1 AND connector_id = $2 AND status = 'connected'
+	`, tenantID, connectorID).Scan(&configJSON, &oauthTokenJSON)
+	if err != nil {
+		return nil, &errConnectorNotInstalled{ConnectorID: connectorID}
+	}
+
+	config := make(map[string]any)
+	if len(configJSON) > 0 {
+		_ = json.Unmarshal(configJSON, &config)
+	}
+	if len(oauthTokenJSON) > 0 {
+		var oauthData map[string]any
+		if err := json.Unmarshal(oauthTokenJSON, &oauthData); err == nil {
+			for k, v := range oauthData {
+				config["oauth_"+k] = v
+			}
+			if at, ok := oauthData["access_token"].(string); ok {
+				config["accessToken"] = at
+			}
+		}
+	}
+
+	if rt, ok := config["oauth_refresh_token"].(string); ok && rt != "" {
+		if newToken, refreshErr := refreshGoogleToken(rt); refreshErr == nil && newToken != "" {
+			config["accessToken"] = newToken
+			updatedOAuth, _ := json.Marshal(map[string]any{
+				"access_token":  newToken,
+				"refresh_token": rt,
+				"token_type":    "Bearer",
+			})
+			_, _ = pool.Exec(ctx,
+				`UPDATE connector_installs SET oauth_token_encrypted = $1 WHERE tenant_id = $2 AND connector_id = $3`,
+				string(updatedOAuth), tenantID, connectorID,
+			)
+		}
+	}
+
+	switch connectorID {
+	case "gmail":
+		return executeGmail(config, action, params)
+	case "slack":
+		return executeSlack(config, action, params)
+	case "github":
+		return executeGitHub(config, action, params)
+	case "discord":
+		return executeDiscord(config, action, params)
+	case "telegram":
+		return executeTelegram(config, action, params)
+	case "twilio":
+		return executeTwilio(config, action, params)
+	case "notion":
+		return executeNotion(config, action, params)
+	case "linear":
+		return executeLinear(config, action, params)
+	case "jira":
+		return executeJira(config, action, params)
+	case "hubspot":
+		return executeHubSpot(config, action, params)
+	case "stripe":
+		return executeStripe(config, action, params)
+	case "sentry":
+		return executeSentry(config, action, params)
+	case "vercel":
+		return executeVercel(config, action, params)
+	case "salesforce":
+		return executeSalesforce(config, action, params)
+	case "google-calendar":
+		return executeGoogleCalendar(config, action, params)
+	case "google-drive":
+		return executeGoogleDrive(config, action, params)
+	case "google-sheets":
+		return executeGoogleSheets(config, action, params)
+	default:
+		return nil, fmt.Errorf("unsupported connector: %s", connectorID)
+	}
 }
 
 // ---------------------------------------------------------------------------

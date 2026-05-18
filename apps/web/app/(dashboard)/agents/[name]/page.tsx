@@ -150,7 +150,17 @@ type TabKey = (typeof tabs)[number]["key"];
 // Chat types & localStorage helpers
 // ---------------------------------------------------------------------------
 
-interface ChatMessage { role: "user" | "assistant"; content: string; timestamp: string; }
+// A single tool invocation surfaced via SSE during a session message.
+// Status starts as "started", flips to "completed" on success or "failed"
+// on error. result is a truncated JSON string (server caps to 2 KB).
+interface ToolCallEvent {
+  name: string;
+  args: string; // raw JSON
+  result?: string;
+  error?: string;
+  status: "started" | "completed" | "failed";
+}
+interface ChatMessage { role: "user" | "assistant"; content: string; timestamp: string; toolCalls?: ToolCallEvent[]; }
 const CHAT_KEY = (n: string) => `lantern_chat_${n}`;
 function loadChat(n: string): ChatMessage[] { if (typeof window === "undefined") return []; try { return JSON.parse(localStorage.getItem(CHAT_KEY(n)) || "[]"); } catch { return []; } }
 function saveChat(n: string, msgs: ChatMessage[]) { if (typeof window === "undefined") return; localStorage.setItem(CHAT_KEY(n), JSON.stringify(msgs)); }
@@ -447,6 +457,10 @@ export default function AgentDetailPage() {
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages, chatStreaming]);
 
   // Gap 1: Connect to session SSE when sessionId is set
+  // Tool calls accumulated since the last agent.message — gets attached
+  // to the next assistant message so each chat bubble can render its own
+  // "Used GitHub" / "Used Linear" indicators inline.
+  const pendingToolCallsRef = useRef<ToolCallEvent[]>([]);
   useEffect(() => {
     if (!sessionId || !sessionConnected) return;
     const es = api.connectSessionEvents(sessionId);
@@ -459,7 +473,9 @@ export default function AgentDetailPage() {
             role: "assistant",
             content: data.data?.content || "",
             timestamp: data.data?.timestamp || new Date().toISOString(),
+            toolCalls: pendingToolCallsRef.current.length > 0 ? [...pendingToolCallsRef.current] : undefined,
           };
+          pendingToolCallsRef.current = []; // reset for next message
           setChatMessages((prev) => {
             const updated = [...prev, assistantMsg];
             saveChat(name, updated);
@@ -470,6 +486,28 @@ export default function AgentDetailPage() {
         } else if (data.type === "agent.thinking") {
           setChatStreaming(true);
           setSessionStatus("thinking");
+        } else if (data.type === "agent.tool_call_started") {
+          // Append placeholder; the matching completed/failed event will
+          // mutate this entry by name (best-effort — duplicate names are
+          // disambiguated by order of arrival).
+          pendingToolCallsRef.current.push({
+            name: data.data?.name || "tool",
+            args: data.data?.args || "{}",
+            status: "started",
+          });
+          setSessionStatus("thinking");
+        } else if (data.type === "agent.tool_call_completed" || data.type === "agent.tool_call_failed") {
+          const failed = data.type === "agent.tool_call_failed";
+          // Find the most recent "started" entry with this name and mutate.
+          for (let i = pendingToolCallsRef.current.length - 1; i >= 0; i--) {
+            const tc = pendingToolCallsRef.current[i];
+            if (tc.name === data.data?.name && tc.status === "started") {
+              tc.status = failed ? "failed" : "completed";
+              if (failed) tc.error = data.data?.error;
+              else tc.result = data.data?.result;
+              break;
+            }
+          }
         } else if (data.type === "session.status_idle") {
           setChatStreaming(false);
           setSessionStatus("idle");
@@ -1329,6 +1367,49 @@ export default function AgentDetailPage() {
               {chatMessages.map((msg, i) => (
                 <div key={i} className={clsx("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
                   <div className={clsx("max-w-[80%] rounded-xl px-3.5 py-2.5 text-sm", msg.role === "user" ? "bg-lantern-500/20 text-zinc-200" : "bg-surface-2 text-zinc-300")}>
+                    {/* Tool calls executed before this assistant turn. Match
+                        the ChatGPT/Claude "used X" indicator — collapsed by
+                        default, click to expand the args/result. */}
+                    {msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <div className="mb-2 space-y-1">
+                        {msg.toolCalls.map((tc, ti) => {
+                          const [connectorId, action] = tc.name.split("__");
+                          return (
+                            <details key={ti} className="group rounded-lg border border-zinc-700/60 bg-surface-1/60">
+                              <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-[11px] [&::-webkit-details-marker]:hidden">
+                                {tc.status === "started" && <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />}
+                                {tc.status === "completed" && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
+                                {tc.status === "failed" && <AlertCircle className="h-3 w-3 text-red-400" />}
+                                <span className="text-zinc-400">Used</span>
+                                <span className="font-medium text-zinc-200">{connectorId}</span>
+                                <span className="text-zinc-600">·</span>
+                                <span className="font-mono text-[10px] text-zinc-400">{action}</span>
+                              </summary>
+                              <div className="border-t border-zinc-800 px-2.5 py-2 text-[10px] text-zinc-500">
+                                {tc.args && tc.args !== "{}" && (
+                                  <>
+                                    <p className="font-medium text-zinc-400">Args</p>
+                                    <pre className="mt-0.5 overflow-auto whitespace-pre-wrap break-all font-mono text-zinc-500">{tc.args}</pre>
+                                  </>
+                                )}
+                                {tc.result && (
+                                  <>
+                                    <p className="mt-1.5 font-medium text-zinc-400">Result</p>
+                                    <pre className="mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-zinc-500">{tc.result}</pre>
+                                  </>
+                                )}
+                                {tc.error && (
+                                  <>
+                                    <p className="mt-1.5 font-medium text-red-400">Error</p>
+                                    <pre className="mt-0.5 whitespace-pre-wrap font-mono text-red-300/80">{tc.error}</pre>
+                                  </>
+                                )}
+                              </div>
+                            </details>
+                          );
+                        })}
+                      </div>
+                    )}
                     <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
                     {/* Code block run buttons in assistant messages */}
                     {msg.role === "assistant" && extractCodeBlocks(msg.content).map((block, bi) => (

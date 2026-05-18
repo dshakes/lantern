@@ -254,13 +254,15 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		systemPrompt = systemHint
 	}
 
-	var promptMessages []map[string]string
-	promptMessages = append(promptMessages, map[string]string{
+	// Build the message list in the OpenAI tool-aware shape (any-valued
+	// content so we can interleave tool_call / tool messages later).
+	var promptMessages []map[string]any
+	promptMessages = append(promptMessages, map[string]any{
 		"role":    "system",
 		"content": systemPrompt,
 	})
 	for _, m := range messages {
-		promptMessages = append(promptMessages, map[string]string{
+		promptMessages = append(promptMessages, map[string]any{
 			"role":    m.Role,
 			"content": m.Content,
 		})
@@ -295,8 +297,53 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		}
 	}
 
-	// Call LLM with full message history.
-	result, _, _, _, llmErr := h.callLLMWithMessages(ctx, provider, model, apiKey, promptMessages)
+	// Build the tool list from the tenant's installed connectors. Empty
+	// list = no tool-calling, model just responds in text (unchanged
+	// behavior for agents without connectors).
+	tools, toolsErr := toolsForTenant(ctx, h.srv.Pool, tenantID)
+	if toolsErr != nil {
+		h.logger().Warn("session: tool catalog lookup failed", zap.Error(toolsErr))
+		tools = nil
+	}
+
+	// Dispatch function closes over the tenant + pool so the tool-call
+	// loop can invoke connector actions without re-resolving credentials.
+	dispatch := func(dispatchCtx context.Context, name string, args map[string]any) (any, error) {
+		return dispatchTool(dispatchCtx, h.srv.Pool, tenantID, name, args)
+	}
+
+	// Emit per-tool-call events so the UI can render "Used GitHub →
+	// list_prs" chips inline with the conversation. Each invocation fires
+	// twice: once before dispatch (Result==nil) and once after.
+	onToolCall := func(inv ToolInvocation) {
+		argsJSON, _ := json.Marshal(inv.Args)
+		event := "agent.tool_call_started"
+		payload := map[string]string{
+			"name": inv.Name,
+			"args": string(argsJSON),
+		}
+		if inv.Error != "" {
+			event = "agent.tool_call_failed"
+			payload["error"] = inv.Error
+		} else if inv.Result != nil {
+			event = "agent.tool_call_completed"
+			// Result can be very large; cap to keep SSE frame size sane.
+			// The full result is still in the prompt for the model.
+			resultJSON, _ := json.Marshal(inv.Result)
+			s := string(resultJSON)
+			if len(s) > 2000 {
+				s = s[:2000] + "...(truncated)"
+			}
+			payload["result"] = s
+		}
+		h.publishEvent(sessionID, event, payload)
+	}
+
+	// Run the tool-call loop. Up to 5 turns of tool use.
+	result, _, _, _, llmErr := h.llmProxy.callLLMWithTools(
+		ctx, provider, model, apiKey,
+		promptMessages, tools, dispatch, onToolCall, 5,
+	)
 	if llmErr != nil {
 		h.logger().Error("session: LLM call failed", zap.Error(llmErr))
 		errContent := fmt.Sprintf("Sorry, I encountered an error: %s", llmErr.Error())

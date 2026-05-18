@@ -1222,3 +1222,199 @@ func estimateCost(provider, model string, tokensIn, tokensOut int) float64 {
 
 	return (float64(tokensIn) * inPer1M / 1_000_000) + (float64(tokensOut) * outPer1M / 1_000_000)
 }
+
+// ---------------------------------------------------------------------------
+// Tool-call loop (OpenAI only for now). Used by sessions.processMessage so
+// templated agents (Morning Brief, Inbox Concierge, …) can actually invoke
+// their connectors. Anthropic uses a different tool schema; once we wire it
+// the same way, callers won't need to know the difference.
+//
+// Returns the final assistant text plus a flattened list of tool calls so
+// callers can emit them as journal events or session SSE.
+// ---------------------------------------------------------------------------
+
+type ToolInvocation struct {
+	Name   string         `json:"name"`
+	Args   map[string]any `json:"args"`
+	Result any            `json:"result,omitempty"`
+	Error  string         `json:"error,omitempty"`
+}
+
+// callLLMWithTools runs a tool-use loop against OpenAI. Up to maxTurns
+// rounds of tool_calls; on each round it dispatches tool calls via the
+// provided dispatch function and feeds results back. If tools is empty
+// this devolves to a single chat completion.
+//
+// onToolCall is called once per tool invocation (started + completed) so
+// the caller can stream UI events; pass nil to skip.
+func (h *LlmProxyHandler) callLLMWithTools(
+	ctx context.Context,
+	provider, model, apiKey string,
+	messages []map[string]any,
+	tools []map[string]any,
+	dispatch func(ctx context.Context, name string, args map[string]any) (any, error),
+	onToolCall func(inv ToolInvocation),
+	maxTurns int,
+) (finalText string, invocations []ToolInvocation, tokensIn, tokensOut int64, err error) {
+	if provider != "openai" {
+		// Anthropic fallback: collapse to text + ignore tools. The system
+		// prompt still tells the model what connectors exist; results just
+		// won't be tool-mediated. TODO: wire Anthropic tool API.
+		txt, ti, to, _, e := h.callLLMSync(ctx, provider, model, apiKey, flattenMessages(messages))
+		return txt, nil, ti, to, e
+	}
+	if maxTurns <= 0 {
+		maxTurns = 5
+	}
+
+	// Local working copy of messages; we append assistant + tool messages
+	// as we loop.
+	msgs := append([]map[string]any{}, messages...)
+
+	for turn := 0; turn < maxTurns; turn++ {
+		reqBody := map[string]any{
+			"model":      model,
+			"messages":   msgs,
+			"max_tokens": 4096,
+		}
+		if len(tools) > 0 {
+			reqBody["tools"] = tools
+			reqBody["tool_choice"] = "auto"
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+
+		req, _ := http.NewRequestWithContext(ctx, "POST",
+			"https://api.openai.com/v1/chat/completions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+
+		resp, httpErr := http.DefaultClient.Do(req)
+		if httpErr != nil {
+			return "", invocations, tokensIn, tokensOut, httpErr
+		}
+		defer resp.Body.Close() //nolint:errcheck
+
+		var oaiResp struct {
+			Choices []struct {
+				Message struct {
+					Role      string `json:"role"`
+					Content   string `json:"content"`
+					ToolCalls []struct {
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls,omitempty"`
+				} `json:"message"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+			Usage struct {
+				PromptTokens     int64 `json:"prompt_tokens"`
+				CompletionTokens int64 `json:"completion_tokens"`
+			} `json:"usage"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error,omitempty"`
+		}
+		if decErr := json.NewDecoder(resp.Body).Decode(&oaiResp); decErr != nil {
+			return "", invocations, tokensIn, tokensOut, decErr
+		}
+		tokensIn += oaiResp.Usage.PromptTokens
+		tokensOut += oaiResp.Usage.CompletionTokens
+
+		if oaiResp.Error != nil {
+			return "", invocations, tokensIn, tokensOut, fmt.Errorf("openai: %s", oaiResp.Error.Message)
+		}
+		if len(oaiResp.Choices) == 0 {
+			return "", invocations, tokensIn, tokensOut, fmt.Errorf("openai: no choices")
+		}
+		choice := oaiResp.Choices[0]
+
+		// Terminal: no more tool calls — model gave a final answer.
+		if len(choice.Message.ToolCalls) == 0 {
+			return choice.Message.Content, invocations, tokensIn, tokensOut, nil
+		}
+
+		// Append the assistant message that requested the tool calls.
+		// OpenAI requires this exact shape before tool messages.
+		assistantMsg := map[string]any{
+			"role":       "assistant",
+			"content":    choice.Message.Content,
+			"tool_calls": choice.Message.ToolCalls,
+		}
+		msgs = append(msgs, assistantMsg)
+
+		// Dispatch each tool call in order.
+		for _, tc := range choice.Message.ToolCalls {
+			var args map[string]any
+			if tc.Function.Arguments != "" {
+				_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+			}
+			inv := ToolInvocation{Name: tc.Function.Name, Args: args}
+			if onToolCall != nil {
+				onToolCall(inv) // started — UI shows spinner
+			}
+
+			result, dispErr := dispatch(ctx, tc.Function.Name, args)
+			if dispErr != nil {
+				inv.Error = dispErr.Error()
+				if onToolCall != nil {
+					onToolCall(inv)
+				}
+				invocations = append(invocations, inv)
+				// Feed the error back as the tool result; the model can
+				// recover (e.g., apologize, try a different approach).
+				resultJSON, _ := json.Marshal(map[string]string{"error": dispErr.Error()})
+				msgs = append(msgs, map[string]any{
+					"role":         "tool",
+					"tool_call_id": tc.ID,
+					"content":      string(resultJSON),
+				})
+				continue
+			}
+			inv.Result = result
+			if onToolCall != nil {
+				onToolCall(inv) // completed
+			}
+			invocations = append(invocations, inv)
+
+			resultJSON, _ := json.Marshal(result)
+			msgs = append(msgs, map[string]any{
+				"role":         "tool",
+				"tool_call_id": tc.ID,
+				"content":      string(resultJSON),
+			})
+		}
+	}
+
+	// Hit the turn budget without a terminal response. Return what we have.
+	return "I was unable to finish synthesizing a response within the tool-call budget. The data fetched is summarized above.", invocations, tokensIn, tokensOut, nil
+}
+
+// flattenMessages converts the messages-with-tool-calls shape into a single
+// text prompt for the legacy callLLMSync (Anthropic fallback). Drops
+// tool_calls / tool roles since they aren't meaningful as text.
+func flattenMessages(messages []map[string]any) string {
+	var b strings.Builder
+	for _, m := range messages {
+		role, _ := m["role"].(string)
+		content, _ := m["content"].(string)
+		if role == "tool" || content == "" {
+			continue
+		}
+		switch role {
+		case "system":
+			b.WriteString("[System]\n")
+		case "user":
+			b.WriteString("[User]\n")
+		case "assistant":
+			b.WriteString("[Assistant]\n")
+		}
+		b.WriteString(content)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("[Assistant]\n")
+	return b.String()
+}
