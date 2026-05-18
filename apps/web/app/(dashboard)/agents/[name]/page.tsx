@@ -52,6 +52,7 @@ import {
   Share2,
   Cloud,
   Download,
+  GitBranch,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -137,6 +138,7 @@ function ModelSelect({ value, onChange, className }: { value: string; onChange: 
 
 const RUNS_PER_PAGE = 10;
 
+// In-page tabs (toggle the active view without leaving page.tsx).
 const tabs = [
   { key: "build", label: "Build", icon: Hammer },
   { key: "chat", label: "Chat", icon: MessageSquare },
@@ -145,6 +147,14 @@ const tabs = [
   { key: "settings", label: "Settings", icon: Settings },
 ] as const;
 type TabKey = (typeof tabs)[number]["key"];
+
+// Route tabs (link to sub-pages, /agents/[name]/channels etc.). Rendered
+// alongside the in-page tabs as a single visual strip. Kept separate so
+// we don't try to flip activeTab to a key whose content lives elsewhere.
+const routeTabs = [
+  { key: "channels", label: "Channels", icon: Plug, suffix: "/channels" as const },
+  { key: "workflow", label: "Workflow", icon: GitBranch, suffix: "/editor" as const },
+];
 
 // ---------------------------------------------------------------------------
 // Chat types & localStorage helpers
@@ -850,7 +860,11 @@ export default function AgentDetailPage() {
     }
   }, [chatInput, chatFiles, chatMessages, instructions, systemPrompt, memoryEntries, testModel, name, sessionId, sessionConnected]);
 
-  // Fallback: direct LLM call when session API is unavailable
+  // Fallback: direct LLM call when session API is unavailable. Passes
+  // agentName so the server attaches the tenant's connector tools and
+  // runs the same tool-use loop the session API uses — without this, the
+  // fallback path lands on plain completions with no tools and the model
+  // says "no connectors provided" regardless of what's installed.
   const fallbackDirectLLM = useCallback(async (updated: ChatMessage[], _content: string) => {
     setChatStreaming(true);
     const effectivePrompt = mergeInstructionsAndPrompt(instructions, systemPrompt) + memoryToContext(memoryEntries);
@@ -858,19 +872,44 @@ export default function AgentDetailPage() {
     if (effectivePrompt.trim()) messages.push({ role: "system", content: effectivePrompt });
     for (const m of updated) messages.push({ role: m.role, content: m.content });
     try {
-      const response = await api.complete({ messages, model: testModel, stream: true, temperature: 1.0, maxTokens: 4096 });
+      const response = await api.complete({ messages, model: testModel, stream: true, temperature: 1.0, maxTokens: 4096, agentName: name });
       if (!response.ok) throw new Error(`API error ${response.status}`);
       let full = "";
+      const fallbackToolCalls: ToolCallEvent[] = [];
       if (response.headers.get("content-type")?.includes("text/event-stream")) {
         const reader = response.body?.getReader(); if (!reader) throw new Error("No body");
         const decoder = new TextDecoder(); let buffer = "";
         while (true) {
           const { done, value } = await reader.read(); if (done) break;
           buffer += decoder.decode(value, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop() ?? "";
-          for (const line of lines) { if (!line.startsWith("data: ")) continue; try { const evt = JSON.parse(line.slice(6).trim()); if (evt.type === "delta" && evt.content) full += evt.content; } catch { /* */ } }
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const evt = JSON.parse(line.slice(6).trim());
+              if (evt.type === "delta" && evt.content) {
+                full += evt.content;
+              } else if (evt.type === "tool_call_started") {
+                fallbackToolCalls.push({ name: evt.name, args: evt.args ?? "{}", status: "started" });
+              } else if (evt.type === "tool_call_completed" || evt.type === "tool_call_failed") {
+                for (let i = fallbackToolCalls.length - 1; i >= 0; i--) {
+                  if (fallbackToolCalls[i].name === evt.name && fallbackToolCalls[i].status === "started") {
+                    fallbackToolCalls[i].status = evt.type === "tool_call_failed" ? "failed" : "completed";
+                    if (evt.result) fallbackToolCalls[i].result = evt.result;
+                    if (evt.error) fallbackToolCalls[i].error = evt.error;
+                    break;
+                  }
+                }
+              }
+            } catch { /* malformed event — skip */ }
+          }
         }
       } else { const result = await response.json(); full = result.content || JSON.stringify(result, null, 2); }
-      const assistantMsg: ChatMessage = { role: "assistant", content: full || "(no response)", timestamp: new Date().toISOString() };
+      const assistantMsg: ChatMessage = {
+        role: "assistant",
+        content: full || "(no response)",
+        timestamp: new Date().toISOString(),
+        toolCalls: fallbackToolCalls.length > 0 ? fallbackToolCalls : undefined,
+      };
       const final = [...updated, assistantMsg]; setChatMessages(final); saveChat(name, final);
     } catch (err) {
       const errMsg: ChatMessage = { role: "assistant", content: `Error: ${err instanceof Error ? err.message : "Unknown error"}`, timestamp: new Date().toISOString() };
@@ -977,9 +1016,19 @@ export default function AgentDetailPage() {
           </div>
           <p className="text-sm text-zinc-500">{agent.description}</p>
         </div>
-        <div className="mt-6 flex gap-1">
+        <div className="mt-6 flex flex-wrap items-center gap-1">
           {tabs.map((tab) => (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)} className={clsx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors", activeTab === tab.key ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:bg-surface-2 hover:text-zinc-300")}>
+              <tab.icon className="h-3.5 w-3.5" /> {tab.label}
+            </button>
+          ))}
+          {/* Route tabs — link to sub-pages instead of toggling in-place. */}
+          {routeTabs.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => router.push(`/agents/${encodeURIComponent(name)}${tab.suffix}`)}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-500 transition-colors hover:bg-surface-2 hover:text-zinc-300"
+            >
               <tab.icon className="h-3.5 w-3.5" /> {tab.label}
             </button>
           ))}

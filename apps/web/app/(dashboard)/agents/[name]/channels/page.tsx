@@ -104,6 +104,12 @@ export default function AgentChannelsPage() {
   return (
     <div className="flex flex-1 flex-col overflow-auto">
       <div className="mx-auto w-full max-w-[1400px] px-6 py-6 md:px-8">
+        <Link
+          href={`/agents/${encodeURIComponent(name)}`}
+          className="mb-4 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300"
+        >
+          <ArrowRight className="h-3 w-3 rotate-180" /> {name}
+        </Link>
         <header className="mb-6">
           <h1 className="text-2xl font-semibold text-zinc-100">Channels</h1>
           <p className="mt-1 max-w-2xl text-xs text-zinc-500">

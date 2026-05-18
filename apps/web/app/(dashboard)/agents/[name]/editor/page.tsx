@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ReactFlowProvider } from "@xyflow/react";
 import { EditorCanvas } from "@/components/editor/editor-canvas";
@@ -183,6 +184,14 @@ export default function EditorPage() {
 
   return (
     <ReactFlowProvider>
+      {/* Floating back nav. The full-canvas editor has no chrome of its
+          own, so without this there's no way back to the agent. */}
+      <Link
+        href={`/agents/${encodeURIComponent(name)}`}
+        className="fixed left-4 top-16 z-20 inline-flex items-center gap-1 rounded-lg border border-zinc-800 bg-surface-1/90 px-3 py-1.5 text-xs font-medium text-zinc-300 backdrop-blur-md transition-colors hover:bg-surface-2 hover:text-zinc-100"
+      >
+        <span aria-hidden>←</span> {name}
+      </Link>
       <EditorCanvas agentName={name} initialWorkflow={selectedWorkflow} />
     </ReactFlowProvider>
   );

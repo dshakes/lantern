@@ -50,6 +50,12 @@ type completionRequest struct {
 	Stream      bool                `json:"stream"`
 	Temperature *float64            `json:"temperature,omitempty"`
 	MaxTokens   *int                `json:"maxTokens,omitempty"`
+	// Optional. When the completion is made on behalf of a specific
+	// agent, pass its name so the server can attach the tenant's
+	// installed-connector tools and run the same tool-use loop the
+	// session API uses. Without this, the call falls through to the
+	// classic single-shot completion (no tools).
+	AgentName string `json:"agentName,omitempty"`
 }
 
 type completionMessage struct {
@@ -402,7 +408,17 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		zap.String("provider", provider),
 		zap.String("model", model),
 		zap.Bool("stream", req.Stream),
+		zap.String("agent", req.AgentName),
 	)
+
+	// Agent-scoped completion → run the same tool loop sessions use. This
+	// is the fallback path for the chat UI when the session API isn't
+	// reachable; without tools here, the model can't actually call
+	// connectors and falls back to "no connectors provided" text.
+	if req.AgentName != "" {
+		h.proxyAgentWithTools(w, ctx, tenantID, provider, model, apiKey, &req)
+		return
+	}
 
 	switch provider {
 	case "openai":
@@ -412,6 +428,96 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported provider"})
 	}
+}
+
+// proxyAgentWithTools runs the tool-use loop for an agent-scoped completion
+// (req.AgentName set). Returns either an SSE stream of {type:'tool_call'},
+// {type:'delta'}, {type:'done'} events when req.Stream is true, or a final
+// JSON payload otherwise. Mirrors what the session API does so the chat
+// fallback path produces identical behavior.
+func (h *LlmProxyHandler) proxyAgentWithTools(
+	w http.ResponseWriter,
+	ctx context.Context,
+	tenantID, provider, model, apiKey string,
+	req *completionRequest,
+) {
+	// Build messages in the shape the tool loop expects.
+	msgs := make([]map[string]any, len(req.Messages))
+	for i, m := range req.Messages {
+		msgs[i] = map[string]any{"role": m.Role, "content": m.Content}
+	}
+
+	tools, _ := toolsForTenant(ctx, h.srv.Pool, tenantID)
+
+	dispatch := func(dispatchCtx context.Context, name string, args map[string]any) (any, error) {
+		return dispatchTool(dispatchCtx, h.srv.Pool, tenantID, name, args)
+	}
+
+	// For streaming completions we want to surface tool calls inline so
+	// the UI can render "Used X" chips while the model thinks. Each
+	// invocation pushes an SSE event before/after dispatch.
+	if req.Stream {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		flusher, _ := w.(http.Flusher)
+		writeEvt := func(payload map[string]any) {
+			b, _ := json.Marshal(payload)
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		onToolCall := func(inv ToolInvocation) {
+			argsJSON, _ := json.Marshal(inv.Args)
+			evt := map[string]any{
+				"type": "tool_call_started",
+				"name": inv.Name,
+				"args": string(argsJSON),
+			}
+			switch {
+			case inv.Error != "":
+				evt["type"] = "tool_call_failed"
+				evt["error"] = inv.Error
+			case inv.Result != nil:
+				evt["type"] = "tool_call_completed"
+				resultJSON, _ := json.Marshal(inv.Result)
+				s := string(resultJSON)
+				if len(s) > 2000 {
+					s = s[:2000] + "...(truncated)"
+				}
+				evt["result"] = s
+			}
+			writeEvt(evt)
+		}
+		text, _, _, _, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, onToolCall, 5)
+		if err != nil {
+			writeEvt(map[string]any{"type": "error", "message": err.Error()})
+			return
+		}
+		// Emit the final text as a single delta then done so existing UI
+		// reassembly (which concatenates delta.content) just works.
+		if text != "" {
+			writeEvt(map[string]any{"type": "delta", "content": text})
+		}
+		writeEvt(map[string]any{"type": "done"})
+		return
+	}
+
+	// Non-streaming: assemble + return JSON.
+	text, _, tin, tout, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, nil, 5)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"content":   text,
+		"model":     model,
+		"provider":  provider,
+		"tokensIn":  tin,
+		"tokensOut": tout,
+		"costUsd":   estimateCost(provider, model, int(tin), int(tout)),
+	})
 }
 
 // ---------- OpenAI proxy ----------

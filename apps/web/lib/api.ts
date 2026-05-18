@@ -1022,6 +1022,10 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     stream?: boolean;
     temperature?: number;
     maxTokens?: number;
+    // Opt-in to agent-scoped tool calling. When set, the server runs the
+    // same tool-use loop the session API uses, attaching the tenant's
+    // installed-connector tools and dispatching tool_calls inline.
+    agentName?: string;
   }): Promise<Response> {
     // Ensure token is loaded (complete() bypasses this.request() so we must check)
     if (!this._token) {
