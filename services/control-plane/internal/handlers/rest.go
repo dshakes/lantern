@@ -604,10 +604,31 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		return
 	}
 
-	// 2. Build a prompt from the input.
+	// 2. Build messages from the agent's stored system_prompt + the input.
+	//    Up until now this used a generic "You are the agent X, process this
+	//    input" fallback that ignored the agent's real instructions — which
+	//    is why Morning Brief (whose template prompt says "use the GitHub
+	//    connector / Linear connector") was responding "no connectors
+	//    provided": the model literally never saw that prompt.
 	logStep("build_prompt", "running", "Building prompt from agent configuration")
 	inputJSON, _ := json.Marshal(input)
-	prompt := fmt.Sprintf("You are the agent '%s'. Process this input and produce a result:\n\n%s", agentName, string(inputJSON))
+	var storedSystemPrompt *string
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT system_prompt FROM agents WHERE name = $1 AND tenant_id = $2`,
+		agentName, tenantID,
+	).Scan(&storedSystemPrompt)
+	systemPromptStr := fmt.Sprintf("You are the agent '%s'. Process the user's input and produce a useful result.", agentName)
+	if storedSystemPrompt != nil && *storedSystemPrompt != "" {
+		systemPromptStr = *storedSystemPrompt
+	}
+	// User-side content. When called via Run Now with no input, give the
+	// model a sensible default ask matching the template's intent rather
+	// than feeding it `{}` which it interprets as "input is empty".
+	userContent := string(inputJSON)
+	if len(input) == 0 || userContent == "{}" || userContent == "null" {
+		userContent = "Do what you were configured to do. Use any available connectors. Respond with your output."
+	}
+	prompt := fmt.Sprintf("%s\n\n%s", systemPromptStr, userContent)
 
 	// 2b. Check if this agent has Gmail in its connector config.
 	// The agent's connector list is stored in the input JSON under "connectors"
@@ -727,7 +748,48 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		}
 	}
 
-	result, tokensIn, tokensOut, costUsd, llmErr := h.llmProxy.callLLMSync(ctx, provider, model, apiKey, prompt)
+	// Build messages + tools for the tool-use loop. The inline executor
+	// previously called callLLMSync with a single concatenated prompt and
+	// no tools — Run Now would happily reply "no connectors provided"
+	// even when GitHub/Linear/Gmail were all connected. With tools wired
+	// here, Run Now matches the Chat tab's behavior exactly.
+	llmMessages := []map[string]any{
+		{"role": "system", "content": systemPromptStr},
+		{"role": "user", "content": userContent},
+	}
+	// If we pre-fetched Gmail above and appended to `prompt`, keep that
+	// inline-context flow intact by sending the augmented user content.
+	if prompt != systemPromptStr+"\n\n"+userContent {
+		// The Gmail branch above mutated `prompt`. Use whatever was after
+		// the system prompt as the user message body.
+		llmMessages[1] = map[string]any{"role": "user", "content": strings.TrimPrefix(prompt, systemPromptStr+"\n\n")}
+	}
+	llmTools, _ := toolsForTenant(ctx, h.srv.Pool, tenantID)
+	llmDispatch := func(dctx context.Context, name string, args map[string]any) (any, error) {
+		return dispatchTool(dctx, h.srv.Pool, tenantID, name, args)
+	}
+	onToolCallStep := func(inv ToolInvocation) {
+		argsJSON, _ := json.Marshal(inv.Args)
+		switch {
+		case inv.Error != "":
+			logStep(fmt.Sprintf("tool:%s", inv.Name), "failed", inv.Error)
+		case inv.Result != nil:
+			resultJSON, _ := json.Marshal(inv.Result)
+			s := string(resultJSON)
+			if len(s) > 400 {
+				s = s[:400] + "..."
+			}
+			logStep(fmt.Sprintf("tool:%s", inv.Name), "completed", s)
+		default:
+			logStep(fmt.Sprintf("tool:%s", inv.Name), "running", string(argsJSON))
+		}
+	}
+
+	result, _, tokensIn, tokensOut, llmErr := h.llmProxy.callLLMWithTools(
+		ctx, provider, model, apiKey,
+		llmMessages, llmTools, llmDispatch, onToolCallStep, 5,
+	)
+	costUsd := estimateCost(provider, model, int(tokensIn), int(tokensOut))
 
 	if llmErr != nil {
 		h.logger().Error("inline executor: LLM call failed", zap.Error(llmErr))
