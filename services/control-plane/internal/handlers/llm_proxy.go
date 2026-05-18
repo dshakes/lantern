@@ -1256,10 +1256,11 @@ func (h *LlmProxyHandler) callLLMWithTools(
 	onToolCall func(inv ToolInvocation),
 	maxTurns int,
 ) (finalText string, invocations []ToolInvocation, tokensIn, tokensOut int64, err error) {
+	if provider == "anthropic" {
+		return h.callAnthropicWithTools(ctx, model, apiKey, messages, tools, dispatch, onToolCall, maxTurns)
+	}
 	if provider != "openai" {
-		// Anthropic fallback: collapse to text + ignore tools. The system
-		// prompt still tells the model what connectors exist; results just
-		// won't be tool-mediated. TODO: wire Anthropic tool API.
+		// Unknown provider — collapse to text and skip tools.
 		txt, ti, to, _, e := h.callLLMSync(ctx, provider, model, apiKey, flattenMessages(messages))
 		return txt, nil, ti, to, e
 	}
@@ -1417,4 +1418,189 @@ func flattenMessages(messages []map[string]any) string {
 	}
 	b.WriteString("[Assistant]\n")
 	return b.String()
+}
+
+// callAnthropicWithTools runs the same tool-use loop against Anthropic's
+// Messages API, whose shape differs from OpenAI's:
+//   - Tools: {name, description, input_schema} (not function/parameters)
+//   - Response: content[] with type="tool_use" blocks carrying id/name/input
+//   - Tool result is fed back as a user message with content[] containing
+//     {type: "tool_result", tool_use_id, content}
+//   - System prompt is a top-level field, not a message role
+//
+// We translate from the OpenAI-shaped messages our callers build (one
+// system + alternating user/assistant) into Anthropic's shape, then
+// translate the response back into our shared ToolInvocation type so the
+// caller doesn't need to know which provider answered.
+func (h *LlmProxyHandler) callAnthropicWithTools(
+	ctx context.Context,
+	model, apiKey string,
+	messages []map[string]any,
+	tools []map[string]any,
+	dispatch func(ctx context.Context, name string, args map[string]any) (any, error),
+	onToolCall func(inv ToolInvocation),
+	maxTurns int,
+) (finalText string, invocations []ToolInvocation, tokensIn, tokensOut int64, err error) {
+	if maxTurns <= 0 {
+		maxTurns = 5
+	}
+
+	// Pull the system message out — Anthropic wants it as a top-level field.
+	var systemPrompt string
+	var antMessages []map[string]any
+	for _, m := range messages {
+		role, _ := m["role"].(string)
+		if role == "system" {
+			if s, ok := m["content"].(string); ok {
+				if systemPrompt != "" {
+					systemPrompt += "\n\n"
+				}
+				systemPrompt += s
+			}
+			continue
+		}
+		// User/assistant get passed through. Anthropic accepts string OR
+		// array content; we keep string for simplicity until tool_use turns.
+		if content, ok := m["content"].(string); ok && content != "" {
+			antMessages = append(antMessages, map[string]any{
+				"role":    role,
+				"content": content,
+			})
+		}
+	}
+
+	// Convert tools from OpenAI to Anthropic format.
+	antTools := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
+		fn, _ := t["function"].(map[string]any)
+		if fn == nil {
+			continue
+		}
+		antTools = append(antTools, map[string]any{
+			"name":         fn["name"],
+			"description":  fn["description"],
+			"input_schema": fn["parameters"],
+		})
+	}
+
+	for turn := 0; turn < maxTurns; turn++ {
+		reqBody := map[string]any{
+			"model":      model,
+			"max_tokens": 4096,
+			"messages":   antMessages,
+		}
+		if systemPrompt != "" {
+			reqBody["system"] = systemPrompt
+		}
+		if len(antTools) > 0 {
+			reqBody["tools"] = antTools
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+
+		req, _ := http.NewRequestWithContext(ctx, "POST",
+			"https://api.anthropic.com/v1/messages", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+
+		resp, httpErr := http.DefaultClient.Do(req)
+		if httpErr != nil {
+			return "", invocations, tokensIn, tokensOut, httpErr
+		}
+		defer resp.Body.Close() //nolint:errcheck
+
+		// Anthropic response carries an array of content blocks; each is
+		// either {type:"text", text:""} or {type:"tool_use", id, name, input}.
+		var antResp struct {
+			Content []map[string]any `json:"content"`
+			StopReason string `json:"stop_reason"`
+			Usage struct {
+				InputTokens  int64 `json:"input_tokens"`
+				OutputTokens int64 `json:"output_tokens"`
+			} `json:"usage"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error,omitempty"`
+		}
+		if decErr := json.NewDecoder(resp.Body).Decode(&antResp); decErr != nil {
+			return "", invocations, tokensIn, tokensOut, decErr
+		}
+		tokensIn += antResp.Usage.InputTokens
+		tokensOut += antResp.Usage.OutputTokens
+
+		if antResp.Error != nil {
+			return "", invocations, tokensIn, tokensOut, fmt.Errorf("anthropic: %s", antResp.Error.Message)
+		}
+
+		// Collect text + tool_use blocks from the response.
+		var textParts []string
+		type toolUse struct {
+			ID    string
+			Name  string
+			Input map[string]any
+		}
+		var toolUses []toolUse
+		for _, block := range antResp.Content {
+			t, _ := block["type"].(string)
+			switch t {
+			case "text":
+				if s, ok := block["text"].(string); ok {
+					textParts = append(textParts, s)
+				}
+			case "tool_use":
+				id, _ := block["id"].(string)
+				name, _ := block["name"].(string)
+				input, _ := block["input"].(map[string]any)
+				toolUses = append(toolUses, toolUse{ID: id, Name: name, Input: input})
+			}
+		}
+
+		// Terminal: no tool calls — model gave a final answer.
+		if antResp.StopReason != "tool_use" && len(toolUses) == 0 {
+			return strings.Join(textParts, "\n\n"), invocations, tokensIn, tokensOut, nil
+		}
+
+		// Append the assistant turn (must include ALL content blocks exactly
+		// as Anthropic returned them, otherwise the next request 400s).
+		antMessages = append(antMessages, map[string]any{
+			"role":    "assistant",
+			"content": antResp.Content,
+		})
+
+		// Dispatch each tool_use and build a single user message with all
+		// tool_results in order. Anthropic requires they appear in one
+		// message, not separate turns.
+		toolResults := make([]map[string]any, 0, len(toolUses))
+		for _, tu := range toolUses {
+			inv := ToolInvocation{Name: tu.Name, Args: tu.Input}
+			if onToolCall != nil {
+				onToolCall(inv)
+			}
+			result, dispErr := dispatch(ctx, tu.Name, tu.Input)
+			tr := map[string]any{
+				"type":         "tool_result",
+				"tool_use_id":  tu.ID,
+			}
+			if dispErr != nil {
+				inv.Error = dispErr.Error()
+				tr["is_error"] = true
+				tr["content"] = dispErr.Error()
+			} else {
+				inv.Result = result
+				resultJSON, _ := json.Marshal(result)
+				tr["content"] = string(resultJSON)
+			}
+			if onToolCall != nil {
+				onToolCall(inv) // completed/failed
+			}
+			invocations = append(invocations, inv)
+			toolResults = append(toolResults, tr)
+		}
+		antMessages = append(antMessages, map[string]any{
+			"role":    "user",
+			"content": toolResults,
+		})
+	}
+
+	return "I was unable to finish synthesizing a response within the tool-call budget. The data fetched is summarized above.", invocations, tokensIn, tokensOut, nil
 }

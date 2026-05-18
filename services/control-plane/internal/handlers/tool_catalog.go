@@ -74,6 +74,33 @@ var connectorTools = []toolDef{
 	},
 	{
 		Connector:   "github",
+		Action:      "list_issues",
+		Description: "List recent GitHub issues assigned to the authenticated user across all repos. Use for daily/weekly briefings.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"state":  map[string]any{"type": "string", "enum": []string{"open", "closed", "all"}, "description": "Issue state (default: open)"},
+				"filter": map[string]any{"type": "string", "enum": []string{"assigned", "created", "mentioned", "subscribed"}, "description": "Which issues to surface (default: assigned)"},
+				"limit":  map[string]any{"type": "integer", "description": "Max results (default 30)"},
+			},
+		},
+	},
+	{
+		Connector:   "github",
+		Action:      "get_issue",
+		Description: "Get a single GitHub issue including body and comments.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"owner":  map[string]any{"type": "string"},
+				"repo":   map[string]any{"type": "string"},
+				"number": map[string]any{"type": "integer", "description": "Issue number"},
+			},
+			"required": []string{"owner", "repo", "number"},
+		},
+	},
+	{
+		Connector:   "github",
 		Action:      "create_issue",
 		Description: "Create a new GitHub issue.",
 		Params: map[string]any{

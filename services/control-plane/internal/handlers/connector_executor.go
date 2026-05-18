@@ -594,6 +594,40 @@ func executeGitHub(config map[string]any, action string, params map[string]any) 
 		}
 		return result, nil
 
+	case "list_issues":
+		state := stringParam(params, "state")
+		if state == "" {
+			state = "open"
+		}
+		filter := stringParam(params, "filter")
+		if filter == "" {
+			filter = "assigned"
+		}
+		limit := intParam(params, "limit", 30)
+		// /issues returns issues across all the user's repos. Default is
+		// "assigned to me" which is exactly what Morning Brief needs.
+		apiURL := fmt.Sprintf("https://api.github.com/issues?state=%s&filter=%s&per_page=%d", state, filter, limit)
+		result, err := doJSONRequest("GET", apiURL, headers, nil)
+		if err != nil {
+			return nil, fmt.Errorf("GitHub list_issues failed: %w", err)
+		}
+		return result, nil
+
+	case "get_issue":
+		owner := stringParam(params, "owner")
+		repo := stringParam(params, "repo")
+		number := stringParam(params, "number")
+		if owner == "" || repo == "" || number == "" {
+			return nil, fmt.Errorf("'owner', 'repo', and 'number' parameters are required")
+		}
+		apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%s",
+			url.PathEscape(owner), url.PathEscape(repo), number)
+		result, err := doJSONRequest("GET", apiURL, headers, nil)
+		if err != nil {
+			return nil, fmt.Errorf("GitHub get_issue failed: %w", err)
+		}
+		return result, nil
+
 	case "create_issue":
 		owner := stringParam(params, "owner")
 		repo := stringParam(params, "repo")
@@ -621,7 +655,7 @@ func executeGitHub(config map[string]any, action string, params map[string]any) 
 		return result, nil
 
 	default:
-		return nil, fmt.Errorf("unknown GitHub action: %s (supported: list_repos, list_prs, get_pr, create_issue)", action)
+		return nil, fmt.Errorf("unknown GitHub action: %s (supported: list_repos, list_prs, get_pr, list_issues, get_issue, create_issue)", action)
 	}
 }
 
