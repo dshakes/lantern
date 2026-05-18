@@ -158,7 +158,7 @@ var connectorTools = []toolDef{
 	},
 	{
 		Connector:   "gmail",
-		Action:      "send",
+		Action:      "send_message",
 		Description: "Send an email from the authenticated user's Gmail account.",
 		Params: map[string]any{
 			"type": "object",
@@ -174,7 +174,7 @@ var connectorTools = []toolDef{
 	// ---- Slack ----
 	{
 		Connector:   "slack",
-		Action:      "send_message",
+		Action:      "post_message",
 		Description: "Post a message to a Slack channel.",
 		Params: map[string]any{
 			"type": "object",
@@ -208,8 +208,250 @@ var connectorTools = []toolDef{
 		Params: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"limit":  map[string]any{"type": "integer", "description": "Max results (default 10)"},
+				"limit":   map[string]any{"type": "integer", "description": "Max results (default 10)"},
 				"timeMin": map[string]any{"type": "string", "description": "RFC 3339 timestamp; default: now"},
+			},
+		},
+	},
+
+	// ---- Google Drive ----
+	{
+		Connector:   "google-drive",
+		Action:      "list_files",
+		Description: "List the authenticated user's recent Google Drive files.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "Max results (default 25)"},
+				"query": map[string]any{"type": "string", "description": "Optional Drive search query (e.g. mimeType='application/pdf')"},
+			},
+		},
+	},
+
+	// ---- Google Sheets ----
+	{
+		Connector:   "google-sheets",
+		Action:      "get_values",
+		Description: "Read cell values from a Google Sheet range.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"spreadsheetId": map[string]any{"type": "string", "description": "Sheet ID from the URL"},
+				"range":         map[string]any{"type": "string", "description": "A1 notation, e.g. 'Sheet1!A1:D20'"},
+			},
+			"required": []string{"spreadsheetId", "range"},
+		},
+	},
+
+	// ---- Jira ----
+	{
+		Connector:   "jira",
+		Action:      "list_issues",
+		Description: "List recent Jira issues assigned to or watched by the authenticated user.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"jql":   map[string]any{"type": "string", "description": "Optional JQL query (default: assignee=currentUser())"},
+				"limit": map[string]any{"type": "integer", "description": "Max results (default 25)"},
+			},
+		},
+	},
+	{
+		Connector:   "jira",
+		Action:      "create_issue",
+		Description: "Create a new Jira issue.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"projectKey": map[string]any{"type": "string", "description": "Project key, e.g. 'ENG'"},
+				"summary":    map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"issueType":  map[string]any{"type": "string", "enum": []string{"Task", "Bug", "Story", "Epic"}, "description": "Default: Task"},
+			},
+			"required": []string{"projectKey", "summary"},
+		},
+	},
+
+	// ---- HubSpot ----
+	{
+		Connector:   "hubspot",
+		Action:      "list_contacts",
+		Description: "List recent HubSpot contacts.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "Max results (default 25)"},
+			},
+		},
+	},
+	{
+		Connector:   "hubspot",
+		Action:      "list_deals",
+		Description: "List recent HubSpot deals.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "Max results (default 25)"},
+			},
+		},
+	},
+
+	// ---- Stripe ----
+	{
+		Connector:   "stripe",
+		Action:      "list_charges",
+		Description: "List recent Stripe charges. Use for revenue summaries.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "Max results (default 25, max 100)"},
+			},
+		},
+	},
+	{
+		Connector:   "stripe",
+		Action:      "list_customers",
+		Description: "List recent Stripe customers.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "Max results (default 25)"},
+			},
+		},
+	},
+
+	// ---- Sentry ----
+	{
+		Connector:   "sentry",
+		Action:      "list_issues",
+		Description: "List recent Sentry issues (errors / exceptions) for the configured project.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "Max results (default 25)"},
+				"query": map[string]any{"type": "string", "description": "Optional Sentry search query (e.g. 'is:unresolved')"},
+			},
+		},
+	},
+
+	// ---- Vercel ----
+	{
+		Connector:   "vercel",
+		Action:      "list_projects",
+		Description: "List the authenticated user's Vercel projects.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "Max results (default 20)"},
+			},
+		},
+	},
+	{
+		Connector:   "vercel",
+		Action:      "list_deployments",
+		Description: "List recent Vercel deployments for a project.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"projectId": map[string]any{"type": "string", "description": "Vercel project ID"},
+				"limit":     map[string]any{"type": "integer", "description": "Max results (default 20)"},
+			},
+		},
+	},
+
+	// ---- Discord ----
+	{
+		Connector:   "discord",
+		Action:      "send_message",
+		Description: "Post a message to a Discord channel.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"channelId": map[string]any{"type": "string", "description": "Discord channel ID"},
+				"content":   map[string]any{"type": "string"},
+			},
+			"required": []string{"channelId", "content"},
+		},
+	},
+
+	// ---- Telegram ----
+	{
+		Connector:   "telegram",
+		Action:      "send_message",
+		Description: "Send a Telegram message via the configured bot.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"chatId": map[string]any{"type": "string", "description": "Telegram chat ID (numeric)"},
+				"text":   map[string]any{"type": "string"},
+			},
+			"required": []string{"chatId", "text"},
+		},
+	},
+
+	// ---- Twilio ----
+	{
+		Connector:   "twilio",
+		Action:      "send_sms",
+		Description: "Send an SMS via Twilio.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"to":   map[string]any{"type": "string", "description": "E.164 phone number, e.g. +15551234567"},
+				"from": map[string]any{"type": "string", "description": "Twilio-owned sender number; defaults to connector config"},
+				"body": map[string]any{"type": "string"},
+			},
+			"required": []string{"to", "body"},
+		},
+	},
+
+	// ---- Notion ----
+	{
+		Connector:   "notion",
+		Action:      "list_databases",
+		Description: "List Notion databases the authenticated user has access to.",
+		Params: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+	},
+
+	// ---- Salesforce ----
+	{
+		Connector:   "salesforce",
+		Action:      "query",
+		Description: "Run a SOQL query against the authenticated Salesforce org.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"soql": map[string]any{"type": "string", "description": "SOQL query, e.g. 'SELECT Id, Name FROM Account LIMIT 10'"},
+			},
+			"required": []string{"soql"},
+		},
+	},
+
+	// ---- Slack (extra) ----
+	{
+		Connector:   "slack",
+		Action:      "list_channels",
+		Description: "List Slack channels the bot user is in.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "Max results (default 50)"},
+			},
+		},
+	},
+
+	// ---- Gmail (extra) ----
+	{
+		Connector:   "gmail",
+		Action:      "list_messages",
+		Description: "List recent Gmail messages (no query — just inbox order). For filtered results use gmail__search.",
+		Params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "Max results (default 20)"},
 			},
 		},
 	},

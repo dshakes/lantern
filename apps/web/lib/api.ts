@@ -1337,7 +1337,15 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     tenantId: string;
     agentName: string;
     status: string;
-    messages: Array<{ role: string; content: string; timestamp: string }>;
+    messages: Array<{
+      role: string;
+      content: string;
+      timestamp: string;
+      // Persisted tool invocations from this assistant turn (if any).
+      // Empty/absent on user messages and assistant turns that didn't
+      // call any connector.
+      toolCalls?: Array<{ name: string; args: string; result?: string; error?: string; status: string }>;
+    }>;
     createdAt: string;
     updatedAt: string;
   }> {
@@ -1349,7 +1357,12 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     tenantId: string;
     agentName: string;
     status: string;
-    messages: Array<{ role: string; content: string; timestamp: string }>;
+    messages: Array<{
+      role: string;
+      content: string;
+      timestamp: string;
+      toolCalls?: Array<{ name: string; args: string; result?: string; error?: string; status: string }>;
+    }>;
     createdAt: string;
     updatedAt: string;
   }>> {

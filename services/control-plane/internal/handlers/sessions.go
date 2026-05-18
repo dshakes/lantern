@@ -54,6 +54,23 @@ type sessionMessage struct {
 	Role      string `json:"role"`
 	Content   string `json:"content"`
 	Timestamp string `json:"timestamp"`
+	// Optional. Set on assistant turns that invoked one or more connector
+	// tools. Persisted to sessions.messages JSONB so the chat UI can re-
+	// render "Used github · list_prs" chips after a page reload. The
+	// frontend reads exactly this shape.
+	ToolCalls []persistedToolCall `json:"toolCalls,omitempty"`
+}
+
+// persistedToolCall is the serialized form of a ToolInvocation that
+// survives in DB. We truncate the result payload to keep the JSONB column
+// from ballooning; the full result already left the system as the tool
+// message in the LLM call.
+type persistedToolCall struct {
+	Name   string `json:"name"`
+	Args   string `json:"args"`             // raw JSON
+	Result string `json:"result,omitempty"` // truncated JSON
+	Error  string `json:"error,omitempty"`
+	Status string `json:"status"` // "completed" | "failed"
 }
 
 type sessionJSON struct {
@@ -312,9 +329,16 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		return dispatchTool(dispatchCtx, h.srv.Pool, tenantID, name, args)
 	}
 
+	// Accumulator for tool invocations that will be persisted with the
+	// assistant message after the loop finishes. Indexed in the order
+	// invocations complete; we mutate the started entry on completion so
+	// the chip ordering matches what the user saw via SSE.
+	persisted := []persistedToolCall{}
+
 	// Emit per-tool-call events so the UI can render "Used GitHub →
 	// list_prs" chips inline with the conversation. Each invocation fires
-	// twice: once before dispatch (Result==nil) and once after.
+	// twice: once before dispatch (Result==nil) and once after. We also
+	// stash a serialized copy into `persisted` so it survives reload.
 	onToolCall := func(inv ToolInvocation) {
 		argsJSON, _ := json.Marshal(inv.Args)
 		event := "agent.tool_call_started"
@@ -322,19 +346,40 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 			"name": inv.Name,
 			"args": string(argsJSON),
 		}
-		if inv.Error != "" {
+		switch {
+		case inv.Error != "":
 			event = "agent.tool_call_failed"
 			payload["error"] = inv.Error
-		} else if inv.Result != nil {
+			// Find the most recent started entry with this name; mutate.
+			for i := len(persisted) - 1; i >= 0; i-- {
+				if persisted[i].Name == inv.Name && persisted[i].Status == "started" {
+					persisted[i].Status = "failed"
+					persisted[i].Error = inv.Error
+					break
+				}
+			}
+		case inv.Result != nil:
 			event = "agent.tool_call_completed"
-			// Result can be very large; cap to keep SSE frame size sane.
-			// The full result is still in the prompt for the model.
 			resultJSON, _ := json.Marshal(inv.Result)
 			s := string(resultJSON)
 			if len(s) > 2000 {
 				s = s[:2000] + "...(truncated)"
 			}
 			payload["result"] = s
+			for i := len(persisted) - 1; i >= 0; i-- {
+				if persisted[i].Name == inv.Name && persisted[i].Status == "started" {
+					persisted[i].Status = "completed"
+					persisted[i].Result = s
+					break
+				}
+			}
+		default:
+			// Initial fire — Result not yet set. Record as "started".
+			persisted = append(persisted, persistedToolCall{
+				Name:   inv.Name,
+				Args:   string(argsJSON),
+				Status: "started",
+			})
 		}
 		h.publishEvent(sessionID, event, payload)
 	}
@@ -347,7 +392,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	if llmErr != nil {
 		h.logger().Error("session: LLM call failed", zap.Error(llmErr))
 		errContent := fmt.Sprintf("Sorry, I encountered an error: %s", llmErr.Error())
-		h.appendAssistantMessage(ctx, sessionID, errContent)
+		h.appendAssistantMessageWithTools(ctx, sessionID, errContent, persisted)
 		h.publishEvent(sessionID, "agent.message", map[string]string{
 			"content": errContent,
 		})
@@ -355,8 +400,8 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		return
 	}
 
-	// Append assistant message and publish.
-	h.appendAssistantMessage(ctx, sessionID, result)
+	// Append assistant message (with any persisted tool calls) and publish.
+	h.appendAssistantMessageWithTools(ctx, sessionID, result, persisted)
 	h.publishEvent(sessionID, "agent.message", map[string]string{
 		"content":   result,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
@@ -367,10 +412,18 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 // appendAssistantMessage appends an assistant message to the session in DB
 // and sets the status back to active.
 func (h *SessionHandler) appendAssistantMessage(ctx context.Context, sessionID, content string) {
+	h.appendAssistantMessageWithTools(ctx, sessionID, content, nil)
+}
+
+// appendAssistantMessageWithTools is the variant used by processMessage when
+// the assistant turn invoked one or more connector tools. Tool calls are
+// stored on the message so they survive a page reload.
+func (h *SessionHandler) appendAssistantMessageWithTools(ctx context.Context, sessionID, content string, toolCalls []persistedToolCall) {
 	msg := sessionMessage{
 		Role:      "assistant",
 		Content:   content,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		ToolCalls: toolCalls,
 	}
 	msgJSON, _ := json.Marshal(msg)
 

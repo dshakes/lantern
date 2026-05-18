@@ -433,7 +433,18 @@ export default function AgentDetailPage() {
         // Verify the session is still valid
         api.getSession(savedSessionId).then((s) => {
           if (s.status === "active" || s.status === "processing") {
-            setChatMessages(s.messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content, timestamp: m.timestamp })));
+            setChatMessages(s.messages.map((m) => ({
+              role: m.role as "user" | "assistant",
+              content: m.content,
+              timestamp: m.timestamp,
+              toolCalls: m.toolCalls?.map((tc) => ({
+                name: tc.name,
+                args: tc.args,
+                result: tc.result,
+                error: tc.error,
+                status: (tc.status === "completed" || tc.status === "failed" || tc.status === "started") ? tc.status : "completed",
+              })),
+            })));
             setSessionConnected(true);
           } else {
             // Session is stopped/deleted, clear it
