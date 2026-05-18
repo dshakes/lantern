@@ -331,9 +331,16 @@ func resolveAutoModel(hasAnthropic, hasOpenAI bool) (string, string) {
 		case "fast":
 			score = float64(m.speed) * 10
 		default: // "balanced"
-			// Balanced: weight quality (40%), speed (30%), inverse cost (30%)
-			costScore := 100.0 / (m.costPer1MIn + m.costPer1MOut + 1)
-			score = float64(m.quality)*4 + float64(m.speed)*3 + costScore*3
+			// Balanced means "best quality at a reasonable cost", not "cheapest
+			// model that runs". The previous formula gave gpt-4o-mini a score
+			// of ~222 (mostly from cost-inverse) vs gpt-4o at ~78, so 'balanced'
+			// always picked mini — which is tool-shy in practice (the model
+			// often refuses to call tools that ARE present in the request).
+			//
+			// New formula: quality dominates; cost is a tiebreaker with a hard
+			// cap so it can't outscore a quality jump.
+			costBonus := 30.0 / (m.costPer1MIn + m.costPer1MOut + 1) // capped ~30
+			score = float64(m.quality)*20 + float64(m.speed)*3 + costBonus
 		}
 
 		candidates = append(candidates, candidate{m.provider, m.model, score})

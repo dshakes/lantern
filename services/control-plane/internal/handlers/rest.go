@@ -796,6 +796,22 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		h.logger().Warn("inline executor: tools lookup failed",
 			zap.String("run_id", runID), zap.Error(llmToolsErr))
 	}
+	// Tool-shy models (gpt-4o-mini, haiku) routinely refuse to call tools
+	// that ARE in the request, then lie 'I can't access the tools'. If we
+	// have tools attached and the resolver picked a small model, upgrade
+	// to the same provider's strong model. Cheaper for the user too —
+	// nothing more expensive than paying tokens for an LLM that pretends
+	// it can't see its tools.
+	if len(llmTools) > 0 {
+		switch model {
+		case "gpt-4o-mini":
+			model = "gpt-4o"
+			logStep("upgrade_model", "completed", "Upgraded gpt-4o-mini → gpt-4o for tool-use reliability")
+		case "claude-haiku-4-20250414":
+			model = "claude-sonnet-4-20250514"
+			logStep("upgrade_model", "completed", "Upgraded haiku-4 → sonnet-4 for tool-use reliability")
+		}
+	}
 	{
 		// Surface the count + which connectors made it through the
 		// install filter. Without this it's invisible whether the model
