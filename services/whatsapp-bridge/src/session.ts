@@ -8,7 +8,7 @@ import { Boom } from "@hapi/boom";
 import { WebSocket } from "ws";
 import * as QRCode from "qrcode";
 import { join } from "path";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "fs";
 import type { Logger } from "pino";
 import { AgentClient } from "./agent.js";
 import { AttentionClassifier } from "./attention.js";
@@ -75,6 +75,20 @@ function formatNameList(names: string[]): string {
   const head = names.slice(0, 3).join(", ");
   const extra = names.length - 3;
   return `${head} (+${extra} more)`;
+}
+
+// Short human-readable duration. Used by /lantern status replies so the
+// uptime line ('2h 14m', '37s') is glanceable on a phone screen.
+function formatUptimeShort(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  if (h < 24) return rem > 0 ? `${h}h ${rem}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
 }
 
 // Named connection states surfaced to the dashboard. The bridge owns the
@@ -293,6 +307,7 @@ export class WhatsAppSession {
         }
 
         if (connection === "open") {
+          const wasFirstPair = !this.paired;
           this.connected = true;
           this.paired = true;
           this.currentQR = null;
@@ -319,6 +334,30 @@ export class WhatsAppSession {
             },
           });
           this.setConnectionState("connected");
+
+          // Self-chat confirmation. Closes the proof loop — the user
+          // sees the dashboard go green AND receives a WhatsApp message
+          // from themselves saying the bridge is alive. On subsequent
+          // reconnects we send a quieter "🔁 reconnected" line so the
+          // user knows the bridge survived a network hiccup, but only
+          // if it was offline more than 30s (avoids spamming on flaky
+          // wifi).
+          //
+          // Wrapped in a small delay because confirmToSelf can race the
+          // open-state flip on Baileys' side and silently drop.
+          setTimeout(() => {
+            if (wasFirstPair) {
+              void this.confirmToSelf(
+                [
+                  "🟢 *Lantern is connected*",
+                  "",
+                  "I'll auto-reply to DMs (and @mentions in monitored groups).",
+                  "Reply `/lantern status` anytime to verify I'm still alive.",
+                  "Reply `/lantern help` for the full command list.",
+                ].join("\n")
+              );
+            }
+          }, 1500);
         }
 
         if (connection === "close") {
@@ -813,6 +852,10 @@ export class WhatsAppSession {
     if (trimmed === "/bot off") {
       if (self) this.setMuted(true);
       else this.pauseContact(jid, INDEFINITE_MS);
+      // Emoji reaction first — gives instant tactile feedback that the
+      // bridge HEARD the command, before the reply (which the user might
+      // miss if they're not looking).
+      await this.sendReaction(jid, key, "🔇");
       await this.deleteCommand(jid, key, self);
       await this.confirmToSelf(
         self
@@ -835,6 +878,7 @@ export class WhatsAppSession {
       } else {
         this.resumeContact(jid);
       }
+      await this.sendReaction(jid, key, "🟢");
       await this.deleteCommand(jid, key, self);
       await this.confirmToSelf(
         self
@@ -858,6 +902,61 @@ export class WhatsAppSession {
       await this.confirmToSelf(
         `bot: ${state.muted ? "muted (global)" : "active"} · paused contacts: ${pausedCount} · monitored groups: ${groupCount}`
       );
+      return;
+    }
+
+    // ---- /lantern command suite -------------------------------------------
+    //
+    // Mobile-first status surface. Lets the user verify bridge health from
+    // their phone without opening the dashboard. Works in any chat, but
+    // status/help/ping replies always go to self-chat so they don't leak
+    // into a friend's thread.
+    if (trimmed === "/lantern" || trimmed === "/lantern help") {
+      await this.sendReaction(jid, key, "📖");
+      await this.confirmToSelf(
+        [
+          "🤖 *Lantern commands*",
+          "",
+          "`/lantern status` — bridge uptime + agent state",
+          "`/lantern ping` — quick echo, confirms I'm alive",
+          "`/bot off` — silence me everywhere (or in this thread)",
+          "`/bot on` — un-silence me",
+          "`/bot status` — show paused contacts + monitored groups",
+          "`/bot monitor on` — in a group, opt it in (group only)",
+          "`/bot monitor off` — opt the current group out (group only)",
+        ].join("\n")
+      );
+      return;
+    }
+
+    if (trimmed === "/lantern status") {
+      const uptimeMs = Date.now() - this.startedAt;
+      const uptimeStr = formatUptimeShort(uptimeMs);
+      const state = this.getBotState();
+      const pausedCount = Object.keys(state.paused).length;
+      const lastEventMs = this.lastConnectionEventAt
+        ? Date.now() - this.lastConnectionEventAt
+        : null;
+      await this.sendReaction(jid, key, "✅");
+      const lines = [
+        `🤖 *Lantern* · ${state.muted ? "🔇 muted" : "🟢 active"}`,
+        `uptime ${uptimeStr}${this.phoneNumber ? ` · 📞 +${this.phoneNumber}` : ""}`,
+        `paused contacts: ${pausedCount} · monitored groups: ${state.monitoredGroups.length}`,
+      ];
+      if (lastEventMs !== null && lastEventMs > 60_000) {
+        lines.push(`last connection event: ${formatUptimeShort(lastEventMs)} ago`);
+      }
+      if (this.lastError) {
+        lines.push(`⚠️ last error: ${this.lastError}`);
+      }
+      await this.confirmToSelf(lines.join("\n"));
+      return;
+    }
+
+    if (trimmed === "/lantern ping") {
+      // Cheapest possible health check — emoji-only. Confirms the bridge
+      // received + processed the message round-trip.
+      await this.sendReaction(jid, key, "🏓");
       return;
     }
 
@@ -1234,6 +1333,35 @@ export class WhatsAppSession {
     }
     this.connected = false;
     this.currentQR = null;
+  }
+
+  // reset is `disconnect` + nuke the on-disk auth credentials so the next
+  // `start()` issues a fresh QR. Required when the user wants to pair a
+  // DIFFERENT WhatsApp account — vanilla disconnect leaves the credentials
+  // in place and Baileys silently reconnects to the previous account.
+  //
+  // Also clears the in-memory paired/phoneNumber/displayName so the
+  // dashboard stops showing stale identity.
+  async reset() {
+    await this.disconnect();
+    this.paired = false;
+    this.phoneNumber = null;
+    this.displayName = null;
+    this.lastError = null;
+    this.lastConnectionEventAt = null;
+    this.reconnectAttempts = 0;
+    // Wipe the auth directory on disk. Baileys' useMultiFileAuthState
+    // restores from `creds.json` + the keys/ subdirectory; remove them
+    // both. We rebuild the empty dir so the next start() can write to it
+    // without an extra mkdir round-trip.
+    try {
+      rmSync(this.authDir, { recursive: true, force: true });
+      mkdirSync(this.authDir, { recursive: true });
+      this.logger.info({ authDir: this.authDir }, "auth credentials wiped");
+    } catch (err) {
+      this.logger.warn({ err }, "failed to wipe auth credentials");
+    }
+    this.setConnectionState("idle", "Credentials wiped — ready for fresh pairing");
   }
 
   isConnected() {

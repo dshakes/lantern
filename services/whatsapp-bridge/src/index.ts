@@ -212,6 +212,24 @@ app.post("/session/:tenantId/disconnect", async (req, res) => {
   res.json({ status: "disconnected" });
 });
 
+// POST /session/:tenantId/reset -- disconnect AND wipe the on-disk auth
+// credentials so the next /start issues a fresh QR. Plain disconnect
+// leaves credentials in place and Baileys silently reconnects to the
+// previously-paired WhatsApp number, which the user noticed: "When I
+// disconnect and connect, it auto-connects prev session". Use this when
+// the user wants to pair a different WhatsApp account.
+app.post("/session/:tenantId/reset", async (req, res) => {
+  const tenantId = req.params.tenantId;
+  let session = sessions.get(tenantId);
+  if (!session) {
+    // Build a transient session just so we can wipe the auth dir.
+    session = new WhatsAppSession(tenantId, logger);
+  }
+  await session.reset();
+  sessions.delete(tenantId);
+  res.json({ status: "reset", message: "Auth credentials wiped. Call /start to issue a fresh QR." });
+});
+
 // GET /session/:tenantId/bot -- current bot mute/pause state
 app.get("/session/:tenantId/bot", (req, res) => {
   const session = sessions.get(req.params.tenantId);

@@ -26,6 +26,7 @@ import {
   RefreshCw,
   ShieldAlert,
   Smartphone,
+  Trash2,
   UserMinus,
   WifiOff,
   Zap,
@@ -714,6 +715,40 @@ export function WhatsAppPairing({
     toast.info("Disconnected from WhatsApp");
   }, [bridgeUrl, tenantId, onDisconnected, toast]);
 
+  // handleReset is "disconnect + wipe credentials so the next pair is
+  // fresh". Without this the bridge silently reconnects to the previously
+  // paired phone number — confusing if the user wanted to pair a different
+  // account. Confirmed before firing because it's destructive.
+  const handleReset = useCallback(async () => {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Forget this WhatsApp device? You'll need to scan a new QR code on your phone to pair again."
+      )
+    ) {
+      return;
+    }
+    try {
+      await fetch(`${bridgeUrl}/session/${tenantId}/reset`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+    } catch {
+      // best effort
+    }
+    wsRef.current?.close();
+    wsRef.current = null;
+    setState("idle");
+    setQrDataUrl(null);
+    setPhoneNumber(null);
+    setDisplayName(null);
+    setConnectedAt(null);
+    setBotState(null);
+    setActivity([]);
+    onDisconnected?.();
+    toast.success("Device forgotten. Click Pair to start fresh.");
+  }, [bridgeUrl, tenantId, onDisconnected, toast]);
+
   const toggleMute = useCallback(async () => {
     if (!botState) return;
     setTogglingMute(true);
@@ -1021,30 +1056,97 @@ export function WhatsAppPairing({
       )}
 
       {state === "connected" && (
-        <ConnectedPanel
-          phoneNumber={phoneNumber}
-          displayName={displayName}
-          uptime={uptime}
-          lastActivityAt={lastActivityAt}
-          medianLatencyMs={medianLatencyMs}
-          botState={botState}
-          pausedCount={pausedCount}
-          groups={groups}
-          activity={activity}
-          now={now}
-          togglingMute={togglingMute}
-          clearingPauses={clearingPauses}
-          unmonitoring={unmonitoring}
-          pausingContact={pausingContact}
-          testMode={testMode}
-          onToggleMute={toggleMute}
-          onClearAll={clearAllPauses}
-          onUnmonitor={unmonitorGroup}
-          onPauseContact={pauseContact}
-          onDisconnect={handleDisconnect}
-          onStartTest={() => setTestMode("waiting")}
-          onClearTest={() => setTestMode("idle")}
-        />
+        <>
+          <ConnectedPanel
+            phoneNumber={phoneNumber}
+            displayName={displayName}
+            uptime={uptime}
+            lastActivityAt={lastActivityAt}
+            medianLatencyMs={medianLatencyMs}
+            botState={botState}
+            pausedCount={pausedCount}
+            groups={groups}
+            activity={activity}
+            now={now}
+            togglingMute={togglingMute}
+            clearingPauses={clearingPauses}
+            unmonitoring={unmonitoring}
+            pausingContact={pausingContact}
+            testMode={testMode}
+            onToggleMute={toggleMute}
+            onClearAll={clearAllPauses}
+            onUnmonitor={unmonitorGroup}
+            onPauseContact={pauseContact}
+            onDisconnect={handleDisconnect}
+            onStartTest={() => setTestMode("waiting")}
+            onClearTest={() => setTestMode("idle")}
+          />
+
+          {/* Mobile commands — the killer feature for verifying bridge
+              health without leaving WhatsApp. Each row is a command the
+              user can send to their own chat, with a one-line description
+              of what it does + what it replies. */}
+          <section className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
+            <header className="mb-3 flex items-center gap-2">
+              <span className="text-base">📱</span>
+              <h3 className="text-sm font-semibold text-zinc-100">
+                Check from your phone
+              </h3>
+              <span className="text-[11px] text-zinc-500">
+                · text these to yourself anytime
+              </span>
+            </header>
+            <ul className="space-y-2 text-[12px]">
+              {[
+                { cmd: "/lantern status", what: "Bridge uptime, agent state, last error if any." },
+                { cmd: "/lantern ping", what: "Quickest health check — replies with 🏓 reaction." },
+                { cmd: "/lantern help", what: "Full command reference, replied as a self-message." },
+                { cmd: "/bot off", what: "Silence the agent everywhere (or in a specific thread)." },
+                { cmd: "/bot on", what: "Un-silence — works alongside /bot off." },
+                { cmd: "/bot status", what: "Mute state + paused-contacts + monitored-groups counts." },
+              ].map((row) => (
+                <li
+                  key={row.cmd}
+                  className="flex items-start gap-3 rounded-lg border border-zinc-800/60 bg-surface-2/40 px-3 py-2"
+                >
+                  <code className="shrink-0 rounded bg-surface-3 px-2 py-0.5 font-mono text-[11px] text-lantern-300">
+                    {row.cmd}
+                  </code>
+                  <span className="text-zinc-400">{row.what}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-[11px] text-zinc-500">
+              These commands work in your self-chat. The bridge reacts with
+              an emoji so you know it received them even when offline.
+            </p>
+          </section>
+
+          {/* Danger zone: forget device. Distinct from Disconnect — wipes
+              the on-disk auth credentials so the next pair issues a fresh
+              QR. Required when switching to a different WhatsApp number. */}
+          <section className="rounded-xl border border-red-500/15 bg-red-500/[0.03] p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-red-300">Forget this device</h3>
+                <p className="mt-1 text-[12px] leading-relaxed text-zinc-500">
+                  Wipes the stored WhatsApp credentials. The next time you
+                  pair, you'll get a fresh QR — use this to switch to a
+                  different WhatsApp account, or if your current session is
+                  stuck in a conflict loop.
+                </p>
+              </div>
+              <Button
+                onClick={handleReset}
+                variant="danger"
+                size="sm"
+                icon={<Trash2 className="h-3 w-3" />}
+              >
+                Forget device
+              </Button>
+            </div>
+          </section>
+        </>
       )}
 
       {/* Diagnostics expander — always available so support can grab data
