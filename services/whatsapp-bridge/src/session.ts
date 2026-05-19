@@ -88,6 +88,11 @@ export type ConnectionState =
   | "connected"
   | "reconnecting"
   | "logged_out"
+  // Terminal: another WhatsApp Web session is active for this account
+  // and keeps kicking us off. Reconnecting is futile until the user
+  // closes the other session — the dashboard renders this as an
+  // actionable "close other sessions" prompt rather than spinning forever.
+  | "conflict"
   | "error";
 
 export class WhatsAppSession {
@@ -322,16 +327,27 @@ export class WhatsAppSession {
             ?.statusCode;
           const reason = (lastDisconnect?.error as Error | undefined)?.message;
           const loggedOut = statusCode === DisconnectReason.loggedOut;
-          const shouldReconnect = !loggedOut;
+
+          // 'Stream Errored (conflict)' / connectionReplaced (440) means
+          // another WhatsApp Web session is active for the same account
+          // and kicked us off. Reconnecting just steals the slot back,
+          // which then gets stolen again — an infinite ping-pong. Treat
+          // this as terminal: stop reconnecting, surface a clear state
+          // the dashboard can render with "close other sessions" guidance.
+          const isConflict =
+            statusCode === DisconnectReason.connectionReplaced ||
+            statusCode === 440 ||
+            (reason?.toLowerCase().includes("conflict") ?? false);
+          const shouldReconnect = !loggedOut && !isConflict;
           this.lastConnectionEventAt = Date.now();
 
           this.logger.info(
-            { statusCode, shouldReconnect },
+            { statusCode, shouldReconnect, isConflict },
             "WhatsApp disconnected"
           );
           this.broadcast({
             type: "disconnected",
-            data: { statusCode, reason: reason ?? null, loggedOut },
+            data: { statusCode, reason: reason ?? null, loggedOut, conflict: isConflict },
           });
 
           try {
@@ -340,6 +356,11 @@ export class WhatsAppSession {
             this.socket?.ev.removeAllListeners("messages.upsert");
           } catch {}
           this.socket = null;
+          // Cancel any pending retry — we're entering a terminal state.
+          if (this.reconnectTimer && (loggedOut || isConflict)) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+          }
 
           if (loggedOut) {
             // Phone unlinked us — auth dir is now useless; pairing must
@@ -350,6 +371,15 @@ export class WhatsAppSession {
               "logged_out",
               "WhatsApp on your phone unlinked this device"
             );
+            return;
+          }
+
+          if (isConflict) {
+            this.setConnectionState(
+              "conflict",
+              "Another WhatsApp Web session is active for this number. Close it (e.g. web.whatsapp.com or another Linked Device) and click Reconnect."
+            );
+            this.reconnectAttempts = 0;
             return;
           }
 

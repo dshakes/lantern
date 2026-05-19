@@ -56,6 +56,10 @@ type ConnectionState =
   | "connected"
   | "reconnecting"
   | "logged_out"
+  // Terminal: another WhatsApp Web session is active for this number
+  // and keeps stealing our slot. The bridge stops retrying and we
+  // render an actionable "close other sessions" panel.
+  | "conflict"
   | "error";
 
 // Stepper stages — the four "wide" milestones the user walks through.
@@ -72,6 +76,7 @@ const STATE_TO_STAGE: Record<ConnectionState, Stage> = {
   connected: "connected",
   reconnecting: "connected",
   logged_out: "pairing",
+  conflict: "pairing",
   error: "pairing",
 };
 
@@ -197,6 +202,7 @@ function StatePill({ state }: { state: ConnectionState }) {
     connected: { label: "Connected", cls: "bg-emerald-500/10 text-emerald-300", dot: "bg-emerald-400" },
     reconnecting: { label: "Reconnecting", cls: "bg-amber-500/10 text-amber-300", dot: "bg-amber-400 animate-pulse" },
     logged_out: { label: "Unlinked", cls: "bg-red-500/10 text-red-300", dot: "bg-red-500" },
+    conflict: { label: "Conflict", cls: "bg-amber-500/10 text-amber-300", dot: "bg-amber-500" },
     error: { label: "Error", cls: "bg-red-500/10 text-red-300", dot: "bg-red-500" },
   };
   const v = map[state];
@@ -961,6 +967,38 @@ export function WhatsAppPairing({
           </div>
           <Button onClick={startPairing} variant="primary" size="sm" icon={<RefreshCw className="h-3 w-3" />}>
             Pair again
+          </Button>
+        </div>
+      )}
+
+      {state === "conflict" && (
+        <div className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-amber-200">
+                Another WhatsApp Web session is active
+              </p>
+              <p className="text-[12px] leading-relaxed text-zinc-400">
+                Your WhatsApp account can only be linked to one web session
+                at a time and something else is currently holding the slot,
+                kicking the bridge off every reconnect. Close it before
+                retrying:
+              </p>
+              <ol className="ml-4 list-decimal space-y-1 text-[12px] text-zinc-400">
+                <li>
+                  Close any <code className="rounded bg-surface-2 px-1 text-zinc-300">web.whatsapp.com</code> browser tabs.
+                </li>
+                <li>
+                  On your phone: WhatsApp → Settings → Linked Devices → tap
+                  any unrecognized device → Log Out.
+                </li>
+                <li>Then click Retry below.</li>
+              </ol>
+            </div>
+          </div>
+          <Button onClick={startPairing} variant="primary" size="sm" icon={<RefreshCw className="h-3 w-3" />}>
+            Retry connection
           </Button>
         </div>
       )}
