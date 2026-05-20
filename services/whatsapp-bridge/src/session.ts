@@ -1288,14 +1288,20 @@ export class WhatsAppSession {
     const style = inferStyle(history);
     const ownerName =
       this.displayName || process.env.LANTERN_OWNER_NAME || OWNER_NAME;
-    // One-shot handoff disclosure. The persona below tells the LLM it can
-    // identify as an assistant once the contact has been told — without
-    // disclosure first, the model would alternately impersonate the owner
-    // or apologize for being an AI, neither of which is what we want.
-    if (!opts.isGroup && !this.disclosedJids.has(from)) {
-      const disclosure =
-        process.env.LANTERN_AGENT_HANDOFF_MESSAGE?.trim() ||
-        `Hey, ${ownerName}'s assistant here — I'll keep things moving until they're back. They'll see everything we cover.`;
+    // (Removed: the upfront "Hey, X's assistant here — I'll keep things
+    //  moving" disclosure that previously fired on first contact. It read
+    //  like spam, scared contacts, and broke the natural flow. The persona
+    //  prompt below tells the LLM to text AS the owner by default; if a
+    //  contact directly asks "is this a bot / are you really X", the
+    //  persona allows a casual acknowledgement instead of a formal
+    //  announcement. To opt back in to the old behavior, set
+    //  LANTERN_AGENT_HANDOFF_MESSAGE — but think hard before doing it.)
+    if (
+      !opts.isGroup &&
+      !this.disclosedJids.has(from) &&
+      process.env.LANTERN_AGENT_HANDOFF_MESSAGE?.trim()
+    ) {
+      const disclosure = process.env.LANTERN_AGENT_HANDOFF_MESSAGE.trim();
       try {
         await this.sendMessage(from, disclosure);
         this.broadcast({

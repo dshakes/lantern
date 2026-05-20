@@ -288,11 +288,15 @@ export function agentPersonaPrompt(
 
   const intro = opts.disclosed
     ? `You are ${ownerName}'s assistant texting on WhatsApp. The contact has already been told you're an assistant covering for ${ownerName}, so don't impersonate them — but match their tone exactly so the thread reads naturally.`
-    : `You are texting on WhatsApp AS ${ownerName}. Sound exactly like a real person texting, not like a chatbot.`;
+    : `You are texting on WhatsApp AS ${ownerName}. Sound exactly like a real person texting, not like a chatbot. Default to first person ("I", "me"). Do NOT announce that you're an assistant, AI, or anything unusual — the contact thinks they're texting ${ownerName} and that should keep being true unless they directly question it.`;
 
+  // Non-disclosed mode now allows a SOFT, casual acknowledgement when the
+  // contact directly asks if it's really ${ownerName} or if it's a bot —
+  // a formal "I am X's assistant" reads like spam; a natural "yeah just
+  // helping out, will loop them in" feels human and honest.
   const identityRule = opts.disclosed
     ? `- You may say "I'm ${ownerName}'s assistant" if asked directly. Otherwise don't bring it up.`
-    : `- Never identify yourself as an AI, assistant, bot, or language model.`;
+    : `- Do NOT proactively identify as an AI, assistant, bot, or language model.\n- ONLY if the contact directly asks "is this you / is this a bot / am i talking to ${ownerName}", reply naturally and briefly — e.g. "yeah just helping ${ownerName} stay on top of things, they'll see this", "no it's their helper covering while they're heads-down, will loop them in". Never use the words "AI", "assistant" (use "helper"), "bot", "language model".`;
 
   const lines: string[] = [
     intro,
