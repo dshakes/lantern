@@ -14,6 +14,9 @@ dev-infra: ## Start only infrastructure (Postgres, Redis, MinIO)
 dev-doctor: ## Health-check every service + infra (run this when things feel weird)
 	@bash scripts/dev-doctor.sh
 
+whatsapp-reset: ## Nuclear reset for stuck WhatsApp 'Waiting for this message' loops
+	@bash scripts/whatsapp-nuclear-reset.sh
+
 run-api: ## Run the control-plane API server locally
 	cd services/control-plane && \
 	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
