@@ -11,6 +11,9 @@ dev: ## Start the full dev stack (Postgres, Redis, MinIO, services)
 dev-infra: ## Start only infrastructure (Postgres, Redis, MinIO)
 	docker compose -f infra/docker/docker-compose.yml up -d postgres redis minio minio-init
 
+dev-doctor: ## Health-check every service + infra (run this when things feel weird)
+	@bash scripts/dev-doctor.sh
+
 run-api: ## Run the control-plane API server locally
 	cd services/control-plane && \
 	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
