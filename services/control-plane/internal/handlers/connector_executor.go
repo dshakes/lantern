@@ -488,16 +488,14 @@ func searchGmailViaAPI(accessToken, query string, limit int) (any, error) {
 // ---------------------------------------------------------------------------
 
 func executeSlack(config map[string]any, action string, params map[string]any) (any, error) {
-	botToken, _ := config["botToken"].(string)
+	botToken := resolveConnectorToken(config, "botToken")
 	if botToken == "" {
-		// Try OAuth access token.
-		botToken, _ = config["accessToken"].(string)
-	}
-	if botToken == "" {
-		botToken, _ = config["oauth_access_token"].(string)
-	}
-	if botToken == "" {
-		return nil, fmt.Errorf("missing Slack bot token. Provide 'botToken' in connector config")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Slack",
+			ManualField:       "Bot Token",
+			SupportsOAuth:     true,
+			CredentialDocsURL: "https://api.slack.com/apps",
+		})
 	}
 
 	headers := map[string]string{
@@ -547,24 +545,14 @@ func executeSlack(config map[string]any, action string, params map[string]any) (
 // ---------------------------------------------------------------------------
 
 func executeGitHub(config map[string]any, action string, params map[string]any) (any, error) {
-	// Token can live under several keys depending on how the user installed
-	// the connector. The dashboard's manual install form stores it as
-	// 'personalAccessToken'; an OAuth flow stores 'oauth_access_token';
-	// SDK-driven installs sometimes use the generic 'token' or 'accessToken'.
-	// Check all of them so 'github connected' in the UI actually means
-	// 'github callable from the executor'.
-	token, _ := config["token"].(string)
+	token := resolveConnectorToken(config, "personalAccessToken")
 	if token == "" {
-		token, _ = config["personalAccessToken"].(string)
-	}
-	if token == "" {
-		token, _ = config["accessToken"].(string)
-	}
-	if token == "" {
-		token, _ = config["oauth_access_token"].(string)
-	}
-	if token == "" {
-		return nil, fmt.Errorf("missing GitHub token. Provide 'personalAccessToken' (manual install) or complete OAuth")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "GitHub",
+			ManualField:       "Personal Access Token",
+			SupportsOAuth:     true,
+			CredentialDocsURL: "https://github.com/settings/tokens (scopes: repo, read:user)",
+		})
 	}
 
 	headers := map[string]string{
@@ -691,18 +679,14 @@ func executeGitHub(config map[string]any, action string, params map[string]any) 
 // ---------------------------------------------------------------------------
 
 func executeDiscord(config map[string]any, action string, params map[string]any) (any, error) {
-	botToken, _ := config["botToken"].(string)
+	botToken := resolveConnectorToken(config, "botToken")
 	if botToken == "" {
-		botToken, _ = config["token"].(string)
-	}
-	if botToken == "" {
-		botToken, _ = config["accessToken"].(string)
-	}
-	if botToken == "" {
-		botToken, _ = config["oauth_access_token"].(string)
-	}
-	if botToken == "" {
-		return nil, fmt.Errorf("missing Discord bot token. Provide 'botToken' in connector config")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Discord",
+			ManualField:       "Bot Token",
+			SupportsOAuth:     false,
+			CredentialDocsURL: "https://discord.com/developers/applications",
+		})
 	}
 
 	headers := map[string]string{
@@ -746,12 +730,14 @@ func executeDiscord(config map[string]any, action string, params map[string]any)
 // ---------------------------------------------------------------------------
 
 func executeTelegram(config map[string]any, action string, params map[string]any) (any, error) {
-	botToken, _ := config["botToken"].(string)
+	botToken := resolveConnectorToken(config, "botToken")
 	if botToken == "" {
-		botToken, _ = config["token"].(string)
-	}
-	if botToken == "" {
-		return nil, fmt.Errorf("missing Telegram bot token. Provide 'botToken' in connector config")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Telegram",
+			ManualField:       "Bot Token",
+			SupportsOAuth:     false,
+			CredentialDocsURL: "https://t.me/BotFather",
+		})
 	}
 
 	baseURL := fmt.Sprintf("https://api.telegram.org/bot%s", botToken)
@@ -848,18 +834,14 @@ func executeTwilio(config map[string]any, action string, params map[string]any) 
 // ---------------------------------------------------------------------------
 
 func executeNotion(config map[string]any, action string, params map[string]any) (any, error) {
-	token, _ := config["integrationToken"].(string)
+	token := resolveConnectorToken(config, "integrationToken")
 	if token == "" {
-		token, _ = config["token"].(string)
-	}
-	if token == "" {
-		token, _ = config["accessToken"].(string)
-	}
-	if token == "" {
-		token, _ = config["oauth_access_token"].(string)
-	}
-	if token == "" {
-		return nil, fmt.Errorf("missing Notion integration token. Provide 'integrationToken' in connector config")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Notion",
+			ManualField:       "Integration Token",
+			SupportsOAuth:     true,
+			CredentialDocsURL: "https://www.notion.so/my-integrations",
+		})
 	}
 
 	headers := map[string]string{
@@ -907,18 +889,14 @@ func executeNotion(config map[string]any, action string, params map[string]any) 
 // ---------------------------------------------------------------------------
 
 func executeLinear(config map[string]any, action string, params map[string]any) (any, error) {
-	token, _ := config["apiKey"].(string)
+	token := resolveConnectorToken(config, "apiKey")
 	if token == "" {
-		token, _ = config["token"].(string)
-	}
-	if token == "" {
-		token, _ = config["accessToken"].(string)
-	}
-	if token == "" {
-		token, _ = config["oauth_access_token"].(string)
-	}
-	if token == "" {
-		return nil, fmt.Errorf("missing Linear API key. Provide 'apiKey' in connector config")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Linear",
+			ManualField:       "API Key",
+			SupportsOAuth:     false,
+			CredentialDocsURL: "https://linear.app/settings/api",
+		})
 	}
 
 	headers := map[string]string{
@@ -968,36 +946,47 @@ func executeLinear(config map[string]any, action string, params map[string]any) 
 // ---------------------------------------------------------------------------
 
 func executeJira(config map[string]any, action string, params map[string]any) (any, error) {
+	// Jira is special: it accepts EITHER an OAuth bearer token OR
+	// email+apiToken Basic auth. We prefer OAuth when present (via the
+	// shared resolveConnectorToken which checks accessToken /
+	// oauth_access_token first), then fall back to email+apiToken.
 	domain, _ := config["domain"].(string)
 	email, _ := config["email"].(string)
 	apiToken, _ := config["apiToken"].(string)
 	if apiToken == "" {
 		apiToken, _ = config["token"].(string)
 	}
-
-	// Also support OAuth access token.
-	oauthToken, _ := config["oauth_access_token"].(string)
+	oauthToken, _ := config["accessToken"].(string)
+	if oauthToken == "" {
+		oauthToken, _ = config["oauth_access_token"].(string)
+	}
 
 	if domain == "" {
-		return nil, fmt.Errorf("missing Jira domain. Provide 'domain' (e.g., 'mycompany.atlassian.net') in connector config")
+		return nil, fmt.Errorf("Jira is not authenticated. Set the 'Domain' field (e.g. 'mycompany.atlassian.net') on the Connectors page")
 	}
 
 	var headers map[string]string
-	if oauthToken != "" {
+	switch {
+	case oauthToken != "":
 		headers = map[string]string{
 			"Authorization": "Bearer " + oauthToken,
 			"Accept":        "application/json",
 			"Content-Type":  "application/json",
 		}
-	} else if email != "" && apiToken != "" {
+	case email != "" && apiToken != "":
 		basicAuth := base64.StdEncoding.EncodeToString([]byte(email + ":" + apiToken))
 		headers = map[string]string{
 			"Authorization": "Basic " + basicAuth,
 			"Accept":        "application/json",
 			"Content-Type":  "application/json",
 		}
-	} else {
-		return nil, fmt.Errorf("missing Jira credentials. Provide email+apiToken or connect via OAuth")
+	default:
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Jira",
+			ManualField:       "Email + API Token",
+			SupportsOAuth:     true,
+			CredentialDocsURL: "https://id.atlassian.com/manage-profile/security/api-tokens",
+		})
 	}
 
 	baseURL := fmt.Sprintf("https://%s/rest/api/3", domain)
@@ -1064,18 +1053,14 @@ func executeJira(config map[string]any, action string, params map[string]any) (a
 // ---------------------------------------------------------------------------
 
 func executeHubSpot(config map[string]any, action string, params map[string]any) (any, error) {
-	token, _ := config["accessToken"].(string)
+	token := resolveConnectorToken(config, "apiKey")
 	if token == "" {
-		token, _ = config["token"].(string)
-	}
-	if token == "" {
-		token, _ = config["apiKey"].(string)
-	}
-	if token == "" {
-		token, _ = config["oauth_access_token"].(string)
-	}
-	if token == "" {
-		return nil, fmt.Errorf("missing HubSpot access token. Provide 'accessToken' in connector config")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "HubSpot",
+			ManualField:       "API Key (Private App Access Token)",
+			SupportsOAuth:     true,
+			CredentialDocsURL: "https://developers.hubspot.com/docs/api/private-apps",
+		})
 	}
 
 	headers := map[string]string{
@@ -1112,15 +1097,14 @@ func executeHubSpot(config map[string]any, action string, params map[string]any)
 // ---------------------------------------------------------------------------
 
 func executeStripe(config map[string]any, action string, params map[string]any) (any, error) {
-	secretKey, _ := config["secretKey"].(string)
+	secretKey := resolveConnectorToken(config, "secretKey", "apiKey")
 	if secretKey == "" {
-		secretKey, _ = config["apiKey"].(string)
-	}
-	if secretKey == "" {
-		secretKey, _ = config["token"].(string)
-	}
-	if secretKey == "" {
-		return nil, fmt.Errorf("missing Stripe secret key. Provide 'secretKey' in connector config")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Stripe",
+			ManualField:       "Secret Key",
+			SupportsOAuth:     false,
+			CredentialDocsURL: "https://dashboard.stripe.com/apikeys",
+		})
 	}
 
 	headers := map[string]string{
@@ -1156,15 +1140,14 @@ func executeStripe(config map[string]any, action string, params map[string]any) 
 // ---------------------------------------------------------------------------
 
 func executeSentry(config map[string]any, action string, params map[string]any) (any, error) {
-	token, _ := config["authToken"].(string)
+	token := resolveConnectorToken(config, "authToken")
 	if token == "" {
-		token, _ = config["token"].(string)
-	}
-	if token == "" {
-		token, _ = config["accessToken"].(string)
-	}
-	if token == "" {
-		return nil, fmt.Errorf("missing Sentry auth token. Provide 'authToken' in connector config")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Sentry",
+			ManualField:       "Auth Token",
+			SupportsOAuth:     false,
+			CredentialDocsURL: "https://sentry.io/settings/account/api/auth-tokens/",
+		})
 	}
 
 	headers := map[string]string{
@@ -1199,15 +1182,14 @@ func executeSentry(config map[string]any, action string, params map[string]any) 
 // ---------------------------------------------------------------------------
 
 func executeVercel(config map[string]any, action string, params map[string]any) (any, error) {
-	token, _ := config["token"].(string)
+	token := resolveConnectorToken(config, "apiToken")
 	if token == "" {
-		token, _ = config["accessToken"].(string)
-	}
-	if token == "" {
-		token, _ = config["apiToken"].(string)
-	}
-	if token == "" {
-		return nil, fmt.Errorf("missing Vercel token. Provide 'token' in connector config")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Vercel",
+			ManualField:       "API Token",
+			SupportsOAuth:     false,
+			CredentialDocsURL: "https://vercel.com/account/tokens",
+		})
 	}
 
 	headers := map[string]string{
@@ -1252,10 +1234,7 @@ func executeVercel(config map[string]any, action string, params map[string]any) 
 // ---------------------------------------------------------------------------
 
 func executeSalesforce(config map[string]any, action string, params map[string]any) (any, error) {
-	accessToken, _ := config["accessToken"].(string)
-	if accessToken == "" {
-		accessToken, _ = config["oauth_access_token"].(string)
-	}
+	accessToken := resolveConnectorToken(config)
 	instanceURL, _ := config["instanceUrl"].(string)
 	if instanceURL == "" {
 		instanceURL, _ = config["instance_url"].(string)
@@ -1265,7 +1244,12 @@ func executeSalesforce(config map[string]any, action string, params map[string]a
 	}
 
 	if accessToken == "" || instanceURL == "" {
-		return nil, fmt.Errorf("missing Salesforce credentials. Provide 'accessToken' and 'instanceUrl' in connector config (or connect via OAuth)")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Salesforce",
+			ManualField:       "Access Token + Instance URL",
+			SupportsOAuth:     true,
+			CredentialDocsURL: "your Salesforce admin → Connected Apps",
+		})
 	}
 
 	// Strip trailing slash from instance URL.
@@ -1302,12 +1286,14 @@ func executeSalesforce(config map[string]any, action string, params map[string]a
 // ---------------------------------------------------------------------------
 
 func executeGoogleCalendar(config map[string]any, action string, params map[string]any) (any, error) {
-	accessToken, _ := config["accessToken"].(string)
+	accessToken := resolveConnectorToken(config)
 	if accessToken == "" {
-		accessToken, _ = config["oauth_access_token"].(string)
-	}
-	if accessToken == "" {
-		return nil, fmt.Errorf("Google Calendar requires OAuth. Connect via the OAuth flow on the Connectors page")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Google Calendar",
+			ManualField:       "(OAuth only — no manual install)",
+			SupportsOAuth:     true,
+			CredentialDocsURL: "click 'Sign in with Google' on /connectors. Also enable the Calendar API at https://console.cloud.google.com/apis/library/calendar-json.googleapis.com",
+		})
 	}
 
 	headers := map[string]string{
@@ -1346,12 +1332,14 @@ func executeGoogleCalendar(config map[string]any, action string, params map[stri
 // ---------------------------------------------------------------------------
 
 func executeGoogleDrive(config map[string]any, action string, params map[string]any) (any, error) {
-	accessToken, _ := config["accessToken"].(string)
+	accessToken := resolveConnectorToken(config)
 	if accessToken == "" {
-		accessToken, _ = config["oauth_access_token"].(string)
-	}
-	if accessToken == "" {
-		return nil, fmt.Errorf("Google Drive requires OAuth. Connect via the OAuth flow on the Connectors page")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Google Drive",
+			ManualField:       "(OAuth only — no manual install)",
+			SupportsOAuth:     true,
+			CredentialDocsURL: "click 'Sign in with Google' on /connectors. Also enable the Drive API at https://console.cloud.google.com/apis/library/drive.googleapis.com",
+		})
 	}
 
 	headers := map[string]string{
@@ -1383,12 +1371,14 @@ func executeGoogleDrive(config map[string]any, action string, params map[string]
 // ---------------------------------------------------------------------------
 
 func executeGoogleSheets(config map[string]any, action string, params map[string]any) (any, error) {
-	accessToken, _ := config["accessToken"].(string)
+	accessToken := resolveConnectorToken(config)
 	if accessToken == "" {
-		accessToken, _ = config["oauth_access_token"].(string)
-	}
-	if accessToken == "" {
-		return nil, fmt.Errorf("Google Sheets requires OAuth. Connect via the OAuth flow on the Connectors page")
+		return nil, missingTokenError(connectorAuthHint{
+			ConnectorName:     "Google Sheets",
+			ManualField:       "(OAuth only — no manual install)",
+			SupportsOAuth:     true,
+			CredentialDocsURL: "click 'Sign in with Google' on /connectors. Also enable the Sheets API at https://console.cloud.google.com/apis/library/sheets.googleapis.com",
+		})
 	}
 
 	headers := map[string]string{

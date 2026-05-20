@@ -157,9 +157,12 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Name        string            `json:"name"`
-		Description string            `json:"description"`
-		Labels      map[string]string `json:"labels"`
+		Name         string            `json:"name"`
+		Description  string            `json:"description"`
+		Labels       map[string]string `json:"labels"`
+		AvatarURL    *string           `json:"avatarUrl"`
+		StylePrompt  *string           `json:"stylePrompt"`
+		SystemPrompt *string           `json:"systemPrompt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -177,7 +180,33 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, agentToMap(agent))
+	// Optional extension columns (not on the proto Agent message) are
+	// persisted with a follow-up UPDATE so the proto path stays untouched.
+	if body.AvatarURL != nil || body.StylePrompt != nil || body.SystemPrompt != nil {
+		tenantID, _ := middleware.TenantIDFromContext(ctx)
+		_, uerr := h.srv.Pool.Exec(ctx, `
+			UPDATE agents SET
+				avatar_url   = COALESCE($1, avatar_url),
+				style_prompt = COALESCE($2, style_prompt),
+				system_prompt = COALESCE($3, system_prompt)
+			WHERE tenant_id = $4 AND name = $5
+		`, body.AvatarURL, body.StylePrompt, body.SystemPrompt, tenantID, body.Name)
+		if uerr != nil {
+			h.logger().Warn("CreateAgent extension fields failed", zap.Error(uerr))
+		}
+	}
+
+	out := agentToMap(agent)
+	if body.AvatarURL != nil {
+		out["avatarUrl"] = *body.AvatarURL
+	}
+	if body.StylePrompt != nil {
+		out["stylePrompt"] = *body.StylePrompt
+	}
+	if body.SystemPrompt != nil {
+		out["systemPrompt"] = *body.SystemPrompt
+	}
+	writeJSON(w, http.StatusCreated, out)
 }
 
 // GetAgent handles GET /v1/agents/{name}.
@@ -208,7 +237,31 @@ func (h *RESTHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, agentToMap(agent))
+	out := agentToMap(agent)
+	// Extension columns not present on the proto Agent (system_prompt,
+	// avatar_url, style_prompt) — pulled directly so the dashboard can
+	// round-trip them through the create/edit forms.
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	var (
+		avatarURL    *string
+		stylePrompt  *string
+		systemPrompt *string
+	)
+	if err := h.srv.Pool.QueryRow(ctx, `
+		SELECT avatar_url, style_prompt, system_prompt
+		FROM agents WHERE tenant_id = $1 AND name = $2
+	`, tenantID, name).Scan(&avatarURL, &stylePrompt, &systemPrompt); err == nil {
+		if avatarURL != nil {
+			out["avatarUrl"] = *avatarURL
+		}
+		if stylePrompt != nil {
+			out["stylePrompt"] = *stylePrompt
+		}
+		if systemPrompt != nil {
+			out["systemPrompt"] = *systemPrompt
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // DeleteAgent handles DELETE /v1/agents/{name}.
@@ -265,26 +318,34 @@ func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		SystemPrompt *string `json:"systemPrompt"`
+		AvatarURL    *string `json:"avatarUrl"`
+		StylePrompt  *string `json:"stylePrompt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	if body.SystemPrompt != nil {
-		tag, err := h.srv.Pool.Exec(ctx, `
-			UPDATE agents SET system_prompt = $1
-			WHERE name = $2 AND tenant_id = $3
-		`, *body.SystemPrompt, name, tenantID)
-		if err != nil {
-			h.logger().Error("UpdateAgent systemPrompt failed", zap.Error(err))
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
-			return
-		}
-		if tag.RowsAffected() == 0 {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
-			return
-		}
+	if body.SystemPrompt == nil && body.AvatarURL == nil && body.StylePrompt == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"name": name, "updated": false})
+		return
+	}
+
+	tag, err := h.srv.Pool.Exec(ctx, `
+		UPDATE agents SET
+			system_prompt = COALESCE($1, system_prompt),
+			avatar_url    = COALESCE($2, avatar_url),
+			style_prompt  = COALESCE($3, style_prompt)
+		WHERE name = $4 AND tenant_id = $5
+	`, body.SystemPrompt, body.AvatarURL, body.StylePrompt, name, tenantID)
+	if err != nil {
+		h.logger().Error("UpdateAgent failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "updated": true})
@@ -619,8 +680,17 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		agentName, tenantID,
 	).Scan(&storedSystemPrompt, &labelsJSON)
 	systemPromptStr := fmt.Sprintf("You are the agent '%s'. Process the user's input and produce a useful result.", agentName)
-	// resolvedTemplateID is set by the backfill (or label lookup) so we can
-	// later check whether a deterministic prefetch exists for this agent.
+	// resolvedTemplateID drives prefetch dispatch — MUST be set on every
+	// run, not just freshly-backfilled ones. Earlier bug: backfill ran
+	// once, populated system_prompt, but NOT labels. Subsequent runs
+	// skipped the backfill block (system_prompt now non-empty) and
+	// resolvedTemplateID stayed empty, so prefetch silently returned
+	// false and tools attached when they shouldn't.
+	//
+	// Resolve in two steps, every run:
+	//   1. labels.lantern.template (set by templates.Apply OR back-fill)
+	//   2. agent-name == template-name (covers any agent named after a
+	//      registered template, even with no labels)
 	resolvedTemplateID := ""
 	{
 		var lbl struct {
@@ -629,28 +699,39 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		_ = json.Unmarshal(labelsJSON, &lbl)
 		resolvedTemplateID = lbl.TemplateID
 	}
+	if resolvedTemplateID == "" {
+		if _, ok := templates[agentName]; ok {
+			resolvedTemplateID = agentName
+		}
+	}
 	if storedSystemPrompt != nil && *storedSystemPrompt != "" {
 		systemPromptStr = *storedSystemPrompt
 	} else {
-		// Lazy back-fill for agents created before templates.go started
-		// persisting system_prompt + labels. Re-derive the template by ID
-		// (from labels) or by name match against the static registry, then
-		// UPDATE the row so future runs read it from disk.
+		// Lazy back-fill for agents that pre-date templates.go storing
+		// system_prompt. resolvedTemplateID was already set above.
 		var tpl templateDef
 		var found bool
 		if resolvedTemplateID != "" {
 			tpl, found = templates[resolvedTemplateID]
 		}
-		if !found {
-			tpl, found = templates[agentName]
-		}
 		if found && tpl.SystemPrompt != "" {
 			systemPromptStr = tpl.SystemPrompt
-			resolvedTemplateID = tpl.ID
-			// Persist so we don't recompute every run.
+			// Persist system_prompt AND labels so the next run sees
+			// lbl.TemplateID and can hit step 1 above (no name-match
+			// fallback needed) — and the setup gate can re-derive
+			// required_connectors/surfaces too.
+			labelsPatch, _ := json.Marshal(map[string]any{
+				"lantern.template":            tpl.ID,
+				"lantern.required_connectors": tpl.Connectors,
+				"lantern.required_surfaces":   tpl.Surfaces,
+			})
 			_, _ = h.srv.Pool.Exec(ctx,
-				`UPDATE agents SET system_prompt = $1, model = COALESCE(NULLIF(model,''), $2) WHERE name = $3 AND tenant_id = $4`,
-				tpl.SystemPrompt, tpl.Model, agentName, tenantID,
+				`UPDATE agents
+				 SET system_prompt = $1,
+				     model = COALESCE(NULLIF(model,''), $2),
+				     labels = COALESCE(labels, '{}'::jsonb) || $5::jsonb
+				 WHERE name = $3 AND tenant_id = $4`,
+				tpl.SystemPrompt, tpl.Model, agentName, tenantID, string(labelsPatch),
 			)
 			logStep("backfill_prompt", "completed", fmt.Sprintf("Restored system prompt from template '%s'", tpl.ID))
 		}

@@ -176,6 +176,17 @@ export class WhatsAppSession {
   // sounds like a human matching their register.
   private inboundHistory: Map<string, string[]> = new Map();
   private static readonly INBOUND_HISTORY_PER_CONTACT = 12;
+  // Per-contact "has this person been told they're talking to an assistant?"
+  // We send the one-liner handoff disclosure exactly once per JID, the first
+  // time the agent is about to reply on this thread. Groups are skipped —
+  // group members can't have a meaningful 1:1 disclosure relationship.
+  private disclosedJids: Set<string> = new Set();
+  // Rolling per-contact buffer of the OWNER's actual sent messages (the
+  // human, not the bridge) — fed as few-shot exemplars to the persona so
+  // the agent learns "my voice" from real history. Capped per-contact;
+  // persisted with state so the buffer survives restarts.
+  private ownerSentHistory: Map<string, string[]> = new Map();
+  private static readonly OWNER_SENT_PER_CONTACT = 10;
 
   constructor(tenantId: string, logger: Logger) {
     this.tenantId = tenantId;
@@ -464,6 +475,16 @@ export class WhatsAppSession {
               continue;
             }
             if (!text) continue;
+            // Capture the owner's real outgoing messages as few-shot
+            // exemplars for the persona. Skip self-chat (commands), groups
+            // (mixed register), and /bot commands themselves.
+            if (
+              !isGroup &&
+              !this.isSelfChat(from) &&
+              !text.trim().toLowerCase().startsWith("/bot")
+            ) {
+              this.rememberOwnerSent(from, text);
+            }
             await this.handleOwnerMessage(from, text, msg.key);
             continue;
           }
@@ -688,6 +709,8 @@ export class WhatsAppSession {
           muted?: boolean;
           pausedUntil?: Record<string, unknown>;
           monitoredGroups?: string[];
+          disclosedJids?: string[];
+          ownerSentHistory?: Record<string, string[]>;
         };
         this.muted = !!raw.muted;
         const now = Date.now();
@@ -699,6 +722,14 @@ export class WhatsAppSession {
         }
         for (const g of raw.monitoredGroups ?? []) {
           if (typeof g === "string") this.monitoredGroups.add(g);
+        }
+        for (const jid of raw.disclosedJids ?? []) {
+          if (typeof jid === "string") this.disclosedJids.add(jid);
+        }
+        for (const [jid, msgs] of Object.entries(raw.ownerSentHistory ?? {})) {
+          if (!Array.isArray(msgs)) continue;
+          const clean = msgs.filter((m): m is string => typeof m === "string");
+          if (clean.length > 0) this.ownerSentHistory.set(jid, clean);
         }
         loaded = true;
       } catch (err) {
@@ -744,10 +775,14 @@ export class WhatsAppSession {
     try {
       const pausedUntil: Record<string, PauseEntry> = {};
       for (const [jid, entry] of this.pausedUntil) pausedUntil[jid] = entry;
+      const ownerSentHistory: Record<string, string[]> = {};
+      for (const [jid, msgs] of this.ownerSentHistory) ownerSentHistory[jid] = msgs;
       const payload = {
         muted: this.muted,
         pausedUntil,
         monitoredGroups: [...this.monitoredGroups],
+        disclosedJids: [...this.disclosedJids],
+        ownerSentHistory,
       };
       writeFileSync(this.stateFile, JSON.stringify(payload, null, 2));
     } catch (err) {
@@ -846,6 +881,18 @@ export class WhatsAppSession {
         jid,
         scope: "group",
       });
+      return;
+    }
+
+    // `/bot monitor on|off` outside a group is a no-op silently before
+    // this commit — the message looked normal in the user's chat and
+    // they assumed it worked. Give explicit feedback in self-chat so the
+    // user knows the command was misplaced + suggests the right action.
+    if (!group && (trimmed === "/bot monitor on" || trimmed === "/bot monitor off")) {
+      await this.sendReaction(jid, key, "🤷");
+      await this.confirmToSelf(
+        `⚠️ \`${text.trim()}\` only works in *group* chats — that's where the agent decides whether to auto-reply on @mentions.\n\nFor a 1-on-1 contact, use:\n• \`/bot off\` (in their thread) — pause auto-reply for this contact\n• \`/bot on\` — un-pause\n• \`/bot off\` in self-chat — mute everywhere`
+      );
       return;
     }
 
@@ -1196,10 +1243,39 @@ export class WhatsAppSession {
     const style = inferStyle(history);
     const ownerName =
       this.displayName || process.env.LANTERN_OWNER_NAME || OWNER_NAME;
+    // One-shot handoff disclosure. The persona below tells the LLM it can
+    // identify as an assistant once the contact has been told — without
+    // disclosure first, the model would alternately impersonate the owner
+    // or apologize for being an AI, neither of which is what we want.
+    if (!opts.isGroup && !this.disclosedJids.has(from)) {
+      const disclosure =
+        process.env.LANTERN_AGENT_HANDOFF_MESSAGE?.trim() ||
+        `Hey, ${ownerName}'s assistant here — I'll keep things moving until they're back. They'll see everything we cover.`;
+      try {
+        await this.sendMessage(from, disclosure);
+        this.broadcast({
+          type: "agent_reply",
+          data: {
+            to: from,
+            text: disclosure,
+            kind: "handoff_disclosure",
+            timestamp: Date.now(),
+          },
+        });
+      } catch (err) {
+        this.logger.warn({ err, jid: from }, "handoff disclosure failed");
+      }
+      this.disclosedJids.add(from);
+      this.saveState();
+    }
+    const ownerSamples = opts.isGroup
+      ? []
+      : this.ownerSentHistory.get(from) ?? [];
     const systemHint = agentPersonaPrompt(
       ownerName,
       style,
-      !!opts.isGroup
+      !!opts.isGroup,
+      { ownerSamples, disclosed: this.disclosedJids.has(from) }
     );
 
     // In groups, annotate the user message so the agent knows it's in a group

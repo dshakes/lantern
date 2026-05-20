@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -97,7 +98,12 @@ func prefetchInboxConcierge(
 	pool *pgxpool.Pool,
 	tenantID string,
 ) prefetchResult {
-	res, err := executeConnectorAction(ctx, pool, tenantID, "gmail", "search", map[string]any{
+	// 10s timeout matches the morning-brief per-fetch cap. Single fetch
+	// here, but bounding it still prevents a hung Gmail call from
+	// blocking the run.
+	fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	res, err := executeConnectorAction(fctx, pool, tenantID, "gmail", "search", map[string]any{
 		"query": "is:unread newer_than:1d -category:promotions -category:social",
 		"limit": 25,
 	})
@@ -131,9 +137,16 @@ func prefetchMorningBrief(
 		Format func(any) string        // turns the raw result into markdown body
 	}
 
+	// Per-fetch timeout. One hung connector used to block the whole brief
+	// because the parent ctx was Background() with no deadline. 10s is
+	// comfortably above any real connector latency (Linear GraphQL is
+	// usually < 1s) but well under the run's UX cap.
+	const perFetchTimeout = 10 * time.Second
 	exec := func(connectorID, action string, params map[string]any) func() (any, error) {
 		return func() (any, error) {
-			return executeConnectorAction(ctx, pool, tenantID, connectorID, action, params)
+			fctx, cancel := context.WithTimeout(ctx, perFetchTimeout)
+			defer cancel()
+			return executeConnectorAction(fctx, pool, tenantID, connectorID, action, params)
 		}
 	}
 
