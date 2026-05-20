@@ -195,7 +195,29 @@ export class WhatsAppSession {
     mkdirSync(this.authDir, { recursive: true });
     this.agent = new AgentClient(this.logger, this.authDir);
     this.attention = new AttentionClassifier(this.logger);
-    this.stateFile = join(this.authDir, "agent_state.json");
+    // User preferences (monitored groups, paused contacts, mute) live
+    // OUTSIDE auth_sessions/ so `reset()` (which wipes auth creds for
+    // re-pair) doesn't also nuke the user's settings. Previously they
+    // were colocated and re-pairing silently cleared every preference.
+    const stateDir = join(process.cwd(), "bridge_state", tenantId);
+    mkdirSync(stateDir, { recursive: true });
+    this.stateFile = join(stateDir, "agent_state.json");
+    // One-time migration: if the legacy file exists in authDir but the
+    // new location is empty, move it. Idempotent — runs once per tenant
+    // and then never finds the source file again.
+    const legacyStateFile = join(this.authDir, "agent_state.json");
+    if (existsSync(legacyStateFile) && !existsSync(this.stateFile)) {
+      try {
+        const data = readFileSync(legacyStateFile, "utf8");
+        writeFileSync(this.stateFile, data);
+        this.logger.info(
+          { from: legacyStateFile, to: this.stateFile },
+          "migrated agent_state out of authDir",
+        );
+      } catch (err) {
+        this.logger.warn({ err }, "agent_state migration failed (non-fatal)");
+      }
+    }
     this.loadState();
     // GC stale bridgeSentIds every minute so a missed echo doesn't leak mem.
     this.gcTimer = setInterval(() => this.gcBridgeSentIds(), 60_000);
@@ -714,6 +736,37 @@ export class WhatsAppSession {
       this.logger.debug({ err, jid }, "resolveGroupName failed");
       return null;
     }
+  }
+
+  /**
+   * Returns every group the bridge knows about with {jid, name,
+   * participantCount, monitored}. Used by the dashboard to render a
+   * checkbox list — no more curl-with-JID workaround for opting groups
+   * in. Sorted: monitored first (so the active ones surface), then
+   * alphabetical by name.
+   */
+  async listGroups(): Promise<Array<{ jid: string; name: string; participants: number; monitored: boolean }>> {
+    if (!this.socket) return [];
+    let metas: Record<string, { id?: string; subject?: string; participants?: unknown[] }> = {};
+    try {
+      metas = (await this.socket.groupFetchAllParticipating()) as typeof metas;
+    } catch (err) {
+      this.logger.warn({ err }, "listGroups: groupFetchAllParticipating failed");
+      return [];
+    }
+    const out = Object.values(metas).map((m) => {
+      const jid = m.id || "";
+      const name = (m.subject || "").trim() || jid.split("@")[0];
+      const participants = Array.isArray(m.participants) ? m.participants.length : 0;
+      // Refresh cache while we're at it.
+      if (name && jid) this.groupNameCache.set(jid, { name, fetchedAt: Date.now() });
+      return { jid, name, participants, monitored: this.monitoredGroups.has(jid) };
+    });
+    out.sort((a, b) => {
+      if (a.monitored !== b.monitored) return a.monitored ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    return out;
   }
 
   /**
