@@ -1210,28 +1210,70 @@ export class WhatsAppSession {
   }
 
   private async confirmToSelf(text: string) {
-    const own = this.ownJid();
-    if (!own || !this.socket) return;
-    // Broadcast EVERY self-reply to the dashboard activity feed BEFORE
-    // attempting WhatsApp delivery — that way if the user's phone can't
-    // decrypt the outbound message (the classic 'Waiting for this
-    // message' stale-Signal-keys issue we keep hitting), they can still
-    // see what the bridge said in /personal/activity. The actual text
-    // isn't lost just because Signal couldn't deliver.
+    // Three parallel delivery channels — fire all of them so the user
+    // sees the bridge's response regardless of which one happens to be
+    // working today:
+    //   1. Dashboard activity feed (always — broadcast over the WS)
+    //   2. Telegram bot (when LANTERN_OWNER_TELEGRAM_* env vars are set)
+    //   3. WhatsApp self-chat (best-effort; can silently lose to stale
+    //      Signal keys, which is the whole reason we have channels 1 + 2)
+    //
+    // No await between them — each is independent. WhatsApp send still
+    // gets awaited so we can register bridgeSentIds for echo suppression.
     this.broadcast({
       type: "agent_reply",
-      data: {
-        to: own,
-        text,
-        kind: "self_reply",
-        timestamp: Date.now(),
-      },
+      data: { to: this.ownJid() || "self", text, kind: "self_reply", timestamp: Date.now() },
     });
+    void this.mirrorToTelegram(text);
+
+    const own = this.ownJid();
+    if (!own || !this.socket) return;
     try {
       const sent = await this.socket.sendMessage(own, { text });
       if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
     } catch (err) {
       this.logger.warn({ err }, "could not send confirmation to self");
+    }
+  }
+
+  // Telegram fallback for bridge status messages. Reliable delivery on
+  // mobile when WhatsApp's Signal session is in stale-key purgatory
+  // (the 'Waiting for this message' loop). Setup: BotFather → /newbot
+  // → paste the token into LANTERN_OWNER_TELEGRAM_BOT_TOKEN, get your
+  // chat id (any of multiple methods — message @userinfobot or just
+  // hit api.telegram.org/bot<token>/getUpdates after you DM the bot)
+  // → set LANTERN_OWNER_TELEGRAM_CHAT_ID.
+  //
+  // Fire-and-forget: failures log a warning but never block the WA
+  // path or throw to the caller. Skipped silently when env not set so
+  // users who don't want telegram never see noise.
+  private async mirrorToTelegram(text: string): Promise<void> {
+    const token = process.env.LANTERN_OWNER_TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.LANTERN_OWNER_TELEGRAM_CHAT_ID;
+    if (!token || !chatId) return;
+    try {
+      const url = `https://api.telegram.org/bot${token}/sendMessage`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          // Markdown to match WhatsApp's *bold* / `code` rendering we
+          // use in /lantern status / help replies.
+          parse_mode: "Markdown",
+          disable_web_page_preview: true,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        this.logger.warn(
+          { status: res.status, body: body.slice(0, 200) },
+          "telegram mirror failed",
+        );
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "telegram mirror request errored");
     }
   }
 
