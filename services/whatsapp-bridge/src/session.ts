@@ -346,6 +346,18 @@ export class WhatsAppSession {
           });
           this.setConnectionState("connected");
 
+          // Pre-warm group metadata so group session keys are initialized
+          // BEFORE the first message arrives. Without this, the first
+          // group message after a fresh pair hits libsignal with no
+          // session record → "failed to decrypt message" loop. We have
+          // a real user-reported case where /bot monitor on in a group
+          // sat undelivered for an hour because the group's sender keys
+          // hadn't been bootstrapped on the bridge side. Calling
+          // groupFetchAllParticipating() (fire-and-forget) triggers the
+          // WhatsApp client to send sender-key distribution messages to
+          // this device for every group the user is in.
+          void this.refreshGroupSessions("pair");
+
           // Self-chat confirmation. Closes the proof loop — the user
           // sees the dashboard go green AND receives a WhatsApp message
           // from themselves saying the bridge is alive. On subsequent
@@ -672,6 +684,39 @@ export class WhatsAppSession {
   /** True if we're currently monitoring this group. */
   isMonitoredGroup(jid: string) {
     return this.monitoredGroups.has(jid);
+  }
+
+  /**
+   * Pre-warm group sessions by fetching metadata for every group the
+   * user is in. Fire-and-forget — failures are logged but never thrown
+   * because the bridge can still function (1-on-1s) without it.
+   *
+   * Why this matters: after a fresh pair, group messages from the
+   * owner's phone fail to decrypt with "SessionError: No session record"
+   * until the phone re-distributes its sender key for each group to the
+   * bridge. groupFetchAllParticipating() touches every group, which
+   * triggers WhatsApp to push the missing keys.
+   *
+   * Reason is a free-form string used purely for log context
+   * ('pair', 'manual', 'on-decrypt-failure' etc.).
+   */
+  async refreshGroupSessions(reason: string): Promise<{ ok: boolean; count: number; error?: string }> {
+    if (!this.socket) {
+      return { ok: false, count: 0, error: "not connected" };
+    }
+    try {
+      // Baileys returns { jid: GroupMetadata } map. We don't need the
+      // metadata itself — just the side effect of the fetch triggering
+      // sender-key distribution.
+      const groups = await this.socket.groupFetchAllParticipating();
+      const count = Object.keys(groups || {}).length;
+      this.logger.info({ count, reason }, "refreshed group sessions");
+      return { ok: true, count };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn({ err: msg, reason }, "refreshGroupSessions failed");
+      return { ok: false, count: 0, error: msg };
+    }
   }
 
   /**
