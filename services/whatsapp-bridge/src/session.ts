@@ -1212,6 +1212,21 @@ export class WhatsAppSession {
   private async confirmToSelf(text: string) {
     const own = this.ownJid();
     if (!own || !this.socket) return;
+    // Broadcast EVERY self-reply to the dashboard activity feed BEFORE
+    // attempting WhatsApp delivery — that way if the user's phone can't
+    // decrypt the outbound message (the classic 'Waiting for this
+    // message' stale-Signal-keys issue we keep hitting), they can still
+    // see what the bridge said in /personal/activity. The actual text
+    // isn't lost just because Signal couldn't deliver.
+    this.broadcast({
+      type: "agent_reply",
+      data: {
+        to: own,
+        text,
+        kind: "self_reply",
+        timestamp: Date.now(),
+      },
+    });
     try {
       const sent = await this.socket.sendMessage(own, { text });
       if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());

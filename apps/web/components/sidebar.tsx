@@ -41,6 +41,7 @@ import {
   Plug,
   MessageSquare,
   Search,
+  Smartphone,
 } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -250,6 +251,18 @@ export function Sidebar() {
           label="Activity"
           collapsed={collapsed}
           active={pathname === "/inbox"}
+        />
+        {/* Personal — WhatsApp-personal-assistant mode. Distinct product
+            surface from Agents (scheduled automation) and Channels (agent
+            delivery targets). The mental model: Personal is "you on
+            WhatsApp", with voice/auto-reply/groups/contacts as the
+            tunables. */}
+        <SecondaryLink
+          href="/personal"
+          icon={Smartphone}
+          label="Personal"
+          collapsed={collapsed}
+          active={pathname === "/personal" || pathname.startsWith("/personal/")}
         />
         <SecondaryLink
           href="/surfaces"
