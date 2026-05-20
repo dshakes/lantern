@@ -25,6 +25,15 @@ run-api: ## Run the control-plane API server locally
 	LOG_LEVEL="debug" \
 	go run ./cmd/server
 
+run-api-free: ## Run the API but route LLM calls through local `claude` CLI ($0 — uses Claude Max subscription)
+	cd services/control-plane && \
+	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
+	REDIS_URL="redis://localhost:6379" \
+	S3_ENDPOINT="http://localhost:9000" \
+	LOG_LEVEL="debug" \
+	LANTERN_USE_CLAUDE_CODE=1 \
+	go run ./cmd/server
+
 run-whatsapp-bridge: ## Start the WhatsApp bridge service
 	cd services/whatsapp-bridge && npm run dev
 

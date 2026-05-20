@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -142,10 +143,67 @@ func (h *LlmProxyHandler) resolveModelForTenant(ctx context.Context, tenantID, c
 	return resolveModel(capability)
 }
 
+// claudeCodeBinary returns the resolved `claude` binary path when local
+// Claude Code routing is enabled, otherwise empty. Gated by an explicit
+// env var so prod can't accidentally route through a dev tool.
+//
+// LANTERN_USE_CLAUDE_CODE=1   → enable; uses the user's Claude Max
+//                                subscription (no API credits burned)
+// LANTERN_CLAUDE_BINARY=/path → override binary location
+func claudeCodeBinary() string {
+	if os.Getenv("LANTERN_USE_CLAUDE_CODE") != "1" {
+		return ""
+	}
+	if explicit := os.Getenv("LANTERN_CLAUDE_BINARY"); explicit != "" {
+		return explicit
+	}
+	if path, err := exec.LookPath("claude"); err == nil {
+		return path
+	}
+	return ""
+}
+
+// callClaudeCode shells out to `claude -p <prompt>` and returns the
+// stdout text. Designed for local dev: lets the developer use their
+// Claude Max subscription instead of burning API credits.
+//
+// Caveats:
+//   - Token usage is not reported by the CLI; cost is hard-coded to 0.
+//   - No streaming, no tool use — only good for plain summarize/respond.
+//   - Falls through to API providers via the failover chain if the CLI
+//     errors out, so a missing binary or auth issue isn't fatal.
+func callClaudeCode(ctx context.Context, prompt string) (string, error) {
+	binary := claudeCodeBinary()
+	if binary == "" {
+		return "", fmt.Errorf("claude code routing not enabled or binary missing")
+	}
+	// Cap to 60s — Claude Code occasionally hangs on tool-use prompts we
+	// don't want here anyway.
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, binary, "-p", prompt, "--output-format", "text")
+	var out, stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("claude code failed: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(out.String()), nil
+}
+
 // callLLMSync makes a synchronous (non-streaming) LLM call and returns the
 // result text along with usage metrics. Used by the inline run executor.
 func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiKey, prompt string) (result string, tokensIn, tokensOut int64, costUsd float64, err error) {
 	_ = ctx // context for future cancellation support
+
+	// Local Claude Code path. apiKey is ignored — auth is via the user's
+	// `claude` CLI session, not a server-side token. Token + cost are
+	// not reported by the CLI so we return zeros (caller can still log
+	// the model name as 'claude-code/local' for visibility).
+	if provider == "claude-code" {
+		text, err := callClaudeCode(ctx, prompt)
+		return text, 0, 0, 0, err
+	}
 
 	switch provider {
 	case "openai":
@@ -369,6 +427,13 @@ func resolveAutoModel(hasAnthropic, hasOpenAI bool) (string, string) {
 // Used by callLLMWithFailover so that if Claude returns 429 / 402 / 5xx,
 // the next request hits GPT-4o automatically. Without this, a single
 // provider outage stops every Lantern agent on the tenant.
+//
+// Local Claude Code: when LANTERN_USE_CLAUDE_CODE=1 and the `claude`
+// binary is on PATH, claude-code is PREPENDED as the top candidate.
+// That makes local dev free (uses the user's Claude Max subscription
+// instead of API credits). If the CLI fails for any reason — binary
+// missing, auth not set up, timeout — the failover loop slides down to
+// the API providers automatically.
 func resolveCandidateChain(hasAnthropic, hasOpenAI bool) []struct{ Provider, Model string } {
 	type ranked struct {
 		provider, model string
@@ -398,7 +463,13 @@ func resolveCandidateChain(hasAnthropic, hasOpenAI bool) []struct{ Provider, Mod
 	// is enough. Failover is across providers, not across models of the
 	// same provider (a 429 from Anthropic affects all Anthropic models).
 	seen := map[string]bool{}
-	out := make([]struct{ Provider, Model string }, 0, 2)
+	out := make([]struct{ Provider, Model string }, 0, 3)
+	// Local Claude Code goes FIRST when enabled. The failover loop will
+	// slide down to API providers if the CLI errors. Model name is
+	// 'local' purely for log readability.
+	if claudeCodeBinary() != "" {
+		out = append(out, struct{ Provider, Model string }{"claude-code", "local"})
+	}
 	for _, c := range all {
 		if seen[c.provider] {
 			continue
@@ -1855,13 +1926,19 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 
 	var lastErr error
 	for _, cand := range chain {
-		apiKey, keyErr := h.resolveProviderKey(ctx, tenantID, cand.Provider)
-		if keyErr != nil {
-			lastErr = keyErr
-			if onAttempt != nil {
-				onAttempt(candidateAttempt{Provider: cand.Provider, Model: cand.Model, Err: keyErr})
+		// claude-code has no API key — auth is via the user's `claude`
+		// CLI session. Skip the key lookup for it.
+		var apiKey string
+		if cand.Provider != "claude-code" {
+			key, keyErr := h.resolveProviderKey(ctx, tenantID, cand.Provider)
+			if keyErr != nil {
+				lastErr = keyErr
+				if onAttempt != nil {
+					onAttempt(candidateAttempt{Provider: cand.Provider, Model: cand.Model, Err: keyErr})
+				}
+				continue
 			}
-			continue
+			apiKey = key
 		}
 		text, invs, tin, tout, callErr := h.callLLMWithTools(
 			ctx, cand.Provider, cand.Model, apiKey, messages, tools, dispatch, onToolCall, maxTurns,
