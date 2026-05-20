@@ -3,6 +3,14 @@
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
+# Auto-load .env.local for run-* targets. Keeps secrets (GOOGLE_CLIENT_ID,
+# OAUTH_CLIENT_ID_*, third-party tokens) out of the Makefile + out of the
+# shell history. The file is .gitignored — see .gitignore.
+ifneq (,$(wildcard .env.local))
+include .env.local
+export
+endif
+
 # ---------- Dev ----------
 
 dev: ## Start the full dev stack (Postgres, Redis, MinIO, services)
