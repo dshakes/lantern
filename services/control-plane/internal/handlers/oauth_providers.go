@@ -137,15 +137,47 @@ var oauthProviders = map[string]OAuthProvider{
 
 // oauthClientID returns the OAuth client ID for a given connector.
 // In production these come from a secret store; here we read from env vars.
+//
+// For Google-family connectors (gmail, google-calendar, google-drive,
+// google-sheets, google) we fall back to GOOGLE_CLIENT_ID — they all use
+// the SAME OAuth client (Google issues one client per project, not per
+// API). This matches what the login flow already reads, so configuring
+// 'Sign in with Google' once unlocks every Google connector at the same
+// time. Without this fallback users were getting 'OAuth is not
+// configured for Gmail' even though GOOGLE_CLIENT_ID was set.
 func oauthClientID(connectorID string) string {
 	envKey := "OAUTH_CLIENT_ID_" + strings.ToUpper(strings.ReplaceAll(connectorID, "-", "_"))
-	return os.Getenv(envKey)
+	if v := os.Getenv(envKey); v != "" {
+		return v
+	}
+	if isGoogleConnector(connectorID) {
+		return os.Getenv("GOOGLE_CLIENT_ID")
+	}
+	return ""
 }
 
 // oauthClientSecret returns the OAuth client secret for a given connector.
+// See oauthClientID for the Google fallback rationale.
 func oauthClientSecret(connectorID string) string {
 	envKey := "OAUTH_CLIENT_SECRET_" + strings.ToUpper(strings.ReplaceAll(connectorID, "-", "_"))
-	return os.Getenv(envKey)
+	if v := os.Getenv(envKey); v != "" {
+		return v
+	}
+	if isGoogleConnector(connectorID) {
+		return os.Getenv("GOOGLE_CLIENT_SECRET")
+	}
+	return ""
+}
+
+// isGoogleConnector lets the env-var fallback know which connectors share
+// the GOOGLE_CLIENT_ID/SECRET pair. Keep in sync with the entries in
+// oauthProviders that point at accounts.google.com / oauth2.googleapis.com.
+func isGoogleConnector(connectorID string) bool {
+	switch connectorID {
+	case "google", "gmail", "google-calendar", "google-drive", "google-sheets":
+		return true
+	}
+	return false
 }
 
 // oauthBaseURL returns the public base URL for redirect URIs.
@@ -166,7 +198,14 @@ func buildAuthorizationURL(connectorID, stateToken string) (string, error) {
 
 	clientID := oauthClientID(connectorID)
 	if clientID == "" {
-		return "", fmt.Errorf("OAuth client ID not configured for %s (set %s)", connectorID, "OAUTH_CLIENT_ID_"+strings.ToUpper(strings.ReplaceAll(connectorID, "-", "_")))
+		// More helpful message for Google connectors — they share one
+		// OAuth client, so users only need GOOGLE_CLIENT_ID set once
+		// (same as the 'Sign in with Google' login flow).
+		if isGoogleConnector(connectorID) {
+			return "", fmt.Errorf("OAuth not configured for %s. Set GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET on the control-plane (same as 'Sign in with Google'). Get credentials at https://console.cloud.google.com/apis/credentials and add redirect URI %s%s", connectorID, oauthBaseURL(), provider.RedirectPath)
+		}
+		envName := "OAUTH_CLIENT_ID_" + strings.ToUpper(strings.ReplaceAll(connectorID, "-", "_"))
+		return "", fmt.Errorf("OAuth client ID not configured for %s (set %s + the matching _SECRET on the control-plane)", connectorID, envName)
 	}
 
 	redirectURI := oauthBaseURL() + provider.RedirectPath
