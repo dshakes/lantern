@@ -503,6 +503,33 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 
 	provider, model := h.resolveModelForTenant(ctx, tenantID, req.Model)
 
+	// For NON-streaming, NON-agent-scoped completions ('Generate with AI'
+	// buttons etc.) route through the failover chain so claude-code is
+	// reachable when LANTERN_USE_CLAUDE_CODE=1 is the only thing
+	// configured. Without this, users with no API keys + claude-code
+	// enabled hit 'No LLM provider API key configured' for any plain
+	// completion call — including the agent-detail Generate buttons,
+	// AI-spec generation, etc.
+	if req.AgentName == "" && !req.Stream {
+		text, _, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.callLLMWithFailover(
+			ctx, tenantID,
+			messagesToAny(req.Messages), nil, nil, nil, nil, 1,
+		)
+		if llmErr != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": llmErr.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, completionResponse{
+			Model:    usedModel,
+			Content:  text,
+			Provider: usedProvider,
+			TokensIn: int(tokensIn),
+			TokensOut: int(tokensOut),
+			CostUsd:  estimateCost(usedProvider, usedModel, int(tokensIn), int(tokensOut)),
+		})
+		return
+	}
+
 	// Try to get key for resolved provider; if not available, try the other one.
 	apiKey, err := h.resolveProviderKey(ctx, tenantID, provider)
 	if err != nil {
@@ -514,7 +541,7 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		altKey, altErr := h.resolveProviderKey(ctx, tenantID, altProvider)
 		if altErr != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "No LLM provider API key configured. Add one in Settings > LLM Providers.",
+				"error": "No LLM provider API key configured. Add one in Settings > LLM Providers, or set LANTERN_USE_CLAUDE_CODE=1 for free local routing.",
 			})
 			return
 		}
@@ -1628,6 +1655,18 @@ func (h *LlmProxyHandler) callLLMWithTools(
 // flattenMessages converts the messages-with-tool-calls shape into a single
 // text prompt for the legacy callLLMSync (Anthropic fallback). Drops
 // tool_calls / tool roles since they aren't meaningful as text.
+// messagesToAny converts the inbound completionMessage list into the
+// any-valued shape the tool-loop functions consume. No fields are
+// renamed; this is just a type widening so existing helpers can be
+// reused for the non-streaming completion path.
+func messagesToAny(msgs []completionMessage) []map[string]any {
+	out := make([]map[string]any, len(msgs))
+	for i, m := range msgs {
+		out[i] = map[string]any{"role": m.Role, "content": m.Content}
+	}
+	return out
+}
+
 func flattenMessages(messages []map[string]any) string {
 	var b strings.Builder
 	for _, m := range messages {

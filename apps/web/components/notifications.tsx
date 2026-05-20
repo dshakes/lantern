@@ -120,7 +120,7 @@ export function Notifications() {
       </button>
 
       {open && (
-        <div className="modal-content absolute right-0 top-full mt-2 w-80 overflow-hidden rounded-xl border border-zinc-800 bg-surface-1 shadow-2xl">
+        <div className="modal-content absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-xl border border-zinc-800 bg-surface-1 shadow-2xl">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
             <h3 className="text-sm font-semibold text-zinc-200">Notifications</h3>
