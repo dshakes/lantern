@@ -236,6 +236,21 @@ app.post("/session/:tenantId/reset", async (req, res) => {
   res.json({ status: "reset", message: "Auth credentials wiped. Call /start to issue a fresh QR." });
 });
 
+// POST /session/:tenantId/groups/refresh -- re-fetch metadata for every
+// group the user is in. Triggers WhatsApp to send sender-key
+// distribution messages, which unsticks 'failed to decrypt' loops on
+// groups that were active before the bridge paired. Auto-runs on pair;
+// this endpoint lets the dashboard re-trigger without a full re-pair.
+app.post("/session/:tenantId/groups/refresh", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.status(404).json({ error: "No active session for this tenant" });
+    return;
+  }
+  const result = await session.refreshGroupSessions("manual");
+  res.json(result);
+});
+
 // GET /session/:tenantId/bot -- current bot mute/pause state
 app.get("/session/:tenantId/bot", (req, res) => {
   const session = sessions.get(req.params.tenantId);
