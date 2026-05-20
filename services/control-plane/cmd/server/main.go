@@ -222,6 +222,10 @@ func main() {
 	// matchers so they're not shadowed.
 	httpMux.HandleFunc("POST /v1/surfaces/whatsapp/heartbeat", surfaceHandler.BridgeHeartbeat)
 	httpMux.HandleFunc("GET /v1/surfaces/whatsapp/status", surfaceHandler.WhatsAppStatus)
+	// Slack /lantern slash command. Signed via SLACK_SIGNING_SECRET when
+	// configured (dev accepts unverified + warns); ephemeral JSON replies.
+	slackCommandHandler := handlers.NewSlackCommandHandler(srv)
+	httpMux.HandleFunc("POST /v1/surfaces/slack/command", slackCommandHandler.HandleCommand)
 	httpMux.HandleFunc("PUT /v1/surfaces/{id}", surfaceHandler.UpdateSurface)
 	httpMux.HandleFunc("DELETE /v1/surfaces/{id}", surfaceHandler.RemoveSurface)
 	httpMux.HandleFunc("POST /v1/surfaces/{id}/test", surfaceHandler.TestSurface)
