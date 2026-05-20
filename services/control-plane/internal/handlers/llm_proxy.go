@@ -1923,6 +1923,25 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 	if len(chain) == 0 {
 		return "", nil, "", "", 0, 0, fmt.Errorf("no LLM provider configured for this tenant")
 	}
+	// The local `claude -p` CLI doesn't support OpenAI-style tools[]. If
+	// this run actually needs tool calling, drop claude-code from the
+	// chain — otherwise tools silently get dropped, the model never calls
+	// gmail/github/etc, and the user sees a hollow response. Prefetch
+	// agents (zero tools) keep claude-code as the top candidate for free
+	// local runs.
+	if len(tools) > 0 {
+		filtered := chain[:0]
+		for _, c := range chain {
+			if c.Provider == "claude-code" {
+				continue
+			}
+			filtered = append(filtered, c)
+		}
+		chain = filtered
+		if len(chain) == 0 {
+			return "", nil, "", "", 0, 0, fmt.Errorf("no tool-capable LLM provider configured (claude-code CLI doesn't support tools; set OpenAI or Anthropic API key)")
+		}
+	}
 
 	var lastErr error
 	for _, cand := range chain {

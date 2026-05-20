@@ -670,7 +670,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	//     summarize — no tool-use loop, works on cheap models, can't fail
 	//     with 'no connectors set up' gaslighting. Falls through to the
 	//     tool-use loop for custom agents that don't have a prefetch.
-	prefetched, hasPrefetch := prefetchForTemplate(ctx, h.srv.Pool, tenantID, resolvedTemplateID)
+	prefetched, hasPrefetch := prefetchForTemplate(ctx, h.srv.Pool, tenantID, resolvedTemplateID, userContent)
 	if hasPrefetch {
 		detail := fmt.Sprintf("%d sources fetched", len(prefetched.Sources))
 		if len(prefetched.Errors) > 0 {

@@ -44,17 +44,76 @@ type prefetchResult struct {
 // prefetchForTemplate returns the pre-fetched data for known templates or
 // (zero-value, false) for templates without a prefetch handler. Callers
 // MUST handle the (false) case by falling through to the tool-use loop.
+//
+// userInput is the run's input text (empty for Run Now / cron). For
+// templates that mix summarize-mode and instruction-mode (Inbox Concierge
+// — 'summarize my inbox' vs 'draft a reply to alex'), prefetch only fires
+// when input is empty. Non-empty input falls through to the tool-use loop
+// so the model can call gmail__send_message etc.
 func prefetchForTemplate(
 	ctx context.Context,
 	pool *pgxpool.Pool,
-	tenantID, templateID string,
+	tenantID, templateID, userInput string,
 ) (prefetchResult, bool) {
 	switch templateID {
 	case "morning-brief":
+		// Morning Brief is summarize-only — always prefetch regardless of
+		// input. (Future: respect a 'detailed' input flag etc.)
 		return prefetchMorningBrief(ctx, pool, tenantID), true
+	case "inbox-concierge":
+		// Only prefetch when no user instruction was provided. With an
+		// instruction like 'draft a reply to alex' we need the tool-use
+		// loop to call gmail__send_message, which prefetch can't do.
+		if isEmptyInput(userInput) {
+			return prefetchInboxConcierge(ctx, pool, tenantID), true
+		}
+		return prefetchResult{}, false
 	default:
 		return prefetchResult{}, false
 	}
+}
+
+// isEmptyInput recognizes the values executeRunInline emits when there's
+// no real user instruction (Run Now / cron with no body).
+func isEmptyInput(s string) bool {
+	t := strings.TrimSpace(s)
+	if t == "" || t == "{}" || t == "null" {
+		return true
+	}
+	// Match the synthesized 'Run Now' default we inject — if the user
+	// didn't actually type anything, prefetch is still the right call.
+	if strings.HasPrefix(t, "This is a Run Now invocation") {
+		return true
+	}
+	return false
+}
+
+// prefetchInboxConcierge calls Gmail once (search for last-24h unread,
+// filtered to non-promotional non-social) and formats the result so the
+// model can do the 3-bucket triage from a static blob instead of needing
+// the tool-use loop.
+func prefetchInboxConcierge(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	tenantID string,
+) prefetchResult {
+	res, err := executeConnectorAction(ctx, pool, tenantID, "gmail", "search", map[string]any{
+		"query": "is:unread newer_than:1d -category:promotions -category:social",
+		"limit": 25,
+	})
+	var b strings.Builder
+	b.WriteString("## Gmail — unread, last 24h (non-promotional, non-social)\n")
+	if err != nil {
+		b.WriteString(fmt.Sprintf("_(error: %s)_\n", truncate(err.Error(), 200)))
+		return prefetchResult{Body: b.String(), Errors: []string{"gmail: " + truncate(err.Error(), 80)}}
+	}
+	formatted := formatGmailMessages(res)
+	if formatted == "" {
+		b.WriteString("_(no unread mail)_\n")
+	} else {
+		b.WriteString(formatted)
+	}
+	return prefetchResult{Body: b.String(), Sources: []string{"gmail_unread"}}
 }
 
 // prefetchMorningBrief calls GitHub + Linear + Gmail + Calendar in parallel,
