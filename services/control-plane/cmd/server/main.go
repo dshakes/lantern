@@ -157,8 +157,18 @@ func main() {
 	// --- HTTP server (health + auth + REST API) ---
 	httpMux := http.NewServeMux()
 	httpMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		// JSON body so dev-doctor (and humans) can see runtime config at a
+		// glance — most importantly which LLM routing mode is active so
+		// the user knows whether they're spending API credits or not.
+		// Kept backward-compatible by also accepting old text 'ok' shape:
+		// callers that just check status code still work.
+		llmMode := "api"
+		if os.Getenv("LANTERN_USE_CLAUDE_CODE") == "1" {
+			llmMode = "claude-code-local"
+		}
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "ok")
+		fmt.Fprintf(w, `{"status":"ok","llmMode":%q}`+"\n", llmMode)
 	})
 	httpMux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {

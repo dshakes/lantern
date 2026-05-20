@@ -18,6 +18,7 @@ whatsapp-reset: ## Nuclear reset for stuck WhatsApp 'Waiting for this message' l
 	@bash scripts/whatsapp-nuclear-reset.sh
 
 run-api: ## Run the control-plane API server locally
+	@bash scripts/kill-port.sh 8080 50051
 	cd services/control-plane && \
 	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
 	REDIS_URL="redis://localhost:6379" \
@@ -26,6 +27,7 @@ run-api: ## Run the control-plane API server locally
 	go run ./cmd/server
 
 run-api-free: ## Run the API but route LLM calls through local `claude` CLI ($0 — uses Claude Max subscription)
+	@bash scripts/kill-port.sh 8080 50051
 	cd services/control-plane && \
 	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
 	REDIS_URL="redis://localhost:6379" \
@@ -35,6 +37,7 @@ run-api-free: ## Run the API but route LLM calls through local `claude` CLI ($0 
 	go run ./cmd/server
 
 run-whatsapp-bridge: ## Start the WhatsApp bridge service
+	@bash scripts/kill-port.sh 3100
 	cd services/whatsapp-bridge && npm run dev
 
 run-whatsapp: run-whatsapp-bridge ## Alias: start the WhatsApp bridge service
@@ -46,6 +49,7 @@ docs-dev: ## Start the docs site in dev mode
 	cd apps/docs && npm run dev
 
 dashboard-dev: ## Start the dashboard in dev mode
+	@bash scripts/kill-port.sh 3001
 	cd apps/web && npm run dev
 
 local-dev: ## One-command local dev setup (docker-compose)

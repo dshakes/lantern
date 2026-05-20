@@ -141,7 +141,8 @@ check_api() {
     fail "control-plane :8080" "no listener" "Run: ${BLD}make run-api${RST} (in a separate terminal)"
     return
   fi
-  local code
+  local healthz_body code
+  healthz_body=$(curl -sS http://localhost:8080/healthz -m 2 2>/dev/null)
   code=$(curl_status http://localhost:8080/healthz)
   if [[ "$code" != "200" ]]; then
     fail "control-plane /healthz" "got ${code:-no-response}" "Tail \`/tmp/lantern-api.log\` for the error"
@@ -157,7 +158,24 @@ check_api() {
   else
     fail "control-plane auth" "login returned: ${login_body:0:80}" \
       "Likely postgres broke after the API started. Re-run ${BLD}make run-api${RST}"
+    return
   fi
+  # Surface LLM routing so the user knows whether they're burning API
+  # credits or using their local claude-code subscription. Pulled from
+  # /healthz JSON body's llmMode field (added in main.go).
+  local llm_mode
+  llm_mode=$(echo "$healthz_body" | sed -nE 's/.*"llmMode":"([^"]+)".*/\1/p')
+  case "$llm_mode" in
+    claude-code-local)
+      pass "LLM routing" "${GRN}local claude-code (free — uses Claude Max subscription)${RST}"
+      ;;
+    api)
+      pass "LLM routing" "API providers (billed per request)"
+      ;;
+    *)
+      warn "LLM routing" "unknown mode (healthz didn't report)" "Upgrade the API binary"
+      ;;
+  esac
 }
 
 check_grpc() {
