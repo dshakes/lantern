@@ -1,5 +1,7 @@
 import type { Logger } from "pino";
 
+import { authedFetch, authEnabled } from "./auth";
+
 /**
  * Attention verdict returned by {@link AttentionClassifier.classify}.
  *
@@ -43,25 +45,21 @@ const DEFAULT_DEDUP_MIN = 30;
  *  - per-JID dedup prevents one noisy thread from flooding the self-chat.
  */
 export class AttentionClassifier {
-  private apiUrl: string;
-  private token: string;
   private ownerName: string;
   private logger: Logger;
   private lastNotified: Map<string, number> = new Map();
   private dedupMs: number;
 
   constructor(logger: Logger) {
-    this.apiUrl = (process.env.LANTERN_API_URL || "http://localhost:8080").replace(/\/$/, "");
-    this.token = process.env.LANTERN_API_TOKEN || "";
     this.ownerName = process.env.LANTERN_OWNER_NAME || "the owner";
     this.logger = logger.child({ component: "attention" });
     this.dedupMs =
       Math.max(1, Number(process.env.LANTERN_ATTENTION_DEDUP_MIN) || DEFAULT_DEDUP_MIN) * 60_000;
   }
 
-  /** True when a Lantern API token is configured and classification can run. */
+  /** True when bridge auth is set up and classification can run. */
   enabled() {
-    return this.token !== "";
+    return authEnabled();
   }
 
   /**
@@ -144,12 +142,9 @@ Return STRICT JSON only, no prose, no code fences:
     const userMsg = `${USER_BEGIN}\n${prefix}${safeText}\n${USER_END}`;
 
     try {
-      const res = await fetch(`${this.apiUrl}/v1/completions`, {
+      const res = await authedFetch(`/v1/completions`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.token}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "auto",
           messages: [

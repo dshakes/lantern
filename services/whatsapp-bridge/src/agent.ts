@@ -2,11 +2,11 @@ import type { Logger } from "pino";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 
+import { authedFetch, authEnabled, apiBaseUrl, currentToken } from "./auth";
+
 const SSE_TIMEOUT_MS = 90_000;
 
 export class AgentClient {
-  private apiUrl: string;
-  private token: string;
   private agentName: string;
   private logger: Logger;
   private sessionsFile: string;
@@ -16,8 +16,6 @@ export class AgentClient {
   private inflight: Map<string, Promise<string | null>> = new Map();
 
   constructor(logger: Logger, tenantAuthDir: string) {
-    this.apiUrl = (process.env.LANTERN_API_URL || "http://localhost:8080").replace(/\/$/, "");
-    this.token = process.env.LANTERN_API_TOKEN || "";
     this.agentName = process.env.LANTERN_AGENT_NAME || "whatsapp-assistant";
     this.logger = logger.child({ component: "agent" });
     this.sessionsFile = join(tenantAuthDir, "agent_sessions.json");
@@ -25,7 +23,7 @@ export class AgentClient {
   }
 
   enabled(): boolean {
-    return this.token !== "";
+    return authEnabled();
   }
 
   async respondTo(
@@ -65,14 +63,11 @@ export class AgentClient {
     const postBody: Record<string, unknown> = { content: userText };
     if (systemHint) postBody.systemHint = systemHint;
 
-    const postRes = await fetch(
-      `${this.apiUrl}/v1/sessions/${sessionId}/messages`,
+    const postRes = await authedFetch(
+      `/v1/sessions/${sessionId}/messages`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.token}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(postBody),
       }
     );
@@ -100,12 +95,9 @@ export class AgentClient {
     const existing = this.sessions.get(jid);
     if (existing) return existing;
 
-    const res = await fetch(`${this.apiUrl}/v1/sessions`, {
+    const res = await authedFetch(`/v1/sessions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.token}`,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ agentName: this.agentName }),
     });
 
@@ -134,13 +126,10 @@ export class AgentClient {
     const timeoutId = setTimeout(() => ctrl.abort(), SSE_TIMEOUT_MS);
 
     try {
-      const res = await fetch(
-        `${this.apiUrl}/v1/sessions/${sessionId}/events`,
+      const res = await authedFetch(
+        `/v1/sessions/${sessionId}/events`,
         {
-          headers: {
-            Accept: "text/event-stream",
-            Authorization: `Bearer ${this.token}`,
-          },
+          headers: { Accept: "text/event-stream" },
           signal: ctrl.signal,
         }
       );

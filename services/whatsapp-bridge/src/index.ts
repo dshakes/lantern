@@ -34,6 +34,12 @@ import pino from "pino";
 
 const logger = pino({ level: process.env.LOG_LEVEL || "info" });
 
+// Initialize bridge → control-plane auth. Lazily logs in on first use
+// (using LANTERN_BRIDGE_EMAIL / PASSWORD, defaults to admin@lantern.dev
+// for dev). Survives JWT expiry + API restarts via auto-relogin on 401.
+import { initAuth, authEnabled } from "./auth.js";
+initAuth(logger);
+
 // Resolve the bridge's package version once at boot so /diagnostics can
 // report it. Failing the read is non-fatal — diagnostics is best-effort.
 const SERVICE_VERSION = (() => {
@@ -96,14 +102,14 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 
 logger.info(
   {
-    agentEnabled: !!process.env.LANTERN_API_TOKEN,
+    agentEnabled: authEnabled(),
     authRequired: !!BRIDGE_TOKEN,
     bind: BIND,
     port: PORT,
   },
-  process.env.LANTERN_API_TOKEN
-    ? "Agent auto-reply enabled"
-    : "Agent auto-reply disabled (set LANTERN_API_TOKEN to enable)"
+  authEnabled()
+    ? "Agent auto-reply enabled (will log in to control-plane on first use)"
+    : "Agent auto-reply disabled (set LANTERN_BRIDGE_EMAIL + LANTERN_BRIDGE_PASSWORD, or LANTERN_API_TOKEN)"
 );
 
 // sessions keyed by tenantId. One tenant = one Baileys socket.
@@ -151,7 +157,7 @@ app.get("/diagnostics", (_, res) => {
     port: PORT,
     authRequired: !!BRIDGE_TOKEN,
     controlPlaneHeartbeat: !!(CONTROL_PLANE_URL && HEARTBEAT_TOKEN),
-    agentEnabled: !!process.env.LANTERN_API_TOKEN,
+    agentEnabled: authEnabled(),
     activeSessions: [...sessions.keys()],
   });
 });
