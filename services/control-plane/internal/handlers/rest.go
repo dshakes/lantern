@@ -767,95 +767,13 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		prompt = fmt.Sprintf("%s\n\n%s", systemPromptStr, userContent)
 	}
 
-	// 2b. Check if this agent has Gmail in its connector config.
-	// The agent's connector list is stored in the input JSON under "connectors"
-	// or we check if the agent has a Gmail connector explicitly linked.
-	// For now, check the input for a "useGmail" flag, or check if the agent
-	// description/labels mention email. The proper fix: read agent's connector
-	// config from a dedicated table.
-	agentUsesGmail := false
-	if connectors, ok := input["connectors"]; ok {
-		if connList, ok := connectors.([]any); ok {
-			for _, c := range connList {
-				if cs, ok := c.(string); ok && (cs == "Gmail" || cs == "gmail") {
-					agentUsesGmail = true
-				}
-			}
-		}
-	}
-	// Also check if explicitly requested in the input
-	if _, ok := input["fetchEmails"]; ok {
-		agentUsesGmail = true
-	}
-
-	var gmailToken string
-	if agentUsesGmail {
-		logStep("fetch_data", "running", "Fetching data from connected sources")
-		gmailToken = resolveGmailToken(ctx, h.srv.Pool, tenantID)
-	// Try to refresh the token before use
-	if gmailToken != "" {
-		var refreshToken string
-		var oauthJSON []byte
-		_ = h.srv.Pool.QueryRow(ctx,
-			`SELECT oauth_token_encrypted FROM connector_installs WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'`,
-			tenantID,
-		).Scan(&oauthJSON)
-		if len(oauthJSON) > 0 {
-			var tok map[string]any
-			if json.Unmarshal(oauthJSON, &tok) == nil {
-				if rt, ok := tok["refresh_token"].(string); ok { refreshToken = rt }
-			}
-		}
-		if refreshToken != "" {
-			if newToken, err := refreshGoogleToken(refreshToken); err == nil && newToken != "" {
-				gmailToken = newToken
-				updatedOAuth, _ := json.Marshal(map[string]any{"access_token": newToken, "refresh_token": refreshToken, "token_type": "Bearer"})
-				_, _ = h.srv.Pool.Exec(ctx, `UPDATE connector_installs SET oauth_token_encrypted = $1 WHERE tenant_id = $2 AND connector_id = 'gmail'`, string(updatedOAuth), tenantID)
-			}
-		}
-	}
-	if gmailToken != "" {
-		logStep("fetch_gmail", "running", "Fetching emails from Gmail API")
-		emails, fetchErr := FetchGmailViaAPI(gmailToken, 20)
-		if fetchErr == nil && len(emails) > 0 {
-			logStep("fetch_gmail", "completed", fmt.Sprintf("Fetched %d emails", len(emails)))
-			var emailText strings.Builder
-			emailText.WriteString("\n\nHere are the user's recent emails:\n\n")
-			for i, e := range emails {
-				emailText.WriteString(fmt.Sprintf("%d. From: %s\n   Subject: %s\n   Preview: %s\n   Date: %s\n\n",
-					i+1, e.From, e.Subject, e.Snippet, e.Date))
-			}
-			prompt += emailText.String()
-		} else if fetchErr != nil {
-			h.logger().Warn("inline executor: Gmail fetch failed, continuing without emails",
-				zap.String("run_id", runID), zap.Error(fetchErr))
-		}
-	} else {
-		// Try IMAP with email + app password
-		var email, appPassword string
-		_ = h.srv.Pool.QueryRow(ctx,
-			`SELECT config->>'email', config->>'appPassword' FROM connector_installs WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'`,
-			tenantID,
-		).Scan(&email, &appPassword)
-
-		if email != "" && appPassword != "" {
-			emails, fetchErr := FetchGmailViaIMAP(email, appPassword, 20)
-			if fetchErr == nil && len(emails) > 0 {
-				var emailText strings.Builder
-				emailText.WriteString("\n\nHere are the user's recent emails (fetched via IMAP):\n\n")
-				for i, e := range emails {
-					emailText.WriteString(fmt.Sprintf("%d. From: %s\n   Subject: %s\n   Preview: %s\n   Date: %s\n\n",
-						i+1, e.From, e.Subject, e.Snippet, e.Date))
-				}
-				prompt += emailText.String()
-			} else if fetchErr != nil {
-				h.logger().Warn("inline executor: IMAP Gmail fetch failed", zap.String("run_id", runID), zap.Error(fetchErr))
-			}
-		} else {
-			prompt += "\n\nNote: Gmail is not connected. The user may paste email content manually, or you should explain how to connect Gmail."
-		}
-	}
-	} // end isEmailAgent
+	// (Dead pre-prefetch-era Gmail-injection branch removed. All
+	//  template-driven data fetching now goes through prefetchForTemplate
+	//  in template_prefetch.go — see Source B in prefetchMorningBrief /
+	//  prefetchInboxConcierge. Custom agents that need Gmail data go
+	//  through the tool-use loop, where the model calls gmail__search /
+	//  gmail__list_messages explicitly. No more ad-hoc input-flag
+	//  inspection inside executeRunInline.)
 
 	// 3. Call the LLM. Use the tenant-aware resolver so auto-routing picks
 	// from providers configured in Settings, not just the process env.

@@ -1271,11 +1271,16 @@ export class WhatsAppSession {
     const ownerSamples = opts.isGroup
       ? []
       : this.ownerSentHistory.get(from) ?? [];
+    const stylePrompt = await this.agent.getStylePrompt();
     const systemHint = agentPersonaPrompt(
       ownerName,
       style,
       !!opts.isGroup,
-      { ownerSamples, disclosed: this.disclosedJids.has(from) }
+      {
+        ownerSamples,
+        disclosed: this.disclosedJids.has(from),
+        stylePrompt,
+      }
     );
 
     // In groups, annotate the user message so the agent knows it's in a group
@@ -1384,6 +1389,25 @@ export class WhatsAppSession {
     if (bucket.length > WhatsAppSession.INBOUND_HISTORY_PER_CONTACT) {
       bucket.splice(0, bucket.length - WhatsAppSession.INBOUND_HISTORY_PER_CONTACT);
     }
+  }
+
+  // Remember a message the owner just typed from their phone in a 1:1 thread.
+  // Drives the few-shot exemplars in the persona — "this is how the human
+  // actually writes". Skipped for the self-chat, groups, and slash commands
+  // upstream. We persist with state so the buffer survives restarts.
+  private rememberOwnerSent(jid: string, text: string) {
+    const t = text.trim();
+    if (!t || t.length > 280) return;
+    let bucket = this.ownerSentHistory.get(jid);
+    if (!bucket) {
+      bucket = [];
+      this.ownerSentHistory.set(jid, bucket);
+    }
+    bucket.push(t);
+    if (bucket.length > WhatsAppSession.OWNER_SENT_PER_CONTACT) {
+      bucket.splice(0, bucket.length - WhatsAppSession.OWNER_SENT_PER_CONTACT);
+    }
+    this.saveState();
   }
 
   async disconnect() {

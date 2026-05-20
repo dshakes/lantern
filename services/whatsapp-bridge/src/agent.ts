@@ -14,6 +14,12 @@ export class AgentClient {
   private sessions: Map<string, string> = new Map();
   // jid -> pending reply resolver (prevents overlapping requests from one contact)
   private inflight: Map<string, Promise<string | null>> = new Map();
+  // Cached per-agent style prompt fetched from the control-plane. Refreshed
+  // lazily with a small TTL so edits to the "my voice" textarea on the
+  // dashboard show up within ~30s without a per-turn round trip.
+  private cachedStylePrompt: string | undefined = undefined;
+  private styleFetchedAt = 0;
+  private static readonly STYLE_TTL_MS = 30_000;
 
   constructor(logger: Logger, tenantAuthDir: string) {
     this.agentName = process.env.LANTERN_AGENT_NAME || "whatsapp-assistant";
@@ -182,6 +188,33 @@ export class AgentClient {
   clearHistory(jid: string) {
     this.sessions.delete(jid);
     this.saveSessions();
+  }
+
+  // Fetch the agent's style_prompt from the control-plane, cached for
+  // STYLE_TTL_MS. Returns undefined when not set or unreachable.
+  async getStylePrompt(): Promise<string | undefined> {
+    if (!this.enabled()) return undefined;
+    if (Date.now() - this.styleFetchedAt < AgentClient.STYLE_TTL_MS) {
+      return this.cachedStylePrompt;
+    }
+    try {
+      const res = await authedFetch(
+        `/v1/agents/${encodeURIComponent(this.agentName)}`,
+        { headers: { Accept: "application/json" } }
+      );
+      if (!res.ok) {
+        this.styleFetchedAt = Date.now();
+        return this.cachedStylePrompt;
+      }
+      const data = (await res.json()) as { stylePrompt?: string };
+      this.cachedStylePrompt = data.stylePrompt?.trim() || undefined;
+      this.styleFetchedAt = Date.now();
+      return this.cachedStylePrompt;
+    } catch (err) {
+      this.logger.warn({ err }, "fetch agent stylePrompt failed");
+      this.styleFetchedAt = Date.now();
+      return this.cachedStylePrompt;
+    }
   }
 
   private loadSessions() {

@@ -400,6 +400,27 @@ var migrations = []string{
 	END$$`,
 
 	// ---------------------------------------------------------------
+	// Avatar + per-agent style prompt. Avatar is a URL (we may upload
+	// to MinIO later and store the ref). style_prompt overrides the
+	// bridge's baseline persona; it captures "my voice" rules.
+	// ---------------------------------------------------------------
+	`DO $$
+	BEGIN
+		IF NOT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'agents' AND column_name = 'avatar_url'
+		) THEN
+			ALTER TABLE agents ADD COLUMN avatar_url TEXT;
+		END IF;
+		IF NOT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'agents' AND column_name = 'style_prompt'
+		) THEN
+			ALTER TABLE agents ADD COLUMN style_prompt TEXT;
+		END IF;
+	END$$`,
+
+	// ---------------------------------------------------------------
 	// Agent budgets — policy-as-code per-tool rate + cost limits.
 	// Enforced at step-executor before any LLM call or tool dispatch.
 	// ---------------------------------------------------------------
