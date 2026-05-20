@@ -391,11 +391,29 @@ func executeGmail(config map[string]any, action string, params map[string]any) (
 		if query == "" {
 			return nil, fmt.Errorf("'query' parameter is required")
 		}
-		if accessToken == "" {
-			return nil, fmt.Errorf("search requires an OAuth access token")
-		}
 		limit := intParam(params, "limit", 10)
-		return searchGmailViaAPI(accessToken, query, limit)
+		if accessToken != "" {
+			// OAuth path — supports the full Gmail search syntax
+			// ('is:unread', 'newer_than:1d', '-category:promotions', etc.)
+			return searchGmailViaAPI(accessToken, query, limit)
+		}
+		if email != "" && appPassword != "" {
+			// App Password fallback — IMAP can't run the full Gmail
+			// search DSL, so we return the most recent N messages and
+			// let the caller filter. Better than 'no Gmail data at all'
+			// for users who installed Gmail via the App Password flow.
+			messages, err := FetchGmailViaIMAP(email, appPassword, limit)
+			if err != nil {
+				return nil, fmt.Errorf("IMAP search fallback failed: %w", err)
+			}
+			return map[string]any{
+				"messages": messages,
+				"count":    len(messages),
+				"source":   "imap",
+				"note":     "App Password mode — recent messages returned (Gmail search DSL filters not applied). Re-install Gmail via OAuth for filtered search.",
+			}, nil
+		}
+		return nil, fmt.Errorf("search needs either an OAuth access token OR email+appPassword for IMAP fallback")
 
 	default:
 		return nil, fmt.Errorf("unknown Gmail action: %s (supported: list_messages, send_message, search)", action)
