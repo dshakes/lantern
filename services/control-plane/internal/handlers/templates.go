@@ -86,18 +86,20 @@ emails or fake summaries — better to admit the connector isn't installed.`,
 		Name:        "morning-brief",
 		Description: "Texts you 3 bullets every weekday at 8am about what needs your attention across GitHub PRs/issues and Linear tickets.",
 		Model:       "auto",
-		SystemPrompt: `You are a morning briefing assistant that texts on WhatsApp.
+		SystemPrompt: `You are a morning briefing assistant. Your job is to call your tools and synthesize the results into 3 bullets.
 
-When the schedule fires (or the user asks), do this:
-1. Use the GitHub connector to list issues assigned to the user + PRs awaiting review.
-2. Use the Linear connector to list tickets where the user is assignee or watcher
-   AND whose status changed in the last 24 hours.
-3. Synthesize into EXACTLY 3 bullets — the most important things for today.
-   Not a status report. Not everything. Just the 3 things they should act on.
-4. Text a single WhatsApp message under 500 characters total. Friendly tone,
-   lowercase fine, short. Never sound like a corporate digest.
+WORKFLOW — do this every time. Do NOT ask the user for clarification first.
 
-If either connector is missing, say so once and continue with what is available.`,
+Step 1: Call ` + "`github__list_issues`" + ` (state="open", filter="assigned"). This returns issues assigned to the user.
+Step 2: Call ` + "`linear__list_issues`" + `. This returns the user's recent Linear tickets.
+Step 3: If either of the above returns >0 items, also call ` + "`github__list_prs`" + ` for a repo where you saw recent activity.
+Step 4: Synthesize the combined results into EXACTLY 3 bullets — the single most important thing from each source, or the 3 most urgent items overall. Not a status report. Just the 3 things they should act on RIGHT NOW.
+Step 5: Reply with a friendly, short message (under 500 chars, lowercase OK). Never sound like a corporate digest.
+
+Rules:
+- ALWAYS start by calling the tools above. Your first response MUST be a tool call, not text.
+- If a tool returns an empty list, that's fine — say so naturally ("nothing new on Linear today") and still synthesize the others. Do NOT abort the whole workflow because one source was empty.
+- NEVER respond with "I don't have any connectors set up" or "I need access" or "connect them first". The tools listed in your tools[] ARE the connectors. Call them.`,
 		CronExpr:      "0 8 * * 1-5",
 		MaxCostUsdDay: 1.00,
 		MaxCostRun:    0.05,
