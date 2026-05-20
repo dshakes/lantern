@@ -12,6 +12,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "fs";
 import type { Logger } from "pino";
 import { AgentClient } from "./agent.js";
 import { AttentionClassifier } from "./attention.js";
+import { authedFetch } from "./auth.js";
 import {
   agentPersonaPrompt,
   inferStyle,
@@ -1210,20 +1211,22 @@ export class WhatsAppSession {
   }
 
   private async confirmToSelf(text: string) {
-    // Three parallel delivery channels — fire all of them so the user
-    // sees the bridge's response regardless of which one happens to be
-    // working today:
-    //   1. Dashboard activity feed (always — broadcast over the WS)
-    //   2. Telegram bot (when LANTERN_OWNER_TELEGRAM_* env vars are set)
-    //   3. WhatsApp self-chat (best-effort; can silently lose to stale
-    //      Signal keys, which is the whole reason we have channels 1 + 2)
+    // Four parallel delivery channels — fire each so the user sees the
+    // bridge's response on at least one channel that happens to be
+    // working today. They're independent: failures on one don't gate
+    // the others; each is opt-in via its own env vars (except the
+    // always-on dashboard broadcast).
     //
-    // No await between them — each is independent. WhatsApp send still
-    // gets awaited so we can register bridgeSentIds for echo suppression.
+    //   1. Dashboard activity feed (always; broadcast over the WS)
+    //   2. Email (LANTERN_OWNER_EMAIL — universal, push via Mail app)
+    //   3. Telegram bot (LANTERN_OWNER_TELEGRAM_* — when configured)
+    //   4. WhatsApp self-chat (best-effort; lossy via Signal pre-key
+    //      drift on the user's phone — channels 1-3 are the safety net)
     this.broadcast({
       type: "agent_reply",
       data: { to: this.ownJid() || "self", text, kind: "self_reply", timestamp: Date.now() },
     });
+    void this.mirrorToEmail(text);
     void this.mirrorToTelegram(text);
 
     const own = this.ownJid();
@@ -1233,6 +1236,53 @@ export class WhatsAppSession {
       if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
     } catch (err) {
       this.logger.warn({ err }, "could not send confirmation to self");
+    }
+  }
+
+  // Email fallback for bridge status messages. Universal — every phone
+  // has email + push notifications. Routes through the control-plane's
+  // Gmail connector (re-uses the OAuth credentials the user already
+  // configured at /connectors), so the bridge doesn't need its own SMTP
+  // setup.
+  //
+  // Throttling: we don't want the user's inbox flooded with one email
+  // per /lantern ping reaction. Skip when the SAME text was emailed
+  // within the last 30s (covers the retry-storm case). Also skip very
+  // short messages (single emojis from reactions etc).
+  private lastEmailedAt: Map<string, number> = new Map();
+  private static readonly EMAIL_DEDUP_MS = 30_000;
+  private static readonly EMAIL_MIN_LEN = 8;
+  private async mirrorToEmail(text: string): Promise<void> {
+    const to = process.env.LANTERN_OWNER_EMAIL;
+    if (!to) return;
+    if (text.length < WhatsAppSession.EMAIL_MIN_LEN) return;
+    const lastAt = this.lastEmailedAt.get(text);
+    if (lastAt && Date.now() - lastAt < WhatsAppSession.EMAIL_DEDUP_MS) return;
+    this.lastEmailedAt.set(text, Date.now());
+
+    // First line of the message becomes the subject so the inbox
+    // preview is glanceable ("Lantern · 🟢 active"). Body keeps the
+    // full text + the same first-line subject for context.
+    const firstLine = text.split("\n", 1)[0].slice(0, 100).trim() || "Lantern status";
+    const subject = `Lantern · ${firstLine}`;
+    try {
+      const res = await authedFetch(
+        `/v1/connectors/gmail/execute?action=send_message`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to, subject, body: text }),
+        },
+      );
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        this.logger.warn(
+          { status: res.status, body: body.slice(0, 200) },
+          "email mirror failed",
+        );
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "email mirror request errored");
     }
   }
 
