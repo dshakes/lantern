@@ -529,7 +529,16 @@ func executeSlack(config map[string]any, action string, params map[string]any) (
 // ---------------------------------------------------------------------------
 
 func executeGitHub(config map[string]any, action string, params map[string]any) (any, error) {
+	// Token can live under several keys depending on how the user installed
+	// the connector. The dashboard's manual install form stores it as
+	// 'personalAccessToken'; an OAuth flow stores 'oauth_access_token';
+	// SDK-driven installs sometimes use the generic 'token' or 'accessToken'.
+	// Check all of them so 'github connected' in the UI actually means
+	// 'github callable from the executor'.
 	token, _ := config["token"].(string)
+	if token == "" {
+		token, _ = config["personalAccessToken"].(string)
+	}
 	if token == "" {
 		token, _ = config["accessToken"].(string)
 	}
@@ -537,7 +546,7 @@ func executeGitHub(config map[string]any, action string, params map[string]any) 
 		token, _ = config["oauth_access_token"].(string)
 	}
 	if token == "" {
-		return nil, fmt.Errorf("missing GitHub token. Provide 'token' in connector config")
+		return nil, fmt.Errorf("missing GitHub token. Provide 'personalAccessToken' (manual install) or complete OAuth")
 	}
 
 	headers := map[string]string{
