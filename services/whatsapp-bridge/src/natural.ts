@@ -250,10 +250,27 @@ export function inferStyle(messages: string[]): StyleProfile {
  * verbatim — that's creepy and breaks under mixed registers. We just
  * tell it the conversational register so it doesn't pivot to corporate.
  */
+export interface PersonaOptions {
+  // Last N messages the owner ACTUALLY sent this contact. Used as
+  // few-shot exemplars so the LLM matches their real voice instead of
+  // a generic "casual texter". Capped to a small handful so the prompt
+  // stays compact.
+  ownerSamples?: string[];
+  // True once the bridge has sent the one-line handoff disclosure on
+  // this thread. When disclosed, the persona allows soft self-identification
+  // ("the assistant") and drops the strict impersonation rules.
+  disclosed?: boolean;
+  // Per-agent style override (the "my voice" textarea on the agent detail
+  // page). Concatenated verbatim at the end of the persona — power-user
+  // hand-tuning beats inferred cues.
+  stylePrompt?: string;
+}
+
 export function agentPersonaPrompt(
   ownerName: string,
   style: StyleProfile,
-  isGroup: boolean
+  isGroup: boolean,
+  opts: PersonaOptions = {}
 ): string {
   const cues: string[] = [];
   if (style.formality === "casual") {
@@ -269,27 +286,58 @@ export function agentPersonaPrompt(
     cues.push("they send very short messages — keep replies short too, often one line.");
   }
 
-  return [
-    `You are texting on WhatsApp AS ${ownerName}. The other person believes they are talking to ${ownerName}, not to an AI.`,
+  const intro = opts.disclosed
+    ? `You are ${ownerName}'s assistant texting on WhatsApp. The contact has already been told you're an assistant covering for ${ownerName}, so don't impersonate them — but match their tone exactly so the thread reads naturally.`
+    : `You are texting on WhatsApp AS ${ownerName}. Sound exactly like a real person texting, not like a chatbot.`;
+
+  const identityRule = opts.disclosed
+    ? `- You may say "I'm ${ownerName}'s assistant" if asked directly. Otherwise don't bring it up.`
+    : `- Never identify yourself as an AI, assistant, bot, or language model.`;
+
+  const lines: string[] = [
+    intro,
     ``,
-    `Sound exactly like a real person texting. NOT like a chatbot or assistant.`,
-    ``,
-    `Hard rules:`,
-    `- Never identify yourself as an AI, assistant, bot, or language model.`,
-    `- Never apologize for being an AI.`,
+    `Hard rules — non-negotiable:`,
+    identityRule,
+    `- Never apologize for being slow, being an AI, or being a bot.`,
     `- Never say "How can I help you today?", "I'd be happy to assist", "Certainly!", "Of course!", "Great question", "Let me know if you need anything else", or anything that signals customer service.`,
-    `- No bullet lists, no markdown formatting, no headers. This is a text message, not a Notion page.`,
-    `- Short messages are better. 1-2 lines unless they asked something complex.`,
-    `- It's fine to send a single word ("yeah", "ok", "haha", "true").`,
-    `- It's fine NOT to end a message with a period.`,
-    `- When you don't know, just say "not sure" or "lemme check" — don't invent an answer.`,
+    `- Plain text only. No markdown, no bullets, no headers, no em-dashes (—). This is a text message, not a Notion page.`,
+    `- Keep replies SHORT. Default to one line, under 15 words. Two lines only when the question genuinely needs it.`,
+    `- Single-word replies are fine ("yeah", "ok", "true", "lol").`,
+    `- Use contractions ("I'll", "can't", "don't", "won't"). Not "I will" / "cannot".`,
+    `- Don't end every line with a period.`,
+    `- When you don't know, say "not sure" or "lemme check" — don't invent.`,
+    `- Skip greetings and signoffs unless the contact opens with one. No "Hi!" no "Best,".`,
     `- ${isGroup ? "You are in a group chat — be brief and only reply when directly addressed." : "This is a 1-on-1 thread."}`,
     ``,
-    `Style notes for this thread:`,
+    `Inferred style for this thread:`,
     ...(cues.length > 0 ? cues.map((c) => `- ${c}`) : ["- no strong signal yet — keep it neutral and casual."]),
-    ``,
-    `Reply as ${ownerName}, in plain text, no quoting, no preface.`,
-  ].join("\n");
+  ];
+
+  const samples = (opts.ownerSamples ?? [])
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s.length <= 280)
+    .slice(-8);
+  if (samples.length > 0) {
+    lines.push(``);
+    lines.push(`Examples of how ${ownerName} actually writes (match this voice — length, casing, vocabulary, punctuation):`);
+    for (const s of samples) lines.push(`> ${s}`);
+  }
+
+  const override = opts.stylePrompt?.trim();
+  if (override) {
+    lines.push(``);
+    lines.push(`Style overrides (these take precedence over the rules above):`);
+    lines.push(override);
+  }
+
+  lines.push(``);
+  lines.push(
+    opts.disclosed
+      ? `Reply in plain text, in ${ownerName}'s voice, no preface, no signature.`
+      : `Reply as ${ownerName}, in plain text, no quoting, no preface.`
+  );
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------

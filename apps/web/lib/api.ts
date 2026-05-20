@@ -437,7 +437,7 @@ class LanternAPI {
 
   async updateAgent(
     name: string,
-    data: { description?: string; systemPrompt?: string; model?: string; isolation?: string; timeout?: string; maxTokens?: number; maxCostUsd?: number; cron?: string },
+    data: { description?: string; systemPrompt?: string; model?: string; isolation?: string; timeout?: string; maxTokens?: number; maxCostUsd?: number; cron?: string; avatarUrl?: string; stylePrompt?: string },
   ): Promise<Agent> {
     return this.request<Agent>(
       `/v1/agents/${encodeURIComponent(name)}`,

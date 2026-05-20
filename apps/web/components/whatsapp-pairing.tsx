@@ -121,6 +121,11 @@ interface WhatsAppPairingProps {
   bridgeUrl?: string;
   onConnected?: (info: { phoneNumber: string; name: string }) => void;
   onDisconnected?: () => void;
+  // Optional agent identity. When set, agent_reply rows in the activity
+  // timeline render the avatar instead of the generic lightning icon so
+  // the operator can tell at a glance which turns were the agent's.
+  agentAvatarUrl?: string;
+  agentName?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,13 +291,19 @@ function ActivityRow({
   now,
   onPauseContact,
   pausing,
+  agentAvatarUrl,
+  agentName,
 }: {
   event: ActivityEvent;
   now: number;
   onPauseContact?: (jid: string) => void;
   pausing?: string | null;
+  agentAvatarUrl?: string;
+  agentName?: string;
 }) {
   const { icon: Icon, cls } = ACTIVITY_ICON[event.kind] ?? ACTIVITY_ICON.system;
+  const isAgentReply = event.kind === "agent_reply";
+  const showAvatar = isAgentReply && !!agentAvatarUrl;
   // The "pause this contact" action only makes sense on inbound DMs — you
   // can't pause the bot for a group, and pausing an outbound row is
   // meaningless. We render the action inline (WATI pattern) on hover.
@@ -304,9 +315,27 @@ function ActivityRow({
   const isPausing = pausing === event.jid;
   return (
     <li className="group flex items-start gap-2.5 px-3 py-2 hover:bg-surface-2">
-      <Icon className={clsx("mt-0.5 h-3.5 w-3.5 shrink-0", cls)} />
+      {showAvatar ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={agentAvatarUrl}
+          alt={agentName ? `${agentName} avatar` : "Agent avatar"}
+          className="mt-0.5 h-4 w-4 shrink-0 rounded-full border border-zinc-700 object-cover"
+          onError={(e) => {
+            // Fall back to the icon if the URL fails to load.
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      ) : (
+        <Icon className={clsx("mt-0.5 h-3.5 w-3.5 shrink-0", cls)} />
+      )}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[12px] text-zinc-200">{event.summary}</p>
+        <p className="truncate text-[12px] text-zinc-200">
+          {isAgentReply && agentName ? (
+            <span className="mr-1 font-medium text-lantern-300">{agentName}</span>
+          ) : null}
+          {event.summary}
+        </p>
         {event.detail && (
           <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-zinc-500">
             {event.detail}
@@ -346,6 +375,8 @@ export function WhatsAppPairing({
   bridgeUrl = "http://localhost:3100",
   onConnected,
   onDisconnected,
+  agentAvatarUrl,
+  agentName,
 }: WhatsAppPairingProps) {
   const toast = useToast();
 
@@ -1080,6 +1111,8 @@ export function WhatsAppPairing({
             onDisconnect={handleDisconnect}
             onStartTest={() => setTestMode("waiting")}
             onClearTest={() => setTestMode("idle")}
+            agentAvatarUrl={agentAvatarUrl}
+            agentName={agentName}
           />
 
           {/* Mobile commands — the killer feature for verifying bridge
@@ -1375,6 +1408,8 @@ function ConnectedPanel({
   onDisconnect,
   onStartTest,
   onClearTest,
+  agentAvatarUrl,
+  agentName,
 }: {
   phoneNumber: string | null;
   displayName: string | null;
@@ -1398,6 +1433,8 @@ function ConnectedPanel({
   onDisconnect: () => void;
   onStartTest: () => void;
   onClearTest: () => void;
+  agentAvatarUrl?: string;
+  agentName?: string;
 }) {
   const muted = botState?.muted ?? false;
   const initials = useMemo(
@@ -1610,6 +1647,8 @@ function ConnectedPanel({
                 now={now}
                 onPauseContact={onPauseContact}
                 pausing={pausingContact}
+                agentAvatarUrl={agentAvatarUrl}
+                agentName={agentName}
               />
             ))}
           </ul>

@@ -26,6 +26,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useAgent } from "@/lib/hooks";
 import { WhatsAppPairing } from "@/components/whatsapp-pairing";
 
 export default function AgentWhatsAppPage() {
@@ -33,6 +34,7 @@ export default function AgentWhatsAppPage() {
   const name = params?.name ?? "";
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? "default";
+  const { agent } = useAgent(name);
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
@@ -54,7 +56,7 @@ export default function AgentWhatsAppPage() {
           </div>
         </header>
 
-        <WhatsAppPairing tenantId={tenantId} />
+        <WhatsAppPairing tenantId={tenantId} agentAvatarUrl={agent?.avatarUrl} agentName={agent?.name} />
       </div>
     </div>
   );
