@@ -624,6 +624,41 @@ func (h *RESTHandler) SetLlmProxy(proxy *LlmProxyHandler) {
 // executeRunInline processes a run in the background by calling the LLM
 // directly. This is the spike-mode "workflow engine" — in production, the
 // separate workflow-engine service handles this with durable execution.
+// isRunNowInput returns true when the run's input has no real user
+// instruction — Run Now from the dashboard, cron-triggered runs, etc.
+// "Real instruction" means at least one non-empty string field OR a
+// 'prompt'/'message'/'text'/'query'/'input' key. The dashboard sends
+// shaped metadata like {"connectors":[]} for Run Now invocations, which
+// is NOT a user instruction; treat it as empty so the executor's
+// synthesized default + prefetch logic kicks in.
+func isRunNowInput(input map[string]any, raw string) bool {
+	if len(input) == 0 || raw == "" || raw == "{}" || raw == "null" {
+		return true
+	}
+	// Known user-instruction field names. If any is present with non-empty
+	// content, this is a real user message.
+	for _, key := range []string{"prompt", "message", "text", "query", "input", "instruction", "ask"} {
+		if v, ok := input[key]; ok {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				return false
+			}
+		}
+	}
+	// No known instruction field. Treat as Run Now unless there's some
+	// other meaningful string content we haven't named.
+	for k, v := range input {
+		// Skip pure-metadata keys the dashboard adds.
+		switch k {
+		case "connectors", "surfaces", "tags", "labels", "model", "stream":
+			continue
+		}
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			return false
+		}
+	}
+	return true
+}
+
 func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input map[string]any) {
 	ctx := context.Background()
 	ctx = middleware.InjectTenantID(ctx, tenantID)
@@ -736,11 +771,17 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 			logStep("backfill_prompt", "completed", fmt.Sprintf("Restored system prompt from template '%s'", tpl.ID))
 		}
 	}
-	// User-side content. When called via Run Now with no input, give the
-	// model a sensible default ask matching the template's intent rather
-	// than feeding it `{}` which it interprets as "input is empty".
+	// User-side content. When called via Run Now with no real user
+	// instruction, synthesize a sensible default ask matching the
+	// template's intent rather than handing the model an empty/metadata
+	// blob which it interprets as "input is empty".
+	//
+	// "No real instruction" includes more than just `{}`/`null` — the
+	// dashboard sometimes sends `{"connectors":[]}` (the agent's config
+	// shape, not a user message). Treat any input with no user-facing
+	// text fields as Run Now too.
 	userContent := string(inputJSON)
-	if len(input) == 0 || userContent == "{}" || userContent == "null" {
+	if isRunNowInput(input, userContent) {
 		userContent = "This is a Run Now invocation — execute the workflow described in your system prompt right now. Call the tools you have available; do not ask me for clarification or claim you can't access anything."
 	}
 	prompt := fmt.Sprintf("%s\n\n%s", systemPromptStr, userContent)
