@@ -919,10 +919,28 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 		}
 	}
 
-	result, _, tokensIn, tokensOut, llmErr := h.llmProxy.callLLMWithTools(
-		ctx, provider, model, apiKey,
-		llmMessages, llmTools, llmDispatch, onToolCallStep, 5,
+	_ = provider // resolved by failover loop below
+	_ = model
+	_ = apiKey
+	// Per-attempt step: shows the run waterfall which provider answered
+	// and which (if any) failed over. Surfaces multi-provider failover
+	// when Anthropic is out of credits and OpenAI takes over (or v.v.).
+	onAttempt := func(att candidateAttempt) {
+		label := fmt.Sprintf("llm:%s/%s", att.Provider, att.Model)
+		if att.Err != nil {
+			logStep(label, "failed", truncate(att.Err.Error(), 200))
+		} else {
+			logStep(label, "completed", "answered")
+		}
+	}
+	result, _, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.llmProxy.callLLMWithFailover(
+		ctx, tenantID,
+		llmMessages, llmTools, llmDispatch, onToolCallStep, onAttempt, 5,
 	)
+	if llmErr == nil {
+		provider = usedProvider
+		model = usedModel
+	}
 	costUsd := estimateCost(provider, model, int(tokensIn), int(tokensOut))
 
 	if llmErr != nil {

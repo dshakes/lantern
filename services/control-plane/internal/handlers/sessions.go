@@ -384,10 +384,32 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		h.publishEvent(sessionID, event, payload)
 	}
 
-	// Run the tool-call loop. Up to 5 turns of tool use.
-	result, _, _, _, llmErr := h.llmProxy.callLLMWithTools(
-		ctx, provider, model, apiKey,
-		promptMessages, tools, dispatch, onToolCall, 5,
+	_ = provider // resolved by failover loop below
+	_ = model
+	_ = apiKey
+	// Per-attempt event so the chat UI sees a 'failed-over from Anthropic
+	// (429) to OpenAI' indicator inline if a provider chokes mid-session.
+	onAttempt := func(att candidateAttempt) {
+		evt := "agent.llm_attempt"
+		payload := map[string]string{
+			"provider": att.Provider,
+			"model":    att.Model,
+		}
+		if att.Err != nil {
+			evt = "agent.llm_attempt_failed"
+			s := att.Err.Error()
+			if len(s) > 200 {
+				s = s[:200] + "..."
+			}
+			payload["error"] = s
+		}
+		h.publishEvent(sessionID, evt, payload)
+	}
+	// Run the tool-call loop. Up to 5 turns of tool use. Auto-falls-over
+	// across providers (anthropic ↔ openai) on retryable errors.
+	result, _, _, _, _, _, llmErr := h.llmProxy.callLLMWithFailover(
+		ctx, tenantID,
+		promptMessages, tools, dispatch, onToolCall, onAttempt, 5,
 	)
 	if llmErr != nil {
 		h.logger().Error("session: LLM call failed", zap.Error(llmErr))

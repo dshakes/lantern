@@ -362,6 +362,53 @@ func resolveAutoModel(hasAnthropic, hasOpenAI bool) (string, string) {
 	return best.provider, best.model
 }
 
+// resolveCandidateChain returns the full provider-ranked list (highest
+// quality-balanced score first) for callers that want to do their own
+// failover. Same scoring as resolveAutoModel but returns ALL candidates.
+//
+// Used by callLLMWithFailover so that if Claude returns 429 / 402 / 5xx,
+// the next request hits GPT-4o automatically. Without this, a single
+// provider outage stops every Lantern agent on the tenant.
+func resolveCandidateChain(hasAnthropic, hasOpenAI bool) []struct{ Provider, Model string } {
+	type ranked struct {
+		provider, model string
+		score           float64
+	}
+	var all []ranked
+	for _, m := range modelCatalog {
+		if m.provider == "anthropic" && !hasAnthropic {
+			continue
+		}
+		if m.provider == "openai" && !hasOpenAI {
+			continue
+		}
+		costBonus := 30.0 / (m.costPer1MIn + m.costPer1MOut + 1)
+		score := float64(m.quality)*20 + float64(m.speed)*3 + costBonus
+		all = append(all, ranked{m.provider, m.model, score})
+	}
+	// Sort descending by score (small list, n^2 is fine).
+	for i := 0; i < len(all); i++ {
+		for j := i + 1; j < len(all); j++ {
+			if all[j].score > all[i].score {
+				all[i], all[j] = all[j], all[i]
+			}
+		}
+	}
+	// Dedupe by provider — within each provider, the top-scoring model
+	// is enough. Failover is across providers, not across models of the
+	// same provider (a 429 from Anthropic affects all Anthropic models).
+	seen := map[string]bool{}
+	out := make([]struct{ Provider, Model string }, 0, 2)
+	for _, c := range all {
+		if seen[c.provider] {
+			continue
+		}
+		seen[c.provider] = true
+		out = append(out, struct{ Provider, Model string }{c.provider, c.model})
+	}
+	return out
+}
+
 // ---------- Complete endpoint ----------
 
 // Complete handles POST /v1/completions.
@@ -1716,4 +1763,132 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 	}
 
 	return "I was unable to finish synthesizing a response within the tool-call budget. The data fetched is summarized above.", invocations, tokensIn, tokensOut, nil
+}
+
+// ---------------------------------------------------------------------------
+// Provider-failover layer.
+//
+// callLLMWithTools picks one provider+model and runs the tool loop against
+// it. If that provider returns a retryable error (rate limit, out-of-credits,
+// 5xx), the request fails — the caller sees an error and the agent run is
+// marked failed. With BOTH OpenAI and Anthropic configured, that's a
+// pointless single-provider outage.
+//
+// callLLMWithFailover layers on top: it walks the ranked candidate chain
+// (resolveCandidateChain) and retries on the NEXT provider when the
+// current one fails retryably. Hard errors (bad prompt, invalid tools,
+// model returned malformed JSON) propagate immediately.
+// ---------------------------------------------------------------------------
+
+// isRetryableLLMError classifies an error string as "try a different
+// provider" (true) vs "this is a real problem, give up" (false).
+//
+// Retryable:
+//   - 429 rate limited
+//   - 402 / 'credit' / 'quota' (out of credits)
+//   - 5xx
+//   - network / timeout
+//
+// Non-retryable:
+//   - 400 / 401 / 403 (auth or input issue — same on the other provider)
+//   - successful JSON-decode of the response that has an error string
+//     about the user's actual prompt
+func isRetryableLLMError(errStr string) bool {
+	if errStr == "" {
+		return false
+	}
+	s := strings.ToLower(errStr)
+	retryableMarkers := []string{
+		"429", "rate limit", "rate_limit", "too many requests",
+		"402", "out of credit", "credit balance", "quota", "exceed",
+		"500", "502", "503", "504", "internal server error", "overloaded",
+		"upstream", "timeout", "timed out", "connection reset",
+		"no_active_subscription", "billing",
+	}
+	for _, m := range retryableMarkers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// candidateAttempt is used by the inline executor + sessions to know which
+// provider+model actually answered, so the run-detail waterfall can render
+// 'Failed over: anthropic → openai (anthropic returned 429)'.
+type candidateAttempt struct {
+	Provider string
+	Model    string
+	Err      error
+}
+
+// callLLMWithFailover walks the tenant's ranked provider list and tries
+// each one in order until one succeeds OR the list is exhausted. Returns
+// the same shape as callLLMWithTools plus the actually-used (provider,
+// model) so callers can log the resolution + emit failover steps.
+//
+// onAttempt is called for every attempt (success OR retryable failure) so
+// callers can stream UI events. Pass nil to skip.
+func (h *LlmProxyHandler) callLLMWithFailover(
+	ctx context.Context,
+	tenantID string,
+	messages []map[string]any,
+	tools []map[string]any,
+	dispatch func(ctx context.Context, name string, args map[string]any) (any, error),
+	onToolCall func(inv ToolInvocation),
+	onAttempt func(att candidateAttempt),
+	maxTurns int,
+) (
+	finalText string,
+	invocations []ToolInvocation,
+	usedProvider, usedModel string,
+	tokensIn, tokensOut int64,
+	err error,
+) {
+	chain := resolveCandidateChain(
+		h.providerAvailable(ctx, tenantID, "anthropic"),
+		h.providerAvailable(ctx, tenantID, "openai"),
+	)
+	if len(chain) == 0 {
+		return "", nil, "", "", 0, 0, fmt.Errorf("no LLM provider configured for this tenant")
+	}
+
+	var lastErr error
+	for _, cand := range chain {
+		apiKey, keyErr := h.resolveProviderKey(ctx, tenantID, cand.Provider)
+		if keyErr != nil {
+			lastErr = keyErr
+			if onAttempt != nil {
+				onAttempt(candidateAttempt{Provider: cand.Provider, Model: cand.Model, Err: keyErr})
+			}
+			continue
+		}
+		text, invs, tin, tout, callErr := h.callLLMWithTools(
+			ctx, cand.Provider, cand.Model, apiKey, messages, tools, dispatch, onToolCall, maxTurns,
+		)
+		if callErr == nil {
+			if onAttempt != nil {
+				onAttempt(candidateAttempt{Provider: cand.Provider, Model: cand.Model})
+			}
+			return text, invs, cand.Provider, cand.Model, tin, tout, nil
+		}
+		lastErr = callErr
+		if onAttempt != nil {
+			onAttempt(candidateAttempt{Provider: cand.Provider, Model: cand.Model, Err: callErr})
+		}
+		// Stop early on non-retryable errors — same failure on the next
+		// provider is the most likely outcome and we'd waste tokens.
+		if !isRetryableLLMError(callErr.Error()) {
+			h.logger().Warn("non-retryable LLM error, not failing over",
+				zap.String("provider", cand.Provider),
+				zap.String("model", cand.Model),
+				zap.Error(callErr))
+			break
+		}
+		h.logger().Info("LLM call failed, falling over to next provider",
+			zap.String("from_provider", cand.Provider),
+			zap.String("from_model", cand.Model),
+			zap.Error(callErr))
+	}
+	return "", nil, "", "", 0, 0, fmt.Errorf("all configured providers failed: %w", lastErr)
 }
