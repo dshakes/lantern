@@ -251,6 +251,20 @@ app.post("/session/:tenantId/groups/refresh", async (req, res) => {
   res.json(result);
 });
 
+// GET /session/:tenantId/groups -- list every group the bridge knows
+// about with {jid, name, participants, monitored}. Powers the dashboard's
+// "monitored groups" checkbox list. Sorted: monitored first, then
+// alphabetical by name.
+app.get("/session/:tenantId/groups", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.status(404).json({ error: "No active session for this tenant" });
+    return;
+  }
+  const groups = await session.listGroups();
+  res.json({ groups });
+});
+
 // GET /session/:tenantId/bot -- current bot mute/pause state
 app.get("/session/:tenantId/bot", (req, res) => {
   const session = sessions.get(req.params.tenantId);
