@@ -686,6 +686,36 @@ export class WhatsAppSession {
     return this.monitoredGroups.has(jid);
   }
 
+  // jid -> {name, fetchedAt}. Cached so /lantern groups doesn't hit
+  // Baileys' groupMetadata RPC for every entry on every command. TTL is
+  // generous since group names rarely change.
+  private groupNameCache: Map<string, { name: string; fetchedAt: number }> = new Map();
+  private static readonly GROUP_NAME_TTL_MS = 60 * 60_000;
+
+  /**
+   * Best-effort group name lookup. Returns null when Baileys can't reach
+   * WhatsApp, the group metadata isn't cached yet, or the JID isn't a
+   * group. Used by /lantern groups so the listing shows readable names
+   * instead of raw `120363...@g.us` JIDs.
+   */
+  async resolveGroupName(jid: string): Promise<string | null> {
+    if (!this.isGroupJid(jid) || !this.socket) return null;
+    const cached = this.groupNameCache.get(jid);
+    if (cached && Date.now() - cached.fetchedAt < WhatsAppSession.GROUP_NAME_TTL_MS) {
+      return cached.name;
+    }
+    try {
+      const meta = await this.socket.groupMetadata(jid);
+      const name = (meta?.subject || "").trim();
+      if (!name) return null;
+      this.groupNameCache.set(jid, { name, fetchedAt: Date.now() });
+      return name;
+    } catch (err) {
+      this.logger.debug({ err, jid }, "resolveGroupName failed");
+      return null;
+    }
+  }
+
   /**
    * Pre-warm group sessions by fetching metadata for every group the
    * user is in. Fire-and-forget — failures are logged but never thrown
@@ -1011,6 +1041,7 @@ export class WhatsAppSession {
           "",
           "`/lantern status` — bridge uptime + agent state",
           "`/lantern ping` — quick echo, confirms I'm alive",
+          "`/lantern groups` — list the groups I'm monitoring",
           "`/bot off` — silence me everywhere (or in this thread)",
           "`/bot on` — un-silence me",
           "`/bot status` — show paused contacts + monitored groups",
@@ -1018,6 +1049,31 @@ export class WhatsAppSession {
           "`/bot monitor off` — opt the current group out (group only)",
         ].join("\n")
       );
+      return;
+    }
+
+    // /lantern groups — list monitored groups with friendly names.
+    // Falls back to bare JID when name lookup fails (e.g. metadata not
+    // cached yet). Self-chat only so the list doesn't leak into a friend's
+    // thread.
+    if (trimmed === "/lantern groups" && self) {
+      await this.sendReaction(jid, key, "👥");
+      const monitored = [...this.monitoredGroups];
+      if (monitored.length === 0) {
+        await this.confirmToSelf(
+          "no groups monitored yet.\n\nto opt a group in:\n• type `/bot monitor on` IN the group (most natural), or\n• from the dashboard → Channels → WhatsApp",
+        );
+        return;
+      }
+      const lines: string[] = [`👥 *${monitored.length} group${monitored.length === 1 ? "" : "s"} monitored*`, ""];
+      for (const groupJid of monitored.slice(0, 25)) {
+        const name = await this.resolveGroupName(groupJid);
+        lines.push(name ? `• ${name}` : `• \`${groupJid}\``);
+      }
+      if (monitored.length > 25) {
+        lines.push(`…and ${monitored.length - 25} more`);
+      }
+      await this.confirmToSelf(lines.join("\n"));
       return;
     }
 
