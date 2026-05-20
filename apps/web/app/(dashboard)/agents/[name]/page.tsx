@@ -53,6 +53,7 @@ import {
   Cloud,
   Download,
   GitBranch,
+  Bot,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -198,6 +199,14 @@ export default function AgentDetailPage() {
   const { agent, loading: agentLoading, error: agentError } = useAgent(name);
   const { runs: agentRuns, loading: runsLoading, refresh: refreshRuns } = useAgentRuns(name);
 
+  // Hydrate identity fields from the API once the agent payload lands.
+  useEffect(() => {
+    if (!agent) return;
+    setAvatarUrl(agent.avatarUrl ?? "");
+    setStylePrompt(agent.stylePrompt ?? "");
+    setIdentityDirty(false);
+  }, [agent]);
+
   // Setup-gate status. ready=false means the agent has required connectors
   // or surfaces that aren't connected — we banner the page and disable Run.
   // Templated agents store their requirements in labels JSONB; non-template
@@ -227,6 +236,13 @@ export default function AgentDetailPage() {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [promptDirty, setPromptDirty] = useState(false);
   const [savingPrompt, setSavingPrompt] = useState(false);
+
+  // Identity — avatar URL shown in the WhatsApp dashboard timeline; style
+  // prompt is the per-agent "my voice" override fed into the bridge persona.
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [stylePrompt, setStylePrompt] = useState("");
+  const [identityDirty, setIdentityDirty] = useState(false);
+  const [savingIdentity, setSavingIdentity] = useState(false);
 
   // Test state
   const [testInput, setTestInput] = useState("");
@@ -586,6 +602,19 @@ export default function AgentDetailPage() {
     setDeleting(true);
     try { await api.deleteAgent(name); toast.success(`Agent "${name}" deleted`); router.push("/agents"); } catch (err) { toast.error(err instanceof Error ? err.message : "Failed to delete"); } finally { setDeleting(false); setShowDeleteConfirm(false); }
   }, [name, toast, router]);
+
+  const handleSaveIdentity = useCallback(async () => {
+    setSavingIdentity(true);
+    try {
+      await api.updateAgent(name, { avatarUrl, stylePrompt });
+      setIdentityDirty(false);
+      toast.success("Identity saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSavingIdentity(false);
+    }
+  }, [name, avatarUrl, stylePrompt, toast]);
 
   const handleSavePrompt = useCallback(async () => {
     setSavingPrompt(true);
@@ -1116,6 +1145,74 @@ export default function AgentDetailPage() {
                 placeholder={"Example:\n• Summarize unread emails from the last 24 hours\n• Group by priority: urgent, action required, informational\n• Never include email body text, only subjects and senders\n• Keep the summary under 500 words"}
                 className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-teal-500/50 focus:ring-1 focus:ring-teal-500/20"
               />
+            </div>
+
+            {/* Identity — avatar + per-agent style ("my voice"). Used by the
+                WhatsApp dashboard timeline and the bridge persona. */}
+            <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300">
+                  <Bot className="h-4 w-4 text-teal-400" /> Identity
+                  <span className="text-[10px] font-normal text-zinc-600">-- avatar + voice shown in WhatsApp + chat</span>
+                </h3>
+                <button
+                  onClick={handleSaveIdentity}
+                  disabled={savingIdentity || !identityDirty}
+                  className={clsx(
+                    "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium",
+                    identityDirty
+                      ? "bg-lantern-500 text-white hover:bg-lantern-400"
+                      : "border border-zinc-700 text-zinc-500 cursor-not-allowed",
+                  )}
+                >
+                  {savingIdentity ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                  {savingIdentity ? "Saving..." : "Save"}
+                </button>
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-[auto_1fr]">
+                <div className="flex flex-col items-center gap-2">
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt="Agent avatar"
+                      className="h-16 w-16 rounded-full border border-zinc-700 object-cover"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                    />
+                  ) : (
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full border border-zinc-700 bg-surface-0">
+                      <Bot className="h-7 w-7 text-zinc-500" />
+                    </div>
+                  )}
+                  <p className="text-[10px] text-zinc-600">Preview</p>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-zinc-500">Avatar URL</label>
+                    <input
+                      type="url"
+                      value={avatarUrl}
+                      onChange={(e) => { setAvatarUrl(e.target.value); setIdentityDirty(true); }}
+                      placeholder="https://example.com/avatar.png"
+                      className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-zinc-500">
+                      Style ("my voice")
+                      <span className="ml-1 font-normal text-zinc-600">-- short rules the agent follows on every reply</span>
+                    </label>
+                    <textarea
+                      value={stylePrompt}
+                      onChange={(e) => { setStylePrompt(e.target.value); setIdentityDirty(true); }}
+                      rows={4}
+                      spellCheck={false}
+                      placeholder={"e.g.\n- keep replies under 15 words\n- lowercase, no greetings\n- use contractions, skip em-dashes\n- never apologize for being slow"}
+                      className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-xs leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20"
+                    />
+                  </div>
+                </div>
+              </div>
+              {identityDirty && <p className="mt-2 text-[11px] text-amber-400">Unsaved changes</p>}
             </div>
 
             {/* System Prompt (how the agent behaves) */}

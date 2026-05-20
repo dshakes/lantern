@@ -14,6 +14,9 @@ export interface Agent {
   createdAt: Date;
   labels: Record<string, string>;
   status: "active" | "archived";
+  avatarUrl?: string;
+  stylePrompt?: string;
+  systemPrompt?: string;
 }
 
 export interface AgentVersion {
