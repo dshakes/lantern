@@ -619,6 +619,16 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		agentName, tenantID,
 	).Scan(&storedSystemPrompt, &labelsJSON)
 	systemPromptStr := fmt.Sprintf("You are the agent '%s'. Process the user's input and produce a useful result.", agentName)
+	// resolvedTemplateID is set by the backfill (or label lookup) so we can
+	// later check whether a deterministic prefetch exists for this agent.
+	resolvedTemplateID := ""
+	{
+		var lbl struct {
+			TemplateID string `json:"lantern.template"`
+		}
+		_ = json.Unmarshal(labelsJSON, &lbl)
+		resolvedTemplateID = lbl.TemplateID
+	}
 	if storedSystemPrompt != nil && *storedSystemPrompt != "" {
 		systemPromptStr = *storedSystemPrompt
 	} else {
@@ -626,20 +636,17 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		// persisting system_prompt + labels. Re-derive the template by ID
 		// (from labels) or by name match against the static registry, then
 		// UPDATE the row so future runs read it from disk.
-		var lbl struct {
-			TemplateID string `json:"lantern.template"`
-		}
-		_ = json.Unmarshal(labelsJSON, &lbl)
 		var tpl templateDef
 		var found bool
-		if lbl.TemplateID != "" {
-			tpl, found = templates[lbl.TemplateID]
+		if resolvedTemplateID != "" {
+			tpl, found = templates[resolvedTemplateID]
 		}
 		if !found {
 			tpl, found = templates[agentName]
 		}
 		if found && tpl.SystemPrompt != "" {
 			systemPromptStr = tpl.SystemPrompt
+			resolvedTemplateID = tpl.ID
 			// Persist so we don't recompute every run.
 			_, _ = h.srv.Pool.Exec(ctx,
 				`UPDATE agents SET system_prompt = $1, model = COALESCE(NULLIF(model,''), $2) WHERE name = $3 AND tenant_id = $4`,
@@ -656,6 +663,28 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		userContent = "This is a Run Now invocation — execute the workflow described in your system prompt right now. Call the tools you have available; do not ask me for clarification or claim you can't access anything."
 	}
 	prompt := fmt.Sprintf("%s\n\n%s", systemPromptStr, userContent)
+
+	// 2c. Deterministic pre-fetch for templates whose data sources we know
+	//     up-front (Morning Brief, etc.). Fetches everything server-side and
+	//     hands the formatted text to the LLM, so the model only has to
+	//     summarize — no tool-use loop, works on cheap models, can't fail
+	//     with 'no connectors set up' gaslighting. Falls through to the
+	//     tool-use loop for custom agents that don't have a prefetch.
+	prefetched, hasPrefetch := prefetchForTemplate(ctx, h.srv.Pool, tenantID, resolvedTemplateID)
+	if hasPrefetch {
+		detail := fmt.Sprintf("%d sources fetched", len(prefetched.Sources))
+		if len(prefetched.Errors) > 0 {
+			detail += fmt.Sprintf(", %d errored", len(prefetched.Errors))
+		}
+		logStep("prefetch", "completed", detail)
+		// Replace the user message with the prefetched markdown + an
+		// explicit summarize directive. The system prompt's workflow
+		// instructions are unchanged; the model just doesn't need to
+		// call any tools to follow them anymore.
+		userContent = "# Pre-fetched data\n\n" + prefetched.Body +
+			"\n\n# Your task\n\nUsing ONLY the data above, synthesize the brief per your system prompt's instructions. Do NOT call any tools. If a section is missing or shows an error, briefly acknowledge it and continue with what's available."
+		prompt = fmt.Sprintf("%s\n\n%s", systemPromptStr, userContent)
+	}
 
 	// 2b. Check if this agent has Gmail in its connector config.
 	// The agent's connector list is stored in the input JSON under "connectors"
@@ -791,10 +820,19 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		// the system prompt as the user message body.
 		llmMessages[1] = map[string]any{"role": "user", "content": strings.TrimPrefix(prompt, systemPromptStr+"\n\n")}
 	}
-	llmTools, llmToolsErr := toolsForTenant(ctx, h.srv.Pool, tenantID)
-	if llmToolsErr != nil {
-		h.logger().Warn("inline executor: tools lookup failed",
-			zap.String("run_id", runID), zap.Error(llmToolsErr))
+	var llmTools []map[string]any
+	if hasPrefetch {
+		// Pre-fetch did the work — no tools attached so the model just
+		// summarizes. Saves 700+ tokens of tool definitions per call and
+		// removes the model's option to refuse / hallucinate.
+		logStep("attach_tools", "completed", "0 tools (prefetch mode — model summarizes the fetched data)")
+	} else {
+		var llmToolsErr error
+		llmTools, llmToolsErr = toolsForTenant(ctx, h.srv.Pool, tenantID)
+		if llmToolsErr != nil {
+			h.logger().Warn("inline executor: tools lookup failed",
+				zap.String("run_id", runID), zap.Error(llmToolsErr))
+		}
 	}
 	// When tools ARE attached, models still routinely refuse to call them
 	// because the system prompt's mention of e.g. 'the GitHub connector'
@@ -834,11 +872,13 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 			logStep("upgrade_model", "completed", "Upgraded haiku-4 → sonnet-4 for tool-use reliability")
 		}
 	}
-	{
+	if !hasPrefetch {
 		// Surface the count + which connectors made it through the
 		// install filter. Without this it's invisible whether the model
 		// got 0, 3, or 10 tools — and tool-shy responses look identical
 		// to no-tools-attached responses.
+		// Skipped in prefetch mode since attach_tools was logged earlier
+		// with the prefetch detail.
 		names := make([]string, 0, len(llmTools))
 		for _, t := range llmTools {
 			if fn, ok := t["function"].(map[string]any); ok {
