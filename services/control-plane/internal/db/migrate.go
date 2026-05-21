@@ -793,4 +793,63 @@ var migrations = []string{
 	`ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ`,
 	`ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS last_connection_event_at TIMESTAMPTZ`,
 	`ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS last_error TEXT`,
+
+	// ---------------------------------------------------------------
+	// Contact memory + VIP contacts + pending drafts. These power the
+	// "futuristic" upgrades for the personal-assistant flows on WhatsApp
+	// and iMessage:
+	//   - whatsapp_contact_facts: durable facts the assistant has
+	//     learned (or the user has manually added) about each contact —
+	//     "her daughter is Maya", "works at Stripe", etc. Injected into
+	//     the persona prompt so cold-start awkwardness disappears.
+	//   - whatsapp_vip_contacts: contacts where auto-send is OFF; the
+	//     assistant drafts but posts to the dashboard for one-tap
+	//     approval. Stops the most-feared scenario: bot sends something
+	//     awkward to your boss.
+	//   - whatsapp_pending_drafts: append-only log of VIP drafts +
+	//     their status (pending → approved/discarded). Survives bridge
+	//     restarts.
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS whatsapp_contact_facts (
+		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		jid             TEXT NOT NULL,
+		content         TEXT NOT NULL,
+		source          TEXT NOT NULL DEFAULT 'manual',  -- manual | inferred
+		created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS whatsapp_contact_facts_tenant_jid_idx
+		ON whatsapp_contact_facts (tenant_id, jid, updated_at DESC)`,
+
+	`CREATE TABLE IF NOT EXISTS whatsapp_vip_contacts (
+		tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		jid             TEXT NOT NULL,
+		display_name    TEXT,
+		added_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+		PRIMARY KEY (tenant_id, jid)
+	)`,
+
+	`CREATE TABLE IF NOT EXISTS whatsapp_pending_drafts (
+		id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		jid             TEXT NOT NULL,
+		display_name    TEXT,
+		inbound_text    TEXT NOT NULL,
+		draft_text      TEXT NOT NULL,
+		status          TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | edited | discarded
+		final_text      TEXT,
+		created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+		acted_at        TIMESTAMPTZ
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS whatsapp_pending_drafts_tenant_status_idx
+		ON whatsapp_pending_drafts (tenant_id, status, created_at DESC)`,
+
+	// VIPs + drafts are GLOBAL across messaging channels (one VIP list
+	// applies to both WhatsApp and iMessage). The draft row records
+	// which channel queued it so the dashboard can show the right
+	// badge and the approval endpoint sends back via the right bridge.
+	`ALTER TABLE whatsapp_pending_drafts ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'whatsapp'`,
 }

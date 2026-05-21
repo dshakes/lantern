@@ -50,6 +50,12 @@ run-whatsapp-bridge: ## Start the WhatsApp bridge service
 
 run-whatsapp: run-whatsapp-bridge ## Alias: start the WhatsApp bridge service
 
+run-imessage-bridge: ## Start the iMessage bridge (macOS only)
+	@bash scripts/kill-port.sh 3200
+	cd services/imessage-bridge && npm run dev
+
+run-imessage: run-imessage-bridge ## Alias: start the iMessage bridge
+
 landing-dev: ## Start the landing page in dev mode
 	cd apps/landing && npm run dev
 

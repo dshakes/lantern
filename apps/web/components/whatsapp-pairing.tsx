@@ -236,6 +236,136 @@ function formatUptime(ms: number): string {
   return `${d}d ${h % 24}h`;
 }
 
+// Searchable group picker. Replaces the static monitored-only list with
+// a real UX where the user sees EVERY group the bridge knows about,
+// can search by name, and toggles monitoring with a single click. No
+// more curl-with-JID workarounds.
+function GroupPicker({
+  monitoredCount,
+  allGroups,
+  loading,
+  togglingJid,
+  onToggle,
+  onRefresh,
+}: {
+  monitoredCount: number;
+  allGroups: Array<{ jid: string; name: string; participants: number; monitored: boolean }> | null;
+  loading: boolean;
+  togglingJid: string | null;
+  onToggle: (jid: string, isCurrentlyMonitored: boolean) => void;
+  onRefresh: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const q = search.trim().toLowerCase();
+  const filtered = (allGroups ?? []).filter((g) =>
+    q === "" ? true : g.name.toLowerCase().includes(q) || g.jid.includes(q),
+  );
+  // Cap to 12 by default; "Show all" reveals the rest. Most users care
+  // about the top of the list (monitored first, then alpha).
+  const visible = showAll ? filtered : filtered.slice(0, 12);
+  const remaining = Math.max(0, filtered.length - visible.length);
+
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[12px] font-semibold text-zinc-200">Monitored groups</p>
+        <div className="flex items-center gap-2">
+          <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400">
+            {monitoredCount} / {allGroups?.length ?? "?"}
+          </span>
+          <button
+            onClick={onRefresh}
+            disabled={loading}
+            className="rounded p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-200 disabled:opacity-50"
+            title="Refresh from WhatsApp"
+            aria-label="Refresh groups"
+          >
+            <RefreshCw className={clsx("h-3 w-3", loading && "animate-spin")} />
+          </button>
+        </div>
+      </div>
+
+      {allGroups === null && loading ? (
+        <p className="mt-3 text-[11px] text-zinc-500">Loading groups from WhatsApp…</p>
+      ) : (allGroups?.length ?? 0) === 0 ? (
+        <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+          No groups found. If you're definitely in groups on WhatsApp,
+          click the refresh icon — sometimes Baileys takes a moment to
+          sync the group list after pairing.
+        </p>
+      ) : (
+        <>
+          <div className="relative mt-3">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={`Search ${allGroups?.length ?? 0} groups…`}
+              className="w-full rounded-md border border-zinc-800 bg-surface-0 px-2.5 py-1.5 text-[12px] text-zinc-200 placeholder-zinc-600 outline-none focus:border-lantern-500/50"
+            />
+          </div>
+          <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
+            {visible.map((g) => {
+              const busy = togglingJid === g.jid;
+              return (
+                <li key={g.jid}>
+                  <button
+                    onClick={() => onToggle(g.jid, g.monitored)}
+                    disabled={busy}
+                    className={clsx(
+                      "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors disabled:opacity-50",
+                      g.monitored
+                        ? "border border-emerald-500/30 bg-emerald-500/[0.06] hover:bg-emerald-500/10"
+                        : "border border-zinc-800 bg-surface-0 hover:bg-surface-2",
+                    )}
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={clsx(
+                          "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+                          g.monitored ? "border-emerald-500/50 bg-emerald-500/30" : "border-zinc-700 bg-surface-0",
+                        )}
+                      >
+                        {g.monitored && <Check className="h-3 w-3 text-emerald-300" />}
+                      </span>
+                      <span className="truncate text-[12px] text-zinc-200">{g.name}</span>
+                    </div>
+                    <span className="shrink-0 text-[10px] text-zinc-500">
+                      {busy ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <>{g.participants} 👤</>
+                      )}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+            {filtered.length === 0 && (
+              <li className="px-2 py-3 text-center text-[11px] text-zinc-500">
+                No matches for &ldquo;{search}&rdquo;.
+              </li>
+            )}
+          </ul>
+          {remaining > 0 && (
+            <button
+              onClick={() => setShowAll(true)}
+              className="mt-2 w-full text-center text-[11px] text-zinc-500 hover:text-zinc-300"
+            >
+              Show {remaining} more
+            </button>
+          )}
+          <p className="mt-2 text-[11px] text-zinc-500">
+            Checked groups auto-reply when you&apos;re @mentioned or quoted.
+            Unchecked groups are ignored entirely.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function formatRelative(ts: number, now: number): string {
   const diff = Math.max(0, now - ts);
   if (diff < 5_000) return "just now";
@@ -833,6 +963,61 @@ export function WhatsAppPairing({
     [bridgeUrl, tenantId]
   );
 
+  // Monitor a group — same shape as unmonitor. Used by the searchable
+  // group picker so users can toggle groups in/out from the dashboard
+  // without ever needing the in-group /bot monitor on (which doesn't
+  // reliably propagate to the bridge for accounts in many groups).
+  const monitorGroup = useCallback(
+    async (jid: string) => {
+      setUnmonitoring(jid); // reuse the spinner state — only one in flight at a time
+      try {
+        const res = await fetch(
+          `${bridgeUrl}/session/${tenantId}/bot/group/monitor`,
+          {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ jid }),
+          }
+        );
+        if (res.ok) setBotState(await res.json());
+      } finally {
+        setUnmonitoring(null);
+      }
+    },
+    [bridgeUrl, tenantId]
+  );
+
+  // All groups the bridge can see (not just the monitored ones), with
+  // friendly names + participant counts. Powers the searchable picker.
+  // Refreshed on connect + every 30s while the modal is open so newly-
+  // joined groups appear without a manual refresh.
+  type GroupRow = { jid: string; name: string; participants: number; monitored: boolean };
+  const [allGroups, setAllGroups] = useState<GroupRow[] | null>(null);
+  const [groupsLoading, setGroupsLoading] = useState(false);
+  const refreshAllGroups = useCallback(async () => {
+    if (state !== "connected") return;
+    setGroupsLoading(true);
+    try {
+      const res = await fetch(`${bridgeUrl}/session/${tenantId}/groups`, {
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        const body = (await res.json()) as { groups?: GroupRow[] };
+        setAllGroups(body.groups ?? []);
+      }
+    } catch {
+      // best effort — the existing monitored-only list still renders.
+    } finally {
+      setGroupsLoading(false);
+    }
+  }, [bridgeUrl, tenantId, state]);
+  useEffect(() => {
+    if (state !== "connected") return;
+    void refreshAllGroups();
+    const id = setInterval(refreshAllGroups, 30_000);
+    return () => clearInterval(id);
+  }, [state, refreshAllGroups]);
+
   // Pause auto-reply for a single contact for 60 minutes — the WATI pattern.
   // Triggered from the per-message "Pause" button in the activity feed,
   // which is *where* the user notices they want the bot to stop replying
@@ -1107,10 +1292,14 @@ export function WhatsAppPairing({
             onToggleMute={toggleMute}
             onClearAll={clearAllPauses}
             onUnmonitor={unmonitorGroup}
+            onMonitor={monitorGroup}
             onPauseContact={pauseContact}
             onDisconnect={handleDisconnect}
             onStartTest={() => setTestMode("waiting")}
             onClearTest={() => setTestMode("idle")}
+            allGroups={allGroups}
+            groupsLoading={groupsLoading}
+            onRefreshGroups={refreshAllGroups}
             agentAvatarUrl={agentAvatarUrl}
             agentName={agentName}
           />
@@ -1404,10 +1593,14 @@ function ConnectedPanel({
   onToggleMute,
   onClearAll,
   onUnmonitor,
+  onMonitor,
   onPauseContact,
   onDisconnect,
   onStartTest,
   onClearTest,
+  allGroups,
+  groupsLoading,
+  onRefreshGroups,
   agentAvatarUrl,
   agentName,
 }: {
@@ -1429,10 +1622,16 @@ function ConnectedPanel({
   onToggleMute: () => void;
   onClearAll: () => void;
   onUnmonitor: (jid: string) => void;
+  onMonitor: (jid: string) => void;
   onPauseContact: (jid: string) => void;
   onDisconnect: () => void;
   onStartTest: () => void;
   onClearTest: () => void;
+  // All groups the bridge can see — for the searchable picker.
+  // Null while the first fetch is in flight; [] when there are no groups.
+  allGroups: Array<{ jid: string; name: string; participants: number; monitored: boolean }> | null;
+  groupsLoading: boolean;
+  onRefreshGroups: () => void;
   agentAvatarUrl?: string;
   agentName?: string;
 }) {
@@ -1544,43 +1743,14 @@ function ConnectedPanel({
           )}
         </div>
 
-        <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
-          <div className="flex items-center justify-between">
-            <p className="text-[12px] font-semibold text-zinc-200">Monitored groups</p>
-            <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400">
-              {groups.length}
-            </span>
-          </div>
-          {groups.length === 0 ? (
-            <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
-              Groups are off by default. Send{" "}
-              <code className="rounded bg-surface-0 px-1 text-zinc-300">/bot monitor on</code>{" "}
-              from your phone inside any group to enable.
-            </p>
-          ) : (
-            <ul className="mt-2 space-y-1.5">
-              {groups.map((jid) => (
-                <li
-                  key={jid}
-                  className="flex items-center justify-between gap-2 rounded-md bg-surface-0 px-2 py-1.5"
-                >
-                  <code className="truncate text-[11px] text-zinc-300">{jid.split("@")[0]}</code>
-                  <button
-                    onClick={() => onUnmonitor(jid)}
-                    disabled={unmonitoring === jid}
-                    className="shrink-0 rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400 transition-colors hover:bg-surface-2 disabled:opacity-50"
-                  >
-                    {unmonitoring === jid ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      "Remove"
-                    )}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <GroupPicker
+          monitoredCount={groups.length}
+          allGroups={allGroups}
+          loading={groupsLoading}
+          togglingJid={unmonitoring}
+          onToggle={(jid, isMonitored) => isMonitored ? onUnmonitor(jid) : onMonitor(jid)}
+          onRefresh={onRefreshGroups}
+        />
       </div>
 
       {/* Send-test card — sticks until first inbound message arrives */}

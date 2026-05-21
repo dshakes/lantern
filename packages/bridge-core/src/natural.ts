@@ -359,6 +359,94 @@ export interface NaturalMessage {
   typingMs: number;
 }
 
+// ---------------------------------------------------------------------------
+// Escalation: detect "this needs the owner, not the assistant"
+// ---------------------------------------------------------------------------
+
+// Keywords/patterns that should ALWAYS hand off to the owner. Casting
+// the net wide on the side of false-positives — a missed escalation is
+// far worse than an over-cautious silence (the owner just sees the
+// alert and decides what to do).
+const ESCALATION_PATTERNS: { pattern: RegExp; reason: string }[] = [
+  // Hard urgency markers
+  { pattern: /\b(asap|emergency|urgent|right now|immediately|911)\b/i, reason: "urgency marker" },
+  // Health / safety
+  { pattern: /\b(hospital|ER|ambulance|police|accident|hurt|injured|crashed?)\b/i, reason: "safety/health" },
+  // Direct asks for the human
+  { pattern: /\b(call me|pick up|where are you|need (you|to talk)|are you (ok|okay|alright|home))\b/i, reason: "needs you specifically" },
+  // Money / legal — these are never the assistant's call
+  { pattern: /\b(invoice|payment|owe|wire|transfer|contract|legal|lawyer|sign(ing)?|approve)\b/i, reason: "money/legal" },
+  // Strong negative emotion — let the human respond, not a bot
+  { pattern: /\b(i('m| am) (so )?(angry|upset|hurt|crying|sad|disappointed))\b/i, reason: "emotional" },
+  // Death/grief — must not be handled by a bot
+  { pattern: /\b(died|passed away|funeral|sympathy|condolences?)\b/i, reason: "grief" },
+];
+
+export interface EscalationVerdict {
+  escalate: boolean;
+  reason?: string;
+}
+
+export function detectEscalation(text: string): EscalationVerdict {
+  for (const { pattern, reason } of ESCALATION_PATTERNS) {
+    if (pattern.test(text)) return { escalate: true, reason };
+  }
+  return { escalate: false };
+}
+
+// ---------------------------------------------------------------------------
+// Quiet hours: don't auto-reply at 3am
+// ---------------------------------------------------------------------------
+
+export interface QuietHoursConfig {
+  // IANA timezone (e.g. "America/Los_Angeles"). Falls back to the
+  // process timezone when unset.
+  tz?: string;
+  // 24h hours: skip auto-reply when local hour is in [startHour, endHour).
+  // Default: 22 → 7 (10pm to 7am).
+  startHour: number;
+  endHour: number;
+}
+
+export function defaultQuietHours(): QuietHoursConfig {
+  const tz = process.env.LANTERN_OWNER_TIMEZONE || undefined;
+  const startHour = parseIntSafe(process.env.LANTERN_QUIET_START, 22);
+  const endHour = parseIntSafe(process.env.LANTERN_QUIET_END, 7);
+  return { tz, startHour, endHour };
+}
+
+export function isQuietHours(now: Date, cfg: QuietHoursConfig): boolean {
+  let hour: number;
+  if (cfg.tz) {
+    try {
+      // Intl.DateTimeFormat is the cheapest way to get a TZ-aware hour.
+      const fmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: cfg.tz,
+        hour: "numeric",
+        hour12: false,
+      });
+      hour = parseInt(fmt.format(now), 10);
+      if (Number.isNaN(hour)) hour = now.getHours();
+    } catch {
+      hour = now.getHours();
+    }
+  } else {
+    hour = now.getHours();
+  }
+  if (cfg.startHour <= cfg.endHour) {
+    // Same-day window, e.g. 13..17
+    return hour >= cfg.startHour && hour < cfg.endHour;
+  }
+  // Wraps midnight, e.g. 22..7
+  return hour >= cfg.startHour || hour < cfg.endHour;
+}
+
+function parseIntSafe(s: string | undefined, fallback: number): number {
+  if (!s) return fallback;
+  const n = parseInt(s, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 const ASSISTANT_OPENERS = [
   /^certainly[!,]?\s+/i,
   /^of course[!,]?\s+/i,
@@ -441,27 +529,47 @@ function splitIntoMessages(text: string, style: StyleProfile): string[] {
   return out.slice(0, maxMessages);
 }
 
-// Approx 4 chars per word; ~50 wpm typing → ~250ms per word. We jitter
-// a bit to avoid mechanical-looking exact intervals.
+// Real-mobile typing is ~30-35wpm (slower than the 50wpm desktop number
+// you'd see quoted for typing tests). At ~5 chars/word that's ~400ms
+// per word for short ones, longer for technical words. We jitter ±25%
+// so a sequence of replies doesn't feel mechanical, and stretch a bit
+// when the message has emoji (people slow down to pick them).
 function typingDurationMs(text: string): number {
-  const words = Math.max(1, text.split(/\s+/).length);
-  const base = words * 240;
-  const jitter = (Math.random() - 0.5) * 200;
-  return Math.max(700, Math.min(7000, Math.round(base + jitter)));
+  const words = Math.max(1, text.trim().split(/\s+/).length);
+  // ~35wpm baseline = ~410ms/word, with a per-character floor for
+  // longer technical strings.
+  const base = words * 410 + text.length * 8;
+  const jitter = (Math.random() - 0.5) * (base * 0.4);
+  // Emoji slow people down (picking from picker, typing the codepoint).
+  const emojiBoost = /\p{Extended_Pictographic}/u.test(text) ? 600 : 0;
+  return Math.max(1200, Math.min(10_000, Math.round(base + jitter + emojiBoost)));
 }
 
 // "Read time" before the first message — the lag between receiving an
-// inbound and starting to type. Short inbounds get short lags.
+// inbound and starting to type. Real humans don't reply instantly:
+// even when phone-in-hand it's 2-5s of "wait what did they say".
+// Short inbounds get short lags; long ones get noticeably longer.
 function readDelayMs(inbound: string): number {
-  const words = Math.max(1, inbound.split(/\s+/).length);
-  const base = 600 + words * 80;
-  const jitter = (Math.random() - 0.5) * 400;
-  return Math.max(400, Math.min(4500, Math.round(base + jitter)));
+  const words = Math.max(1, inbound.trim().split(/\s+/).length);
+  const base = 1500 + words * 150;
+  const jitter = (Math.random() - 0.5) * 1200;
+  return Math.max(900, Math.min(8000, Math.round(base + jitter)));
 }
 
-// Inter-message pause — how long between burst messages. ~300-700ms.
+// Occasional "looking at phone later" lag — fires ~30% of the time
+// before the read+type kick-in. Simulates the realistic case where
+// you saw the notification, did something else, then came back. Cap
+// kept low (3-8s) so live conversations don't lose their thread.
+function awayLagMs(): number {
+  if (Math.random() > 0.3) return 0;
+  return 3000 + Math.round(Math.random() * 5000);
+}
+
+// Inter-message pause — how long between burst messages. Real humans
+// pause longer than a few hundred ms between thoughts; 600-1500ms reads
+// natural without dragging.
 function gapMs(): number {
-  return 350 + Math.round(Math.random() * 350);
+  return 600 + Math.round(Math.random() * 900);
 }
 
 /**
@@ -478,9 +586,13 @@ export function naturalize(
   const pieces = splitIntoMessages(stripped, opts.style).map((m) =>
     applyStyle(m, opts.style)
   );
+  // Roll once per reply: 30% chance of an "I was busy" lag before the
+  // first message. Compounds with readDelayMs so the actual first
+  // delay is realistic-bursty: usually 1.5-6s, occasionally 6-15s.
+  const away = awayLagMs();
   return pieces.map((text, idx) => ({
     text,
-    delayBeforeMs: idx === 0 ? readDelayMs(opts.inbound) : gapMs(),
+    delayBeforeMs: idx === 0 ? readDelayMs(opts.inbound) + away : gapMs(),
     typingMs: typingDurationMs(text),
   }));
 }

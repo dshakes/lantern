@@ -147,13 +147,23 @@ const surfaces: SurfaceDefinition[] = [
     hasEmbedCode: true,
   },
   {
-    id: "mobile", name: "Mobile App",
-    description: "iOS and Android with push notifications",
-    icon: Phone, iconColor: "text-rose-400", iconBg: "bg-rose-500/10",
-    configFields: [],
-    hasQRCode: true, qrType: "pair", qrLabel: "Scan with the Lantern mobile app to pair",
+    id: "imessage", name: "iMessage",
+    description: "Native iMessage via a macOS host (chat.db + AppleScript). Full-fidelity messaging on iPhone/iPad/Mac.",
+    icon: Phone, iconColor: "text-blue-400", iconBg: "bg-blue-500/10",
+    configFields: [
+      { key: "macHost", label: "macOS Bridge Host", type: "text", placeholder: "localhost:3200", helpText: "Where the lantern-imessage-bridge service is running. Defaults to localhost:3200 on the same host as the control-plane." },
+      { key: "sharedToken", label: "Bridge Shared Token (optional)", type: "password", placeholder: "long random string", helpText: "Must match LANTERN_IMESSAGE_BRIDGE_TOKEN on the bridge host." },
+    ],
+    hasQRCode: false,
   },
 ];
+
+// Note: a previous "Mobile App" connector was removed — it generated a QR
+// linking to /pair?token=… but the /pair route never shipped AND
+// localhost URLs aren't reachable from a phone in the first place. Mobile
+// access today: open /personal in your phone's browser (the dashboard is
+// responsive). For native messaging on iPhone, use the iMessage connector
+// above (requires a macOS host).
 
 // ---------------------------------------------------------------------------
 // Helpers

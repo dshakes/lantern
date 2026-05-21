@@ -127,6 +127,8 @@ func main() {
 	connectorHandler := handlers.NewConnectorHandler(srv, authHandler)
 	connectorExecutor := handlers.NewConnectorExecutor(srv, authHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
+	waPersonalHandler := handlers.NewWhatsAppPersonalHandler(srv, authHandler)
+	shortcutsHandler := handlers.NewShortcutsHandler(srv, authHandler)
 	apiKeyHandler := handlers.NewApiKeyHandler(srv, authHandler)
 	deploymentHandler := handlers.NewDeploymentHandler(srv, authHandler)
 	a2aHandler := handlers.NewA2AHandler(srv, authHandler)
@@ -222,6 +224,26 @@ func main() {
 	// matchers so they're not shadowed.
 	httpMux.HandleFunc("POST /v1/surfaces/whatsapp/heartbeat", surfaceHandler.BridgeHeartbeat)
 	httpMux.HandleFunc("GET /v1/surfaces/whatsapp/status", surfaceHandler.WhatsAppStatus)
+
+	// Personal-assistant futuristic endpoints (VIP contacts, contact
+	// facts/memory, smart-draft VIP approval flow).
+	httpMux.HandleFunc("GET /v1/whatsapp/vips", waPersonalHandler.ListVIPs)
+	httpMux.HandleFunc("POST /v1/whatsapp/vips", waPersonalHandler.AddVIP)
+	httpMux.HandleFunc("DELETE /v1/whatsapp/vips", waPersonalHandler.RemoveVIP)
+	httpMux.HandleFunc("GET /v1/whatsapp/facts", waPersonalHandler.ListFacts)
+	httpMux.HandleFunc("POST /v1/whatsapp/facts", waPersonalHandler.AddFact)
+	httpMux.HandleFunc("DELETE /v1/whatsapp/facts/{id}", waPersonalHandler.DeleteFact)
+	httpMux.HandleFunc("POST /v1/whatsapp/drafts", waPersonalHandler.CreateDraft)
+	httpMux.HandleFunc("GET /v1/whatsapp/drafts", waPersonalHandler.ListDrafts)
+	httpMux.HandleFunc("POST /v1/whatsapp/drafts/{id}/act", waPersonalHandler.ActOnDraft)
+
+	// iOS Shortcuts / Siri endpoints — single-purpose actions that map
+	// 1:1 to Shortcut steps. Plain-text responses so Siri can speak
+	// them aloud. Authenticated via the standard bearer token.
+	httpMux.HandleFunc("POST /v1/shortcuts/pause", shortcutsHandler.Pause)
+	httpMux.HandleFunc("POST /v1/shortcuts/resume", shortcutsHandler.Resume)
+	httpMux.HandleFunc("GET /v1/shortcuts/status", shortcutsHandler.Status)
+	httpMux.HandleFunc("POST /v1/shortcuts/say", shortcutsHandler.Say)
 	// Slack /lantern slash command. Signed via SLACK_SIGNING_SECRET when
 	// configured (dev accepts unverified + warns); ephemeral JSON replies.
 	slackCommandHandler := handlers.NewSlackCommandHandler(srv)

@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import { authedFetch, authEnabled } from "./auth";
+import { authedFetch, authEnabled } from "@lantern/bridge-core/auth";
 
 /**
  * Attention verdict returned by {@link AttentionClassifier.classify}.
