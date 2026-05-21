@@ -103,8 +103,16 @@ func prefetchInboxConcierge(
 	// blocking the run.
 	fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	// Filters: -category:promotions -category:social drops marketing/
+	// social noise. -from:me + -label:lantern drop the user's own sent
+	// mail (sometimes appears unread on first sync) AND Lantern's own
+	// status mirror mail (which lands in inbox until the user grants
+	// gmail.modify scope, otherwise the label/skip-inbox is a no-op).
+	// Without these two, the prefetch was returning 5 lantern-self
+	// emails as the "unread" set and the model concluded "nothing real
+	// to reply to".
 	res, err := executeConnectorAction(fctx, pool, tenantID, "gmail", "search", map[string]any{
-		"query": "is:unread newer_than:1d -category:promotions -category:social",
+		"query": "is:unread newer_than:1d -category:promotions -category:social -from:me -label:lantern",
 		"limit": 25,
 	})
 	var b strings.Builder
@@ -229,16 +237,12 @@ func prefetchMorningBrief(
 // down into 3 bullets and we want it to have the raw signal to pick from.
 
 func formatGitHubIssues(raw any) string {
-	// GitHub /issues returns []map[string]any
-	arr, _ := raw.([]any)
+	// GitHub /issues returns []map[string]any in-process or []any via JSON.
+	// normalizeAnyList accepts both — see comment on that helper.
+	arr := normalizeAnyList(raw)
 	if len(arr) == 0 {
-		// The doJSONRequest helper returns map[string]any for top-level objects.
-		// For /issues the API actually returns an array, but if our helper
-		// re-shaped it as {"data": [...]}, peek at that too.
 		if m, ok := raw.(map[string]any); ok {
-			if d, ok := m["data"].([]any); ok {
-				arr = d
-			}
+			arr = normalizeAnyList(m["data"])
 		}
 	}
 	if len(arr) == 0 {
@@ -288,7 +292,7 @@ func formatLinearIssues(raw any) string {
 	if issues == nil {
 		return ""
 	}
-	nodes, _ := issues["nodes"].([]any)
+	nodes := normalizeAnyList(issues["nodes"])
 	if len(nodes) == 0 {
 		return ""
 	}
@@ -323,15 +327,16 @@ func formatLinearIssues(raw any) string {
 
 func formatGmailMessages(raw any) string {
 	// Gmail search returns map with 'messages' (or just a list).
-	var msgs []any
-	if m, ok := raw.(map[string]any); ok {
-		if mm, ok := m["messages"].([]any); ok {
-			msgs = mm
-		}
-	}
+	// The connector returns []map[string]any from searchGmailViaAPI
+	// when called in-process; JSON marshalling converts that to []any
+	// over the HTTP boundary. We accept both — silently dropping the
+	// typed-slice case caused prefetched Gmail data to look empty to
+	// the model (it would say "no unread emails" even when 9 were
+	// present). normalizeAnyList is the workhorse.
+	msgs := normalizeAnyList(raw)
 	if msgs == nil {
-		if arr, ok := raw.([]any); ok {
-			msgs = arr
+		if m, ok := raw.(map[string]any); ok {
+			msgs = normalizeAnyList(m["messages"])
 		}
 	}
 	if len(msgs) == 0 {
@@ -344,9 +349,7 @@ func formatGmailMessages(raw any) string {
 			break
 		}
 		m, _ := v.(map[string]any)
-		from, _ := m["from"].(string)
-		subject, _ := m["subject"].(string)
-		snippet, _ := m["snippet"].(string)
+		from, subject, snippet := extractGmailFields(m)
 		// Some Gmail responses only carry message IDs; degrade gracefully.
 		if from == "" && subject == "" {
 			if id, ok := m["id"].(string); ok {
@@ -369,21 +372,84 @@ func formatGmailMessages(raw any) string {
 	return b.String()
 }
 
+// normalizeAnyList accepts a value that could be:
+//   - []any (post-JSON shape)
+//   - []map[string]any (raw Go shape from in-process connector calls)
+//   - any other typed slice — converted via reflection-free best-effort
+// and returns it as []any. Returns nil if the input isn't a list shape.
+// This is necessary because Go's type assertion `x.([]any)` fails on a
+// `[]map[string]any` value even though every element is convertible to
+// `any` — the slice headers are different types in the runtime.
+func normalizeAnyList(v any) []any {
+	if v == nil {
+		return nil
+	}
+	if a, ok := v.([]any); ok {
+		return a
+	}
+	if a, ok := v.([]map[string]any); ok {
+		out := make([]any, len(a))
+		for i, m := range a {
+			out[i] = m
+		}
+		return out
+	}
+	return nil
+}
+
+// extractGmailFields returns (from, subject, snippet) from a Gmail
+// message map. Handles both shapes the connector produces:
+//   1. Flat (IMAP path): {"from": "...", "subject": "...", "snippet": "..."}
+//   2. Nested (OAuth API path): {"payload":{"headers":[{"name":"From","value":"..."}, ...]}, "snippet":"..."}
+// Without this, OAuth-mode runs printed bare message IDs and the
+// model concluded "nothing real to reply to".
+func extractGmailFields(m map[string]any) (from, subject, snippet string) {
+	from, _ = m["from"].(string)
+	subject, _ = m["subject"].(string)
+	snippet, _ = m["snippet"].(string)
+	if from != "" || subject != "" {
+		return
+	}
+	// Fall through to nested payload.headers.
+	payload, _ := m["payload"].(map[string]any)
+	if payload == nil {
+		return
+	}
+	headers, _ := payload["headers"].([]any)
+	for _, h := range headers {
+		hm, _ := h.(map[string]any)
+		if hm == nil {
+			continue
+		}
+		name, _ := hm["name"].(string)
+		value, _ := hm["value"].(string)
+		switch strings.ToLower(name) {
+		case "from":
+			if from == "" {
+				from = value
+			}
+		case "subject":
+			if subject == "" {
+				subject = value
+			}
+		}
+	}
+	return
+}
+
 func formatCalendarEvents(raw any) string {
-	// google-calendar list_events returns map with 'items' (Google API shape)
+	// google-calendar list_events returns map with 'items' (Google API shape).
+	// normalizeAnyList accepts both []any and []map[string]any.
 	var items []any
 	if m, ok := raw.(map[string]any); ok {
-		if it, ok := m["items"].([]any); ok {
+		if it := normalizeAnyList(m["items"]); it != nil {
 			items = it
-		}
-		if it, ok := m["events"].([]any); ok {
+		} else if it := normalizeAnyList(m["events"]); it != nil {
 			items = it
 		}
 	}
 	if items == nil {
-		if arr, ok := raw.([]any); ok {
-			items = arr
-		}
+		items = normalizeAnyList(raw)
 	}
 	if len(items) == 0 {
 		return ""

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+LaunchAgent for the Lantern iMessage bridge (macOS only). Mirrors the
+WhatsApp plist. The bridge requires Full Disk Access AND Automation
+permission for the launchd-spawned process — see scripts/launchd/
+README.md for the permission walkthrough.
+
+To unload:  launchctl unload ~/Library/LaunchAgents/dev.lantern.imessage-bridge.plist
+To inspect: launchctl list | grep lantern
+Logs:       ~/Library/Logs/Lantern/imessage-bridge.{out,err}.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.lantern.imessage-bridge</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__REPO_ROOT__/services/imessage-bridge/node_modules/.bin/tsx</string>
+    <string>__REPO_ROOT__/services/imessage-bridge/src/index.ts</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO_ROOT__/services/imessage-bridge</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/Lantern/imessage-bridge.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/Lantern/imessage-bridge.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>LANTERN_API_URL</key>
+    <string>http://localhost:8080</string>
+    <key>LANTERN_IMESSAGE_BRIDGE_PORT</key>
+    <string>3200</string>
+    <key>LANTERN_IMESSAGE_AUTOSTART</key>
+    <string>1</string>
+    <key>LOG_LEVEL</key>
+    <string>info</string>
+  </dict>
+</dict>
+</plist>

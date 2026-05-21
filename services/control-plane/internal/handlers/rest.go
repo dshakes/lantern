@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -1033,6 +1034,176 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 			}
 		}()
 	}
+
+	// 6. WhatsApp delivery — when the template declares "whatsapp" as a
+	// delivery surface (inbox-concierge, morning-brief), push the
+	// agent's output to the user's WhatsApp self-chat via the bridge.
+	// This is what the user expected when the template description
+	// says "texts a 3-bucket summary to your WhatsApp". Fire-and-
+	// forget so a bridge outage doesn't fail the run — the result is
+	// already saved + visible in the dashboard, plus the bridge's
+	// send-self path mirrors to email/telegram as backup channels.
+	if shouldDeliverToWhatsApp(resolvedTemplateID) && result != "" {
+		go func() {
+			logStep("deliver_whatsapp", "running", "Sending summary to your WhatsApp")
+			if err := h.deliverWhatsAppSelf(tenantID, result); err != nil {
+				logStep("deliver_whatsapp", "failed", fmt.Sprintf("WhatsApp delivery failed: %v", err))
+				h.logger().Warn("whatsapp delivery failed",
+					zap.String("run_id", runID),
+					zap.String("template", resolvedTemplateID),
+					zap.Error(err),
+				)
+				return
+			}
+			logStep("deliver_whatsapp", "completed", "Delivered to WhatsApp")
+			h.logger().Info("whatsapp delivered",
+				zap.String("run_id", runID),
+				zap.String("template", resolvedTemplateID),
+			)
+		}()
+	}
+}
+
+// shouldDeliverToWhatsApp returns true if the named template declares
+// "whatsapp" as a delivery surface in its templateDef. Unknown templates
+// (including user-built agents with no template_id) are NOT auto-
+// delivered — that would surprise users who didn't opt in.
+func shouldDeliverToWhatsApp(templateID string) bool {
+	if templateID == "" {
+		return false
+	}
+	tpl, ok := templates[templateID]
+	if !ok {
+		return false
+	}
+	for _, s := range tpl.Surfaces {
+		if strings.EqualFold(s, "whatsapp") {
+			return true
+		}
+	}
+	return false
+}
+
+// deliverViaBridge POSTs to whichever bridge (WhatsApp or iMessage)
+// queued the draft so the approved/edited text goes out on the right
+// channel. Channel string is "whatsapp" | "imessage"; falls back to
+// WhatsApp for back-compat with drafts that pre-date the channel column.
+func deliverViaBridge(channel, tenantID, jid, message string) error {
+	var base string
+	switch channel {
+	case "imessage":
+		base = os.Getenv("LANTERN_IMESSAGE_BRIDGE_URL")
+		if base == "" {
+			base = "http://localhost:3200"
+		}
+	default:
+		base = os.Getenv("LANTERN_BRIDGE_URL")
+		if base == "" {
+			base = "http://localhost:3100"
+		}
+	}
+	base = strings.TrimRight(base, "/")
+
+	// iMessage uses 'to' as a handle (phone/email); WhatsApp uses JID.
+	// Both bridges accept the same {to, message} shape on /send.
+	payload, _ := json.Marshal(map[string]string{"to": jid, "message": message})
+	req, err := http.NewRequest("POST",
+		fmt.Sprintf("%s/session/%s/send", base, tenantID),
+		bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	tokenEnv := "LANTERN_BRIDGE_TOKEN"
+	if channel == "imessage" {
+		tokenEnv = "LANTERN_IMESSAGE_BRIDGE_TOKEN"
+	}
+	if tok := os.Getenv(tokenEnv); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("bridge unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("bridge returned %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// deliverWhatsAppViaBridge — back-compat wrapper. Existing call sites
+// (if any remain) hit this; new code uses deliverViaBridge(channel, ...).
+func deliverWhatsAppViaBridge(tenantID, jid, message string) error {
+	base := os.Getenv("LANTERN_BRIDGE_URL")
+	if base == "" {
+		base = "http://localhost:3100"
+	}
+	base = strings.TrimRight(base, "/")
+	payload, _ := json.Marshal(map[string]string{"to": jid, "message": message})
+	req, err := http.NewRequest(
+		"POST",
+		fmt.Sprintf("%s/session/%s/send", base, tenantID),
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if tok := os.Getenv("LANTERN_BRIDGE_TOKEN"); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("bridge unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("bridge returned %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// deliverWhatsAppSelf POSTs the message to the bridge's send-self
+// endpoint, which routes to the bridge owner's own WhatsApp self-chat.
+// Bridge URL + optional shared token come from env (LANTERN_BRIDGE_URL,
+// LANTERN_BRIDGE_TOKEN). Defaults to localhost:3100 for dev.
+func (h *RESTHandler) deliverWhatsAppSelf(tenantID, message string) error {
+	base := os.Getenv("LANTERN_BRIDGE_URL")
+	if base == "" {
+		base = "http://localhost:3100"
+	}
+	base = strings.TrimRight(base, "/")
+
+	payload, _ := json.Marshal(map[string]string{"message": message})
+	req, err := http.NewRequest(
+		"POST",
+		fmt.Sprintf("%s/session/%s/send-self", base, tenantID),
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if tok := os.Getenv("LANTERN_BRIDGE_TOKEN"); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("bridge unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("bridge returned %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 // runWorkflowIfPresent loads agents.workflow for the given agent and, if a

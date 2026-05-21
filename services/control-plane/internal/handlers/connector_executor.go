@@ -316,6 +316,23 @@ func intParam(params map[string]any, key string, defaultVal int) int {
 	return defaultVal
 }
 
+// boolParam extracts a bool from the params map. Accepts bool, string
+// ("true"/"false"/"1"/"0"), and JSON number (non-zero = true). Returns
+// defaultVal when the key is missing or unparseable.
+func boolParam(params map[string]any, key string, defaultVal bool) bool {
+	switch v := params[key].(type) {
+	case bool:
+		return v
+	case string:
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	case float64:
+		return v != 0
+	}
+	return defaultVal
+}
+
 // ---------------------------------------------------------------------------
 // Gmail
 // ---------------------------------------------------------------------------
@@ -378,11 +395,17 @@ func executeGmail(config map[string]any, action string, params map[string]any) (
 		to := stringParam(params, "to")
 		subject := stringParam(params, "subject")
 		body := stringParam(params, "body")
+		// Optional: tag the outgoing message with a Gmail label so the
+		// recipient (who is usually `me`) can filter status-mail out of
+		// the main inbox. Pass `skipInbox: true` to also strip the INBOX
+		// label so the message bypasses the inbox entirely.
+		label := stringParam(params, "label")
+		skipInbox := boolParam(params, "skipInbox", false)
 		if to == "" || subject == "" {
 			return nil, fmt.Errorf("'to' and 'subject' parameters are required")
 		}
 		if accessToken != "" {
-			return sendGmailViaAPI(accessToken, to, subject, body)
+			return sendGmailViaAPI(accessToken, to, subject, body, label, skipInbox)
 		}
 		return nil, fmt.Errorf("send_message requires an OAuth access token")
 
@@ -420,9 +443,15 @@ func executeGmail(config map[string]any, action string, params map[string]any) (
 	}
 }
 
-func sendGmailViaAPI(accessToken, to, subject, body string) (any, error) {
-	// Build RFC 2822 message.
-	msg := fmt.Sprintf("To: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s", to, subject, body)
+func sendGmailViaAPI(accessToken, to, subject, body, label string, skipInbox bool) (any, error) {
+	// Build RFC 2822 message. Subjects with non-ASCII bytes MUST be
+	// encoded as RFC 2047 encoded-words or Gmail's web view shows
+	// mojibake (the raw UTF-8 bytes get re-interpreted as Latin-1).
+	encodedSubject := encodeMimeHeader(subject)
+	msg := fmt.Sprintf(
+		"To: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n%s",
+		to, encodedSubject, body,
+	)
 	raw := base64.URLEncoding.EncodeToString([]byte(msg))
 
 	payload, _ := json.Marshal(map[string]string{"raw": raw})
@@ -435,7 +464,116 @@ func sendGmailViaAPI(accessToken, to, subject, body string) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Gmail send failed: %w", err)
 	}
+
+	// Best-effort label application. Failures here don't fail the send
+	// — the user's mail still went out, they just won't see the
+	// label/filter. Log via error return only if the send itself failed.
+	if label != "" || skipInbox {
+		msgID, _ := result["id"].(string)
+		if msgID != "" {
+			if err := applyGmailLabel(accessToken, msgID, label, skipInbox); err != nil {
+				// Surface the label error in the response so callers can
+				// log it, but don't fail the whole send.
+				result["labelWarning"] = err.Error()
+			}
+		}
+	}
 	return result, nil
+}
+
+// encodeMimeHeader returns the value as an RFC 2047 encoded-word if it
+// contains any non-ASCII bytes; otherwise it returns the string as-is.
+// `=?UTF-8?B?<base64>?=` works in every modern mail client and avoids
+// the Latin-1 mojibake Gmail's web view exhibits when raw UTF-8 lands
+// in a header.
+func encodeMimeHeader(s string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] > 0x7F {
+			return "=?UTF-8?B?" + base64.StdEncoding.EncodeToString([]byte(s)) + "?="
+		}
+	}
+	return s
+}
+
+// applyGmailLabel finds-or-creates the named label, then modifies the
+// sent message to add it (and optionally strip INBOX so the message
+// skips the inbox entirely).
+func applyGmailLabel(accessToken, msgID, labelName string, skipInbox bool) error {
+	headers := map[string]string{
+		"Authorization": "Bearer " + accessToken,
+		"Content-Type":  "application/json",
+	}
+
+	addLabels := []string{}
+	if labelName != "" {
+		labelID, err := findOrCreateGmailLabel(accessToken, labelName)
+		if err != nil {
+			return fmt.Errorf("label lookup failed: %w", err)
+		}
+		addLabels = append(addLabels, labelID)
+	}
+
+	mod := map[string]any{}
+	if len(addLabels) > 0 {
+		mod["addLabelIds"] = addLabels
+	}
+	if skipInbox {
+		mod["removeLabelIds"] = []string{"INBOX"}
+	}
+	if len(mod) == 0 {
+		return nil
+	}
+
+	payload, _ := json.Marshal(mod)
+	modURL := fmt.Sprintf("https://gmail.googleapis.com/gmail/v1/users/me/messages/%s/modify", msgID)
+	if _, err := doJSONRequest("POST", modURL, headers, bytes.NewReader(payload)); err != nil {
+		return fmt.Errorf("messages.modify failed: %w", err)
+	}
+	return nil
+}
+
+func findOrCreateGmailLabel(accessToken, name string) (string, error) {
+	headers := map[string]string{
+		"Authorization": "Bearer " + accessToken,
+		"Content-Type":  "application/json",
+	}
+
+	// 1. List existing labels and look for a case-insensitive name match.
+	result, err := doJSONRequest("GET", "https://gmail.googleapis.com/gmail/v1/users/me/labels", headers, nil)
+	if err != nil {
+		return "", fmt.Errorf("labels.list failed: %w", err)
+	}
+	if labels, ok := result["labels"].([]any); ok {
+		for _, l := range labels {
+			lm, ok := l.(map[string]any)
+			if !ok {
+				continue
+			}
+			lname, _ := lm["name"].(string)
+			if strings.EqualFold(lname, name) {
+				if id, _ := lm["id"].(string); id != "" {
+					return id, nil
+				}
+			}
+		}
+	}
+
+	// 2. Not found — create it.
+	create := map[string]any{
+		"name":                  name,
+		"messageListVisibility": "show",
+		"labelListVisibility":   "labelShow",
+	}
+	payload, _ := json.Marshal(create)
+	created, err := doJSONRequest("POST", "https://gmail.googleapis.com/gmail/v1/users/me/labels", headers, bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("labels.create failed: %w", err)
+	}
+	id, _ := created["id"].(string)
+	if id == "" {
+		return "", fmt.Errorf("labels.create returned no id")
+	}
+	return id, nil
 }
 
 func searchGmailViaAPI(accessToken, query string, limit int) (any, error) {

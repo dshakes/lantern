@@ -1,7 +1,16 @@
-// Shared types for the WhatsApp bridge. Extracted from
-// components/whatsapp-pairing.tsx so the new /personal product surface
-// can consume the same shapes without dragging the whole 1800-line
-// component along for the ride.
+// Shared types for the personal-assistant bridges (WhatsApp + iMessage).
+// Originally extracted from components/whatsapp-pairing.tsx; iMessage
+// reuses 95% of the shape so the dashboard pages can be channel-agnostic.
+
+// Which personal-assistant channel the user is currently looking at.
+// Persisted to localStorage so deep links work + tab survives reload.
+export type BridgeChannel = "whatsapp" | "imessage";
+
+export const BRIDGE_CHANNELS: BridgeChannel[] = ["whatsapp", "imessage"];
+
+export function isBridgeChannel(s: string): s is BridgeChannel {
+  return s === "whatsapp" || s === "imessage";
+}
 //
 // Source of truth for ConnectionState is the bridge's session.ts. Two
 // extra states sit out front of the wire ones, owned by the dashboard:

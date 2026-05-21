@@ -63,6 +63,9 @@ __pycache__/
 
 # WhatsApp bridge runtime state (contains session keys)
 services/whatsapp-bridge/auth_sessions/
+services/whatsapp-bridge/bridge_state/
+services/imessage-bridge/bridge_state/
+services/imessage-bridge/node_modules/
 
 # Local Claude Code overrides
 .claude/settings.local.json

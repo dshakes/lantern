@@ -44,6 +44,7 @@ var (
 	tagAPI      = procTag{"api  ", "\033[35m"} // magenta
 	tagWeb      = procTag{"web  ", "\033[32m"} // green
 	tagWA       = procTag{"wa   ", "\033[33m"} // yellow
+	tagIM       = procTag{"im   ", "\033[34m"} // blue (iMessage)
 	resetColor  = "\033[0m"
 	noColorMode = false
 )
@@ -66,6 +67,7 @@ func newDevCommand() *cobra.Command {
 	var (
 		infraOnly   bool
 		withWA      bool
+		withIM      bool
 		noOpen      bool
 		dashPort    int
 		apiPort     int
@@ -90,6 +92,7 @@ Defaults:
 			return runDev(devOpts{
 				infraOnly: infraOnly,
 				withWA:    withWA,
+				withIM:    withIM,
 				openURL:   !noOpen,
 				dashPort:  dashPort,
 				apiPort:   apiPort,
@@ -99,6 +102,7 @@ Defaults:
 
 	cmd.Flags().BoolVar(&infraOnly, "infra-only", false, "Only start infra containers (Postgres/Redis/MinIO)")
 	cmd.Flags().BoolVar(&withWA, "with-whatsapp", true, "Start the WhatsApp bridge alongside")
+	cmd.Flags().BoolVar(&withIM, "with-imessage", true, "Start the iMessage bridge alongside (macOS only — auto-skipped elsewhere)")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "Don't auto-open the browser")
 	cmd.Flags().IntVar(&dashPort, "dashboard-port", 3001, "Port for the dashboard dev server")
 	cmd.Flags().IntVar(&apiPort, "api-port", 8080, "Port the control-plane HTTP API binds")
@@ -111,6 +115,7 @@ Defaults:
 type devOpts struct {
 	infraOnly bool
 	withWA    bool
+	withIM    bool
 	openURL   bool
 	dashPort  int
 	apiPort   int
@@ -202,6 +207,21 @@ func runDev(opts devOpts) error {
 		}
 	}
 
+	// ---- 5) iMessage bridge (macOS only).
+	if opts.withIM && runtime.GOOS == "darwin" {
+		imCmd := makeProc(ctx, repoRoot, tagIM, "npm", "run", "dev")
+		imCmd.Dir = filepath.Join(repoRoot, "services", "imessage-bridge")
+		imCmd.Env = append(os.Environ(),
+			fmt.Sprintf("LANTERN_API_URL=http://localhost:%d", opts.apiPort),
+		)
+		if err := startProc(&wg, imCmd, tagIM); err != nil {
+			fmt.Fprintln(os.Stderr, tag(tagIM, fmt.Sprintf("could not start iMessage bridge: %v", err)))
+			// Non-fatal — dev can continue without it.
+		}
+	} else if opts.withIM && runtime.GOOS != "darwin" {
+		fmt.Fprintln(os.Stderr, tag(tagIM, "iMessage bridge requires macOS — skipping"))
+	}
+
 	// ---- 5) Wait for the API + dashboard to be healthy, then open the browser.
 	apiURL := fmt.Sprintf("http://localhost:%d", opts.apiPort)
 	dashURL := fmt.Sprintf("http://localhost:%d", opts.dashPort)
@@ -221,6 +241,9 @@ func runDev(opts devOpts) error {
 		fmt.Fprintln(os.Stderr, tag(tagInfra, "  API:       "+apiURL))
 		if opts.withWA {
 			fmt.Fprintln(os.Stderr, tag(tagInfra, "  WhatsApp:  http://localhost:3100"))
+		}
+		if opts.withIM && runtime.GOOS == "darwin" {
+			fmt.Fprintln(os.Stderr, tag(tagInfra, "  iMessage:  http://localhost:3200"))
 		}
 		fmt.Fprintln(os.Stderr, tag(tagInfra, "  Login:     admin@lantern.dev / lantern"))
 		fmt.Fprintln(os.Stderr, tag(tagInfra, "──────────────────────────────────────────"))

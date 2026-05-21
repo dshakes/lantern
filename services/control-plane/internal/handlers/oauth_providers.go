@@ -26,9 +26,14 @@ var oauthProviders = map[string]OAuthProvider{
 		RedirectPath: "/v1/connectors/oauth/callback",
 	},
 	"gmail": {
-		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
-		TokenURL:     "https://oauth2.googleapis.com/token",
-		Scopes:       []string{"https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.labels"},
+		AuthURL:  "https://accounts.google.com/o/oauth2/v2/auth",
+		TokenURL: "https://oauth2.googleapis.com/token",
+		// gmail.modify covers send + read + labels.modify + messages.modify
+		// (needed so we can apply labels to outgoing mail and strip INBOX
+		// for status messages so they don't dilute the user's inbox).
+		// gmail.send + gmail.labels alone are insufficient — gmail.labels
+		// lets you CRUD label definitions but not apply them to messages.
+		Scopes:       []string{"https://www.googleapis.com/auth/gmail.modify"},
 		RedirectPath: "/v1/connectors/oauth/callback",
 	},
 	"google-calendar": {

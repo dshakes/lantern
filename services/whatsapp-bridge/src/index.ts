@@ -37,7 +37,7 @@ const logger = pino({ level: process.env.LOG_LEVEL || "info" });
 // Initialize bridge → control-plane auth. Lazily logs in on first use
 // (using LANTERN_BRIDGE_EMAIL / PASSWORD, defaults to admin@lantern.dev
 // for dev). Survives JWT expiry + API restarts via auto-relogin on 401.
-import { initAuth, authEnabled } from "./auth.js";
+import { initAuth, authEnabled } from "@lantern/bridge-core/auth";
 initAuth(logger);
 
 // Resolve the bridge's package version once at boot so /diagnostics can
@@ -396,6 +396,29 @@ app.post("/session/:tenantId/send", async (req, res) => {
   try {
     await session.sendMessage(to, message);
     res.json({ status: "sent" });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Send a message to the bridge owner's own WhatsApp self-chat. Used
+// by the control-plane to deliver agent output (Morning Brief,
+// inbox-concierge summary, etc.) directly to the user's phone without
+// the control-plane needing to know the owner JID.
+app.post("/session/:tenantId/send-self", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session || !session.isConnected()) {
+    res.status(400).json({ error: "Not connected" });
+    return;
+  }
+  const { message } = req.body as { message?: unknown };
+  if (typeof message !== "string" || message.length === 0 || message.length > 4096) {
+    res.status(400).json({ error: "'message' must be a non-empty string (<=4096 chars)" });
+    return;
+  }
+  try {
+    const ownJid = await session.sendSelf(message);
+    res.json({ status: "sent", jid: ownJid });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

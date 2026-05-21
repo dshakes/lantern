@@ -1,0 +1,27 @@
+{
+  "name": "@lantern/bridge-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./natural": "./src/natural.ts",
+    "./auth": "./src/auth.ts",
+    "./agent": "./src/agent.ts",
+    "./personal": "./src/personal.ts",
+    "./calendar": "./src/calendar.ts",
+    "./nl-commands": "./src/nl-commands.ts",
+    "./email-mirror": "./src/email-mirror.ts",
+    "./command-executor": "./src/command-executor.ts",
+    "./reaction-commands": "./src/reaction-commands.ts",
+    "./voice-commands": "./src/voice-commands.ts",
+    "./daily-digest": "./src/daily-digest.ts"
+  },
+  "dependencies": {
+    "pino": "^9.14.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

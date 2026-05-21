@@ -50,8 +50,12 @@ export default function DashboardLayout({
           {/* Left: Breadcrumbs */}
           <Breadcrumbs />
 
-          {/* Right: Search hint, Notifications, User avatar */}
-          <div className="flex items-center gap-2">
+          {/* Right: Search hint, Notifications, User avatar.
+              `ml-auto` keeps this pinned to the right even when
+              Breadcrumbs returns null (single-segment routes like
+              /personal). Without it, `justify-between` with only one
+              flex child collapses the group to the left. */}
+          <div className="ml-auto flex items-center gap-2">
             {/* Search shortcut hint */}
             <button
               onClick={() => {

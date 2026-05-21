@@ -1,0 +1,256 @@
+// Read-only access to macOS Messages.app's SQLite database.
+//
+// The file at ~/Library/Messages/chat.db is where Messages.app stores
+// every conversation. We open it read-only and poll for new rows in
+// the `message` table since our last seen rowid. This is the standard
+// pattern every iMessage automation tool uses (mautrix-imessage,
+// BlueBubbles, etc.) — it's stable across macOS versions and doesn't
+// require any private APIs.
+//
+// Permission requirements (one-time, on the macOS host running this):
+//   System Settings → Privacy & Security → Full Disk Access
+//   Add the binary that runs this service (your terminal app for dev,
+//   or the LaunchAgent .plist binary for prod).
+//
+// Without Full Disk Access, sqlite3 will fail to open chat.db with
+// SQLITE_AUTH or ENOENT — we surface that as a clear error so the user
+// knows what to fix.
+
+import Database from "better-sqlite3";
+import { homedir } from "os";
+import { join } from "path";
+import { existsSync } from "fs";
+import type { Logger } from "pino";
+
+export interface IMessageRow {
+  // Stable per-message identity. We track lastSeenRowid in memory and
+  // bump it as we read.
+  rowid: number;
+  // The text body. Newer macOS versions also store attributed text in
+  // `attributedBody` (a serialized Cocoa archive); for now we just
+  // read `text` which covers the vast majority of human-typed
+  // messages. Attributed-body decoding is in the future-work list.
+  text: string;
+  // Apple-epoch nanoseconds. Apple epoch is 2001-01-01 UTC, not Unix.
+  // Helper toUnixMs() converts.
+  date: number;
+  // True if the message was sent BY the user (outbound), false for
+  // inbound from a contact.
+  isFromMe: boolean;
+  // Contact handle — phone "+15551234567" or email — depending on
+  // how the conversation was started.
+  handle: string;
+  // Apple's GUID — useful for de-duping and for AppleScript
+  // operations that target a specific message.
+  guid: string;
+  // Group chat display name (if this is a group), else empty.
+  chatDisplayName: string;
+  // Service: "iMessage" or "SMS". We may want to surface SMS
+  // differently in the UI.
+  service: string;
+  // chat.ROWID — useful for identifying threads/groups.
+  chatRowid: number;
+  // True if the message references one or more attachments. We
+  // resolve them lazily via attachmentsFor(rowid) to avoid the join
+  // cost when the caller doesn't need media.
+  hasAttachments: boolean;
+}
+
+export interface Attachment {
+  rowid: number;
+  filename: string;  // absolute or ~-prefixed path to the file on disk
+  mimeType: string;
+  transferName: string;  // original filename as transmitted (good for video labels)
+  totalBytes: number;
+}
+
+const APPLE_EPOCH_OFFSET_MS = 978307200_000; // 2001-01-01 UTC in Unix ms
+
+export function appleNsToUnixMs(ns: number): number {
+  // chat.db uses nanoseconds-since-Apple-epoch in newer macOS, seconds
+  // in much older ones. We detect by magnitude — values > 1e15 are ns,
+  // smaller are seconds. (As of macOS Ventura, all writes are ns.)
+  if (ns > 1e15) {
+    return Math.round(ns / 1_000_000) + APPLE_EPOCH_OFFSET_MS;
+  }
+  return ns * 1000 + APPLE_EPOCH_OFFSET_MS;
+}
+
+export class ChatDB {
+  private db: Database.Database | null = null;
+  private path: string;
+  private logger: Logger;
+  private lastSeenRowid: number = 0;
+
+  constructor(logger: Logger, customPath?: string) {
+    this.logger = logger.child({ component: "chat-db" });
+    this.path = customPath ?? join(homedir(), "Library", "Messages", "chat.db");
+  }
+
+  // Returns true if the database is readable. The most common failure
+  // is missing Full Disk Access — we surface that explicitly.
+  open(): { ok: true } | { ok: false; reason: string } {
+    if (!existsSync(this.path)) {
+      return {
+        ok: false,
+        reason: `chat.db not found at ${this.path}. iMessage may not be set up on this macOS account.`,
+      };
+    }
+    try {
+      this.db = new Database(this.path, { readonly: true, fileMustExist: true });
+      // Tune for our read pattern — frequent polling, no writes.
+      this.db.pragma("journal_mode = WAL"); // safe for read-only opens
+      this.db.pragma("query_only = 1");
+      this.logger.info({ path: this.path }, "opened chat.db");
+      // Initialize the high-water-mark to the current max rowid so we
+      // don't spam the bridge with the user's entire message history
+      // on first boot.
+      const row = this.db
+        .prepare("SELECT COALESCE(MAX(ROWID), 0) AS max FROM message")
+        .get() as { max: number };
+      this.lastSeenRowid = row.max;
+      return { ok: true };
+    } catch (err) {
+      const msg = (err as Error).message;
+      // sqlite3's "authorization denied" or EACCES → no Full Disk Access
+      if (msg.includes("authorization") || msg.includes("EACCES") || msg.includes("permission denied")) {
+        return {
+          ok: false,
+          reason: `Permission denied reading chat.db. Grant Full Disk Access to the process running lantern-imessage-bridge: System Settings → Privacy & Security → Full Disk Access → add your terminal/launchd binary.`,
+        };
+      }
+      return { ok: false, reason: `Failed to open chat.db: ${msg}` };
+    }
+  }
+
+  close() {
+    this.db?.close();
+    this.db = null;
+  }
+
+  // Return all messages with ROWID > lastSeenRowid, then bump the high-
+  // water mark. This is the hot path called by the polling loop.
+  pollNewMessages(): IMessageRow[] {
+    if (!this.db) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT
+           m.ROWID                              AS rowid,
+           COALESCE(m.text, '')                 AS text,
+           m.date                               AS date,
+           m.is_from_me                         AS is_from_me,
+           m.guid                               AS guid,
+           COALESCE(h.id, '')                   AS handle,
+           m.service                            AS service,
+           m.cache_has_attachments              AS has_attachments,
+           c.ROWID                              AS chat_rowid,
+           COALESCE(c.display_name, '')         AS chat_display_name
+         FROM message m
+         LEFT JOIN handle h            ON m.handle_id = h.ROWID
+         LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         LEFT JOIN chat c              ON c.ROWID = cmj.chat_id
+         WHERE m.ROWID > ?
+         ORDER BY m.ROWID ASC
+         LIMIT 200`,
+      )
+      .all(this.lastSeenRowid) as Array<{
+      rowid: number;
+      text: string;
+      date: number;
+      is_from_me: number;
+      guid: string;
+      handle: string;
+      service: string;
+      has_attachments: number;
+      chat_rowid: number;
+      chat_display_name: string;
+    }>;
+
+    if (rows.length === 0) return [];
+    this.lastSeenRowid = rows[rows.length - 1].rowid;
+
+    return rows.map((r) => ({
+      rowid: r.rowid,
+      text: r.text,
+      date: r.date,
+      isFromMe: !!r.is_from_me,
+      handle: r.handle,
+      guid: r.guid,
+      service: r.service ?? "iMessage",
+      chatRowid: r.chat_rowid,
+      chatDisplayName: r.chat_display_name,
+      hasAttachments: !!r.has_attachments,
+    }));
+  }
+
+  // Look up attachments for a specific message. Called lazily when a
+  // poll row has hasAttachments=true — most messages don't, so we
+  // skip the join cost in the common case.
+  attachmentsFor(messageRowid: number): Attachment[] {
+    if (!this.db) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT
+           a.ROWID                       AS rowid,
+           COALESCE(a.filename, '')      AS filename,
+           COALESCE(a.mime_type, '')     AS mime_type,
+           COALESCE(a.transfer_name, '') AS transfer_name,
+           COALESCE(a.total_bytes, 0)    AS total_bytes
+         FROM message_attachment_join maj
+         JOIN attachment a ON a.ROWID = maj.attachment_id
+         WHERE maj.message_id = ?`,
+      )
+      .all(messageRowid) as Array<{
+      rowid: number;
+      filename: string;
+      mime_type: string;
+      transfer_name: string;
+      total_bytes: number;
+    }>;
+    return rows.map((r) => ({
+      rowid: r.rowid,
+      filename: r.filename,
+      mimeType: r.mime_type,
+      transferName: r.transfer_name,
+      totalBytes: r.total_bytes,
+    }));
+  }
+
+  // List all known chats so the dashboard can show a contact picker.
+  // Used by GET /session/:tid/chats.
+  listChats(): Array<{ rowid: number; displayName: string; chatIdentifier: string; participantCount: number }> {
+    if (!this.db) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT
+           c.ROWID                       AS rowid,
+           COALESCE(c.display_name, '')  AS display_name,
+           COALESCE(c.chat_identifier, '') AS chat_identifier,
+           (SELECT COUNT(*) FROM chat_handle_join chj WHERE chj.chat_id = c.ROWID) AS participant_count
+         FROM chat c
+         ORDER BY c.last_read_message_timestamp DESC
+         LIMIT 500`,
+      )
+      .all() as Array<{
+      rowid: number;
+      display_name: string;
+      chat_identifier: string;
+      participant_count: number;
+    }>;
+    return rows.map((r) => ({
+      rowid: r.rowid,
+      displayName: r.display_name,
+      chatIdentifier: r.chat_identifier,
+      participantCount: r.participant_count,
+    }));
+  }
+
+  // For surfacing to the dashboard health view.
+  diagnostics(): { path: string; lastSeenRowid: number; open: boolean } {
+    return {
+      path: this.path,
+      lastSeenRowid: this.lastSeenRowid,
+      open: this.db !== null,
+    };
+  }
+}

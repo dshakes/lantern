@@ -10,15 +10,26 @@ import * as QRCode from "qrcode";
 import { join } from "path";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "fs";
 import type { Logger } from "pino";
-import { AgentClient } from "./agent.js";
+import { AgentClient } from "@lantern/bridge-core/agent";
 import { AttentionClassifier } from "./attention.js";
-import { authedFetch } from "./auth.js";
+import { authedFetch } from "@lantern/bridge-core/auth";
+import { MediaHandler } from "./media.js";
+import { PersonalClient } from "@lantern/bridge-core/personal";
+import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
   agentPersonaPrompt,
+  defaultQuietHours,
+  detectEscalation,
   inferStyle,
+  isQuietHours,
   naturalize,
   shouldRespond,
-} from "./natural.js";
+} from "@lantern/bridge-core/natural";
+import { parseNLCommand, type ParsedCommand } from "@lantern/bridge-core/nl-commands";
+import { executeCommand } from "@lantern/bridge-core/command-executor";
+import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
+import { reactionToAction, dispatchReaction } from "@lantern/bridge-core/reaction-commands";
+import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
 import type { BotState } from "./types.js";
 
 // Display name for the bot-owner used in attention prompts and log lines.
@@ -115,6 +126,9 @@ export class WhatsAppSession {
   private logger: Logger;
   private agent: AgentClient;
   private attention: AttentionClassifier;
+  private media: MediaHandler;
+  private personal: PersonalClient;
+  private calendar: CalendarLookup;
   private socket: ReturnType<typeof makeWASocket> | null = null;
   private listeners: Set<WebSocket> = new Set();
   private currentQR: string | null = null;
@@ -194,8 +208,14 @@ export class WhatsAppSession {
     this.logger = logger.child({ tenant: tenantId });
     this.authDir = join(process.cwd(), "auth_sessions", tenantId);
     mkdirSync(this.authDir, { recursive: true });
-    this.agent = new AgentClient(this.logger, this.authDir);
+    this.agent = new AgentClient(this.logger, {
+      agentName: process.env.LANTERN_AGENT_NAME || "whatsapp-assistant",
+      sessionsFile: join(this.authDir, "agent_sessions.json"),
+    });
     this.attention = new AttentionClassifier(this.logger);
+    this.media = new MediaHandler(this.logger);
+    this.personal = new PersonalClient(this.logger);
+    this.calendar = new CalendarLookup(this.logger);
     // User preferences (monitored groups, paused contacts, mute) live
     // OUTSIDE auth_sessions/ so `reset()` (which wipes auth creds for
     // re-pair) doesn't also nuke the user's settings. Previously they
@@ -245,6 +265,7 @@ export class WhatsAppSession {
   // code, `error` includes the exception message).
   private setConnectionState(state: ConnectionState, reason?: string) {
     if (this.connectionState === state && !reason) return;
+    const prev = this.connectionState;
     this.connectionState = state;
     this.lastStateChangeAt = Date.now();
     if (reason) this.lastError = reason;
@@ -257,6 +278,101 @@ export class WhatsAppSession {
         reason: reason ?? null,
       },
     });
+    // Proactive alerts: fire email/telegram immediately when the bridge
+    // enters a terminal or actionable error state. Don't wait for the
+    // user to notice — the whole point of a 24/7 personal assistant is
+    // they shouldn't have to check on it. De-duped + actionable
+    // recovery hints inside the alert function itself.
+    this.maybeFireCriticalAlert(prev, state, reason);
+  }
+
+  // Per-state cooldowns so a flapping connection (reconnecting →
+  // conflict → reconnecting → conflict) doesn't send 20 alert emails.
+  // Same state within 5 minutes is suppressed.
+  private lastAlertAt: Map<ConnectionState, number> = new Map();
+  private static readonly ALERT_COOLDOWN_MS = 5 * 60_000;
+  private maybeFireCriticalAlert(
+    prev: ConnectionState,
+    next: ConnectionState,
+    reason: string | undefined,
+  ): void {
+    // States worth alerting on. Don't alert on transient states like
+    // 'reconnecting' / 'connecting' / 'qr_ready' — those are noisy and
+    // not actionable.
+    // 'bridge_offline' is a dashboard-only state (the dashboard can't
+    // reach the bridge over HTTP) — by definition the bridge can't fire
+    // an alert about itself being offline. That alert path lives in the
+    // dashboard's heartbeat probe.
+    const alertable: ConnectionState[] = [
+      "conflict",
+      "logged_out",
+      "error",
+    ];
+    if (!alertable.includes(next)) return;
+    if (prev === next) return; // no change → no new alert
+
+    const lastAt = this.lastAlertAt.get(next) ?? 0;
+    if (Date.now() - lastAt < WhatsAppSession.ALERT_COOLDOWN_MS) return;
+    this.lastAlertAt.set(next, Date.now());
+
+    // Map state → user-facing copy. Each carries a concrete recovery
+    // action so the alert is actually useful, not just 'something broke'.
+    const phone = this.phoneNumber ? `+${this.phoneNumber}` : "your account";
+    const msg = (() => {
+      switch (next) {
+        case "conflict":
+          return [
+            "⚠️ *Lantern alert: WhatsApp conflict*",
+            "",
+            `Another WhatsApp Web session is active for ${phone} and keeps stealing the bridge's slot. The bridge has stopped retrying.`,
+            "",
+            "*Recovery:*",
+            "1. On your phone: WhatsApp → Settings → Linked Devices",
+            "2. Log out every device in the list",
+            "3. Wait 60 seconds",
+            "4. Open the Lantern dashboard → Channels → WhatsApp → Pair with QR",
+            reason ? `\n_detail: ${reason}_` : "",
+          ].filter(Boolean).join("\n");
+        case "logged_out":
+          return [
+            "🚪 *Lantern alert: WhatsApp unlinked*",
+            "",
+            `Your phone unlinked the bridge from ${phone}. The bridge is no longer paired.`,
+            "",
+            "*Recovery:*",
+            "1. Dashboard → Channels → WhatsApp → Pair with QR",
+            "2. Scan with your phone",
+            reason ? `\n_detail: ${reason}_` : "",
+          ].filter(Boolean).join("\n");
+        case "error":
+          return [
+            "🔴 *Lantern alert: WhatsApp bridge error*",
+            "",
+            `The bridge hit an error and may not be receiving messages.`,
+            reason ? `\n_${reason}_\n` : "",
+            "*Try:* dashboard → Channels → WhatsApp → click Pair to reconnect. If it persists, check the bridge log at `/tmp/lantern-whatsapp-bridge.log`.",
+          ].filter(Boolean).join("\n");
+        default:
+          return null;
+      }
+    })();
+    if (!msg) return;
+
+    // Use the same mirror functions as normal status messages — they
+    // already handle env-var gating + fire-and-forget semantics. Alerts
+    // are tagged 'critical_alert' in the dashboard broadcast so the UI
+    // can render them distinctly.
+    this.broadcast({
+      type: "activity",
+      data: {
+        kind: "system",
+        summary: `Alert: bridge entered ${next}`,
+        detail: reason ?? undefined,
+        timestamp: Date.now(),
+      },
+    });
+    void this.mirrorToEmail(msg);
+    void this.mirrorToTelegram(msg);
   }
 
   // Structured activity event used by the dashboard's live feed. Every
@@ -368,6 +484,10 @@ export class WhatsAppSession {
             },
           });
           this.setConnectionState("connected");
+
+          // Start the daily morning digest scheduler. Sends a brief
+          // self-chat summary every morning at LANTERN_DIGEST_HOUR.
+          this.startDailyDigest();
 
           // Pre-warm group metadata so group session keys are initialized
           // BEFORE the first message arrives. Without this, the first
@@ -494,11 +614,120 @@ export class WhatsAppSession {
         for (const msg of m.messages) {
           const from = msg.key.remoteJid || "";
           if (!from) continue;
-          const text =
+
+          // Reaction commands. If the owner reacts to a message
+          // (typically a bot-sent reply) with a recognized emoji,
+          // we treat it as a command on that thread:
+          //   ⏸ / 🔇 → pause this contact
+          //   ▶️ / 🟢 → resume
+          //   📊 → status reply
+          //   ❤️ → mark contact as VIP
+          //   🗑 → forget contact
+          // Reactions arrive as a separate Baileys event with
+          // `reactionMessage.text` (the emoji) + key pointing to the
+          // reacted-to message. Only OWNER reactions count.
+          const reactionMsg = msg.message?.reactionMessage;
+          if (reactionMsg && msg.key.fromMe) {
+            const emoji = reactionMsg.text || "";
+            const action = reactionToAction(emoji);
+            if (action) {
+              const targetKeyId = reactionMsg.key?.id || undefined;
+              const onBotReply = !!(targetKeyId && this.bridgeSentIds.has(targetKeyId));
+              this.logger.info({ emoji, action, threadJid: from, onBotReply }, "reaction command");
+              void dispatchReaction(
+                { action, threadJid: from, onBotReply },
+                {
+                  pauseContact: (jid) => { this.pauseContact(jid, INDEFINITE_MS); },
+                  resumeContact: (jid) => { this.resumeContact(jid); },
+                  markVIP: async (jid) => {
+                    try {
+                      await authedFetch("/v1/whatsapp/vips", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ jid, displayName: this.contactNames.get(jid) ?? "" }),
+                      });
+                    } catch (err) {
+                      this.logger.warn({ err, jid }, "markVIP via reaction failed");
+                    }
+                  },
+                  forgetContact: (jid) => {
+                    this.resumeContact(jid);
+                    this.agent.clearHistory(jid);
+                  },
+                  sendStatus: async () => {
+                    await this.handleSelfChatCommand({ action: "status", echo: "status", explicit: true });
+                  },
+                  approveDraft: async () => { /* WhatsApp reaction-to-draft path is dashboard-only for now */ },
+                  discardDraft: async () => {},
+                  acknowledge: async (jid, ack) => {
+                    if (reactionMsg.key) await this.sendReaction(jid, reactionMsg.key, ack);
+                  },
+                },
+              );
+            }
+            continue; // reactions don't fall through to text processing
+          }
+
+          let text =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             "";
           const isGroup = this.isGroupJid(from);
+
+          // Voice command path: if the OWNER sent themselves a voice
+          // note that starts with "lantern, ..." we transcribe + parse
+          // + dispatch. Whisper round-trip is cheaper than an LLM
+          // round-trip and the wake-word guard prevents misfires.
+          if (msg.key.fromMe && !text && this.media.hasMedia(msg) && this.isSelfChat(from)) {
+            const annotation = await this.media.annotate(msg);
+            if (annotation.kind === "voice" && annotation.ok) {
+              const transcript = annotation.syntheticText.replace(/^\[voice note transcribed\]\s*/i, "");
+              const voiceCmd = parseVoiceCommand(transcript);
+              if (voiceCmd) {
+                this.logger.info({ transcript: transcript.slice(0, 80) }, "voice command detected");
+                this.broadcast({
+                  type: "activity",
+                  data: { kind: "system", summary: `🎙️ voice cmd: ${voiceCmd.action}`, detail: transcript.slice(0, 200), jid: from, timestamp: Date.now() },
+                });
+                await this.handleSelfChatCommand(voiceCmd);
+                continue;
+              }
+            }
+            // Non-command voice from owner self-chat — let it fall
+            // through; the bridge can still record it as exemplar etc.
+          }
+
+          // Media: voice notes → Whisper transcription; images → vision
+          // LLM description. Treat the resulting text as the inbound so
+          // the reply pipeline doesn't need to care about media.
+          // Skip for fromMe (already handled above) and for groups where
+          // we're not on the monitor list. Run async — we await the
+          // annotation before falling through to the rest of the
+          // pipeline so the LLM sees the synthetic text.
+          if (!msg.key.fromMe && !text && this.media.hasMedia(msg)) {
+            const annotation = await this.media.annotate(msg);
+            if (annotation.syntheticText) {
+              text = annotation.syntheticText;
+              // Broadcast a separate activity event so the dashboard
+              // shows "🎙️ voice note transcribed" / "📷 image saw …"
+              this.broadcast({
+                type: "activity",
+                data: {
+                  kind: "message_in",
+                  summary:
+                    annotation.kind === "voice"
+                      ? "voice note transcribed"
+                      : annotation.kind === "image"
+                        ? "image described"
+                        : `received ${annotation.kind}`,
+                  detail: annotation.syntheticText.slice(0, 200),
+                  jid: from,
+                  pushName: msg.pushName,
+                  timestamp: Date.now(),
+                },
+              });
+            }
+          }
 
           // Messages flagged fromMe include both:
           //   (a) replies the bridge itself just sent — echo back; skip.
@@ -580,7 +809,14 @@ export class WhatsAppSession {
             this.logger.info({ from }, "group message not addressed to owner");
             continue;
           }
-          this.handleAgentReply(from, text, { isGroup, senderName, msgKey: msg.key }).catch(
+          this.handleAgentReply(from, text, {
+            isGroup,
+            senderName,
+            msgKey: msg.key,
+            // Full proto message → so we can quote-reply in groups
+            // (real-human behavior in noisy threads).
+            quotedMsg: msg,
+          }).catch(
             (err) => this.logger.error({ err, from }, "agent reply failed")
           );
         }
@@ -593,14 +829,47 @@ export class WhatsAppSession {
     }
   }
 
-  async sendMessage(to: string, text: string) {
+  async sendMessage(
+    to: string,
+    text: string,
+    opts: {
+      // When set, the outgoing message becomes a WhatsApp reply that
+      // quotes this inbound message — exactly how a human would tap
+      // "reply" on an old message in a busy thread. Skip when null/
+      // undefined to send a normal message.
+      quoted?: import("baileys").proto.IWebMessageInfo;
+    } = {},
+  ) {
     if (!this.socket || !this.connected) {
       throw new Error("Not connected");
     }
     // Ensure the JID format is correct
     const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
-    const sent = await this.socket.sendMessage(jid, { text });
+    const sendOpts = opts.quoted ? { quoted: opts.quoted } : undefined;
+    const sent = await this.socket.sendMessage(jid, { text }, sendOpts);
     if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
+  }
+
+  // Send a message to the bridge owner's own WhatsApp self-chat. Used
+  // by the control-plane to deliver agent output (Morning Brief,
+  // inbox-concierge summary, etc.) to the user's phone. Also fires the
+  // email + telegram mirrors so the message reaches the user even when
+  // WhatsApp's Signal session is in stale-key purgatory. Returns the
+  // owner JID on success so the caller can journal it.
+  async sendSelf(text: string): Promise<string> {
+    const own = this.ownJid();
+    if (!own) throw new Error("not paired");
+    if (!this.socket || !this.connected) throw new Error("not connected");
+    if (typeof text !== "string" || text.length === 0) {
+      throw new Error("text required");
+    }
+    const sent = await this.socket.sendMessage(own, { text });
+    if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
+    // Mirror to email + telegram so the user still gets it if WA
+    // itself is degraded. mirrorToEmail is throttled per-text.
+    void this.mirrorToEmail(text);
+    void this.mirrorToTelegram(text);
+    return own;
   }
 
   /**
@@ -989,6 +1258,43 @@ export class WhatsAppSession {
     const self = this.isSelfChat(jid);
     const group = this.isGroupJid(jid);
 
+    // Natural-language command parsing. Two contexts:
+    //
+    //   - Self-chat: parse + dispatch ANY command (status, help,
+    //     pause, mute, resume, etc.) → global control.
+    //
+    //   - Contact thread (not group): parse for non-mute commands
+    //     (status, help, resume-all, ping, list-paused, list-chats).
+    //     For mute/unmute in a contact thread we DO NOT use the NL
+    //     path — those need the per-contact pause semantics below
+    //     ("/bot off" in a friend's thread pauses just that friend).
+    //
+    //   - Group: no NL parsing (group-scoped commands handled below).
+    if ((self || !group) && trimmed) {
+      const parsed = parseNLCommand(text);
+      if (parsed) {
+        // Mute/unmute in a non-self contact thread falls through to
+        // the per-contact logic. Everything else dispatches globally.
+        const globalActions = new Set(["status", "help", "ping", "list-paused", "list-chats", "resume-all"]);
+        if (self || globalActions.has(parsed.action)) {
+          // Instant reaction so the user sees their command was
+          // received even if WhatsApp self-chat delivery is lossy
+          // (Signal pre-key drift). Reaction is a different protocol
+          // path from regular messages and is more reliable.
+          const reactionFor: Record<string, string> = {
+            mute: "🔇", unmute: "🟢", status: "🟢", help: "💡",
+            ping: "🏓", "list-paused": "⏸", "list-chats": "👀",
+            "resume-all": "▶️",
+          };
+          const emoji = reactionFor[parsed.action] || "✅";
+          await this.sendReaction(jid, key, emoji);
+          await this.handleSelfChatCommand(parsed);
+          await this.deleteCommand(jid, key, self);
+          return;
+        }
+      }
+    }
+
     // Group-scoped: /bot monitor on|off opts a group in / out of the agent.
     if (group && trimmed === "/bot monitor on") {
       this.monitorGroup(jid);
@@ -1179,6 +1485,115 @@ export class WhatsAppSession {
     }
   }
 
+  // Auto-resume timer for time-bounded mutes (e.g. "pause for 2 hours").
+  // Replaced on every new time-bounded mute so the most recent wins.
+  private autoUnmuteTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Daily digest tracking — counts since the last digest fired.
+  // Counters reset inside the scheduler's collectData callback.
+  private repliesSentToday = 0;
+  private escalationsToday = 0;
+  private digestStopFn: (() => void) | null = null;
+
+  private startDailyDigest(): void {
+    this.digestStopFn?.();
+    const handle = scheduleDigest({
+      logger: this.logger,
+      cfg: defaultDigestConfig(),
+      collectData: () => {
+        const now = Date.now();
+        const pausedContacts = [...this.pausedUntil.entries()]
+          .filter(([, e]) => e.until > now)
+          .map(([j, e]) => ({
+            label: e.pushName || this.contactNames.get(j) || j.split("@")[0],
+            resumesAtMs: e.until,
+          }));
+        const data = {
+          repliesSent: this.repliesSentToday,
+          pausedContacts,
+          monitoredChats: this.monitoredGroups.size,
+          escalations: this.escalationsToday,
+          channelLabel: "WhatsApp",
+        };
+        this.repliesSentToday = 0;
+        this.escalationsToday = 0;
+        return data;
+      },
+      deliver: async (body) => {
+        await this.confirmToSelf(body);
+      },
+    });
+    this.digestStopFn = handle.stop;
+  }
+
+  // Dispatch a parsed NL command from self-chat through the shared
+  // executor. The bridge supplies WhatsApp-flavored callbacks (mute,
+  // unmute, status, list, etc.) — same shape iMessage uses, so future
+  // command additions need exactly one edit (in nl-commands.ts +
+  // command-executor.ts) and both channels pick them up.
+  private async handleSelfChatCommand(parsed: ParsedCommand): Promise<void> {
+    await executeCommand(parsed, {
+      channelLabel: "WhatsApp",
+      reply: async (text: string) => {
+        // confirmToSelf already broadcasts + mirrors via email/telegram.
+        await this.confirmToSelf(text);
+      },
+      mute: async (durationMs?: number) => {
+        this.setMuted(true);
+        if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
+        if (durationMs && durationMs > 0) {
+          this.autoUnmuteTimer = setTimeout(() => {
+            this.setMuted(false);
+            this.autoUnmuteTimer = null;
+            void this.confirmToSelf("✅ auto-resumed — i'm back online.");
+            this.logActivity("bot_on", "Auto-resumed after timed mute", { scope: "self" });
+          }, durationMs);
+        }
+        this.logActivity("bot_off", "Auto-reply turned off via NL command", { scope: "self" });
+      },
+      unmute: async () => {
+        this.setMuted(false);
+        if (this.autoUnmuteTimer) { clearTimeout(this.autoUnmuteTimer); this.autoUnmuteTimer = null; }
+        this.logActivity("bot_on", "Auto-reply turned on via NL command", { scope: "self" });
+      },
+      statusBody: () => {
+        const now = Date.now();
+        const pausedCount = [...this.pausedUntil.entries()].filter(([, e]) => e.until > now).length;
+        const phone = this.phoneNumber ? `+${this.phoneNumber}` : "(not paired)";
+        return [
+          `🟢 *Lantern WhatsApp*`,
+          `• bot: ${this.muted ? "off" : "on"}`,
+          `• paired: ${phone}`,
+          `• paused contacts: ${pausedCount}`,
+          `• monitored groups: ${this.monitoredGroups.size}`,
+          `• uptime: ${Math.round((now - this.startedAt) / 60_000)}m`,
+        ].join("\n");
+      },
+      listPaused: () => {
+        const now = Date.now();
+        const entries = [...this.pausedUntil.entries()].filter(([, e]) => e.until > now);
+        if (entries.length === 0) return "📭 nothing paused.";
+        return [
+          `⏸ paused contacts (${entries.length}):`,
+          ...entries.map(([j, e]) => `• ${e.pushName || j.split("@")[0]} — resumes in ${Math.round((e.until - now) / 60_000)}m`),
+        ].join("\n");
+      },
+      listChats: () => {
+        const ids = [...this.monitoredGroups];
+        if (ids.length === 0) {
+          return "🪙 no monitored groups. open /personal/groups in the dashboard to pick some.";
+        }
+        return [`👀 monitored groups (${ids.length}):`, ...ids.map((j) => `• ${j.split("@")[0]}`)].join("\n");
+      },
+      resumeAll: async () => {
+        const n = this.pausedUntil.size;
+        this.pausedUntil.clear();
+        this.saveState();
+        this.logActivity("bot_on", `Cleared ${n} per-contact pauses`, { scope: "self" });
+      },
+    });
+  }
+
   private async deleteCommand(
     jid: string,
     key: { id?: string | null; remoteJid?: string | null; fromMe?: boolean | null; participant?: string | null },
@@ -1252,6 +1667,40 @@ export class WhatsAppSession {
   private lastEmailedAt: Map<string, number> = new Map();
   private static readonly EMAIL_DEDUP_MS = 30_000;
   private static readonly EMAIL_MIN_LEN = 8;
+  // Label every Lantern mail with this so the user can filter all
+  // status messages out of their main inbox with one Gmail rule. The
+  // connector creates the label on first use. Together with
+  // `skipInbox: true` below, status mail lands directly under the
+  // label without touching INBOX.
+  private static readonly EMAIL_LABEL = "lantern";
+
+  // Sanitize a string for use in a mail Subject: header. Strips emoji,
+  // markdown asterisks/underscores, control chars and anything outside
+  // ASCII printable so Gmail's web view renders cleanly. Subjects with
+  // non-ASCII bytes get re-interpreted as Latin-1 by some clients,
+  // producing the `Ã,Â·` mojibake seen in screenshots. The backend
+  // also RFC-2047-encodes non-ASCII as a defense in depth, but
+  // stripping at the source keeps the inbox listing tidy too.
+  private sanitizeSubject(raw: string): string {
+    // 1. Drop everything past the first newline — subjects are one line.
+    let s = raw.split("\n", 1)[0];
+    // 2. Strip markdown bold/italic markers — they're noise in subjects.
+    s = s.replace(/[*_`~]+/g, "");
+    // 3. Strip emoji and any non-printable/non-ASCII byte. The Unicode
+    //    'Extended_Pictographic' class covers emoji; we also belt-and-
+    //    suspenders strip the whole supplementary-plane range.
+    s = s.replace(/\p{Extended_Pictographic}/gu, "");
+    s = s.replace(/[\u{1F000}-\u{1FFFF}]/gu, "");
+    s = s.replace(/[\u{2600}-\u{27BF}]/gu, ""); // misc symbols/dingbats
+    s = s.replace(/[\u{2300}-\u{23FF}]/gu, ""); // technical/misc tech
+    // 4. Replace non-ASCII bytes (e.g. `·` U+00B7) with a clean ASCII
+    //    dash so we don't lose structure.
+    s = s.replace(/[^\x20-\x7E]/g, "-");
+    // 5. Collapse runs of dashes/spaces and trim.
+    s = s.replace(/[-\s]{2,}/g, " ").replace(/^[-\s]+|[-\s]+$/g, "");
+    return s.slice(0, 100).trim();
+  }
+
   private async mirrorToEmail(text: string): Promise<void> {
     const to = process.env.LANTERN_OWNER_EMAIL;
     if (!to) return;
@@ -1260,18 +1709,30 @@ export class WhatsAppSession {
     if (lastAt && Date.now() - lastAt < WhatsAppSession.EMAIL_DEDUP_MS) return;
     this.lastEmailedAt.set(text, Date.now());
 
-    // First line of the message becomes the subject so the inbox
-    // preview is glanceable ("Lantern · 🟢 active"). Body keeps the
-    // full text + the same first-line subject for context.
-    const firstLine = text.split("\n", 1)[0].slice(0, 100).trim() || "Lantern status";
-    const subject = `Lantern · ${firstLine}`;
+    // First non-empty line becomes the subject, sanitized to ASCII so
+    // Gmail renders it without mojibake. The full text (with emoji +
+    // markdown intact) goes in the body — that part is rendered as
+    // UTF-8 plain-text which Gmail handles fine.
+    const firstLine = text.split("\n").find((l) => l.trim().length > 0) ?? "";
+    const cleaned = this.sanitizeSubject(firstLine) || "status";
+    const subject = `Lantern: ${cleaned}`;
     try {
       const res = await authedFetch(
         `/v1/connectors/gmail/execute?action=send_message`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to, subject, body: text }),
+          body: JSON.stringify({
+            to,
+            subject,
+            body: text,
+            // Connector creates this label on first use, then applies
+            // it to the sent message and strips INBOX so the user's
+            // main inbox stays clean. See connector_executor.go
+            // applyGmailLabel.
+            label: WhatsAppSession.EMAIL_LABEL,
+            skipInbox: true,
+          }),
         },
       );
       if (!res.ok) {
@@ -1280,6 +1741,25 @@ export class WhatsAppSession {
           { status: res.status, body: body.slice(0, 200) },
           "email mirror failed",
         );
+      } else {
+        // Backend swallows label-application failures so the send
+        // itself never fails — but it surfaces them in the response as
+        // `labelWarning`. Log that here so users notice when the OAuth
+        // token lacks gmail.modify (the scope needed to remove INBOX
+        // and apply the lantern label). Fix is to reconnect Gmail at
+        // /connectors so the new scope gets included.
+        try {
+          const json = (await res.clone().json()) as Record<string, any>;
+          const warn = json?.result?.labelWarning ?? json?.labelWarning;
+          if (warn) {
+            this.logger.warn(
+              { warn },
+              "email mirror sent but label/skip-inbox failed — reconnect Gmail at /connectors so the new OAuth scope (gmail.modify) is granted",
+            );
+          }
+        } catch {
+          // not fatal — labelWarning is best-effort
+        }
       }
     } catch (err) {
       this.logger.warn({ err }, "email mirror request errored");
@@ -1469,6 +1949,10 @@ export class WhatsAppSession {
         fromMe?: boolean | null;
         participant?: string | null;
       };
+      // Full Baileys IWebMessageInfo — used as `quoted` so the reply
+      // visually quotes the inbound in WhatsApp. Helpful in busy
+      // group threads.
+      quotedMsg?: import("baileys").proto.IWebMessageInfo;
     } = {}
   ) {
     if (!this.socket) return;
@@ -1495,6 +1979,64 @@ export class WhatsAppSession {
         },
       });
       return;
+    }
+
+    // Escalation guard: urgent/health/money/legal/emotional content MUST
+    // route to the human, not a bot. Skip auto-reply + DM the owner via
+    // the existing mirror channels so they see the heads-up immediately.
+    const escalation = detectEscalation(text);
+    if (escalation.escalate && !opts.isGroup) {
+      this.escalationsToday += 1;
+      const senderLabel = opts.senderName || from.split("@")[0];
+      const alertBody = [
+        `🚨 *Escalation: ${senderLabel}*`,
+        "",
+        `Reason: _${escalation.reason}_`,
+        "",
+        `> ${text.slice(0, 300)}`,
+        "",
+        "Auto-reply was suppressed — please respond yourself.",
+      ].join("\n");
+      void this.mirrorToEmail(alertBody);
+      void this.mirrorToTelegram(alertBody);
+      this.broadcast({
+        type: "activity",
+        data: {
+          kind: "attention_dm",
+          summary: `escalated to you: ${escalation.reason}`,
+          detail: text.slice(0, 200),
+          jid: from,
+          pushName: opts.senderName,
+          timestamp: Date.now(),
+        },
+      });
+      // Also pause auto-reply for this contact so a follow-up message
+      // doesn't get auto-replied to before the user has handled it.
+      this.pauseContact(from);
+      return;
+    }
+
+    // Quiet hours: skip auto-reply during sleeping hours so contacts
+    // don't see "you" replying at 3am — biggest bot-tell short of an
+    // instant typing indicator. The user gets the inbound notification
+    // on their phone like normal; the assistant just stays silent until
+    // morning. Group threads are exempt (groups already require the
+    // owner be @mentioned to trigger a reply).
+    if (!opts.isGroup) {
+      const qh = defaultQuietHours();
+      if (isQuietHours(new Date(), qh)) {
+        this.logger.info({ from, hour: new Date().getHours() }, "agent skipped — quiet hours");
+        this.broadcast({
+          type: "activity",
+          data: {
+            kind: "agent_skipped",
+            summary: "quiet hours — auto-reply paused",
+            jid: from,
+            timestamp: Date.now(),
+          },
+        });
+        return;
+      }
     }
 
     // Build the persona prompt from this contact's recent inbound style.
@@ -1539,7 +2081,7 @@ export class WhatsAppSession {
       ? []
       : this.ownerSentHistory.get(from) ?? [];
     const stylePrompt = await this.agent.getStylePrompt();
-    const systemHint = agentPersonaPrompt(
+    let systemHint = agentPersonaPrompt(
       ownerName,
       style,
       !!opts.isGroup,
@@ -1550,6 +2092,21 @@ export class WhatsAppSession {
       }
     );
 
+    // Inject durable contact facts ("her daughter is Maya", "works at
+    // Stripe") so the assistant doesn't cold-start each conversation.
+    // Empty string when no facts exist — zero overhead.
+    if (!opts.isGroup) {
+      const factsBlock = await this.personal.factsBlock(from);
+      if (factsBlock) systemHint += factsBlock;
+    }
+
+    // Calendar-aware availability: cheap keyword probe gates the
+    // calendar call so we don't fetch on every reply.
+    if (!opts.isGroup && needsCalendar(text)) {
+      const calBlock = await this.calendar.upcomingBlock(8);
+      if (calBlock) systemHint += calBlock;
+    }
+
     // In groups, annotate the user message so the agent knows it's in a group
     // and who sent it — otherwise the prompt has no way to tell 1-on-1 from
     // group context, and no way to reference the speaker by name.
@@ -1557,20 +2114,50 @@ export class WhatsAppSession {
       ? `[group message from ${opts.senderName || "a participant"}]\n${text}`
       : text;
 
-    // Send "composing…" immediately so the contact sees the human-style
-    // typing indicator while we wait on the LLM. We re-send it before each
-    // burst message to keep the indicator alive (Baileys flips it off
-    // after a few seconds of inactivity).
-    try {
-      await this.socket.sendPresenceUpdate("composing", from);
-    } catch {}
+    // Kick off the LLM call IMMEDIATELY but do NOT show "composing…"
+    // yet. A bot-tell is the typing indicator appearing instantly —
+    // humans don't start typing the moment a message arrives. The LLM
+    // round-trip happens in parallel with the natural read delay below;
+    // by the time the read delay ends, the draft is usually already
+    // available so we can switch on "composing" then.
+    const draftPromise = this.agent.respondTo(from, userText, systemHint);
 
-    const draft = await this.agent.respondTo(from, userText, systemHint);
+    // Wait for draft + naturalize, but don't block on it during the
+    // read phase — we'll respect the pacer's read delay below.
+    const draft = await draftPromise;
 
     if (!draft) {
-      try {
-        await this.socket.sendPresenceUpdate("paused", from);
-      } catch {}
+      // No reply needed — never expose a "composing" tell.
+      return;
+    }
+
+    // VIP gate: if this contact is on the user's VIP list (boss,
+    // parents, top customers, etc.), DON'T send. Queue the draft to
+    // the dashboard for one-tap approval instead. This stops the
+    // single most-feared scenario: the bot sending something off-tone
+    // to the wrong person.
+    if (!opts.isGroup && (await this.personal.isVIP(from))) {
+      const queued = await this.personal.queueDraft(
+        from,
+        opts.senderName ?? this.contactNames.get(from) ?? undefined,
+        text,
+        draft,
+        { channel: "whatsapp" },
+      );
+      this.broadcast({
+        type: "activity",
+        data: {
+          kind: "agent_skipped",
+          summary: queued
+            ? `VIP draft queued for approval`
+            : `VIP — auto-reply suppressed (queue failed)`,
+          detail: draft.slice(0, 200),
+          jid: from,
+          pushName: opts.senderName,
+          timestamp: Date.now(),
+        },
+      });
+      this.logger.info({ from, queued: !!queued }, "VIP draft queued");
       return;
     }
 
@@ -1578,17 +2165,16 @@ export class WhatsAppSession {
     // pace it. The result is the actual sequence of WhatsApp messages.
     const burst = naturalize(draft, { inbound: text, style });
     if (burst.length === 0) {
-      try {
-        await this.socket.sendPresenceUpdate("paused", from);
-      } catch {}
       return;
     }
 
     for (let i = 0; i < burst.length; i++) {
       const msg = burst[i];
-      // Delay before this message — for the first, that's the "read +
-      // think" lag; for subsequent ones it's the inter-burst gap. We've
-      // already sent the composing indicator once; refresh it for long waits.
+      // Delay BEFORE showing the composing indicator. For the first
+      // message this is "I just saw your message + maybe I was busy"
+      // lag (read + optional away). For subsequent burst messages it's
+      // the inter-message gap. The composing indicator only fires AFTER
+      // the delay so contacts don't see "typing…" appear instantly.
       if (msg.delayBeforeMs > 0) {
         await sleep(msg.delayBeforeMs);
       }
@@ -1599,7 +2185,15 @@ export class WhatsAppSession {
       if (msg.typingMs > 0) {
         await sleep(msg.typingMs);
       }
-      await this.sendMessage(from, msg.text);
+      // Quote-reply: in noisy group threads humans quote the message
+      // they're addressing. In 1-on-1 the next message is implicitly
+      // the reply. Only the FIRST burst message quotes — subsequent
+      // ones are part of the same thought.
+      const quoteThis = i === 0 && opts.isGroup ? opts.quotedMsg : undefined;
+      await this.sendMessage(from, msg.text, { quoted: quoteThis });
+      // Counted ONCE per burst (only on the first piece) so a 3-message
+      // burst still counts as one "reply" in the morning digest.
+      if (i === 0) this.repliesSentToday += 1;
       this.broadcast({
         type: "agent_reply",
         data: {
