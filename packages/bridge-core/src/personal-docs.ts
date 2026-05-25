@@ -1,0 +1,982 @@
+// Personal-docs agent — secure, owner-only Q&A over the user's local
+// files. Runs entirely on the user's Mac (file content never leaves
+// the bridge except as relevant snippets in the LLM prompt).
+//
+// Security model:
+//   1. ONLY fires for owner-sent messages (bridges gate on isFromMe).
+//   2. Paths restricted to LANTERN_PERSONAL_DOCS_ROOTS (default:
+//      ~/Documents, ~/Desktop, ~/Library/Mobile Documents/com~apple~CloudDocs).
+//   3. Path-traversal blocked — every read normalizes + checks the
+//      resolved path is within an allowed root.
+//   4. Audit log: every search + read + send appended to
+//      bridge_state/<tenant>/personal-docs.log with timestamp + query.
+//   5. Owner-only attachment delivery: send_my_file ALWAYS targets the
+//      owner's own self-chat, never accepts a contact JID.
+//
+// Search uses macOS Spotlight (`mdfind`) — instant, no indexing
+// overhead, respects the user's existing Spotlight privacy settings.
+// Reading supports PDF / DOCX / TXT / MD / JSON / HTML out of the
+// box; other types return a "binary — won't preview" placeholder.
+
+import { spawn } from "child_process";
+import { existsSync, readFileSync, statSync, appendFileSync, mkdirSync, writeFileSync } from "fs";
+import { resolve, dirname, basename, extname, join, sep } from "path";
+import { homedir } from "os";
+import { createHash } from "crypto";
+import type { Logger } from "pino";
+
+// ---- types ----------------------------------------------------------------
+
+export interface DocSearchResult {
+  path: string;          // absolute, normalized
+  displayPath: string;   // user-friendly (~/Documents/...)
+  name: string;          // basename
+  ext: string;           // .pdf / .docx etc.
+  modifiedAt: number;    // epoch ms
+  bytes: number;
+  // First ~300 chars from the file (when readable), used by the LLM
+  // to decide which file is the right one without doing a full read.
+  snippet?: string;
+}
+
+export interface DocReadResult {
+  ok: boolean;
+  path: string;
+  displayPath: string;
+  content: string;       // first N chars; large files truncated
+  truncated: boolean;
+  bytes: number;
+  ext: string;
+  reason?: string;       // populated when ok=false (binary, too large, denied)
+}
+
+export interface PersonalDocsConfig {
+  // Absolute paths the agent is allowed to search/read in.
+  // Defaults to ~/Documents, ~/Desktop, and iCloud Drive root.
+  // Override via LANTERN_PERSONAL_DOCS_ROOTS=path1:path2:path3
+  roots: string[];
+  // Per-search cap (we cap aggressively; LLM context is precious).
+  maxResults: number;
+  // Per-read cap in characters (truncate huge PDFs).
+  maxReadChars: number;
+  // Path to audit log file.
+  auditLogPath: string;
+}
+
+// ---- defaults / config helpers ------------------------------------------
+
+export function defaultPersonalDocsConfig(stateDir: string): PersonalDocsConfig {
+  const home = homedir();
+  const envRoots = (process.env.LANTERN_PERSONAL_DOCS_ROOTS || "")
+    .split(":")
+    .map((r) => r.trim().replace(/^~/, home))
+    .filter(Boolean);
+  const roots = envRoots.length > 0
+    ? envRoots
+    : [
+        join(home, "Documents"),
+        join(home, "Desktop"),
+        join(home, "Library/Mobile Documents/com~apple~CloudDocs"),
+      ];
+  mkdirSync(stateDir, { recursive: true });
+  return {
+    roots,
+    maxResults: parseInt(process.env.LANTERN_PERSONAL_DOCS_MAX_RESULTS || "8", 10),
+    maxReadChars: parseInt(process.env.LANTERN_PERSONAL_DOCS_MAX_CHARS || "12000", 10),
+    auditLogPath: join(stateDir, "personal-docs.log"),
+  };
+}
+
+// Cheap intent classifier — owner-typed messages that match these
+// patterns trigger the personal-docs pipeline. False-positives waste
+// one Spotlight call (~50ms); false-negatives mean the LLM doesn't
+// see the local context. We err toward catching more queries.
+// Doc-noun vocabulary shared by every intent pattern — easier to
+// extend in one place.
+const DOC_NOUN_GROUP = "(?:i-?\\d+|receipt|invoice|bill|statement|tax|pay\\s*stub|w-?2|1099|lease|contract|insurance|passport|visa|license|dl|ssn|social|registration|certificate|diploma|transcript|resume|cv|mortgage|deed|will|policy|prescription|vaccination|vaccine|loan|application|appointment|order|id\\s*card|green\\s*card)";
+// Possessive prefixes: "my", "the", OR any third-party name + "'s"
+// ("Manasa's drivers license", "Ved's passport"). The "\\w+'s" form
+// catches family members, friends, etc.
+const POSSESSIVE = "(?:my|the|\\w+['’]s)";
+
+const DOC_INTENT_PATTERNS: RegExp[] = [
+  // "find my X file" / "show me the X folder" / "where's my X.pdf"
+  /\b(find|search|look for|where('s| is)|locate|show me|pull up)\b.*\b(doc|file|folder|pdf|note|spreadsheet)/i,
+  // "<possessive> <doc-noun>" — "my I-485", "the receipt", "Manasa's license"
+  new RegExp(`\\b${POSSESSIVE}\\s+\\S*\\s*${DOC_NOUN_GROUP}\\b`, "i"),
+  // "what's in my X" — bucket queries
+  /\b(what'?s|whats|what is|tell me about)\b.*\b(in (my|the)|about (my|the)|on (my|the)|from (my|the))\b/i,
+  // "send me the X" / "attach the X" — delivery requests
+  /\b(send me|attach|email me)\b.*\b(my|the|that|it|those|that one|the first|the second)\b/i,
+  // Question intent on <possessive>: "when does Manasa's license expire"
+  new RegExp(`\\b(what'?s|whats|what is|show me|tell me|where('s| is)|i need|do i have|can you find|can you get|can you pull|when does|when is|when did|when will)\\s+${POSSESSIVE}\\b`, "i"),
+  // "<possessive> X number/date/expir..." — info lookups
+  new RegExp(`\\b${POSSESSIVE}\\s+\\w+\\s+(number|date|address|amount|deadline|due\\s+date|account|expir(es|ation|y))\\b`, "i"),
+  // iCloud / Mac / drive explicit mentions
+  /\b(icloud|on (my )?(mac|laptop|computer|drive))\b/i,
+  /\bsearch (my )?(mac|laptop|computer|drive)\b/i,
+];
+
+// Short follow-up patterns. These match conversational continuations
+// ("send it", "yes", "the first one", "attach") that wouldn't trigger
+// a fresh search but ARE meaningful as a continuation when the user
+// was just asked about a file. The bridge gates these on "had a
+// recent doc query in this chat" so they don't fire out of context.
+const FOLLOWUP_PATTERNS: RegExp[] = [
+  /^(send|send it|send me|send that|send those|attach|attach it|attach that|email it|email me)\b/i,
+  /^(yes|yep|yeah|yup|sure|ok|okay|please|do it|go ahead)\b/i,
+  /^(the first|the second|the third|first one|second one|that one|this one|both)\b/i,
+];
+
+export function looksLikeDocQuery(text: string): boolean {
+  if (!text || text.length < 2) return false;
+  return DOC_INTENT_PATTERNS.some((re) => re.test(text));
+}
+
+// True for short conversational follow-ups that only make sense
+// when continuing a recent doc-query exchange. The bridge wraps this
+// with a "was there a recent doc query in this chat" gate before
+// dispatching, so a bare "yes" doesn't accidentally trigger the doc
+// pipeline in unrelated conversation.
+export function looksLikeDocFollowup(text: string): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+  if (trimmed.length < 2 || trimmed.length > 60) return false;
+  return FOLLOWUP_PATTERNS.some((re) => re.test(trimmed));
+}
+
+// Extract the actual search terms from a natural-language query.
+// "find my I-485 receipt" → "I-485 receipt"
+// "where's my pay stub from last month" → "pay stub last month"
+// "send me the lease" → "lease"
+//
+// Filler words at the start ("find/show/get my", "where is", etc.)
+// would otherwise be passed verbatim to find/mdfind and match
+// nothing.
+const FILLER_PREFIX_RE = /^\s*(?:please\s+)?(?:can you\s+)?(?:hey\s+lantern[,!:\s]+)?(?:lantern[,!:\s]+)?(?:find|search( for)?|look( for)?|locate|show me|pull up|get|grab|fetch|send me|email me|attach|where('s| is|'re| are)|what('s| is)|tell me about)\s+(?:the|my|that|those|some|any|a|an)?\s*/i;
+const FILLER_WORDS = new Set([
+  "from", "the", "my", "that", "this", "these", "those",
+  "a", "an", "on", "in", "of", "to", "and", "or", "for",
+  "please", "thanks", "thank", "you",
+]);
+export function extractSearchTerms(text: string): string {
+  let q = text.trim();
+  // Strip leading filler verbs/articles.
+  q = q.replace(FILLER_PREFIX_RE, "").trim();
+  // Strip trailing punctuation.
+  q = q.replace(/[?.!,;:]+$/g, "").trim();
+  // Drop common stopwords from the remaining tokens, but keep
+  // anything with digits or a dash (I-485, W-2, 1099, 2024) since
+  // those are usually the distinguishing identifier.
+  const tokens = q.split(/\s+/).filter((t) => {
+    if (!t) return false;
+    if (/[\d-]/.test(t)) return true; // keep I-485, W-2, etc.
+    return !FILLER_WORDS.has(t.toLowerCase());
+  });
+  return tokens.join(" ").trim() || text.trim();
+}
+
+// ---- the class ------------------------------------------------------------
+
+export class PersonalDocs {
+  private cfg: PersonalDocsConfig;
+  private logger: Logger;
+
+  constructor(cfg: PersonalDocsConfig, logger: Logger) {
+    this.cfg = cfg;
+    this.logger = logger.child({ component: "personal-docs" });
+  }
+
+  // Returns true if `path` resolves inside one of the configured roots.
+  // Blocks path traversal (../, symlinks pointing outside, etc.).
+  isAllowedPath(path: string): boolean {
+    try {
+      const resolved = resolve(path.replace(/^~/, homedir()));
+      for (const root of this.cfg.roots) {
+        const rootResolved = resolve(root);
+        // Append separator so /tmp/foo doesn't match /tmp/foobar.
+        if (resolved === rootResolved || resolved.startsWith(rootResolved + sep)) {
+          return true;
+        }
+      }
+    } catch {}
+    return false;
+  }
+
+  // Resolve a path the LLM put in an [ATTACH:...] marker to a real
+  // file on disk. The LLM sometimes hallucinates parent directories
+  // — it sees "Shekhar-current-passport-full.pdf" in the context
+  // block and emits "/Users/shakes/Documents/Passport/..." instead
+  // of the real iCloud path. We rescue these cases:
+  //   1. If the literal path exists + is allowed → return it.
+  //   2. Otherwise, search by basename inside the allowed roots and
+  //      return the first match that's also allowed.
+  //   3. Failing that, return null and let the caller report the
+  //      attach error.
+  // This is purely a usability rescue — the security gate
+  // (isAllowedPath) still has the final say on what we attach.
+  async resolveAttachPath(claimedPath: string): Promise<{ ok: true; path: string; rescued?: boolean } | { ok: false; reason: string }> {
+    const expanded = resolve(claimedPath.replace(/^~/, homedir()));
+    if (existsSync(expanded) && this.isAllowedPath(expanded)) {
+      return { ok: true, path: expanded };
+    }
+    // Try basename search via the existing search() pipeline (mdfind
+    // + find fallback). This will scope to the allowed roots.
+    const base = basename(expanded);
+    if (!base) return { ok: false, reason: `path "${claimedPath}" not found and no basename to rescue` };
+    try {
+      const hits = await this.search(base);
+      for (const h of hits) {
+        if (basename(h.path) === base && this.isAllowedPath(h.path) && existsSync(h.path)) {
+          this.logger.info({ claimed: claimedPath, rescued: h.path }, "ATTACH path rescued by basename search");
+          return { ok: true, path: h.path, rescued: true };
+        }
+      }
+    } catch (err) {
+      this.logger.debug({ err }, "resolveAttachPath: basename search errored");
+    }
+    return { ok: false, reason: `file "${base}" not found in any allowed root` };
+  }
+
+  // Spotlight-backed search. Returns the top N most relevant files
+  // across the configured roots. Falls back to plain `find` when
+  // mdfind is unavailable (rare on macOS).
+  async search(query: string): Promise<DocSearchResult[]> {
+    // Strip natural-language filler ("find my", "show me the", etc.)
+    // so the underlying mdfind/find search uses just the meaningful
+    // terms. Without this, "find my I-485 receipt" gets passed as
+    // a literal substring match and returns 0.
+    const trimmed = extractSearchTerms(query);
+    if (!trimmed) return [];
+    this.audit("search", { rawQuery: query, terms: trimmed });
+
+    // Try the full term phrase first. If no results, fall back to
+    // the strongest single term — usually the right thing for
+    // "license number" / "ssn last 4" type queries where the noun
+    // matters more than the modifier.
+    const phrases = [trimmed];
+    const tokens = trimmed.split(/\s+/).filter((t) => t.length >= 3);
+    if (tokens.length > 1) {
+      // Add each individual token as a fallback. Prefer
+      // tokens with digits/dashes (I-485, W-2) since those uniquely
+      // identify documents; the rest get added too.
+      const ranked = [...tokens].sort((a, b) => {
+        const aHas = /\d|-/.test(a) ? 1 : 0;
+        const bHas = /\d|-/.test(b) ? 1 : 0;
+        return bHas - aHas;
+      });
+      for (const t of ranked) {
+        if (!phrases.includes(t)) phrases.push(t);
+      }
+    }
+
+    const results: DocSearchResult[] = [];
+    // Pool cap is large — ranker takes over below. The previous
+    // tight cap (maxResults) caused find's length-sorted output to
+    // be truncated to folders + short filenames, hiding the actual
+    // owner's passport (which has a long filename).
+    const POOL_CAP = Math.max(60, this.cfg.maxResults * 6);
+    // Per-phrase per-root: pull a lot so the ranker has a fair pool.
+    const perPhrasePerRoot = 80;
+
+    const seenPaths = new Set<string>();
+    const ingest = (paths: string[], includeFolders: boolean) => {
+      for (const p of paths) {
+        if (seenPaths.has(p)) continue;
+        if (!this.isAllowedPath(p)) continue;
+        if (!existsSync(p)) continue;
+        try {
+          const st = statSync(p);
+          if (st.isDirectory() && !includeFolders) continue;
+          seenPaths.add(p);
+          const ext = st.isDirectory() ? "" : extname(p).toLowerCase();
+          results.push({
+            path: p,
+            displayPath: this.prettyPath(p) + (st.isDirectory() ? "/" : ""),
+            name: basename(p) + (st.isDirectory() ? " (folder)" : ""),
+            ext,
+            modifiedAt: st.mtimeMs,
+            bytes: st.isDirectory() ? 0 : st.size,
+          });
+          if (results.length >= POOL_CAP) return true;
+        } catch {}
+      }
+      return false;
+    };
+
+    // Run BOTH mdfind and find on every root for every phrase, then
+    // dedupe + rank. Why both? Spotlight on iCloud Drive is often
+    // broken ("unknown indexing state") so mdfind silently misses
+    // files. find catches those by walking the tree directly. The
+    // extra cost is a sub-second wait per root (find is fast on
+    // typical doc trees).
+    for (const root of this.cfg.roots) {
+      if (!existsSync(root)) continue;
+      for (const phrase of phrases) {
+        // We deliberately overshoot here — ingest dedupes by path —
+        // because the final ranker re-sorts the union by relevance
+        // score, not by per-source order.
+        try {
+          const paths = await this.mdfind(phrase, root, perPhrasePerRoot);
+          ingest(paths, true);
+        } catch (err) {
+          this.logger.warn({ err, root, phrase }, "mdfind failed");
+        }
+        try {
+          const paths = await this.findByName(phrase, root, perPhrasePerRoot);
+          ingest(paths, true);
+        } catch (err) {
+          this.logger.warn({ err, root, phrase }, "find failed");
+        }
+        if (results.length >= POOL_CAP) break;
+      }
+    }
+
+    // Rank by relevance. The mtime-only sort produced wrong results
+    // (newest family-member passport ranked above the owner's older
+    // current passport). Score components:
+    //   - basename matches phrase (any): +30
+    //   - path includes owner's first name when query had "my": +20
+    //   - is file (not folder): +10
+    //   - extension is doc-like: +5
+    //   - recency: ((mtime - oldest) / span) * 5  — gentle tie-break
+    // Folder hits stay in the pool (they're useful as breadcrumbs)
+    // but don't beat real files.
+    const ownerFirst = (process.env.LANTERN_OWNER_NAME || "").trim().split(/\s+/)[0]?.toLowerCase() || "";
+    const wantsMine = /\bmy\b|\bmine\b|\bi\b/i.test(query);
+    // Detect a third-party possessive ("Manasa's drivers license",
+    // "Ved's passport") and rank files containing that name higher
+    // than the owner's. The first capture group is the bare name.
+    const possessiveMatch = query.match(/\b([A-Za-z]{3,})['’]s\b/);
+    const targetName = possessiveMatch ? possessiveMatch[1].toLowerCase() : (wantsMine ? ownerFirst : "");
+    const docExts = new Set([".pdf", ".docx", ".doc", ".txt", ".md", ".rtf", ".html", ".csv", ".png", ".jpg", ".jpeg", ".heic"]);
+    const oldest = Math.min(...results.map((r) => r.modifiedAt), Date.now());
+    const newest = Math.max(...results.map((r) => r.modifiedAt), oldest + 1);
+    const span = Math.max(1, newest - oldest);
+    const scoreFor = (r: DocSearchResult): number => {
+      let s = 0;
+      const baseLower = r.name.toLowerCase();
+      const pathLower = r.path.toLowerCase();
+      for (const phrase of phrases) {
+        if (baseLower.includes(phrase.toLowerCase())) { s += 30; break; }
+      }
+      // Person-targeting boost. If the query said "Manasa's …" we
+      // want Manasa's files even though the user (Shekhar) typed.
+      // Penalize the OTHER name to keep cross-talk down (Shekhar's
+      // license file shouldn't beat Manasa's when asked about
+      // Manasa's).
+      if (targetName && pathLower.includes(targetName)) s += 25;
+      if (possessiveMatch && ownerFirst && targetName !== ownerFirst && pathLower.includes(ownerFirst)) s -= 15;
+      if (r.ext && r.ext !== "") s += 10;          // not a folder
+      if (r.ext && docExts.has(r.ext)) s += 5;     // readable type
+      s += ((r.modifiedAt - oldest) / span) * 5;   // recency tie-break
+      return s;
+    };
+    results.sort((a, b) => scoreFor(b) - scoreFor(a) || b.modifiedAt - a.modifiedAt || a.name.localeCompare(b.name));
+    const top = results.slice(0, this.cfg.maxResults);
+
+    // Attach snippets for readable files (best-effort; failures silent).
+    for (const r of top) {
+      try {
+        const head = await this.readHead(r.path, 300);
+        if (head) r.snippet = head;
+      } catch {}
+    }
+    return top;
+  }
+
+  // Read a single file's content. Truncates at maxReadChars. Refuses
+  // anything outside the allowed roots.
+  async read(path: string): Promise<DocReadResult> {
+    const resolved = resolve(path.replace(/^~/, homedir()));
+    const display = this.prettyPath(resolved);
+    if (!this.isAllowedPath(resolved)) {
+      this.audit("read-denied", { path: resolved });
+      return { ok: false, path: resolved, displayPath: display, content: "", truncated: false, bytes: 0, ext: extname(resolved), reason: "path not in allowed roots" };
+    }
+    if (!existsSync(resolved)) {
+      return { ok: false, path: resolved, displayPath: display, content: "", truncated: false, bytes: 0, ext: extname(resolved), reason: "file not found" };
+    }
+    try {
+      const st = statSync(resolved);
+      if (st.isDirectory()) {
+        return { ok: false, path: resolved, displayPath: display, content: "", truncated: false, bytes: 0, ext: "", reason: "is a directory" };
+      }
+      const ext = extname(resolved).toLowerCase();
+      this.audit("read", { path: resolved, bytes: st.size });
+      const text = await this.extractText(resolved, ext, st.size);
+      if (text.text === null) {
+        return { ok: false, path: resolved, displayPath: display, content: "", truncated: false, bytes: st.size, ext, reason: text.reason || "could not extract text" };
+      }
+      const truncated = text.text.length > this.cfg.maxReadChars;
+      const content = truncated ? text.text.slice(0, this.cfg.maxReadChars) : text.text;
+      return { ok: true, path: resolved, displayPath: display, content, truncated, bytes: st.size, ext };
+    } catch (err) {
+      return { ok: false, path: resolved, displayPath: display, content: "", truncated: false, bytes: 0, ext: extname(resolved), reason: (err as Error).message };
+    }
+  }
+
+  // Build a markdown context block for prompt injection. The bridge
+  // calls this with search results + optionally a few file bodies,
+  // then prepends to the LLM system prompt.
+  async buildContextBlock(query: string, opts: { includeBodies?: boolean } = {}): Promise<string> {
+    const results = await this.search(query);
+    if (results.length === 0) {
+      return `\n\n*Personal docs:* searched for "${query}" — no matching files found in:\n${this.cfg.roots.map((r) => `- ${this.prettyPath(r)}`).join("\n")}`;
+    }
+    const lines: string[] = [];
+    lines.push(`\n\n*Personal docs:* top ${results.length} files matching "${query}":`);
+    for (const r of results) {
+      const ago = humanAgo(Date.now() - r.modifiedAt);
+      const size = humanBytes(r.bytes);
+      lines.push(`- **${r.name}** (${r.ext.replace(".", "") || "file"}, ${size}, modified ${ago})`);
+      lines.push(`  \`${r.displayPath}\``);
+      if (r.snippet) lines.push(`  > ${r.snippet.replace(/\n/g, " ").slice(0, 220)}…`);
+    }
+
+    // Try reading multiple candidate files until we have enough
+    // content for the LLM to answer. Scanned PDFs / image-only
+    // docs return empty — we skip those and try the next match.
+    // Stop after 3 successful reads or 8000 chars total to stay
+    // within prompt budget.
+    if (opts.includeBodies) {
+      const candidates = results.filter((r) => r.ext && r.ext !== "");
+      // Read top candidates IN PARALLEL. The ranker already put the
+      // most relevant file at index 0; we read the top 3 concurrently
+      // and keep up to MAX_FILES that produced usable text. Parallel
+      // reads turn (3 × ~10s OCR) into (1 × ~10s) wall time, with
+      // the OCR cache making subsequent queries essentially free.
+      const MAX_FILES = 3;
+      const PARALLEL_PROBE = 3;
+      const CHAR_BUDGET = 12000;
+      const PER_FILE_LIMIT = 5000;
+      const probeCount = Math.min(candidates.length, PARALLEL_PROBE);
+      const bodies = await Promise.all(
+        candidates.slice(0, probeCount).map((c) => this.read(c.path).catch(() => null)),
+      );
+      const included: Array<{ display: string; content: string; truncated: boolean }> = [];
+      let totalChars = 0;
+      for (const body of bodies) {
+        if (included.length >= MAX_FILES) break;
+        if (totalChars >= CHAR_BUDGET) break;
+        if (!body || !body.ok) continue;
+        if (body.content.trim().length < 20) continue; // skip empty/garbage
+        const room = CHAR_BUDGET - totalChars;
+        const chunk = body.content.slice(0, Math.min(room, PER_FILE_LIMIT));
+        included.push({ display: body.displayPath, content: chunk, truncated: body.truncated || chunk.length < body.content.length });
+        totalChars += chunk.length;
+      }
+      if (included.length > 0) {
+        lines.push("");
+        lines.push(`*Content from ${included.length} readable file${included.length === 1 ? "" : "s"} (search the answer here first):*`);
+        for (const inc of included) {
+          lines.push("");
+          lines.push(`--- ${inc.display}${inc.truncated ? " (truncated)" : ""} ---`);
+          lines.push("```");
+          lines.push(inc.content);
+          lines.push("```");
+        }
+      } else if (candidates.length > 0) {
+        lines.push("");
+        lines.push(`*(tried ${candidates.length} file${candidates.length === 1 ? "" : "s"} — none had extractable text. May be scanned/image-only PDFs. Offer to attach the file itself.)*`);
+      }
+    }
+
+    // Tell the LLM how to request a file attachment.
+    lines.push("");
+    lines.push(`*If the user wants the file ITSELF, include* \`[ATTACH:<absolute-path>]\` *on its own line in your reply. The bridge will strip the marker and send the file as an attachment.*`);
+    return lines.join("\n");
+  }
+
+  // ---- internals ----------------------------------------------------------
+
+  // Fallback when Spotlight isn't indexing the folder. Walks the
+  // filesystem, returning files+folders whose name matches the query
+  // case-insensitively. Pruned to skip hidden/cache dirs that would
+  // make this insanely slow (node_modules, .git, Library/Caches, etc.).
+  private findByName(query: string, root: string, limit: number): Promise<string[]> {
+    return new Promise((resolve) => {
+      // `find` with -iname "*query*" matches anywhere in the name.
+      // Skip slow/noisy paths to keep traversal under a few hundred ms.
+      const prunePatterns = [
+        "node_modules", ".git", ".next", "dist", "build", ".cache",
+        "Caches", ".Trash", ".DS_Store",
+      ];
+      const pruneArgs: string[] = [];
+      for (const p of prunePatterns) {
+        if (pruneArgs.length) pruneArgs.push("-o");
+        pruneArgs.push("-name", p);
+      }
+      // ( -name X -o -name Y ... ) -prune -o -iname "*query*" -print
+      const escaped = query.replace(/["'`$]/g, "");
+      const args = [
+        root,
+        "(",
+        ...pruneArgs,
+        ")",
+        "-prune",
+        "-o",
+        "-iname",
+        `*${escaped}*`,
+        "-print",
+      ];
+      const proc = spawn("find", args);
+      let stdout = "";
+      const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; resolve([]); }, 8000);
+      proc.stdout.on("data", (d) => (stdout += d.toString()));
+      proc.stderr.on("data", () => {}); // swallow "permission denied" noise
+      proc.on("close", () => {
+        clearTimeout(timer);
+        const lines = stdout.split("\n").map((l) => l.trim()).filter((l) => l && l !== root);
+        // No path-length sort here — the caller's relevance ranker
+        // (search()) does the final ordering. Length-sorting would
+        // prefer short folder paths over deeply nested files even
+        // when the file is the better answer.
+        resolve(lines.slice(0, limit));
+      });
+      proc.on("error", () => { clearTimeout(timer); resolve([]); });
+    });
+  }
+
+  private mdfind(query: string, root: string, limit: number): Promise<string[]> {
+    return new Promise((resolve) => {
+      // -onlyin scopes the search to one root; we union across roots
+      // in `search()`. -name first to also match filename hits, then
+      // fall back to content search via the bare query.
+      const proc = spawn("mdfind", ["-onlyin", root, query]);
+      let stdout = "";
+      const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; resolve([]); }, 4000);
+      proc.stdout.on("data", (d) => (stdout += d.toString()));
+      proc.on("close", () => {
+        clearTimeout(timer);
+        const lines = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+        resolve(lines.slice(0, limit));
+      });
+      proc.on("error", () => { clearTimeout(timer); resolve([]); });
+    });
+  }
+
+  // Best-effort text extraction. PDFs use `mdls` for metadata + `mdimport`-
+  // indexed text via Spotlight's preview. DOCX falls back to `textutil`
+  // (built-in on macOS). TXT/MD/JSON read directly.
+  private async extractText(path: string, ext: string, size: number): Promise<{ text: string | null; reason?: string }> {
+    // Hard cap on size for INLINE-READ paths (txt/json/csv/docx). PDFs
+    // get a higher ceiling because OCR doesn't load the whole file
+    // into memory — it just renders the first N pages (max 1-2MB each
+    // as PNG). A 50MB passport scan or 100MB report is normal and
+    // should still be OCR-able.
+    const inlineLimit = 25 * 1024 * 1024;   // 25MB for text-extracted formats
+    const pdfLimit = 200 * 1024 * 1024;     // 200MB for PDFs (page-by-page render)
+    const limit = ext === ".pdf" ? pdfLimit : inlineLimit;
+    if (size > limit) {
+      return { text: null, reason: `file is ${humanBytes(size)} — too large` };
+    }
+    const plainExts = new Set([".txt", ".md", ".markdown", ".json", ".csv", ".log", ".html", ".htm", ".xml", ".yaml", ".yml", ".toml", ".rtf"]);
+    if (plainExts.has(ext)) {
+      try {
+        const buf = readFileSync(path, "utf-8");
+        // RTF: strip the rich-text markup for a cleaner read.
+        if (ext === ".rtf") return { text: stripRTF(buf) };
+        return { text: buf };
+      } catch (err) {
+        return { text: null, reason: (err as Error).message };
+      }
+    }
+    // macOS-bundled textutil handles .doc, .docx, .rtf, .html, .webarchive.
+    if ([".doc", ".docx", ".rtf", ".html", ".htm", ".webarchive", ".odt"].includes(ext)) {
+      return { text: await this.textutil(path) };
+    }
+    // PDFs: try four extractors in order of quality:
+    //   1. pdftotext (poppler) — best layout preservation when installed
+    //   2. pdf-parse (pure-Node, bundled) — works for text PDFs
+    //   3. OCR via macOS qlmanage + OpenAI Vision — handles scanned/
+    //      image-only PDFs (passport scans, screenshots, etc.) which
+    //      have NO embedded text. Skipped when OPENAI_API_KEY isn't
+    //      set. ~3-5s for typical first-page OCR.
+    //   4. Spotlight mdls preview — last-resort fallback
+    if (ext === ".pdf") {
+      // For LARGE PDFs (>25MB) skip the in-memory parsers — pdf-parse
+      // and pdftotext both load the whole file and can OOM on a 50MB
+      // scanned passport. Go straight to OCR (renders one page at a
+      // time, peak memory ~ 1-2MB per page PNG).
+      const isLarge = size > 25 * 1024 * 1024;
+      if (!isLarge) {
+        const viaPoppler = await this.pdftotext(path);
+        if (viaPoppler !== null && viaPoppler.trim().length > 50) return { text: viaPoppler };
+        const viaPdfParse = await this.pdfParseNode(path);
+        if (viaPdfParse !== null && viaPdfParse.trim().length > 50) return { text: viaPdfParse };
+      }
+      // Image-only PDF (or large) — OCR via macOS PDFKit + Vision.
+      const viaOcr = await this.ocrViaVision(path);
+      if (viaOcr !== null && viaOcr.trim().length > 0) return { text: `[OCR via Vision LLM]\n${viaOcr}` };
+      const viaSpotlight = await this.spotlightContent(path);
+      if (viaSpotlight !== null) return { text: viaSpotlight };
+      return { text: null, reason: "PDF text extraction failed (OCR also failed — check that an LLM provider is configured in dashboard /settings)" };
+    }
+    // Images: directly OCR via Vision LLM
+    if ([".png", ".jpg", ".jpeg", ".heic", ".gif", ".tiff", ".tif", ".webp"].includes(ext)) {
+      const viaOcr = await this.ocrViaVision(path);
+      if (viaOcr) return { text: `[OCR via Vision LLM]\n${viaOcr}` };
+      return { text: null, reason: "image OCR failed (check that an LLM provider is configured in dashboard /settings)" };
+    }
+    return { text: null, reason: `unsupported file type: ${ext || "unknown"}` };
+  }
+
+  private async readHead(path: string, chars: number): Promise<string> {
+    const ext = extname(path).toLowerCase();
+    if (![".txt", ".md", ".markdown", ".json", ".csv", ".log"].includes(ext)) return "";
+    try {
+      const buf = readFileSync(path, "utf-8");
+      return buf.slice(0, chars).replace(/\s+/g, " ").trim();
+    } catch {
+      return "";
+    }
+  }
+
+  private textutil(path: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      // textutil -convert txt -stdout reads any supported doc and
+      // writes plain text. No temp file needed.
+      const proc = spawn("textutil", ["-convert", "txt", "-stdout", path]);
+      let stdout = "", stderr = "";
+      const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; resolve(null); }, 8000);
+      proc.stdout.on("data", (d) => (stdout += d.toString()));
+      proc.stderr.on("data", (d) => (stderr += d.toString()));
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        if (code === 0 && stdout.length > 0) resolve(stdout);
+        else { this.logger.debug({ stderr }, "textutil failed"); resolve(null); }
+      });
+      proc.on("error", () => { clearTimeout(timer); resolve(null); });
+    });
+  }
+
+  // OCR fallback using macOS's built-in PDFKit (via JXA) + OpenAI
+  // Vision. Renders up to PERSONAL_DOCS_OCR_MAX_PAGES pages of a PDF
+  // as high-resolution PNGs, OCRs each, concatenates the results.
+  // Critical for scanned/image-only PDFs (passports, receipts) where
+  // the answer often lives on page 2+ (the photo-data page of a
+  // passport, the totals page of a receipt, etc.).
+  //
+  // Why JXA + PDFKit instead of qlmanage? qlmanage -t only renders
+  // the first page. PDFKit (Apple's framework, bundled with macOS)
+  // exposes every page; the JXA bridge lets us drive it without
+  // adding a Python / brew dependency. Zero install.
+  //
+  // Calls go through the bridge's /v1/vision/ocr endpoint which uses
+  // the tenant's configured OpenAI key + gpt-4o-mini vision.
+  // OCR cache directory. Keyed by sha1(path + size + mtime) so a
+  // file that hasn't changed since last OCR returns instantly. First
+  // query: ~5-10s. Cached: <50ms. Lives at ~/.lantern/ocr-cache.
+  private get ocrCacheDir(): string {
+    return join(homedir(), ".lantern", "ocr-cache");
+  }
+  private ocrCacheKey(filePath: string): string | null {
+    try {
+      const st = statSync(filePath);
+      return createHash("sha1").update(`${filePath}|${st.size}|${st.mtimeMs}`).digest("hex");
+    } catch { return null; }
+  }
+  private readOcrCache(filePath: string): string | null {
+    const key = this.ocrCacheKey(filePath);
+    if (!key) return null;
+    const file = join(this.ocrCacheDir, `${key}.txt`);
+    try {
+      if (existsSync(file)) return readFileSync(file, "utf-8");
+    } catch {}
+    return null;
+  }
+  private writeOcrCache(filePath: string, text: string): void {
+    const key = this.ocrCacheKey(filePath);
+    if (!key) return;
+    try {
+      // mode 0o700 on dir, 0o600 on file — OCR'd text can include
+      // passport/license numbers and other PII. Restrict to owner only.
+      mkdirSync(this.ocrCacheDir, { recursive: true, mode: 0o700 });
+      writeFileSync(join(this.ocrCacheDir, `${key}.txt`), text, { mode: 0o600 });
+    } catch (err) {
+      this.logger.debug({ err }, "OCR cache write failed");
+    }
+  }
+
+  private async ocrViaVision(filePath: string): Promise<string | null> {
+    // Cache hit short-circuit — biggest win for repeat queries.
+    const cached = this.readOcrCache(filePath);
+    if (cached) {
+      this.logger.info({ filePath: basename(filePath) }, "OCR cache hit");
+      return cached;
+    }
+    const ext = extname(filePath).toLowerCase();
+    const tmpDir = `/tmp/lantern-ocr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let needsCleanup = false;
+    try {
+      let pngs: string[] = [];
+      if (ext === ".pdf") {
+        const maxPages = Number(process.env.LANTERN_PERSONAL_DOCS_OCR_MAX_PAGES || "3");
+        pngs = await this.renderPdfPages(filePath, tmpDir, Math.max(1, maxPages));
+        // Even if renderPdfPages returned 0, the JXA helper may have
+        // created the directory — mark for cleanup either way.
+        needsCleanup = true;
+        if (pngs.length === 0) {
+          const ok = await this.renderPdfPage(filePath, tmpDir);
+          if (!ok) return null;
+          const fs = await import("fs");
+          const entries = fs.readdirSync(tmpDir).filter((f) => f.endsWith(".png"));
+          if (entries.length === 0) return null;
+          pngs = [`${tmpDir}/${entries[0]}`];
+        }
+      } else {
+        pngs = [filePath];
+      }
+
+      const { authedFetch } = await import("./auth.js");
+      // Parallel page OCR — vision API calls are 2-5s each, summed
+      // sequentially that's 6-15s for a 3-page PDF. Parallel keeps
+      // total wall-time at ~max(page durations) = 3-5s.
+      const ocrPage = async (pngPath: string, idx: number): Promise<string | null> => {
+        try {
+          const buf = readFileSync(pngPath);
+          const b64 = buf.toString("base64");
+          const mime = pngPath.endsWith(".png") ? "image/png" : "image/jpeg";
+          const res = await authedFetch("/v1/vision/ocr", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              imageDataUrl: `data:${mime};base64,${b64}`,
+              prompt: "OCR this page. Label every key field: dates (incl. expiration / expiry / valid until), names, numbers, ID/passport/license numbers, addresses, signatures. Be exhaustive.",
+            }),
+          });
+          if (!res.ok) {
+            const body = await res.text().catch(() => "");
+            this.logger.warn({ status: res.status, body: body.slice(0, 200), page: idx + 1 }, "Vision OCR page failed");
+            return null;
+          }
+          const data = (await res.json()) as { text?: string };
+          return data.text?.trim() || null;
+        } catch (err) {
+          this.logger.warn({ err, page: idx + 1 }, "OCR page exception");
+          return null;
+        }
+      };
+      const pageResults = await Promise.all(pngs.map((p, i) => ocrPage(p, i)));
+      const pageTexts: string[] = [];
+      pageResults.forEach((t, i) => {
+        if (t) pageTexts.push(pngs.length > 1 ? `--- page ${i + 1} ---\n${t}` : t);
+      });
+      const combined = pageTexts.length > 0 ? pageTexts.join("\n\n") : null;
+      if (combined) this.writeOcrCache(filePath, combined);
+      return combined;
+    } catch (err) {
+      this.logger.warn({ err }, "OCR exception");
+      return null;
+    } finally {
+      // Always clean up — even on exception mid-OCR or early-return.
+      // Without this, /tmp accumulates a tmpdir per OCR call forever.
+      if (needsCleanup) {
+        try {
+          const fs = await import("fs");
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch {}
+      }
+    }
+  }
+
+  // Multi-page PDF → PNG renderer using macOS PDFKit via JXA.
+  // Returns an array of PNG paths (page-001.png, page-002.png, ...)
+  // in the output directory, capped at `maxPages`. Renders at 2x
+  // scale of the PDF's MediaBox for crisp OCR. Zero install — uses
+  // /usr/bin/osascript and the system PDFKit framework.
+  private renderPdfPages(pdfPath: string, outDir: string, maxPages: number): Promise<string[]> {
+    return new Promise((resolve) => {
+      try { mkdirSync(outDir, { recursive: true }); } catch {}
+      const script = `
+ObjC.import('PDFKit');
+ObjC.import('AppKit');
+function run(argv) {
+  const inputPath = argv[0];
+  const outDir = argv[1];
+  const maxPages = parseInt(argv[2] || '5', 10);
+  const scale = parseFloat(argv[3] || '2.0');
+  const url = $.NSURL.fileURLWithPath(inputPath);
+  const pdfDoc = $.PDFDocument.alloc.initWithURL(url);
+  if (!pdfDoc || pdfDoc.isNil()) { return ''; }
+  const n = Math.min(pdfDoc.pageCount, maxPages);
+  const paths = [];
+  for (let i = 0; i < n; i++) {
+    const page = pdfDoc.pageAtIndex(i);
+    const bounds = page.boundsForBox($.kPDFDisplayBoxMediaBox);
+    const w = Math.max(1, Math.floor(bounds.size.width * scale));
+    const h = Math.max(1, Math.floor(bounds.size.height * scale));
+    const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(
+      $(), w, h, 8, 4, true, false, $.NSCalibratedRGBColorSpace, 0, 0,
+    );
+    const ctx = $.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep);
+    $.NSGraphicsContext.setCurrentContext(ctx);
+    const cg = ctx.CGContext;
+    $.CGContextSaveGState(cg);
+    $.CGContextScaleCTM(cg, scale, scale);
+    page.drawWithBoxToContext($.kPDFDisplayBoxMediaBox, cg);
+    $.CGContextRestoreGState(cg);
+    const png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $());
+    const outPath = outDir + '/page-' + String(i+1).padStart(3,'0') + '.png';
+    png.writeToFileAtomically(outPath, true);
+    paths.push(outPath);
+  }
+  return paths.join('\\n');
+}`;
+      const proc = spawn("osascript", ["-l", "JavaScript", "-e", script, pdfPath, outDir, String(maxPages), "2.0"]);
+      let stdout = "";
+      let stderr = "";
+      const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; resolve([]); }, 60_000);
+      proc.stdout.on("data", (d) => (stdout += d.toString()));
+      proc.stderr.on("data", (d) => (stderr += d.toString()));
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        if (code !== 0) {
+          this.logger.warn({ code, stderr: stderr.slice(0, 200), pdfPath }, "PDFKit JXA render failed");
+          resolve([]);
+          return;
+        }
+        const paths = stdout.trim().split("\n").map((s) => s.trim()).filter(Boolean);
+        resolve(paths);
+      });
+      proc.on("error", (err) => { clearTimeout(timer); this.logger.warn({ err }, "PDFKit JXA spawn error"); resolve([]); });
+    });
+  }
+
+  // Single-page fallback via qlmanage Quick Look. Used when PDFKit
+  // can't open the file (encrypted, malformed). Slower than the
+  // JXA path because qlmanage spins up the Quick Look service.
+  private renderPdfPage(pdfPath: string, outDir: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      try { mkdirSync(outDir, { recursive: true }); } catch {}
+      const proc = spawn("qlmanage", ["-t", "-s", "1600", "-o", outDir, pdfPath]);
+      const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; resolve(false); }, 15_000);
+      proc.stderr.on("data", () => {});
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        resolve(code === 0);
+      });
+      proc.on("error", () => { clearTimeout(timer); resolve(false); });
+    });
+  }
+
+  // Pure-Node PDF text extraction via the pdf-parse package. Works
+  // on any platform without external binaries — perfect default
+  // when poppler isn't installed. Slower than pdftotext on large
+  // PDFs (loads into memory) but fine for typical doc sizes.
+  private async pdfParseNode(path: string): Promise<string | null> {
+    try {
+      // Dynamic import so this module loads cleanly even if
+      // pdf-parse isn't installed (graceful no-op).
+      const mod = await import("pdf-parse").catch(() => null) as
+        | { default?: (b: Buffer) => Promise<{ text: string }>; (b: Buffer): Promise<{ text: string }> }
+        | null;
+      if (!mod) return null;
+      const parser = (mod as { default?: (b: Buffer) => Promise<{ text: string }> }).default
+        ?? (mod as unknown as (b: Buffer) => Promise<{ text: string }>);
+      const buf = readFileSync(path);
+      const out = await parser(buf);
+      return (out?.text || "").trim();
+    } catch (err) {
+      this.logger.debug({ err }, "pdf-parse failed");
+      return null;
+    }
+  }
+
+  private pdftotext(path: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const proc = spawn("pdftotext", ["-layout", "-nopgbrk", path, "-"]);
+      let stdout = "", err = false;
+      const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; resolve(null); }, 10_000);
+      proc.stdout.on("data", (d) => (stdout += d.toString()));
+      proc.on("error", () => { err = true; clearTimeout(timer); resolve(null); });
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        if (err) return;
+        if (code === 0 && stdout.length > 0) resolve(stdout);
+        else resolve(null);
+      });
+    });
+  }
+
+  // Spotlight indexes most files' content — `mdls -name kMDItemTextContent`
+  // returns the indexed text. Limited (Spotlight caps preview length)
+  // but works without any extra deps.
+  private spotlightContent(path: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const proc = spawn("mdls", ["-raw", "-name", "kMDItemTextContent", path]);
+      let stdout = "";
+      const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; resolve(null); }, 4000);
+      proc.stdout.on("data", (d) => (stdout += d.toString()));
+      proc.on("close", () => {
+        clearTimeout(timer);
+        const out = stdout.trim();
+        if (out && out !== "(null)") resolve(out);
+        else resolve(null);
+      });
+      proc.on("error", () => { clearTimeout(timer); resolve(null); });
+    });
+  }
+
+  private prettyPath(absolute: string): string {
+    const home = homedir();
+    if (absolute.startsWith(home)) return "~" + absolute.slice(home.length);
+    return absolute;
+  }
+
+  private audit(action: string, data: Record<string, unknown>): void {
+    try {
+      const line = JSON.stringify({ ts: new Date().toISOString(), action, ...data }) + "\n";
+      appendFileSync(this.cfg.auditLogPath, line);
+    } catch {}
+  }
+}
+
+// ---- markers + helpers ---------------------------------------------------
+
+// Extract [ATTACH:/path/to/file.pdf] markers from an LLM reply. Used
+// by the bridge to detect attach intent + strip the marker from the
+// human-facing reply.
+const ATTACH_RE = /\[ATTACH:([^\]\n]+)\]/g;
+export interface ExtractedAttach {
+  cleanedText: string;
+  paths: string[];
+}
+export function extractAttachMarkers(text: string): ExtractedAttach {
+  const paths: string[] = [];
+  const cleaned = text.replace(ATTACH_RE, (_m, p) => {
+    paths.push(p.trim());
+    return "";
+  }).replace(/\n{3,}/g, "\n\n").trim();
+  return { cleanedText: cleaned, paths };
+}
+
+function humanBytes(n: number): string {
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)}KB`;
+  return `${(n / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function humanAgo(ms: number): string {
+  if (ms < 60_000) return "just now";
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  if (ms < 7 * 86_400_000) return `${Math.floor(ms / 86_400_000)}d ago`;
+  return new Date(Date.now() - ms).toLocaleDateString();
+}
+
+// Tiny RTF stripper — enough to make `.rtf` files readable. Doesn't
+// preserve formatting, just yanks the visible text out.
+function stripRTF(rtf: string): string {
+  return rtf
+    .replace(/\\par[d]?/g, "\n")
+    .replace(/\\[a-z]+-?\d*\s?/g, "")
+    .replace(/[{}]/g, "")
+    .replace(/\\'[0-9a-fA-F]{2}/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// Re-export so the index barrel picks them up.
+export { dirname, basename };

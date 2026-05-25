@@ -65,13 +65,13 @@ type completionMessage struct {
 }
 
 type completionResponse struct {
-	Model       string `json:"model"`
-	Content     string `json:"content"`
-	TokensIn    int    `json:"tokensIn"`
-	TokensOut   int    `json:"tokensOut"`
-	CostUsd     float64 `json:"costUsd"`
-	Provider    string `json:"provider"`
-	FinishReason string `json:"finishReason"`
+	Model        string  `json:"model"`
+	Content      string  `json:"content"`
+	TokensIn     int     `json:"tokensIn"`
+	TokensOut    int     `json:"tokensOut"`
+	CostUsd      float64 `json:"costUsd"`
+	Provider     string  `json:"provider"`
+	FinishReason string  `json:"finishReason"`
 }
 
 // ---------- Provider key resolution ----------
@@ -148,7 +148,9 @@ func (h *LlmProxyHandler) resolveModelForTenant(ctx context.Context, tenantID, c
 // env var so prod can't accidentally route through a dev tool.
 //
 // LANTERN_USE_CLAUDE_CODE=1   → enable; uses the user's Claude Max
-//                                subscription (no API credits burned)
+//
+//	subscription (no API credits burned)
+//
 // LANTERN_CLAUDE_BINARY=/path → override binary location
 func claudeCodeBinary() string {
 	if os.Getenv("LANTERN_USE_CLAUDE_CODE") != "1" {
@@ -297,12 +299,12 @@ func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiK
 // resolveModel maps a capability name to a concrete provider + model.
 // modelOption represents a model candidate for routing.
 type modelOption struct {
-	provider    string
-	model       string
-	costPer1MIn float64 // $/1M input tokens
+	provider     string
+	model        string
+	costPer1MIn  float64 // $/1M input tokens
 	costPer1MOut float64 // $/1M output tokens
-	quality     int     // 1-10, higher is better
-	speed       int     // 1-10, higher is faster
+	quality      int     // 1-10, higher is better
+	speed        int     // 1-10, higher is faster
 }
 
 // All available models with their characteristics.
@@ -520,12 +522,12 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, completionResponse{
-			Model:    usedModel,
-			Content:  text,
-			Provider: usedProvider,
-			TokensIn: int(tokensIn),
+			Model:     usedModel,
+			Content:   text,
+			Provider:  usedProvider,
+			TokensIn:  int(tokensIn),
 			TokensOut: int(tokensOut),
-			CostUsd:  estimateCost(usedProvider, usedModel, int(tokensIn), int(tokensOut)),
+			CostUsd:   estimateCost(usedProvider, usedModel, int(tokensIn), int(tokensOut)),
 		})
 		return
 	}
@@ -1782,9 +1784,9 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 		// Anthropic response carries an array of content blocks; each is
 		// either {type:"text", text:""} or {type:"tool_use", id, name, input}.
 		var antResp struct {
-			Content []map[string]any `json:"content"`
-			StopReason string `json:"stop_reason"`
-			Usage struct {
+			Content    []map[string]any `json:"content"`
+			StopReason string           `json:"stop_reason"`
+			Usage      struct {
 				InputTokens  int64 `json:"input_tokens"`
 				OutputTokens int64 `json:"output_tokens"`
 			} `json:"usage"`
@@ -1848,8 +1850,8 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 			}
 			result, dispErr := dispatch(ctx, tu.Name, tu.Input)
 			tr := map[string]any{
-				"type":         "tool_result",
-				"tool_use_id":  tu.ID,
+				"type":        "tool_result",
+				"tool_use_id": tu.ID,
 			}
 			if dispErr != nil {
 				inv.Error = dispErr.Error()
@@ -2026,4 +2028,117 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 			zap.Error(callErr))
 	}
 	return "", nil, "", "", 0, 0, fmt.Errorf("all configured providers failed: %w", lastErr)
+}
+
+// ---------- OCR / Vision endpoint ----------
+
+// OCRRequest is the body of POST /v1/vision/ocr. The image is passed as
+// a data URL (data:image/png;base64,...) so the client doesn't need to
+// upload a binary multipart form. Prompt is optional — defaults to a
+// generic OCR system prompt tuned for ID documents, forms, and
+// receipts (the personal-docs use case).
+type ocrRequest struct {
+	ImageDataUrl string `json:"imageDataUrl"`
+	Prompt       string `json:"prompt,omitempty"`
+	Model        string `json:"model,omitempty"`
+}
+
+type ocrResponse struct {
+	Text     string `json:"text"`
+	Model    string `json:"model"`
+	Provider string `json:"provider"`
+}
+
+// OCR handles POST /v1/vision/ocr. Uses the tenant's OpenAI key + gpt-4o
+// vision to extract text from a base64 image. Returns 400 if no OpenAI
+// key is configured (Anthropic vision is a future option; for now OCR
+// is OpenAI-only since gpt-4o vision is materially better than Claude
+// at dense ID/form extraction).
+func (h *LlmProxyHandler) OCR(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	var req ocrRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.ImageDataUrl == "" || !strings.HasPrefix(req.ImageDataUrl, "data:") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "imageDataUrl must be a data: URL"})
+		return
+	}
+
+	apiKey, err := h.resolveProviderKey(ctx, tenantID, "openai")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "OCR requires an OpenAI key — add one in Settings > LLM Providers (gpt-4o vision)",
+		})
+		return
+	}
+
+	model := req.Model
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+	prompt := req.Prompt
+	if prompt == "" {
+		prompt = "OCR this document. Label fields clearly."
+	}
+	system := "You are an OCR engine. Extract ALL visible text from the image, preserving structure. Include numbers, dates, names exactly as shown. If the image is a form, ID, passport, license, or receipt, LABEL key fields explicitly (e.g., 'Date of Birth: ...', 'Expiration Date: ...', 'Passport Number: ...', 'License #: ...'). Be exhaustive — every visible text element matters. No commentary, just the extracted text."
+
+	body := map[string]any{
+		"model": model,
+		"messages": []map[string]any{
+			{"role": "system", "content": system},
+			{"role": "user", "content": []map[string]any{
+				{"type": "image_url", "image_url": map[string]any{"url": req.ImageDataUrl}},
+				{"type": "text", "text": prompt},
+			}},
+		},
+		"max_tokens": 2000,
+	}
+	bb, _ := json.Marshal(body)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(bb))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to build request"})
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		h.logger().Error("OCR vision request failed", zap.Error(err))
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to reach OpenAI: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(resp.Body)
+		h.logger().Warn("OCR returned non-200", zap.Int("status", resp.StatusCode), zap.String("body", string(errBody)))
+		writeJSON(w, resp.StatusCode, map[string]string{"error": "OpenAI vision error", "details": string(errBody)})
+		return
+	}
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to parse OpenAI response"})
+		return
+	}
+	text := ""
+	if len(result.Choices) > 0 {
+		text = result.Choices[0].Message.Content
+	}
+	writeJSON(w, http.StatusOK, ocrResponse{Text: text, Model: model, Provider: "openai"})
 }

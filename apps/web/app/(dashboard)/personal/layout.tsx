@@ -18,6 +18,7 @@ import {
   Activity,
   Crown,
   FileText,
+  FolderSearch,
   MessageCircle,
   Smartphone,
   UserMinus,
@@ -61,6 +62,7 @@ const NAV: SubNavItem[] = [
   { href: "/personal", label: "Overview", icon: Smartphone, scope: "global" },
   { href: "/personal/vip", label: "VIPs", icon: Crown, scope: "global" },
   { href: "/personal/drafts", label: "Drafts", icon: FileText, scope: "global" },
+  { href: "/personal/docs", label: "Docs", icon: FolderSearch, scope: "global" },
   // Channel-specific — different per bridge
   { href: "/personal/setup", label: "Pair", icon: Smartphone, scope: "per-channel" },
   { href: "/personal/auto-reply", label: "Auto-reply", icon: Zap, scope: "per-channel" },

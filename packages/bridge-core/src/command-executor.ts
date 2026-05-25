@@ -32,6 +32,12 @@ export interface CommandContext {
   listPaused: () => Promise<string> | string;
   listChats: () => Promise<string> | string;
   resumeAll: () => Promise<void> | void;
+  // Personal-docs toggle. enabled=true allows local-file Q&A in the
+  // owner's self-chat. Default ON. The bridge persists the bool.
+  setDocsEnabled?: (enabled: boolean) => Promise<void> | void;
+  // Master kill switch — when true the bridge MUST refuse to do
+  // anything except listen for the off command. Survives restarts.
+  setKillSwitch?: (engaged: boolean) => Promise<void> | void;
   // Channel name shown in human replies ("iMessage" or "WhatsApp").
   channelLabel: string;
 }
@@ -80,6 +86,29 @@ export async function executeCommand(cmd: ParsedCommand, ctx: CommandContext): P
     }
     case "help": {
       await ctx.reply(renderHelp());
+      return;
+    }
+    case "docs-on": {
+      if (ctx.setDocsEnabled) await ctx.setDocsEnabled(true);
+      await ctx.reply(`${cmd.echo}\nask in your self-chat: "what's my passport number?" / "find my I-485 receipt"`);
+      return;
+    }
+    case "docs-off": {
+      if (ctx.setDocsEnabled) await ctx.setDocsEnabled(false);
+      await ctx.reply(`${cmd.echo}\nfile-search is paused. send "docs on" to re-enable.`);
+      return;
+    }
+    case "killswitch-on": {
+      if (ctx.setKillSwitch) await ctx.setKillSwitch(true);
+      // We still acknowledge this ONE message so the user has a
+      // confirmation the killswitch took effect. After this, no
+      // outbound activity until "kill switch off".
+      await ctx.reply(`${cmd.echo}\nbot will ignore ALL messages until you send: *kill switch off*`);
+      return;
+    }
+    case "killswitch-off": {
+      if (ctx.setKillSwitch) await ctx.setKillSwitch(false);
+      await ctx.reply(`${cmd.echo}\nauto-reply + docs are back online.`);
       return;
     }
   }

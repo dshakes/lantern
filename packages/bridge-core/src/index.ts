@@ -13,3 +13,4 @@ export * from "./reaction-commands.js";
 export * from "./voice-commands.js";
 export * from "./daily-digest.js";
 export * from "./offline-monitor.js";
+export * from "./personal-docs.js";
