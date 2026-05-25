@@ -98,6 +98,64 @@ export class IMessageSender {
     return { ok: false, reason: lastErr.slice(0, 300) };
   }
 
+  // Send a FILE attachment to `to` via Messages.app. AppleScript's
+  // Messages dictionary supports `send <file alias>` for attachments
+  // — the file must already exist on disk and be FULLY MATERIALIZED
+  // (not an iCloud Drive 0-byte placeholder). We pre-materialize via
+  // `brctl download` before sending so iCloud Drive optimized-
+  // storage files don't get sent as broken stubs.
+  async sendFile(to: string, filePath: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if (!to || !filePath) {
+      return { ok: false, reason: "to + filePath required" };
+    }
+    // If the file is in iCloud Drive and only present as a stub,
+    // brctl download materializes it locally. No-op for files that
+    // are already fully on disk OR not in iCloud. Best-effort —
+    // failures here don't block the send (the file might still work).
+    if (filePath.includes("Mobile Documents/com~apple~CloudDocs") || filePath.includes("iCloud")) {
+      await this.brctlDownload(filePath);
+    }
+    const aplStr = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    // POSIX file → `as alias` is critical: without `as alias`,
+    // Messages.app attaches a reference instead of the real file
+    // content, and the recipient sees a "PDF Document" placeholder
+    // that can't be opened or downloaded. The `as alias` cast
+    // resolves the path to a Finder alias the Messages send
+    // pipeline uploads in full.
+    const strategies = [
+      `tell application "Messages"
+        set targetService to 1st service whose service type = iMessage
+        set targetBuddy to buddy ${aplStr(to)} of targetService
+        set theFile to (POSIX file ${aplStr(filePath)}) as alias
+        send theFile to targetBuddy
+      end tell`,
+      `tell application "Messages"
+        set theFile to (POSIX file ${aplStr(filePath)}) as alias
+        send theFile to buddy ${aplStr(to)}
+      end tell`,
+    ];
+    let lastErr = "";
+    for (const script of strategies) {
+      const res = await this.runOsascript(script);
+      if (res.ok) return { ok: true };
+      lastErr = res.reason;
+      if (res.reason.includes("not authorized") || res.reason.includes("-1743")) return res;
+    }
+    return { ok: false, reason: lastErr.slice(0, 300) };
+  }
+
+  // Force iCloud Drive to materialize a file from cloud → local disk.
+  // No-op for files not in iCloud. Short timeout: large files take
+  // longer but we'd rather fail fast than block the iMessage UX.
+  private async brctlDownload(filePath: string): Promise<void> {
+    return new Promise((resolve) => {
+      const proc = spawn("brctl", ["download", filePath]);
+      const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; resolve(); }, 15_000);
+      proc.on("close", () => { clearTimeout(timer); resolve(); });
+      proc.on("error", () => { clearTimeout(timer); resolve(); });
+    });
+  }
+
   // Run an osascript command. Centralized so the multi-strategy send()
   // doesn't duplicate process management.
   private runOsascript(script: string): Promise<{ ok: true } | { ok: false; reason: string }> {

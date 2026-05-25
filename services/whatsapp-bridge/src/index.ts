@@ -25,7 +25,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import cors from "cors";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync, existsSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { WhatsAppSession } from "./session.js";
@@ -190,22 +190,61 @@ app.get("/session/:tenantId/status", (req, res) => {
   });
 });
 
-// POST /session/:tenantId/start -- start a new session (triggers QR generation)
+// GET /session/:tenantId/has-creds -- does the on-disk auth dir hold
+// usable WhatsApp credentials? Dashboard uses this to choose between
+// "Reconnect" (creds exist → silent reconnect) and "Pair with QR"
+// (no creds → fresh pairing flow). Cheap: a single stat() call.
+app.get("/session/:tenantId/has-creds", (req, res) => {
+  const { tenantId } = req.params;
+  // Reject path-traversal — tenantId is always a UUID or short slug.
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(tenantId)) {
+    res.status(400).json({ error: "invalid tenantId" });
+    return;
+  }
+  const credsFile = join(process.cwd(), "auth_sessions", tenantId, "creds.json");
+  let hasCreds = false;
+  let credsAgeMs: number | null = null;
+  try {
+    if (existsSync(credsFile)) {
+      const stat = statSync(credsFile);
+      if (stat.size >= 32) {
+        hasCreds = true;
+        credsAgeMs = Date.now() - stat.mtimeMs;
+      }
+    }
+  } catch {}
+  res.json({ hasCreds, credsAgeMs, sessionActive: sessions.has(tenantId) });
+});
+
+// POST /session/:tenantId/start -- start (or resume) a session.
+//
+// Idempotent: if a session is already active and connected, return
+// the current status WITHOUT disconnecting. Tearing down a working
+// connection only to recreate it triggers WhatsApp pre-key drift +
+// makes the next outbound message lossy. Only when the session is
+// dead/missing do we instantiate a new one.
+//
+// To force a re-pair (different number / wiped creds), use /reset.
 app.post("/session/:tenantId/start", async (req, res) => {
   const { tenantId } = req.params;
 
   const existing = sessions.get(tenantId);
   if (existing) {
-    await existing.disconnect();
+    const state = existing.getConnectionState();
+    if (state === "connected" || state === "connecting" || state === "starting" || state === "reconnecting") {
+      res.json({ status: state, message: "session already active", reused: true });
+      return;
+    }
+    // Stale or errored session — replace it.
+    await existing.disconnect().catch(() => {});
     sessions.delete(tenantId);
   }
 
   const session = new WhatsAppSession(tenantId, logger);
   sessions.set(tenantId, session);
-
   session.start();
 
-  res.json({ status: "starting", message: "QR code will be sent via WebSocket" });
+  res.json({ status: "starting", message: "session starting — reuse creds if available, else QR via WebSocket", reused: false });
 });
 
 // POST /session/:tenantId/disconnect -- disconnect and remove session
@@ -561,8 +600,51 @@ if (CONTROL_PLANE_URL && HEARTBEAT_TOKEN) {
 // Start
 // ---------------------------------------------------------------------------
 
+// Scan auth_sessions/ for tenants with persisted creds and auto-start
+// their sessions. Baileys reconnects silently using the on-disk creds —
+// no QR needed. This means the dashboard sees `connected` from the
+// first request, instead of `idle` + a "Pair with QR" CTA. Lets the
+// bridge survive code restarts as a true daemon.
+//
+// A tenant directory counts as "has creds" when it contains a
+// non-empty creds.json file (the canonical Baileys auth file).
+function autoResumeSessions(): void {
+  const authBase = join(process.cwd(), "auth_sessions");
+  if (!existsSync(authBase)) {
+    logger.info({ authBase }, "no auth_sessions dir yet — skipping auto-resume");
+    return;
+  }
+  let resumed = 0;
+  let skipped = 0;
+  for (const entry of readdirSync(authBase, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const tenantId = entry.name;
+    const credsFile = join(authBase, tenantId, "creds.json");
+    if (!existsSync(credsFile)) { skipped++; continue; }
+    try {
+      const stat = statSync(credsFile);
+      if (stat.size < 32) { skipped++; continue; } // creds.json is always 200+ bytes
+    } catch { skipped++; continue; }
+    if (sessions.has(tenantId)) continue; // already started somehow
+    try {
+      const session = new WhatsAppSession(tenantId, logger);
+      sessions.set(tenantId, session);
+      session.start();
+      resumed++;
+      logger.info({ tenantId }, "auto-resumed WhatsApp session from disk");
+    } catch (err) {
+      logger.warn({ err, tenantId }, "auto-resume failed for tenant");
+    }
+  }
+  logger.info({ resumed, skipped, total: resumed + skipped }, "auto-resume scan done");
+}
+
 server.listen(PORT, BIND, () => {
   logger.info({ bind: BIND, port: PORT }, "WhatsApp bridge service started");
+  // Auto-resume runs AFTER listen so the bridge accepts requests
+  // immediately. Sessions reconnect in the background; their state
+  // flows out via the existing WebSocket broadcast.
+  autoResumeSessions();
 });
 
 // Graceful shutdown: close Baileys sockets before exit so WhatsApp sees a

@@ -483,6 +483,85 @@ env vars are unset, dashboard falls back to direct bridge probe.
 
 ---
 
+## Personal-docs + agentic Mac actions (macOS bridges)
+
+The iMessage + WhatsApp bridges include a personal-docs assistant that answers
+questions about local files on the user's Mac (passport, license, receipts,
+etc.) AND can take native actions on macOS — Calendar / Notes / Mail — when
+the owner confirms a suggested follow-up. Lives in
+`packages/bridge-core/src/{personal-docs,mac-actions,humanize}.ts` and wires
+into both bridges' session handlers.
+
+### Security model
+- **Owner-only.** Both bridges enforce `isOwnerChatRow` / `isOwnerChat`
+  before any doc query, agentic action, or command fires. Two topologies
+  supported: (a) self-chat (single Apple ID / WhatsApp number — owner
+  messages themselves), or (b) dedicated bot account (owner DMs a separate
+  bot Apple ID / WA number). DMs from non-owner contacts never reach the
+  doc/action pipeline.
+- **Path-restricted.** Personal-docs search/read only inside
+  `LANTERN_PERSONAL_DOCS_ROOTS` (defaults: `~/Documents`, `~/Desktop`,
+  iCloud Drive). All reads go through `isAllowedPath` which blocks
+  traversal.
+- **OCR cache 0600.** `~/.lantern/ocr-cache/<sha1>.txt` files are written
+  with mode 0600 (owner-only) because OCR'd text often contains passport
+  numbers, license #s, and other PII.
+- **Killswitch.** Owner can engage a master switch via `kill switch on`
+  in self-chat — bridge ignores ALL inbound until released.
+
+### Agentic action layer
+- `mac-actions.ts` wraps AppleScript for `Calendar.app`, `Notes.app`, and
+  `Mail.app`. Dates are constructed component-by-component (locale-safe;
+  `date "YYYY-MM-DD"` literals are NOT locale-safe and produce garbage
+  outside en_US — verified, fixed).
+- `humanize.ts` post-processes LLM replies: rewrites numeric dates to
+  friendly form (`Sept 14, 2031`), guarantees an agentic follow-up
+  offer when the answer contains an expiry/deadline/ID/file, and
+  returns a structured `PendingOffer` the bridge caches.
+- **Deterministic offer execution.** When the owner replies "yes" /
+  "sure" / "do it" within OFFER_TTL_MS (10 min) of a follow-up, the
+  bridge fires the AppleScript itself — no LLM round trip. Solves a
+  real LLM-hallucination bug where the model would claim the reminder
+  was set without ever emitting a `[CALENDAR:...]` marker.
+
+### Required env (bridge process)
+| Var | Purpose |
+|---|---|
+| `LANTERN_OWNER_NAME` | First name used for ranker boost ("Shekhar" → boost files whose path contains "shekhar" when the query says "my") |
+| `LANTERN_OWNER_EMAIL` | Mirror destination for bot status updates |
+| `LANTERN_IMESSAGE_OWNER_HANDLE` | (Optional) Owner's primary iMessage handle (phone or email). When set, bridge accepts DMs from this handle as owner-channel (dedicated-bot mode). When unset, falls back to self-chat detection. |
+| `LANTERN_WA_OWNER_JID` | (Optional) Owner's primary WhatsApp JID — `15125551234` or `15125551234@s.whatsapp.net`. Same role as the iMessage env. |
+| `LANTERN_PERSONAL_DOCS_ROOTS` | Colon-separated allowed roots (default `~/Documents:~/Desktop:~/Library/Mobile Documents/com~apple~CloudDocs`) |
+| `LANTERN_PERSONAL_DOCS_OCR_MAX_PAGES` | Max PDF pages to render+OCR per file (default 3) |
+| `LANTERN_DEFAULT_CALENDAR` | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`) |
+
+### Always-on
+WhatsApp + API + dashboard run under user LaunchAgents
+(`~/Library/LaunchAgents/dev.lantern.*.plist`). The iMessage bridge needs
+Full Disk Access (chat.db) + Automation permission (Messages.app), which
+is per-binary in macOS TCC — easiest path is to run it via Terminal
+(which already has those grants) or grant FDA explicitly to
+`/Users/shakes/.nvm/.../node` for true always-on. See
+`docs/personal/BOT-SETUP.md`.
+
+### Self-heal (WhatsApp Signal protocol)
+The bridge hooks Baileys' logger and counts decrypt failures
+(`failed to decrypt message` / `Bad MAC` / `MessageCounterError`). When
+20+ errors hit inside 60s, it forces a socket-level reconnect to
+renegotiate the Signal session — no QR re-pair needed for transient
+drift. Hard "Bad MAC" corruption (from process-killed-mid-write) still
+needs a one-time re-pair; `POST /session/:tenant/reset` wipes creds and
+`/start` issues a fresh QR.
+
+### Endpoints added
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/v1/vision/ocr` | OCR a base64 image via tenant's OpenAI vision key. Used by personal-docs for scanned PDFs. |
+| `GET` | `/session/:tenantId/has-creds` (WA bridge) | Dashboard probe — when true, show "Reconnect" instead of "Pair with QR" |
+| `POST` | `/session/:tenantId/reset` (WA bridge) | Wipe creds (destructive — forces fresh QR pair) |
+
+---
+
 ## Proto workflow
 
 Protos live in `packages/proto/lantern/v1/`. Four files: `agents.proto`, `runs.proto`, `models.proto`, `engine.proto`.

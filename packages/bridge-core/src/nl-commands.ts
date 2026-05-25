@@ -28,14 +28,18 @@
 //     bridge schedules an auto-unmute timer.
 
 export type NLCommandAction =
-  | "mute"           // pause auto-reply globally
-  | "unmute"         // resume auto-reply
-  | "status"         // print bridge + bot state
-  | "list-paused"    // show paused contacts
-  | "list-chats"     // show monitored chats/groups
-  | "resume-all"     // clear all per-contact pauses
-  | "ping"           // liveness pong
-  | "help";          // show available commands
+  | "mute"             // pause auto-reply globally
+  | "unmute"           // resume auto-reply
+  | "status"           // print bridge + bot state
+  | "list-paused"      // show paused contacts
+  | "list-chats"       // show monitored chats/groups
+  | "resume-all"       // clear all per-contact pauses
+  | "ping"             // liveness pong
+  | "help"             // show available commands
+  | "docs-on"          // enable personal-docs Q&A
+  | "docs-off"         // disable personal-docs Q&A
+  | "killswitch-on"    // master kill — disable ALL bot activity
+  | "killswitch-off";  // restore from killswitch
 
 export interface ParsedCommand {
   action: NLCommandAction;
@@ -62,6 +66,17 @@ const RESUME_ALL_VERBS = /\bresume\s+(?:all|everyone|everybody)\b/i;
 const LIST_PAUSED_VERBS = /\b(?:what'?s\s+paused|who'?s\s+paused|list\s+pa(used|usee)?|paused\s+contacts?|show\s+paused)\b/i;
 const LIST_CHATS_VERBS = /\b(?:list\s+(chats|groups)|monitored\s+(chats|groups)|show\s+chats|show\s+groups)\b/i;
 const HELP_VERBS = /\b(?:help|what\s+can\s+you\s+do|commands?|usage)\b/i;
+// Personal-docs toggle. Strict prefix so plain chat ("doc this") doesn't
+// misfire. Either "docs on/off" or "personal docs on/off".
+const DOCS_ON_VERBS = /^(?:personal\s+)?docs?\s+(?:on|enable|enabled|allow)$/i;
+const DOCS_OFF_VERBS = /^(?:personal\s+)?docs?\s+(?:off|disable|disabled|deny)$/i;
+// Kill switch — master OFF for the entire bot. Both bridges check this
+// before doing anything else. Recognized forms: "killswitch on",
+// "kill switch off", "kill all", "lantern off", "shut down".
+const KILLSWITCH_ON_VERBS =
+  /^(?:kill\s*switch\s+on|kill\s+(?:all|everything|the\s+bot)|emergency\s+stop|shut\s*down|panic)$/i;
+const KILLSWITCH_OFF_VERBS =
+  /^(?:kill\s*switch\s+off|undo\s+kill|bring\s+(?:it|bot)\s+back|recover|reactivate\s+all)$/i;
 
 // Parse a duration phrase like "for 2 hours", "for 30 min", "until 9am",
 // "for tonight", "for an hour". Returns ms, or undefined when none.
@@ -149,6 +164,20 @@ export function parseNLCommand(input: string): ParsedCommand | null {
   }
 
   // Order matters — list-paused before mute (the words overlap).
+  // Docs + killswitch use anchored ^...$ regexes so they only match
+  // when the body IS the command, not when it contains the words.
+  if (KILLSWITCH_ON_VERBS.test(body)) {
+    return { action: "killswitch-on", echo: "🚨 kill switch ENGAGED — all bot activity halted", explicit };
+  }
+  if (KILLSWITCH_OFF_VERBS.test(body)) {
+    return { action: "killswitch-off", echo: "✅ kill switch RELEASED — bot resumed", explicit };
+  }
+  if (DOCS_ON_VERBS.test(body)) {
+    return { action: "docs-on", echo: "📁 personal-docs Q&A ENABLED", explicit };
+  }
+  if (DOCS_OFF_VERBS.test(body)) {
+    return { action: "docs-off", echo: "🔒 personal-docs Q&A DISABLED", explicit };
+  }
   if (RESUME_ALL_VERBS.test(body)) {
     return { action: "resume-all", echo: "resumed all paused contacts", explicit };
   }
@@ -212,6 +241,18 @@ function parseSlash(raw: string): ParsedCommand | null {
         return { action: "status", echo: "status", explicit };
       case "chats": case "groups":
         return { action: "list-chats", echo: "listing monitored chats", explicit };
+      case "docs": {
+        const arg = (rest[0] || "").toLowerCase();
+        if (arg === "on" || arg === "enable") return { action: "docs-on", echo: "📁 personal-docs ENABLED", explicit };
+        if (arg === "off" || arg === "disable") return { action: "docs-off", echo: "🔒 personal-docs DISABLED", explicit };
+        return { action: "status", echo: "status (with docs state)", explicit };
+      }
+      case "killswitch": case "kill": case "panic": {
+        const arg = (rest[0] || "").toLowerCase();
+        if (arg === "on" || arg === "engage" || arg === "" ) return { action: "killswitch-on", echo: "🚨 kill switch ENGAGED", explicit };
+        if (arg === "off" || arg === "release") return { action: "killswitch-off", echo: "✅ kill switch RELEASED", explicit };
+        return { action: "status", echo: "status (with killswitch state)", explicit };
+      }
       case "help": case "":
         return { action: "help", echo: "help", explicit };
     }
@@ -225,16 +266,27 @@ export function renderHelp(): string {
   return [
     "👋 just talk to me naturally — i understand:",
     "",
+    "*auto-reply*",
     "• *pause* / *mute* / *stop replying* — pause auto-reply",
     "• *pause for 2 hours* / *mute until 9am* / *for tonight* — time-bounded pause",
     "• *resume* / *wake up* / *unmute* — turn auto-reply back on",
     "• *resume everyone* — clear all per-contact pauses",
-    "• *status* / *how are you* — current state",
+    "",
+    "*personal docs* (self-chat only — never replies in DMs or groups)",
+    "• *docs on* / *docs off* — toggle local-file Q&A",
+    "• `/lantern docs on|off` — slash form",
+    "",
+    "*safety*",
+    "• *kill switch on* — 🚨 emergency stop (mutes ALL bot activity until released)",
+    "• *kill switch off* — release the kill switch",
+    "• `/lantern killswitch on|off` — slash form",
+    "",
+    "*diagnostics*",
+    "• *status* — current state (incl. docs + killswitch toggles)",
     "• *what's paused* — list paused contacts",
     "• *list chats* — show monitored group chats",
     "• *ping* — liveness check",
     "",
     "starting messages with *lantern,* is the explicit way (e.g. *lantern, pause for 2h*).",
-    "slash commands still work: /bot on, /bot off, /lantern status.",
   ].join("\n");
 }

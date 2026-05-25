@@ -32,11 +32,56 @@ import { reactionToAction, dispatchReaction } from "@lantern/bridge-core/reactio
 import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
+import {
+  PersonalDocs,
+  defaultPersonalDocsConfig,
+  looksLikeDocQuery,
+  extractAttachMarkers,
+} from "@lantern/bridge-core/personal-docs";
+import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
+import { humanizeWithOffer, looksLikeConfirmation, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { extname } from "path";
+
+// MIME map for sendDocument — WhatsApp's UI shows a file-type icon
+// based on this. Falls back to application/octet-stream for unknown.
+const MIME_FOR_EXT: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".json": "application/json",
+  ".csv": "text/csv",
+  ".html": "text/html",
+  ".htm": "text/html",
+  ".rtf": "application/rtf",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".heic": "image/heic",
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".zip": "application/zip",
+};
 import type { BotState } from "./types.js";
 
 // Display name for the bot-owner used in attention prompts and log lines.
 // Configurable so the classifier doesn't hardcode a single user's name.
 const OWNER_NAME = process.env.LANTERN_OWNER_NAME || "the owner";
+
+// Normalize a WhatsApp JID for comparison: strip the optional
+// ":<device>" suffix from the id portion. Incoming msg.key.remoteJid
+// usually omits the device, but multi-device sync can include it.
+function normWaJid(jid: string): string {
+  if (!jid) return "";
+  const [id, server] = jid.split("@");
+  return `${id.split(":")[0]}@${server || ""}`;
+}
 
 // Conservative estimate of how long a Baileys-issued QR stays scannable
 // before WhatsApp's server rotates it. Baileys re-emits a new QR string
@@ -127,6 +172,14 @@ export class WhatsAppSession {
   private tenantId: string;
   private logger: Logger;
   private agent: AgentClient;
+  private docs: PersonalDocs | null = null;
+  private macActions: MacActions | null = null;
+  // Per-chat cache of the most recent offer (humanize follow-up).
+  // On next-turn "yes" we execute it deterministically — bypasses
+  // LLM hallucination where it claims an action happened without
+  // emitting a marker.
+  private pendingOffers: Map<string, PendingOffer> = new Map();
+  private static readonly OFFER_TTL_MS = 10 * 60_000;
   private attention: AttentionClassifier;
   private media: MediaHandler;
   private personal: PersonalClient;
@@ -144,6 +197,21 @@ export class WhatsAppSession {
   private authDir: string;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectAttempts = 0;
+  // Decrypt-storm watchdog. When the Signal pre-key state corrupts
+  // (bridge killed mid-write, multi-process race, etc.), Baileys's
+  // libsignal logs continuous "failed to decrypt message" errors at
+  // level=50. The bridge reports "connected" but receives ZERO
+  // messages that reach messages.upsert because every inbound dies
+  // in decryption. We hook the logger to count these errors and
+  // force a socket-level reconnect when the storm crosses threshold.
+  // Reconnect renegotiates the Signal session with WhatsApp and
+  // clears most transient corruption without a full re-pair.
+  private decryptErrorCount = 0;
+  private decryptErrorWindowStart = Date.now();
+  private static readonly DECRYPT_STORM_THRESHOLD = 20;
+  private static readonly DECRYPT_STORM_WINDOW_MS = 60_000;
+  private selfHealing = false;
+  private lastSuccessfulInboundAt = 0;
   // Lifecycle telemetry surfaced via getDiagnostics() and the WS
   // `connection_state` event. lastError carries the most recent failure
   // reason (close code, exception message) so the dashboard can show a
@@ -161,6 +229,13 @@ export class WhatsAppSession {
   // Global kill switch. Toggled via self-chat `/bot off`/`/bot on`,
   // via dashboard, or via REST.
   private muted = false;
+  // Personal-docs Q&A toggle. Default ON. Owner toggles from
+  // self-chat ("docs on" / "docs off"). Persisted.
+  private personalDocsEnabled = true;
+  // Master kill switch — separate from `muted`. Survives restart.
+  // When ENGAGED the bridge ignores every inbound except a
+  // "kill switch off" command from the owner's self-chat.
+  private killSwitch = false;
   private stateFile: string;
   // Opted-in group JIDs. Groups not in this set are ignored entirely; in
   // opted-in groups the agent runs the attention classifier on every message
@@ -218,6 +293,8 @@ export class WhatsAppSession {
     this.media = new MediaHandler(this.logger);
     this.personal = new PersonalClient(this.logger);
     this.calendar = new CalendarLookup(this.logger);
+    this.docs = new PersonalDocs(defaultPersonalDocsConfig(this.authDir), this.logger);
+    this.macActions = new MacActions(this.logger);
     // User preferences (monitored groups, paused contacts, mute) live
     // OUTSIDE auth_sessions/ so `reset()` (which wipes auth creds for
     // re-pair) doesn't also nuke the user's settings. Previously they
@@ -410,13 +487,41 @@ export class WhatsAppSession {
       const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
       const { version } = await fetchLatestBaileysVersion();
 
+      // Wrap our pino logger with a thin proxy that counts decrypt
+      // errors. Baileys logs "failed to decrypt message" at level=50
+      // when libsignal can't find/use a session. A burst of these
+      // (>20 in 60s) means Signal state is corrupted — we force a
+      // socket-level reconnect to renegotiate, no QR re-pair needed.
+      const baseLogger = this.logger;
+      const baileysLogger = baseLogger.child({}) as Logger & {
+        error: (obj: unknown, msg?: string) => void;
+      };
+      const origError = baileysLogger.error.bind(baileysLogger);
+      baileysLogger.error = (obj: unknown, msg?: string) => {
+        let probe = "";
+        try {
+          const m = (typeof obj === "object" && obj && (obj as { msg?: string }).msg) || msg || "";
+          probe = String(m);
+          // Stringify is best-effort — Baileys logs can contain
+          // Buffers/circular refs that throw. Failure here MUST NOT
+          // break logging.
+          probe += " " + JSON.stringify(obj, (_k, v) => (v instanceof Error ? v.message : v));
+        } catch {
+          // Probe falls back to just the msg string
+        }
+        if (/failed to decrypt message|No matching sessions|MessageCounterError|Bad MAC/i.test(probe)) {
+          this.noteDecryptError();
+        }
+        origError(obj, msg);
+      };
+
       this.socket = makeWASocket({
         version,
         auth: {
           creds: state.creds,
-          keys: makeCacheableSignalKeyStore(state.keys, this.logger),
+          keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
         },
-        logger: this.logger,
+        logger: baileysLogger,
         browser: ["Lantern", "Desktop", "1.0.0"],
         // Baileys' default (60s) spuriously trips fetchProps/history sync on
         // slow networks; undefined disables the per-query timeout.
@@ -619,6 +724,28 @@ export class WhatsAppSession {
           const from = msg.key.remoteJid || "";
           if (!from) continue;
 
+          // KILL SWITCH gate. When engaged the bridge IGNORES
+          // everything except a "kill switch off" command from the
+          // owner's self-chat. We parse early — before bodyguard
+          // text-extraction logic — to keep the rejection path cheap.
+          if (this.killSwitch) {
+            const probe =
+              msg.message?.conversation
+              || msg.message?.extendedTextMessage?.text
+              || "";
+            const cmd = probe ? parseNLCommand(probe.trim()) : null;
+            const isOwnerChan = this.isOwnerChat(from);
+            const releasing = !!cmd && cmd.action === "killswitch-off";
+            // In self-chat mode, fromMe=true (owner authored it). In
+            // dedicated-bot mode the owner DMs the bot from another
+            // number → fromMe=false. Accept both.
+            if (!(isOwnerChan && releasing)) {
+              continue; // total silence
+            }
+            // Release: fall through to normal handling so the
+            // command executor fires + confirms back.
+          }
+
           // Reaction commands. If the owner reacts to a message
           // (typically a bot-sent reply) with a recognized emoji,
           // we treat it as a command on that thread:
@@ -753,6 +880,19 @@ export class WhatsAppSession {
             ) {
               this.rememberOwnerSent(from, text);
             }
+            await this.handleOwnerMessage(from, text, msg.key);
+            continue;
+          }
+
+          // DEDICATED-BOT MODE: owner DMs the bot from their primary
+          // WhatsApp number. msg.key.fromMe is false here (the bot's
+          // session didn't author it), but isOwnerChat(from) is true
+          // (the sender JID matches LANTERN_WA_OWNER_JID). Route the
+          // same owner-control + docs + commands path used in
+          // self-chat mode so all features (status, /bot off, doc
+          // queries, agentic actions) work identically.
+          if (!isGroup && text && this.isOwnerChat(from)) {
+            this.rememberOwnerSent(from, text);
             await this.handleOwnerMessage(from, text, msg.key);
             continue;
           }
@@ -1113,8 +1253,13 @@ export class WhatsAppSession {
           monitoredGroups?: string[];
           disclosedJids?: string[];
           ownerSentHistory?: Record<string, string[]>;
+          personalDocsEnabled?: boolean;
+          killSwitch?: boolean;
         };
         this.muted = !!raw.muted;
+        // Toggles default to safe values: docs ON, killswitch OFF.
+        if (typeof raw.personalDocsEnabled === "boolean") this.personalDocsEnabled = raw.personalDocsEnabled;
+        if (typeof raw.killSwitch === "boolean") this.killSwitch = raw.killSwitch;
         const now = Date.now();
         for (const [jid, v] of Object.entries(raw.pausedUntil ?? {})) {
           const entry = this.coercePauseEntry(v);
@@ -1185,6 +1330,8 @@ export class WhatsAppSession {
         monitoredGroups: [...this.monitoredGroups],
         disclosedJids: [...this.disclosedJids],
         ownerSentHistory,
+        personalDocsEnabled: this.personalDocsEnabled,
+        killSwitch: this.killSwitch,
       };
       writeFileSync(this.stateFile, JSON.stringify(payload, null, 2));
     } catch (err) {
@@ -1248,9 +1395,89 @@ export class WhatsAppSession {
     return false;
   }
 
+  // Increment decrypt-error counter; trigger self-heal when the
+  // storm crosses threshold inside the rolling window.
+  private noteDecryptError(): void {
+    const now = Date.now();
+    if (now - this.decryptErrorWindowStart > WhatsAppSession.DECRYPT_STORM_WINDOW_MS) {
+      this.decryptErrorWindowStart = now;
+      this.decryptErrorCount = 0;
+    }
+    this.decryptErrorCount++;
+    if (this.decryptErrorCount >= WhatsAppSession.DECRYPT_STORM_THRESHOLD && !this.selfHealing) {
+      this.selfHealing = true;
+      this.logger.warn(
+        { count: this.decryptErrorCount, windowMs: now - this.decryptErrorWindowStart },
+        "decrypt storm detected — forcing socket reconnect to renegotiate Signal state",
+      );
+      this.triggerSelfHeal().catch((err) =>
+        this.logger.error({ err }, "self-heal threw"),
+      );
+    }
+  }
+
+  // Force a socket-level reconnect WITHOUT wiping auth creds.
+  // Baileys will re-handshake with WhatsApp using existing creds,
+  // which usually renegotiates Signal pre-keys + clears transient
+  // session-state corruption. Distinct from /reset which wipes
+  // creds and requires a QR re-pair.
+  private async triggerSelfHeal(): Promise<void> {
+    try {
+      // Close current socket — Baileys' connection.update handler
+      // already auto-reconnects with backoff (see the close handler
+      // around line 640+). After reconnect, decryptErrorCount resets
+      // when the next successful message lands.
+      this.socket?.ws?.close();
+      this.setConnectionState("reconnecting", "self-heal: decrypt storm");
+      // Email-mirror the user so they know recovery is in flight.
+      void this.mirrorToEmail?.("⚠️ WhatsApp bridge auto-recovery: Signal state was corrupted (20+ decrypt failures in 60s). Forcing socket reconnect — no QR needed. Should resume in <30s.").catch(() => {});
+    } catch (err) {
+      this.logger.error({ err }, "self-heal close failed");
+    } finally {
+      // Reset gate after a delay so a NEW storm can re-trigger.
+      setTimeout(() => {
+        this.selfHealing = false;
+        this.decryptErrorCount = 0;
+        this.decryptErrorWindowStart = Date.now();
+      }, 60_000);
+    }
+  }
+
   private isSelfChat(jid: string): boolean {
-    const own = this.ownJid();
-    return !!own && jid === own;
+    if (!jid) return false;
+    const target = normWaJid(jid);
+    // ownIds() returns BOTH JID forms WhatsApp uses for the owner:
+    //   - phone-format: "<phone>@s.whatsapp.net"
+    //   - LID-format:   "<id>@lid"  (newer privacy IDs)
+    for (const own of this.ownIds()) {
+      if (normWaJid(own) === target) return true;
+    }
+    return false;
+  }
+
+  // Owner-chat check — the SECURITY gate for personal-docs, agentic
+  // actions, the killswitch-release command, etc. Two topologies:
+  //
+  //   (A) DEDICATED BOT MODE — bridge paired to a SEPARATE WhatsApp
+  //       number (Google Voice / Twilio / spare SIM) acting as the
+  //       bot. Owner DMs the bot from their primary WhatsApp.
+  //       Set LANTERN_WA_OWNER_JID to the owner's primary JID,
+  //       either "<phone>@s.whatsapp.net" or just "<phone>".
+  //   (B) SELF-CHAT MODE — single number; owner messages themselves.
+  //
+  // Both accepted. Group chats are never owner-chats.
+  private isOwnerChat(jid: string): boolean {
+    if (!jid) return false;
+    if (this.isGroupJid(jid)) return false;
+    const target = normWaJid(jid);
+    // Mode A: explicit owner-JID env var
+    const ownerEnv = (process.env.LANTERN_WA_OWNER_JID || "").trim();
+    if (ownerEnv) {
+      const ownerJid = ownerEnv.includes("@") ? ownerEnv : `${ownerEnv.replace(/\D/g, "")}@s.whatsapp.net`;
+      if (normWaJid(ownerJid) === target) return true;
+    }
+    // Mode B: self-chat fallback
+    return this.isSelfChat(jid);
   }
 
   private async handleOwnerMessage(
@@ -1259,7 +1486,13 @@ export class WhatsAppSession {
     key: { id?: string | null; remoteJid?: string | null; fromMe?: boolean | null; participant?: string | null }
   ) {
     const trimmed = text.trim().toLowerCase();
-    const self = this.isSelfChat(jid);
+    // `self` here means "the owner-control channel" — either the
+    // owner's own self-chat (single-account mode) OR a DM from the
+    // owner's primary number to this dedicated bot (LANTERN_WA_OWNER_JID).
+    // Both topologies route through the same command + docs paths
+    // since the semantics are identical: it's the owner addressing
+    // the bot directly.
+    const self = this.isOwnerChat(jid);
     const group = this.isGroupJid(jid);
 
     // Natural-language command parsing. Two contexts:
@@ -1297,6 +1530,31 @@ export class WhatsAppSession {
           return;
         }
       }
+    }
+
+    // Personal-docs Q&A — owner asking about local files in self-chat.
+    // SECURITY: triple-gated:
+    //   1) personalDocsEnabled toggle ON (owner-controlled, persisted)
+    //   2) `self` flag — message is in the owner's self-chat (jid
+    //      matches the bridge's own paired number)
+    //   3) NOT a group
+    // No DM from a contact or group message can reach this code path.
+    // CONFIRMATION INTERCEPT: pending offer + user says "yes" →
+    // execute the action deterministically, no LLM round trip.
+    if (this.personalDocsEnabled && self && !group && this.docs && this.macActions) {
+      this.gcPendingOffers();
+      const cachedOffer = this.pendingOffers.get(jid);
+      if (cachedOffer && looksLikeConfirmation(text)) {
+        this.logger.info({ kind: cachedOffer.kind, jid }, "executing cached offer on confirmation");
+        this.pendingOffers.delete(jid);
+        void this.executeCachedOffer(jid, cachedOffer);
+        return;
+      }
+    }
+
+    if (this.personalDocsEnabled && self && !group && this.docs && looksLikeDocQuery(text)) {
+      void this.handleOwnerDocQuery(jid, text, key);
+      return;
     }
 
     // Group-scoped: /bot monitor on|off opts a group in / out of the agent.
@@ -1590,7 +1848,8 @@ export class WhatsAppSession {
         const phone = this.phoneNumber ? `+${this.phoneNumber}` : "(not paired)";
         return [
           `🟢 *Lantern WhatsApp*`,
-          `• bot: ${this.muted ? "off" : "on"}`,
+          `• bot: ${this.killSwitch ? "🚨 KILL SWITCH ENGAGED" : this.muted ? "off" : "on"}`,
+          `• personal-docs: ${this.personalDocsEnabled ? "on" : "off"}`,
           `• paired: ${phone}`,
           `• paused contacts: ${pausedCount}`,
           `• monitored groups: ${this.monitoredGroups.size}`,
@@ -1619,7 +1878,214 @@ export class WhatsAppSession {
         this.saveState();
         this.logActivity("bot_on", `Cleared ${n} per-contact pauses`, { scope: "self" });
       },
+      setDocsEnabled: async (enabled: boolean) => {
+        this.personalDocsEnabled = enabled;
+        this.saveState();
+        this.logActivity(enabled ? "bot_on" : "bot_off", `personal-docs ${enabled ? "ENABLED" : "DISABLED"}`, { scope: "self" });
+      },
+      setKillSwitch: async (engaged: boolean) => {
+        this.killSwitch = engaged;
+        this.saveState();
+        this.logActivity(engaged ? "bot_off" : "bot_on", `🚨 kill switch ${engaged ? "ENGAGED" : "RELEASED"}`, { scope: "self" });
+      },
     });
+  }
+
+  // Personal-docs Q&A in WhatsApp self-chat. Owner asked about a
+  // local file. Search → inject into LLM → reply → optionally attach
+  // the file via Baileys's document message type.
+  private async handleOwnerDocQuery(
+    jid: string,
+    query: string,
+    key: { id?: string | null; remoteJid?: string | null; fromMe?: boolean | null; participant?: string | null },
+  ): Promise<void> {
+    if (!this.docs) return;
+    this.logger.info({ query: query.slice(0, 80) }, "owner doc query (whatsapp)");
+    this.logActivity("attention_dm", `📁 doc query: ${query.slice(0, 60)}`, { scope: "self" });
+    // Acknowledge so the user sees instant feedback. We do BOTH a
+    // reaction (subtle, on their message) AND a text ack (impossible
+    // to miss). Doc queries can take 10-15s for OCR'd PDFs and the
+    // reaction alone isn't loud enough.
+    try { await this.sendReaction(jid, key, "📁"); } catch {}
+    await this.confirmToSelf("📁 one sec — looking through your files…");
+
+    // If the heavy work runs long (>6s), nudge once so the user
+    // knows we're still chewing. Cancelled when the work finishes.
+    const startedAt = Date.now();
+    let progressFired = false;
+    const progressTimer = setTimeout(() => {
+      progressFired = true;
+      void this.confirmToSelf("📷 still scanning — almost there…");
+    }, 6000);
+    const clearProgress = () => {
+      clearTimeout(progressTimer);
+      if (progressFired) { /* already informed */ }
+    };
+
+    const contextBlock = await this.docs.buildContextBlock(query, { includeBodies: true });
+    this.logger.info({ ms: Date.now() - startedAt }, "doc context built (whatsapp)");
+    const today = new Date().toISOString().slice(0, 10);
+    const systemHint = [
+      `You are Lantern — Shekhar's personal agent, replying in his WhatsApp self-chat.`,
+      `Today is ${today}. You can search his Mac, read local files (incl. OCR scanned PDFs), and take native actions on his behalf.`,
+      ``,
+      `STYLE — sophisticated, natural, agentic. Like Jarvis: warm, concise, never robotic.`,
+      `  • Direct answers first. No "I'd be happy to" / "feel free".`,
+      `  • Lowercase, conversational. 1-3 short lines max.`,
+      `  • State the FACT directly when you have it. If the OCR'd content gives the answer, give it. Don't say "check the file".`,
+      ``,
+      `AGENTIC FOLLOW-UPS — MANDATORY when applicable:`,
+      `  • Answer mentions an EXPIRY/DUE DATE/DEADLINE → ALWAYS add a second line offering a calendar reminder.`,
+      `    Example: "want me to add a renewal reminder to your calendar 60 days before?"`,
+      `  • Answer mentions a NUMBER worth remembering (passport #, license #, account #) → offer to save it as a Note.`,
+      `  • Answer references a FILE the user might want → offer to attach it.`,
+      `  • If the answer is purely factual and none of the above apply, no offer is needed.`,
+      ``,
+      `ACTIONS — emit ONE marker per action on its own line at the END of your reply. The bridge executes them.`,
+      `  • Attach file:    [ATTACH:/exact/absolute/path] — COPY paths VERBATIM from the context block. Never fabricate.`,
+      `  • Calendar event: [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]  (local TZ, ISO format)`,
+      `  • Note:           [NOTE:Title|Body text]`,
+      `  • Mail draft:     [MAIL:to@x.com,b@y.com|Subject|Body]  (opens draft in Mail.app for review)`,
+      ``,
+      `OFFER-then-CONFIRM rule: Don't fire an action on first mention. End reply with a short suggestion. If user confirms next turn ("yes", "sure", "do it"), THEN emit the marker.`,
+      ``,
+      `PATHS: Many files live under iCloud Drive at /Users/shakes/Library/Mobile Documents/com~apple~CloudDocs/...  — never substitute /Users/shakes/Documents/...`,
+      ``,
+      contextBlock,
+    ].join("\n");
+
+    const draft = await this.agent.respondTo(jid, query, systemHint);
+    clearProgress();
+    this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft }, "doc query done (whatsapp)");
+    if (!draft) {
+      await this.confirmToSelf("(couldn't reach the agent — try again in a sec.)");
+      return;
+    }
+
+    const { cleanedText: textNoAttach, paths } = extractAttachMarkers(draft);
+    const { cleanedText: finalText, calendarEvents, notes, mailDrafts } = extractActionMarkers(textNoAttach);
+    // Humanize: friendly dates + guaranteed offer + deterministic
+    // execution path on next-turn confirmation.
+    const { reply: polished, offer } = humanizeWithOffer(finalText);
+    if (polished) {
+      await this.confirmToSelf(polished);
+    }
+    if (offer && jid) {
+      this.pendingOffers.set(jid, offer);
+    }
+    for (const claimedPath of paths) {
+      const resolved = await this.docs.resolveAttachPath(claimedPath);
+      if (!resolved.ok) {
+        this.logger.warn({ claimedPath, reason: resolved.reason }, "ATTACH path unresolved — skipped");
+        await this.confirmToSelf(`(couldn't attach — ${resolved.reason})`);
+        continue;
+      }
+      const path = resolved.path;
+      if (resolved.rescued) {
+        this.logger.info({ claimedPath, rescuedPath: path }, "ATTACH path rescued by basename");
+      }
+      try {
+        await this.sendDocument(jid, path);
+      } catch (err) {
+        this.logger.warn({ err, path }, "WhatsApp doc send failed");
+        await this.confirmToSelf(`(couldn't attach ${path.split("/").pop() || path})`);
+      }
+    }
+    if (this.macActions) {
+      for (const ev of calendarEvents) {
+        try {
+          const res = await this.macActions.createCalendarEvent(ev);
+          await this.confirmToSelf(res.ok ? `📅 added to calendar — ${res.detail || ev.title}` : `(calendar failed: ${res.reason})`);
+        } catch (err) { this.logger.warn({ err }, "calendar action exception"); }
+      }
+      for (const n of notes) {
+        try {
+          const res = await this.macActions.createNote(n);
+          await this.confirmToSelf(res.ok ? `🗒 saved as a note — "${n.title}"` : `(note failed: ${res.reason})`);
+        } catch (err) { this.logger.warn({ err }, "note action exception"); }
+      }
+      for (const m of mailDrafts) {
+        try {
+          const res = await this.macActions.createMailDraft(m);
+          await this.confirmToSelf(res.ok ? `✉️ draft opened in Mail — review + send when ready` : `(mail draft failed: ${res.reason})`);
+        } catch (err) { this.logger.warn({ err }, "mail action exception"); }
+      }
+    }
+  }
+
+  // Execute a cached offer (calendar reminder / save note).
+  // Deterministic, bypasses the LLM. Sends a natural confirmation.
+  private async executeCachedOffer(jid: string, offer: PendingOffer): Promise<void> {
+    if (!this.macActions) return;
+    if (offer.kind === "calendar-reminder" && offer.targetIsoDate && offer.leadDays) {
+      const target = new Date(`${offer.targetIsoDate}T09:00:00`);
+      const reminderDate = new Date(target.getTime() - offer.leadDays * 86_400_000);
+      const startIso = reminderDate.toISOString().slice(0, 19);
+      const endIso = new Date(reminderDate.getTime() + 30 * 60_000).toISOString().slice(0, 19);
+      try {
+        const res = await this.macActions.createCalendarEvent({
+          title: offer.title || "Renewal reminder",
+          start: startIso,
+          end: endIso,
+          notes: `Auto-set by Lantern. Original expiration: ${offer.targetIsoDate}.`,
+        });
+        if (res.ok) {
+          const friendly = reminderDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+          await this.confirmToSelf(`📅 done — reminder set for ${friendly} (${offer.leadDays} days before). ${res.detail || ""}`);
+        } else {
+          await this.confirmToSelf(`(couldn't add to calendar: ${res.reason})`);
+        }
+      } catch (err) {
+        this.logger.error({ err }, "calendar offer execution failed");
+        await this.confirmToSelf(`(calendar add failed — try again)`);
+      }
+      return;
+    }
+    if (offer.kind === "save-note" && offer.noteTitle && offer.noteBody) {
+      try {
+        const res = await this.macActions.createNote({
+          title: offer.noteTitle,
+          body: offer.noteBody,
+        });
+        if (res.ok) {
+          await this.confirmToSelf(`🗒 saved as a note — "${offer.noteTitle}". find it in Notes.app.`);
+        } else {
+          await this.confirmToSelf(`(couldn't save the note: ${res.reason})`);
+        }
+      } catch (err) {
+        this.logger.error({ err }, "note offer execution failed");
+        await this.confirmToSelf(`(note save failed — try again)`);
+      }
+      return;
+    }
+  }
+
+  // GC pendingOffers — sweep entries older than OFFER_TTL_MS.
+  private gcPendingOffers(): void {
+    if (this.pendingOffers.size === 0) return;
+    const cutoff = Date.now() - WhatsAppSession.OFFER_TTL_MS;
+    for (const [key, offer] of this.pendingOffers) {
+      if (offer.issuedAt < cutoff) this.pendingOffers.delete(key);
+    }
+  }
+
+  // Send a local file as a WhatsApp document attachment. Uses
+  // Baileys's document message type. Attaches a sensible mimetype
+  // based on extension.
+  private async sendDocument(jid: string, filePath: string): Promise<void> {
+    if (!this.socket || !this.connected) {
+      throw new Error("WhatsApp not connected");
+    }
+    const data = readFileSync(filePath);
+    const ext = extname(filePath).toLowerCase();
+    const mime = MIME_FOR_EXT[ext] || "application/octet-stream";
+    const fileName = filePath.split("/").pop() || "file";
+    const sent = await this.socket.sendMessage(jid, {
+      document: data,
+      mimetype: mime,
+      fileName,
+    });
+    if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
   }
 
   private async deleteCommand(

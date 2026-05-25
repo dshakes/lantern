@@ -545,6 +545,12 @@ export function WhatsAppPairing({
     "idle"
   );
 
+  // Has-creds probe. When true, the on-disk auth dir already holds a
+  // paired session — the dashboard shows "Reconnect" (idempotent
+  // /start that reuses creds) instead of "Pair with QR" so the user
+  // doesn't have to scan again after every code restart.
+  const [hasCreds, setHasCreds] = useState<boolean | null>(null);
+
   // Wall-clock ticker so countdowns and "just now" labels update without
   // re-mounting children. 500ms is smooth enough; lower has no benefit.
   const [now, setNow] = useState(Date.now());
@@ -656,6 +662,24 @@ export function WhatsAppPairing({
         setState("idle");
       }
       refreshDiagnostics();
+
+      // Probe whether the bridge has saved creds on disk. When true,
+      // the "idle" CTA shifts from "Pair with QR" to "Reconnect"
+      // (idempotent /start that reuses existing creds — no scan).
+      try {
+        const credsRes = await fetch(
+          `${bridgeUrl}/session/${tenantId}/has-creds`,
+          { signal: AbortSignal.timeout(3000), headers: authHeaders() }
+        );
+        if (credsRes.ok) {
+          const c = (await credsRes.json()) as { hasCreds?: boolean };
+          setHasCreds(!!c.hasCreds);
+        } else {
+          setHasCreds(false);
+        }
+      } catch {
+        setHasCreds(false);
+      }
     } catch {
       setState("bridge_offline");
     }
@@ -1157,15 +1181,21 @@ export function WhatsAppPairing({
         <div className="space-y-3 rounded-xl border border-zinc-800 bg-surface-1 p-5">
           <div className="flex items-start gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10">
-              <Smartphone className="h-4 w-4 text-emerald-400" />
+              {hasCreds ? (
+                <RefreshCw className="h-4 w-4 text-emerald-400" />
+              ) : (
+                <Smartphone className="h-4 w-4 text-emerald-400" />
+              )}
             </div>
             <div className="space-y-1">
               <p className="text-sm font-medium text-zinc-100">
-                Pair your WhatsApp to start
+                {hasCreds ? "Reconnect to your paired WhatsApp" : "Pair your WhatsApp to start"}
               </p>
               <p className="text-[12px] leading-relaxed text-zinc-400">
-                Generates a QR code you scan from your phone — same flow as WhatsApp Web.
-                Auth stays local in <code className="text-zinc-300">auth_sessions/{tenantId}/</code>.
+                {hasCreds
+                  ? <>This Mac is already paired — click to resume the existing session. No QR scan needed. Auth lives in <code className="text-zinc-300">auth_sessions/{tenantId}/</code>.</>
+                  : <>Generates a QR code you scan from your phone — same flow as WhatsApp Web. Auth stays local in <code className="text-zinc-300">auth_sessions/{tenantId}/</code>.</>
+                }
               </p>
             </div>
           </div>
@@ -1173,9 +1203,9 @@ export function WhatsAppPairing({
             onClick={startPairing}
             variant="primary"
             size="md"
-            icon={<Smartphone className="h-3.5 w-3.5" />}
+            icon={hasCreds ? <RefreshCw className="h-3.5 w-3.5" /> : <Smartphone className="h-3.5 w-3.5" />}
           >
-            Pair with QR code
+            {hasCreds ? "Reconnect" : "Pair with QR code"}
           </Button>
         </div>
       )}
