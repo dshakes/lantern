@@ -1,5 +1,15 @@
 {
   "enabledPlugins": {
-    "frontend-design@claude-plugins-official": true
+    "frontend-design@claude-plugins-official": true,
+    "core@agent-settings": true
+  },
+  "extraKnownMarketplaces": {
+    "agent-settings": {
+      "source": {
+        "source": "github",
+        "repo": "dshakes/agent-settings",
+        "ref": "v0.2.0"
+      }
+    }
   }
 }
