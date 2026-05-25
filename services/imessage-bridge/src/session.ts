@@ -1176,7 +1176,7 @@ export class IMessageSession {
       `  • Use any connector tools attached to this agent in the Lantern dashboard (Gmail, Calendar, etc.) when helpful.`,
     ].join("\n");
     try {
-      const draft = await this.agent.respondTo(jid, text, systemHint);
+      const draft = await this.agent.respondTo(jid, text, systemHint, { withTools: true });
       if (!draft) {
         this.logger.warn({ jid }, "owner natural chat — no draft");
         return;

@@ -43,10 +43,16 @@ export class AgentClient {
 
   enabled(): boolean { return authEnabled(); }
 
-  async respondTo(jid: string, userText: string, systemHint?: string): Promise<string | null> {
+  // `withTools=true` opts INTO the tenant's installed connector
+  // tools (Gmail / Calendar / etc.). Default off because pulling
+  // every installed connector's schema into the prompt is expensive
+  // and is wrong for personal-docs replies where the prompt is
+  // already large with OCR context. The bridges' natural-chat path
+  // sets this to true so the bot can actually use Gmail when asked.
+  async respondTo(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean }): Promise<string | null> {
     if (!this.enabled()) return null;
     const prev = this.inflight.get(jid) ?? Promise.resolve<string | null>(null);
-    const next = prev.then(() => this.runTurn(jid, userText, systemHint)).catch((err) => {
+    const next = prev.then(() => this.runTurn(jid, userText, systemHint, opts?.withTools === true)).catch((err) => {
       this.logger.error({ err, jid }, "turn errored");
       return null;
     });
@@ -56,7 +62,7 @@ export class AgentClient {
     return reply;
   }
 
-  private async runTurn(jid: string, userText: string, systemHint?: string): Promise<string | null> {
+  private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false): Promise<string | null> {
     const sessionId = await this.ensureSession(jid);
     if (!sessionId) return null;
 
@@ -65,13 +71,13 @@ export class AgentClient {
 
     const postBody: Record<string, unknown> = {
       content: userText,
-      // Bridges are personal-text auto-reply. We never want the LLM
-      // to try calling GitHub/Linear/Gmail tools mid-WhatsApp-reply,
-      // and pulling all installed connectors' schemas into the prompt
-      // can blow OpenAI's per-minute token limit on tenants with many
-      // connectors. The control-plane's session handler honors this
-      // flag by skipping the tool catalog entirely.
-      noTools: true,
+      // noTools=true is the default for auto-reply paths (replying
+      // to a friend, generating a doc-query answer) where the
+      // bridge has already loaded heavy context and the LLM
+      // shouldn't be invoking unrelated connectors. The natural-
+      // chat path explicitly opts INTO tools so the bot can use
+      // Gmail / Calendar / etc. when the owner asks.
+      noTools: !withTools,
     };
     if (systemHint) postBody.systemHint = systemHint;
 
