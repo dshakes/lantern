@@ -932,10 +932,27 @@ export class WhatsAppSession {
           // Classify attention independently of the auto-reply path — we want
           // to notify the owner even when the bot is globally muted or paused
           // for this contact (that's exactly when a heads-up matters most).
+          //
+          // Hard-skip non-conversational JIDs — WhatsApp Status updates
+          // (status@broadcast) and newsletters (@newsletter) are one-way
+          // broadcasts, not messages addressed to the owner. Treating
+          // them as escalations spams the self-chat every time a contact
+          // posts a Story.
           const senderName = msg.pushName || undefined;
-          this.checkAttention(from, text, senderName, isGroup).catch((err) =>
-            this.logger.warn({ err, from }, "attention check failed")
-          );
+          const isBroadcast = from === "status@broadcast"
+            || from.endsWith("@broadcast")
+            || from.endsWith("@newsletter");
+          if (isBroadcast) {
+            this.logger.debug({ from }, "skipping attention check — broadcast JID");
+          } else {
+            this.checkAttention(from, text, senderName, isGroup).catch((err) =>
+              this.logger.warn({ err, from }, "attention check failed")
+            );
+          }
+          // Also short-circuit the rest of the message-handling pipeline
+          // for broadcast JIDs — auto-reply / monitor / store-history
+          // make no sense for one-way Status posts.
+          if (isBroadcast) continue;
 
           if (!this.agent.enabled()) continue;
           if (this.muted) {
