@@ -2095,7 +2095,7 @@ export class WhatsAppSession {
       `  • Use any connector tools attached to this agent in the Lantern dashboard (Gmail, Calendar, etc.) when helpful.`,
     ].join("\n");
     try {
-      const draft = await this.agent.respondTo(jid, text, systemHint);
+      const draft = await this.agent.respondTo(jid, text, systemHint, { withTools: true });
       if (!draft) return;
       await this.confirmToSelf(draft.trim());
     } catch (err) {
