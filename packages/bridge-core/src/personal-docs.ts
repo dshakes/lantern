@@ -128,8 +128,20 @@ const FOLLOWUP_PATTERNS: RegExp[] = [
   /^(the first|the second|the third|first one|second one|that one|this one|both)\b/i,
 ];
 
+// Connector-domain nouns that belong to other agents/tools (Gmail,
+// Calendar, etc.) — NOT local file lookup. Catches false positives
+// from "what's on my calendar" / "any new emails" matching the
+// generic "bucket query about my X" intent.
+const CONNECTOR_DOMAIN_RE = /\b(calendar|inbox|email|emails|mail|message|messages|notification|notifications|schedule|meeting|meetings|slack|github|linear|notion|sheet|spreadsheet|drive|doc(?!ument)|task|tasks|todo|reminder)\b/i;
+
 export function looksLikeDocQuery(text: string): boolean {
   if (!text || text.length < 2) return false;
+  // Hard exclude: if the message mentions a connector domain noun
+  // (calendar, inbox, email, slack, etc.) it belongs to the
+  // natural-chat + tools path, not local-file OCR. Lets queries like
+  // "what's on my calendar tomorrow" / "any new emails" reach Gmail
+  // and Calendar connectors instead of the docs pipeline.
+  if (CONNECTOR_DOMAIN_RE.test(text)) return false;
   return DOC_INTENT_PATTERNS.some((re) => re.test(text));
 }
 

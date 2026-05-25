@@ -58,8 +58,14 @@ export interface ParsedCommand {
 
 const INVOCATION_PREFIX = /^(?:hey\s+)?lantern[,!:\s]+/i;
 
-const MUTE_VERBS = /\b(?:pause|mute|stop\s+replying|stop|off|hush|quiet|silence|sleep)\b/i;
-const UNMUTE_VERBS = /\b(?:resume|unmute|wake\s*up|wake|start\s+replying|on|continue|reactivate)\b/i;
+const MUTE_VERBS = /\b(?:pause|mute|stop\s+replying|hush|quiet|silence|go\s+to\s+sleep)\b/i;
+// Bare "on" / "off" / "stop" used to be in here but tripped on
+// natural phrases like "what's on my calendar". Now we only accept
+// explicit forms — bare verbs at the start of message body, full
+// phrases, or the "lantern, on" / slash forms.
+const UNMUTE_VERBS = /^(?:resume|unmute|wake(?:\s+up)?|reactivate|start\s+replying|come\s+back)\b/i;
+const STRICT_MUTE_AT_START = /^(?:stop\s+replying|stop|off|sleep)\b/i;
+const STRICT_UNMUTE_AT_START = /^(?:on)\b/i;
 const STATUS_VERBS = /\b(?:status|state|diagnostics|how('s|\s+are|\s+is)|check\s*in)\b/i;
 const PING_VERBS = /\b(?:ping|are\s+you\s+(?:alive|there|up|on))\b/i;
 const RESUME_ALL_VERBS = /\bresume\s+(?:all|everyone|everybody)\b/i;
@@ -196,10 +202,15 @@ export function parseNLCommand(input: string): ParsedCommand | null {
   if (HELP_VERBS.test(body)) {
     return { action: "help", echo: "available commands", explicit };
   }
-  if (UNMUTE_VERBS.test(body)) {
+  // Bare "on" / "off" only when invoked explicitly via "lantern, on" /
+  // "lantern, off". Without the prefix they false-positive on
+  // conversational phrases like "what's on my calendar" or "the lights
+  // are off". The slash form (/bot on, /bot off) goes through
+  // parseSlash and is unaffected.
+  if (UNMUTE_VERBS.test(body) || (explicit && STRICT_UNMUTE_AT_START.test(body))) {
     return { action: "unmute", echo: "auto-reply resumed", explicit };
   }
-  if (MUTE_VERBS.test(body)) {
+  if (MUTE_VERBS.test(body) || (explicit && STRICT_MUTE_AT_START.test(body))) {
     const dur = parseDuration(body);
     const echo = dur.phrase
       ? `auto-reply paused for ${dur.phrase}`
