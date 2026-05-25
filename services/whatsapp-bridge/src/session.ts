@@ -1557,6 +1557,19 @@ export class WhatsAppSession {
       return;
     }
 
+    // OWNER-CHANNEL NATURAL CHAT: free-form chat from the owner that
+    // isn't a command, doc query, or confirmation. Routes to the
+    // regular agent so the bridge functions as a chatbot in addition
+    // to commands + docs. Suppressed when LANTERN_OWNER_CHAT_NL=off.
+    if (self && !group && text) {
+      const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
+      if (nlEnabled && !this.muted) {
+        this.logger.info({ jid, textPreview: text.slice(0, 60) }, "owner natural chat");
+        void this.handleOwnerNaturalChat(jid, text);
+        return;
+      }
+    }
+
     // Group-scoped: /bot monitor on|off opts a group in / out of the agent.
     if (group && trimmed === "/bot monitor on") {
       this.monitorGroup(jid);
@@ -2057,6 +2070,36 @@ export class WhatsAppSession {
         await this.confirmToSelf(`(note save failed — try again)`);
       }
       return;
+    }
+  }
+
+  // Owner free-form chat handler. Same shape as iMessage's — agent
+  // round-trip with a Jarvis-tuned prompt so the owner channel
+  // doubles as a chatbot on top of commands + docs.
+  private async handleOwnerNaturalChat(jid: string, text: string): Promise<void> {
+    const today = new Date().toISOString().slice(0, 10);
+    const hour = new Date().getHours();
+    const timeOfDay = hour < 5 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 22 ? "evening" : "late night";
+    const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+    const systemHint = [
+      `You are Lantern — ${ownerName}'s personal agent, replying in his WhatsApp self-chat.`,
+      `Today is ${today}. Local time of day: ${timeOfDay}.`,
+      ``,
+      `You ARE his Jarvis. Warm, concise, authentic. Like a sharp peer who knows him well.`,
+      `  • 1-3 short lines. No corporate filler ("I'd be happy to" / "feel free" / "let me know if").`,
+      `  • Lowercase, conversational.`,
+      `  • Match his energy — if he's brief, you're brief.`,
+      `  • For greetings ("hi", "hey"), say hello briefly + ask what he needs OR drop a useful nudge from time of day (morning → "anything on for today?", evening → "wrap-up notes for tomorrow?").`,
+      `  • You can search his Mac files (passport, license, receipts, etc.) — when he mentions one, suggest the exact phrasing ("when does my passport expire", "find my I-485 receipt", "what's my green card number").`,
+      `  • You can add calendar events, save notes, draft mail on his behalf — offer when relevant.`,
+      `  • Use any connector tools attached to this agent in the Lantern dashboard (Gmail, Calendar, etc.) when helpful.`,
+    ].join("\n");
+    try {
+      const draft = await this.agent.respondTo(jid, text, systemHint);
+      if (!draft) return;
+      await this.confirmToSelf(draft.trim());
+    } catch (err) {
+      this.logger.warn({ err, jid }, "owner natural chat exception (whatsapp)");
     }
   }
 

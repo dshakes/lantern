@@ -766,6 +766,18 @@ export class IMessageSession {
         void this.handleOwnerDocQuery(row.handle, text, { followup: isFollowup });
         return;
       }
+
+      // OWNER-CHANNEL NATURAL CHAT: free-form messages from the owner
+      // that aren't commands/docs/confirmations. Route to the regular
+      // agent so the bridge functions as a chatbot on top of the
+      // command + docs layers. Suppressed when LANTERN_OWNER_CHAT_NL=off
+      // for users who treat their self-chat as a silent scratchpad.
+      const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
+      if (nlEnabled && !this.muted) {
+        this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "owner natural chat");
+        void this.handleOwnerNaturalChat(row.handle, text);
+        return;
+      }
     }
 
     // Media: attach a synthetic-text annotation when an attachment is
@@ -1135,6 +1147,43 @@ export class IMessageSession {
         await this.send(jid, `(note save failed — try again)`);
       }
       return;
+    }
+  }
+
+  // Owner free-form chat — anything that isn't a command, doc query,
+  // or confirmation. Lets the owner-channel double as a Jarvis-style
+  // chatbot on top of the personal-docs / actions layer.
+  //
+  // Tone: short, warm, lowercase — matches the Jarvis persona used
+  // for doc queries. We DON'T inject the docs context block here
+  // (no search runs), so this is just a clean agent round-trip.
+  private async handleOwnerNaturalChat(jid: string, text: string): Promise<void> {
+    const today = new Date().toISOString().slice(0, 10);
+    const hour = new Date().getHours();
+    const timeOfDay = hour < 5 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 22 ? "evening" : "late night";
+    const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+    const systemHint = [
+      `You are Lantern — ${ownerName}'s personal agent, replying in his iMessage self-chat.`,
+      `Today is ${today}. Local time of day: ${timeOfDay}.`,
+      ``,
+      `You ARE his Jarvis. Warm, concise, authentic. Like a sharp peer who knows him well.`,
+      `  • 1-3 short lines. No corporate filler ("I'd be happy to" / "feel free" / "let me know if").`,
+      `  • Lowercase, conversational.`,
+      `  • Match his energy — if he's brief, you're brief.`,
+      `  • For greetings ("hi", "hey"), say hello briefly + ask what he needs OR drop a useful nudge from time of day (morning → "anything on for today?", evening → "wrap-up notes for tomorrow?").`,
+      `  • You can search his Mac files (passport, license, receipts, etc.) — when he mentions one, suggest the exact phrasing ("when does my passport expire", "find my I-485 receipt", "what's my green card number").`,
+      `  • You can add calendar events, save notes, draft mail on his behalf — offer when relevant.`,
+      `  • Use any connector tools attached to this agent in the Lantern dashboard (Gmail, Calendar, etc.) when helpful.`,
+    ].join("\n");
+    try {
+      const draft = await this.agent.respondTo(jid, text, systemHint);
+      if (!draft) {
+        this.logger.warn({ jid }, "owner natural chat — no draft");
+        return;
+      }
+      await this.send(jid, draft.trim());
+    } catch (err) {
+      this.logger.warn({ err, jid }, "owner natural chat exception");
     }
   }
 
