@@ -864,12 +864,25 @@ export class WhatsAppSession {
           //   (a) replies the bridge itself just sent — echo back; skip.
           //   (b) replies the owner typed from native WhatsApp on phone —
           //       treat as command or takeover.
+          //   (c) HISTORY-SYNC REPLAYS — every reconnect, Baileys
+          //       backfills old messages through the SAME upsert event
+          //       with m.type==="append" (not "notify"). Without this
+          //       guard, the bridge re-pauses every contact you've
+          //       ever messaged on EACH reconnect, resetting the 60min
+          //       take-over timer indefinitely. Result: you appear
+          //       perma-paused even when idle.
           if (msg.key.fromMe) {
             if (msg.key.id && this.bridgeSentIds.has(msg.key.id)) {
               this.bridgeSentIds.delete(msg.key.id);
               continue;
             }
             if (!text) continue;
+            // Skip history-sync replays — only LIVE owner messages
+            // should trigger take-over + persona learning.
+            if (m.type !== "notify") {
+              this.logger.debug({ from, type: m.type }, "skipping fromMe replay (history-sync)");
+              continue;
+            }
             // Capture the owner's real outgoing messages as few-shot
             // exemplars for the persona. Skip self-chat (commands), groups
             // (mixed register), and /bot commands themselves.
