@@ -23,6 +23,7 @@ import { useToast } from "@/components/toast";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
 import { PageHeader } from "@/components/page-header";
 import { WebChatWidget } from "@/components/web-chat-widget";
+import Link from "next/link";
 import { QRCode, buildQRLink, generatePairingToken } from "@/components/qr-code";
 import { WhatsAppPairing } from "@/components/whatsapp-pairing";
 import { api } from "@/lib/api";
@@ -66,6 +67,16 @@ interface SurfaceDefinition {
   hasQRCode?: boolean;
   qrType?: "whatsapp" | "telegram" | "pair";
   qrLabel?: string;
+  // Live liveness probe — when set, the card hits this URL's /health
+  // endpoint and renders Connected/Offline instead of relying on the
+  // surface_configs table. Used by iMessage (no config needed; the
+  // bridge IS the config).
+  livenessProbeUrl?: string;
+  // When set, the card's button becomes a Link to this href instead
+  // of opening the config modal. Used by iMessage to send the user
+  // to /personal/setup where the real UX lives.
+  primaryActionHref?: string;
+  primaryActionLabel?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,13 +159,18 @@ const surfaces: SurfaceDefinition[] = [
   },
   {
     id: "imessage", name: "iMessage",
-    description: "Native iMessage via a macOS host (chat.db + AppleScript). Full-fidelity messaging on iPhone/iPad/Mac.",
+    description: "Native iMessage via a macOS host (chat.db + AppleScript). Full-fidelity messaging on iPhone/iPad/Mac. Configure + control at /personal.",
     icon: Phone, iconColor: "text-blue-400", iconBg: "bg-blue-500/10",
-    configFields: [
-      { key: "macHost", label: "macOS Bridge Host", type: "text", placeholder: "localhost:3200", helpText: "Where the lantern-imessage-bridge service is running. Defaults to localhost:3200 on the same host as the control-plane." },
-      { key: "sharedToken", label: "Bridge Shared Token (optional)", type: "password", placeholder: "long random string", helpText: "Must match LANTERN_IMESSAGE_BRIDGE_TOKEN on the bridge host." },
-    ],
+    configFields: [],
     hasQRCode: false,
+    // Live-probe the iMessage bridge so the card shows accurate state
+    // ("Connected" vs "Bridge offline") instead of the always-"Not
+    // configured" status driven by surface_configs. iMessage doesn't
+    // need a config row — the bridge running on this Mac IS the
+    // configuration.
+    livenessProbeUrl: process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL || "http://localhost:3200",
+    primaryActionHref: "/personal/setup",
+    primaryActionLabel: "Manage on /personal",
   },
 ];
 
@@ -389,18 +405,29 @@ export default function SurfacesPage() {
 
   // Check WhatsApp bridge status for display on the card
   const [whatsappBridgeRunning, setWhatsappBridgeRunning] = useState<boolean | null>(null);
+  // Same for iMessage bridge — drives the "Live"/"Bridge offline" pill
+  // on the iMessage card so the user sees real state instead of the
+  // misleading "Not configured" we used to show.
+  const [imessageBridgeRunning, setImessageBridgeRunning] = useState<boolean | null>(null);
   useEffect(() => {
-    async function checkWhatsAppBridge() {
+    async function probe(url: string, setter: (v: boolean) => void) {
       try {
-        const res = await fetch("http://localhost:3100/health", { signal: AbortSignal.timeout(3000) });
-        setWhatsappBridgeRunning(res.ok);
+        const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+        setter(res.ok);
       } catch {
-        setWhatsappBridgeRunning(false);
+        setter(false);
       }
     }
-    checkWhatsAppBridge();
-    // Re-check every 30 seconds
-    const interval = setInterval(checkWhatsAppBridge, 30000);
+    async function checkBoth() {
+      const waUrl = process.env.NEXT_PUBLIC_LANTERN_BRIDGE_URL || "http://localhost:3100";
+      const imUrl = process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL || "http://localhost:3200";
+      await Promise.all([
+        probe(`${waUrl}/health`, setWhatsappBridgeRunning),
+        probe(`${imUrl}/health`, setImessageBridgeRunning),
+      ]);
+    }
+    checkBoth();
+    const interval = setInterval(checkBoth, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -462,7 +489,14 @@ export default function SurfacesPage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {surfaces.map((surface) => {
             const config = configs[surface.id];
-            const connected = config?.connected ?? false;
+            // iMessage uses live bridge probe; other surfaces use
+            // the surface_configs row + an explicit Connect step.
+            const liveProbeState =
+              surface.id === "imessage" ? imessageBridgeRunning : null;
+            const connected =
+              surface.livenessProbeUrl
+                ? liveProbeState === true
+                : (config?.connected ?? false);
             const Icon = surface.icon;
             return (
               <div key={surface.id} className="surface-card card-hover group">
@@ -473,7 +507,17 @@ export default function SurfacesPage() {
                   {connected ? (
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                      Connected
+                      {surface.livenessProbeUrl ? "Live" : "Connected"}
+                    </span>
+                  ) : surface.livenessProbeUrl && liveProbeState === false ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-400">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                      Bridge offline
+                    </span>
+                  ) : surface.livenessProbeUrl && liveProbeState === null ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-zinc-500">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Checking…
                     </span>
                   ) : (
                     <span className="text-xs text-zinc-600">Not configured</span>
@@ -504,15 +548,27 @@ export default function SurfacesPage() {
                   </div>
                 )}
                 <div className="mt-4 flex items-center gap-2">
-                  <button
-                    onClick={() => openConfig(surface)}
-                    className={clsx(
-                      "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-                      connected ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-white hover:bg-lantern-400",
-                    )}
-                  >
-                    {connected ? "Configure" : "Set up"}
-                  </button>
+                  {surface.primaryActionHref ? (
+                    <Link
+                      href={surface.primaryActionHref}
+                      className={clsx(
+                        "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                        connected ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-white hover:bg-lantern-400",
+                      )}
+                    >
+                      {surface.primaryActionLabel || (connected ? "Manage" : "Set up")}
+                    </Link>
+                  ) : (
+                    <button
+                      onClick={() => openConfig(surface)}
+                      className={clsx(
+                        "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                        connected ? "border border-zinc-700 text-zinc-300 hover:bg-surface-3" : "bg-lantern-500 text-white hover:bg-lantern-400",
+                      )}
+                    >
+                      {connected ? "Configure" : "Set up"}
+                    </button>
+                  )}
                   {surface.id === "webchat" && connected && (
                     <button onClick={() => setShowWebChat(!showWebChat)} className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3">
                       Preview

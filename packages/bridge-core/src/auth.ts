@@ -11,7 +11,32 @@ import type { Logger } from "pino";
 const API_BASE_URL =
   process.env.LANTERN_API_URL || "http://localhost:8080";
 
-const STATIC_TOKEN = process.env.LANTERN_API_TOKEN || "";
+const RAW_STATIC_TOKEN = process.env.LANTERN_API_TOKEN || "";
+
+// Smart static-token validation. If the env var holds a JWT whose
+// `exp` claim is in the past, we treat it as if no static token were
+// set — falling back to credential login + auto-relogin. This prevents
+// the foot-gun where a developer exports a JWT once into their shell
+// and the env var stays set across machine reboots / weeks; the
+// bridge would otherwise silently 401 on every API call.
+function isJWTExpired(token: string): boolean {
+  if (!token) return false;
+  const parts = token.split(".");
+  if (parts.length !== 3) return false; // not a JWT, can't tell
+  try {
+    // base64url decode the payload
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = Buffer.from(b64, "base64").toString("utf-8");
+    const claims = JSON.parse(json) as { exp?: number };
+    if (typeof claims.exp !== "number") return false;
+    const nowSec = Math.floor(Date.now() / 1000);
+    return claims.exp <= nowSec;
+  } catch {
+    return false;
+  }
+}
+
+const STATIC_TOKEN = isJWTExpired(RAW_STATIC_TOKEN) ? "" : RAW_STATIC_TOKEN;
 
 const EMAIL = process.env.LANTERN_BRIDGE_EMAIL || "admin@lantern.dev";
 const PASSWORD = process.env.LANTERN_BRIDGE_PASSWORD || "lantern";
@@ -22,6 +47,43 @@ let log: Logger | null = null;
 
 export function initAuth(logger: Logger) {
   log = logger.child({ component: "auth" });
+  const rawHadToken = !!RAW_STATIC_TOKEN;
+  const tokenWasExpired = rawHadToken && !STATIC_TOKEN;
+  log.info(
+    {
+      apiUrl: API_BASE_URL,
+      hasStaticToken: !!STATIC_TOKEN,
+      ignoredExpiredEnvToken: tokenWasExpired,
+      email: EMAIL,
+    },
+    "auth initialized",
+  );
+  if (tokenWasExpired) {
+    log.warn(
+      "LANTERN_API_TOKEN env var holds an EXPIRED JWT — falling back to credential login. Run `unset LANTERN_API_TOKEN` in your shell to silence this.",
+    );
+  }
+  // Eagerly log in at startup so the first authedFetch always has a
+  // fresh token. Without this, the first request triggers a lazy
+  // login — and ANY auth blip later (token rotation, brief connection
+  // hiccup) creates a window where a 401 hits the caller before
+  // auto-relogin completes. Eager login + periodic refresh closes
+  // that window entirely.
+  if (!STATIC_TOKEN && authEnabled()) {
+    log.info("scheduling eager login");
+    loginNow()
+      .then((tok) => log?.info({ ok: !!tok }, "eager login resolved"))
+      .catch((err) => log?.warn({ err: String(err) }, "eager login rejected"));
+    // Refresh every 12 hours to stay ahead of JWT expiry (typical
+    // bridge sessions are 24h; refreshing at half-life is safe).
+    setInterval(() => {
+      loginNow()
+        .then((tok) => log?.info({ ok: !!tok }, "periodic relogin resolved"))
+        .catch((err) => log?.warn({ err: String(err) }, "periodic relogin rejected"));
+    }, 12 * 60 * 60_000);
+  } else {
+    log.info({ reason: STATIC_TOKEN ? "static-token mode" : "auth disabled" }, "no eager login");
+  }
 }
 
 export function authEnabled(): boolean {

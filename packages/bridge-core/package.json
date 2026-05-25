@@ -16,7 +16,8 @@
     "./command-executor": "./src/command-executor.ts",
     "./reaction-commands": "./src/reaction-commands.ts",
     "./voice-commands": "./src/voice-commands.ts",
-    "./daily-digest": "./src/daily-digest.ts"
+    "./daily-digest": "./src/daily-digest.ts",
+    "./offline-monitor": "./src/offline-monitor.ts"
   },
   "dependencies": {
     "pino": "^9.14.0"

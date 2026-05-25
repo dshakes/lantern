@@ -166,6 +166,14 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		// "you're texting as the owner, sound natural" persona with fresh
 		// per-thread style cues. Not persisted — strictly transient.
 		SystemHint string `json:"systemHint,omitempty"`
+		// NoTools, when true, disables tool-catalog attachment for this
+		// turn. The personal-assistant bridges (WhatsApp + iMessage) set
+		// this to true because (a) auto-reply doesn't need GitHub/Linear/
+		// etc., and (b) loading the full 13-connector tool catalog blows
+		// the prompt past OpenAI's 30k TPM limit on tenants with many
+		// connectors installed. Without this guard, the LLM call fails
+		// with "Request too large" and the contact never gets a reply.
+		NoTools bool `json:"noTools,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -240,7 +248,7 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	// Kick off LLM response in background. The systemHint (if any) is passed
 	// through so it can override the agent's stored system prompt for this
 	// turn only — see processMessage.
-	go h.processMessage(sessionID, tenantID, agentName, messages, body.SystemHint)
+	go h.processMessage(sessionID, tenantID, agentName, messages, body.SystemHint, body.NoTools)
 }
 
 // processMessage calls the LLM with the full message history and appends the
@@ -249,7 +257,7 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 // systemHint, when non-empty, takes precedence over the agent's stored
 // system_prompt for this turn only. The bridge uses it to ship a fresh
 // "natural texting" persona per inbound — see whatsapp-bridge/src/natural.ts.
-func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage, systemHint string) {
+func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage, systemHint string, noTools bool) {
 	ctx := context.Background()
 	ctx = middleware.InjectTenantID(ctx, tenantID)
 
@@ -317,10 +325,21 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// Build the tool list from the tenant's installed connectors. Empty
 	// list = no tool-calling, model just responds in text (unchanged
 	// behavior for agents without connectors).
-	tools, toolsErr := toolsForTenant(ctx, h.srv.Pool, tenantID)
-	if toolsErr != nil {
-		h.logger().Warn("session: tool catalog lookup failed", zap.Error(toolsErr))
-		tools = nil
+	//
+	// Bridges set noTools=true for personal auto-reply: the persona
+	// is "text a casual response", tools aren't needed, AND loading
+	// 10+ connectors as tool schemas can blow OpenAI's 30k TPM limit
+	// on tenants with many connectors installed.
+	var tools []map[string]any
+	if noTools {
+		h.logger().Debug("session: noTools=true — skipping tool catalog")
+	} else {
+		var toolsErr error
+		tools, toolsErr = toolsForTenant(ctx, h.srv.Pool, tenantID)
+		if toolsErr != nil {
+			h.logger().Warn("session: tool catalog lookup failed", zap.Error(toolsErr))
+			tools = nil
+		}
 	}
 
 	// Dispatch function closes over the tenant + pool so the tool-call
