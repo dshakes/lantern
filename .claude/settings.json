@@ -1,14 +1,14 @@
 {
   "enabledPlugins": {
     "frontend-design@claude-plugins-official": true,
-    "core@agent-settings": true
+    "core@compass": true
   },
   "extraKnownMarketplaces": {
-    "agent-settings": {
+    "compass": {
       "source": {
         "source": "github",
-        "repo": "dshakes/agent-settings",
-        "ref": "v0.2.0"
+        "repo": "dshakes/compass",
+        "ref": "v0.4.0"
       }
     }
   }
