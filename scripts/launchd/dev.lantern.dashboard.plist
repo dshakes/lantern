@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+LaunchAgent for the Lantern dashboard (Next.js dev). Auto-starts at
+login on http://localhost:3001.
+
+Logs: ~/Library/Logs/Lantern/dashboard.{out,err}.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.lantern.dashboard</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO_ROOT__/scripts/launchd/run-dashboard-wrapper.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO_ROOT__/apps/web</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/Lantern/dashboard.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/Lantern/dashboard.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:__HOME__/.nvm/versions/node/v22.18.0/bin:/usr/bin:/bin</string>
+    <key>NEXT_PUBLIC_API_URL</key>
+    <string>http://localhost:8080</string>
+    <key>PORT</key>
+    <string>3001</string>
+  </dict>
+</dict>
+</plist>

@@ -56,6 +56,26 @@ run-imessage-bridge: ## Start the iMessage bridge (macOS only)
 
 run-imessage: run-imessage-bridge ## Alias: start the iMessage bridge
 
+autostart-install: ## Install Lantern as macOS LaunchAgents (auto-start at login, auto-restart on crash)
+	@bash scripts/launchd/install.sh
+
+autostart-uninstall: ## Remove all Lantern LaunchAgents
+	@bash scripts/launchd/install.sh --uninstall
+
+autostart-status: ## Show currently-loaded Lantern LaunchAgents + recent log lines
+	@launchctl list | grep -i lantern || echo "(no lantern launchagents loaded — run 'make autostart-install')"
+	@echo ""
+	@for s in infra api dashboard whatsapp-bridge imessage-bridge; do \
+		echo "—— $$s last 3 lines ——"; \
+		tail -3 "$$HOME/Library/Logs/Lantern/$$s.err.log" 2>/dev/null || echo "(no log yet)"; \
+	done
+
+regression: ## Run the full alpha-readiness regression test suite
+	@bash scripts/regression.sh
+
+regression-quiet: ## Same but only print failures (good for cron)
+	@bash scripts/regression.sh --quiet
+
 landing-dev: ## Start the landing page in dev mode
 	cd apps/landing && npm run dev
 

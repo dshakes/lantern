@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+LaunchAgent for the Lantern control-plane API (Go). Auto-starts at
+login, auto-restarts on crash. Depends on Docker (Postgres/Redis/MinIO)
+being up — see scripts/launchd/wait-for-docker.sh which is invoked
+before the API binary.
+
+To unload:  launchctl unload ~/Library/LaunchAgents/dev.lantern.api.plist
+Logs:       ~/Library/Logs/Lantern/api.{out,err}.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.lantern.api</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO_ROOT__/scripts/launchd/run-api-wrapper.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO_ROOT__</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/Lantern/api.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/Lantern/api.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/opt/homebrew/opt/go/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>DATABASE_URL</key>
+    <string>postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable</string>
+    <key>REDIS_URL</key>
+    <string>redis://localhost:6379</string>
+    <key>S3_ENDPOINT</key>
+    <string>http://localhost:9000</string>
+    <key>LOG_LEVEL</key>
+    <string>info</string>
+  </dict>
+</dict>
+</plist>

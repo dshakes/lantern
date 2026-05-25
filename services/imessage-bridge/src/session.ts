@@ -42,6 +42,8 @@ import { parseNLCommand, type ParsedCommand } from "@lantern/bridge-core/nl-comm
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
+import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
+import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 
 export type IMessageConnectionState =
   | "starting"
@@ -156,9 +158,35 @@ export class IMessageSession {
     }
 
     this.setState("ready");
+    this.everConnected = true;
     this.startPolling();
     this.startDailyDigest();
+    this.startOfflineMonitor();
     this.logger.info("iMessage session ready");
+  }
+
+  // True once we've successfully reached `ready` at least once.
+  // Used by OfflineMonitor to distinguish first-boot idle (expected,
+  // no alert) from post-disconnect idle (worth alerting on).
+  private everConnected = false;
+
+  private offlineMonitor: OfflineMonitor | null = null;
+  private startOfflineMonitor(): void {
+    if (this.offlineMonitor) return;
+    const mirror = new EmailMirror(this.logger, { subjectPrefix: "Lantern iMessage" });
+    this.offlineMonitor = new OfflineMonitor(
+      this.logger,
+      defaultOfflineMonitorConfig("iMessage"),
+      mirror,
+      {
+        getState: () => ({
+          state: this.state,
+          everConnected: this.everConnected,
+          reason: this.stateReason,
+        }),
+      },
+    );
+    this.offlineMonitor.start();
   }
 
   // Track session-lifetime stats for the digest. Reset on each
@@ -207,6 +235,8 @@ export class IMessageSession {
     }
     this.digestStopFn?.();
     this.digestStopFn = null;
+    this.offlineMonitor?.stop();
+    this.offlineMonitor = null;
     this.db.close();
     this.sockets.forEach((s) => {
       try { s.close(); } catch {}

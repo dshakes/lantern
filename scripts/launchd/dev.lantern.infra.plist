@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+LaunchAgent for Lantern infrastructure (Postgres + Redis + MinIO via
+docker-compose). Runs at login: brings up the docker stack via
+`make dev-infra`, then exits cleanly. Other LaunchAgents (api,
+dashboard, bridges) depend on these being healthy.
+
+Docker Desktop itself must be set to "Start at login" — that's
+configured in Docker Desktop's Settings → General. This plist runs
+AFTER Docker is up.
+
+Logs: ~/Library/Logs/Lantern/infra.{out,err}.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.lantern.infra</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO_ROOT__/scripts/launchd/run-infra-wrapper.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO_ROOT__</string>
+
+  <!-- RunAtLoad fires once per login. KeepAlive is OFF — docker-compose
+       is a one-shot 'bring up' command, not a long-running daemon. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/Lantern/infra.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/Lantern/infra.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>

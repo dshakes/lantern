@@ -63,7 +63,16 @@ export class AgentClient {
     const sseCtrl = new AbortController();
     const ssePromise = this.waitForAgentMessage(sessionId, sseCtrl.signal);
 
-    const postBody: Record<string, unknown> = { content: userText };
+    const postBody: Record<string, unknown> = {
+      content: userText,
+      // Bridges are personal-text auto-reply. We never want the LLM
+      // to try calling GitHub/Linear/Gmail tools mid-WhatsApp-reply,
+      // and pulling all installed connectors' schemas into the prompt
+      // can blow OpenAI's per-minute token limit on tenants with many
+      // connectors. The control-plane's session handler honors this
+      // flag by skipping the tool catalog entirely.
+      noTools: true,
+    };
     if (systemHint) postBody.systemHint = systemHint;
 
     const postRes = await authedFetch(`/v1/sessions/${sessionId}/messages`, {

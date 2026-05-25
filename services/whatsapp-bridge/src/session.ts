@@ -30,6 +30,8 @@ import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { reactionToAction, dispatchReaction } from "@lantern/bridge-core/reaction-commands";
 import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
+import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
+import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import type { BotState } from "./types.js";
 
 // Display name for the bot-owner used in attention prompts and log lines.
@@ -484,10 +486,12 @@ export class WhatsAppSession {
             },
           });
           this.setConnectionState("connected");
+          this.everConnected = true;
 
           // Start the daily morning digest scheduler. Sends a brief
           // self-chat summary every morning at LANTERN_DIGEST_HOUR.
           this.startDailyDigest();
+          this.startOfflineMonitor();
 
           // Pre-warm group metadata so group session keys are initialized
           // BEFORE the first message arrives. Without this, the first
@@ -1494,6 +1498,30 @@ export class WhatsAppSession {
   private repliesSentToday = 0;
   private escalationsToday = 0;
   private digestStopFn: (() => void) | null = null;
+
+  // Set to true once the bridge has been in `connected` state at least
+  // once. OfflineMonitor uses this to distinguish first-boot idle
+  // (expected, no alert) from post-disconnect idle (worth alerting on).
+  private everConnected = false;
+  private offlineMonitor: OfflineMonitor | null = null;
+
+  private startOfflineMonitor(): void {
+    if (this.offlineMonitor) return;
+    const mirror = new EmailMirror(this.logger, { subjectPrefix: "Lantern WhatsApp" });
+    this.offlineMonitor = new OfflineMonitor(
+      this.logger,
+      defaultOfflineMonitorConfig("WhatsApp"),
+      mirror,
+      {
+        getState: () => ({
+          state: this.connectionState,
+          everConnected: this.everConnected,
+          reason: this.lastError,
+        }),
+      },
+    );
+    this.offlineMonitor.start();
+  }
 
   private startDailyDigest(): void {
     this.digestStopFn?.();
