@@ -132,7 +132,13 @@ const FOLLOWUP_PATTERNS: RegExp[] = [
 // Calendar, etc.) — NOT local file lookup. Catches false positives
 // from "what's on my calendar" / "any new emails" matching the
 // generic "bucket query about my X" intent.
-const CONNECTOR_DOMAIN_RE = /\b(calendar|inbox|email|emails|mail|message|messages|notification|notifications|schedule|meeting|meetings|slack|github|linear|notion|sheet|spreadsheet|drive|doc(?!ument)|task|tasks|todo|reminder)\b/i;
+//
+// Also includes "live-event" nouns (appointment, meeting, booking,
+// reservation, flight, hotel, doctor visit) because those typically
+// live in CALENDAR + GMAIL confirmations, not in scanned Mac PDFs.
+// Routing them to the natural-chat path gives the LLM Gmail +
+// Calendar tools to actually find them.
+const CONNECTOR_DOMAIN_RE = /\b(calendar|inbox|email|emails|mail|message|messages|notification|notifications|schedule|meeting|meetings|slack|github|linear|notion|sheet|spreadsheet|drive|doc(?!ument)|task|tasks|todo|reminder|appointment|appointments|booking|reservation|flight|flights|hotel|hotels|doctor|dentist|endoscop|colonoscop|surgery|procedure|visit|consult|standup|interview|callback|invite|invites|rsvp)\b/i;
 
 export function looksLikeDocQuery(text: string): boolean {
   if (!text || text.length < 2) return false;
