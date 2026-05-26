@@ -40,6 +40,7 @@ import {
 } from "@lantern/bridge-core/personal-docs";
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { extname } from "path";
 
 // MIME map for sendDocument — WhatsApp's UI shows a file-type icon
@@ -1965,7 +1966,15 @@ export class WhatsAppSession {
       if (progressFired) { /* already informed */ }
     };
 
-    const contextBlock = await this.docs.buildContextBlock(query, { includeBodies: true });
+    // Build docs context AND prefetch appointment data in parallel.
+    const client = defaultConnectorClient(this.logger);
+    const [docsBlock, apptBlock] = await Promise.all([
+      this.docs.buildContextBlock(query, { includeBodies: true }),
+      looksLikeAppointmentQuery(query)
+        ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    const contextBlock = [docsBlock, apptBlock].filter(Boolean).join("\n");
     this.logger.info({ ms: Date.now() - startedAt }, "doc context built (whatsapp)");
     const today = new Date().toISOString().slice(0, 10);
     const systemHint = [
@@ -2121,6 +2130,20 @@ export class WhatsAppSession {
     const hour = new Date().getHours();
     const timeOfDay = hour < 5 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 22 ? "evening" : "late night";
     const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+
+    // Pre-fetch Gmail + Calendar for appointment-style queries so
+    // the LLM receives all live data up-front and just synthesizes.
+    let prefetchBlock = "";
+    if (looksLikeAppointmentQuery(text)) {
+      try {
+        const client = defaultConnectorClient(this.logger);
+        const block = await prefetchAppointmentContext(client, text, this.logger);
+        if (block) prefetchBlock = block;
+      } catch (err) {
+        this.logger.warn({ err }, "wa prefetch failed (continuing without)");
+      }
+    }
+
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his WhatsApp self-chat.`,
       `Today is ${today}. Local time of day: ${timeOfDay}.`,
@@ -2133,7 +2156,8 @@ export class WhatsAppSession {
       `  • You can search his Mac files (passport, license, receipts, etc.) — when he mentions one, suggest the exact phrasing ("when does my passport expire", "find my I-485 receipt", "what's my green card number").`,
       `  • You can add calendar events, save notes, draft mail on his behalf — offer when relevant.`,
       `  • Use any connector tools attached to this agent in the Lantern dashboard (Gmail, Calendar, etc.) when helpful.`,
-    ].join("\n");
+      prefetchBlock,
+    ].filter(Boolean).join("\n");
     try {
       const draft = await this.agent.respondTo(jid, text, systemHint, { withTools: true });
       if (!draft) return;

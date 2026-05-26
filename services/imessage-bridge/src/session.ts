@@ -53,6 +53,7 @@ import {
 } from "@lantern/bridge-core/personal-docs";
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 
 export type IMessageConnectionState =
   | "starting"
@@ -1162,6 +1163,22 @@ export class IMessageSession {
     const hour = new Date().getHours();
     const timeOfDay = hour < 5 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 22 ? "evening" : "late night";
     const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+
+    // PRE-FETCH appointment-style queries — runs Gmail + Calendar in
+    // parallel and stuffs results into the prompt so the LLM has
+    // everything in one shot. Eliminates the "checked one tool,
+    // gave up" failure mode.
+    let prefetchBlock = "";
+    if (looksLikeAppointmentQuery(text)) {
+      try {
+        const client = defaultConnectorClient(this.logger);
+        const block = await prefetchAppointmentContext(client, text, this.logger);
+        if (block) prefetchBlock = block;
+      } catch (err) {
+        this.logger.warn({ err }, "prefetch failed (continuing without)");
+      }
+    }
+
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his iMessage self-chat.`,
       `Today is ${today}. Local time of day: ${timeOfDay}.`,
@@ -1174,7 +1191,8 @@ export class IMessageSession {
       `  • You can search his Mac files (passport, license, receipts, etc.) — when he mentions one, suggest the exact phrasing ("when does my passport expire", "find my I-485 receipt", "what's my green card number").`,
       `  • You can add calendar events, save notes, draft mail on his behalf — offer when relevant.`,
       `  • Use any connector tools attached to this agent in the Lantern dashboard (Gmail, Calendar, etc.) when helpful.`,
-    ].join("\n");
+      prefetchBlock,
+    ].filter(Boolean).join("\n");
     try {
       const draft = await this.agent.respondTo(jid, text, systemHint, { withTools: true });
       if (!draft) {
@@ -1276,11 +1294,20 @@ export class IMessageSession {
 
     // Followups skip a fresh search — the agent already has the file
     // paths in its session history. Fresh queries inject a context
-    // block with search results + top-match content.
-    const contextBlock = opts.followup
-      ? "\n\n(continuing previous doc query — use the file paths from your prior reply for any [ATTACH:...] markers)"
-      : await this.docs.buildContextBlock(query, { includeBodies: true });
-    this.logger.info({ ms: Date.now() - startedAt }, "doc context built");
+    // block with search results + top-match content. Plus: if the
+    // query looks appointment-y, ALSO prefetch Gmail + Calendar in
+    // parallel so all sources are in the prompt at once.
+    const client = defaultConnectorClient(this.logger);
+    const [docsBlock, apptBlock] = await Promise.all([
+      opts.followup
+        ? Promise.resolve("\n\n(continuing previous doc query — use the file paths from your prior reply for any [ATTACH:...] markers)")
+        : this.docs.buildContextBlock(query, { includeBodies: true }),
+      looksLikeAppointmentQuery(query)
+        ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    const contextBlock = [docsBlock, apptBlock].filter(Boolean).join("\n");
+    this.logger.info({ ms: Date.now() - startedAt, hasAppt: !!apptBlock }, "doc context built");
 
     // Persona: you ARE the user, answering yourself about your own
     // docs. Brief, factual, lowercase. Use [ATTACH:...] markers to
