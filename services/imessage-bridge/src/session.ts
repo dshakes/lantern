@@ -52,7 +52,7 @@ import {
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
-import { humanizeWithOffer, looksLikeConfirmation, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 
 export type IMessageConnectionState =
@@ -151,6 +151,17 @@ export class IMessageSession {
   // without ever emitting a [CALENDAR:...] marker.
   private pendingOffers: Map<string, PendingOffer> = new Map();
   private static readonly OFFER_TTL_MS = 10 * 60_000; // 10 min
+
+  // Per-chat concurrency lock. A single doc-query / natural-chat
+  // round-trip can take 90+ seconds (multi-page OCR + prefetch +
+  // LLM tool loop). Without this lock, rapid-fire messages from
+  // the owner (or multi-Apple-ID cross-device replays) spawn N
+  // parallel pipelines that all reply minutes later — the user sees
+  // a flood. With the lock: subsequent messages while one is
+  // in-flight get a brief "one sec — still working on the last
+  // one" + drop. The lock auto-clears when the in-flight query
+  // finishes (success or error).
+  private busyChat: Set<string> = new Set();
 
   // Futuristic helpers
   private agent: AgentClient;
@@ -739,17 +750,35 @@ export class IMessageSession {
       // CONFIRMATION INTERCEPT: when there's a pending offer for
       // this chat and the user replied with a clean affirmation
       // ("yes" / "sure" / "do it"), execute the action directly.
-      // No LLM round trip — avoids the hallucination where the
-      // LLM claimed it set the reminder without emitting the
-      // marker.
-      // First, sweep expired offers so the Map can't grow
-      // unboundedly across long-lived sessions.
       this.gcPendingOffers();
       const cachedOffer = this.pendingOffers.get(row.handle);
       if (cachedOffer && looksLikeConfirmation(text)) {
         this.logger.info({ kind: cachedOffer.kind, chat: row.handle }, "executing cached offer on confirmation");
         this.pendingOffers.delete(row.handle); // one-shot
         void this.executeCachedOffer(row.handle, cachedOffer);
+        return;
+      }
+      // REJECTION INTERCEPT: short negative ("no" / "nope" / "not now"
+      // / "cancel" / "skip") with a pending offer → clear the offer,
+      // send a brief ack, DON'T fire natural-chat. Stops every "no"
+      // from spawning a fresh agent round-trip + reply.
+      if (cachedOffer && looksLikeRejection(text)) {
+        this.logger.info({ kind: cachedOffer.kind, chat: row.handle }, "dropping cached offer on rejection");
+        this.pendingOffers.delete(row.handle);
+        void this.send(row.handle, "👍 no worries");
+        return;
+      }
+      // CHAT-BUSY GATE: a previous query for this chat is still
+      // in-flight. Drop new ones (with a brief explanation) so we
+      // don't spawn parallel pipelines that all reply minutes later.
+      if (this.busyChat.has(row.handle)) {
+        this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "skipping — chat busy with prior query");
+        // Optional: nudge so the user knows we heard them. Suppressed
+        // for ultra-short messages (yes/ok/no) since those already
+        // got handled by the intercepts above.
+        if (text.length > 8) {
+          void this.send(row.handle, "⏳ still working on the previous one — give me a sec");
+        }
         return;
       }
 
@@ -1159,6 +1188,9 @@ export class IMessageSession {
   // for doc queries. We DON'T inject the docs context block here
   // (no search runs), so this is just a clean agent round-trip.
   private async handleOwnerNaturalChat(jid: string, text: string): Promise<void> {
+    // Acquire per-chat busy lock; release on exit (success or throw).
+    this.busyChat.add(jid);
+    try {
     const today = new Date().toISOString().slice(0, 10);
     const hour = new Date().getHours();
     const timeOfDay = hour < 5 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 22 ? "evening" : "late night";
@@ -1202,6 +1234,9 @@ export class IMessageSession {
       await this.send(jid, draft.trim());
     } catch (err) {
       this.logger.warn({ err, jid }, "owner natural chat exception");
+    }
+    } finally {
+      this.busyChat.delete(jid);
     }
   }
 
@@ -1257,6 +1292,8 @@ export class IMessageSession {
     query: string,
     opts: { followup?: boolean } = {},
   ): Promise<void> {
+    this.busyChat.add(jid);
+    try {
     this.logger.info({ query: query.slice(0, 80), followup: !!opts.followup }, "owner doc query");
     this.broadcast({
       type: "activity",
@@ -1439,6 +1476,9 @@ export class IMessageSession {
       } catch (err) {
         this.logger.warn({ err, subject: m.subject }, "mail action exception");
       }
+    }
+    } finally {
+      this.busyChat.delete(jid);
     }
   }
 
