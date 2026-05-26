@@ -39,7 +39,7 @@ import {
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
-import { humanizeWithOffer, looksLikeConfirmation, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { extname } from "path";
 
@@ -181,6 +181,11 @@ export class WhatsAppSession {
   // emitting a marker.
   private pendingOffers: Map<string, PendingOffer> = new Map();
   private static readonly OFFER_TTL_MS = 10 * 60_000;
+  // Per-chat concurrency lock. A single doc / natural-chat
+  // round-trip can take 60+ seconds. Without this lock, rapid-fire
+  // messages spawn parallel pipelines that all reply minutes later.
+  // Acquired on owner-query handler entry, released in `finally`.
+  private busyChat: Set<string> = new Set();
   private attention: AttentionClassifier;
   private media: MediaHandler;
   private personal: PersonalClient;
@@ -1570,8 +1575,7 @@ export class WhatsAppSession {
     //      matches the bridge's own paired number)
     //   3) NOT a group
     // No DM from a contact or group message can reach this code path.
-    // CONFIRMATION INTERCEPT: pending offer + user says "yes" →
-    // execute the action deterministically, no LLM round trip.
+    // CONFIRMATION / REJECTION INTERCEPTS + BUSY GATE for owner chat.
     if (this.personalDocsEnabled && self && !group && this.docs && this.macActions) {
       this.gcPendingOffers();
       const cachedOffer = this.pendingOffers.get(jid);
@@ -1581,6 +1585,25 @@ export class WhatsAppSession {
         void this.executeCachedOffer(jid, cachedOffer);
         return;
       }
+      // Short "no" / "nope" / "skip" with a pending offer → drop the
+      // offer and ack briefly. Stops every rejection from spawning a
+      // fresh agent round-trip + reply.
+      if (cachedOffer && looksLikeRejection(text)) {
+        this.logger.info({ kind: cachedOffer.kind, jid }, "dropping cached offer on rejection");
+        this.pendingOffers.delete(jid);
+        void this.confirmToSelf("👍 no worries");
+        return;
+      }
+      // CHAT-BUSY GATE — drop new owner queries when a prior one is
+      // still in flight. Otherwise rapid-fire messages or history-
+      // sync replays spawn N parallel pipelines.
+      if (this.busyChat.has(jid)) {
+        this.logger.info({ jid, textPreview: text.slice(0, 60) }, "skipping — chat busy with prior query");
+        if (text.length > 8) {
+          void this.confirmToSelf("⏳ still working on the previous one — give me a sec");
+        }
+        return;
+      }
     }
 
     if (this.personalDocsEnabled && self && !group && this.docs && looksLikeDocQuery(text)) {
@@ -1588,10 +1611,7 @@ export class WhatsAppSession {
       return;
     }
 
-    // OWNER-CHANNEL NATURAL CHAT: free-form chat from the owner that
-    // isn't a command, doc query, or confirmation. Routes to the
-    // regular agent so the bridge functions as a chatbot in addition
-    // to commands + docs. Suppressed when LANTERN_OWNER_CHAT_NL=off.
+    // OWNER-CHANNEL NATURAL CHAT: free-form chat from the owner.
     if (self && !group && text) {
       const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
       if (nlEnabled && !this.muted) {
@@ -1944,6 +1964,8 @@ export class WhatsAppSession {
     key: { id?: string | null; remoteJid?: string | null; fromMe?: boolean | null; participant?: string | null },
   ): Promise<void> {
     if (!this.docs) return;
+    this.busyChat.add(jid);
+    try {
     this.logger.info({ query: query.slice(0, 80) }, "owner doc query (whatsapp)");
     this.logActivity("attention_dm", `📁 doc query: ${query.slice(0, 60)}`, { scope: "self" });
     // Acknowledge so the user sees instant feedback. We do BOTH a
@@ -2073,6 +2095,9 @@ export class WhatsAppSession {
         } catch (err) { this.logger.warn({ err }, "mail action exception"); }
       }
     }
+    } finally {
+      this.busyChat.delete(jid);
+    }
   }
 
   // Execute a cached offer (calendar reminder / save note).
@@ -2126,6 +2151,8 @@ export class WhatsAppSession {
   // round-trip with a Jarvis-tuned prompt so the owner channel
   // doubles as a chatbot on top of commands + docs.
   private async handleOwnerNaturalChat(jid: string, text: string): Promise<void> {
+    this.busyChat.add(jid);
+    try {
     const today = new Date().toISOString().slice(0, 10);
     const hour = new Date().getHours();
     const timeOfDay = hour < 5 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 22 ? "evening" : "late night";
@@ -2164,6 +2191,9 @@ export class WhatsAppSession {
       await this.confirmToSelf(draft.trim());
     } catch (err) {
       this.logger.warn({ err, jid }, "owner natural chat exception (whatsapp)");
+    }
+    } finally {
+      this.busyChat.delete(jid);
     }
   }
 

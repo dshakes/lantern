@@ -582,6 +582,14 @@ export class IMessageSession {
         && this.isOwnerChatRow(row)
         && looksLikeDocQuery(text)
       ) {
+        // CONCURRENCY GATE: skip if a prior query for this chat is
+        // still in flight. Same gate as handleInbound — applied here
+        // because the fromMe branch fires this path too when the
+        // owner types directly on this Mac.
+        if (this.busyChat.has(row.handle)) {
+          this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "fromMe doc-query skipped — chat busy");
+          return;
+        }
         void this.handleOwnerDocQuery(row.handle, text);
         return;
       }
