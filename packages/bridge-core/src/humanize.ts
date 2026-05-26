@@ -248,6 +248,15 @@ export function looksLikeConfirmation(text: string): boolean {
   return /^(yes|yep|yeah|yup|sure|ok|okay|please|do it|go ahead|go for it|set it|add it|save it|set the reminder|add the reminder|schedule it)\b/i.test(t);
 }
 
+// Rejection detection. When the user said NO to a pending offer.
+// Drops the cached offer + sends a brief ack instead of routing to
+// the agent (which would treat "no" as a fresh question and reply).
+export function looksLikeRejection(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (t.length > 30) return false;
+  return /^(no|nope|nah|not now|not really|skip|cancel|never mind|nvm|don'?t|do not|leave it)\b/i.test(t);
+}
+
 // Combined entry point: returns the polished reply AND the offer
 // (if any) so the caller can cache it for next-turn confirmation.
 export function humanizeWithOffer(text: string): { reply: string; offer: PendingOffer | null } {
