@@ -20,7 +20,8 @@
     "./offline-monitor": "./src/offline-monitor.ts",
     "./personal-docs": "./src/personal-docs.ts",
     "./mac-actions": "./src/mac-actions.ts",
-    "./humanize": "./src/humanize.ts"
+    "./humanize": "./src/humanize.ts",
+    "./prefetch": "./src/prefetch.ts"
   },
   "dependencies": {
     "pdf-parse": "^2.4.5",
