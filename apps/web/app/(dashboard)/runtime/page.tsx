@@ -6,7 +6,7 @@
 // Polls every 5s — cheap because the list page reads a single Postgres
 // table indexed on (tenant_id, created_at desc).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -25,7 +25,7 @@ import { Button } from "@/components/button";
 import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
 import { useToast } from "@/components/toast";
-import { runtimeApi } from "@/lib/runtime-api";
+import { runtimeApi, UnauthorizedError } from "@/lib/runtime-api";
 
 interface VmRow {
   vm_id: string;
@@ -79,6 +79,10 @@ export default function RuntimePage() {
   const [stateFilter, setStateFilter] = useState<"all" | VmRow["state"]>("all");
   const [refreshing, setRefreshing] = useState(false);
 
+  // Dedup repeated error toasts on the polling loop — without this, a
+  // single bad-state error (e.g. API down) fires once every 5s forever.
+  const lastErrorRef = useRef<string>("");
+
   const load = useCallback(async () => {
     try {
       const [vmRes, clRes] = await Promise.all([
@@ -87,8 +91,15 @@ export default function RuntimePage() {
       ]);
       setVms(vmRes.items ?? []);
       setCluster(clRes ?? null);
+      lastErrorRef.current = "";
     } catch (err) {
-      toast.error("Failed to load runtime view: " + (err instanceof Error ? err.message : String(err)));
+      // 401 already triggered a redirect-to-login inside runtimeApi —
+      // swallow so we don't toast on the way out.
+      if (err instanceof UnauthorizedError) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === lastErrorRef.current) return; // same error as last tick
+      lastErrorRef.current = msg;
+      toast.error("Failed to load runtime view: " + msg);
     }
   }, [toast]);
 

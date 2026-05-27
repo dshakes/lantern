@@ -17,7 +17,7 @@ import { Button } from "@/components/button";
 import { PageHeader } from "@/components/page-header";
 import { PageSkeleton } from "@/components/skeleton";
 import { useToast } from "@/components/toast";
-import { runtimeApi } from "@/lib/runtime-api";
+import { runtimeApi, UnauthorizedError } from "@/lib/runtime-api";
 
 interface VmDetail {
   vm: {
@@ -44,16 +44,25 @@ export default function RuntimeVmPage() {
   const [terminating, setTerminating] = useState(false);
   const logBoxRef = useRef<HTMLDivElement>(null);
 
-  // Initial + polling load of details + audit.
+  // Initial + polling load of details + audit. Dedup errors so a 401 / 500
+  // doesn't toast-spam every 5 seconds.
   useEffect(() => {
     if (!vmId) return;
     let cancelled = false;
+    let lastError = "";
     const load = async () => {
       try {
         const d = await runtimeApi.get<VmDetail>(`/v1/runtime/vms/${vmId}`);
-        if (!cancelled) setDetail(d);
+        if (!cancelled) {
+          setDetail(d);
+          lastError = "";
+        }
       } catch (err) {
-        toast.error("Failed to load VM: " + (err instanceof Error ? err.message : String(err)));
+        if (err instanceof UnauthorizedError) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg === lastError) return;
+        lastError = msg;
+        toast.error("Failed to load VM: " + msg);
       }
     };
     load();
@@ -97,7 +106,9 @@ export default function RuntimeVmPage() {
       await runtimeApi.del(`/v1/runtime/vms/${vmId}`);
       toast.success("Termination requested");
     } catch (err) {
-      toast.error("Termination failed: " + (err instanceof Error ? err.message : String(err)));
+      if (!(err instanceof UnauthorizedError)) {
+        toast.error("Termination failed: " + (err instanceof Error ? err.message : String(err)));
+      }
     } finally {
       setTerminating(false);
     }

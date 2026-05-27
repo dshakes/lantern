@@ -341,6 +341,25 @@ class LanternAPI {
       headers,
     });
 
+    if (res.status === 401) {
+      // Stale or invalid token. Drop it + kick to /login so the rest of
+      // the dashboard doesn't sit on a permanently-failing poll loop.
+      // Auth endpoints are exempt — /auth/login itself returning 401
+      // is just "bad credentials", caller handles it locally.
+      if (
+        typeof window !== "undefined" &&
+        !path.startsWith("/auth/") &&
+        !window.location.pathname.startsWith("/login")
+      ) {
+        this.setToken(null);
+        const next = encodeURIComponent(
+          window.location.pathname + window.location.search,
+        );
+        window.location.href = `/login?next=${next}`;
+      }
+      throw new Error("API 401: unauthorized");
+    }
+
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new Error(
