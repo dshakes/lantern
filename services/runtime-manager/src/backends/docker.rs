@@ -87,7 +87,10 @@ impl DockerBackend {
         // Secret refs are passed as env vars pointing to the vault reference.
         // The agent runner resolves them at execution time.
         for secret in &req.secrets {
-            env.push(format!("{}=lantern.secret/{}", secret.env_var, secret.vault_ref));
+            env.push(format!(
+                "{}=lantern.secret/{}",
+                secret.env_var, secret.vault_ref
+            ));
         }
 
         env
@@ -97,11 +100,23 @@ impl DockerBackend {
     fn parse_memory_bytes(memory: &str) -> Option<i64> {
         let memory = memory.trim();
         if memory.ends_with("Gi") {
-            memory.trim_end_matches("Gi").parse::<i64>().ok().map(|v| v * 1024 * 1024 * 1024)
+            memory
+                .trim_end_matches("Gi")
+                .parse::<i64>()
+                .ok()
+                .map(|v| v * 1024 * 1024 * 1024)
         } else if memory.ends_with("Mi") {
-            memory.trim_end_matches("Mi").parse::<i64>().ok().map(|v| v * 1024 * 1024)
+            memory
+                .trim_end_matches("Mi")
+                .parse::<i64>()
+                .ok()
+                .map(|v| v * 1024 * 1024)
         } else if memory.ends_with("Ki") {
-            memory.trim_end_matches("Ki").parse::<i64>().ok().map(|v| v * 1024)
+            memory
+                .trim_end_matches("Ki")
+                .parse::<i64>()
+                .ok()
+                .map(|v| v * 1024)
         } else {
             memory.parse::<i64>().ok()
         }
@@ -156,7 +171,11 @@ impl RuntimeBackend for DockerBackend {
 
         self.ensure_image().await?;
 
-        let container_name = format!("lantern-run-{}-{}", req.run_id, &Uuid::new_v4().to_string()[..8]);
+        let container_name = format!(
+            "lantern-run-{}-{}",
+            req.run_id,
+            &Uuid::new_v4().to_string()[..8]
+        );
         let env = Self::build_env(req);
 
         // Build host config with resource limits.
@@ -219,14 +238,15 @@ impl RuntimeBackend for DockerBackend {
     }
 
     async fn cancel(&self, handle_id: &str, reason: &str) -> Result<()> {
-        tracing::info!(handle_id = handle_id, reason = reason, "cancelling container");
+        tracing::info!(
+            handle_id = handle_id,
+            reason = reason,
+            "cancelling container"
+        );
 
         // Stop with a grace period.
         self.client
-            .stop_container(
-                handle_id,
-                Some(StopContainerOptions { t: 10 }),
-            )
+            .stop_container(handle_id, Some(StopContainerOptions { t: 10 }))
             .await
             .context("failed to stop container")?;
 
@@ -343,15 +363,9 @@ impl RuntimeBackend for DockerBackend {
 
         // Get the size of the created image.
         let image_ref = format!("{repo}:{tag}");
-        let image_info = self
-            .client
-            .inspect_image(&image_ref)
-            .await
-            .ok();
+        let image_info = self.client.inspect_image(&image_ref).await.ok();
 
-        let size_bytes = image_info
-            .and_then(|i| i.size)
-            .unwrap_or(0);
+        let size_bytes = image_info.and_then(|i| i.size).unwrap_or(0);
 
         let result_id = result.id.as_deref().unwrap_or("unknown");
 
@@ -395,7 +409,10 @@ impl RuntimeBackend for DockerBackend {
         }
 
         for secret in &req.secrets {
-            env.push(format!("{}=lantern.secret/{}", secret.env_var, secret.vault_ref));
+            env.push(format!(
+                "{}=lantern.secret/{}",
+                secret.env_var, secret.vault_ref
+            ));
         }
 
         let config = ContainerConfig {
@@ -446,8 +463,7 @@ fn gethostname() -> String {
     #[cfg(unix)]
     {
         let mut buf = vec![0u8; 256];
-        let ret =
-            unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+        let ret = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
         if ret != 0 {
             return "unknown".to_string();
         }

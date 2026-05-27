@@ -488,6 +488,27 @@ CLI surface (`lantern run`, `lantern vm …`) and dashboard pages
 (`/runtime`, `/runtime/{vm}`) consume these endpoints. End-to-end demo
 agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-research,04-ml-inference}/`.
 
+**Wiring env vars (set on control-plane + scheduler):**
+- `LANTERN_SCHEDULER_GRPC_ADDR=localhost:50055` — control-plane dials
+  the scheduler. Unset → falls back to `stubSchedulerClient` (synthesizes
+  vm-ids, returns `node-stub`/`az-stub`; useful for dashboard-only work).
+- `LANTERN_DEFAULT_MANAGER_ADDR=localhost:50054` — scheduler dials this
+  node when the placement chooses `node-local` / `node-stub` / empty.
+  Also used by the control-plane's Logs SSE proxy to reach the manager
+  directly. Unset → scheduler keeps the `LogOnlyDialer` stub.
+- `LANTERN_NODE_ADDR_<NODE>=host:port` — explicit per-node override
+  when the scheduler picks a named node and its IP isn't discoverable
+  via DNS.
+- `LANTERN_DIALER=stub` — force the stub dialer even when
+  `LANTERN_DEFAULT_MANAGER_ADDR` is set (debug aid).
+
+Real protoc Go codegen at `gen/go/lantern/v1/` is hand-maintained stubs
+(file gitignored, regenerated locally per `make proto`). Wire is
+protobuf-tag-compatible regardless of local Go type names — Go's
+hand-stub renames (e.g. `RuntimeLogLine` to avoid colliding with the
+`LogLine` from `runs.proto`) don't affect interop with the Rust
+tonic-generated server.
+
 ---
 
 ## What to do, and what NOT to do

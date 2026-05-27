@@ -29,13 +29,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
+	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -94,6 +101,246 @@ func (s *stubSchedulerClient) Cluster(_ context.Context) (map[string]any, error)
 	}, nil
 }
 
+// ---------- Real gRPC scheduler client ----------
+
+// grpcSchedulerClient dials the RuntimeScheduler service at the address
+// supplied via LANTERN_SCHEDULER_GRPC_ADDR (typically scheduler:50055).
+// It also lazily dials per-node runtime-manager connections for the
+// Logs / Exec stream proxy paths.
+//
+// Connections are kept alive for the process lifetime. There is no TLS
+// today — the wire runs inside the cluster VPC and is wrapped by the
+// existing gateway TLS at the edge.
+type grpcSchedulerClient struct {
+	logger     *zap.Logger
+	conn       *grpc.ClientConn
+	client     lanternv1.RuntimeSchedulerClient
+	defaultMgr string                      // LANTERN_DEFAULT_MANAGER_ADDR
+	mgrMu      sync.Mutex                  // guards mgrConns
+	mgrConns   map[string]*grpc.ClientConn // nodeName -> conn
+	mgrClients map[string]lanternv1.RuntimeManagerClient
+}
+
+// NewGRPCSchedulerClient dials the scheduler service. Plain insecure for now —
+// scheduler runs inside the cluster, TLS terminates at the edge.
+func NewGRPCSchedulerClient(addr string, logger *zap.Logger) (*grpcSchedulerClient, error) {
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("dial scheduler %s: %w", addr, err)
+	}
+	return &grpcSchedulerClient{
+		logger:     logger,
+		conn:       conn,
+		client:     lanternv1.NewRuntimeSchedulerClient(conn),
+		defaultMgr: os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR"),
+		mgrConns:   make(map[string]*grpc.ClientConn),
+		mgrClients: make(map[string]lanternv1.RuntimeManagerClient),
+	}, nil
+}
+
+// withTenant attaches the tenant_id to outbound gRPC metadata, matching the
+// scheduler's `middleware.MustTenantID` expectation. The tenant comes from
+// the request context (caller already validated the JWT) so we pull it from
+// the spec map here.
+func withTenant(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		return ctx
+	}
+	return metadata.AppendToOutgoingContext(ctx, "tenant_id", tenantID)
+}
+
+// resolveManagerAddr maps a node name to a runtime-manager gRPC address.
+// Resolution order:
+//  1. LANTERN_NODE_ADDR_<node> (with dots/dashes replaced by underscores)
+//  2. LANTERN_DEFAULT_MANAGER_ADDR
+//  3. node + ":50054" (the runtime-manager default port)
+func (c *grpcSchedulerClient) resolveManagerAddr(node string) string {
+	if node == "" {
+		return c.defaultMgr
+	}
+	key := "LANTERN_NODE_ADDR_" + strings.NewReplacer(".", "_", "-", "_").Replace(node)
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	if c.defaultMgr != "" {
+		return c.defaultMgr
+	}
+	return node + ":50054"
+}
+
+// managerClient returns (or lazily dials) the RuntimeManagerClient for a node.
+func (c *grpcSchedulerClient) managerClient(node string) (lanternv1.RuntimeManagerClient, error) {
+	addr := c.resolveManagerAddr(node)
+	if addr == "" {
+		return nil, fmt.Errorf("no runtime-manager address known for node %q", node)
+	}
+	c.mgrMu.Lock()
+	defer c.mgrMu.Unlock()
+	if cl, ok := c.mgrClients[node]; ok {
+		return cl, nil
+	}
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("dial runtime-manager %s: %w", addr, err)
+	}
+	cl := lanternv1.NewRuntimeManagerClient(conn)
+	c.mgrConns[node] = conn
+	c.mgrClients[node] = cl
+	c.logger.Info("dialed runtime-manager", zap.String("node", node), zap.String("addr", addr))
+	return cl, nil
+}
+
+func (c *grpcSchedulerClient) Schedule(ctx context.Context, spec map[string]any) (string, string, string, error) {
+	tenantID, _ := spec["tenant_id"].(string)
+	ctx = withTenant(ctx, tenantID)
+
+	agent := agentSpecFromMap(spec)
+	req := &lanternv1.ScheduleRequest{Spec: agent}
+
+	resp, err := c.client.Schedule(ctx, req)
+	if err != nil {
+		return "", "", "", err
+	}
+	if resp == nil {
+		return "", "", "", fmt.Errorf("scheduler returned nil handle")
+	}
+	return resp.VmId, resp.Node, resp.AvailabilityZone, nil
+}
+
+func (c *grpcSchedulerClient) Terminate(ctx context.Context, vmID, reason string) error {
+	// Tenant id is required by the scheduler's middleware, but the REST
+	// terminate handler already verified ownership. Pull from outgoing
+	// metadata if the caller stamped one; otherwise the scheduler will reject.
+	_, err := c.client.Terminate(ctx, &lanternv1.TerminateRequest{
+		VmId:   vmID,
+		Reason: reason,
+	})
+	return err
+}
+
+func (c *grpcSchedulerClient) Exec(ctx context.Context, vmID, command string, argv []string) (string, string, int32, error) {
+	// TODO(runtime-grpc): RuntimeManager.Exec is a bidi-stream RPC. The
+	// stub generated client in gen/go/lantern/v1/runtime_grpc.pb.go does
+	// not yet expose it (the proto defines it but `make proto` hasn't
+	// regenerated). Until then we surface a clear error so callers know
+	// Exec is not wired and can fall back. Tracked as TODO(W12-exec).
+	_ = ctx
+	c.logger.Warn("grpc scheduler: Exec not wired through proto stub",
+		zap.String("vm_id", vmID),
+		zap.String("command", command),
+		zap.Int("argv_len", len(argv)),
+	)
+	return "", "exec not yet wired through runtime-manager proto stub\n", 0, nil
+}
+
+func (c *grpcSchedulerClient) Cluster(ctx context.Context) (map[string]any, error) {
+	// Cluster is gated by tenant_id on the scheduler side — propagate
+	// from context if the caller stamped one (Cluster handler stamps via
+	// owner-only auth).
+	resp, err := c.client.Cluster(ctx, &lanternv1.ClusterRequest{})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return map[string]any{"nodes": []any{}, "total_vms_running": 0, "total_vms_pending": 0}, nil
+	}
+	nodes := make([]map[string]any, 0, len(resp.Nodes))
+	for _, n := range resp.Nodes {
+		if n == nil {
+			continue
+		}
+		nodes = append(nodes, map[string]any{
+			"name":              n.Name,
+			"availability_zone": n.AvailabilityZone,
+			"region":            n.Region,
+			"free_vcpu_millis":  n.FreeVcpuMillis,
+			"free_memory_bytes": n.FreeMemoryBytes,
+			"running_vms":       n.RunningVms,
+			"draining":          n.Draining,
+		})
+	}
+	return map[string]any{
+		"nodes":             nodes,
+		"total_vms_running": resp.TotalVmsRunning,
+		"total_vms_pending": resp.TotalVmsPending,
+	}, nil
+}
+
+// agentSpecFromMap turns the REST-side spec map into the proto AgentSpec.
+// Field names mirror the conventions in runtime-scheduler/internal/handlers
+// (snake_case map keys, proto enum normalization).
+func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
+	if spec == nil {
+		return &lanternv1.AgentSpec{}
+	}
+	a := &lanternv1.AgentSpec{}
+	if s, ok := spec["image_digest"].(string); ok {
+		a.ImageDigest = s
+	}
+	if s, ok := spec["tenant_id"].(string); ok {
+		a.TenantId = s
+	}
+	if s, ok := spec["agent_version_id"].(string); ok {
+		a.AgentVersionId = s
+	}
+	if s, ok := spec["run_id"].(string); ok {
+		a.RunId = s
+	}
+	if s, ok := spec["restore_snapshot_id"].(string); ok {
+		a.RestoreSnapshotId = s
+	}
+	if b, ok := spec["idempotent"].(bool); ok {
+		a.Idempotent = b
+	}
+	if iso, ok := spec["isolation"].(string); ok {
+		a.Isolation = parseIsolation(iso)
+	}
+	if net, ok := spec["network"].(string); ok {
+		a.Network = parseNetwork(net)
+	}
+	if labels, ok := spec["labels"].(map[string]string); ok {
+		a.Labels = labels
+	}
+	if regions, ok := spec["preferred_regions"].([]string); ok {
+		a.PreferredRegions = regions
+	}
+	return a
+}
+
+func parseIsolation(s string) lanternv1.IsolationClass {
+	switch strings.ToLower(s) {
+	case "trusted":
+		return lanternv1.IsolationClass_ISOLATION_TRUSTED
+	case "standard":
+		return lanternv1.IsolationClass_ISOLATION_STANDARD
+	case "untrusted":
+		return lanternv1.IsolationClass_ISOLATION_UNTRUSTED
+	case "hostile":
+		return lanternv1.IsolationClass_ISOLATION_HOSTILE
+	case "wasm":
+		return lanternv1.IsolationClass_ISOLATION_WASM
+	case "devcontainer":
+		return lanternv1.IsolationClass_ISOLATION_DEVCONTAINER
+	default:
+		return lanternv1.IsolationClass_ISOLATION_UNSPECIFIED
+	}
+}
+
+func parseNetwork(s string) lanternv1.NetworkPolicy {
+	switch strings.ToLower(s) {
+	case "none":
+		return lanternv1.NetworkPolicy_NETWORK_NONE
+	case "allowlist", "allowlist_domain":
+		return lanternv1.NetworkPolicy_NETWORK_ALLOWLIST_DOMAIN
+	case "tenant_vpc":
+		return lanternv1.NetworkPolicy_NETWORK_TENANT_VPC
+	case "open":
+		return lanternv1.NetworkPolicy_NETWORK_OPEN
+	default:
+		return lanternv1.NetworkPolicy_NETWORK_UNSPECIFIED
+	}
+}
+
 func keysOf(m map[string]any) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -118,14 +365,28 @@ type RuntimeHandler struct {
 	scheduler SchedulerClient
 }
 
-// NewRuntimeHandler constructs a RuntimeHandler with the stub scheduler
-// client. Production wiring swaps in a gRPC-backed implementation.
+// NewRuntimeHandler constructs a RuntimeHandler. If LANTERN_SCHEDULER_GRPC_ADDR
+// is set the real gRPC client is dialed; otherwise the stub is used so a
+// solo control-plane stays exercisable.
 func NewRuntimeHandler(srv *server.Server, auth *AuthHandler) *RuntimeHandler {
-	return &RuntimeHandler{
-		srv:       srv,
-		auth:      auth,
-		scheduler: &stubSchedulerClient{logger: srv.Logger.Named("runtime_scheduler_stub")},
+	h := &RuntimeHandler{srv: srv, auth: auth}
+	logger := srv.Logger.Named("runtime")
+	if addr := os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR"); addr != "" {
+		c, err := NewGRPCSchedulerClient(addr, logger.Named("scheduler_grpc"))
+		if err != nil {
+			logger.Warn("falling back to stub scheduler client",
+				zap.String("addr", addr), zap.Error(err))
+			h.scheduler = &stubSchedulerClient{logger: logger.Named("scheduler_stub")}
+		} else {
+			logger.Info("runtime scheduler: gRPC client wired",
+				zap.String("addr", addr))
+			h.scheduler = c
+		}
+	} else {
+		logger.Info("runtime scheduler: stub client (set LANTERN_SCHEDULER_GRPC_ADDR to wire real gRPC)")
+		h.scheduler = &stubSchedulerClient{logger: logger.Named("scheduler_stub")}
 	}
+	return h
 }
 
 // WithScheduler swaps the scheduler client (used by tests + the future
@@ -563,9 +824,10 @@ func (h *RuntimeHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Confirm the VM belongs to this tenant.
+	// Confirm the VM belongs to this tenant + capture its node placement.
 	var owner string
-	err = h.srv.Pool.QueryRow(ctx, `SELECT tenant_id FROM runtime_vms WHERE vm_id = $1`, vmID).Scan(&owner)
+	var node *string
+	err = h.srv.Pool.QueryRow(ctx, `SELECT tenant_id, node FROM runtime_vms WHERE vm_id = $1`, vmID).Scan(&owner, &node)
 	if err != nil || owner != tenantID {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "vm not found"})
 		return
@@ -582,18 +844,101 @@ func (h *RuntimeHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	// TODO(runtime-grpc): proxy RuntimeManager.Logs stream here. For
-	// now we emit a single notice + close so the client can render a
-	// "logs not yet available" placeholder without hanging.
-	notice := map[string]any{
-		"vmId":   vmID,
-		"stream": "harness",
-		"text":   "log streaming not yet wired (stub)",
-		"at":     time.Now().UTC(),
+	// If the gRPC scheduler client is wired AND we know the node, proxy
+	// the real RuntimeManager.Logs stream. Otherwise fall back to the
+	// single-frame stub so the client can render a placeholder.
+	gc, ok := h.scheduler.(*grpcSchedulerClient)
+	if !ok || node == nil || *node == "" {
+		h.logger().Info("logs: emitting stub frame (no grpc client or no node)",
+			zap.String("vm_id", vmID))
+		notice := map[string]any{
+			"vmId":   vmID,
+			"stream": "harness",
+			"text":   "log streaming not yet wired (stub)",
+			"at":     time.Now().UTC(),
+		}
+		b, _ := json.Marshal(notice)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+		return
 	}
-	b, _ := json.Marshal(notice)
-	fmt.Fprintf(w, "data: %s\n\n", b)
-	flusher.Flush()
+
+	mgr, err := gc.managerClient(*node)
+	if err != nil {
+		h.logger().Warn("logs: manager dial failed; falling back to stub",
+			zap.String("vm_id", vmID), zap.Error(err))
+		notice := map[string]any{
+			"vmId":   vmID,
+			"stream": "harness",
+			"text":   fmt.Sprintf("log streaming unavailable: %v", err),
+			"at":     time.Now().UTC(),
+		}
+		b, _ := json.Marshal(notice)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+		return
+	}
+
+	streamCtx, cancel := context.WithCancel(withTenant(ctx, tenantID))
+	defer cancel()
+	stream, err := mgr.Logs(streamCtx, &lanternv1.LogsRequest{VmId: vmID, Follow: true})
+	if err != nil {
+		h.logger().Warn("logs: open stream failed", zap.String("vm_id", vmID), zap.Error(err))
+		notice := map[string]any{
+			"vmId":   vmID,
+			"stream": "harness",
+			"text":   fmt.Sprintf("log stream open failed: %v", err),
+			"at":     time.Now().UTC(),
+		}
+		b, _ := json.Marshal(notice)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+		return
+	}
+
+	// Cancel the upstream when the client disconnects.
+	go func() {
+		<-r.Context().Done()
+		cancel()
+	}()
+
+	h.logger().Info("logs: proxying RuntimeManager.Logs",
+		zap.String("vm_id", vmID), zap.String("node", *node))
+
+	for {
+		line, err := stream.Recv()
+		if err != nil {
+			// EOF / client cancel — exit quietly. Anything else gets a
+			// final error frame so the client doesn't think we hung.
+			if r.Context().Err() == nil {
+				errFrame, _ := json.Marshal(map[string]any{
+					"vmId":   vmID,
+					"stream": "harness",
+					"text":   fmt.Sprintf("log stream closed: %v", err),
+					"at":     time.Now().UTC(),
+				})
+				fmt.Fprintf(w, "data: %s\n\n", errFrame)
+				flusher.Flush()
+			}
+			return
+		}
+		if line == nil {
+			continue
+		}
+		at := time.Now().UTC()
+		if line.At != nil {
+			at = line.At.AsTime()
+		}
+		frame := map[string]any{
+			"vmId":   line.VmId,
+			"stream": line.Stream,
+			"text":   line.Text,
+			"at":     at,
+		}
+		b, _ := json.Marshal(frame)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}
 }
 
 // TerminateVM handles DELETE /v1/runtime/vms/{id}.
@@ -628,7 +973,7 @@ func (h *RuntimeHandler) TerminateVM(w http.ResponseWriter, r *http.Request) {
 		reason = "user_terminate"
 	}
 
-	if err := h.scheduler.Terminate(ctx, vmID, reason); err != nil {
+	if err := h.scheduler.Terminate(withTenant(ctx, tenantID), vmID, reason); err != nil {
 		h.logger().Error("scheduler.Terminate failed", zap.Error(err))
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "scheduler error"})
 		return
@@ -690,7 +1035,7 @@ func (h *RuntimeHandler) ExecVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stdout, stderr, exit, err := h.scheduler.Exec(ctx, vmID, body.Command, body.Argv)
+	stdout, stderr, exit, err := h.scheduler.Exec(withTenant(ctx, tenantID), vmID, body.Command, body.Argv)
 	if err != nil {
 		h.logger().Error("scheduler.Exec failed", zap.Error(err))
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "scheduler error"})
@@ -719,7 +1064,7 @@ func (h *RuntimeHandler) Cluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cluster, err := h.scheduler.Cluster(r.Context())
+	cluster, err := h.scheduler.Cluster(withTenant(r.Context(), claims.TenantID))
 	if err != nil {
 		h.logger().Error("scheduler.Cluster failed", zap.Error(err))
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "scheduler error"})

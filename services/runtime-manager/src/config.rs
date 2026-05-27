@@ -40,8 +40,8 @@ impl Config {
             &std::env::var("RUNTIME_BACKEND").unwrap_or_else(|_| "docker".to_string()),
         )?;
 
-        let docker_socket = std::env::var("DOCKER_SOCKET")
-            .unwrap_or_else(|_| "/var/run/docker.sock".to_string());
+        let docker_socket =
+            std::env::var("DOCKER_SOCKET").unwrap_or_else(|_| "/var/run/docker.sock".to_string());
 
         let agent_image = std::env::var("AGENT_IMAGE")
             .unwrap_or_else(|_| "ghcr.io/lantern/agent-runner:latest".to_string());
@@ -49,11 +49,10 @@ impl Config {
         let bundle_s3_endpoint = std::env::var("BUNDLE_S3_ENDPOINT")
             .unwrap_or_else(|_| "http://localhost:9000".to_string());
 
-        let bundle_s3_bucket = std::env::var("BUNDLE_S3_BUCKET")
-            .unwrap_or_else(|_| "lantern-bundles".to_string());
+        let bundle_s3_bucket =
+            std::env::var("BUNDLE_S3_BUCKET").unwrap_or_else(|_| "lantern-bundles".to_string());
 
-        let log_level =
-            std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+        let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
 
         Ok(Config {
             listen_addr,

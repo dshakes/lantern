@@ -155,7 +155,10 @@ impl FirecrackerBackend {
     fn api_url(&self) -> String {
         // In production, we'd use a Unix socket transport.
         // For the spike, we use a placeholder HTTP URL.
-        format!("http://localhost/firecracker/{}", self.socket_path.replace('/', "_"))
+        format!(
+            "http://localhost/firecracker/{}",
+            self.socket_path.replace('/', "_")
+        )
     }
 
     /// PUT request to the Firecracker API.
@@ -182,10 +185,7 @@ impl FirecrackerBackend {
     }
 
     /// Parse CPU/memory limits from the schedule request into Firecracker config.
-    fn machine_config_from_limits(
-        &self,
-        req: &ScheduleRequest,
-    ) -> MachineConfig {
+    fn machine_config_from_limits(&self, req: &ScheduleRequest) -> MachineConfig {
         let vcpu_count = if !req.limits.cpu.is_empty() {
             let cpu = &req.limits.cpu;
             if cpu.ends_with('m') {
@@ -383,9 +383,7 @@ impl RuntimeBackend for FirecrackerBackend {
         let start = Instant::now();
         let vm_id = Uuid::new_v4().to_string();
 
-        let snapshot_path = snapshot_uri
-            .strip_prefix("fc://")
-            .unwrap_or(snapshot_uri);
+        let snapshot_path = snapshot_uri.strip_prefix("fc://").unwrap_or(snapshot_uri);
 
         // Derive the mem file path from the snapshot path.
         let mem_file_path = snapshot_path.replace("/snapshot", "/mem");
