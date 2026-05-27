@@ -42,20 +42,26 @@ impl DockerBackend {
         })
     }
 
-    /// Ensure the agent runner image is available locally.
-    async fn ensure_image(&self) -> Result<()> {
+    /// Ensure the image is available locally, pulling it if missing.
+    /// Pass `None` to fall back to the manager's default `agent_image`.
+    async fn ensure_image(&self, image_override: Option<&str>) -> Result<String> {
         use bollard::image::CreateImageOptions;
         use futures::TryStreamExt;
 
-        // Check if image exists locally.
-        if self.client.inspect_image(&self.agent_image).await.is_ok() {
-            return Ok(());
+        let image = image_override
+            .filter(|s| !s.is_empty())
+            .unwrap_or(self.agent_image.as_str())
+            .to_string();
+
+        // Already pulled?
+        if self.client.inspect_image(&image).await.is_ok() {
+            return Ok(image);
         }
 
-        tracing::info!(image = %self.agent_image, "pulling agent runner image");
+        tracing::info!(image = %image, "pulling image");
 
         let options = CreateImageOptions {
-            from_image: self.agent_image.clone(),
+            from_image: image.clone(),
             ..Default::default()
         };
 
@@ -63,10 +69,10 @@ impl DockerBackend {
             .create_image(Some(options), None, None)
             .try_collect::<Vec<_>>()
             .await
-            .context("failed to pull agent runner image")?;
+            .with_context(|| format!("failed to pull image {image}"))?;
 
-        tracing::info!(image = %self.agent_image, "image pulled successfully");
-        Ok(())
+        tracing::info!(image = %image, "image pulled");
+        Ok(image)
     }
 
     /// Build the environment variable list for the container.
@@ -169,7 +175,21 @@ impl RuntimeBackend for DockerBackend {
     async fn schedule(&self, req: &ScheduleRequest) -> Result<Handle> {
         let start = Instant::now();
 
-        self.ensure_image().await?;
+        // Caller-supplied image takes precedence over the manager default.
+        // The image string can be:
+        //   * a tag:  python:3.11-slim
+        //   * a digest: sha256:abc...
+        //   * a fully-qualified ref: ghcr.io/lantern/agent-runner@sha256:...
+        // Pure-digest strings ("sha256:abc...") aren't pullable on their own —
+        // we treat them as opaque pool keys and fall back to the manager
+        // default image. Real prod ships with a content-addressed registry
+        // that lets the digest pull directly.
+        let pullable = if req.image.is_empty() || req.image.starts_with("sha256:") {
+            None
+        } else {
+            Some(req.image.as_str())
+        };
+        let resolved_image = self.ensure_image(pullable).await?;
 
         let container_name = format!(
             "lantern-run-{}-{}",
@@ -178,20 +198,48 @@ impl RuntimeBackend for DockerBackend {
         );
         let env = Self::build_env(req);
 
-        // Build host config with resource limits.
+        // Build host config with resource limits + network policy.
         let memory = Self::parse_memory_bytes(&req.limits.memory);
         let nano_cpus = Self::parse_nano_cpus(&req.limits.cpu);
+
+        // Network: untrusted/hostile = no network; trusted/standard get
+        // bridge by default. The harness-enforced egress allowlist sits on
+        // top of bridge in the production microVM path; on a bare Docker
+        // dev host we approximate with bridge / none.
+        let network_mode = match req.isolation_class {
+            crate::proto::IsolationClass::Untrusted | crate::proto::IsolationClass::Hostile => {
+                "none"
+            }
+            _ => "bridge",
+        };
 
         let host_config = bollard::models::HostConfig {
             memory,
             nano_cpus,
-            network_mode: Some("none".to_string()), // Network isolation by default.
+            network_mode: Some(network_mode.to_string()),
+            // Auto-remove keeps the demo Docker host tidy. For prod where you
+            // want post-mortem `docker logs`, flip this to false and let the
+            // reaper handle GC. Today the manager has no reaper, so auto-rm
+            // is the safer default.
+            auto_remove: Some(false),
             ..Default::default()
         };
 
+        // Honor caller-supplied entrypoint/args.
+        let cmd: Option<Vec<String>> = if !req.command.is_empty() {
+            let mut full = req.command.clone();
+            full.extend(req.args.iter().cloned());
+            Some(full)
+        } else if !req.args.is_empty() {
+            Some(req.args.clone())
+        } else {
+            None
+        };
+
         let config = ContainerConfig {
-            image: Some(self.agent_image.clone()),
+            image: Some(resolved_image),
             env: Some(env),
+            cmd,
             host_config: Some(host_config),
             labels: Some(HashMap::from([
                 ("lantern.run_id".to_string(), req.run_id.clone()),

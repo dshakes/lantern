@@ -43,6 +43,28 @@ impl HandleRegistry {
         self.handles.insert(info.handle_id.clone(), info);
     }
 
+    /// Reassign the public key under which a handle is registered. The
+    /// backend's container/VM id stays in `HandleInfo.handle_id` so cancel
+    /// can forward it; the public key becomes the wire-level vm_id minted
+    /// by the scheduler.
+    pub fn rekey(&self, old_id: &str, new_id: &str) -> bool {
+        if old_id == new_id {
+            return true;
+        }
+        if let Some((_, info)) = self.handles.remove(old_id) {
+            tracing::info!(
+                old_id = %old_id,
+                new_id = %new_id,
+                backend_handle = %info.handle_id,
+                "rekeyed handle to wire vm_id"
+            );
+            self.handles.insert(new_id.to_string(), info);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Remove a handle from the registry, returning its info if it existed.
     pub fn deregister(&self, handle_id: &str) -> Option<HandleInfo> {
         let removed = self.handles.remove(handle_id).map(|(_, v)| v);

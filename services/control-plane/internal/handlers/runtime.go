@@ -304,6 +304,29 @@ func agentSpecFromMap(spec map[string]any) *lanternv1.AgentSpec {
 	if regions, ok := spec["preferred_regions"].([]string); ok {
 		a.PreferredRegions = regions
 	}
+	// command, args, env — JSON arrays/objects come back as []any / map[string]any.
+	if cmd, ok := spec["command"].([]any); ok {
+		for _, v := range cmd {
+			if s, ok := v.(string); ok {
+				a.Command = append(a.Command, s)
+			}
+		}
+	}
+	if args, ok := spec["args"].([]any); ok {
+		for _, v := range args {
+			if s, ok := v.(string); ok {
+				a.Args = append(a.Args, s)
+			}
+		}
+	}
+	if env, ok := spec["env"].(map[string]any); ok {
+		a.Env = make(map[string]string, len(env))
+		for k, v := range env {
+			if s, ok := v.(string); ok {
+				a.Env[k] = s
+			}
+		}
+	}
 	return a
 }
 
@@ -416,6 +439,11 @@ type agentSpecDTO struct {
 	RestoreSnapshotID string            `json:"restoreSnapshotId,omitempty"`
 	AgentVersionID    string            `json:"agentVersionId,omitempty"`
 	RunID             string            `json:"runId,omitempty"`
+	// Container entrypoint override + extra args. Both honored by the
+	// runtime-manager docker backend.
+	Command []string          `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
 	// Limits / EgressRules / Secrets are passed through opaque so the
 	// scheduler can interpret them without re-defining the structs here.
 	Limits      map[string]any   `json:"limits,omitempty"`
@@ -632,6 +660,29 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		"egress_rules":        spec.EgressRules,
 		"secrets":             spec.Secrets,
 		"tenant_id":           tenantID,
+	}
+	// Container exec controls — convert []string to []any so
+	// agentSpecFromMap's type-asserted decoder handles them uniformly.
+	if len(spec.Command) > 0 {
+		cmd := make([]any, len(spec.Command))
+		for i, s := range spec.Command {
+			cmd[i] = s
+		}
+		specMap["command"] = cmd
+	}
+	if len(spec.Args) > 0 {
+		args := make([]any, len(spec.Args))
+		for i, s := range spec.Args {
+			args[i] = s
+		}
+		specMap["args"] = args
+	}
+	if len(spec.Env) > 0 {
+		env := make(map[string]any, len(spec.Env))
+		for k, v := range spec.Env {
+			env[k] = v
+		}
+		specMap["env"] = env
 	}
 
 	vmID, node, az, err := h.scheduler.Schedule(ctx, specMap)

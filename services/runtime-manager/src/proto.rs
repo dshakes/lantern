@@ -109,6 +109,19 @@ pub struct ScheduleRequest {
     pub env: std::collections::HashMap<String, String>,
     pub secrets: Vec<SecretRef>,
     pub input: serde_json::Value,
+    /// Entrypoint override (empty = use image's ENTRYPOINT).
+    #[serde(default)]
+    pub command: Vec<String>,
+    /// Arguments appended to entrypoint (or image CMD if command is empty).
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Caller-supplied image. When non-empty the backend uses this instead
+    /// of the manager's default `agent_image`. Headless agents always set
+    /// this from `AgentSpec.image_digest` (the value should be a digest,
+    /// `sha256:...`, or a fully-qualified image reference like
+    /// `python:3.11-slim`).
+    #[serde(default)]
+    pub image: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
