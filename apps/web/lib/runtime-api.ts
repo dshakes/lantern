@@ -7,7 +7,9 @@
 function baseUrl(): string {
   if (typeof window !== "undefined") {
     return (
-      (window as unknown as Record<string, unknown>).__NEXT_PUBLIC_API_URL as string | undefined ??
+      ((window as unknown as Record<string, unknown>).__NEXT_PUBLIC_API_URL as
+        | string
+        | undefined) ??
       process.env.NEXT_PUBLIC_API_URL ??
       "http://localhost:8080"
     );
@@ -24,7 +26,38 @@ function token(): string | null {
   return localStorage.getItem("lantern_token");
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+/** Thrown when the API rejects the bearer token (401). Callers can detect
+ *  this to drop their cached token and redirect to /login instead of
+ *  showing a generic error toast on every poll. */
+export class UnauthorizedError extends Error {
+  constructor(message = "unauthorized") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+
+function purgeTokenAndRedirect() {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem("lantern_token");
+    document.cookie = "lantern_token=; path=/; max-age=0; SameSite=Lax";
+  } catch {
+    /* ignore */
+  }
+  // Avoid bouncing back-and-forth if we're already on /login.
+  if (!window.location.pathname.startsWith("/login")) {
+    const next = encodeURIComponent(
+      window.location.pathname + window.location.search,
+    );
+    window.location.href = `/login?next=${next}`;
+  }
+}
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const t = token();
   if (t) headers.Authorization = `Bearer ${t}`;
@@ -34,6 +67,15 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+
+  if (res.status === 401) {
+    // Stale token (server restart with new JWT_SECRET, expiry, signed-out
+    // on another tab, ...). Purge + bounce to login. Throw a typed error
+    // so callers can swallow it instead of toasting on every poll.
+    purgeTokenAndRedirect();
+    throw new UnauthorizedError();
+  }
+
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${text || res.statusText}`);
