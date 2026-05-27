@@ -852,4 +852,72 @@ var migrations = []string{
 	// which channel queued it so the dashboard can show the right
 	// badge and the approval endpoint sends back via the right bridge.
 	`ALTER TABLE whatsapp_pending_drafts ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'whatsapp'`,
+
+	// ---------------------------------------------------------------
+	// Headless-agent runtime governance.
+	//
+	// Three tables form the contract surface between the control-plane
+	// and the (Firecracker-backed) runtime scheduler at :50055:
+	//
+	//   * runtime_quotas       — per-tenant ceilings (concurrent VMs,
+	//                            compute hours/day, egress GB/day,
+	//                            cost USD/day). Enforced by
+	//                            checkRuntimeQuota before /schedule.
+	//   * runtime_vms          — canonical record of every VM the
+	//                            scheduler has accepted. The
+	//                            dashboard reads list/detail from
+	//                            here; the scheduler reconciles state
+	//                            against this table.
+	//   * runtime_audit_events — append-only audit log. Every
+	//                            schedule/terminate/exec/quota-deny
+	//                            writes a row keyed by tenant_id so
+	//                            cross-VM forensics is one query.
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS runtime_quotas (
+		tenant_id                   UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+		max_concurrent_vms          INTEGER NOT NULL DEFAULT 20,
+		max_compute_hours_per_day   NUMERIC(10,2) NOT NULL DEFAULT 10.0,
+		max_egress_gb_per_day       INTEGER NOT NULL DEFAULT 5,
+		max_cost_usd_per_day        NUMERIC(12,4) NOT NULL DEFAULT 5.0,
+		hard_fail                   BOOLEAN NOT NULL DEFAULT true,
+		updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE TABLE IF NOT EXISTS runtime_audit_events (
+		id            BIGSERIAL PRIMARY KEY,
+		tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		vm_id         TEXT,
+		action        TEXT NOT NULL,
+		attrs         JSONB NOT NULL DEFAULT '{}'::jsonb,
+		principal_id  UUID,
+		at            TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS runtime_audit_events_tenant_at_idx
+		ON runtime_audit_events (tenant_id, at DESC)`,
+
+	`CREATE INDEX IF NOT EXISTS runtime_audit_events_vm_idx
+		ON runtime_audit_events (vm_id, at DESC)`,
+
+	`CREATE TABLE IF NOT EXISTS runtime_vms (
+		vm_id              TEXT PRIMARY KEY,
+		tenant_id          UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		agent_version_id   UUID,
+		run_id             UUID,
+		node               TEXT,
+		az                 TEXT,
+		region             TEXT,
+		isolation_class    TEXT,
+		state              TEXT NOT NULL DEFAULT 'pending',
+		spec               JSONB NOT NULL DEFAULT '{}'::jsonb,
+		last_heartbeat_at  TIMESTAMPTZ,
+		created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+		terminated_at      TIMESTAMPTZ
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS runtime_vms_tenant_state_idx
+		ON runtime_vms (tenant_id, state)`,
+
+	`CREATE INDEX IF NOT EXISTS runtime_vms_tenant_created_idx
+		ON runtime_vms (tenant_id, created_at DESC)`,
 }

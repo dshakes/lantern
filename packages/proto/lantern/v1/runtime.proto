@@ -1,0 +1,398 @@
+// Runtime v1 — definitive contract for headless agent execution.
+//
+// Three services collaborate over this proto:
+//   * RuntimeScheduler   (cluster-wide placement)
+//   * RuntimeManager     (node-local lifecycle, replaces engine.proto's spec)
+//   * RuntimeHarness     (in-VM init process; reports up to manager)
+//
+// All RPCs are tenant-scoped — the bearer JWT (or workload-identity
+// token from the harness) carries `tenant_id` in metadata. The
+// control-plane gates this proto via RBAC + quotas before any
+// scheduling/spawn occurs.
+//
+// Versioning: this proto is v1. Backwards-compatible additions only;
+// breaking changes ship as runtime/v2.proto with a deprecation window.
+
+syntax = "proto3";
+
+package lantern.v1;
+
+option go_package = "github.com/dshakes/lantern/services/control-plane/gen/go/lantern/v1;lanternv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+enum IsolationClass {
+  ISOLATION_UNSPECIFIED = 0;
+  ISOLATION_TRUSTED      = 1;   // K8s Job, first-party only
+  ISOLATION_STANDARD     = 2;   // Firecracker — default for tenant code
+  ISOLATION_UNTRUSTED    = 3;   // Firecracker + seccomp + egress allowlist
+  ISOLATION_HOSTILE      = 4;   // Kata Containers (full VM, broader compat)
+  ISOLATION_WASM         = 5;   // Wasmtime in-process (deterministic, no I/O)
+  ISOLATION_DEVCONTAINER = 6;   // long-lived pod + PVC
+}
+
+enum VmState {
+  VM_STATE_UNSPECIFIED = 0;
+  VM_STATE_PENDING     = 1;   // scheduler accepted, awaiting placement
+  VM_STATE_SPAWNING    = 2;   // node assigned, bootstrapping
+  VM_STATE_RUNNING     = 3;   // harness reporting heartbeats
+  VM_STATE_DRAINING    = 4;   // graceful shutdown initiated
+  VM_STATE_TERMINATED  = 5;   // resources released
+  VM_STATE_FAILED      = 6;   // spawn or health failure; reason in StatusEvent
+}
+
+enum NetworkPolicy {
+  NETWORK_UNSPECIFIED      = 0;
+  NETWORK_NONE             = 1;   // no egress at all
+  NETWORK_ALLOWLIST_DOMAIN = 2;   // domain-based allowlist (default for untrusted)
+  NETWORK_TENANT_VPC       = 3;   // routable inside tenant's K8s namespace
+  NETWORK_OPEN             = 4;   // dangerous; trusted/wasm only
+}
+
+// ============================================================================
+// Resource + spec types
+// ============================================================================
+
+message ResourceLimits {
+  // K8s-style quantities. "500m" = 0.5 vCPU, "512Mi" = 512 MiB.
+  string vcpu       = 1;
+  string memory     = 2;
+  string gpu        = 3;   // e.g. "1" or "" for none
+  // Hard ceilings — exceeded means terminate.
+  google.protobuf.Duration timeout       = 4;
+  int64  max_steps                       = 5;
+  int64  max_tokens                      = 6;
+  double max_cost_usd                    = 7;
+  string scratch_size                    = 8;   // tmpfs size, e.g. "1Gi"
+}
+
+message EgressRule {
+  // Domain or CIDR. Wildcards: "*.openai.com", "10.0.0.0/8".
+  string pattern = 1;
+  // Allowed methods if HTTP: ["GET", "POST"]; empty = all.
+  repeated string http_methods = 2;
+  // Optional bytes/sec rate limit per rule.
+  int64 rate_bps = 3;
+}
+
+message SecretRef {
+  // Mount path inside the VM, e.g. "OPENAI_API_KEY".
+  string env_name = 1;
+  // Lantern secret URI: lantern.secret://tenant/<id>/key/<name>.
+  string secret_uri = 2;
+}
+
+message AgentSpec {
+  // Image digest is REQUIRED — tags are not allowed for reproducibility.
+  string image_digest                    = 1;
+  IsolationClass isolation               = 2;
+  ResourceLimits limits                  = 3;
+  NetworkPolicy network                  = 4;
+  repeated EgressRule egress_rules       = 5;
+  repeated SecretRef secrets             = 6;
+  // Free-form labels for routing & dashboards.
+  map<string, string> labels             = 7;
+  // Region preference; empty = any.
+  repeated string preferred_regions      = 8;
+  // True if the workload is idempotent — scheduler may pre-empt + retry.
+  bool idempotent                        = 9;
+  // Snapshot to restore from (empty = cold boot).
+  string restore_snapshot_id             = 10;
+  // Owner — set by control-plane from JWT, never by the caller.
+  string tenant_id                       = 11;
+  string agent_version_id                = 12;
+  string run_id                          = 13;
+}
+
+message PlacementHint {
+  string node               = 1;   // optional pin
+  string availability_zone  = 2;
+  string region             = 3;
+  // For replicas: skew across the named topology key.
+  string spread_topology    = 4;
+}
+
+// ============================================================================
+// VM handle + status events
+// ============================================================================
+
+message VmHandle {
+  string vm_id        = 1;   // globally unique
+  string node         = 2;   // assigned node
+  string availability_zone = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message StatusEvent {
+  string vm_id                                 = 1;
+  VmState state                                = 2;
+  google.protobuf.Timestamp at                 = 3;
+  string reason                                = 4;
+  // OTel trace ID — caller can correlate to spans.
+  string trace_id                              = 5;
+  // Resource snapshot when this event was emitted.
+  ResourceUsage usage                          = 6;
+}
+
+message ResourceUsage {
+  int64  vcpu_ms_used        = 1;
+  int64  memory_bytes        = 2;
+  int64  network_bytes_in    = 3;
+  int64  network_bytes_out   = 4;
+  int64  disk_bytes          = 5;
+  double cost_usd_accumulated = 6;
+}
+
+message LogLine {
+  string vm_id                                 = 1;
+  google.protobuf.Timestamp at                 = 2;
+  // Stream: "stdout", "stderr", "harness", "audit".
+  string stream                                = 3;
+  string text                                  = 4;
+  // For structured logs.
+  map<string, string> attrs                    = 5;
+}
+
+// ============================================================================
+// Scheduler service — cluster-wide placement
+// ============================================================================
+
+service RuntimeScheduler {
+  // Schedule a workload. Returns a handle once a node has been
+  // picked and the spawn has been dispatched. Listen to /events for
+  // state changes.
+  rpc Schedule (ScheduleRequest) returns (VmHandle);
+
+  // Stream per-VM status events (multiplexed if vm_id is empty).
+  rpc Events (EventsRequest) returns (stream StatusEvent);
+
+  // Tenant-scoped view of live VMs.
+  rpc List (ListRequest) returns (ListResponse);
+
+  // Drain + terminate a VM.
+  rpc Terminate (TerminateRequest) returns (TerminateResponse);
+
+  // Take a snapshot — durable, restorable from another node.
+  rpc Snapshot (SnapshotRequest) returns (SnapshotResponse);
+
+  // Cluster health / capacity for dashboards.
+  rpc Cluster (ClusterRequest) returns (ClusterResponse);
+}
+
+message ScheduleRequest {
+  AgentSpec spec               = 1;
+  PlacementHint hint           = 2;
+  google.protobuf.Duration cold_start_budget = 3;
+  // If true, scheduler reserves the slot but doesn't spawn yet —
+  // caller commits via Spawn(handle) on the manager service.
+  bool reserve_only            = 4;
+}
+
+message EventsRequest {
+  string vm_id     = 1;   // empty = all VMs for this tenant
+  string tenant_id = 2;   // set by control-plane from JWT
+}
+
+message ListRequest {
+  string tenant_id           = 1;
+  repeated VmState states    = 2;
+  string label_selector      = 3;
+}
+
+message ListResponse {
+  message Item {
+    VmHandle handle           = 1;
+    AgentSpec spec            = 2;
+    VmState  state            = 3;
+    ResourceUsage usage       = 4;
+    google.protobuf.Timestamp last_heartbeat = 5;
+  }
+  repeated Item items         = 1;
+}
+
+message TerminateRequest {
+  string vm_id                                 = 1;
+  google.protobuf.Duration grace               = 2;   // default 30s
+  string reason                                = 3;
+}
+
+message TerminateResponse {
+  bool ok                                      = 1;
+  string detail                                = 2;
+}
+
+message SnapshotRequest {
+  string vm_id          = 1;
+  // Snapshot ID is chosen by the server; caller can pass a hint.
+  string id_hint        = 2;
+  // If true, the VM continues running after snapshot.
+  bool keep_running     = 3;
+}
+
+message SnapshotResponse {
+  string snapshot_id    = 1;
+  int64  bytes          = 2;
+  string sha256         = 3;
+}
+
+message ClusterRequest {}
+
+message ClusterResponse {
+  message Node {
+    string name           = 1;
+    string availability_zone = 2;
+    string region            = 3;
+    int64  free_vcpu_millis = 4;
+    int64  free_memory_bytes = 5;
+    int64  running_vms      = 6;
+    bool   draining         = 7;
+    map<string, int32> warm_pool_inventory = 8; // image_digest -> count
+  }
+  repeated Node nodes        = 1;
+  int64  total_vms_running   = 2;
+  int64  total_vms_pending   = 3;
+}
+
+// ============================================================================
+// Manager service — node-local lifecycle (one per host)
+// ============================================================================
+
+service RuntimeManager {
+  // Direct spawn (used by scheduler after placement decision).
+  rpc Spawn (SpawnRequest) returns (SpawnResponse);
+  rpc Stop  (StopRequest)  returns (StopResponse);
+
+  // Stream stdout/stderr + harness logs.
+  rpc Logs  (LogsRequest)  returns (stream LogLine);
+
+  // Live exec into a running VM (debugger).
+  rpc Exec  (stream ExecRequest) returns (stream ExecResponse);
+
+  // Live stats.
+  rpc Stats (StatsRequest) returns (stream ResourceUsage);
+}
+
+message SpawnRequest {
+  AgentSpec spec       = 1;
+  VmHandle handle      = 2;   // pre-allocated by scheduler
+}
+
+message SpawnResponse {
+  VmHandle handle      = 1;
+  google.protobuf.Duration boot_duration = 2;
+  bool from_snapshot   = 3;
+}
+
+message StopRequest {
+  string vm_id                         = 1;
+  google.protobuf.Duration grace       = 2;
+  string reason                        = 3;
+}
+
+message StopResponse {
+  bool ok     = 1;
+  string detail = 2;
+}
+
+message LogsRequest {
+  string vm_id           = 1;
+  bool   follow          = 2;
+  int64  tail_lines      = 3;
+  google.protobuf.Timestamp since = 4;
+}
+
+message ExecRequest {
+  string vm_id    = 1;
+  // First message in the stream MUST set `command` (and optional argv).
+  // Subsequent messages carry stdin bytes via `stdin`.
+  string command  = 2;
+  repeated string argv = 3;
+  bytes  stdin    = 4;
+  bool   tty      = 5;
+}
+
+message ExecResponse {
+  bytes stdout    = 1;
+  bytes stderr    = 2;
+  int32 exit_code = 3;
+  bool  done      = 4;
+}
+
+message StatsRequest {
+  string vm_id     = 1;
+  google.protobuf.Duration interval = 2;  // default 5s
+}
+
+// ============================================================================
+// Harness — in-VM init process; reports up to manager
+// ============================================================================
+
+service RuntimeHarness {
+  // Harness opens this stream on boot. Heartbeats every 5s; if
+  // missed for 30s, manager force-terminates the VM and reschedules.
+  rpc Heartbeat (stream HeartbeatRequest) returns (stream HeartbeatAck);
+
+  // Vend a short-TTL token for a declared secret. Returns 401 if the
+  // requested secret_uri isn't in the AgentSpec.secrets list.
+  rpc VendSecret (VendSecretRequest) returns (VendSecretResponse);
+
+  // Forward structured logs / traces / metrics.
+  rpc Report (stream HarnessReport) returns (HarnessAck);
+}
+
+message HeartbeatRequest {
+  string vm_id                                 = 1;
+  google.protobuf.Timestamp at                 = 2;
+  ResourceUsage usage                          = 3;
+  // Worker PID + restart count for supervisor visibility.
+  int32 worker_pid                             = 4;
+  int32 restart_count                          = 5;
+}
+
+message HeartbeatAck {
+  // Manager may push down policy updates (e.g. egress rule changes,
+  // new resource caps) inside the heartbeat ack stream.
+  repeated EgressRule egress_overrides         = 1;
+  ResourceLimits      limits_override          = 2;
+  // If true, harness should drain + exit.
+  bool drain                                   = 3;
+  // If true, harness should freeze for snapshot.
+  bool snapshot                                = 4;
+}
+
+message VendSecretRequest {
+  string vm_id        = 1;
+  string secret_uri   = 2;
+  // Lifetime requested; manager may cap.
+  google.protobuf.Duration ttl = 3;
+}
+
+message VendSecretResponse {
+  string value      = 1;   // raw secret material
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message HarnessReport {
+  oneof body {
+    LogLine log                = 1;
+    // Pre-serialized OTLP span batch.
+    bytes otlp_traces          = 2;
+    // Pre-serialized Prometheus exposition.
+    bytes prometheus_metrics   = 3;
+    AuditEvent audit           = 4;
+  }
+}
+
+message HarnessAck { bool ok = 1; }
+
+message AuditEvent {
+  string vm_id                                 = 1;
+  string action                                = 2;   // egress, secret_vend, exec, etc.
+  google.protobuf.Timestamp at                 = 3;
+  map<string, string> attrs                    = 4;
+}

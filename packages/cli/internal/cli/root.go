@@ -51,6 +51,8 @@ and deploy agent code from your terminal.`,
 
 	// Register subcommand groups.
 	root.AddCommand(newAgentsCommand())
+	root.AddCommand(newRunCommand())
+	root.AddCommand(newVmCommand())
 	root.AddCommand(newRunsCommand())
 	root.AddCommand(newLogsCommand())
 	root.AddCommand(newInitCommand())
