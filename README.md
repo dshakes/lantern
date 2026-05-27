@@ -123,6 +123,7 @@ The four-Makefile-target dance (`make dev-infra` + `make run-api` + `make dashbo
 | **Embeddable webchat widget** | ✅ | `<script src=".../widget.js">` on any site; talks to `/v1/sessions` |
 | **Voice channel (Twilio/LiveKit pluggable)** | ✅ | `voice_numbers` + `voice_calls`; `VoiceProvider` interface |
 | **Workflow runtime** | ✅ | Saved graphs execute (trigger/ai-step/tool/connector/condition/approval/end) |
+| **Headless microVM runtime** | ✅ | `runtime-scheduler` placement + `harness` (Rust, in-VM) for egress allowlist, JWT secret vending, OTel. Endpoints: `POST /v1/runtime/schedule`, dashboard at `/runtime`, CLI `lantern run <agent.yaml>`. Demos in `examples/headless-agents/` |
 | **Verifiable HMAC receipts** | ✅ | `/v1/runs/{id}/receipt`, public verifier at `/proof`, key fingerprint at `/.well-known/lantern-receipts` |
 | **Cross-tenant marketplace commerce** | ✅ | `POST /v1/marketplace/{slug}/invoke` settles via signed invocation receipt |
 | **Human takeover handshake** | ✅ | `takeover_requests` table + WebRTC SDP fields; workflow approval blocks on it |

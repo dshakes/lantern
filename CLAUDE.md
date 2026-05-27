@@ -106,6 +106,7 @@ Without these env vars, Google OAuth is disabled and the sign-in button will sho
 | workflow-engine | `:50052` | gRPC |
 | model-router | `:50053` | gRPC |
 | runtime-manager | `:50054` | gRPC |
+| runtime-scheduler | `:50055` (gRPC) / `:8085` (REST) | Placement engine for headless agent microVMs |
 | gateway | `:8443` | HTTPS (TLS) |
 | surface-gateway | `:8000` | HTTP (webhooks) |
 | PostgreSQL | `:5432` | postgres |
@@ -457,6 +458,35 @@ env vars are unset, dashboard falls back to direct bridge probe.
 |---|---|---|
 | `POST` | `/v1/surfaces/whatsapp/heartbeat` | Shared-token auth. Upserts pairing state per tenant |
 | `GET` | `/v1/surfaces/whatsapp/status` | JWT auth. Returns last-known pairing state with `stale` flag |
+
+### MicroVM headless runtime (W12)
+Productionized headless agent execution: control-plane schedules a spec,
+`runtime-scheduler` picks a node (warm-pool / region / fair-share / cost /
+health), `runtime-manager` spawns the workload in the right isolation
+(Firecracker / Kata / K8s Job / Wasmtime / devcontainer), and the
+in-VM `harness` (Rust, baked into the image) enforces egress allowlist,
+vends short-TTL JWT secrets, and streams heartbeats + logs back. Full
+contract is in `packages/proto/lantern/v1/runtime.proto`; arch overview is
+`docs/architecture/04b-microvm-productionization.md`; rationale per
+component is in ADRs 0002–0007. Quota is per tenant; cap exceeded returns
+HTTP 402.
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/runtime/schedule` | Submit an AgentSpec (image, isolation, limits, egress, secrets). Returns `vm_id`. 402 if quota exceeded |
+| `GET` | `/v1/runtime/vms` | List VMs (`?state=running&limit=50`) |
+| `GET` | `/v1/runtime/vms/{id}` | VM detail + recent audit events |
+| `DELETE` | `/v1/runtime/vms/{id}?grace=30s` | Drain + terminate |
+| `GET` | `/v1/runtime/vms/{id}/logs` | SSE log stream from the harness |
+| `POST` | `/v1/runtime/vms/{id}/exec` | One-shot exec into a running VM (operator debugging) |
+| `GET` | `/v1/runtime/cluster` | Owner-only. Node load + warm-pool capacity |
+| `GET` | `/v1/runtime/audit` | Recent runtime audit events for the tenant |
+| `GET` | `/v1/runtime/quota` | Current quota + today's usage |
+| `PUT` | `/v1/runtime/quota` | Owner-only. Update max concurrent VMs / cost-per-day |
+
+CLI surface (`lantern run`, `lantern vm …`) and dashboard pages
+(`/runtime`, `/runtime/{vm}`) consume these endpoints. End-to-end demo
+agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-research,04-ml-inference}/`.
 
 ---
 
