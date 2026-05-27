@@ -50,12 +50,24 @@ export function useToast(): ToastCtx {
 
 let nextId = 0;
 
+// Hard cap on simultaneously-visible toasts. A bug-driven 401 storm or a
+// noisy form-validation flow shouldn't bury the rest of the UI under a
+// vertical wall of error pills. Newest toasts stay visible; the oldest
+// silently fall off so the viewport stays sane.
+const MAX_VISIBLE_TOASTS = 4;
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const push = useCallback((message: string, kind: ToastKind = "info") => {
     const id = ++nextId;
-    setToasts((prev) => [...prev, { id, message, kind }]);
+    setToasts((prev) => {
+      const next = [...prev, { id, message, kind }];
+      if (next.length > MAX_VISIBLE_TOASTS) {
+        return next.slice(next.length - MAX_VISIBLE_TOASTS);
+      }
+      return next;
+    });
   }, []);
 
   const dismiss = useCallback((id: number) => {

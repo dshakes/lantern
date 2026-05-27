@@ -17,6 +17,7 @@ import {
   Shield,
   TerminalSquare,
   RefreshCw,
+  Plus,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import clsx from "clsx";
@@ -26,6 +27,7 @@ import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
 import { useToast } from "@/components/toast";
 import { runtimeApi, UnauthorizedError } from "@/lib/runtime-api";
+import { ScheduleModal } from "./schedule-modal";
 
 interface VmRow {
   vm_id: string;
@@ -78,6 +80,7 @@ export default function RuntimePage() {
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [stateFilter, setStateFilter] = useState<"all" | VmRow["state"]>("all");
   const [refreshing, setRefreshing] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
 
   // Dedup repeated error toasts on the polling loop — without this, a
   // single bad-state error (e.g. API down) fires once every 5s forever.
@@ -137,7 +140,7 @@ export default function RuntimePage() {
         title="Runtime"
         description="Live view of headless agents executing in microVMs across the cluster."
         badge={<CountBadge count={counts.running} />}
-        action={
+        secondaryAction={
           <Button
             variant="ghost"
             size="sm"
@@ -151,6 +154,22 @@ export default function RuntimePage() {
             Refresh
           </Button>
         }
+        action={
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Plus className="h-3.5 w-3.5" />}
+            onClick={() => setScheduleOpen(true)}
+          >
+            Schedule VM
+          </Button>
+        }
+      />
+
+      <ScheduleModal
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        onScheduled={load}
       />
 
       {/* Cluster summary cards */}
@@ -186,9 +205,11 @@ export default function RuntimePage() {
           title={stateFilter === "all" ? "No agents have run yet" : `No ${STATE_STYLES[stateFilter as VmRow["state"]].label} VMs`}
           description={
             stateFilter === "all"
-              ? "Schedule an agent with `lantern run <agent.yaml>` or POST /v1/runtime/schedule."
+              ? "Spawn one from this page, or use `lantern run <agent.yaml>` / POST /v1/runtime/schedule."
               : "Try a different filter."
           }
+          actionLabel={stateFilter === "all" ? "Schedule a VM" : undefined}
+          onAction={stateFilter === "all" ? () => setScheduleOpen(true) : undefined}
         />
       ) : (
         <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
