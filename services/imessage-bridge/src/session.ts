@@ -153,15 +153,18 @@ export class IMessageSession {
   private static readonly OFFER_TTL_MS = 10 * 60_000; // 10 min
 
   // Per-chat concurrency lock. A single doc-query / natural-chat
-  // round-trip can take 90+ seconds (multi-page OCR + prefetch +
-  // LLM tool loop). Without this lock, rapid-fire messages from
-  // the owner (or multi-Apple-ID cross-device replays) spawn N
-  // parallel pipelines that all reply minutes later — the user sees
-  // a flood. With the lock: subsequent messages while one is
-  // in-flight get a brief "one sec — still working on the last
-  // one" + drop. The lock auto-clears when the in-flight query
-  // finishes (success or error).
+  // round-trip can take 90+ seconds. Without this lock, rapid-fire
+  // messages from the owner (or multi-Apple-ID cross-device
+  // replays) spawn N parallel pipelines that all reply minutes
+  // later — the user sees a flood. The lock auto-clears when the
+  // in-flight query finishes (success or error).
   private busyChat: Set<string> = new Set();
+  // Throttle for the busy-nudge message ("⏳ still working …"). Without
+  // this, every inbound while busy fires another nudge, and each
+  // nudge cross-device-echoes — easy to send 10+ in a row. Cap at
+  // ONE nudge per chat per 30s.
+  private lastBusyNudgeAt: Map<string, number> = new Map();
+  private static readonly BUSY_NUDGE_THROTTLE_MS = 30_000;
 
   // Futuristic helpers
   private agent: AgentClient;
@@ -779,10 +782,15 @@ export class IMessageSession {
       // don't spawn parallel pipelines that all reply minutes later.
       if (this.busyChat.has(row.handle)) {
         this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "skipping — chat busy with prior query");
-        // Optional: nudge so the user knows we heard them. Suppressed
-        // for ultra-short messages (yes/ok/no) since those already
-        // got handled by the intercepts above.
-        if (text.length > 8) {
+        // Throttled nudge — at most ONE per chat per 30s, never on
+        // ultra-short follow-ups (those are usually "yes/ok/no"
+        // handled above OR rapid retries that don't need a separate
+        // ack). Without this throttle, every retry during a busy
+        // period fires another "still working" message which then
+        // cross-device-echoes into another inbound → loop.
+        const lastNudge = this.lastBusyNudgeAt.get(row.handle) || 0;
+        if (text.length > 12 && Date.now() - lastNudge > IMessageSession.BUSY_NUDGE_THROTTLE_MS) {
+          this.lastBusyNudgeAt.set(row.handle, Date.now());
           void this.send(row.handle, "⏳ still working on the previous one — give me a sec");
         }
         return;
