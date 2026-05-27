@@ -641,25 +641,23 @@ export class IMessageSession {
   // account.
   private isSelfChat(chatRowid: number, handle: string): boolean {
     if (this.selfChatRowIds.has(chatRowid)) return true;
-    // Check chat.db: self-chats have chat_identifier matching the
-    // owner's own handle. We don't know the owner's handle for sure
-    // (LANTERN_IMESSAGE_OWNER_HANDLE may be unset), so we use a
-    // heuristic: if the participant count of this chat is exactly 1
-    // AND the participant handle matches `handle`, this row is a
-    // self-chat conversation (you DM'ing yourself across devices).
-    try {
-      const chats = this.db.listChats();
-      const c = chats.find((x) => x.rowid === chatRowid);
-      if (c && c.participantCount === 1 && c.chatIdentifier === handle) {
-        this.selfChatRowIds.add(chatRowid);
-        return true;
-      }
-    } catch {}
-    // Env override — set LANTERN_IMESSAGE_OWNER_HANDLE to your own
-    // number to force-match. Useful when chat.db's participantCount
-    // is wrong (rare, but happens with merged contacts).
-    const ownerEnv = process.env.LANTERN_IMESSAGE_OWNER_HANDLE;
-    if (ownerEnv && handle === ownerEnv) {
+    // Self-chat detection requires KNOWING the owner's own handle —
+    // there's no safe heuristic. The prior version used
+    // (participantCount === 1 && chatIdentifier === handle) which is
+    // true for EVERY 1-on-1 DM, not just self-DM — so every friend's
+    // chat was misclassified as the owner's self-chat. Result: the
+    // bot greeted friends with "hey shekhar!" and processed their
+    // messages through the owner-channel pipeline.
+    //
+    // Now: ONLY trust LANTERN_IMESSAGE_OWNER_HANDLE. When unset,
+    // self-chat is treated as unknown and the bot falls back to the
+    // contact auto-reply path (which is the correct default for a
+    // friend's DM). Owners who want the owner-channel features MUST
+    // set the env var.
+    const ownerEnv = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+    if (!ownerEnv) return false;
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9@.]/g, "");
+    if (norm(handle) === norm(ownerEnv)) {
       this.selfChatRowIds.add(chatRowid);
       return true;
     }
