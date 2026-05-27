@@ -41,6 +41,7 @@ import {
   Plug,
   MessageSquare,
   Search,
+  Server,
   Smartphone,
 } from "lucide-react";
 import clsx from "clsx";
@@ -263,6 +264,13 @@ export function Sidebar() {
           label="Personal"
           collapsed={collapsed}
           active={pathname === "/personal" || pathname.startsWith("/personal/")}
+        />
+        <SecondaryLink
+          href="/runtime"
+          icon={Server}
+          label="Runtime"
+          collapsed={collapsed}
+          active={pathname === "/runtime" || pathname.startsWith("/runtime/")}
         />
         <SecondaryLink
           href="/surfaces"

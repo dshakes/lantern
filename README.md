@@ -300,7 +300,7 @@ Four verbs do 95% of the daily workflow: `dev`, `deploy`, `test`, `login`.
 | `make dev` | Full docker-compose stack |
 | `make dev-infra` | Postgres + Redis + MinIO only |
 | `make run-api` | Control-plane API on `:8080` |
-| `make dashboard-dev` | Next.js dashboard on `:3000` |
+| `make dashboard-dev` | Next.js dashboard on `:3001` |
 | `make build` | Compile Go + Rust + TypeScript |
 | `make proto` | Regenerate from proto definitions |
 | `make test` | All test suites |

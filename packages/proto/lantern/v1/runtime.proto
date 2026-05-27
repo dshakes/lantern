@@ -148,7 +148,7 @@ message ResourceUsage {
   double cost_usd_accumulated = 6;
 }
 
-message LogLine {
+message RuntimeLogLine {
   string vm_id                                 = 1;
   google.protobuf.Timestamp at                 = 2;
   // Stream: "stdout", "stderr", "harness", "audit".
@@ -268,7 +268,7 @@ service RuntimeManager {
   rpc Stop  (StopRequest)  returns (StopResponse);
 
   // Stream stdout/stderr + harness logs.
-  rpc Logs  (LogsRequest)  returns (stream LogLine);
+  rpc Logs  (LogsRequest)  returns (stream RuntimeLogLine);
 
   // Live exec into a running VM (debugger).
   rpc Exec  (stream ExecRequest) returns (stream ExecResponse);
@@ -379,7 +379,7 @@ message VendSecretResponse {
 
 message HarnessReport {
   oneof body {
-    LogLine log                = 1;
+    RuntimeLogLine log                = 1;
     // Pre-serialized OTLP span batch.
     bytes otlp_traces          = 2;
     // Pre-serialized Prometheus exposition.

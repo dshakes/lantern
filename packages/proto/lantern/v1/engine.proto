@@ -4,13 +4,19 @@ package lantern.v1;
 
 option go_package = "github.com/dshakes/lantern/gen/go/lantern/v1;lanternv1";
 
-import "google/protobuf/timestamp.proto";
 import "google/protobuf/struct.proto";
 import "lantern/v1/runs.proto";
 
 // ---------------------------------------------------------------------------
 // Workflow Engine (internal only — not exposed to clients)
 // ---------------------------------------------------------------------------
+//
+// The headless runtime (Schedule / Spawn / Snapshot / Logs / Exec) lives in
+// runtime.proto. The W12 productionization moved those types out of this
+// file; the old `RuntimeManagerService` and its supporting messages were
+// removed because nothing implemented them — the real implementation is
+// `lantern.v1.RuntimeManager` in runtime.proto, backed by
+// `services/runtime-manager` (Rust + tonic).
 
 service WorkflowEngineService {
   rpc ExecuteRun(ExecuteRunRequest) returns (stream StreamEvent);
@@ -34,130 +40,3 @@ message ResumeRunRequest {
 }
 
 message CancelRunResponse {}
-
-// ---------------------------------------------------------------------------
-// Runtime Manager (internal only)
-// ---------------------------------------------------------------------------
-
-service RuntimeManagerService {
-  rpc Schedule(ScheduleRequest) returns (ScheduleResponse);
-  rpc Cancel(RuntimeCancelRequest) returns (RuntimeCancelResponse);
-  rpc Stream(RuntimeStreamRequest) returns (stream RuntimeEvent);
-  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
-  rpc Restore(RestoreRequest) returns (RestoreResponse);
-}
-
-enum IsolationClass {
-  ISOLATION_CLASS_UNSPECIFIED = 0;
-  ISOLATION_CLASS_TRUSTED = 1;
-  ISOLATION_CLASS_STANDARD = 2;
-  ISOLATION_CLASS_UNTRUSTED = 3;
-  ISOLATION_CLASS_HOSTILE = 4;
-  ISOLATION_CLASS_WASM = 5;
-  ISOLATION_CLASS_DEVCONTAINER = 6;
-}
-
-message ScheduleRequest {
-  string run_id = 1;
-  string bundle_uri = 2;
-  bytes bundle_digest = 3;
-  IsolationClass isolation_class = 4;
-  ResourceLimits limits = 5;
-  map<string, string> env = 6;
-  repeated SecretRef secrets = 7;
-  google.protobuf.Struct input = 8;
-}
-
-message ResourceLimits {
-  string cpu = 1;
-  string memory = 2;
-  string gpu = 3;
-  string timeout = 4;
-  int64 max_steps = 5;
-  int64 max_tokens = 6;
-  double max_cost_usd = 7;
-  string scratch_size = 8;
-}
-
-message SecretRef {
-  string alias = 1;
-  string vault_ref = 2;
-  string env_var = 3;
-}
-
-message ScheduleResponse {
-  string handle_id = 1;
-  string node_name = 2;
-  double cold_start_ms = 3;
-}
-
-message RuntimeCancelRequest {
-  string handle_id = 1;
-  string reason = 2;
-  int32 grace_period_seconds = 3;
-}
-
-message RuntimeCancelResponse {}
-
-message RuntimeStreamRequest {
-  string handle_id = 1;
-}
-
-message RuntimeEvent {
-  oneof event {
-    StepRequest step_request = 1;
-    StepResponse step_response = 2;
-    LlmRequest llm_request = 3;
-    LlmDelta llm_delta = 4;
-    LogLine log = 5;
-    bytes screen_frame = 6;
-    RuntimeExited exited = 7;
-  }
-}
-
-message StepRequest {
-  string step_id = 1;
-  string kind = 2;
-  google.protobuf.Struct payload = 3;
-}
-
-message StepResponse {
-  string step_id = 1;
-  google.protobuf.Struct result = 2;
-  string error = 3;
-}
-
-message LlmRequest {
-  string step_id = 1;
-  string capability = 2;
-  string optimize = 3;
-}
-
-message RuntimeExited {
-  int32 exit_code = 1;
-  string error = 2;
-}
-
-message SnapshotRequest {
-  string handle_id = 1;
-  bytes bundle_digest = 2;
-  IsolationClass isolation_class = 3;
-}
-
-message SnapshotResponse {
-  string snapshot_uri = 1;
-  int64 size_bytes = 2;
-}
-
-message RestoreRequest {
-  string snapshot_uri = 1;
-  string run_id = 2;
-  google.protobuf.Struct input = 3;
-  map<string, string> env = 4;
-  repeated SecretRef secrets = 5;
-}
-
-message RestoreResponse {
-  string handle_id = 1;
-  double restore_ms = 2;
-}

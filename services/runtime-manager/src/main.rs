@@ -10,6 +10,7 @@ mod config;
 mod handle_registry;
 mod pool;
 mod proto;
+mod scheduler_heartbeat;
 mod service;
 
 use std::sync::Arc;
@@ -68,6 +69,17 @@ async fn main() -> anyhow::Result<()> {
 
     let listen_addr = config.listen_addr;
     let svc = RuntimeManagerServer::new(grpc_service);
+
+    // Self-register with the scheduler on a background task. No-op when
+    // SCHEDULER_URL is unset (standalone dev).
+    scheduler_heartbeat::spawn(scheduler_heartbeat::HeartbeatConfig {
+        scheduler_url: config.scheduler_url.clone(),
+        token: config.scheduler_token.clone(),
+        node_name: config.node_name.clone(),
+        advertise_addr: config.node_advertise_addr.clone(),
+        region: config.node_region.clone(),
+        zone: config.node_zone.clone(),
+    });
 
     tracing::info!(%listen_addr, "gRPC server starting");
 
