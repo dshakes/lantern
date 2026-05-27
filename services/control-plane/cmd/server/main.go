@@ -477,7 +477,7 @@ func loadConfig() config {
 		ListenAddr:  envOrDefault("LISTEN_ADDR", ":50051"),
 		S3Bucket:    envOrDefault("S3_BUCKET", "lantern-bundles-dev"),
 		LogLevel:    envOrDefault("LOG_LEVEL", "info"),
-		JWTSecret:   envOrDefault("JWT_SECRET", "lantern-dev-secret-change-me-in-production"),
+		JWTSecret:   envOrDefault("JWT_SECRET", "lantern-dev-jwt-secret-do-not-use-in-production"),
 	}
 }
 

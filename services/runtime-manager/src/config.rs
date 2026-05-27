@@ -27,6 +27,19 @@ pub struct Config {
     pub bundle_s3_endpoint: String,
     pub bundle_s3_bucket: String,
     pub log_level: String,
+    /// Scheduler REST endpoint for self-registration heartbeat
+    /// (POST /v1/nodes/heartbeat). Empty disables auto-register.
+    pub scheduler_url: String,
+    /// Optional shared token used as `X-Scheduler-Token` on heartbeat.
+    pub scheduler_token: String,
+    /// Logical node identity reported to the scheduler. Defaults to
+    /// `node-` + hostname, which is fine for single-node dev.
+    pub node_name: String,
+    /// Address other services dial to reach this manager's gRPC port.
+    /// Defaults to LISTEN_ADDR. Override in NAT'd / multi-host setups.
+    pub node_advertise_addr: String,
+    pub node_region: String,
+    pub node_zone: String,
 }
 
 impl Config {
@@ -54,6 +67,26 @@ impl Config {
 
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
 
+        let scheduler_url = std::env::var("SCHEDULER_URL").unwrap_or_default();
+        let scheduler_token = std::env::var("SCHEDULER_TOKEN").unwrap_or_default();
+
+        let node_name = std::env::var("NODE_NAME").unwrap_or_else(|_| {
+            let host = std::env::var("HOSTNAME")
+                .or_else(|_| std::env::var("HOST"))
+                .unwrap_or_else(|_| "local".to_string());
+            format!("node-{host}")
+        });
+
+        let node_advertise_addr = std::env::var("NODE_ADVERTISE_ADDR").unwrap_or_else(|_| {
+            // Default to LISTEN_ADDR with 0.0.0.0 rewritten to localhost
+            // (useful default for single-host dev; multi-host setups override).
+            let s = listen_addr.to_string();
+            s.replace("0.0.0.0", "localhost")
+        });
+
+        let node_region = std::env::var("NODE_REGION").unwrap_or_else(|_| "local".to_string());
+        let node_zone = std::env::var("NODE_ZONE").unwrap_or_else(|_| "local-a".to_string());
+
         Ok(Config {
             listen_addr,
             runtime_backend,
@@ -62,6 +95,12 @@ impl Config {
             bundle_s3_endpoint,
             bundle_s3_bucket,
             log_level,
+            scheduler_url,
+            scheduler_token,
+            node_name,
+            node_advertise_addr,
+            node_region,
+            node_zone,
         })
     }
 }

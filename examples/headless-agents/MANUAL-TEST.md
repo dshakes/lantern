@@ -12,10 +12,10 @@ at the bottom first if you want to skip to the truth.
 # From repo root
 make dev-infra          # Postgres + Redis + MinIO via docker-compose
 make run-api            # control-plane on :8080
-make dashboard-dev      # Next.js dashboard on :3000
+make dashboard-dev      # Next.js dashboard on :3001
 ```
 
-Log in at <http://localhost:3000> as `admin@lantern.dev` / `lantern`. Then
+Log in at <http://localhost:3001> as `admin@lantern.dev` / `lantern`. Then
 grab a JWT for CLI/curl use:
 
 ```bash
@@ -106,7 +106,7 @@ lantern vm list --state running         # filter
 lantern vm get <vm-id>                  # full JSON: spec + audit events
 ```
 
-In the dashboard: open <http://localhost:3000/runtime>. You'll see:
+In the dashboard: open <http://localhost:3001/runtime>. You'll see:
 
 - 4 stat cards (Running / Spawning / Failed-24h / Nodes)
 - State filter chips
@@ -218,7 +218,7 @@ documents what it proves about the platform:
 
 ---
 
-## What's real, what's still stubbed (TL;DR)
+## What's real, what's still stubbed (TL;DR — post-W12.1 wire)
 
 **Real end-to-end today (two-tier run):**
 - POST `/v1/runtime/schedule` → real `RuntimeScheduler.Schedule` gRPC →
@@ -253,11 +253,15 @@ documents what it proves about the platform:
   zero samples would be misleading.
 - **Snapshot**: scheduler accepts the call and records intent; the
   manager-side snapshot/restore wire for Firecracker is the next mile.
-- **Real protoc Go codegen**: `gen/go/lantern/v1/` files are hand-
-  maintained stubs (gitignored). `make proto` runs protoc but the
-  output drifts from the hand-stubs. Pre-existing tech debt, not
-  blocking the wire — Go's struct names are local identifiers; the
-  proto tags determine wire compat.
+- **Real protoc Go codegen**: ✅ FIXED. `gen/go/` is now true
+  protoc-gen-go output (run `make proto` to regenerate). The old
+  `engine.proto` runtime stubs (ScheduleRequest / ResourceLimits /
+  IsolationClass / SecretRef / Snapshot{Request,Response}) were
+  duplicates of `runtime.proto` — deleted from engine.proto in
+  W12.1 so protoc compiles cleanly. `runtime.proto`'s LogLine was
+  renamed to `RuntimeLogLine` to avoid colliding with `runs.proto`'s
+  LogLine. All four Go services compile + vet clean; cargo build +
+  clippy `-D warnings` green on runtime-manager + harness.
 
 For everything in the **Real** list above, you get a true end-to-end
 round trip — POST a spec, watch a Docker container start, tail its

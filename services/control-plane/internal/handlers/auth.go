@@ -846,5 +846,5 @@ func GetJWTSecret() string {
 	if s := os.Getenv("JWT_SECRET"); s != "" {
 		return s
 	}
-	return "lantern-dev-secret-change-me-in-production"
+	return "lantern-dev-jwt-secret-do-not-use-in-production"
 }

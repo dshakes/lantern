@@ -245,7 +245,7 @@ impl RuntimeManagerGrpc {
 // over-the-wire proto message into the internal `proto::ScheduleRequest`
 // / `proto::RuntimeCancelRequest` shape and delegates to the handlers
 // above. Streaming methods bridge the backend's `BoxStream<RuntimeEvent>`
-// into a `tokio_stream::wrappers::ReceiverStream` of `pb::LogLine`.
+// into a `tokio_stream::wrappers::ReceiverStream` of `pb::RuntimeLogLine`.
 // ---------------------------------------------------------------------------
 
 /// Translate a wire `SpawnRequest` into the internal `ScheduleRequest` the
@@ -389,8 +389,9 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         }
     }
 
-    type LogsStream =
-        Pin<Box<dyn tokio_stream::Stream<Item = Result<pb::LogLine, Status>> + Send + 'static>>;
+    type LogsStream = Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<pb::RuntimeLogLine, Status>> + Send + 'static>,
+    >;
 
     async fn logs(
         &self,
@@ -408,7 +409,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             .await
             .map_err(Self::to_status)?;
 
-        let (tx, rx) = mpsc::channel::<Result<pb::LogLine, Status>>(256);
+        let (tx, rx) = mpsc::channel::<Result<pb::RuntimeLogLine, Status>>(256);
         let registry = Arc::clone(&self.registry);
         let vm_id = req.vm_id.clone();
 
@@ -422,7 +423,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                 // events become structured `harness` lines so clients see
                 // every state transition.
                 let line = match event {
-                    proto::RuntimeEvent::Log(l) => pb::LogLine {
+                    proto::RuntimeEvent::Log(l) => pb::RuntimeLogLine {
                         vm_id: vm_id.clone(),
                         at: None,
                         stream: l.level.clone(),
@@ -432,7 +433,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                             ("ts".to_string(), l.timestamp),
                         ]),
                     },
-                    proto::RuntimeEvent::Exited(e) => pb::LogLine {
+                    proto::RuntimeEvent::Exited(e) => pb::RuntimeLogLine {
                         vm_id: vm_id.clone(),
                         at: None,
                         stream: "harness".to_string(),
@@ -442,7 +443,7 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
                             ("exit_code".to_string(), e.exit_code.to_string()),
                         ]),
                     },
-                    other => pb::LogLine {
+                    other => pb::RuntimeLogLine {
                         vm_id: vm_id.clone(),
                         at: None,
                         stream: "harness".to_string(),

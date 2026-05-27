@@ -102,7 +102,7 @@ Without these env vars, Google OAuth is disabled and the sign-in button will sho
 |---|---|---|
 | control-plane | `:8080` | HTTP (REST + health + SSE) |
 | control-plane (gRPC) | `:50051` | gRPC |
-| dashboard | `:3000` | HTTP (Next.js dev) |
+| dashboard | `:3001` | HTTP (Next.js dev, turbopack) |
 | workflow-engine | `:50052` | gRPC |
 | model-router | `:50053` | gRPC |
 | runtime-manager | `:50054` | gRPC |
@@ -116,7 +116,7 @@ Without these env vars, Google OAuth is disabled and the sign-in button will sho
 ### Frontend dev
 
 ```bash
-make dashboard-dev    # Next.js dashboard at localhost:3000
+make dashboard-dev    # Next.js dashboard at localhost:3001
 make landing-dev      # Landing page
 ```
 
