@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, Loader2, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
@@ -39,7 +39,19 @@ function GitHubIcon() {
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { login, signup, loginDemo, isAuthenticated } = useAuth();
+
+  // Where to send the user after a successful login. Defaults to /agents.
+  // ?next= is set by the 401-redirect in lib/runtime-api + lib/api so that
+  // a session expiring mid-task drops the user back where they were.
+  // Reject absolute URLs to avoid open-redirect; only same-origin paths.
+  const nextPath = (() => {
+    const raw = searchParams.get("next");
+    if (!raw) return "/agents";
+    if (!raw.startsWith("/") || raw.startsWith("//")) return "/agents";
+    return raw;
+  })();
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
@@ -52,7 +64,7 @@ export default function LoginPage() {
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
 
   if (isAuthenticated) {
-    router.replace("/agents");
+    router.replace(nextPath);
     return null;
   }
 
@@ -108,7 +120,7 @@ export default function LoginPage() {
         router.replace("/onboarding");
       } else {
         await login(email, password);
-        router.replace("/agents");
+        router.replace(nextPath);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed");
@@ -120,7 +132,7 @@ export default function LoginPage() {
   const handleDemo = () => {
     setDemoLoading(true);
     loginDemo();
-    router.replace("/agents");
+    router.replace(nextPath);
   };
 
   return (
