@@ -107,6 +107,13 @@ message AgentSpec {
   string tenant_id                       = 11;
   string agent_version_id                = 12;
   string run_id                          = 13;
+  // Entrypoint override. Empty = use image's ENTRYPOINT.
+  repeated string command                = 14;
+  // Arguments appended to entrypoint (or image CMD if command is empty).
+  repeated string args                   = 15;
+  // Extra env passed to the container process. Tenant id and run id are
+  // injected by the runtime; this is for caller-supplied vars.
+  map<string, string> env                = 16;
 }
 
 message PlacementHint {

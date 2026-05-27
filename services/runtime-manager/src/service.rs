@@ -282,9 +282,13 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
         })
         .unwrap_or_default();
 
-    // Build env from labels + tenant injection. Backends look for
-    // `LANTERN_TENANT_ID` in env to populate the handle registry.
-    let mut env: std::collections::HashMap<String, String> = spec.labels.clone();
+    // Build env from caller-supplied env + labels (for backwards-compat) +
+    // tenant injection. Backends look for `LANTERN_TENANT_ID` in env to
+    // populate the handle registry.
+    let mut env: std::collections::HashMap<String, String> = spec.env.clone();
+    for (k, v) in &spec.labels {
+        env.entry(k.clone()).or_insert_with(|| v.clone());
+    }
     if !spec.tenant_id.is_empty() {
         env.insert("LANTERN_TENANT_ID".to_string(), spec.tenant_id.clone());
     }
@@ -318,6 +322,9 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
         env,
         secrets,
         input: serde_json::Value::Null,
+        command: spec.command.clone(),
+        args: spec.args.clone(),
+        image: spec.image_digest.clone(),
     })
 }
 
@@ -344,10 +351,18 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
 
         // Honor a scheduler-pre-allocated handle if one was supplied;
         // otherwise mint a wire VmHandle from the cold-start result.
+        // When the scheduler pre-allocated a wire vm_id, rekey the registry
+        // so subsequent Stop/Logs/Exec by wire id resolve to the backend
+        // handle. Without this, the registry only knows the docker
+        // container id and Stop(vm-uuid) silently no-ops.
+        let backend_handle_id = resp.handle_id.clone();
         let vm_handle = match pre_handle {
-            Some(h) if !h.vm_id.is_empty() => h,
+            Some(h) if !h.vm_id.is_empty() => {
+                self.registry.rekey(&backend_handle_id, &h.vm_id);
+                h
+            }
             _ => pb::VmHandle {
-                vm_id: resp.handle_id,
+                vm_id: backend_handle_id,
                 node: resp.node_name,
                 availability_zone: String::new(),
                 created_at: None,
@@ -371,17 +386,32 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         let req = request.into_inner();
         let grace_seconds = req.grace.as_ref().map(|d| d.seconds as i32).unwrap_or(30);
 
+        // Resolve the wire vm_id (issued by the scheduler) to the backend
+        // handle id (docker container id / firecracker socket / pod name).
+        // The registry was rekeyed to use the wire vm_id as the lookup key
+        // in spawn(), and HandleInfo.handle_id still carries the backend id.
+        let backend_handle = self
+            .registry
+            .get(&req.vm_id)
+            .map(|h| h.handle_id)
+            .unwrap_or_else(|| req.vm_id.clone());
+
         let internal = proto::RuntimeCancelRequest {
-            handle_id: req.vm_id.clone(),
+            handle_id: backend_handle,
             reason: req.reason,
             grace_period_seconds: grace_seconds,
         };
 
         match self.cancel(Request::new(internal)).await {
-            Ok(_) => Ok(Response::new(pb::StopResponse {
-                ok: true,
-                detail: format!("vm {} stopped", req.vm_id),
-            })),
+            Ok(_) => {
+                // Cancel deregisters under the backend id; also drop the
+                // wire-id alias so subsequent lookups 404.
+                self.registry.deregister(&req.vm_id);
+                Ok(Response::new(pb::StopResponse {
+                    ok: true,
+                    detail: format!("vm {} stopped", req.vm_id),
+                }))
+            }
             Err(status) => Ok(Response::new(pb::StopResponse {
                 ok: false,
                 detail: status.message().to_string(),
@@ -399,13 +429,15 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
     ) -> Result<Response<Self::LogsStream>, Status> {
         let req = request.into_inner();
 
-        if self.registry.get(&req.vm_id).is_none() {
-            return Err(Status::not_found(format!("vm {} not found", req.vm_id)));
-        }
+        // Resolve wire vm_id → backend handle (docker container id).
+        let info = self
+            .registry
+            .get(&req.vm_id)
+            .ok_or_else(|| Status::not_found(format!("vm {} not found", req.vm_id)))?;
 
         let mut event_stream = self
             .backend
-            .stream(&req.vm_id)
+            .stream(&info.handle_id)
             .await
             .map_err(Self::to_status)?;
 
