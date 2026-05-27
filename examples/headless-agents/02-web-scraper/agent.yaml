@@ -1,0 +1,51 @@
+# Demo 02: web-scraper
+#
+# Fetches a URL from the public web, returns title + meta description.
+# Picks `untrusted` because the workload uses `requests` + `beautifulsoup4`
+# from pypi — anything that loads third-party packages is untrusted from
+# Lantern's perspective.
+#
+# What this demo proves:
+#   * EGRESS ALLOWLIST: workload can only reach hosts on the allowlist.
+#     A POST to non-allowlisted host gets denied at the harness proxy
+#     AND audited in runtime_audit_events.
+#   * SECRET VENDING: a `USER_AGENT` secret is vended to the workload
+#     via /run/lantern/secrets/USER_AGENT. The raw secret never appears
+#     in env or in the image.
+#   * NETWORK POLICY: domain-based allowlist (NETWORK_ALLOWLIST_DOMAIN).
+#   * COST ACCOUNTING: bytes_in / bytes_out captured in ResourceUsage.
+
+apiVersion: lantern.dev/v1
+kind: AgentSpec
+
+metadata:
+  name: web-scraper
+  labels:
+    demo: "02"
+
+spec:
+  image_digest: lantern/demos/web-scraper@sha256:0000000000000000000000000000000000000000000000000000000000000002
+  isolation: untrusted
+
+  limits:
+    vcpu: "500m"
+    memory: "256Mi"
+    timeout: 60s
+    scratch_size: "64Mi"
+    max_cost_usd: 0.05
+
+  network: allowlist_domain
+
+  egress_rules:
+    - pattern: "*.wikipedia.org"
+      http_methods: ["GET"]
+      rate_bps: 1048576       # 1 MiB/s
+    - pattern: "*.github.com"
+      http_methods: ["GET"]
+      rate_bps: 524288        # 512 KiB/s
+
+  secrets:
+    - env_name: USER_AGENT
+      secret_uri: lantern.secret://__tenant__/key/scraper-user-agent
+
+  idempotent: true

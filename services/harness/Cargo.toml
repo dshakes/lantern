@@ -1,0 +1,36 @@
+[package]
+name = "lantern-harness"
+version = "0.1.0"
+edition = "2024"
+description = "Lantern RuntimeHarness — PID 1 init process running inside every Lantern microVM"
+
+[[bin]]
+name = "lantern-harness"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+# tonic + prost are dependency-pinned for the moment the proto codegen
+# pipeline lands; see build.rs. Until then the harness uses hand-defined
+# types in src/proto.rs (mirrors services/runtime-manager).
+tonic = "0.12"
+prost = "0.13"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+nix = { version = "0.29", features = ["signal", "process"] }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+dashmap = "6"
+
+# Note: tonic-build is intentionally NOT in [build-dependencies]. The proto
+# stubs aren't regenerated as part of this crate today — see build.rs for the
+# documented hook and src/proto.rs for the hand-defined types we use instead.
+# When `make proto` learns to drive cargo, switch back to tonic-build here.
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

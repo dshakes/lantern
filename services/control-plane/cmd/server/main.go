@@ -393,6 +393,21 @@ func main() {
 	// Rehearsals — replay past failures against a candidate agent version.
 	httpMux.HandleFunc("POST /v1/runs/rehearse", rehearseHandler.Rehearse)
 
+	// Headless-agent runtime governance — REST surface in front of the
+	// Firecracker-backed RuntimeScheduler at :50055. Quota-gated,
+	// tenant-scoped, audit-logged.
+	runtimeHandler := handlers.NewRuntimeHandler(srv, authHandler)
+	httpMux.HandleFunc("POST /v1/runtime/schedule", runtimeHandler.Schedule)
+	httpMux.HandleFunc("GET /v1/runtime/vms", runtimeHandler.ListVMs)
+	httpMux.HandleFunc("GET /v1/runtime/vms/{id}", runtimeHandler.GetVM)
+	httpMux.HandleFunc("GET /v1/runtime/vms/{id}/logs", runtimeHandler.StreamLogs)
+	httpMux.HandleFunc("DELETE /v1/runtime/vms/{id}", runtimeHandler.TerminateVM)
+	httpMux.HandleFunc("POST /v1/runtime/vms/{id}/exec", runtimeHandler.ExecVM)
+	httpMux.HandleFunc("GET /v1/runtime/cluster", runtimeHandler.Cluster)
+	httpMux.HandleFunc("GET /v1/runtime/quota", runtimeHandler.GetQuota)
+	httpMux.HandleFunc("PUT /v1/runtime/quota", runtimeHandler.UpsertQuota)
+	httpMux.HandleFunc("GET /v1/runtime/audit", runtimeHandler.ListAudit)
+
 	httpServer := &http.Server{
 		Addr:              ":8080",
 		Handler:           handlers.CORSMiddleware(httpMux),

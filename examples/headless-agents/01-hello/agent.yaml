@@ -1,0 +1,47 @@
+# Demo 01: hello
+#
+# The smallest possible Lantern agent. Echoes the input back with a
+# timestamp. Picks the `trusted` isolation class because the code is
+# Lantern-authored — no untrusted package loading, no LLM-generated
+# code path. Cold start target: <1.5s on a K8s Job. Warm: <100ms.
+#
+# What this demo proves end-to-end:
+#   1. Control-plane RBAC + quota gate accepts the spec.
+#   2. Scheduler picks a node and forwards to runtime-manager.
+#   3. Manager spawns the K8s Job, harness boots PID 1.
+#   4. Workload runs, writes "hello $name @ $ts" to stdout.
+#   5. Harness streams the log line to the manager via Report.
+#   6. Control-plane writes the log to runtime_audit_events + relays
+#      it to the dashboard SSE stream.
+#   7. Workload exits 0, harness reports clean shutdown, manager
+#      tears down the pod, scheduler marks runtime_vms.state=
+#      terminated.
+
+apiVersion: lantern.dev/v1
+kind: AgentSpec
+
+metadata:
+  name: hello
+  labels:
+    demo: "01"
+    owner: lantern-team
+
+spec:
+  image_digest: lantern/demos/hello@sha256:0000000000000000000000000000000000000000000000000000000000000001
+  isolation: trusted
+
+  limits:
+    vcpu: "100m"           # 0.1 vCPU — this is a 50-line Python script
+    memory: "64Mi"
+    timeout: 30s
+    scratch_size: "16Mi"
+
+  network: none            # workload only writes to stdout; no egress at all
+
+  # No secrets needed.
+  secrets: []
+
+  # No external traffic.
+  egress_rules: []
+
+  idempotent: true

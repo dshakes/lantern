@@ -1,0 +1,53 @@
+# Demo 03: stateful-research
+#
+# A long-lived research agent that maintains a workspace across calls.
+# Picks `devcontainer` isolation — long-lived pod backed by a PVC, so
+# work survives between invocations. Snapshots the workspace state
+# every N steps so the scheduler can RESTORE it on a different node
+# after a crash or planned drain.
+#
+# What this demo proves:
+#   * SNAPSHOT / RESTORE: workspace state persisted as a Firecracker
+#     snapshot OR a PVC snapshot, addressable by snapshot_id.
+#   * DRAIN + RESCHEDULE: if a node enters draining state, the
+#     scheduler asks the harness to snapshot, then picks a new node
+#     and passes `restore_snapshot_id` in the next SpawnRequest.
+#   * STATEFUL COMPUTATION: the workload writes to ./workspace/ which
+#     is backed by a PVC; reading it back on the next invocation works.
+#   * COST OVER TIME: agent runs for ~minutes, not seconds — the
+#     cost-accumulator in ResourceUsage tracks the running total.
+
+apiVersion: lantern.dev/v1
+kind: AgentSpec
+
+metadata:
+  name: stateful-research
+  labels:
+    demo: "03"
+
+spec:
+  image_digest: lantern/demos/stateful-research@sha256:0000000000000000000000000000000000000000000000000000000000000003
+  isolation: devcontainer
+
+  limits:
+    vcpu: "1"               # 1 vCPU for the research loop
+    memory: "1Gi"
+    timeout: 30m
+    scratch_size: "2Gi"     # ./workspace lives here
+    max_cost_usd: 1.00
+
+  network: allowlist_domain
+  egress_rules:
+    - pattern: "*.arxiv.org"
+      http_methods: ["GET"]
+    - pattern: "api.openai.com"
+      http_methods: ["POST"]
+
+  secrets:
+    - env_name: OPENAI_API_KEY
+      secret_uri: lantern.secret://__tenant__/key/openai
+
+  # NON-idempotent: don't preempt + retry mid-workspace.
+  idempotent: false
+  # On first run, no restore. On subsequent: scheduler fills this in.
+  restore_snapshot_id: ""

@@ -1,0 +1,48 @@
+# Demo 04: ml-inference
+#
+# Runs ONNX inference on a small model (e.g. sentence-transformers MiniLM).
+# Picks `standard` Firecracker isolation but with a GPU class request,
+# so the scheduler routes to a node with available GPU capacity.
+#
+# What this demo proves:
+#   * GPU SCHEDULING: scheduler honors `limits.gpu="1"` and picks a node
+#     whose warm pool has a GPU-class slot.
+#   * COST ACCOUNTING: workload reports cost_usd_accumulated to harness
+#     after each inference batch. Harness adds to ResourceUsage. Scheduler
+#     enforces max_cost_usd_per_day from the tenant's runtime_quotas row.
+#   * OTEL TRACING: workload emits OTLP spans through the unix socket at
+#     /run/lantern/otlp.sock. Harness batches + forwards. Spans show up
+#     in the dashboard's per-VM debug view (linked to the trace_id on
+#     each StatusEvent).
+#   * COLD-START SNAPSHOT: a tier-1 snapshot of the post-model-load VM
+#     is cached after first boot; subsequent invocations restore from
+#     that snapshot — model weights are already in memory, inference
+#     starts in ~150ms instead of ~12s.
+
+apiVersion: lantern.dev/v1
+kind: AgentSpec
+
+metadata:
+  name: ml-inference
+  labels:
+    demo: "04"
+    pool: "gpu-t4"          # scheduler honors this as a label selector
+
+spec:
+  image_digest: lantern/demos/ml-inference@sha256:0000000000000000000000000000000000000000000000000000000000000004
+  isolation: standard       # Firecracker; trusted base image
+
+  limits:
+    vcpu: "2"
+    memory: "4Gi"
+    gpu: "1"                # one GPU slot — scheduler picks gpu-class node
+    timeout: 120s
+    scratch_size: "512Mi"
+    max_cost_usd: 0.50
+    max_tokens: 100000
+
+  network: none             # model is in the image; no external calls
+
+  secrets: []
+  egress_rules: []
+  idempotent: true
