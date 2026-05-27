@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use dashmap::DashMap;
 use tokio::sync::Mutex;
-use tracing;
 
 use crate::backend::{Handle, RuntimeBackend};
 use crate::proto::{IsolationClass, ScheduleRequest};
@@ -178,19 +177,11 @@ impl WarmPool {
     }
 
     /// Pre-warm a number of instances for a given isolation class and bundle.
-    pub async fn prewarm(
-        &self,
-        req: &ScheduleRequest,
-        count: usize,
-    ) -> Result<usize> {
+    pub async fn prewarm(&self, req: &ScheduleRequest, count: usize) -> Result<usize> {
         let _lock = self.prewarm_lock.lock().await;
         let key = PoolKey::new(req.isolation_class, &req.bundle_digest);
 
-        let current = self
-            .pool
-            .get(&key)
-            .map(|e| e.value().len())
-            .unwrap_or(0);
+        let current = self.pool.get(&key).map(|e| e.value().len()).unwrap_or(0);
 
         let needed = count.saturating_sub(current);
         let mut created = 0usize;

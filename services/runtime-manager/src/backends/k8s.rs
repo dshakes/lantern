@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use futures::{AsyncBufReadExt, StreamExt};
 use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{
     Container, ContainerPort, EnvVar, PodSpec, PodTemplateSpec, ResourceRequirements,
@@ -12,7 +13,6 @@ use k8s_openapi::api::core::v1::{
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use kube::api::{Api, DeleteParams, ListParams, LogParams, PostParams};
 use kube::Client;
-use futures::{AsyncBufReadExt, StreamExt};
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
@@ -78,12 +78,7 @@ impl K8sBackend {
     }
 
     /// Build the K8s Job spec for a schedule request.
-    fn build_job(
-        &self,
-        req: &ScheduleRequest,
-        job_name: &str,
-        namespace: &str,
-    ) -> Job {
+    fn build_job(&self, req: &ScheduleRequest, job_name: &str, namespace: &str) -> Job {
         let mut env_vars: Vec<EnvVar> = vec![
             EnvVar {
                 name: "LANTERN_RUN_ID".to_string(),
@@ -164,8 +159,14 @@ impl K8sBackend {
         };
 
         let mut labels = BTreeMap::new();
-        labels.insert("app.kubernetes.io/name".to_string(), "lantern-agent-runner".to_string());
-        labels.insert("app.kubernetes.io/managed-by".to_string(), "lantern-runtime-manager".to_string());
+        labels.insert(
+            "app.kubernetes.io/name".to_string(),
+            "lantern-agent-runner".to_string(),
+        );
+        labels.insert(
+            "app.kubernetes.io/managed-by".to_string(),
+            "lantern-runtime-manager".to_string(),
+        );
         labels.insert("lantern.dev/run-id".to_string(), req.run_id.clone());
         labels.insert(
             "lantern.dev/isolation-class".to_string(),
@@ -202,11 +203,7 @@ impl K8sBackend {
     }
 
     /// Wait for the job's pod to be scheduled and running (or failed).
-    async fn wait_for_pod(
-        &self,
-        namespace: &str,
-        job_name: &str,
-    ) -> Result<String> {
+    async fn wait_for_pod(&self, namespace: &str, job_name: &str) -> Result<String> {
         let pods: Api<k8s_openapi::api::core::v1::Pod> =
             Api::namespaced(self.client.clone(), namespace);
 
@@ -227,14 +224,14 @@ impl K8sBackend {
                     .unwrap_or("unknown")
                     .to_string();
 
-                if let Some(status) = &pod.status {
-                    if let Some(phase) = &status.phase {
-                        match phase.as_str() {
-                            "Running" | "Succeeded" | "Failed" => {
-                                return Ok(pod_name);
-                            }
-                            _ => {}
+                if let Some(status) = &pod.status
+                    && let Some(phase) = &status.phase
+                {
+                    match phase.as_str() {
+                        "Running" | "Succeeded" | "Failed" => {
+                            return Ok(pod_name);
                         }
+                        _ => {}
                     }
                 }
             }

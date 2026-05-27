@@ -33,14 +33,40 @@ export LANTERN_API_URL=http://localhost:8080
 export LANTERN_API_TOKEN="$TOKEN"
 ```
 
-(Optional) Start the runtime-scheduler — only useful if you want to watch
-its placement logs. The control-plane works without it today via the
-stubbed scheduler client.
+### Two-tier run (real wire, recommended)
+
+Boot all three runtime services + wire them together via env vars:
 
 ```bash
-cd services/runtime-scheduler && go run ./cmd/scheduler
+# Terminal 1 — runtime-manager (Rust, the per-node sandbox executor)
+cd services/runtime-manager
+LISTEN_ADDR=0.0.0.0:50054 \
+  RUNTIME_BACKEND=docker \
+  cargo run
+
+# Terminal 2 — runtime-scheduler (Go, placement)
+cd services/runtime-scheduler
+LANTERN_DEFAULT_MANAGER_ADDR=localhost:50054 \
+  go run ./cmd/scheduler
 # gRPC on :50055, REST on :8085
+
+# Terminal 3 — control-plane (Go, public API) — point it at the scheduler
+LANTERN_SCHEDULER_GRPC_ADDR=localhost:50055 \
+  LANTERN_DEFAULT_MANAGER_ADDR=localhost:50054 \
+  make run-api
 ```
+
+Log lines to grep for:
+- control-plane: `gRPC scheduler client wired`
+- scheduler: `using gRPC manager dialer`
+- runtime-manager: `gRPC server starting`
+
+### Single-tier run (stub fallback, for quick UI work)
+
+Skip the scheduler + manager terminals and run just the control-plane.
+The `stubSchedulerClient` synthesizes `vm-<uuid>` IDs and a `node-stub`
+node so the dashboard + CLI list still light up. Use this when you're
+hacking on dashboard styling and don't need real placement.
 
 ---
 
@@ -156,11 +182,10 @@ Dashboard list reflects within 5s (the poll interval).
 lantern vm cluster
 ```
 
-Returns per-node load + warm-pool capacity. With no real
-`runtime-scheduler` connected, this returns stub data marked with
-`"stub": true`. When you start the scheduler in step 0 and the
-control-plane is configured to dial it (env var to be added in next wave),
-this becomes live.
+Returns per-node load + warm-pool capacity. With the two-tier run setup
+(`LANTERN_SCHEDULER_GRPC_ADDR` set), this is live data from the
+scheduler's `RuntimeScheduler.Cluster` RPC. Without it, returns the
+stub topology marked `"stub": true`.
 
 ---
 
@@ -171,9 +196,11 @@ lantern vm logs <vm-id> --follow
 ```
 
 Or in the browser: the per-VM debug view opens an EventSource on
-`/v1/runtime/vms/<id>/logs?follow=1`. Right now this emits a single
-"log streaming not yet wired (stub)" frame — the real path requires the
-RuntimeManager gRPC `Logs` stream which lands when proto codegen runs.
+`/v1/runtime/vms/<id>/logs?follow=1`. With the two-tier setup, the
+control-plane proxies `RuntimeManager.Logs` server-streaming RPC from
+the per-node manager and forwards each `LogLine` as an SSE `data:`
+frame. Without `LANTERN_DEFAULT_MANAGER_ADDR`, falls back to a single
+stub frame.
 
 ---
 
@@ -191,32 +218,47 @@ documents what it proves about the platform:
 
 ---
 
-## What's real, what's a stub (TL;DR)
+## What's real, what's still stubbed (TL;DR)
 
-**Real today:**
-- POST `/v1/runtime/schedule` validates spec, enforces quota (402), stamps
-  `runtime_vms`, returns `vm_id`. Visible in dashboard + CLI list.
-- Quota CRUD + enforcement.
+**Real end-to-end today (two-tier run):**
+- POST `/v1/runtime/schedule` → real `RuntimeScheduler.Schedule` gRPC →
+  scheduler placement (warm-pool / region / fair-share / cost / health
+  scoring) → real `RuntimeManager.Spawn` gRPC to the resolved node →
+  Docker container spawns (default backend; K8s + Firecracker backends
+  also wired).
+- Logs SSE proxies the real `RuntimeManager.Logs` server-stream from
+  the spawned container.
+- Terminate proxies `RuntimeScheduler.Terminate` → `RuntimeManager.Stop`.
+- Cluster proxies `RuntimeScheduler.Cluster` → real node topology.
+- Quota CRUD + 402 enforcement.
 - Audit events on every operation.
-- Dashboard `/runtime` list + per-VM debug view with 5s polling.
-- All CLI subcommands (`lantern run`, `lantern vm {list,get,logs,stop,cluster,quota}`).
-- `runtime-scheduler` binary boots cleanly and serves its gRPC + REST surface.
+- Dashboard `/runtime` list + per-VM debug view with live SSE logs.
+- All CLI subcommands (`lantern run`, `lantern vm
+  {list,get,logs,stop,cluster,quota}`).
 - Rust `harness` compiles + has unit-tested subsystems (egress proxy,
-  secret vending, heartbeat reconnect).
+  secret vending, heartbeat reconnect). Reachable from the manager
+  once a real microVM image is built that includes it.
+- Generated tonic server stubs for `RuntimeScheduler`, `RuntimeManager`,
+  and `RuntimeHarness` services (runtime-manager only — scheduler still
+  has hand-stub Go code in `gen/go/lantern/v1/`).
 
-**Stubbed (pending `make proto` integration of `runtime.proto`):**
-- Real wire-up between `control-plane → scheduler → runtime-manager → harness`
-  is via a `stubSchedulerClient` that logs intent and synthesizes
-  `node-stub`/`az-stub` values. The contract (`SchedulerClient` interface
-  in `services/control-plane/internal/handlers/runtime.go`) is the seam
-  for the real `tonic`-generated gRPC client.
-- `vm logs --follow` emits a single stub frame instead of streaming from
-  the harness.
-- `vm exec` returns a stub message instead of streaming bidi from the
-  manager.
-- `vm cluster` returns stub topology when scheduler isn't dialed.
+**Honest gaps that remain:**
+- **`vm exec`**: returns `Status::unimplemented` / a stub placeholder.
+  Bidi streams are wired through tonic on the Rust side but the
+  per-backend exec primitive isn't exposed in `RuntimeBackend`, and the
+  Go control-plane's hand-stub gRPC code doesn't include bidi streaming
+  glue. TODO(W12-exec).
+- **`vm stats`**: `Status::unimplemented` — `ResourceUsage` rolls up via
+  the harness `Heartbeat` stream, not per-backend polling, so returning
+  zero samples would be misleading.
+- **Snapshot**: scheduler accepts the call and records intent; the
+  manager-side snapshot/restore wire for Firecracker is the next mile.
+- **Real protoc Go codegen**: `gen/go/lantern/v1/` files are hand-
+  maintained stubs (gitignored). `make proto` runs protoc but the
+  output drifts from the hand-stubs. Pre-existing tech debt, not
+  blocking the wire — Go's struct names are local identifiers; the
+  proto tags determine wire compat.
 
-Once `packages/proto/lantern/v1/runtime.proto` is wired through `make proto`,
-swapping the four stubs for real generated clients is the only remaining
-work — every other layer (HTTP, DB, dashboard, CLI, quotas, audit) is
-production-shape.
+For everything in the **Real** list above, you get a true end-to-end
+round trip — POST a spec, watch a Docker container start, tail its
+logs in your browser, terminate it.

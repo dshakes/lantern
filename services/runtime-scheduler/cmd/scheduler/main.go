@@ -57,7 +57,14 @@ func main() {
 	}
 	pl := &placement.Engine{Store: store, Weights: weights}
 
-	managerDialer := dialer.NewLogOnlyDialer(logger)
+	var managerDialer dialer.ManagerDialer
+	if os.Getenv("LANTERN_DIALER") == "stub" || os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR") == "" {
+		managerDialer = dialer.NewLogOnlyDialer(logger)
+		logger.Info("using stub manager dialer (no LANTERN_DEFAULT_MANAGER_ADDR set)")
+	} else {
+		managerDialer = dialer.NewGRPCDialer(logger)
+		logger.Info("using gRPC manager dialer")
+	}
 	defer managerDialer.Close()
 
 	// --- Background heartbeat reaper ---
