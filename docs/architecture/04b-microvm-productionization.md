@@ -246,6 +246,7 @@ The control-plane handles JWT auth, tenant stamping, and run-level persistence (
 
 ## See also
 
+- [`../../examples/headless-agents/MANUAL-TEST.md`](../../examples/headless-agents/MANUAL-TEST.md) — step-by-step manual exercise of every endpoint, with an honest "what's real vs. stubbed" map
 - [`04-runtime-isolation.md`](04-runtime-isolation.md) — which class, why, and what the hardening looks like
 - [ADR 0002](../adr/0002-runtime-class-per-workload.md) — agents declare class; scheduler picks backend
 - [ADR 0003](../adr/0003-scheduler-as-separate-service.md) — scheduler split out of runtime-manager

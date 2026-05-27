@@ -9,6 +9,11 @@ layer (`packages/proto/lantern/v1/runtime.proto`, `services/runtime-scheduler`,
 3. Has a `README.md` explaining what it demonstrates and why this isolation class was picked.
 4. Runs end-to-end via `lantern run agent.yaml --input <payload>`.
 
+> **Trying things out?** [`MANUAL-TEST.md`](./MANUAL-TEST.md) is a step-by-step
+> guide for exercising the runtime today: scheduling, listing, quotas
+> (HTTP 402), audit, terminate — with an honest "what's real vs. stubbed"
+> section so you know where the seams are.
+
 | # | Demo | Isolation | What it proves |
 |---|---|---|---|
 | **01** | `hello`             | `trusted`      | The smallest possible round-trip. Validates spawn → exec → stream → terminate. Cold start ≤ 1.5s, warm ≤ 100ms. |
