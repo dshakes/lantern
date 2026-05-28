@@ -57,6 +57,11 @@ type SchedulerClient interface {
 	Terminate(ctx context.Context, vmID, reason string) error
 	Exec(ctx context.Context, vmID, command string, argv []string) (stdout, stderr string, exitCode int32, err error)
 	Cluster(ctx context.Context) (map[string]any, error)
+	// ListStates returns the scheduler's current view of live VM states,
+	// keyed by vm_id. Used by the reconciler to write authoritative state
+	// back to runtime_vms. Returns an empty map (not an error) when the
+	// scheduler has no live VMs.
+	ListStates(ctx context.Context, tenantID string) (map[string]string, error)
 }
 
 type stubSchedulerClient struct {
@@ -99,6 +104,11 @@ func (s *stubSchedulerClient) Cluster(_ context.Context) (map[string]any, error)
 		"totalVmsPending": 0,
 		"stub":            true,
 	}, nil
+}
+
+func (s *stubSchedulerClient) ListStates(_ context.Context, _ string) (map[string]string, error) {
+	// Stub: no scheduler to ask, so the reconciler has nothing to do.
+	return map[string]string{}, nil
 }
 
 // ---------- Real gRPC scheduler client ----------
@@ -266,6 +276,47 @@ func (c *grpcSchedulerClient) Cluster(ctx context.Context) (map[string]any, erro
 	}, nil
 }
 
+func (c *grpcSchedulerClient) ListStates(ctx context.Context, tenantID string) (map[string]string, error) {
+	ctx = withTenant(ctx, tenantID)
+	resp, err := c.client.List(ctx, &lanternv1.ListRequest{TenantId: tenantID})
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string)
+	if resp == nil {
+		return out, nil
+	}
+	for _, item := range resp.GetItems() {
+		h := item.GetHandle()
+		if h == nil || h.GetVmId() == "" {
+			continue
+		}
+		out[h.GetVmId()] = vmStateString(item.GetState())
+	}
+	return out, nil
+}
+
+// vmStateString maps the proto VmState enum to the lowercase string the
+// runtime_vms table + dashboard use.
+func vmStateString(s lanternv1.VmState) string {
+	switch s {
+	case lanternv1.VmState_VM_STATE_PENDING:
+		return "pending"
+	case lanternv1.VmState_VM_STATE_SPAWNING:
+		return "spawning"
+	case lanternv1.VmState_VM_STATE_RUNNING:
+		return "running"
+	case lanternv1.VmState_VM_STATE_DRAINING:
+		return "draining"
+	case lanternv1.VmState_VM_STATE_TERMINATED:
+		return "terminated"
+	case lanternv1.VmState_VM_STATE_FAILED:
+		return "failed"
+	default:
+		return "pending"
+	}
+}
+
 // agentSpecFromMap turns the REST-side spec map into the proto AgentSpec.
 // Field names mirror the conventions in runtime-scheduler/internal/handlers
 // (snake_case map keys, proto enum normalization).
@@ -409,7 +460,100 @@ func NewRuntimeHandler(srv *server.Server, auth *AuthHandler) *RuntimeHandler {
 		logger.Info("runtime scheduler: stub client (set LANTERN_SCHEDULER_GRPC_ADDR to wire real gRPC)")
 		h.scheduler = &stubSchedulerClient{logger: logger.Named("scheduler_stub")}
 	}
+	// State reconciler: the scheduler is authoritative for live VM state
+	// but the dashboard reads runtime_vms. Without writeback, a row stays
+	// 'pending' forever even after the container is running or gone. Poll
+	// the scheduler every few seconds and reconcile. Only runs against the
+	// real gRPC client — the stub has nothing to report.
+	if _, isStub := h.scheduler.(*stubSchedulerClient); !isStub {
+		go h.reconcileLoop()
+	}
 	return h
+}
+
+// reconcileLoop periodically pulls live VM states from the scheduler and
+// writes them back to runtime_vms so the dashboard reflects reality.
+// Rows that the control-plane believes are live (pending/spawning/running/
+// draining) but that the scheduler no longer knows about are marked
+// terminated — the scheduler deletes VMs from its store on terminate, so
+// "gone from scheduler" means "finished".
+func (h *RuntimeHandler) reconcileLoop() {
+	const interval = 4 * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		h.reconcileOnce()
+	}
+}
+
+func (h *RuntimeHandler) reconcileOnce() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Distinct tenants with live rows — reconcile each (scheduler.List is
+	// tenant-scoped). Keeps the query small on a busy cluster.
+	rows, err := h.srv.Pool.Query(ctx, `
+		SELECT DISTINCT tenant_id FROM runtime_vms
+		WHERE state IN ('pending','spawning','running','draining')
+	`)
+	if err != nil {
+		h.logger().Warn("reconcile: tenant scan failed", zap.Error(err))
+		return
+	}
+	var tenants []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err == nil {
+			tenants = append(tenants, t)
+		}
+	}
+	rows.Close()
+
+	for _, tenantID := range tenants {
+		states, err := h.scheduler.ListStates(ctx, tenantID)
+		if err != nil {
+			h.logger().Debug("reconcile: ListStates failed", zap.String("tenant", tenantID), zap.Error(err))
+			continue
+		}
+		// Update each live VM the scheduler still knows about.
+		for vmID, state := range states {
+			_, err := h.srv.Pool.Exec(ctx, `
+				UPDATE runtime_vms SET state = $1
+				WHERE vm_id = $2 AND tenant_id = $3 AND state <> $1
+			`, state, vmID, tenantID)
+			if err != nil {
+				h.logger().Debug("reconcile: state update failed", zap.String("vm", vmID), zap.Error(err))
+			}
+		}
+		// Any DB row still marked live but absent from the scheduler's
+		// view has finished — mark terminated + stamp terminated_at.
+		liveIDs := make([]string, 0, len(states))
+		for id := range states {
+			liveIDs = append(liveIDs, id)
+		}
+		// Grace window: don't sweep VMs created in the last 30s — a
+		// freshly-scheduled VM may not have propagated into the
+		// scheduler's List view yet, and we'd wrongly terminate it.
+		// Also skip the sweep entirely when the scheduler reports ZERO
+		// live VMs but the DB has live rows — that's the signature of a
+		// scheduler restart (in-memory store wiped), not "everything
+		// finished at once". Mass-terminating on a restart would lie.
+		if len(liveIDs) == 0 {
+			continue
+		}
+		_, err = h.srv.Pool.Exec(ctx, `
+			UPDATE runtime_vms
+			SET state = 'terminated',
+			    terminated_at = COALESCE(terminated_at, now())
+			WHERE tenant_id = $1
+			  AND state IN ('pending','spawning','running','draining')
+			  AND created_at < now() - interval '30 seconds'
+			  AND NOT (vm_id = ANY($2))
+		`, tenantID, liveIDs)
+		if err != nil {
+			h.logger().Debug("reconcile: terminate-sweep failed", zap.String("tenant", tenantID), zap.Error(err))
+		}
+	}
 }
 
 // WithScheduler swaps the scheduler client (used by tests + the future
