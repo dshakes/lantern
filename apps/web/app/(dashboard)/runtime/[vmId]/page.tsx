@@ -19,19 +19,22 @@ import { PageSkeleton } from "@/components/skeleton";
 import { useToast } from "@/components/toast";
 import { runtimeApi, UnauthorizedError } from "@/lib/runtime-api";
 
+// Shapes mirror the control-plane JSON (camelCase tags on vmRow + the
+// events array — NOT snake_case, and the key is `events` not `audit`).
 interface VmDetail {
   vm: {
-    vm_id: string;
+    vmId: string;
     state: string;
     node: string | null;
-    region: string | null;
-    isolation_class: string;
+    az: string | null;
+    region?: string | null;
+    isolationClass: string;
     spec: Record<string, unknown> | null;
-    created_at: string;
-    terminated_at: string | null;
-    last_heartbeat_at: string | null;
+    createdAt: string;
+    terminatedAt?: string | null;
+    lastHeartbeatAt?: string | null;
   };
-  audit: Array<{ id: number; action: string; attrs: Record<string, unknown>; at: string }>;
+  events: Array<{ id: number; action: string; attrs: Record<string, unknown>; at: string }>;
 }
 
 export default function RuntimeVmPage() {
@@ -122,8 +125,8 @@ export default function RuntimeVmPage() {
   return (
     <div className="space-y-6 p-8">
       <PageHeader
-        title={v.vm_id}
-        description={`${v.state}${v.node ? " on " + v.node : ""} · ${v.isolation_class} · created ${formatDistanceToNow(new Date(v.created_at), { addSuffix: true })}`}
+        title={v.vmId}
+        description={`${v.state}${v.node ? " on " + v.node : ""} · ${v.isolationClass} · created ${formatDistanceToNow(new Date(v.createdAt), { addSuffix: true })}`}
         secondaryAction={
           <button
             onClick={() => router.push("/runtime")}
@@ -179,11 +182,11 @@ export default function RuntimeVmPage() {
           </Section>
 
           <Section title="Audit trail" icon={<Activity className="h-3.5 w-3.5" />}>
-            {detail.audit.length === 0 ? (
+            {detail.events.length === 0 ? (
               <div className="px-3 py-4 text-[12px] text-zinc-500">No events yet.</div>
             ) : (
               <ul className="space-y-1.5">
-                {detail.audit.map((e) => (
+                {detail.events.map((e) => (
                   <li key={e.id} className="rounded bg-surface-0 px-2 py-1.5 text-[11px]">
                     <div className="flex items-center justify-between">
                       <span className="font-medium text-zinc-200">{e.action}</span>
@@ -201,7 +204,7 @@ export default function RuntimeVmPage() {
           </Section>
 
           <Section title="Isolation" icon={<Shield className="h-3.5 w-3.5" />}>
-            <div className="px-1 py-1 text-[12px] text-zinc-400">{v.isolation_class}</div>
+            <div className="px-1 py-1 text-[12px] text-zinc-400">{v.isolationClass}</div>
           </Section>
         </div>
       </div>
