@@ -647,6 +647,43 @@ server.listen(PORT, BIND, () => {
   autoResumeSessions();
 });
 
+// ---------------------------------------------------------------------------
+// Graceful shutdown — CRITICAL for Signal session integrity.
+//
+// Baileys persists the Signal/Noise session keys to auth_sessions/ on
+// each creds.update. If the process is SIGKILL'd mid-write (e.g.
+// `launchctl kickstart -k`), the on-disk keys can be left partial or
+// stale → the next boot loads desynced keys → "Bad MAC" decrypt
+// failures → WhatsApp shows "Waiting for this message" placeholders that
+// never clear. A clean shutdown calls session.disconnect(), which does
+// socket.end() and lets Baileys flush its final creds write before exit.
+//
+// ALWAYS restart this bridge with SIGTERM (the default `kill`, or
+// `launchctl bootout`), NEVER `kickstart -k` (SIGKILL), so this runs.
+let shuttingDown = false;
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ signal, sessions: sessions.size }, "graceful shutdown — flushing Signal sessions");
+  const deadline = setTimeout(() => {
+    logger.warn("graceful shutdown timed out — forcing exit");
+    process.exit(0);
+  }, 8000);
+  try {
+    await Promise.all(
+      [...sessions.values()].map((s) =>
+        s.disconnect().catch((err) => logger.warn({ err }, "session disconnect failed")),
+      ),
+    );
+  } finally {
+    clearTimeout(deadline);
+    logger.info("graceful shutdown complete");
+    process.exit(0);
+  }
+}
+process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
+
 // Graceful shutdown: close Baileys sockets before exit so WhatsApp sees a
 // clean disconnect and the next reconnect doesn't race a half-open socket.
 function shutdown(signal: string) {
