@@ -566,6 +566,20 @@ export class IMessageSession {
   // futurism: persona/style, escalation, quiet hours, calendar, facts,
   // VIP draft queue, attachment understanding.
   private handleNewRow(row: IMessageRow): void {
+    // REACTION / TAPBACK GUARD. iMessage stores a "love"/"like"/"laugh"
+    // tapback as a message row with associated_message_type != 0. These
+    // are NOT messages — someone hearting a message in a group is not a
+    // prompt for the bot to reply. Without this, a heart reaction in a
+    // group came through as inbound text and the bot replied with a
+    // heart of its own (and as a DM, not in the group). Drop entirely.
+    if (row.associatedMessageType && row.associatedMessageType !== 0) {
+      this.logger.debug(
+        { rowid: row.rowid, handle: row.handle, type: row.associatedMessageType },
+        "skipping reaction/tapback row — not a real message",
+      );
+      return;
+    }
+
     const unixMs = appleNsToUnixMs(row.date);
     const isGroup = row.chatDisplayName !== "" || row.handle === "";
 
@@ -1142,13 +1156,17 @@ export class IMessageSession {
       return;
     }
 
-    // Naturalize + paced send.
+    // Naturalize + paced send. CRITICAL: for a group, send to the GROUP
+    // chat identifier — never to the individual sender's handle, which
+    // would DM them instead of posting in the group. (This is what
+    // produced the "replied to a group with a DM" bug.)
+    const sendTarget = isGroup && row.chatIdentifier ? row.chatIdentifier : row.handle;
     const burst = naturalize(draft, { inbound: text, style });
     for (let i = 0; i < burst.length; i++) {
       const piece = burst[i];
       await new Promise((r) => setTimeout(r, piece.delayBeforeMs));
       await new Promise((r) => setTimeout(r, piece.typingMs));
-      await this.send(row.handle, piece.text);
+      await this.send(sendTarget, piece.text);
       // Count once per burst for the morning digest.
       if (i === 0) this.repliesSentToday += 1;
     }

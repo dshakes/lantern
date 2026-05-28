@@ -45,6 +45,11 @@ export interface IMessageRow {
   guid: string;
   // Group chat display name (if this is a group), else empty.
   chatDisplayName: string;
+  // chat.chat_identifier — the GUID/identifier needed to target a send
+  // at the GROUP (e.g. "chat1234..." or the group's iMessage id). For a
+  // group reply, send to this, NOT to the individual sender's handle —
+  // otherwise the bot DMs the sender instead of posting in the group.
+  chatIdentifier: string;
   // Service: "iMessage" or "SMS". We may want to surface SMS
   // differently in the UI.
   service: string;
@@ -54,6 +59,13 @@ export interface IMessageRow {
   // resolve them lazily via attachmentsFor(rowid) to avoid the join
   // cost when the caller doesn't need media.
   hasAttachments: boolean;
+  // iMessage tapback / reaction marker. 0 = a normal message. Non-zero
+  // means this row is a reaction (love=2000, like=2001, dislike=2002,
+  // laugh=2003, emphasize=2004, question=2005; 3000-3005 = reaction
+  // removed; newer macOS uses other ranges for emoji/sticker reactions).
+  // The bridge must NEVER treat a reaction as an inbound message —
+  // someone hearting a message in a group is not a prompt to reply.
+  associatedMessageType: number;
 }
 
 export interface Attachment {
@@ -143,8 +155,10 @@ export class ChatDB {
            COALESCE(h.id, '')                   AS handle,
            m.service                            AS service,
            m.cache_has_attachments              AS has_attachments,
+           COALESCE(m.associated_message_type, 0) AS associated_message_type,
            c.ROWID                              AS chat_rowid,
-           COALESCE(c.display_name, '')         AS chat_display_name
+           COALESCE(c.display_name, '')         AS chat_display_name,
+           COALESCE(c.chat_identifier, '')      AS chat_identifier
          FROM message m
          LEFT JOIN handle h            ON m.handle_id = h.ROWID
          LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
@@ -162,8 +176,10 @@ export class ChatDB {
       handle: string;
       service: string;
       has_attachments: number;
+      associated_message_type: number;
       chat_rowid: number;
       chat_display_name: string;
+      chat_identifier: string;
     }>;
 
     if (rows.length === 0) return [];
@@ -179,7 +195,9 @@ export class ChatDB {
       service: r.service ?? "iMessage",
       chatRowid: r.chat_rowid,
       chatDisplayName: r.chat_display_name,
+      chatIdentifier: r.chat_identifier,
       hasAttachments: !!r.has_attachments,
+      associatedMessageType: r.associated_message_type ?? 0,
     }));
   }
 
