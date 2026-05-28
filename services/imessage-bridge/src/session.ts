@@ -66,6 +66,11 @@ interface PersistedState {
   muted?: boolean;
   paused?: Record<string, number>; // handle -> until_ms
   monitoredChats?: number[]; // chat ROWIDs to act in
+  // 1:1 contacts the owner has explicitly opted in for auto-reply.
+  // Default behavior is DENY — friends + family + strangers don't get
+  // bot replies unless the owner adds them here. The bot still acts on
+  // the owner's own channel (self-chat / dedicated bot DM) regardless.
+  enabledContacts?: string[];
   personalDocsEnabled?: boolean; // owner toggle for local-file Q&A; default true
   killSwitch?: boolean;          // master OFF — bot refuses everything except killswitch-off
 }
@@ -95,6 +100,9 @@ export class IMessageSession {
   private muted = false;
   private pausedUntil: Map<string, number> = new Map();
   private monitoredChats: Set<number> = new Set();
+  // 1:1 handles approved for auto-reply. Empty = bot stays silent to
+  // everyone but the owner. See PersistedState.enabledContacts.
+  private enabledContacts: Set<string> = new Set();
   // Personal-docs Q&A toggle. Default ON. Owner can disable from
   // self-chat at any time with "docs off" — survives restart.
   private personalDocsEnabled = true;
@@ -320,6 +328,7 @@ export class IMessageSession {
       muted: this.muted,
       pausedCount: this.pausedUntil.size,
       monitoredChats: [...this.monitoredChats],
+      enabledContacts: [...this.enabledContacts],
       chatDb: this.db.diagnostics(),
     };
   }
@@ -338,6 +347,7 @@ export class IMessageSession {
       muted: this.muted,
       paused,
       monitoredChats: [...this.monitoredChats],
+      enabledContacts: [...this.enabledContacts],
     };
   }
 
@@ -368,6 +378,94 @@ export class IMessageSession {
     this.persist();
     this.broadcast({ type: "activity", data: { kind: "monitor_on", summary: `monitoring chat ${rowid}`, timestamp: Date.now() } });
   }
+
+  // --- contact allow-list (1:1 non-owner auto-reply opt-in) -------------
+  //
+  // Default behavior is DENY: friends, family, and strangers don't get
+  // any bot reply. Owner explicitly opts a handle in here; the bridge
+  // sends as normal once enabled. Removing a handle stops replies but
+  // does NOT delete chat history.
+  //
+  // Owner channel (self-chat / dedicated bot DM) is exempt — those
+  // always work because that's the owner talking to themselves.
+  enableContact(handle: string): void {
+    const h = this.normalizeHandle(handle);
+    if (!h) return;
+    this.enabledContacts.add(h);
+    this.persist();
+    this.broadcast({ type: "activity", data: { kind: "contact_enabled", summary: `auto-reply enabled for ${this.contactLabel(h)}`, jid: h, timestamp: Date.now() } });
+  }
+  disableContact(handle: string): void {
+    const h = this.normalizeHandle(handle);
+    if (!h) return;
+    this.enabledContacts.delete(h);
+    this.persist();
+    this.broadcast({ type: "activity", data: { kind: "contact_disabled", summary: `auto-reply disabled for ${this.contactLabel(h)}`, jid: h, timestamp: Date.now() } });
+  }
+  listEnabledContacts(): string[] {
+    return [...this.enabledContacts];
+  }
+  private isContactEnabled(handle: string): boolean {
+    if (!handle) return false;
+    return this.enabledContacts.has(this.normalizeHandle(handle));
+  }
+  // Parse "allow <handle>" / "deny <handle>" / "allowed" / "list allowed".
+  // Returns null when the message isn't one of these commands.
+  private parseAllowCommand(text: string): { op: "allow" | "deny" | "list"; handle?: string } | null {
+    const t = text.trim();
+    if (/^(?:allow(?:ed)?|list\s+allow(?:ed)?|who(?:'s|\s+is)\s+allow(?:ed)?)\s*\??$/i.test(t)) {
+      return { op: "list" };
+    }
+    const allow = t.match(/^allow\s+(.+?)\s*$/i);
+    if (allow) return { op: "allow", handle: allow[1] };
+    const deny = t.match(/^(?:deny|disable|remove)\s+(.+?)\s*$/i);
+    if (deny) return { op: "deny", handle: deny[1] };
+    return null;
+  }
+
+  private async handleAllowCommand(
+    replyTo: string,
+    cmd: { op: "allow" | "deny" | "list"; handle?: string },
+  ): Promise<void> {
+    const send = async (body: string) => {
+      if (!replyTo) return;
+      const res = await this.send(replyTo, body);
+      if (!res.ok) {
+        this.logger.warn({ replyTo, reason: res.reason }, "allow-command reply failed");
+      }
+    };
+    if (cmd.op === "list") {
+      const list = this.listEnabledContacts();
+      if (list.length === 0) {
+        await send("📭 allow-list empty — bot only replies to you.\nadd a contact with: allow <phone-or-email>");
+      } else {
+        await send(`✅ auto-reply enabled for ${list.length}:\n${list.map((h) => `• ${this.contactLabel(h)}`).join("\n")}`);
+      }
+      return;
+    }
+    const handle = (cmd.handle || "").trim();
+    if (!handle) {
+      await send("usage: allow <phone-or-email> | deny <phone-or-email> | allowed");
+      return;
+    }
+    if (cmd.op === "allow") {
+      this.enableContact(handle);
+      await send(`✅ allow-listed ${this.contactLabel(handle)} — i'll auto-reply to them now.`);
+    } else {
+      this.disableContact(handle);
+      await send(`🔒 removed ${this.contactLabel(handle)} from allow-list — i'll stay silent to them.`);
+    }
+  }
+
+  private normalizeHandle(handle: string): string {
+    // iMessage handles come in two shapes: phone (`+15125551234`) and
+    // email. Trim whitespace + lowercase emails so the allow-list is
+    // case-insensitive for emails but exact for phones.
+    const t = (handle || "").trim();
+    if (!t) return "";
+    return t.includes("@") ? t.toLowerCase() : t;
+  }
+
   unmonitorChat(rowid: number): void {
     this.monitoredChats.delete(rowid);
     this.persist();
@@ -560,6 +658,19 @@ export class IMessageSession {
         // text as anything.
         return;
       }
+      // Allow-list management commands. Strict prefix so a chat
+      // message that happens to start with the word "allow" can't
+      // accidentally flip behavior. Recognized forms:
+      //   allow <handle>     — opt this contact in for auto-reply
+      //   deny  <handle>     — remove from allow-list
+      //   allowed            — show current allow-list
+      const allowCmd = this.parseAllowCommand(text);
+      if (allowCmd) {
+        const replyTo = row.handle || this.ownHandleGuess() || this.lastSelfHandle || "";
+        void this.handleAllowCommand(replyTo, allowCmd);
+        return;
+      }
+
       const parsed = parseNLCommand(text);
       if (parsed) {
         void this.handleOwnerCommand(row.handle || this.ownHandleGuess(), parsed);
@@ -861,7 +972,33 @@ export class IMessageSession {
     });
 
     // Bot decisions ----------------------------------------------------
-    if (!text) return; // nothing to reply to
+    // Empty inbound (attachment-only, sticker, reaction, etc.). Stay
+    // SILENT — never ask the LLM to compose a "I can't see your message"
+    // reply. That kind of wooden text is exactly what makes a bot smell
+    // like a bot. The owner can read the attachment themselves; bot's
+    // job is to be invisible when it has nothing real to say.
+    if (!text) return;
+
+    // 1:1 ALLOW-LIST GATE (the spam-prevention fix).
+    //   - Owner channel always passes (self-chat / dedicated bot DM).
+    //   - Non-owner contacts must be explicitly enabled by the owner.
+    //   - Groups have their own monitoredChats gate below.
+    // Without this gate, every friend / family / unknown DM got an
+    // auto-reply by default, which scared people who could tell it
+    // wasn't really the owner typing.
+    if (!isGroup && !this.isOwnerChatRow(row) && !this.isContactEnabled(row.handle)) {
+      this.broadcast({
+        type: "activity",
+        data: {
+          kind: "agent_skipped",
+          summary: `not in allow-list — ${this.contactLabel(row.handle)}`,
+          detail: text.slice(0, 120),
+          jid: row.handle,
+          timestamp: Date.now(),
+        },
+      });
+      return;
+    }
     if (this.muted) {
       this.broadcast({ type: "activity", data: { kind: "agent_skipped", summary: `bot muted — ${this.contactLabel(row.handle)}`, jid: row.handle, timestamp: Date.now() } });
       return;
@@ -1555,6 +1692,7 @@ export class IMessageSession {
         muted: this.muted,
         paused: Object.fromEntries(this.pausedUntil),
         monitoredChats: [...this.monitoredChats],
+        enabledContacts: [...this.enabledContacts],
         personalDocsEnabled: this.personalDocsEnabled,
         killSwitch: this.killSwitch,
       };
@@ -1573,6 +1711,7 @@ export class IMessageSession {
         if (typeof v === "number" && v > Date.now()) this.pausedUntil.set(k, v);
       }
       for (const c of data.monitoredChats ?? []) this.monitoredChats.add(c);
+      for (const h of data.enabledContacts ?? []) this.enabledContacts.add(this.normalizeHandle(h));
       // Toggles default to safe values: docs ON, killswitch OFF.
       // Only honor the persisted value when present.
       if (typeof data.personalDocsEnabled === "boolean") this.personalDocsEnabled = data.personalDocsEnabled;
