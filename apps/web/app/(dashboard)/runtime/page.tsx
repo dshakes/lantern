@@ -29,15 +29,18 @@ import { useToast } from "@/components/toast";
 import { runtimeApi, UnauthorizedError } from "@/lib/runtime-api";
 import { ScheduleModal } from "./schedule-modal";
 
+// camelCase to match the control-plane vmRow JSON tags. (cluster summary
+// below stays snake_case — that endpoint returns snake_case keys.)
 interface VmRow {
-  vm_id: string;
+  vmId: string;
   state: "pending" | "spawning" | "running" | "draining" | "terminated" | "failed";
   node: string | null;
-  region: string | null;
-  isolation_class: string;
-  created_at: string;
-  terminated_at: string | null;
-  last_heartbeat_at: string | null;
+  region?: string | null;
+  az?: string | null;
+  isolationClass: string;
+  createdAt: string;
+  terminatedAt?: string | null;
+  lastHeartbeatAt?: string | null;
   spec: Record<string, unknown> | null;
 }
 
@@ -231,15 +234,15 @@ export default function RuntimePage() {
             </thead>
             <tbody>
               {visible.map((v) => {
-                const ss = STATE_STYLES[v.state];
-                const is = ISOLATION_STYLES[v.isolation_class] || { label: v.isolation_class, cls: "bg-zinc-500/10 text-zinc-300" };
+                const ss = STATE_STYLES[v.state] ?? STATE_STYLES.pending;
+                const is = ISOLATION_STYLES[v.isolationClass] || { label: v.isolationClass, cls: "bg-zinc-500/10 text-zinc-300" };
                 return (
                   <tr
-                    key={v.vm_id}
+                    key={v.vmId}
                     className="border-b border-zinc-800 last:border-0 hover:bg-surface-2 cursor-pointer"
-                    onClick={() => router.push(`/runtime/${v.vm_id}`)}
+                    onClick={() => router.push(`/runtime/${v.vmId}`)}
                   >
-                    <td className="px-4 py-3 font-mono text-[12px] text-zinc-200">{v.vm_id.slice(0, 12)}…</td>
+                    <td className="px-4 py-3 font-mono text-[12px] text-zinc-200">{(v.vmId ?? "").slice(0, 12)}…</td>
                     <td className="px-4 py-3">
                       <span className={clsx("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium", ss.pill)}>
                         <span className={clsx("h-1.5 w-1.5 rounded-full", ss.dot)} />
@@ -253,13 +256,13 @@ export default function RuntimePage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-zinc-400">{v.node || "—"}</td>
-                    <td className="px-4 py-3 text-zinc-400">{formatDistanceToNow(new Date(v.created_at), { addSuffix: true })}</td>
+                    <td className="px-4 py-3 text-zinc-400">{v.createdAt ? formatDistanceToNow(new Date(v.createdAt), { addSuffix: true }) : "—"}</td>
                     <td className="px-4 py-3 text-zinc-400">
-                      {v.last_heartbeat_at ? formatDistanceToNow(new Date(v.last_heartbeat_at), { addSuffix: true }) : "—"}
+                      {v.lastHeartbeatAt ? formatDistanceToNow(new Date(v.lastHeartbeatAt), { addSuffix: true }) : "—"}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Link
-                        href={`/runtime/${v.vm_id}`}
+                        href={`/runtime/${v.vmId}`}
                         className="inline-flex items-center gap-1.5 rounded border border-zinc-700 bg-surface-2 px-2.5 py-1 text-[11px] text-zinc-300 hover:bg-surface-3"
                         onClick={(e) => e.stopPropagation()}
                       >
