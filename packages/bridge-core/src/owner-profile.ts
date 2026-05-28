@@ -122,29 +122,65 @@ export function parseProfile(raw: string): OwnerProfile {
   const relationships = new Map<string, string>();
   const proseLines: string[] = [];
 
+  // Markdown section heading: "## Title". We only treat level-2+ ("##",
+  // "###", ...) as section boundaries. A single "#" is reserved for the
+  // top title AND for the comment lines the template leaves inside the
+  // relationships block ("# Format: ...") — those must NOT end the
+  // section, or none of the entries below them parse.
+  const sectionHeading = (line: string): string | null => {
+    const m = line.match(/^(#{2,6})\s+(.*)$/);
+    return m ? m[2].trim() : null;
+  };
+
   const lines = raw.split(/\r?\n/);
   let inRelationships = false;
+  // Everything before the first "## " section (the "# Owner profile"
+  // title + the "Do NOT put secrets here" instructional preamble) is
+  // guidance for the human, NOT content about the owner. Skip it so it
+  // never leaks into the persona prompt as if it described them.
+  let seenFirstSection = false;
   for (const line of lines) {
-    const heading = line.match(/^#{1,6}\s+(.*)$/);
-    if (heading) {
-      inRelationships = /relationship|contacts?|people/i.test(heading[1]);
-      // Keep the heading in prose only if it's NOT the relationships
-      // section (so the prose reads cleanly).
+    const section = sectionHeading(line);
+    if (section !== null) {
+      seenFirstSection = true;
+      inRelationships = /relationship|contacts?|people/i.test(section);
       if (!inRelationships) proseLines.push(line);
       continue;
     }
+    if (!seenFirstSection) continue; // pre-section preamble — drop
     if (inRelationships) {
-      // "- Name: relationship" or "Name: relationship"
-      const m = line.match(/^\s*[-*]?\s*(.+?)\s*:\s*(.+?)\s*$/);
-      if (m) {
-        const key = m[1].trim().toLowerCase();
-        const val = m[2].trim();
-        if (key && val) {
-          relationships.set(key, val);
-          // Also index the digit-only form of phone keys.
-          const digits = key.replace(/[^\d]/g, "");
-          if (digits.length >= 7) relationships.set(digits, val);
-        }
+      const trimmed = line.trim();
+      // Skip blank lines, the top "# Owner profile" title, and the
+      // template's "# ..." comment lines — they're guidance, not data.
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      // "- Name: relationship" / "* Name: relationship" / "Name: relationship".
+      // Split on the FIRST colon so values like "brother-in-law, Raju's
+      // spouse" survive intact.
+      const m = trimmed.match(/^[-*]?\s*([^:]+?)\s*:\s*(.+?)\s*$/);
+      if (!m) continue;
+      const rawKey = m[1].trim();
+      // Strip template angle brackets the user may have kept ("<friend>"
+      // → "friend"). If the value is STILL an empty placeholder after
+      // stripping, skip it (the contact isn't really tagged yet).
+      const val = m[2].trim().replace(/^<\s*|\s*>$/g, "").trim();
+      if (!rawKey || !val) continue;
+
+      const indexKey = (k: string) => {
+        const lc = k.trim().toLowerCase();
+        if (lc) relationships.set(lc, val);
+        const digits = lc.replace(/[^\d]/g, "");
+        if (digits.length >= 7) relationships.set(digits, val);
+      };
+
+      // Index the full key plus any parenthetical alias, so both
+      // "Manasa(Manu)" and the bare "Manasa" / "Manu" match a contact's
+      // display name.
+      indexKey(rawKey);
+      const paren = rawKey.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+      if (paren) {
+        indexKey(paren[1]); // "Manasa"
+        indexKey(paren[2]); // "Manu"
       }
       continue;
     }
