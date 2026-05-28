@@ -247,6 +247,10 @@ export class WhatsAppSession {
   // opted-in groups the agent runs the attention classifier on every message
   // and auto-replies only when the owner is @mentioned or quoted.
   private monitoredGroups: Set<string> = new Set();
+  // 1:1 JIDs the owner has explicitly opted in for auto-reply. Empty =
+  // bot stays silent to everyone but the owner. Same model as the
+  // iMessage bridge's enabledContacts.
+  private enabledContacts: Set<string> = new Set();
   // msg.key.id -> epoch_ms when the id was added. We suppress the echo that
   // comes back through messages.upsert (fromMe=true) for messages we sent
   // from the bridge. Stored with a timestamp so we can GC entries whose
@@ -989,6 +993,15 @@ export class WhatsAppSession {
             this.logger.info({ from }, "group message not addressed to owner");
             continue;
           }
+          // 1:1 ALLOW-LIST GATE — same default-deny policy as the
+          // iMessage bridge. Without this gate, every friend / family /
+          // unknown DM got a bot reply by default, which both scared
+          // people and felt spammy. Owner channel still passes
+          // (self-chat / dedicated bot DM).
+          if (!isGroup && !this.isOwnerChat(from) && !this.isContactEnabled(from)) {
+            this.logger.info({ from }, "agent skipped — contact not in allow-list");
+            continue;
+          }
           this.handleAgentReply(from, text, {
             isGroup,
             senderName,
@@ -1158,6 +1171,46 @@ export class WhatsAppSession {
     return this.monitoredGroups.has(jid);
   }
 
+  // --- 1:1 contact allow-list (opt-in auto-reply) ----------------------
+  //
+  // Default-deny: friends, family, strangers don't get any auto-reply
+  // unless the owner explicitly opts them in. Mirrors the iMessage
+  // bridge's enabledContacts. Owner channel (self-chat / dedicated bot
+  // DM) is always exempt — the bot still replies to its owner.
+  enableContact(jid: string): void {
+    const norm = this.normalizeContactJid(jid);
+    if (!norm) return;
+    this.enabledContacts.add(norm);
+    this.saveState();
+    this.logger.info({ jid: norm }, "auto-reply enabled for contact");
+  }
+  disableContact(jid: string): void {
+    const norm = this.normalizeContactJid(jid);
+    if (!norm) return;
+    if (this.enabledContacts.delete(norm)) {
+      this.saveState();
+      this.logger.info({ jid: norm }, "auto-reply disabled for contact");
+    }
+  }
+  listEnabledContacts(): string[] {
+    return [...this.enabledContacts];
+  }
+  isContactEnabled(jid: string): boolean {
+    const norm = this.normalizeContactJid(jid);
+    if (!norm) return false;
+    return this.enabledContacts.has(norm);
+  }
+  private normalizeContactJid(input: string): string {
+    // Strip device suffix and bare-phone variants so "15125551234" and
+    // "15125551234@s.whatsapp.net" hit the same allow-list entry.
+    let s = (input || "").trim();
+    if (!s) return "";
+    // Strip ":<N>" device suffix Baileys sometimes carries.
+    s = s.replace(/:\d+@/, "@");
+    if (!s.includes("@")) s = `${s}@s.whatsapp.net`;
+    return s;
+  }
+
   // jid -> {name, fetchedAt}. Cached so /lantern groups doesn't hit
   // Baileys' groupMetadata RPC for every entry on every command. TTL is
   // generous since group names rarely change.
@@ -1287,6 +1340,7 @@ export class WhatsAppSession {
           muted?: boolean;
           pausedUntil?: Record<string, unknown>;
           monitoredGroups?: string[];
+          enabledContacts?: string[];
           disclosedJids?: string[];
           ownerSentHistory?: Record<string, string[]>;
           personalDocsEnabled?: boolean;
@@ -1305,6 +1359,12 @@ export class WhatsAppSession {
         }
         for (const g of raw.monitoredGroups ?? []) {
           if (typeof g === "string") this.monitoredGroups.add(g);
+        }
+        for (const c of raw.enabledContacts ?? []) {
+          if (typeof c === "string") {
+            const norm = this.normalizeContactJid(c);
+            if (norm) this.enabledContacts.add(norm);
+          }
         }
         for (const jid of raw.disclosedJids ?? []) {
           if (typeof jid === "string") this.disclosedJids.add(jid);
@@ -1364,6 +1424,7 @@ export class WhatsAppSession {
         muted: this.muted,
         pausedUntil,
         monitoredGroups: [...this.monitoredGroups],
+        enabledContacts: [...this.enabledContacts],
         disclosedJids: [...this.disclosedJids],
         ownerSentHistory,
         personalDocsEnabled: this.personalDocsEnabled,
