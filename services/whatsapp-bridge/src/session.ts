@@ -19,6 +19,7 @@ import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
   agentPersonaPrompt,
   defaultQuietHours,
+  detectBotTells,
   detectEscalation,
   inferStyle,
   isQuietHours,
@@ -2820,6 +2821,26 @@ export class WhatsAppSession {
 
     if (!draft) {
       // No reply needed — never expose a "composing" tell.
+      return;
+    }
+
+    // BOT-TELL FILTER — same defense as the iMessage bridge. Catches
+    // "I can't see your message", "looks like an issue", customer-
+    // service phrasing, AI tell-words. Suppressed drafts log to the
+    // dashboard so the owner can see what was almost sent.
+    const tellCheck = detectBotTells(draft);
+    if (!tellCheck.ok) {
+      this.logger.info({ from, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft suppressed by bot-tell filter");
+      this.broadcast({
+        type: "activity",
+        data: {
+          kind: "agent_skipped",
+          summary: `draft suppressed — ${tellCheck.reason}`,
+          detail: draft.slice(0, 200),
+          jid: from,
+          timestamp: Date.now(),
+        },
+      });
       return;
     }
 

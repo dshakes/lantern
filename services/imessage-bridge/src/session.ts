@@ -32,6 +32,7 @@ import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
   agentPersonaPrompt,
   defaultQuietHours,
+  detectBotTells,
   detectEscalation,
   inferStyle,
   isQuietHours,
@@ -1100,6 +1101,28 @@ export class IMessageSession {
     const userText = isGroup ? `[group message]\n${text}` : text;
     const draft = await this.agent.respondTo(row.handle, userText, systemHint);
     if (!draft) return;
+
+    // BOT-TELL FILTER — last-line defense before send. Catches the
+    // wooden "I can't see your message", "looks like an issue with how
+    // it sent", customer-service stock phrases, and AI tell-words. When
+    // a draft trips this, we STAY SILENT rather than send fiction.
+    // (Real motivation: a friend got "I can't see any text in your
+    // message - try typing it out?" and asked "Is this really you?".)
+    const tellCheck = detectBotTells(draft);
+    if (!tellCheck.ok) {
+      this.logger.info({ from: row.handle, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft suppressed by bot-tell filter");
+      this.broadcast({
+        type: "activity",
+        data: {
+          kind: "agent_skipped",
+          summary: `draft suppressed — ${tellCheck.reason}`,
+          detail: draft.slice(0, 200),
+          jid: row.handle,
+          timestamp: Date.now(),
+        },
+      });
+      return;
+    }
 
     // VIP gate: if this contact is a VIP, queue the draft for human
     // approval via the dashboard instead of auto-sending. Same flow

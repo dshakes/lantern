@@ -315,6 +315,16 @@ export function agentPersonaPrompt(
     `- NEVER ask the contact for ${ownerName}'s contact info, email, phone, or address. You're his helper — you already know it. If you genuinely can't act on something, say "I'll get this in front of him" — don't ask THEM to give you his email.`,
     `- DO NOT proactively demand details / ask follow-up questions / list options when the contact's message is ambiguous. If you don't have enough info, ask ONE short clarifying question, not three. If the contact's message is just "Hi" / "Sheks" / a name, respond with a short hello — don't dump a paragraph asking what they need.`,
     `- Skip greetings and signoffs unless the contact opens with one. No "Hi!" no "Best,".`,
+    // Anti-bot tells. These are the patterns that make a reply scream
+    // "I am a chatbot" — added because a real friend got the message
+    // "I can't see any text in your message — might be an issue with
+    // how it sent. Try typing it out?" and immediately asked "Is this
+    // really you?". Never compose any of these.
+    `- NEVER explain what you can or can't see / read / parse. If the inbound was an attachment, sticker, voice note, or unclear, the safest reply is to wait — return an empty string and the bridge will stay silent. Asking the contact to retype is a dead giveaway.`,
+    `- NEVER describe your own limitations or processing ("seems your message was empty", "looks like there might be an issue", "I didn't catch that"). A real human just doesn't reply, or asks "huh?" — they don't analyze the failure mode.`,
+    `- NEVER use the structure "<action verb> <task>?" as a polite suggestion ("Try typing it out?", "Want me to look into that?", "Should I forward this?"). Real people make statements, not nudges.`,
+    `- If you have nothing to say, RETURN AN EMPTY STRING. The bridge will simply not reply — which is what a human distracted with their day does naturally. Forced replies are the worst possible failure mode.`,
+    `- Mimic ${ownerName}'s rhythm: typo-tolerant, lowercase ok, sometimes one word, sometimes one short sentence. Never two paragraphs. Never a formal greeting + body + closing structure.`,
     `- ${isGroup ? "You are in a group chat — be brief and only reply when directly addressed." : "This is a 1-on-1 thread."}`,
     ``,
     `Inferred style for this thread:`,
@@ -345,6 +355,82 @@ export function agentPersonaPrompt(
       : `Reply as ${ownerName}, in plain text, no quoting, no preface.`
   );
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Bot-tell detector — last-line defense before sending
+// ---------------------------------------------------------------------------
+//
+// The persona prompt forbids these patterns, but LLMs occasionally
+// regress under unusual inputs (attachment-only inbound, ambiguous
+// short messages, etc.). This filter is the safety net: if a draft
+// trips any rule, the bridge SUPPRESSES the send entirely. Better
+// silent than uncanny — that's the contract.
+//
+// Real example that motivated this: bot replied "I can't see any text
+// in your message - might be an issue with how it sent. Try typing it
+// out?" to a friend. Friend asked "Is this really you?". Never again.
+
+export interface BotTellVerdict {
+  /** True when the draft is safe to send. */
+  ok: boolean;
+  /** Short reason (only present when ok=false). */
+  reason?: string;
+}
+
+// Phrases that mean the LLM is META-COMMENTING on the message itself,
+// rather than just responding like a human. A real person doesn't
+// announce their parsing failure; they just don't reply.
+const META_PATTERNS: { re: RegExp; reason: string }[] = [
+  { re: /\b(?:can'?t|cannot|couldn'?t|didn'?t)\s+(?:see|read|view|parse|find|catch|access|open)\b/i, reason: "explains a parse/view failure" },
+  { re: /\b(?:seems|looks like|appears?)\b.{0,40}\b(?:empty|blank|missing|issue|problem|trouble|error|broken)\b/i, reason: "narrates an inbound problem" },
+  { re: /\b(?:try|please|could you|can you)\s+(?:typing|retyping|resending|sending|writing|texting|type|retype|resend|write)\s+(?:it|that|again|out)\b/i, reason: "asks contact to retype" },
+  { re: /\bmight be (?:an? )?(?:issue|problem|glitch|bug)\b/i, reason: "speculates about a tech issue" },
+  { re: /\byour message (?:was|seems|appears|is)\s+(?:empty|blank|missing|unreadable|not\s+visible)\b/i, reason: "narrates inbound state" },
+  { re: /\bi (?:don'?t|do not) (?:see|have|receive|get) (?:any|the)\s+(?:text|content|message|details?)\b/i, reason: "denies receipt" },
+];
+
+// Customer-service / chatbot stock phrases. Even if the prompt forbids
+// them, the LLM sometimes slips them in.
+const CHATBOT_PATTERNS: { re: RegExp; reason: string }[] = [
+  { re: /\b(?:how\s+can\s+i\s+(?:help|assist)|i'?d\s+be\s+happy\s+to|of\s+course!?|certainly!?|great\s+question)\b/i, reason: "customer-service phrasing" },
+  { re: /\blet\s+me\s+know\s+if\s+(?:you\s+(?:need|have|want)|there'?s|anything)\b/i, reason: "stock closing" },
+  { re: /\b(?:as\s+an\s+(?:ai|assistant|language\s+model)|i\s+am\s+an?\s+(?:ai|assistant|language\s+model))\b/i, reason: "self-identifies as AI" },
+  { re: /\b(?:i\s+apologize|my\s+apologies|sorry\s+for\s+the\s+(?:confusion|inconvenience|delay))\b/i, reason: "corporate apology" },
+];
+
+// Words that are dead giveaways of AI ghost-writing in a casual text.
+// A friend texting a friend doesn't say "kindly" or "delve" or
+// "navigate the situation."
+const AI_TELL_WORDS = [
+  "delve", "kindly", "rest assured", "rest-assured", "navigate",
+  "facilitate", "endeavor", "utilize", "elaborate", "regarding",
+  "in regards to", "with regards to", "as per", "i hope this finds",
+];
+
+/** Scan a draft for bot-tells. Returns `ok=false` with a reason when
+ *  the draft should be suppressed entirely (bridge should NOT send). */
+export function detectBotTells(draft: string): BotTellVerdict {
+  const text = (draft || "").trim();
+  if (!text) return { ok: false, reason: "empty draft (stay silent)" };
+
+  for (const { re, reason } of META_PATTERNS) {
+    if (re.test(text)) return { ok: false, reason };
+  }
+  for (const { re, reason } of CHATBOT_PATTERNS) {
+    if (re.test(text)) return { ok: false, reason };
+  }
+  const lowered = text.toLowerCase();
+  for (const w of AI_TELL_WORDS) {
+    if (lowered.includes(w)) return { ok: false, reason: `AI tell-word "${w}"` };
+  }
+
+  // Length sanity: a text message is a text message. >400 chars or
+  // >3 line breaks reads as bot regardless of content.
+  if (text.length > 400) return { ok: false, reason: "too long for a text reply" };
+  if ((text.match(/\n/g)?.length ?? 0) > 3) return { ok: false, reason: "too many line breaks" };
+
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
