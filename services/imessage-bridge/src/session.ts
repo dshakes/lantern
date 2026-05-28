@@ -55,6 +55,7 @@ import {
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
+import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
 
 export type IMessageConnectionState =
   | "starting"
@@ -181,6 +182,7 @@ export class IMessageSession {
   private personal: PersonalClient;
   private calendar: CalendarLookup;
   private docs: PersonalDocs;
+  private ownerProfileStore: OwnerProfileStore;
   private macActions: MacActions;
 
   constructor(tenantId: string, baseStateDir: string, logger: Logger) {
@@ -199,6 +201,7 @@ export class IMessageSession {
     this.calendar = new CalendarLookup(this.logger);
     this.docs = new PersonalDocs(defaultPersonalDocsConfig(this.stateDir), this.logger);
     this.macActions = new MacActions(this.logger);
+    this.ownerProfileStore = new OwnerProfileStore(this.logger);
 
     mkdirSync(this.stateDir, { recursive: true });
     this.loadState();
@@ -1093,10 +1096,17 @@ export class IMessageSession {
     const style = inferStyle(history);
     const ownerSamples = isGroup ? [] : this.ownerSentHistory.get(row.handle) ?? [];
     const ownerName = process.env.LANTERN_OWNER_NAME || OWNER_NAME;
+    // Owner profile + relationship — the "sounds like me" context.
+    const ownerProfile = this.ownerProfileStore.prose();
+    const relationship = isGroup
+      ? undefined
+      : this.ownerProfileStore.relationshipFor(row.handle, this.contactNames.get(row.handle));
     let systemHint = agentPersonaPrompt(ownerName, style, isGroup, {
       ownerSamples,
       disclosed: false,
       stylePrompt: undefined,
+      ownerProfile,
+      relationship,
     });
     // Per-contact memory: facts the user has captured about this
     // contact (their daughter is Maya, works at Stripe, etc).
@@ -1138,10 +1148,23 @@ export class IMessageSession {
       return;
     }
 
-    // VIP gate: if this contact is a VIP, queue the draft for human
-    // approval via the dashboard instead of auto-sending. Same flow
-    // as WhatsApp's smart-draft.
-    if (!isGroup && (await this.personal.isVIP(row.handle))) {
+    // CONFIDENCE GATE + VIP gate. Both route the draft to human approval
+    // instead of auto-sending:
+    //   - VIP: contact is on the owner's VIP list (boss, parents, top
+    //     customers) — never auto-send to them.
+    //   - Low confidence: the bot doesn't have enough signal to be sure
+    //     it sounds like the owner for THIS contact. Heuristic: no prior
+    //     owner-sent samples AND no captured facts AND no known
+    //     relationship. That's an unfamiliar contact — draft, don't send,
+    //     so the owner trains trust over time. Once the owner replies to
+    //     them a few times (samples accumulate) the gate opens.
+    const lowConfidence =
+      !isGroup &&
+      ownerSamples.length === 0 &&
+      !relationship &&
+      !(await this.personal.factsBlock(row.handle));
+    const isVIP = !isGroup && (await this.personal.isVIP(row.handle));
+    if (isVIP || lowConfidence) {
       const queued = await this.personal.queueDraft(
         row.handle,
         this.contactNames.get(row.handle) ?? undefined,
@@ -1149,9 +1172,10 @@ export class IMessageSession {
         draft,
         { channel: "imessage" },
       );
+      const why = isVIP ? "VIP" : "low-confidence (unfamiliar contact)";
       this.broadcast({
         type: "activity",
-        data: { kind: "agent_skipped", summary: queued ? `VIP draft queued for approval` : `VIP — auto-reply suppressed (queue failed)`, detail: draft.slice(0, 200), jid: row.handle, timestamp: Date.now() },
+        data: { kind: "agent_skipped", summary: queued ? `draft queued for approval — ${why}` : `${why} — auto-reply suppressed (queue failed)`, detail: draft.slice(0, 200), jid: row.handle, timestamp: Date.now() },
       });
       return;
     }
