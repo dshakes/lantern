@@ -21,7 +21,8 @@
     "./personal-docs": "./src/personal-docs.ts",
     "./mac-actions": "./src/mac-actions.ts",
     "./humanize": "./src/humanize.ts",
-    "./prefetch": "./src/prefetch.ts"
+    "./prefetch": "./src/prefetch.ts",
+    "./owner-profile": "./src/owner-profile.ts"
   },
   "dependencies": {
     "pdf-parse": "^2.4.5",

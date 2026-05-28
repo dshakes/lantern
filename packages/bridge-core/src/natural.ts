@@ -264,6 +264,17 @@ export interface PersonaOptions {
   // page). Concatenated verbatim at the end of the persona — power-user
   // hand-tuning beats inferred cues.
   stylePrompt?: string;
+  // Owner profile — a first-person, owner-curated description of who they
+  // are, how they write, their world. Loaded from owner-profile.md (see
+  // bridge-core/owner-profile.ts). This is the single biggest lever for
+  // "sounds like me". SAFE to use in every reply because the owner wrote
+  // it knowing it shapes outbound voice.
+  ownerProfile?: string;
+  // The relationship between the owner and THIS contact ("brother",
+  // "coworker", "my manager", "college friend"). Shifts tone + length:
+  // warm + terse for family, a touch more measured for work. Resolved
+  // from the owner profile's relationships map by handle/name.
+  relationship?: string;
 }
 
 export function agentPersonaPrompt(
@@ -330,6 +341,22 @@ export function agentPersonaPrompt(
     `Inferred style for this thread:`,
     ...(cues.length > 0 ? cues.map((c) => `- ${c}`) : ["- no strong signal yet — keep it neutral and casual."]),
   ];
+
+  // Owner profile — who you are. Goes near the top of the context so the
+  // model anchors on identity before style cues.
+  const profile = opts.ownerProfile?.trim();
+  if (profile) {
+    lines.push(``);
+    lines.push(`Who you are (${ownerName}'s own words — embody this, never recite it):`);
+    lines.push(profile.length > 1800 ? profile.slice(0, 1800) : profile);
+  }
+
+  // Relationship to THIS contact — calibrates warmth + length.
+  const rel = opts.relationship?.trim();
+  if (rel && !isGroup) {
+    lines.push(``);
+    lines.push(`Your relationship with this contact: ${rel}. Match the tone you'd use with ${rel} — warmth, length, and vocabulary should fit that relationship, not a generic register.`);
+  }
 
   const samples = (opts.ownerSamples ?? [])
     .map((s) => s.trim())

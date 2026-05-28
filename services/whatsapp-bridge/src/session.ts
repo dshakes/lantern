@@ -42,6 +42,7 @@ import {
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
+import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
 import { extname } from "path";
 
 // MIME map for sendDocument — WhatsApp's UI shows a file-type icon
@@ -191,6 +192,7 @@ export class WhatsAppSession {
   private media: MediaHandler;
   private personal: PersonalClient;
   private calendar: CalendarLookup;
+  private ownerProfileStore: OwnerProfileStore;
   private socket: ReturnType<typeof makeWASocket> | null = null;
   private listeners: Set<WebSocket> = new Set();
   private currentQR: string | null = null;
@@ -304,6 +306,7 @@ export class WhatsAppSession {
     this.media = new MediaHandler(this.logger);
     this.personal = new PersonalClient(this.logger);
     this.calendar = new CalendarLookup(this.logger);
+    this.ownerProfileStore = new OwnerProfileStore(this.logger);
     this.docs = new PersonalDocs(defaultPersonalDocsConfig(this.authDir), this.logger);
     this.macActions = new MacActions(this.logger);
     // User preferences (monitored groups, paused contacts, mute) live
@@ -2774,6 +2777,11 @@ export class WhatsAppSession {
       ? []
       : this.ownerSentHistory.get(from) ?? [];
     const stylePrompt = await this.agent.getStylePrompt();
+    // Owner profile + relationship — the "sounds like me" context.
+    const ownerProfile = this.ownerProfileStore.prose();
+    const relationship = opts.isGroup
+      ? undefined
+      : this.ownerProfileStore.relationshipFor(from, opts.senderName ?? this.contactNames.get(from));
     let systemHint = agentPersonaPrompt(
       ownerName,
       style,
@@ -2782,6 +2790,8 @@ export class WhatsAppSession {
         ownerSamples,
         disclosed: this.disclosedJids.has(from),
         stylePrompt,
+        ownerProfile,
+        relationship,
       }
     );
 
@@ -2844,12 +2854,21 @@ export class WhatsAppSession {
       return;
     }
 
-    // VIP gate: if this contact is on the user's VIP list (boss,
-    // parents, top customers, etc.), DON'T send. Queue the draft to
-    // the dashboard for one-tap approval instead. This stops the
-    // single most-feared scenario: the bot sending something off-tone
-    // to the wrong person.
-    if (!opts.isGroup && (await this.personal.isVIP(from))) {
+    // CONFIDENCE GATE + VIP gate. Route to human approval instead of
+    // auto-sending when:
+    //   - VIP: contact is on the owner's VIP list (boss, parents, top
+    //     customers) — never auto-send to them.
+    //   - Low confidence: no prior owner-sent samples AND no known
+    //     relationship AND no captured facts. An unfamiliar contact —
+    //     draft, don't send, so the owner trains trust over time. Once
+    //     samples accumulate the gate opens automatically.
+    const lowConfidence =
+      !opts.isGroup &&
+      ownerSamples.length === 0 &&
+      !relationship &&
+      !(await this.personal.factsBlock(from));
+    const isVIP = !opts.isGroup && (await this.personal.isVIP(from));
+    if (isVIP || lowConfidence) {
       const queued = await this.personal.queueDraft(
         from,
         opts.senderName ?? this.contactNames.get(from) ?? undefined,
@@ -2857,20 +2876,21 @@ export class WhatsAppSession {
         draft,
         { channel: "whatsapp" },
       );
+      const why = isVIP ? "VIP" : "low-confidence (unfamiliar contact)";
       this.broadcast({
         type: "activity",
         data: {
           kind: "agent_skipped",
           summary: queued
-            ? `VIP draft queued for approval`
-            : `VIP — auto-reply suppressed (queue failed)`,
+            ? `draft queued for approval — ${why}`
+            : `${why} — auto-reply suppressed (queue failed)`,
           detail: draft.slice(0, 200),
           jid: from,
           pushName: opts.senderName,
           timestamp: Date.now(),
         },
       });
-      this.logger.info({ from, queued: !!queued }, "VIP draft queued");
+      this.logger.info({ from, queued: !!queued, why }, "draft queued for approval");
       return;
     }
 
