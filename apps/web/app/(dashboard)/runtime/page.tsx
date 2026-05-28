@@ -89,10 +89,14 @@ export default function RuntimePage() {
   const load = useCallback(async () => {
     try {
       const [vmRes, clRes] = await Promise.all([
-        runtimeApi.get<{ items: VmRow[] }>("/v1/runtime/vms"),
+        // The list endpoint returns a BARE array ([{...}]); older drafts
+        // expected {items:[...]}. Accept both so a response-shape change
+        // never silently empties the table again.
+        runtimeApi.get<VmRow[] | { items: VmRow[] }>("/v1/runtime/vms"),
         runtimeApi.get<ClusterSummary>("/v1/runtime/cluster").catch(() => null),
       ]);
-      setVms(vmRes.items ?? []);
+      const items = Array.isArray(vmRes) ? vmRes : (vmRes.items ?? []);
+      setVms(items);
       setCluster(clRes ?? null);
       lastErrorRef.current = "";
     } catch (err) {
