@@ -58,22 +58,38 @@ pkill -f "imessage-bridge/src/index.ts" 2>/dev/null || true
 pkill -f "imessage-bridge/node_modules/.bin/tsx" 2>/dev/null || true
 sleep 2
 
-# (Re)load under launchd.
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-sleep 1
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-sleep 8
+LOG="$HOME/Library/Logs/Lantern/imessage-bridge.out.log"
+# Truncate the log so our verify reads ONLY this attempt (avoids a stale
+# "opened chat.db" from a prior Terminal run masking a fresh failure, or
+# a stale "permission_required" masking a fresh success).
+: > "$LOG" 2>/dev/null || true
 
-# Verify it actually opened chat.db under launchd.
-if grep -q "opened chat.db" "$HOME/Library/Logs/Lantern/imessage-bridge.out.log" 2>/dev/null \
-   && ! tail -5 "$HOME/Library/Logs/Lantern/imessage-bridge.out.log" 2>/dev/null | grep -q "permission_required"; then
+# (Re)load under launchd. bootstrap alone sometimes doesn't fire
+# RunAtLoad promptly, so we ALSO kickstart to force a start now.
+launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+sleep 2
+launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
+launchctl kickstart "gui/$(id -u)/$LABEL" 2>/dev/null || true
+
+# Poll up to 20s for a definitive signal in the fresh log.
+ok=""
+for _ in $(seq 1 10); do
+  sleep 2
+  if grep -q "opened chat.db" "$LOG" 2>/dev/null; then ok=1; break; fi
+  if grep -q "permission_required\|unable to open" "$LOG" 2>/dev/null; then ok=""; break; fi
+done
+
+if [ -n "$ok" ]; then
   echo "✓ iMessage bridge is now launchd-managed and reading chat.db."
   echo "  It will auto-start at login and auto-restart on crash."
+  echo "  To stop it intentionally:  launchctl bootout gui/$(id -u)/$LABEL"
 else
   echo "✗ Launched, but chat.db still not accessible under launchd."
-  echo "  → Grant Full Disk Access to: ${NODE_BIN:-<your node path>}"
-  echo "  → Then re-run this script."
-  echo "  Falling back to a Terminal run keeps it up meanwhile:"
-  echo "      make run-imessage-bridge"
+  echo "  → Full Disk Access for this binary isn't taking effect:"
+  echo "       ${NODE_BIN:-<your node path>}"
+  echo "  Try: remove the node entry in System Settings → Full Disk Access,"
+  echo "       re-add it via Cmd+Shift+G with the path above, toggle ON,"
+  echo "       then re-run this script. A reboot clears stubborn TCC caches."
+  echo "  Meanwhile, a Terminal run keeps it up:  make run-imessage-bridge"
   exit 1
 fi
