@@ -27,7 +27,7 @@ import { ChatDB, appleNsToUnixMs, type IMessageRow } from "./chat-db.js";
 import { IMessageSender } from "./applescript.js";
 import { AgentClient } from "@lantern/bridge-core/agent";
 import { MediaHandler, type MediaAnnotation } from "./media.js";
-import { PersonalClient } from "@lantern/bridge-core/personal";
+import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
   agentPersonaPrompt,
@@ -76,6 +76,11 @@ interface PersistedState {
   enabledContacts?: string[];
   personalDocsEnabled?: boolean; // owner toggle for local-file Q&A; default true
   killSwitch?: boolean;          // master OFF — bot refuses everything except killswitch-off
+  // Per-contact tail of messages the owner actually sent (from their
+  // phone). Few-shot exemplars for "my voice". Persisted so the voice
+  // model isn't reset on every restart (WhatsApp already persisted this;
+  // iMessage didn't until now).
+  ownerSentHistory?: Record<string, string[]>;
 }
 
 const POLL_INTERVAL_MS = 1500;
@@ -727,10 +732,38 @@ export class IMessageSession {
         return;
       }
 
+      // "remember X about this person" — owner teaching the bot a durable
+      // fact about the CONTACT whose thread this is. Saved server-side and
+      // injected into every future reply to them via factsBlock.
+      // SECURITY/UX: the bot does NOT reply in the contact's thread (that
+      // would leak the note to them). It acks to the owner's self-chat
+      // (LANTERN_IMESSAGE_OWNER_HANDLE) when known, else just logs +
+      // dashboard-broadcasts. Contact threads only (not self-chat/group).
+      if (!isGroup && row.handle && !this.isOwnerChatRow(row)) {
+        const fact = parseRememberCommand(text);
+        if (fact) {
+          const contactHandle = row.handle;
+          const label = this.contactLabel(contactHandle);
+          void this.personal.addFact(contactHandle, fact).then((ok) => {
+            this.broadcast({
+              type: "activity",
+              data: { kind: "system", summary: ok ? `📝 noted about ${label}: ${fact.slice(0, 80)}` : `failed to save fact for ${label}`, jid: contactHandle, timestamp: Date.now() },
+            });
+            const selfHandle = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+            if (selfHandle) {
+              void this.send(selfHandle, ok ? `📝 got it — noted about ${label}: ${fact}` : `couldn't save that note about ${label}, try again`);
+            }
+          });
+          return; // a memory command is not a voice exemplar + no contact reply
+        }
+      }
+
       // Capture as ownerSentHistory exemplar for style cloning. Skip
-      // groups (mixed register), skip empty/short.
+      // groups (mixed register), skip empty/short. Persisted so the voice
+      // model survives restarts (lever: aggressive owner-voice capture).
       if (!isGroup && row.handle && text.length >= 3) {
         this.rememberOwnerSent(row.handle, text);
+        this.persist();
       }
       // Pause auto-reply for this contact — the user just typed.
       if (row.handle && !isGroup) {
@@ -1786,6 +1819,7 @@ export class IMessageSession {
         enabledContacts: [...this.enabledContacts],
         personalDocsEnabled: this.personalDocsEnabled,
         killSwitch: this.killSwitch,
+        ownerSentHistory: Object.fromEntries(this.ownerSentHistory),
       };
       writeFileSync(this.stateFile, JSON.stringify(data, null, 2));
     } catch (err) {
@@ -1807,6 +1841,12 @@ export class IMessageSession {
       // Only honor the persisted value when present.
       if (typeof data.personalDocsEnabled === "boolean") this.personalDocsEnabled = data.personalDocsEnabled;
       if (typeof data.killSwitch === "boolean") this.killSwitch = data.killSwitch;
+      for (const [jid, msgs] of Object.entries(data.ownerSentHistory ?? {})) {
+        if (Array.isArray(msgs)) {
+          const clean = msgs.filter((m): m is string => typeof m === "string");
+          if (clean.length > 0) this.ownerSentHistory.set(jid, clean);
+        }
+      }
     } catch (err) {
       this.logger.warn({ err }, "could not load bot state, starting fresh");
     }

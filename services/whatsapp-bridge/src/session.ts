@@ -14,7 +14,7 @@ import { AgentClient } from "@lantern/bridge-core/agent";
 import { AttentionClassifier } from "./attention.js";
 import { authedFetch } from "@lantern/bridge-core/auth";
 import { MediaHandler } from "./media.js";
-import { PersonalClient } from "@lantern/bridge-core/personal";
+import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
   agentPersonaPrompt,
@@ -925,6 +925,24 @@ export class WhatsAppSession {
             if (m.type !== "notify") {
               this.logger.debug({ from, type: m.type }, "skipping fromMe replay (history-sync)");
               continue;
+            }
+            // "remember X about this person" — owner teaching a durable
+            // fact about the CONTACT in this thread. Saved server-side +
+            // injected into future replies via factsBlock. The bot does
+            // NOT reply in the contact's thread (would leak the note);
+            // it acks to the owner's self-chat. Contact threads only.
+            if (!isGroup && !this.isSelfChat(from)) {
+              const fact = parseRememberCommand(text);
+              if (fact) {
+                const contactJid = from;
+                const label = this.contactNames.get(contactJid) || contactJid.split("@")[0];
+                void this.personal.addFact(contactJid, fact).then((ok) => {
+                  void this.confirmToSelf(
+                    ok ? `📝 got it — noted about ${label}: ${fact}` : `couldn't save that note about ${label}, try again`,
+                  );
+                });
+                continue; // a memory command is not a voice exemplar + no contact reply
+              }
             }
             // Capture the owner's real outgoing messages as few-shot
             // exemplars for the persona. Skip self-chat (commands), groups
