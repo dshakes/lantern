@@ -1101,12 +1101,16 @@ export class IMessageSession {
     const relationship = isGroup
       ? undefined
       : this.ownerProfileStore.relationshipFor(row.handle, this.contactNames.get(row.handle));
+    // Recent thread transcript (real back-and-forth from chat.db) so the
+    // reply is grounded in what's actually being discussed.
+    const recentTranscript = this.buildRecentTranscript(row.chatRowid);
     let systemHint = agentPersonaPrompt(ownerName, style, isGroup, {
       ownerSamples,
       disclosed: false,
       stylePrompt: undefined,
       ownerProfile,
       relationship,
+      recentTranscript,
     });
     // Per-contact memory: facts the user has captured about this
     // contact (their daughter is Maya, works at Stripe, etc).
@@ -1492,6 +1496,28 @@ export class IMessageSession {
 
   private contactLabel(handle: string): string {
     return this.contactNames.get(handle) || handle;
+  }
+
+  // Build a compact "them:/you:" transcript of the last few messages on a
+  // chat, straight from chat.db (the real, complete thread — not just what
+  // the bot saw). Fed into the persona prompt so replies are grounded in
+  // the live conversation. Returns "" on any error so a reply never blocks
+  // on transcript construction.
+  private buildRecentTranscript(chatRowid: number): string {
+    try {
+      const msgs = this.db.recentMessages(chatRowid, 10);
+      if (msgs.length === 0) return "";
+      // Drop the very last line if it's the inbound we're replying to —
+      // it's already the "current message"; keeping it is harmless but
+      // the prompt reads cleaner ending on prior context. We keep it
+      // anyway since chat.db ordering vs the in-flight row can race; the
+      // model handles a duplicated last line fine.
+      return msgs
+        .map((m) => `${m.fromMe ? "you" : "them"}: ${m.text.replace(/\s+/g, " ").slice(0, 240)}`)
+        .join("\n");
+    } catch {
+      return "";
+    }
   }
 
   // Owner asked a doc-query in self-chat. Search local files, inject

@@ -275,6 +275,13 @@ export interface PersonaOptions {
   // warm + terse for family, a touch more measured for work. Resolved
   // from the owner profile's relationships map by handle/name.
   relationship?: string;
+  // Recent back-and-forth on THIS thread, oldest→newest, already
+  // formatted ("them: ..." / "you: ..."). The single biggest lever for
+  // CONTEXTUAL authenticity: lets the reply reference what was actually
+  // being discussed ("that thing", "tomorrow", a name mentioned 3 msgs
+  // ago) and match the live tone, instead of answering the last line in
+  // a vacuum. Kept short (last ~10 turns) so the prompt stays tight.
+  recentTranscript?: string;
 }
 
 export function agentPersonaPrompt(
@@ -373,6 +380,17 @@ export function agentPersonaPrompt(
     lines.push(``);
     lines.push(`Style overrides (these take precedence over the rules above):`);
     lines.push(override);
+  }
+
+  // Recent conversation — placed LAST (freshest, closest to the reply
+  // instruction) so the model grounds its answer in what's actually being
+  // discussed: resolve "that"/"tomorrow"/names, match the live tone, and
+  // don't repeat something already said.
+  const transcript = opts.recentTranscript?.trim();
+  if (transcript) {
+    lines.push(``);
+    lines.push(`Recent conversation on this thread (oldest first — reply to the LAST message, in context):`);
+    lines.push(transcript.length > 2000 ? transcript.slice(-2000) : transcript);
   }
 
   lines.push(``);
