@@ -206,6 +206,15 @@ export class WhatsAppSession {
   private authDir: string;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectAttempts = 0;
+  // Conflict recovery backoff. A "conflict: replaced" (440) means another
+  // WhatsApp Web session took our slot. Rather than dying permanently
+  // (which left the bridge DOWN), we auto-reconnect with growing backoff:
+  // a TRANSIENT conflict (e.g. a brief double-instance) recovers in ~60s;
+  // a PERSISTENT one (owner genuinely has WhatsApp Web open elsewhere)
+  // retries quietly every few minutes and recovers the instant that other
+  // session closes. Capped so we never storm. Reset on a clean connect.
+  private conflictBackoffMs = 60_000;
+  private static readonly CONFLICT_BACKOFF_MAX_MS = 300_000;
   // Decrypt-storm watchdog. When the Signal pre-key state corrupts
   // (bridge killed mid-write, multi-process race, etc.), Baileys's
   // libsignal logs continuous "failed to decrypt message" errors at
@@ -584,6 +593,7 @@ export class WhatsAppSession {
           this.currentQR = null;
           this.qrIssuedAt = null;
           this.reconnectAttempts = 0;
+          this.conflictBackoffMs = 60_000; // clean connect resets conflict backoff
           this.lastConnectionEventAt = Date.now();
           this.lastError = null;
 
@@ -703,11 +713,29 @@ export class WhatsAppSession {
           }
 
           if (isConflict) {
+            // Self-healing conflict recovery (was previously terminal,
+            // which left the bridge DOWN until a manual reconnect — the
+            // opposite of "always up"). Schedule a single backed-off
+            // reconnect; the backoff grows on consecutive conflicts and
+            // resets on a clean connect. Transient conflicts (a stray
+            // double-instance) recover in ~60s; a real competing session
+            // is retried quietly until it closes.
+            const delay = this.conflictBackoffMs;
             this.setConnectionState(
               "conflict",
-              "Another WhatsApp Web session is active for this number. Close it (e.g. web.whatsapp.com or another Linked Device) and click Reconnect."
+              `Another WhatsApp Web session took this slot. Auto-reconnecting in ${Math.round(delay / 1000)}s — if it persists, close other Linked Devices.`,
             );
             this.reconnectAttempts = 0;
+            if (!this.reconnectTimer) {
+              this.reconnectTimer = setTimeout(() => {
+                this.reconnectTimer = null;
+                this.start();
+              }, delay);
+            }
+            this.conflictBackoffMs = Math.min(
+              WhatsAppSession.CONFLICT_BACKOFF_MAX_MS,
+              this.conflictBackoffMs * 2,
+            );
             return;
           }
 
