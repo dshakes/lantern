@@ -50,6 +50,7 @@ import {
   defaultPersonalDocsConfig,
   looksLikeDocQuery,
   looksLikeDocFollowup,
+  looksLikeOwnerQuestion,
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
@@ -930,10 +931,21 @@ export class IMessageSession {
       const isFollowup = !isDocQuery
         && looksLikeDocFollowup(text)
         && Date.now() - lastDocAt < 5 * 60_000;
-      if (isDocQuery || isFollowup) {
+      // INTELLIGENT OWNER ROUTING: in the owner's own channel, route ANY
+      // substantive question/request through the agentic pipeline (local
+      // docs + Gmail + Calendar tools), not just narrow regex-matched doc
+      // queries. This is the fix for "you have my docs, be intelligent" —
+      // a question like "when should I apply for naturalization" must
+      // actually search the green-card doc + compute the date, instead of
+      // falling to a tool-less LLM that says "I can't access your files"
+      // and asks YOU for the answer. Trivial chatter (ok/thanks/lol) still
+      // skips the heavy pipeline.
+      const isOwnerQuestion = looksLikeOwnerQuestion(text);
+      if (isDocQuery || isFollowup || isOwnerQuestion) {
+        const mode = isDocQuery ? "query" : isFollowup ? "followup" : "owner-question";
         this.logger.info(
-          { query: text.slice(0, 80), chatRowid: row.chatRowid, mode: isDocQuery ? "query" : "followup" },
-          "self-chat doc query (cross-device)",
+          { query: text.slice(0, 80), chatRowid: row.chatRowid, mode },
+          "owner self-chat → agentic pipeline",
         );
         this.lastDocQueryAt.set(row.chatRowid, Date.now());
         void this.handleOwnerDocQuery(row.handle, text, { followup: isFollowup });
