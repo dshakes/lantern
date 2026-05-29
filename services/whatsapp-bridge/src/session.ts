@@ -37,6 +37,7 @@ import {
   PersonalDocs,
   defaultPersonalDocsConfig,
   looksLikeDocQuery,
+  looksLikeOwnerQuestion,
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
@@ -1698,7 +1699,19 @@ export class WhatsAppSession {
       }
     }
 
-    if (this.personalDocsEnabled && self && !group && this.docs && looksLikeDocQuery(text)) {
+    // INTELLIGENT OWNER ROUTING (mirrors iMessage): in the owner's own
+    // channel, route ANY substantive question/request through the agentic
+    // pipeline (local docs + Gmail + Calendar tools), not just narrow
+    // regex-matched doc queries. Fixes the tool-less LLM saying "I can't
+    // access your files" and asking the owner for answers it should look
+    // up. Trivial chatter (ok/thanks/lol) still skips the heavy pipeline.
+    if (
+      this.personalDocsEnabled &&
+      self &&
+      !group &&
+      this.docs &&
+      (looksLikeDocQuery(text) || looksLikeOwnerQuestion(text))
+    ) {
       void this.handleOwnerDocQuery(jid, text, key);
       return;
     }

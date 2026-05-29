@@ -151,6 +151,34 @@ export function looksLikeDocQuery(text: string): boolean {
   return DOC_INTENT_PATTERNS.some((re) => re.test(text));
 }
 
+// Broad "this is a real question/request the assistant should answer
+// with its tools + the owner's data" detector. Used ONLY for the owner's
+// own private channel (self-chat / dedicated bot), where almost every
+// message is an info-seeking request, not social chatter. Routing these
+// through the agentic pipeline (docs + Gmail + Calendar tools) is what
+// makes the assistant feel intelligent — instead of a tool-less LLM that
+// says "I can't access your files" and asks YOU for the answer.
+//
+// Returns FALSE for trivial chatter (acks, greetings, reactions) so we
+// don't spin the heavy pipeline on "ok" / "thanks" / "lol".
+const TRIVIAL_CHATTER_RE =
+  /^(?:k|kk|ok(?:ay)?|cool|nice|lol|lmao|haha+|thx|thanks|ty|yes|yep|yeah|no|nope|sure|got it|gotcha|nvm|np|👍|🙏|❤️|💯|hi|hey|hello|yo|sup|gm|gn|good\s*(?:morning|night|evening))[\s!.?]*$/i;
+const QUESTION_LEAD_RE =
+  /^\s*(?:wh(?:at|en|ere|o|ich|y)|how|should|can|could|would|will|do|does|did|is|are|am|was|were|may|might|i\s+need|i\s+want|find|get|check|search|look\s+up|tell\s+me|show\s+me|pull|help\s+me|remind|when'?s|what'?s|who'?s|where'?s)\b/i;
+
+export function looksLikeOwnerQuestion(text: string): boolean {
+  const t = (text || "").trim();
+  if (t.length < 3) return false;
+  if (TRIVIAL_CHATTER_RE.test(t)) return false;
+  // A question mark, OR a question/request lead word, OR simply a
+  // reasonably substantive sentence (owners rarely send long non-
+  // questions to their own assistant).
+  if (t.includes("?")) return true;
+  if (QUESTION_LEAD_RE.test(t)) return true;
+  if (t.split(/\s+/).length >= 5) return true;
+  return false;
+}
+
 // True for short conversational follow-ups that only make sense
 // when continuing a recent doc-query exchange. The bridge wraps this
 // with a "was there a recent doc query in this chat" gate before
