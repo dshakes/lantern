@@ -222,6 +222,75 @@ export function extractSearchTerms(text: string): string {
   return tokens.join(" ").trim() || text.trim();
 }
 
+// Domain-aware semantic expansion. Real user files use formal/legal names
+// (e.g. "I-485 Approval", "Receipt Notice", "N-400") while users ask in
+// everyday terms ("when should I apply for naturalization?", "passport
+// expiry"). Without synonym expansion the literal mdfind/find returns 0
+// even when the doc is sitting right there. Each key triggers extra search
+// phrases — empirically tuned to the most common personal-document
+// vocabularies.
+const QUERY_SYNONYMS: Array<{ trigger: RegExp; phrases: string[] }> = [
+  // US immigration: naturalization / green card / citizenship space
+  {
+    trigger: /\b(?:naturali[sz](?:e|ation)|citizenship|us\s*citizenship|become\s+(?:a\s+)?citizen)\b/i,
+    phrases: ["I-485", "N-400", "I-130", "green card", "permanent resident", "USCIS"],
+  },
+  {
+    trigger: /\b(?:green\s*card|greencard|permanent\s+resident(?:\s+card)?|pr\s+card|gc\s+approval)\b/i,
+    phrases: ["I-485", "I-140", "permanent resident", "green card", "USCIS", "approval notice"],
+  },
+  {
+    trigger: /\bi-?485\b/i,
+    phrases: ["I-485", "green card", "permanent resident", "approval", "receipt notice"],
+  },
+  // Visa / work authorization
+  {
+    trigger: /\b(?:h1b|h-1b|work\s+visa|visa\s+expir(?:y|es|ation))\b/i,
+    phrases: ["H1B", "H-1B", "I-129", "I-94", "visa", "approval notice"],
+  },
+  {
+    trigger: /\b(?:i-?94|travel\s+history)\b/i,
+    phrases: ["I-94", "arrival", "departure"],
+  },
+  // Travel docs
+  {
+    trigger: /\bpassport(?:s)?\b/i,
+    phrases: ["passport", "passport book"],
+  },
+  // Driving
+  {
+    trigger: /\b(?:driver'?s?\s+license|dl\s+expir|license\s+expir)\b/i,
+    phrases: ["license", "DL", "driver"],
+  },
+  // Tax
+  {
+    trigger: /\b(?:tax(?:es)?|w-?2|1099|return)\b/i,
+    phrases: ["W-2", "1099", "tax", "return"],
+  },
+];
+
+/** Returns extra search phrases triggered by domain concepts in the
+ *  query. Used by PersonalDocs.search() so a question phrased in everyday
+ *  language ("naturalization") still finds the file named in its formal
+ *  form ("I-485 Approval"). */
+export function synonymPhrasesFor(text: string): string[] {
+  const t = text || "";
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const { trigger, phrases } of QUERY_SYNONYMS) {
+    if (trigger.test(t)) {
+      for (const p of phrases) {
+        const k = p.toLowerCase();
+        if (!seen.has(k)) {
+          seen.add(k);
+          out.push(p);
+        }
+      }
+    }
+  }
+  return out;
+}
+
 // ---- the class ------------------------------------------------------------
 
 export class PersonalDocs {
@@ -315,6 +384,13 @@ export class PersonalDocs {
         if (!phrases.includes(t)) phrases.push(t);
       }
     }
+    // Semantic expansion: "when should I apply for naturalization" needs
+    // to ALSO search "I-485 / green card / N-400" because that's how the
+    // actual files are named. Domain map in synonymPhrasesFor().
+    for (const syn of synonymPhrasesFor(query)) {
+      if (!phrases.includes(syn)) phrases.push(syn);
+    }
+    this.logger.debug({ phrases }, "doc search phrases (with synonyms)");
 
     const results: DocSearchResult[] = [];
     // Pool cap is large — ranker takes over below. The previous
