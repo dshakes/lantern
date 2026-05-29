@@ -9,6 +9,29 @@ import type { Logger } from "pino";
 interface VIPEntry { jid: string; displayName: string }
 interface Fact { id: string; content: string; source: string; updatedAt: string }
 
+// Detect an owner "teach the bot a fact about this contact" instruction
+// typed in a contact's own thread: "remember she's vegetarian",
+// "note that he just had a baby", "fyi they're moving to Austin",
+// "keep in mind her birthday is june 3". Returns the cleaned fact text
+// (the part after the lead phrase) or null when it's not a remember cmd.
+//
+// Deliberately requires a clear lead phrase so normal conversation
+// ("I'll remember to call you") doesn't get captured as a fact.
+const REMEMBER_LEAD =
+  /^\s*(?:remember(?:\s+that)?|note(?:\s+that)?|fyi[,:]?|keep in mind(?:\s+that)?|don'?t forget(?:\s+that)?)\b[:,]?\s*(.+?)\s*$/i;
+
+export function parseRememberCommand(text: string): string | null {
+  const t = (text || "").trim();
+  if (t.length < 5 || t.length > 400) return null;
+  const m = t.match(REMEMBER_LEAD);
+  if (!m) return null;
+  const fact = m[1].trim();
+  // Guard against "remember to <do something>" — that's a self-reminder/
+  // task, not a fact ABOUT the contact.
+  if (/^to\s+/i.test(fact)) return null;
+  return fact.length >= 2 ? fact : null;
+}
+
 export class PersonalClient {
   private logger: Logger;
   // Cache VIP list for 30s — checked on every inbound; don't hammer
@@ -66,6 +89,31 @@ export class PersonalClient {
     } catch (err) {
       this.logger.warn({ err, jid }, "facts fetch failed");
       return [];
+    }
+  }
+
+  // Save a fact the owner taught the bot about a contact ("remember she's
+  // vegetarian"). Persists server-side (whatsapp_contact_facts) so it
+  // survives restarts and feeds factsBlock on every future reply.
+  // Invalidates the local cache so the new fact is visible immediately.
+  async addFact(jid: string, content: string): Promise<boolean> {
+    const c = content.trim();
+    if (!jid || !c) return false;
+    try {
+      const res = await authedFetch(`/v1/whatsapp/facts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jid, content: c }),
+      });
+      if (!res.ok) {
+        this.logger.warn({ jid, status: res.status }, "addFact failed");
+        return false;
+      }
+      this.factsCache.delete(jid); // force refetch incl. the new fact
+      return true;
+    } catch (err) {
+      this.logger.warn({ err, jid }, "addFact errored");
+      return false;
     }
   }
 
