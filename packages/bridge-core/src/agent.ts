@@ -17,7 +17,12 @@ import type { Logger } from "pino";
 
 import { authedFetch, authEnabled } from "./auth.js";
 
-const SSE_TIMEOUT_MS = 90_000;
+// Tool-driven owner queries can chain search_personal_files →
+// read_personal_file (with OCR for scanned PDFs, 5-10s each) → maybe a
+// Gmail search → another read. 90s was tight; 180s gives the model
+// headroom on multi-tool flows without leaving the user waiting
+// indefinitely on the rare runaway.
+const SSE_TIMEOUT_MS = Number(process.env.LANTERN_BRIDGE_AGENT_TIMEOUT_MS || "180000");
 
 export interface AgentClientOptions {
   agentName: string;
@@ -63,40 +68,58 @@ export class AgentClient {
   }
 
   private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false): Promise<string | null> {
-    const sessionId = await this.ensureSession(jid);
-    if (!sessionId) return null;
+    // Up to ONE retry on dead-session errors. A prior turn that got
+    // SSE-aborted (timeout, network hiccup) leaves the control-plane
+    // session in "ended" state — the next POST then 409s with
+    // "session is not active" and EVERY subsequent message fails until
+    // the bridge restarts. We detect that, drop the stale id, and
+    // recreate ONCE so the user's next message lands clean.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const sessionId = await this.ensureSession(jid);
+      if (!sessionId) return null;
 
-    const sseCtrl = new AbortController();
-    const ssePromise = this.waitForAgentMessage(sessionId, sseCtrl.signal);
+      const sseCtrl = new AbortController();
+      const ssePromise = this.waitForAgentMessage(sessionId, sseCtrl.signal);
 
-    const postBody: Record<string, unknown> = {
-      content: userText,
-      // noTools=true is the default for auto-reply paths (replying
-      // to a friend, generating a doc-query answer) where the
-      // bridge has already loaded heavy context and the LLM
-      // shouldn't be invoking unrelated connectors. The natural-
-      // chat path explicitly opts INTO tools so the bot can use
-      // Gmail / Calendar / etc. when the owner asks.
-      noTools: !withTools,
-    };
-    if (systemHint) postBody.systemHint = systemHint;
+      const postBody: Record<string, unknown> = {
+        content: userText,
+        // noTools=true is the default for auto-reply paths (replying
+        // to a friend, generating a doc-query answer) where the
+        // bridge has already loaded heavy context and the LLM
+        // shouldn't be invoking unrelated connectors. The natural-
+        // chat path explicitly opts INTO tools so the bot can use
+        // Gmail / Calendar / etc. when the owner asks.
+        noTools: !withTools,
+      };
+      if (systemHint) postBody.systemHint = systemHint;
 
-    const postRes = await authedFetch(`/v1/sessions/${sessionId}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(postBody),
-    });
-    if (!postRes.ok) {
+      const postRes = await authedFetch(`/v1/sessions/${sessionId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(postBody),
+      });
+      if (postRes.ok) {
+        return await ssePromise;
+      }
+
       sseCtrl.abort();
       const body = await postRes.text().catch(() => "");
-      this.logger.error({ status: postRes.status, body: body.slice(0, 300), sessionId }, "send message failed");
-      if (postRes.status === 404) {
+      const isDead =
+        postRes.status === 404 ||
+        postRes.status === 409 ||
+        /session\s+is\s+not\s+active|session\s+(?:not\s+found|ended|expired)/i.test(body);
+      this.logger.error(
+        { status: postRes.status, body: body.slice(0, 300), sessionId, attempt, isDead },
+        "send message failed",
+      );
+      if (isDead && attempt === 0) {
         this.sessions.delete(jid);
         this.saveSessions();
+        continue; // recreate session + retry the same user message once
       }
       return null;
     }
-    return await ssePromise;
+    return null;
   }
 
   private async ensureSession(jid: string): Promise<string | null> {

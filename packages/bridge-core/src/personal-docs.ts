@@ -89,23 +89,42 @@ export function defaultPersonalDocsConfig(stateDir: string): PersonalDocsConfig 
 
 // Trivial-chatter detector — the ONE pre-decider we keep. Used by the
 // bridges' owner-self-chat router to skip the heavy agentic pipeline on
-// acks/greetings/emoji-only replies ("ok", "thanks", "lol", "👍"). Every
-// other substantive owner message goes straight to the LLM with tools
-// (search_personal_files / read_personal_file / Gmail / Calendar) and
-// the model decides what to do.
+// acks/greetings/rejections/confirmations ("ok", "thanks", "no thanks",
+// "sounds good", "👍"). Every other substantive owner message goes
+// straight to the LLM with tools (search_personal_files /
+// read_personal_file / Gmail / Calendar) and the model decides what to
+// do.
 //
 // We deliberately do NOT try to classify "is this a doc query?" anymore.
 // That was the broken design — false-negatives produced "I can't access
 // your files" replies and false-positives wasted Spotlight calls. The
 // LLM is now responsible for picking the right tool.
-const TRIVIAL_CHATTER_RE =
-  /^(?:k|kk|ok(?:ay)?|cool|nice|lol|lmao|haha+|thx|thanks|ty|yes|yep|yeah|no|nope|sure|got it|gotcha|nvm|np|👍|🙏|❤️|💯|hi|hey|hello|yo|sup|gm|gn|good\s*(?:morning|night|evening))[\s!.?]*$/i;
+//
+// Conservative: catches single-clause acknowledgments/rejections up to
+// 30 chars. Anything substantive (a question, multi-sentence, contains
+// proper nouns/verbs beyond ack vocabulary) falls through to the
+// pipeline.
+const CHATTER_WORD =
+  "(?:k|kk|ok(?:ay)?|cool|nice|great|perfect|awesome|fine|lol|lmao|(?:ha){2,}|" +
+  "thx|thanks|thank\\s+you|thank\\s+u|ty|tysm|much\\s+appreciated|appreciated|appreciate\\s+it|" +
+  "yes|yep|yeah|yup|sure|sure\\s+thing|will\\s+do|got\\s+it|gotcha|sounds\\s+good|please|" +
+  "no|nope|nah|no\\s+thanks|no\\s+thx|no\\s+thank\\s+you|not\\s+now|not\\s+really|" +
+  "maybe\\s+later|later|skip|cancel|never\\s+mind|nvm|np|" +
+  "all\\s+good|all\\s+set|good\\s+to\\s+know|roger|roger\\s+that|" +
+  "hi|hey|hello|yo|sup|gm|gn|good\\s*(?:morning|night|evening|afternoon))";
+const TRIVIAL_CHATTER_RE = new RegExp(
+  `^(?:${CHATTER_WORD})(?:[,\\s]+(?:${CHATTER_WORD}))?[\\s!.?]*$`,
+  "i",
+);
 
 export function isTrivialChatter(text: string): boolean {
   const t = (text || "").trim();
   if (t.length === 0) return true;
   // Pure emoji / very-short utterances.
   if (t.length <= 3 && !/[a-z0-9]/i.test(t)) return true;
+  // Cap on length — anything longer than 30 chars is unlikely to be
+  // a pure ack/rejection.
+  if (t.length > 30) return false;
   return TRIVIAL_CHATTER_RE.test(t);
 }
 
