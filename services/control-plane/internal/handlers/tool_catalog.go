@@ -263,10 +263,10 @@ var connectorTools = []toolDef{
 		Params: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"projectKey": map[string]any{"type": "string", "description": "Project key, e.g. 'ENG'"},
-				"summary":    map[string]any{"type": "string"},
+				"projectKey":  map[string]any{"type": "string", "description": "Project key, e.g. 'ENG'"},
+				"summary":     map[string]any{"type": "string"},
 				"description": map[string]any{"type": "string"},
-				"issueType":  map[string]any{"type": "string", "enum": []string{"Task", "Bug", "Story", "Epic"}, "description": "Default: Task"},
+				"issueType":   map[string]any{"type": "string", "enum": []string{"Task", "Bug", "Story", "Epic"}, "description": "Default: Task"},
 			},
 			"required": []string{"projectKey", "summary"},
 		},
@@ -481,7 +481,7 @@ func toolsForTenant(ctx context.Context, pool *pgxpool.Pool, tenantID string) ([
 		installed[c] = true
 	}
 
-	out := make([]map[string]any, 0, len(connectorTools))
+	out := make([]map[string]any, 0, len(connectorTools)+2)
 	for _, t := range connectorTools {
 		if !installed[t.Connector] {
 			continue
@@ -495,12 +495,23 @@ func toolsForTenant(ctx context.Context, pool *pgxpool.Pool, tenantID string) ([
 			},
 		})
 	}
+
+	// Always-on built-in tools — not gated by connector_installs. The
+	// personal-docs pair proxies to the bridge over loopback; when no
+	// bridge is running the tool just returns ok=false to the LLM,
+	// which then asks the user instead of failing the run.
+	out = append(out, personalDocsTools()...)
 	return out, nil
 }
 
-// dispatchTool maps an OpenAI tool name (`<connector>__<action>`) back to
-// the connector executor.
+// dispatchTool maps an OpenAI tool name back to the right executor.
+// Personal-docs tools (search_personal_files / read_personal_file) are
+// built-in and proxy to the bridge over loopback — they don't go through
+// the connector_installs gate. Everything else is `<connector>__<action>`.
 func dispatchTool(ctx context.Context, pool *pgxpool.Pool, tenantID, name string, params map[string]any) (any, error) {
+	if isPersonalDocsTool(name) {
+		return executePersonalDocsTool(ctx, tenantID, name, params)
+	}
 	parts := strings.SplitN(name, "__", 2)
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid tool name %q (expected <connector>__<action>)", name)

@@ -48,9 +48,7 @@ import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
   PersonalDocs,
   defaultPersonalDocsConfig,
-  looksLikeDocQuery,
-  looksLikeDocFollowup,
-  looksLikeOwnerQuestion,
+  isTrivialChatter,
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
@@ -188,6 +186,10 @@ export class IMessageSession {
   private personal: PersonalClient;
   private calendar: CalendarLookup;
   private docs: PersonalDocs;
+
+  // Public accessor so the HTTP layer can proxy path-restricted
+  // personal-docs search/read for the control-plane's LLM tools.
+  getDocs(): PersonalDocs { return this.docs; }
   private ownerProfileStore: OwnerProfileStore;
   private macActions: MacActions;
 
@@ -718,14 +720,14 @@ export class IMessageSession {
         this.personalDocsEnabled
         && !isGroup
         && this.isOwnerChatRow(row)
-        && looksLikeDocQuery(text)
+        && !isTrivialChatter(text)
       ) {
         // CONCURRENCY GATE: skip if a prior query for this chat is
         // still in flight. Same gate as handleInbound — applied here
         // because the fromMe branch fires this path too when the
         // owner types directly on this Mac.
         if (this.busyChat.has(row.handle)) {
-          this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "fromMe doc-query skipped — chat busy");
+          this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "fromMe owner-query skipped — chat busy");
           return;
         }
         void this.handleOwnerDocQuery(row.handle, text);
@@ -892,7 +894,6 @@ export class IMessageSession {
       this.logger.info({
         rowid: row.rowid, chatRowid: row.chatRowid, handle: row.handle,
         isGroup, isSelf, textPreview: text.slice(0, 60),
-        docQuery: looksLikeDocQuery(text),
       }, "inbound");
     }
 
@@ -959,43 +960,25 @@ export class IMessageSession {
         return;
       }
 
-      const isDocQuery = looksLikeDocQuery(text);
-      const lastDocAt = this.lastDocQueryAt.get(row.chatRowid) || 0;
-      const isFollowup = !isDocQuery
-        && looksLikeDocFollowup(text)
-        && Date.now() - lastDocAt < 5 * 60_000;
-      // INTELLIGENT OWNER ROUTING: in the owner's own channel, route ANY
-      // substantive question/request through the agentic pipeline (local
-      // docs + Gmail + Calendar tools), not just narrow regex-matched doc
-      // queries. This is the fix for "you have my docs, be intelligent" —
-      // a question like "when should I apply for naturalization" must
-      // actually search the green-card doc + compute the date, instead of
-      // falling to a tool-less LLM that says "I can't access your files"
-      // and asks YOU for the answer. Trivial chatter (ok/thanks/lol) still
-      // skips the heavy pipeline.
-      const isOwnerQuestion = looksLikeOwnerQuestion(text);
-      if (isDocQuery || isFollowup || isOwnerQuestion) {
-        const mode = isDocQuery ? "query" : isFollowup ? "followup" : "owner-question";
-        this.logger.info(
-          { query: text.slice(0, 80), chatRowid: row.chatRowid, mode },
-          "owner self-chat → agentic pipeline",
-        );
-        this.lastDocQueryAt.set(row.chatRowid, Date.now());
-        void this.handleOwnerDocQuery(row.handle, text, { followup: isFollowup });
+      // OWNER SELF-CHAT — every substantive message goes through the
+      // agentic pipeline with tools attached. The LLM decides whether
+      // to search local files (search_personal_files / read_personal_file),
+      // call Gmail / Calendar, etc. Trivial chatter ("thanks", "ok",
+      // "👍") still skips the heavy path. No more regex pre-deciders
+      // guessing the user's intent from query shape — the model is the
+      // router now.
+      if (isTrivialChatter(text)) {
+        const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
+        if (nlEnabled && !this.muted) {
+          this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "owner trivial chatter → natural chat");
+          void this.handleOwnerNaturalChat(row.handle, text);
+        }
         return;
       }
-
-      // OWNER-CHANNEL NATURAL CHAT: free-form messages from the owner
-      // that aren't commands/docs/confirmations. Route to the regular
-      // agent so the bridge functions as a chatbot on top of the
-      // command + docs layers. Suppressed when LANTERN_OWNER_CHAT_NL=off
-      // for users who treat their self-chat as a silent scratchpad.
-      const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
-      if (nlEnabled && !this.muted) {
-        this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "owner natural chat");
-        void this.handleOwnerNaturalChat(row.handle, text);
-        return;
-      }
+      this.logger.info({ query: text.slice(0, 80), chatRowid: row.chatRowid }, "owner self-chat → agentic pipeline (LLM-driven tools)");
+      this.lastDocQueryAt.set(row.chatRowid, Date.now());
+      void this.handleOwnerDocQuery(row.handle, text);
+      return;
     }
 
     // Media: attach a synthetic-text annotation when an attachment is
@@ -1553,119 +1536,92 @@ export class IMessageSession {
     }
   }
 
-  // Owner asked a doc-query in self-chat. Search local files, inject
-  // results into the LLM prompt, send the reply back. If the LLM
-  // included [ATTACH:/path] markers, send those files as iMessage
-  // attachments via AppleScript.
-  //
-  // When `opts.followup` is true, we DON'T do a fresh search —
-  // we trust the agent's session memory of the previous turn to
-  // know which file the user is referring to. This handles "send
-  // it" / "yes" / "the first one" continuations.
+  // Owner asked something in self-chat. We hand the message to the agent
+  // with the full tool kit (search_personal_files / read_personal_file /
+  // Gmail / Calendar / etc.) and let the LLM pick the path — no more
+  // regex pre-deciders guessing the shape of the question. If the LLM
+  // included [ATTACH:/path] / [CALENDAR:...] / [NOTE:...] / [MAIL:...]
+  // markers, the bridge fires the corresponding Mac action.
   private async handleOwnerDocQuery(
     jid: string,
     query: string,
-    opts: { followup?: boolean } = {},
   ): Promise<void> {
     this.busyChat.add(jid);
     try {
-    this.logger.info({ query: query.slice(0, 80), followup: !!opts.followup }, "owner doc query");
+    this.logger.info({ query: query.slice(0, 80) }, "owner agentic query");
     this.broadcast({
       type: "activity",
       data: {
         kind: "system",
-        summary: `📁 doc ${opts.followup ? "followup" : "query"}: ${query.slice(0, 60)}`,
+        summary: `🧠 owner query: ${query.slice(0, 60)}`,
         timestamp: Date.now(),
       },
     });
 
-    // Immediate ack — doc queries can take 10-15s for OCR'd PDFs.
-    // Without this signal, the user thinks the bot is dead. We await
-    // the send so this message lands BEFORE the answer (which might
-    // come back fast for cached / non-OCR queries).
-    const ackText = opts.followup
-      ? "📎 grabbing it…"
-      : "📁 one sec — looking through your files…";
-    await this.send(jid, ackText);
+    // Immediate ack — tool-driven runs can take 10-15s for OCR'd PDFs.
+    // Without this signal, the user thinks the bot is dead.
+    await this.send(jid, "🧠 on it…");
 
-    // If the heavy work runs long (>6s), send ONE progress nudge so
-    // the user knows the bot is still alive on big PDFs. Cancelled
-    // when the work finishes.
+    // ONE progress nudge if the work runs long (>8s). The LLM may
+    // chain search → read → another search, plus OCR; let the user
+    // know the bot's still alive.
     const startedAt = Date.now();
     let progressFired = false;
     const progressTimer = setTimeout(() => {
       progressFired = true;
-      void this.send(jid, "📷 still scanning — almost there…");
-    }, 6000);
+      void this.send(jid, "📷 still working — almost there…");
+    }, 8000);
     const clearProgress = () => {
       clearTimeout(progressTimer);
-      if (progressFired) {
-        // GC-friendly noop. The user already saw the progress msg.
-      }
+      if (progressFired) { /* nothing — the user already saw it */ }
     };
 
-    // Followups skip a fresh search — the agent already has the file
-    // paths in its session history. Fresh queries inject a context
-    // block with search results + top-match content. Plus: if the
-    // query looks appointment-y, ALSO prefetch Gmail + Calendar in
-    // parallel so all sources are in the prompt at once.
+    // Appointment-y queries get an additional deterministic Gmail +
+    // Calendar prefetch in parallel — strictly an optimization (the
+    // LLM could also call those tools) but gets results in the prompt
+    // before the first round-trip, cutting latency on the common case.
     const client = defaultConnectorClient(this.logger);
-    const [docsBlock, apptBlock] = await Promise.all([
-      opts.followup
-        ? Promise.resolve("\n\n(continuing previous doc query — use the file paths from your prior reply for any [ATTACH:...] markers)")
-        : this.docs.buildContextBlock(query, { includeBodies: true }),
-      looksLikeAppointmentQuery(query)
-        ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
-        : Promise.resolve(null),
-    ]);
-    const contextBlock = [docsBlock, apptBlock].filter(Boolean).join("\n");
-    this.logger.info({ ms: Date.now() - startedAt, hasAppt: !!apptBlock }, "doc context built");
+    const apptBlock = looksLikeAppointmentQuery(query)
+      ? await prefetchAppointmentContext(client, query, this.logger).catch(() => null)
+      : null;
+    this.logger.info({ ms: Date.now() - startedAt, hasAppt: !!apptBlock }, "agentic prefetch done");
 
-    // Persona: you ARE the user, answering yourself about your own
-    // docs. Brief, factual, lowercase. Use [ATTACH:...] markers to
-    // request file delivery.
     const today = new Date().toISOString().slice(0, 10);
     const systemHint = [
       "You are Lantern — Shekhar's personal agent, replying in his iMessage self-chat.",
       `Today is ${today}.`,
       "",
-      "DATA SOURCES — use them aggressively, in this order, until you have a real answer:",
-      "  1. Local Mac files (OCR'd context attached below — passport, license, scanned PDFs).",
-      "  2. **Gmail** (gmail_search / gmail_list_messages tools). Appointment confirmations, receipts, order emails, doctor visit reminders all live here. ALWAYS check Gmail when the question is about an appointment, booking, reservation, order, flight, hotel, doctor visit, or anything that typically arrives as a confirmation email. Search broadly — e.g. for 'endoscopy appointment' try queries like `endoscopy`, `appointment`, `gastroenterology`, `procedure`, `colonoscopy`, then narrow by date.",
-      "  3. **Google Calendar** (google-calendar_list_events). For anything time-bound, check the next 30 days.",
-      "  4. Other connectors (sheets, drive, github, etc.) when relevant.",
-      "NEVER respond with 'I can't access your emails / calendar / X' — if a tool exists for that data source, CALL IT. If it returns nothing, say so concretely AND name what queries you tried.",
+      "TOOLS — call them. Don't ask the user for data you can fetch yourself.",
+      "  • search_personal_files / read_personal_file — local Mac files (Documents, Desktop, iCloud Drive). Passport, license, green card, I-485, taxes, receipts, contracts, prescriptions all live here. PDFs and images are OCR'd automatically. ALWAYS search first when the question is about a document, ID, expiry, number, or file. Try multiple queries (formal name AND everyday name — 'I-485', 'green card', 'permanent resident').",
+      "  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits live in email. ALWAYS check Gmail for anything that arrived as a confirmation.",
+      "  • google-calendar_list_events — anything time-bound, next 30 days.",
+      "  • Other connectors (sheets, drive, github, etc.) when relevant.",
+      "NEVER respond with 'I can't access your files / emails / calendar' — the tools are right here. Call them. If a tool returns nothing, say so concretely and name what queries you tried.",
       "",
       "STYLE — sophisticated, natural, agentic. Like Jarvis: warm, concise, never robotic.",
       "  • Direct answers first. No 'I'd be happy to' / 'feel free'.",
       "  • Lowercase, conversational. 1-3 short lines max.",
-      "  • State the FACT directly when you have it. If a tool returns the data, give it. Don't say 'check the file' / 'check your inbox'.",
+      "  • State the FACT directly when you have it. Don't say 'check the file' / 'check your inbox'.",
       "",
       "AGENTIC FOLLOW-UPS — MANDATORY when applicable:",
-      "  • Answer mentions an EXPIRY / DUE DATE / DEADLINE  → ALWAYS add a second line offering a calendar event AND/OR mail-renewal reminder. Phrase as a question.",
-      "    Example: 'want me to add a renewal reminder to your calendar 60 days before?'",
-      "  • Answer mentions a NUMBER worth remembering (passport #, license #, account #, SSN-last-4) → offer to save it as a Note.",
-      "  • Answer references a FILE the user might want delivered → offer to attach it.",
-      "  • If the answer is purely factual and none of the above apply, no offer is needed.",
+      "  • Answer mentions an EXPIRY / DUE DATE / DEADLINE → end with ONE short question offering a calendar reminder 60 days before.",
+      "  • Answer mentions a NUMBER worth remembering (passport #, license #, account #) → offer to save it as a Note.",
+      "  • Answer references a FILE the user might want → offer to attach it.",
       "",
-      "ACTIONS — you can take these on his Mac. Emit ONE marker per action on its own line at the END of your reply.",
-      "  • Attach file:    `[ATTACH:/exact/absolute/path]`  (COPY paths VERBATIM from the context block)",
+      "ACTIONS — emit ONE marker per action on its own line at the END of your reply.",
+      "  • Attach file:    `[ATTACH:/absolute/path]`  (COPY the path you got from read_personal_file — never invent paths)",
       "  • Calendar event: `[CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]`  (local TZ, ISO)",
       "  • Note:           `[NOTE:Title|Body text]`",
-      "  • Mail draft:     `[MAIL:to@x.com,b@y.com|Subject|Body]`  (opens in Mail.app for review)",
+      "  • Mail draft:     `[MAIL:to@x.com|Subject|Body]`",
       "",
-      "OFFER-then-CONFIRM rule: Don't fire an action on the FIRST mention. Instead END with one short question. If the user confirms ('yes', 'sure', 'do it', 'go') in the NEXT turn, THEN emit the marker — and put it on its own line so the bridge can parse it. Compute the actual date (e.g., 60 days before 14/09/2031 = 16/07/2031) when you emit the marker.",
-      "",
-      "PATHS: Many files live under iCloud Drive at `/Users/shakes/Library/Mobile Documents/com~apple~CloudDocs/...`. Never substitute `/Users/shakes/Documents/...`. If a path isn't in the context block, say you need to look again.",
-      "",
-      contextBlock,
+      "OFFER-then-CONFIRM rule: Don't fire an action on the FIRST mention. End with one short question. On the user's next-turn confirmation ('yes', 'sure', 'do it') THEN emit the marker.",
+      apptBlock ? "\n" + apptBlock : "",
     ].join("\n");
 
-    // withTools=true so the agent can call Gmail / Calendar / etc. mid-doc
-    // query — many "appointment / receipt / order" questions live in email
-    // confirmations, not Mac files. Without this the LLM falsely claims
-    // "I can't access email" and gives up. The OCR context block is still
-    // attached so it also sees local files.
+    // withTools=true so the agent can call the personal-docs + connector
+    // tools. The control-plane registers search_personal_files /
+    // read_personal_file as built-in tools (no install required) — they
+    // proxy back to this bridge over loopback.
     const draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
     clearProgress();
     this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft }, "doc query done");
