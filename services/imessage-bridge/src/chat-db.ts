@@ -234,6 +234,42 @@ export class ChatDB {
     }));
   }
 
+  // Recent messages for a chat (both directions), oldest→newest, for
+  // building the conversation-context block fed to the reply model.
+  // Reaction/tapback rows (associated_message_type != 0) are excluded —
+  // they're not real messages. Empty-text rows (attachments/stickers)
+  // are kept as a placeholder so the timeline reads correctly.
+  recentMessages(chatRowid: number, limit = 10): Array<{ fromMe: boolean; text: string }> {
+    if (!this.db) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT m.is_from_me AS is_from_me,
+                COALESCE(m.text, '') AS text,
+                COALESCE(m.associated_message_type, 0) AS amt,
+                m.cache_has_attachments AS has_att
+         FROM message m
+         JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         WHERE cmj.chat_id = ?
+           AND COALESCE(m.associated_message_type, 0) = 0
+         ORDER BY m.ROWID DESC
+         LIMIT ?`,
+      )
+      .all(chatRowid, limit) as Array<{
+      is_from_me: number;
+      text: string;
+      amt: number;
+      has_att: number;
+    }>;
+    // Query is newest-first; reverse to oldest-first for natural reading.
+    return rows
+      .reverse()
+      .map((r) => ({
+        fromMe: !!r.is_from_me,
+        text: r.text.trim() || (r.has_att ? "[attachment]" : ""),
+      }))
+      .filter((m) => m.text.length > 0);
+  }
+
   // List all known chats so the dashboard can show a contact picker.
   // Used by GET /session/:tid/chats.
   listChats(): Array<{ rowid: number; displayName: string; chatIdentifier: string; participantCount: number }> {

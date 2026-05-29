@@ -2822,6 +2822,11 @@ export class WhatsAppSession {
     const relationship = opts.isGroup
       ? undefined
       : this.ownerProfileStore.relationshipFor(from, opts.senderName ?? this.contactNames.get(from));
+    // Recent thread context. WhatsApp has no chat.db, so we interleave the
+    // bridge's captured inbound (them) + owner-sent (you) tails into a
+    // rough recent transcript. Grounds the reply in what's being discussed
+    // rather than answering the last line in a vacuum.
+    const recentTranscript = this.buildRecentTranscript(from, opts.isGroup);
     let systemHint = agentPersonaPrompt(
       ownerName,
       style,
@@ -2832,6 +2837,7 @@ export class WhatsAppSession {
         stylePrompt,
         ownerProfile,
         relationship,
+        recentTranscript,
       }
     );
 
@@ -3009,6 +3015,29 @@ export class WhatsAppSession {
       });
     } catch (err) {
       this.logger.warn({ err, jid, emoji }, "reaction send failed");
+    }
+  }
+
+  // Build a compact recent-thread transcript for the persona prompt.
+  // WhatsApp has no chat.db, so we approximate from the captured inbound
+  // (them) tail; for 1:1 we also weave in the owner-sent (you) tail so
+  // the model sees both voices. Best-effort + bounded; "" when empty.
+  private buildRecentTranscript(from: string, isGroup?: boolean): string {
+    try {
+      const key = isGroup ? `group:${from}` : from;
+      const theirs = (this.inboundHistory.get(key) ?? []).slice(-6);
+      if (theirs.length === 0) return "";
+      const yours = isGroup ? [] : (this.ownerSentHistory.get(from) ?? []).slice(-4);
+      // We can't perfectly interleave without timestamps, so present the
+      // owner's recent voice first (older context) then the contact's
+      // recent messages (newest, what to reply to). The labels keep it
+      // unambiguous for the model.
+      const lines: string[] = [];
+      for (const y of yours) lines.push(`you: ${y.replace(/\s+/g, " ").slice(0, 240)}`);
+      for (const t of theirs) lines.push(`them: ${t.replace(/\s+/g, " ").slice(0, 240)}`);
+      return lines.join("\n");
+    } catch {
+      return "";
     }
   }
 
