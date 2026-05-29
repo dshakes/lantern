@@ -36,8 +36,7 @@ import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
   PersonalDocs,
   defaultPersonalDocsConfig,
-  looksLikeDocQuery,
-  looksLikeOwnerQuestion,
+  isTrivialChatter,
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
@@ -177,6 +176,11 @@ export class WhatsAppSession {
   private logger: Logger;
   private agent: AgentClient;
   private docs: PersonalDocs | null = null;
+
+  // Public accessor so the HTTP layer can proxy path-restricted
+  // personal-docs search/read for the control-plane's LLM tools.
+  // Returns null on darwin-non-Macs where docs wasn't initialized.
+  getDocs(): PersonalDocs | null { return this.docs; }
   private macActions: MacActions | null = null;
   // Per-chat cache of the most recent offer (humanize follow-up).
   // On next-turn "yes" we execute it deterministically — bypasses
@@ -1717,28 +1721,29 @@ export class WhatsAppSession {
       }
     }
 
-    // INTELLIGENT OWNER ROUTING (mirrors iMessage): in the owner's own
-    // channel, route ANY substantive question/request through the agentic
-    // pipeline (local docs + Gmail + Calendar tools), not just narrow
-    // regex-matched doc queries. Fixes the tool-less LLM saying "I can't
-    // access your files" and asking the owner for answers it should look
-    // up. Trivial chatter (ok/thanks/lol) still skips the heavy pipeline.
-    if (
-      this.personalDocsEnabled &&
-      self &&
-      !group &&
-      this.docs &&
-      (looksLikeDocQuery(text) || looksLikeOwnerQuestion(text))
-    ) {
-      void this.handleOwnerDocQuery(jid, text, key);
-      return;
-    }
-
-    // OWNER-CHANNEL NATURAL CHAT: free-form chat from the owner.
+    // OWNER SELF-CHAT — every substantive message goes through the
+    // agentic pipeline with tools attached. The LLM decides whether to
+    // search local files (search_personal_files / read_personal_file),
+    // call Gmail / Calendar, etc. Trivial chatter ("thanks", "ok",
+    // "👍") still skips the heavy path. No more regex pre-deciders —
+    // the model is the router.
     if (self && !group && text) {
       const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
+      if (isTrivialChatter(text)) {
+        if (nlEnabled && !this.muted) {
+          this.logger.info({ jid, textPreview: text.slice(0, 60) }, "owner trivial chatter → natural chat");
+          void this.handleOwnerNaturalChat(jid, text);
+        }
+        return;
+      }
+      if (this.personalDocsEnabled && this.docs) {
+        this.logger.info({ jid, textPreview: text.slice(0, 60) }, "owner self-chat → agentic pipeline (LLM-driven tools)");
+        void this.handleOwnerDocQuery(jid, text, key);
+        return;
+      }
+      // personal-docs disabled — fall through to natural chat so the
+      // bridge still replies.
       if (nlEnabled && !this.muted) {
-        this.logger.info({ jid, textPreview: text.slice(0, 60) }, "owner natural chat");
         void this.handleOwnerNaturalChat(jid, text);
         return;
       }
@@ -2111,27 +2116,27 @@ export class WhatsAppSession {
       if (progressFired) { /* already informed */ }
     };
 
-    // Build docs context AND prefetch appointment data in parallel.
+    // Deterministic Gmail + Calendar prefetch in parallel for
+    // appointment-y queries — optimization only (the LLM could call
+    // those tools too). The personal-docs path is now tool-driven:
+    // the model calls search_personal_files / read_personal_file
+    // itself instead of us pre-OCR'ing every match.
     const client = defaultConnectorClient(this.logger);
-    const [docsBlock, apptBlock] = await Promise.all([
-      this.docs.buildContextBlock(query, { includeBodies: true }),
-      looksLikeAppointmentQuery(query)
-        ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
-        : Promise.resolve(null),
-    ]);
-    const contextBlock = [docsBlock, apptBlock].filter(Boolean).join("\n");
-    this.logger.info({ ms: Date.now() - startedAt }, "doc context built (whatsapp)");
+    const apptBlock = looksLikeAppointmentQuery(query)
+      ? await prefetchAppointmentContext(client, query, this.logger).catch(() => null)
+      : null;
+    this.logger.info({ ms: Date.now() - startedAt, hasAppt: !!apptBlock }, "agentic prefetch done (whatsapp)");
     const today = new Date().toISOString().slice(0, 10);
     const systemHint = [
       `You are Lantern — Shekhar's personal agent, replying in his WhatsApp self-chat.`,
       `Today is ${today}.`,
       ``,
-      `DATA SOURCES — use them aggressively, in this order, until you have a real answer:`,
-      `  1. Local Mac files (OCR'd context attached below).`,
-      `  2. **Gmail** (gmail_search / gmail_list_messages). Appointment confirmations, receipts, orders, doctor visits live here. ALWAYS check Gmail when the question is about an appointment, booking, reservation, order, flight, hotel, doctor visit, or anything that typically arrives as a confirmation email. Try multiple search variants.`,
-      `  3. **Google Calendar** (google-calendar_list_events). For anything time-bound, check the next 30 days.`,
-      `  4. Other connectors (sheets, drive, etc.) when relevant.`,
-      `NEVER say "I can't access your emails/calendar" — if a tool exists, CALL IT. If empty, name the queries you tried.`,
+      `TOOLS — call them. Don't ask the user for data you can fetch yourself.`,
+      `  • search_personal_files / read_personal_file — local Mac files (Documents, Desktop, iCloud Drive). Passport, license, green card, I-485, taxes, receipts, contracts, prescriptions all live here. PDFs and images are OCR'd automatically. ALWAYS search first when the question is about a document, ID, expiry, number, or file. Try multiple queries (formal name AND everyday name — 'I-485', 'green card', 'permanent resident').`,
+      `  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits live in email. ALWAYS check Gmail for anything that arrived as a confirmation.`,
+      `  • google-calendar_list_events — anything time-bound, next 30 days.`,
+      `  • Other connectors (sheets, drive, etc.) when relevant.`,
+      `NEVER say "I can't access your files/emails/calendar" — the tools are right here. Call them. If empty, name what you tried.`,
       ``,
       `STYLE — sophisticated, natural, agentic. Like Jarvis: warm, concise, never robotic.`,
       `  • Direct answers first. No "I'd be happy to" / "feel free".`,
@@ -2139,23 +2144,18 @@ export class WhatsAppSession {
       `  • State the FACT directly. Don't say "check the file" / "check your inbox" if a tool returns the data.`,
       ``,
       `AGENTIC FOLLOW-UPS — MANDATORY when applicable:`,
-      `  • Answer mentions an EXPIRY/DUE DATE/DEADLINE → ALWAYS add a second line offering a calendar reminder.`,
-      `    Example: "want me to add a renewal reminder to your calendar 60 days before?"`,
+      `  • Answer mentions an EXPIRY/DUE DATE/DEADLINE → end with ONE short question offering a calendar reminder 60 days before.`,
       `  • Answer mentions a NUMBER worth remembering (passport #, license #, account #) → offer to save it as a Note.`,
       `  • Answer references a FILE the user might want → offer to attach it.`,
-      `  • If the answer is purely factual and none of the above apply, no offer is needed.`,
       ``,
       `ACTIONS — emit ONE marker per action on its own line at the END of your reply. The bridge executes them.`,
-      `  • Attach file:    [ATTACH:/exact/absolute/path] — COPY paths VERBATIM from the context block. Never fabricate.`,
-      `  • Calendar event: [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]  (local TZ, ISO format)`,
+      `  • Attach file:    [ATTACH:/absolute/path]  (COPY the path you got from read_personal_file — never invent paths)`,
+      `  • Calendar event: [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]  (local TZ, ISO)`,
       `  • Note:           [NOTE:Title|Body text]`,
-      `  • Mail draft:     [MAIL:to@x.com,b@y.com|Subject|Body]  (opens draft in Mail.app for review)`,
+      `  • Mail draft:     [MAIL:to@x.com|Subject|Body]`,
       ``,
       `OFFER-then-CONFIRM rule: Don't fire an action on first mention. End reply with a short suggestion. If user confirms next turn ("yes", "sure", "do it"), THEN emit the marker.`,
-      ``,
-      `PATHS: Many files live under iCloud Drive at /Users/shakes/Library/Mobile Documents/com~apple~CloudDocs/...  — never substitute /Users/shakes/Documents/...`,
-      ``,
-      contextBlock,
+      apptBlock ? "\n" + apptBlock : "",
     ].join("\n");
 
     // withTools=true: gives the LLM Gmail / Calendar / Sheets etc. even

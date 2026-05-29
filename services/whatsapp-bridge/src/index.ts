@@ -464,6 +464,83 @@ app.post("/session/:tenantId/send-self", async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Personal-docs HTTP surface
+// ---------------------------------------------------------------------------
+//
+// Symmetric to the iMessage bridge. Exposes the per-session PersonalDocs
+// instance so the control-plane's LLM tools (`search_personal_files`,
+// `read_personal_file`) can drive it. Path-restricted to
+// LANTERN_PERSONAL_DOCS_ROOTS, audit-logged inside PersonalDocs, and
+// reachable only via loopback (BIND defaults to 127.0.0.1) + bridge
+// token (mounted under /session/* middleware).
+
+app.post("/session/:tenantId/personal-docs/search", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) { res.status(400).json({ error: "session not started" }); return; }
+  const docs = session.getDocs();
+  if (!docs) { res.status(503).json({ error: "personal-docs unavailable on this host" }); return; }
+  const { query, limit } = req.body as { query?: unknown; limit?: unknown };
+  if (typeof query !== "string" || query.trim().length === 0) {
+    res.status(400).json({ error: "'query' required (non-empty string)" });
+    return;
+  }
+  if (query.length > 500) { res.status(400).json({ error: "'query' must be ≤ 500 chars" }); return; }
+  const cap = typeof limit === "number" && limit > 0 && limit <= 25 ? limit : 8;
+  try {
+    const hits = await docs.search(query);
+    const results = hits.slice(0, cap).map((h) => ({
+      path: h.path,
+      displayPath: h.displayPath,
+      name: h.name,
+      ext: h.ext,
+      bytes: h.bytes,
+      modifiedAt: h.modifiedAt,
+      snippet: h.snippet ?? "",
+    }));
+    res.json({ query, count: results.length, results });
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "personal-docs/search failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/session/:tenantId/personal-docs/read", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) { res.status(400).json({ error: "session not started" }); return; }
+  const docs = session.getDocs();
+  if (!docs) { res.status(503).json({ error: "personal-docs unavailable on this host" }); return; }
+  const { path } = req.body as { path?: unknown };
+  if (typeof path !== "string" || path.trim().length === 0) {
+    res.status(400).json({ error: "'path' required (non-empty string)" });
+    return;
+  }
+  if (path.length > 2048) { res.status(400).json({ error: "'path' must be ≤ 2048 chars" }); return; }
+  try {
+    const out = await docs.read(path);
+    if (!out.ok) {
+      const status =
+        out.reason === "path not in allowed roots" ? 403 :
+        out.reason === "file not found" ? 404 :
+        out.reason === "is a directory" ? 400 :
+        422;
+      res.status(status).json({ error: out.reason, path: out.path, displayPath: out.displayPath });
+      return;
+    }
+    res.json({
+      path: out.path,
+      displayPath: out.displayPath,
+      ext: out.ext,
+      bytes: out.bytes,
+      truncated: out.truncated,
+      content: out.content,
+    });
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "personal-docs/read failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // WebSocket
 // ---------------------------------------------------------------------------
 

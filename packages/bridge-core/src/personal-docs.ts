@@ -87,208 +87,26 @@ export function defaultPersonalDocsConfig(stateDir: string): PersonalDocsConfig 
   };
 }
 
-// Cheap intent classifier — owner-typed messages that match these
-// patterns trigger the personal-docs pipeline. False-positives waste
-// one Spotlight call (~50ms); false-negatives mean the LLM doesn't
-// see the local context. We err toward catching more queries.
-// Doc-noun vocabulary shared by every intent pattern — easier to
-// extend in one place.
-const DOC_NOUN_GROUP = "(?:i-?\\d+|receipt|invoice|bill|statement|tax|pay\\s*stub|w-?2|1099|lease|contract|insurance|passport|visa|license|dl|ssn|social|registration|certificate|diploma|transcript|resume|cv|mortgage|deed|will|policy|prescription|vaccination|vaccine|loan|application|appointment|order|id\\s*card|green\\s*card)";
-// Possessive prefixes: "my", "the", OR any third-party name + "'s"
-// ("Manasa's drivers license", "Ved's passport"). The "\\w+'s" form
-// catches family members, friends, etc.
-const POSSESSIVE = "(?:my|the|\\w+['’]s)";
-
-const DOC_INTENT_PATTERNS: RegExp[] = [
-  // "find my X file" / "show me the X folder" / "where's my X.pdf"
-  /\b(find|search|look for|where('s| is)|locate|show me|pull up)\b.*\b(doc|file|folder|pdf|note|spreadsheet)/i,
-  // "<possessive> <doc-noun>" — "my I-485", "the receipt", "Manasa's license"
-  new RegExp(`\\b${POSSESSIVE}\\s+\\S*\\s*${DOC_NOUN_GROUP}\\b`, "i"),
-  // "what's in my X" — bucket queries
-  /\b(what'?s|whats|what is|tell me about)\b.*\b(in (my|the)|about (my|the)|on (my|the)|from (my|the))\b/i,
-  // "send me the X" / "attach the X" — delivery requests
-  /\b(send me|attach|email me)\b.*\b(my|the|that|it|those|that one|the first|the second)\b/i,
-  // Question intent on <possessive>: "when does Manasa's license expire"
-  new RegExp(`\\b(what'?s|whats|what is|show me|tell me|where('s| is)|i need|do i have|can you find|can you get|can you pull|when does|when is|when did|when will)\\s+${POSSESSIVE}\\b`, "i"),
-  // "<possessive> X number/date/expir..." — info lookups
-  new RegExp(`\\b${POSSESSIVE}\\s+\\w+\\s+(number|date|address|amount|deadline|due\\s+date|account|expir(es|ation|y))\\b`, "i"),
-  // iCloud / Mac / drive explicit mentions
-  /\b(icloud|on (my )?(mac|laptop|computer|drive))\b/i,
-  /\bsearch (my )?(mac|laptop|computer|drive)\b/i,
-];
-
-// Short follow-up patterns. These match conversational continuations
-// ("send it", "yes", "the first one", "attach") that wouldn't trigger
-// a fresh search but ARE meaningful as a continuation when the user
-// was just asked about a file. The bridge gates these on "had a
-// recent doc query in this chat" so they don't fire out of context.
-const FOLLOWUP_PATTERNS: RegExp[] = [
-  /^(send|send it|send me|send that|send those|attach|attach it|attach that|email it|email me)\b/i,
-  /^(yes|yep|yeah|yup|sure|ok|okay|please|do it|go ahead)\b/i,
-  /^(the first|the second|the third|first one|second one|that one|this one|both)\b/i,
-];
-
-// Connector-domain nouns that belong to other agents/tools (Gmail,
-// Calendar, etc.) — NOT local file lookup. Catches false positives
-// from "what's on my calendar" / "any new emails" matching the
-// generic "bucket query about my X" intent.
+// Trivial-chatter detector — the ONE pre-decider we keep. Used by the
+// bridges' owner-self-chat router to skip the heavy agentic pipeline on
+// acks/greetings/emoji-only replies ("ok", "thanks", "lol", "👍"). Every
+// other substantive owner message goes straight to the LLM with tools
+// (search_personal_files / read_personal_file / Gmail / Calendar) and
+// the model decides what to do.
 //
-// Also includes "live-event" nouns (appointment, meeting, booking,
-// reservation, flight, hotel, doctor visit) because those typically
-// live in CALENDAR + GMAIL confirmations, not in scanned Mac PDFs.
-// Routing them to the natural-chat path gives the LLM Gmail +
-// Calendar tools to actually find them.
-const CONNECTOR_DOMAIN_RE = /\b(calendar|inbox|email|emails|mail|message|messages|notification|notifications|schedule|meeting|meetings|slack|github|linear|notion|sheet|spreadsheet|drive|doc(?!ument)|task|tasks|todo|reminder|appointment|appointments|booking|reservation|flight|flights|hotel|hotels|doctor|dentist|endoscop|colonoscop|surgery|procedure|visit|consult|standup|interview|callback|invite|invites|rsvp)\b/i;
-
-export function looksLikeDocQuery(text: string): boolean {
-  if (!text || text.length < 2) return false;
-  // Hard exclude: if the message mentions a connector domain noun
-  // (calendar, inbox, email, slack, etc.) it belongs to the
-  // natural-chat + tools path, not local-file OCR. Lets queries like
-  // "what's on my calendar tomorrow" / "any new emails" reach Gmail
-  // and Calendar connectors instead of the docs pipeline.
-  if (CONNECTOR_DOMAIN_RE.test(text)) return false;
-  return DOC_INTENT_PATTERNS.some((re) => re.test(text));
-}
-
-// Broad "this is a real question/request the assistant should answer
-// with its tools + the owner's data" detector. Used ONLY for the owner's
-// own private channel (self-chat / dedicated bot), where almost every
-// message is an info-seeking request, not social chatter. Routing these
-// through the agentic pipeline (docs + Gmail + Calendar tools) is what
-// makes the assistant feel intelligent — instead of a tool-less LLM that
-// says "I can't access your files" and asks YOU for the answer.
-//
-// Returns FALSE for trivial chatter (acks, greetings, reactions) so we
-// don't spin the heavy pipeline on "ok" / "thanks" / "lol".
+// We deliberately do NOT try to classify "is this a doc query?" anymore.
+// That was the broken design — false-negatives produced "I can't access
+// your files" replies and false-positives wasted Spotlight calls. The
+// LLM is now responsible for picking the right tool.
 const TRIVIAL_CHATTER_RE =
   /^(?:k|kk|ok(?:ay)?|cool|nice|lol|lmao|haha+|thx|thanks|ty|yes|yep|yeah|no|nope|sure|got it|gotcha|nvm|np|👍|🙏|❤️|💯|hi|hey|hello|yo|sup|gm|gn|good\s*(?:morning|night|evening))[\s!.?]*$/i;
-const QUESTION_LEAD_RE =
-  /^\s*(?:wh(?:at|en|ere|o|ich|y)|how|should|can|could|would|will|do|does|did|is|are|am|was|were|may|might|i\s+need|i\s+want|find|get|check|search|look\s+up|tell\s+me|show\s+me|pull|help\s+me|remind|when'?s|what'?s|who'?s|where'?s)\b/i;
 
-export function looksLikeOwnerQuestion(text: string): boolean {
+export function isTrivialChatter(text: string): boolean {
   const t = (text || "").trim();
-  if (t.length < 3) return false;
-  if (TRIVIAL_CHATTER_RE.test(t)) return false;
-  // A question mark, OR a question/request lead word, OR simply a
-  // reasonably substantive sentence (owners rarely send long non-
-  // questions to their own assistant).
-  if (t.includes("?")) return true;
-  if (QUESTION_LEAD_RE.test(t)) return true;
-  if (t.split(/\s+/).length >= 5) return true;
-  return false;
-}
-
-// True for short conversational follow-ups that only make sense
-// when continuing a recent doc-query exchange. The bridge wraps this
-// with a "was there a recent doc query in this chat" gate before
-// dispatching, so a bare "yes" doesn't accidentally trigger the doc
-// pipeline in unrelated conversation.
-export function looksLikeDocFollowup(text: string): boolean {
-  if (!text) return false;
-  const trimmed = text.trim();
-  if (trimmed.length < 2 || trimmed.length > 60) return false;
-  return FOLLOWUP_PATTERNS.some((re) => re.test(trimmed));
-}
-
-// Extract the actual search terms from a natural-language query.
-// "find my I-485 receipt" → "I-485 receipt"
-// "where's my pay stub from last month" → "pay stub last month"
-// "send me the lease" → "lease"
-//
-// Filler words at the start ("find/show/get my", "where is", etc.)
-// would otherwise be passed verbatim to find/mdfind and match
-// nothing.
-const FILLER_PREFIX_RE = /^\s*(?:please\s+)?(?:can you\s+)?(?:hey\s+lantern[,!:\s]+)?(?:lantern[,!:\s]+)?(?:find|search( for)?|look( for)?|locate|show me|pull up|get|grab|fetch|send me|email me|attach|where('s| is|'re| are)|what('s| is)|tell me about)\s+(?:the|my|that|those|some|any|a|an)?\s*/i;
-const FILLER_WORDS = new Set([
-  "from", "the", "my", "that", "this", "these", "those",
-  "a", "an", "on", "in", "of", "to", "and", "or", "for",
-  "please", "thanks", "thank", "you",
-]);
-export function extractSearchTerms(text: string): string {
-  let q = text.trim();
-  // Strip leading filler verbs/articles.
-  q = q.replace(FILLER_PREFIX_RE, "").trim();
-  // Strip trailing punctuation.
-  q = q.replace(/[?.!,;:]+$/g, "").trim();
-  // Drop common stopwords from the remaining tokens, but keep
-  // anything with digits or a dash (I-485, W-2, 1099, 2024) since
-  // those are usually the distinguishing identifier.
-  const tokens = q.split(/\s+/).filter((t) => {
-    if (!t) return false;
-    if (/[\d-]/.test(t)) return true; // keep I-485, W-2, etc.
-    return !FILLER_WORDS.has(t.toLowerCase());
-  });
-  return tokens.join(" ").trim() || text.trim();
-}
-
-// Domain-aware semantic expansion. Real user files use formal/legal names
-// (e.g. "I-485 Approval", "Receipt Notice", "N-400") while users ask in
-// everyday terms ("when should I apply for naturalization?", "passport
-// expiry"). Without synonym expansion the literal mdfind/find returns 0
-// even when the doc is sitting right there. Each key triggers extra search
-// phrases — empirically tuned to the most common personal-document
-// vocabularies.
-const QUERY_SYNONYMS: Array<{ trigger: RegExp; phrases: string[] }> = [
-  // US immigration: naturalization / green card / citizenship space
-  {
-    trigger: /\b(?:naturali[sz](?:e|ation)|citizenship|us\s*citizenship|become\s+(?:a\s+)?citizen)\b/i,
-    phrases: ["I-485", "N-400", "I-130", "green card", "permanent resident", "USCIS"],
-  },
-  {
-    trigger: /\b(?:green\s*card|greencard|permanent\s+resident(?:\s+card)?|pr\s+card|gc\s+approval)\b/i,
-    phrases: ["I-485", "I-140", "permanent resident", "green card", "USCIS", "approval notice"],
-  },
-  {
-    trigger: /\bi-?485\b/i,
-    phrases: ["I-485", "green card", "permanent resident", "approval", "receipt notice"],
-  },
-  // Visa / work authorization
-  {
-    trigger: /\b(?:h1b|h-1b|work\s+visa|visa\s+expir(?:y|es|ation))\b/i,
-    phrases: ["H1B", "H-1B", "I-129", "I-94", "visa", "approval notice"],
-  },
-  {
-    trigger: /\b(?:i-?94|travel\s+history)\b/i,
-    phrases: ["I-94", "arrival", "departure"],
-  },
-  // Travel docs
-  {
-    trigger: /\bpassport(?:s)?\b/i,
-    phrases: ["passport", "passport book"],
-  },
-  // Driving
-  {
-    trigger: /\b(?:driver'?s?\s+license|dl\s+expir|license\s+expir)\b/i,
-    phrases: ["license", "DL", "driver"],
-  },
-  // Tax
-  {
-    trigger: /\b(?:tax(?:es)?|w-?2|1099|return)\b/i,
-    phrases: ["W-2", "1099", "tax", "return"],
-  },
-];
-
-/** Returns extra search phrases triggered by domain concepts in the
- *  query. Used by PersonalDocs.search() so a question phrased in everyday
- *  language ("naturalization") still finds the file named in its formal
- *  form ("I-485 Approval"). */
-export function synonymPhrasesFor(text: string): string[] {
-  const t = text || "";
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const { trigger, phrases } of QUERY_SYNONYMS) {
-    if (trigger.test(t)) {
-      for (const p of phrases) {
-        const k = p.toLowerCase();
-        if (!seen.has(k)) {
-          seen.add(k);
-          out.push(p);
-        }
-      }
-    }
-  }
-  return out;
+  if (t.length === 0) return true;
+  // Pure emoji / very-short utterances.
+  if (t.length <= 3 && !/[a-z0-9]/i.test(t)) return true;
+  return TRIVIAL_CHATTER_RE.test(t);
 }
 
 // ---- the class ------------------------------------------------------------
@@ -357,24 +175,21 @@ export class PersonalDocs {
   // across the configured roots. Falls back to plain `find` when
   // mdfind is unavailable (rare on macOS).
   async search(query: string): Promise<DocSearchResult[]> {
-    // Strip natural-language filler ("find my", "show me the", etc.)
-    // so the underlying mdfind/find search uses just the meaningful
-    // terms. Without this, "find my I-485 receipt" gets passed as
-    // a literal substring match and returns 0.
-    const trimmed = extractSearchTerms(query);
+    // Query comes from an LLM tool call (search_personal_files) — the
+    // model has already picked good keywords ("I-485 approval", not
+    // "find my green card stuff"). We pass them through directly and
+    // also try each individual token as a fallback for narrow phrases
+    // like "license number" where the noun matters more than the
+    // modifier.
+    const trimmed = query.trim().replace(/[?.!,;:]+$/g, "");
     if (!trimmed) return [];
     this.audit("search", { rawQuery: query, terms: trimmed });
 
-    // Try the full term phrase first. If no results, fall back to
-    // the strongest single term — usually the right thing for
-    // "license number" / "ssn last 4" type queries where the noun
-    // matters more than the modifier.
     const phrases = [trimmed];
     const tokens = trimmed.split(/\s+/).filter((t) => t.length >= 3);
     if (tokens.length > 1) {
-      // Add each individual token as a fallback. Prefer
-      // tokens with digits/dashes (I-485, W-2) since those uniquely
-      // identify documents; the rest get added too.
+      // Prefer tokens with digits/dashes (I-485, W-2) — they uniquely
+      // identify documents.
       const ranked = [...tokens].sort((a, b) => {
         const aHas = /\d|-/.test(a) ? 1 : 0;
         const bHas = /\d|-/.test(b) ? 1 : 0;
@@ -384,13 +199,7 @@ export class PersonalDocs {
         if (!phrases.includes(t)) phrases.push(t);
       }
     }
-    // Semantic expansion: "when should I apply for naturalization" needs
-    // to ALSO search "I-485 / green card / N-400" because that's how the
-    // actual files are named. Domain map in synonymPhrasesFor().
-    for (const syn of synonymPhrasesFor(query)) {
-      if (!phrases.includes(syn)) phrases.push(syn);
-    }
-    this.logger.debug({ phrases }, "doc search phrases (with synonyms)");
+    this.logger.debug({ phrases }, "doc search phrases");
 
     const results: DocSearchResult[] = [];
     // Pool cap is large — ranker takes over below. The previous
