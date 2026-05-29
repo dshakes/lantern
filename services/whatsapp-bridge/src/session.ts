@@ -997,15 +997,14 @@ export class WhatsAppSession {
             this.logger.info({ from }, "group message not addressed to owner");
             continue;
           }
-          // 1:1 ALLOW-LIST GATE — same default-deny policy as the
-          // iMessage bridge. Without this gate, every friend / family /
-          // unknown DM got a bot reply by default, which both scared
-          // people and felt spammy. Owner channel still passes
-          // (self-chat / dedicated bot DM).
-          if (!isGroup && !this.isOwnerChat(from) && !this.isContactEnabled(from)) {
-            this.logger.info({ from }, "agent skipped — contact not in allow-list");
-            continue;
-          }
+          // NOTE: no hard allow-list gate here. The old default-deny was
+          // over-correction — it silenced EVERY contact. The real spam
+          // problem (wooden replies to strangers) is handled downstream
+          // by confidence-gating (unknown contacts → draft for approval,
+          // never auto-sent) + the bot-tell filter + escalation guard.
+          // So: known contacts (relationship/samples/facts) auto-reply
+          // authentically; unknown contacts get held as a draft; nobody
+          // gets spam. Owner can still globally mute or pause per-contact.
           this.handleAgentReply(from, text, {
             isGroup,
             senderName,

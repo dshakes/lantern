@@ -997,26 +997,14 @@ export class IMessageSession {
     // job is to be invisible when it has nothing real to say.
     if (!text) return;
 
-    // 1:1 ALLOW-LIST GATE (the spam-prevention fix).
-    //   - Owner channel always passes (self-chat / dedicated bot DM).
-    //   - Non-owner contacts must be explicitly enabled by the owner.
-    //   - Groups have their own monitoredChats gate below.
-    // Without this gate, every friend / family / unknown DM got an
-    // auto-reply by default, which scared people who could tell it
-    // wasn't really the owner typing.
-    if (!isGroup && !this.isOwnerChatRow(row) && !this.isContactEnabled(row.handle)) {
-      this.broadcast({
-        type: "activity",
-        data: {
-          kind: "agent_skipped",
-          summary: `not in allow-list — ${this.contactLabel(row.handle)}`,
-          detail: text.slice(0, 120),
-          jid: row.handle,
-          timestamp: Date.now(),
-        },
-      });
-      return;
-    }
+    // NOTE: no hard allow-list gate here (removed — it was an
+    // over-correction that silenced every contact). The real spam
+    // problem (wooden replies to strangers) is handled downstream by
+    // confidence-gating (unknown contacts → draft for approval, never
+    // auto-sent) + the bot-tell filter + escalation guard. Known
+    // contacts (relationship/samples/facts) auto-reply authentically;
+    // unknown contacts get held as a draft; nobody gets spam. Owner can
+    // still globally mute or pause per-contact.
     if (this.muted) {
       this.broadcast({ type: "activity", data: { kind: "agent_skipped", summary: `bot muted — ${this.contactLabel(row.handle)}`, jid: row.handle, timestamp: Date.now() } });
       return;
