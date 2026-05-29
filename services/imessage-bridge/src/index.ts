@@ -25,6 +25,34 @@
 // Auth: same shared-token pattern as WhatsApp bridge. Set
 // LANTERN_IMESSAGE_BRIDGE_TOKEN; dashboard sends Authorization: Bearer.
 
+// Load a local .env (gitignored) BEFORE anything reads process.env, so
+// owner-only settings like LANTERN_IMESSAGE_OWNER_HANDLE survive every
+// restart whether launched from a Terminal (make run-imessage-bridge)
+// or launchd — without baking PII into the repo. Node 20.12+/21.7+
+// native loader; no dependency. Looks next to the service dir first,
+// then ~/.lantern/imessage.env as a fallback.
+import { existsSync as _existsSync } from "node:fs";
+import { join as _join, dirname as _dirname } from "node:path";
+import { fileURLToPath as _fileURLToPath } from "node:url";
+import { homedir as _homedir } from "node:os";
+{
+  const _here = _dirname(_fileURLToPath(import.meta.url));
+  const _candidates = [
+    _join(_here, "..", ".env"),
+    _join(process.cwd(), ".env"),
+    _join(_homedir(), ".lantern", "imessage.env"),
+  ];
+  for (const _p of _candidates) {
+    if (_existsSync(_p)) {
+      try {
+        process.loadEnvFile(_p);
+      } catch {
+        /* older node or malformed file — ignore, env stays as-is */
+      }
+    }
+  }
+}
+
 import express from "express";
 import cors from "cors";
 import { WebSocketServer } from "ws";
