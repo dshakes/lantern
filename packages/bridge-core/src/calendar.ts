@@ -76,6 +76,46 @@ export class CalendarLookup {
       return "";
     }
   }
+
+  /**
+   * Returns the next meeting-like event that is either active right
+   * now or starts within the next 30 minutes. Used by the presence
+   * tracker to detect "in a meeting" without re-rendering an entire
+   * formatted block. Returns null when there's no qualifying event
+   * or the fetch fails.
+   */
+  async nextMeetingWindow(): Promise<{ summary?: string; startMs: number; endMs: number } | null> {
+    try {
+      const res = await authedFetch(
+        `/v1/connectors/google-calendar/execute?action=list_events`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ limit: 4 }),
+        },
+      );
+      if (!res.ok) return null;
+      const payload = (await res.json()) as { data?: { items?: CalendarEvent[]; events?: CalendarEvent[] } };
+      const items = payload.data?.items ?? payload.data?.events ?? [];
+      const now = Date.now();
+      const horizon = now + 30 * 60_000;
+      for (const ev of items) {
+        const startIso = ev.start?.dateTime || ev.start?.date;
+        const endIso = ev.end?.dateTime || ev.end?.date;
+        if (!startIso || !endIso) continue;
+        const startMs = new Date(startIso).getTime();
+        const endMs = new Date(endIso).getTime();
+        if (Number.isNaN(startMs) || Number.isNaN(endMs)) continue;
+        // Active OR starts within 30 min from now.
+        if ((startMs <= now && endMs > now) || (startMs > now && startMs <= horizon)) {
+          return { summary: ev.summary, startMs, endMs };
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
 }
 
 function formatWhen(iso: string, tz?: string): string {

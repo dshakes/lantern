@@ -282,6 +282,25 @@ export interface PersonaOptions {
   // ago) and match the live tone, instead of answering the last line in
   // a vacuum. Kept short (last ~10 turns) so the prompt stays tight.
   recentTranscript?: string;
+  // Per-contact style fingerprint block (from per-contact-style.ts →
+  // formatStyleBlock). Statistical features + verbatim examples of how
+  // the owner has historically written to THIS specific person. The
+  // single most authentic anchor in the prompt — overrides global
+  // style cues when present. Empty string when there's not enough
+  // data (< 3 prior messages to this contact).
+  contactStyleBlock?: string;
+  // Per-contact dislike memory block (from dislike-memory.ts →
+  // formatDislikeBlock). Recent (inbound, bad-reply, good-reply)
+  // triples saved from 👎 retries — tells the LLM what reply shapes
+  // the owner has explicitly rejected for THIS contact so they don't
+  // repeat. Empty string when no dislikes are on file.
+  dislikeBlock?: string;
+  // Live presence string (from presence.ts → currentPresence). One
+  // line like "in a meeting until 4:30 PM ET" / "free / available" /
+  // "driving — Focus mode". Bot tone adapts: in-meeting → terse
+  // promise to follow up; free → normal pacing. Empty when presence
+  // can't be detected.
+  presence?: string;
   // Pre-formatted language-modality block (from
   // bridge-core/language.ts → languageModalityHint). When the inbound
   // is in a non-English language, this tells the model to reply in
@@ -396,6 +415,35 @@ export function agentPersonaPrompt(
     lines.push(``);
     lines.push(`Style overrides (these take precedence over the rules above):`);
     lines.push(override);
+  }
+
+  // Per-contact style fingerprint — placed BEFORE the recent
+  // transcript so the model anchors on "how I write to this person"
+  // before "what we said today". The fingerprint includes verbatim
+  // examples, which is far more potent than abstract rules.
+  const contactStyle = opts.contactStyleBlock?.trim();
+  if (contactStyle) {
+    lines.push(``);
+    lines.push(contactStyle);
+  }
+
+  // Dislike memory — surface recently-rejected reply shapes for this
+  // contact so the model doesn't repeat patterns the owner already
+  // 👎'd. Tiny block, max ~400 chars; placed near the transcript so
+  // it's adjacent to the freshly-relevant content.
+  const dislikes = opts.dislikeBlock?.trim();
+  if (dislikes) {
+    lines.push(``);
+    lines.push(dislikes);
+  }
+
+  // Live presence — owner's CURRENT availability ("in a meeting until
+  // 4pm", "driving"). One-liner; placed late so it conditions the
+  // reply tone without dominating identity context.
+  const presence = opts.presence?.trim();
+  if (presence) {
+    lines.push(``);
+    lines.push(`Owner's current state: ${presence}. Reflect this in the reply (e.g. "in a meeting, will ping you after" if mid-meeting; normal pacing if free).`);
   }
 
   // Recent conversation — placed LAST (freshest, closest to the reply

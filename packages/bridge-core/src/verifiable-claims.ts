@@ -1,0 +1,177 @@
+// Verifiable-claims post-processor.
+//
+// LLMs love to claim completed actions they didn't take: "I sent him
+// an email", "I added it to your calendar", "I told him about it",
+// "I forwarded the link". The contact trusts the claim and follow-up
+// fails — sometimes catastrophically (commitments to friends/family,
+// missed meetings, hurt relationships).
+//
+// This module is the LAST PASS before a reply is sent. It scans the
+// outbound text for action-claim verbs. If the matching action was
+// NOT actually invoked this turn (caller passes in the set of tools
+// fired), we rewrite the claim from completion → intent:
+//   "I sent him an email" → "I'll send him an email"
+//   "I added it to your calendar" → "I'll add it to your calendar"
+//   "I told him" → "I'll let him know"
+//
+// The rewriter is deterministic + cheap. It NEVER drops content; the
+// worst case is a marginally-clumsier sentence. That's a much better
+// failure mode than shipping a lie.
+
+export interface VerifyOptions {
+  // Tools / actions actually invoked this turn. We honor a claim
+  // ("I added it to your calendar") only when the matching action
+  // shows up here. Caller supplies whatever they have — bridge-side
+  // tool dispatch, marker emission, etc.
+  performedActions?: ReadonlySet<string>;
+  // When true, claims of NOTIFY ("I let him know", "I texted him")
+  // are auto-rewritten regardless of performedActions. Default true:
+  // the bridge can't actually loop someone in mid-thread, so these
+  // are almost always lies.
+  rewriteNotifyClaims?: boolean;
+}
+
+export interface VerifyResult {
+  text: string;          // possibly-rewritten reply
+  rewrites: string[];    // human-readable description of each rewrite
+}
+
+// Each pattern: { regex matching the claim, action key that would
+// satisfy it if `performedActions` contains it, rewrite generator.
+// The regex must capture enough context to do a clean rewrite.
+//
+// Style: matches are case-insensitive AND tolerant of contractions
+// ("i've sent", "i sent", "ive sent"). The rewrite preserves the
+// surrounding tone — lowercase stays lowercase.
+interface ClaimPattern {
+  // Action key this claim asserts. When this key is in
+  // `performedActions`, the claim is honored. Use "notify-third-party"
+  // for "I let him know" etc — those are always rewritten in default
+  // mode because the bridge can't actually do them mid-thread.
+  action: string;
+  // Regex with at least one capture group: $1 = the rest of the
+  // claim that should become the intent ("sent him an email" →
+  // "send him an email").
+  re: RegExp;
+  // Build the rewritten sentence. Receives the original match + a
+  // helper for case-preservation.
+  rewrite: (match: RegExpMatchArray, lower: boolean) => string;
+  description: string;
+}
+
+const PATTERNS: ClaimPattern[] = [
+  // "I sent ..." / "I've sent ..." / "Sent ..." (with implicit subject)
+  {
+    action: "send-message",
+    re: /\b(?:i\s+(?:just\s+)?(?:already\s+)?(?:'?ve\s+)?sent|sent)\s+((?:him|her|them|you|the|a|an|that|this|it)\s+\S[^.!?]*?)(?=[.!?]|$)/i,
+    rewrite: (m, lower) =>
+      (lower ? "i'll send " : "I'll send ") + m[1].trim(),
+    description: "send → will send",
+  },
+
+  // "I added ..." (calendar/note/list)
+  {
+    action: "calendar-or-note-add",
+    re: /\bi\s+(?:just\s+)?(?:already\s+)?(?:'?ve\s+)?added\s+((?:it|that|this|the|a|an)\s+\S[^.!?]*?)(?=[.!?]|$)/i,
+    rewrite: (m, lower) =>
+      (lower ? "i'll add " : "I'll add ") + m[1].trim(),
+    description: "added → will add",
+  },
+
+  // "I let him know" / "I told him" / "I notified him" — these are
+  // almost always lies (the bridge has no channel to actually do
+  // them mid-thread) so we ALWAYS rewrite unless explicitly allowed.
+  {
+    action: "notify-third-party",
+    re: /\bi\s+(?:just\s+)?(?:already\s+)?(?:'?ve\s+)?(?:let|told|notified|informed|messaged|texted|pinged|reached\s+out\s+to)\s+(him|her|them|\w+)\s*(?:know\s+)?((?:about|that|on)?\s*\S[^.!?]*?)?(?=[.!?]|$)/i,
+    rewrite: (m, lower) => {
+      const subject = m[1];
+      const rest = (m[2] || "").trim();
+      const prefix = lower ? "i'll make sure " : "I'll make sure ";
+      const body = rest
+        ? `${subject} ${/^(?:about|that|on)/i.test(rest) ? "knows" : "sees"} ${rest.replace(/^(?:about|that|on)\s*/i, "")}`
+        : `${subject} sees this`;
+      return prefix + body;
+    },
+    description: "told/notified → will make sure they see",
+  },
+
+  // "I forwarded ..." (message, email, attachment)
+  {
+    action: "forward",
+    re: /\bi\s+(?:just\s+)?(?:already\s+)?(?:'?ve\s+)?forwarded\s+((?:it|that|this|the|a|an|his|her|the\s+email|the\s+message|the\s+link)\s*\S[^.!?]*?)(?=[.!?]|$)/i,
+    rewrite: (m, lower) =>
+      (lower ? "i'll forward " : "I'll forward ") + m[1].trim(),
+    description: "forwarded → will forward",
+  },
+
+  // "I emailed ..." (separate from generic "sent")
+  {
+    action: "send-email",
+    re: /\bi\s+(?:just\s+)?(?:already\s+)?(?:'?ve\s+)?(?:emailed|e-mailed)\s+((?:him|her|them|you|the)\s*\S[^.!?]*?)(?=[.!?]|$)/i,
+    rewrite: (m, lower) =>
+      (lower ? "i'll email " : "I'll email ") + m[1].trim(),
+    description: "emailed → will email",
+  },
+
+  // "I made the reservation" / "I booked ..."
+  {
+    action: "booking",
+    re: /\bi\s+(?:just\s+)?(?:already\s+)?(?:'?ve\s+)?(?:booked|reserved|made\s+(?:the|a)\s+reservation\s+for)\s+(\S[^.!?]*?)(?=[.!?]|$)/i,
+    rewrite: (m, lower) =>
+      (lower ? "i'll book " : "I'll book ") + m[1].trim(),
+    description: "booked → will book",
+  },
+];
+
+/**
+ * Walk `text` through every pattern. For each pattern that matches,
+ * check whether the underlying action was actually performed; if not,
+ * rewrite. Returns the (possibly mutated) text and a list of rewrites
+ * for logging.
+ *
+ * Safe to call on every outbound reply. No-op when text doesn't
+ * trigger any pattern (the common case for short replies).
+ */
+export function verifyClaims(text: string, opts: VerifyOptions = {}): VerifyResult {
+  if (!text) return { text: "", rewrites: [] };
+
+  const performed = opts.performedActions ?? new Set<string>();
+  const rewriteNotify = opts.rewriteNotifyClaims !== false;
+
+  let working = text;
+  const rewrites: string[] = [];
+
+  for (const pat of PATTERNS) {
+    // Honor genuine completions. The notify-third-party pattern is
+    // special: we rewrite it always (unless caller opts out) since
+    // the bridge has no truthful path to it.
+    if (pat.action === "notify-third-party") {
+      if (!rewriteNotify) continue;
+    } else if (performed.has(pat.action)) {
+      continue;
+    }
+
+    // Loop on the regex (a long reply may have multiple claims).
+    // Replace one at a time so each rewrite sees fresh ground truth.
+    let safety = 5;
+    while (safety-- > 0) {
+      const m = working.match(pat.re);
+      if (!m) break;
+      const lower = !/[A-Z]/.test(m[0]);
+      const replacement = pat.rewrite(m, lower);
+      working =
+        working.slice(0, m.index!) +
+        replacement +
+        working.slice(m.index! + m[0].length);
+      rewrites.push(`${pat.description}: "${truncate(m[0], 60)}" → "${truncate(replacement, 60)}"`);
+    }
+  }
+
+  return { text: working, rewrites };
+}
+
+function truncate(s: string, n: number): string {
+  const flat = (s || "").replace(/\s+/g, " ").trim();
+  return flat.length > n ? flat.slice(0, n) + "…" : flat;
+}

@@ -1,0 +1,265 @@
+// Per-contact style fingerprint.
+//
+// Each persons sees a slightly different version of the owner. The
+// owner writes in lowercase + clipped Telugu to family, formal English
+// to a recruiter, emoji-heavy to a close friend. A single global
+// "ownerStyle" prompt washes those differences out and produces
+// uncanny-valley replies. This module computes a per-jid fingerprint
+// from the owner's PRIOR messages to THAT contact, plus 6-10 verbatim
+// samples the LLM can mimic by example.
+//
+// Wired into the persona prompt so every reply to a known contact is
+// anchored on (1) statistical features of the owner's tone with them
+// and (2) literal phrasings the owner has actually used.
+//
+// Reads from the persisted `ownerSentHistory: Map<jid, string[]>` that
+// both bridges already maintain — no new storage required.
+//
+// Computation is cheap (~20-50µs) so we recompute on every reply
+// rather than caching. Caching adds complexity without measurable
+// savings at our message rate.
+
+export interface ContactStyle {
+  // Sample count behind the fingerprint. Below 3, the fingerprint is
+  // too thin — callers should fall back to global style. Above 50,
+  // we have high confidence the patterns are stable.
+  sampleCount: number;
+
+  // Average word count per message (your messages to this person).
+  avgWords: number;
+
+  // Fraction of messages that contain ANY uppercase letter (excluding
+  // proper nouns) — 0.0 = pure lowercase, 1.0 = full sentence case.
+  uppercaseRate: number;
+
+  // Fraction with at least one emoji.
+  emojiRate: number;
+
+  // Fraction ending in terminal punctuation (. ! ?).
+  terminalPunctRate: number;
+
+  // Language mix as detected from message bodies. Sum to ~1.0.
+  // We keep this coarse: english | telugu (incl Romanized) | hindi |
+  // mixed (multiple in one message).
+  langMix: { english: number; telugu: number; hindi: number; mixed: number };
+
+  // Common openers (first 1-2 tokens) used > 1 time, top 5.
+  // Examples: ["yeah", "lol", "ela undi", "bro"].
+  commonOpeners: string[];
+
+  // Common closers (last 1-2 tokens), top 5.
+  // Examples: ["for sure", "lol", "vasta"].
+  commonClosers: string[];
+
+  // 6-10 verbatim samples — the LLM mimics by example far better than
+  // by rule. We pick recent + medium-length samples to avoid the
+  // shortest acks ("ok", "k") and longest paragraphs. These go
+  // straight into the system prompt.
+  verbatimSamples: string[];
+}
+
+// Heuristic language tagger. Romanized Telugu is detected by the
+// presence of specific tokens that don't exist in English ("vasta",
+// "ela", "cheppu", "matladta", etc.). Same idea for Hindi.
+const TELUGU_TOKENS = new Set([
+  "vasta","vacchaka","vacchina","cheptha","cheptanu","matladta","matladtham","matladkundam","ela","undi","unnav","chustha","chustanu","ostha","ostunnav","ostunnaru","thelvadu","telidu","leda","kavali","ledu","ledhu","emi","enti","amma","anna","akka","bava","vadina","ammayi","abbayi","cheppu","cheppara","sare","tappakunda","mari","koncham","baagunnav","ekkada","epudu","emaindi","chesthunnav",
+]);
+const HINDI_TOKENS = new Set([
+  "hai","hain","kya","kyun","kaisa","kaise","theek","accha","achha","nahin","nahi","haan","mujhe","tujhe","kar","kuch","abhi","baad","mein","tum","aap","yaar","bhai","bhaiya","kar","raha","rahi","rahe","hoga","hogi","mat",
+]);
+
+function detectLang(msg: string): "english" | "telugu" | "hindi" | "mixed" {
+  const tokens = msg.toLowerCase().split(/[^a-zA-Zऀ-ॿఀ-౿]+/).filter(Boolean);
+  if (tokens.length === 0) return "english";
+  let te = 0, hi = 0;
+  for (const t of tokens) {
+    if (TELUGU_TOKENS.has(t)) te++;
+    else if (HINDI_TOKENS.has(t)) hi++;
+  }
+  // Telugu/Hindi native script characters are dead giveaways.
+  const hasDevanagari = /[ऀ-ॿ]/.test(msg);
+  const hasTeluguScript = /[ఀ-౿]/.test(msg);
+  if (hasTeluguScript) return "telugu";
+  if (hasDevanagari) return "hindi";
+  const teShare = te / tokens.length;
+  const hiShare = hi / tokens.length;
+  if (teShare > 0.25 && hiShare > 0.1) return "mixed";
+  if (teShare > 0.25) return "telugu";
+  if (hiShare > 0.25) return "hindi";
+  // Below threshold of native-language tokens → treat as English.
+  return "english";
+}
+
+// Emoji detection — Unicode emoji range (rough but adequate for our
+// fingerprint, which is statistical not exact).
+const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F2FF}]/u;
+
+function tokenize(msg: string): string[] {
+  return msg
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+}
+
+function topN(counts: Map<string, number>, n: number): string[] {
+  return [...counts.entries()]
+    .filter(([, c]) => c > 1)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([k]) => k);
+}
+
+export function computeContactStyle(messages: string[]): ContactStyle {
+  const samples = messages.filter((m) => typeof m === "string" && m.trim().length > 0);
+  const n = samples.length;
+  if (n === 0) {
+    return {
+      sampleCount: 0,
+      avgWords: 0,
+      uppercaseRate: 0,
+      emojiRate: 0,
+      terminalPunctRate: 0,
+      langMix: { english: 0, telugu: 0, hindi: 0, mixed: 0 },
+      commonOpeners: [],
+      commonClosers: [],
+      verbatimSamples: [],
+    };
+  }
+
+  let totalWords = 0;
+  let upperHits = 0;
+  let emojiHits = 0;
+  let punctHits = 0;
+  const langCount = { english: 0, telugu: 0, hindi: 0, mixed: 0 };
+  const openerCounts = new Map<string, number>();
+  const closerCounts = new Map<string, number>();
+
+  for (const m of samples) {
+    const tokens = tokenize(m);
+    totalWords += tokens.length;
+
+    // Uppercase: any A-Z that ISN'T the first letter of a properly-cased
+    // word. Cheap heuristic — full uppercase letters present is enough
+    // signal to flag.
+    if (/[A-Z]{2,}|^[A-Z][a-z]+\s+[A-Z][a-z]+/.test(m)) upperHits++;
+    else if (/[A-Z]/.test(m) && !/^[A-Z][a-z]/.test(m)) upperHits++;
+
+    if (EMOJI_RE.test(m)) emojiHits++;
+    if (/[.!?]$/.test(m.trim())) punctHits++;
+
+    langCount[detectLang(m)]++;
+
+    if (tokens.length >= 2) {
+      const opener = tokens.slice(0, 2).join(" ").toLowerCase().replace(/[^\w\s]/g, "");
+      const opener1 = tokens[0].toLowerCase().replace(/[^\w]/g, "");
+      if (opener) openerCounts.set(opener, (openerCounts.get(opener) ?? 0) + 1);
+      if (opener1 && opener1 !== opener) openerCounts.set(opener1, (openerCounts.get(opener1) ?? 0) + 1);
+
+      const closer = tokens.slice(-2).join(" ").toLowerCase().replace(/[^\w\s]/g, "");
+      const closer1 = tokens[tokens.length - 1].toLowerCase().replace(/[^\w]/g, "");
+      if (closer) closerCounts.set(closer, (closerCounts.get(closer) ?? 0) + 1);
+      if (closer1 && closer1 !== closer) closerCounts.set(closer1, (closerCounts.get(closer1) ?? 0) + 1);
+    }
+  }
+
+  // Verbatim samples: prefer messages of 3-15 words (real
+  // conversational unit), most-recent first, dedup near-duplicates.
+  const seen = new Set<string>();
+  const verbatim: string[] = [];
+  for (let i = samples.length - 1; i >= 0 && verbatim.length < 10; i--) {
+    const m = samples[i].trim();
+    const wc = tokenize(m).length;
+    if (wc < 3 || wc > 15) continue;
+    const key = m.toLowerCase().replace(/\s+/g, " ").slice(0, 40);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    verbatim.push(m);
+  }
+
+  return {
+    sampleCount: n,
+    avgWords: totalWords / n,
+    uppercaseRate: upperHits / n,
+    emojiRate: emojiHits / n,
+    terminalPunctRate: punctHits / n,
+    langMix: {
+      english: langCount.english / n,
+      telugu: langCount.telugu / n,
+      hindi: langCount.hindi / n,
+      mixed: langCount.mixed / n,
+    },
+    commonOpeners: topN(openerCounts, 5),
+    commonClosers: topN(closerCounts, 5),
+    verbatimSamples: verbatim,
+  };
+}
+
+/**
+ * Format the fingerprint as a system-prompt block. Returns empty
+ * string when there's too little data for the fingerprint to be
+ * meaningful (sample count < 3). Callers should append the result to
+ * their existing persona prompt.
+ */
+export function formatStyleBlock(style: ContactStyle): string {
+  if (style.sampleCount < 3) return "";
+
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  const lines: string[] = [
+    "## How you text THIS specific contact (mirror these patterns)",
+    `Sample size: ${style.sampleCount} of your past messages to them.`,
+    `Average message length: ${style.avgWords.toFixed(1)} words.`,
+  ];
+
+  // Tone signals — only mention when they have a strong direction.
+  if (style.uppercaseRate < 0.2) {
+    lines.push("Tone: mostly lowercase. Don't sentence-case unless they do first.");
+  } else if (style.uppercaseRate > 0.7) {
+    lines.push("Tone: properly capitalized sentences — keep that.");
+  }
+
+  if (style.emojiRate < 0.05) {
+    lines.push("Emoji: never (you don't use them with this person).");
+  } else if (style.emojiRate > 0.3) {
+    lines.push(`Emoji: yes (you use them in ${pct(style.emojiRate)} of messages).`);
+  }
+
+  if (style.terminalPunctRate < 0.3) {
+    lines.push("Punctuation: rarely end with . ! or ? — same here.");
+  }
+
+  // Language mix.
+  const lang = style.langMix;
+  const dominant = Object.entries(lang).sort((a, b) => b[1] - a[1])[0];
+  if (dominant && dominant[1] > 0.5) {
+    lines.push(`Language: mostly ${dominant[0]} (${pct(dominant[1])}). Match that.`);
+  } else if (lang.mixed > 0.3) {
+    lines.push("Language: code-switched (Telugu + English in same message). Same style here.");
+  }
+
+  if (style.commonOpeners.length > 0) {
+    lines.push(`Your common openers with them: ${style.commonOpeners.map((o) => `"${o}"`).join(", ")}.`);
+  }
+  if (style.commonClosers.length > 0) {
+    lines.push(`Your common closers with them: ${style.commonClosers.map((o) => `"${o}"`).join(", ")}.`);
+  }
+
+  if (style.verbatimSamples.length > 0) {
+    lines.push("");
+    lines.push(
+      "Verbatim examples of how you wrote to this person (mimic the SHAPE, not the content):",
+    );
+    for (const s of style.verbatimSamples) {
+      lines.push(`  → ${s}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Convenience: compute + format in one call. Returns "" when there's
+ * not enough data.
+ */
+export function styleBlockFor(messages: string[]): string {
+  return formatStyleBlock(computeContactStyle(messages));
+}
