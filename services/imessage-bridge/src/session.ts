@@ -156,11 +156,19 @@ export class IMessageSession {
   //   (a) an SSE-aborted agent turn can leave the bridge idle for 180s,
   //   (b) iCloud sync can drop a backlog of old bot rows into a single
   //       poll tick minutes after they were sent.
-  // 1 hour covers both with comfortable margin and the persistent on-
-  // disk store (sent.json) survives bridge restarts so we don't lose
-  // dedup state when launchd respawns the process.
-  private static readonly BRIDGE_SEND_DEDUP_MS = 60 * 60_000; // 1 hour
-  private static readonly BRIDGE_SEND_MAX_ENTRIES = 500;
+  // 1 hour covers both with comfortable margin. Override per-deployment
+  // via LANTERN_BRIDGE_SEND_DEDUP_MS (e.g., bump to 6 hours for slow
+  // shared-Mac iCloud sync, or shrink for a memory-tight host). The
+  // persistent on-disk store (sent.json) survives bridge restarts
+  // independently.
+  private static readonly BRIDGE_SEND_DEDUP_MS =
+    Number(process.env.LANTERN_BRIDGE_SEND_DEDUP_MS) > 0
+      ? Number(process.env.LANTERN_BRIDGE_SEND_DEDUP_MS)
+      : 60 * 60_000;
+  private static readonly BRIDGE_SEND_MAX_ENTRIES =
+    Number(process.env.LANTERN_BRIDGE_SEND_MAX_ENTRIES) > 0
+      ? Number(process.env.LANTERN_BRIDGE_SEND_MAX_ENTRIES)
+      : 500;
   private bridgeSendsPersistPath: string = "";
   private bridgeSendsDirty: boolean = false;
   private bridgeSendsPersistTimer: NodeJS.Timeout | null = null;
@@ -204,6 +212,12 @@ export class IMessageSession {
   // implicitly to 1-per-chat because we overwrite on each new message.
   private queuedQuery: Map<string, { text: string; queuedAt: Date | number }> = new Map();
   private static readonly QUEUED_QUERY_TTL_MS = 5 * 60_000; // 5 min — past that, the user has moved on
+
+  // Per-handle cache of the most recent chatRowid. Lets the queue
+  // drain (which doesn't have the original row in scope) still pull
+  // the correct recent transcript for the active chat — generic,
+  // works for any handle, not just the first self-chat we saw.
+  private lastChatRowidForHandle: Map<string, number> = new Map();
   // Throttle for the busy-nudge message ("⏳ still working …"). Without
   // this, every inbound while busy fires another nudge, and each
   // nudge cross-device-echoes — easy to send 10+ in a row. Cap at
@@ -866,7 +880,7 @@ export class IMessageSession {
           this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "fromMe owner-query skipped — chat busy");
           return;
         }
-        void this.handleOwnerDocQuery(row.handle, text);
+        void this.handleOwnerDocQuery(row.handle, text, row.chatRowid);
         return;
       }
 
@@ -1117,7 +1131,10 @@ export class IMessageSession {
       }
       this.logger.info({ query: text.slice(0, 80), chatRowid: row.chatRowid }, "owner self-chat → agentic pipeline (LLM-driven tools)");
       this.lastDocQueryAt.set(row.chatRowid, Date.now());
-      void this.handleOwnerDocQuery(row.handle, text);
+      // Cache the chatRowid against the handle so the queue drain can
+      // pull recent transcript correctly even when it fires later.
+      this.lastChatRowidForHandle.set(row.handle, row.chatRowid);
+      void this.handleOwnerDocQuery(row.handle, text, row.chatRowid);
       return;
     }
 
@@ -1685,6 +1702,7 @@ export class IMessageSession {
   private async handleOwnerDocQuery(
     jid: string,
     query: string,
+    chatRowid: number = 0,
   ): Promise<void> {
     this.busyChat.add(jid);
     try {
@@ -1733,11 +1751,12 @@ export class IMessageSession {
     // Recent thread transcript so the LLM understands what came just
     // before. "yeah do it" / "send me the second one" / "what about
     // the other one" all need the recent history to make sense.
-    // Pull from any known self-chat rowid for this handle — the set
-    // is populated lazily by isSelfChat() on first poll, so by the
-    // time the user has typed once this is reliable.
-    const chatRowidGuess = this.selfChatRowIds.size > 0 ? Array.from(this.selfChatRowIds)[0] : 0;
-    const recentTranscript = chatRowidGuess ? this.buildRecentTranscript(chatRowidGuess) : "";
+    // Prefer the chatRowid passed by the caller (always accurate for
+    // the active chat); fall back to any known self-chat rowid for
+    // robustness when the queue drain fires without a chatRowid in
+    // scope.
+    const effectiveChatRowid = chatRowid || (this.selfChatRowIds.size > 0 ? Array.from(this.selfChatRowIds)[0] : 0);
+    const recentTranscript = effectiveChatRowid ? this.buildRecentTranscript(effectiveChatRowid) : "";
     const today = new Date().toISOString().slice(0, 10);
     const ownerName = process.env.LANTERN_OWNER_NAME || "Shekhar";
     const systemHint = [
@@ -1894,7 +1913,7 @@ export class IMessageSession {
         const age = Date.now() - (queued.queuedAt as number);
         if (age < IMessageSession.QUEUED_QUERY_TTL_MS) {
           this.logger.info({ chat: jid, ageMs: age, textPreview: queued.text.slice(0, 60) }, "draining queued query");
-          void this.handleOwnerDocQuery(jid, queued.text);
+          void this.handleOwnerDocQuery(jid, queued.text, this.lastChatRowidForHandle.get(jid) || 0);
         } else {
           this.logger.info({ chat: jid, ageMs: age }, "dropping queued query — too old");
         }

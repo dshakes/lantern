@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,26 @@ type LlmProxyHandler struct {
 // NewLlmProxyHandler creates a new LlmProxyHandler.
 func NewLlmProxyHandler(srv *server.Server, auth *AuthHandler) *LlmProxyHandler {
 	return &LlmProxyHandler{srv: srv, auth: auth}
+}
+
+// maxToolTurnsEnv returns the tool-call budget per LLM turn. Defaults
+// to 12 (covers realistic cross-source synthesis: docs + Gmail +
+// Calendar + iMessage + WhatsApp + 2-3 follow-up reads + 1 synthesis
+// turn). Override via LANTERN_LLM_MAX_TURNS for deployments that need
+// more headroom (multi-step research) or less (cost-bounded).
+func maxToolTurnsEnv() int {
+	v := os.Getenv("LANTERN_LLM_MAX_TURNS")
+	if v == "" {
+		return 12
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 12
+	}
+	if n > 40 {
+		return 40 // hard ceiling — runaway loops past here are almost certainly bugs
+	}
+	return n
 }
 
 func (h *LlmProxyHandler) logger() *zap.Logger {
@@ -644,7 +665,7 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 			}
 			writeEvt(evt)
 		}
-		text, _, _, _, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, onToolCall, 12)
+		text, _, _, _, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, onToolCall, maxToolTurnsEnv())
 		if err != nil {
 			writeEvt(map[string]any{"type": "error", "message": err.Error()})
 			return
@@ -659,7 +680,7 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 	}
 
 	// Non-streaming: assemble + return JSON.
-	text, _, tin, tout, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, nil, 12)
+	text, _, tin, tout, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, nil, maxToolTurnsEnv())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -1525,12 +1546,7 @@ func (h *LlmProxyHandler) callLLMWithTools(
 		return txt, nil, ti, to, e
 	}
 	if maxTurns <= 0 {
-		// Cross-source queries (docs + Gmail + Calendar + WhatsApp
-		// history) routinely need 8-10 tool calls before the model has
-		// enough to synthesize. 5 was too tight; 12 covers the
-		// realistic worst case (search → read multiple → cross-check
-		// across 3+ sources) without inviting runaway loops.
-		maxTurns = 12
+		maxTurns = maxToolTurnsEnv()
 	}
 
 	// Local working copy of messages; we append assistant + tool messages
