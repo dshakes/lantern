@@ -251,6 +251,15 @@ export class IMessageSession {
     queuedAt: number;
   }> = [];
   private static readonly PENDING_META_TTL_MS = 30_000;
+  // TAPBACK DEDUP. The same 👎 reaction lands in chat.db twice when
+  // two Apple IDs are signed into Messages (one row per account view).
+  // Without dedup, handleTapbackRetry fires twice for the same target
+  // GUID → owner sees two retry messages back-to-back. Key on the
+  // TARGET msg guid (what was reacted to) + type, with a 60s window
+  // that swallows cross-device echo without blocking a genuine
+  // second-thought 👎 minutes later.
+  private recentTapbacks: Array<{ targetGuid: string; type: number; ts: number }> = [];
+  private static readonly TAPBACK_DEDUP_MS = 60_000;
   // Throttle for the busy-nudge message ("⏳ still working …"). Without
   // this, every inbound while busy fires another nudge, and each
   // nudge cross-device-echoes — easy to send 10+ in a row. Cap at
@@ -806,6 +815,29 @@ export class IMessageSession {
         this.isOwnerChatRow(row) &&
         this.bridgeReplyMeta.has(row.associatedMessageGuid)
       ) {
+        // CROSS-DEVICE TAPBACK DEDUP. The 👎 echoes once per Apple ID
+        // signed into Messages — same target GUID, different rowid.
+        // Without this guard the retry fires N times back-to-back.
+        const now = Date.now();
+        this.recentTapbacks = this.recentTapbacks.filter(
+          (e) => now - e.ts < IMessageSession.TAPBACK_DEDUP_MS,
+        );
+        const seen = this.recentTapbacks.find(
+          (e) => e.targetGuid === row.associatedMessageGuid && e.type === row.associatedMessageType,
+        );
+        if (seen) {
+          this.logger.debug(
+            { rowid: row.rowid, targetGuid: row.associatedMessageGuid },
+            "duplicate tapback — skipping (cross-device echo)",
+          );
+          return;
+        }
+        this.recentTapbacks.push({
+          targetGuid: row.associatedMessageGuid,
+          type: row.associatedMessageType,
+          ts: now,
+        });
+
         this.logger.info(
           { rowid: row.rowid, targetGuid: row.associatedMessageGuid },
           "self-eval: 👎 tapback on bot reply — triggering critique-retry",
@@ -1990,13 +2022,40 @@ export class IMessageSession {
         { withTools: false }, // critique fixes style/clarity, not new tool calls
       );
 
-      if (!retried || retried.trim().length === 0) {
-        await this.send(recipientHandle, "(couldn't generate a better version — try rephrasing your ask)");
+      const trimmed = (retried || "").trim();
+      // Reject degenerate retries: empty, emoji-only, or so short it
+      // can't carry a real answer to the original inbound. LLMs
+      // sometimes return just "🙂" or "ok" when stuck in critique
+      // mode — that's strictly worse than the disliked reply.
+      const hasWordChar = /[A-Za-z0-9ऀ-ॿ぀-ヿ一-鿿]/.test(trimmed);
+      if (!trimmed || !hasWordChar || trimmed.length < 3) {
+        this.logger.warn(
+          { targetMsgGuid, retriedLen: trimmed.length, retried: trimmed.slice(0, 40) },
+          "self-eval retry rejected — degenerate output (no word chars / too short)",
+        );
+        await this.send(
+          recipientHandle,
+          "(retry didn't produce a real fix — what was off about it?)",
+        );
         return;
       }
 
-      await this.send(recipientHandle, retried.trim());
-      this.logger.info({ targetMsgGuid, retriedLen: retried.length }, "self-eval: retry delivered (imessage)");
+      // Reject literal-no-change: if the retry is byte-equal to the
+      // disliked reply, the critique loop produced nothing useful.
+      if (trimmed === (meta.replyText || "").trim()) {
+        this.logger.warn(
+          { targetMsgGuid },
+          "self-eval retry rejected — identical to original disliked reply",
+        );
+        await this.send(
+          recipientHandle,
+          "(same answer — need a hint on what was off)",
+        );
+        return;
+      }
+
+      await this.send(recipientHandle, trimmed);
+      this.logger.info({ targetMsgGuid, retriedLen: trimmed.length }, "self-eval: retry delivered (imessage)");
     } catch (err) {
       this.logger.warn({ err, targetMsgGuid }, "self-eval retry exception (imessage)");
       try { await this.send(recipientHandle, "(retry hit an error — try again in a sec)"); } catch {}
