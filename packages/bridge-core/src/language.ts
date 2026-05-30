@@ -247,7 +247,15 @@ export function detectLanguageHints(text: string): LanguageHint {
 }
 
 /** Map a detected language → human-readable guidance for the LLM
- *  persona prompt. Returns "" for English (no extra guidance needed). */
+ *  persona prompt. Returns "" for English (no extra guidance needed).
+ *
+ *  IMPORTANT: vocabulary preferences (specific words the owner avoids
+ *  or prefers in this language) live in the owner profile's
+ *  "## Nativity" section and are surfaced via the `Who you are` block.
+ *  This modality block tells the LLM to CONSULT that profile for
+ *  style — so individual quirks (e.g. "I never use the 'ra' particle
+ *  in Telugu") propagate without us having to hard-code them per
+ *  language here. */
 export function languageModalityHint(hint: LanguageHint, opts: { nativity?: string } = {}): string {
   if (hint.primary === "english" || hint.confidence < 0.4) return "";
   const langName: Record<DetectedLanguage, string> = {
@@ -282,5 +290,10 @@ export function languageModalityHint(hint: LanguageHint, opts: { nativity?: stri
   if (hint.mixed) {
     lines.push(`The user code-switched between English and ${lang}. Same — code-switch the same way they do.`);
   }
+  // Always-on reminder: the owner's profile (above in this prompt)
+  // may include specific vocabulary preferences for THIS language
+  // (words to use, particles to avoid, etc.). Honor them strictly —
+  // they encode personal style that no generic dialect rule captures.
+  lines.push(`Honor any vocabulary preferences from the owner profile above — specific words/particles they prefer or avoid take precedence over generic dialect norms. If the profile says "never use X", DO NOT use X.`);
   return lines.join("\n");
 }
