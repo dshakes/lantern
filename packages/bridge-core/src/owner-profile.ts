@@ -32,6 +32,10 @@ export interface OwnerProfile {
   /** handle/name (lowercased) -> relationship label. Parsed from a
    *  "## Relationships" section if present. */
   relationships: Map<string, string>;
+  /** One-line nativity/origin string from a "## Nativity" or
+   *  "## Languages" section, used by the language-modality hint so the
+   *  bot replies in the right regional dialect. Empty when not set. */
+  nativity: string;
 }
 
 const RELOAD_TTL_MS = 30_000;
@@ -109,6 +113,13 @@ export class OwnerProfileStore {
     return this.get()?.prose ?? "";
   }
 
+  /** One-line nativity / origin string used to bias the LLM toward
+   *  the owner's regional dialect when replying in a non-English
+   *  language. Returns "" when the profile has no Nativity section. */
+  nativity(): string {
+    return this.get()?.nativity ?? "";
+  }
+
   /** Formatted "Name → relationship" lines for prompt injection. Used
    *  by the agentic pipeline so the LLM can answer "who is my son?" /
    *  "what's my wife's name?" directly from profile knowledge, without
@@ -175,6 +186,7 @@ export class OwnerProfileStore {
 export function parseProfile(raw: string): OwnerProfile {
   const relationships = new Map<string, string>();
   const proseLines: string[] = [];
+  const nativityLines: string[] = [];
 
   // Markdown section heading: "## Title". We only treat level-2+ ("##",
   // "###", ...) as section boundaries. A single "#" is reserved for the
@@ -188,6 +200,7 @@ export function parseProfile(raw: string): OwnerProfile {
 
   const lines = raw.split(/\r?\n/);
   let inRelationships = false;
+  let inNativity = false;
   // Everything before the first "## " section (the "# Owner profile"
   // title + the "Do NOT put secrets here" instructional preamble) is
   // guidance for the human, NOT content about the owner. Skip it so it
@@ -198,10 +211,24 @@ export function parseProfile(raw: string): OwnerProfile {
     if (section !== null) {
       seenFirstSection = true;
       inRelationships = /relationship|contacts?|people/i.test(section);
+      // "## Nativity", "## Languages", "## Origin", "## Background" all
+      // map to the nativity slot. The line itself stays in prose so the
+      // model still sees the header text.
+      inNativity = /\b(nativity|language|languages|origin|mother\s*tongue|background\s+&\s+language)\b/i.test(section);
       if (!inRelationships) proseLines.push(line);
       continue;
     }
     if (!seenFirstSection) continue; // pre-section preamble — drop
+    if (inNativity) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith("#")) {
+        // Strip leading list marker for the dedicated nativity slot.
+        nativityLines.push(trimmed.replace(/^[-*]\s*/, ""));
+      }
+      // Fall through to prose so it also lives in the free-form context.
+      proseLines.push(line);
+      continue;
+    }
     if (inRelationships) {
       const trimmed = line.trim();
       // Skip blank lines, the top "# Owner profile" title, and the
@@ -244,6 +271,7 @@ export function parseProfile(raw: string): OwnerProfile {
   return {
     prose: proseLines.join("\n").trim(),
     relationships,
+    nativity: nativityLines.join(" ").trim(),
   };
 }
 

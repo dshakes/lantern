@@ -40,6 +40,7 @@ import {
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
+import { detectLanguageHints, languageModalityHint } from "@lantern/bridge-core/language";
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
@@ -3449,6 +3450,17 @@ export class WhatsAppSession {
     // rough recent transcript. Grounds the reply in what's being discussed
     // rather than answering the last line in a vacuum.
     const recentTranscript = this.buildRecentTranscript(from, opts.isGroup);
+    // Detect inbound language so the reply can match it (script + dialect).
+    // Bias the dialect by the owner's nativity (parsed from their profile).
+    const langHint = detectLanguageHints(text);
+    const nativity = this.ownerProfileStore.nativity();
+    const languageModality = languageModalityHint(langHint, { nativity });
+    if (languageModality) {
+      this.logger.info(
+        { from, lang: langHint.primary, confidence: langHint.confidence, nativeScript: langHint.hasNativeScript, romanized: langHint.hasRomanized },
+        "language-modality engaged",
+      );
+    }
     let systemHint = agentPersonaPrompt(
       ownerName,
       style,
@@ -3460,6 +3472,7 @@ export class WhatsAppSession {
         ownerProfile,
         relationship,
         recentTranscript,
+        languageModality,
       }
     );
 
