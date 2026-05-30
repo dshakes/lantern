@@ -53,6 +53,7 @@ import {
 } from "@lantern/bridge-core/personal-docs";
 import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
 import { detectLanguageHints, languageModalityHint } from "@lantern/bridge-core/language";
+import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 
 // Normalize a text body for echo dedup. chat.db sometimes mutates
 // whitespace, line endings, or casing on round-trips through iCloud
@@ -1764,10 +1765,91 @@ export class IMessageSession {
     // LLM could also call those tools) but gets results in the prompt
     // before the first round-trip.
     const client = defaultConnectorClient(this.logger);
-    const apptBlock = looksLikeAppointmentQuery(query)
-      ? await prefetchAppointmentContext(client, query, this.logger).catch(() => null)
-      : null;
-    this.logger.info({ ms: Date.now() - startedAt, hasAppt: !!apptBlock }, "agentic prefetch done");
+    // ROSTER pre-fetch: when the query is a "who came / who's in"
+    // question, hand the LLM the full WhatsApp + iMessage group
+    // rosters that match the topic tokens BEFORE it starts writing.
+    // Without this, the LLM lazy-paths to search_personal_files,
+    // finds insurance/visa with a SUBSET of names, and stops.
+    const rosterSignal = looksLikeRosterQuery(query);
+    const rosterAdapters: RosterPrefetchAdapter[] = [];
+    // iMessage groups (chat.db).
+    rosterAdapters.push({
+      surface: "imessage",
+      listGroups: async () => this.db.listGroups().map((g) => ({
+        id: String(g.chatRowid),
+        name: g.name,
+        participantCount: g.participantCount,
+      })),
+      getGroupMembers: async (opts) => {
+        const res = this.db.getGroupMembers({
+          chatRowid: opts.id ? parseInt(opts.id, 10) || undefined : undefined,
+          name: opts.name,
+        });
+        if (!res) return null;
+        return {
+          id: String(res.chatRowid),
+          name: res.name,
+          // chat.db only has handles (phones/emails). Try to humanize
+          // via the contactNames map; fall back to the handle itself.
+          members: res.members.map((h) => ({
+            name: this.contactNames.get(h) || h,
+            isAdmin: false,
+          })),
+        };
+      },
+    });
+    // WhatsApp groups — proxy to the WhatsApp bridge over loopback.
+    const waBase = (process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
+    rosterAdapters.push({
+      surface: "whatsapp",
+      listGroups: async () => {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 5000);
+        try {
+          const res = await fetch(`${waBase}/session/${this.tenantId}/whatsapp/groups`, { signal: ctrl.signal });
+          if (!res.ok) return [];
+          const data = (await res.json()) as { groups?: Array<{ jid: string; name: string; participants: number }> };
+          return (data.groups || []).map((g) => ({ id: g.jid, name: g.name, participantCount: g.participants }));
+        } catch { return []; }
+        finally { clearTimeout(t); }
+      },
+      getGroupMembers: async (opts) => {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 5000);
+        try {
+          const res = await fetch(`${waBase}/session/${this.tenantId}/whatsapp/group`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jid: opts.id, name: opts.name }),
+            signal: ctrl.signal,
+          });
+          if (!res.ok) return null;
+          const data = (await res.json()) as { jid: string; name: string; members: Array<{ name: string; isAdmin: boolean }> };
+          return { id: data.jid, name: data.name, members: data.members };
+        } catch { return null; }
+        finally { clearTimeout(t); }
+      },
+    });
+
+    const [apptBlock, rosterResults] = await Promise.all([
+      looksLikeAppointmentQuery(query)
+        ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
+        : Promise.resolve(null),
+      rosterSignal.isRoster
+        ? prefetchRoster(rosterSignal, rosterAdapters, { maxGroupsPerSurface: 3 }).catch(() => [])
+        : Promise.resolve([]),
+    ]);
+    const rosterBlock = formatRosterBlock(rosterSignal, rosterResults);
+    this.logger.info(
+      {
+        ms: Date.now() - startedAt,
+        hasAppt: !!apptBlock,
+        isRoster: rosterSignal.isRoster,
+        rosterTokens: rosterSignal.tokens,
+        rosterMatches: rosterResults.flatMap((r) => r.matches.map((m) => `${r.surface}:${m.groupName}`)),
+      },
+      "agentic prefetch done",
+    );
 
     // OWNER PROFILE: who I am, my voice, my people. This is the SAME
     // context the natural-chat path uses. Without it, "who is my son?"
@@ -1848,6 +1930,7 @@ export class IMessageSession {
       "  • Mail draft:     [MAIL:to@x.com|Subject|Body]",
       "OFFER-then-CONFIRM: never fire an action on first mention. End with one short question. Only emit the marker on the user's next-turn confirmation ('yes', 'sure', 'do it').",
       apptBlock ? "\n" + apptBlock : "",
+      rosterBlock ? "\n" + rosterBlock : "",
     ].filter(Boolean).join("\n");
 
     // First attempt. withTools=true so the agent has the personal-docs
