@@ -69,6 +69,10 @@ import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actio
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
+import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
+import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
+import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
+import { PresenceTracker } from "@lantern/bridge-core/presence";
 
 export type IMessageConnectionState =
   | "starting"
@@ -327,6 +331,8 @@ export class IMessageSession {
   }
   private ownerProfileStore: OwnerProfileStore;
   private macActions: MacActions;
+  private dislikeMemory: DislikeMemory;
+  private presence: PresenceTracker;
 
   constructor(tenantId: string, baseStateDir: string, logger: Logger) {
     this.tenantId = tenantId;
@@ -345,6 +351,8 @@ export class IMessageSession {
     this.docs = new PersonalDocs(defaultPersonalDocsConfig(this.stateDir), this.logger);
     this.macActions = new MacActions(this.logger);
     this.ownerProfileStore = new OwnerProfileStore(this.logger);
+    this.dislikeMemory = new DislikeMemory({ logger: this.logger });
+    this.presence = new PresenceTracker({ logger: this.logger });
 
     // Screen-context provider — OPT-IN via LANTERN_SCREEN_OCR=on.
     // OCR fn directly calls the control-plane /v1/vision/ocr endpoint
@@ -658,6 +666,21 @@ export class IMessageSession {
   async send(to: string, text: string): Promise<{ ok: boolean; reason?: string }> {
     if (this.state !== "ready") {
       return { ok: false, reason: `bridge not ready (state=${this.state})` };
+    }
+    // FINAL PASS — verifiable-claims rewriter. Catches "I sent him an
+    // email" / "I added it to your calendar" / "I told him" when no
+    // such action was performed and rewrites to honest intent. Skip
+    // for bridge-self status messages (acks, "thinking…") via the
+    // bot-self prefix check so we don't molest those.
+    if (text && !isBotSelfMessage(text)) {
+      const verdict = verifyClaims(text);
+      if (verdict.rewrites.length > 0) {
+        this.logger.info(
+          { to, rewrites: verdict.rewrites },
+          "verifiable-claims rewrote outbound (false-action claim guarded)",
+        );
+        text = verdict.text;
+      }
     }
     const res = await this.sender.send(to, text);
     if (!res.ok) return res;
@@ -1515,6 +1538,20 @@ export class IMessageSession {
         "language-modality engaged",
       );
     }
+    // World-class authenticity blocks: per-contact style fingerprint,
+    // dislike memory, live presence. Each is best-effort; if any data
+    // source fails the block is simply empty and the persona falls
+    // back to the prior behavior.
+    const contactStyleBlock = !isGroup ? styleBlockFor(ownerSamples) : "";
+    const dislikeEntries = !isGroup ? await this.dislikeMemory.forJid(row.handle, 3) : [];
+    const dislikeBlock = formatDislikeBlock(dislikeEntries);
+    const presenceSnap = await this.presence.current({
+      nextEvent: async () => {
+        try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
+      },
+    });
+    const presenceLine = presenceSnap.line || "";
+
     let systemHint = agentPersonaPrompt(ownerName, style, isGroup, {
       ownerSamples,
       disclosed: false,
@@ -1523,6 +1560,9 @@ export class IMessageSession {
       relationship,
       recentTranscript,
       languageModality,
+      contactStyleBlock,
+      dislikeBlock,
+      presence: presenceLine,
     });
     // Per-contact memory: facts the user has captured about this
     // contact (their daughter is Maya, works at Stripe, etc).
@@ -2260,6 +2300,15 @@ export class IMessageSession {
       return;
     }
     this.logger.info({ targetMsgGuid, inboundLen: meta.inboundText.length }, "self-eval: 👎 tapback → critique-retry");
+    // Permanent calibration: record the (inbound, bad-reply) pair so
+    // future replies to this contact AVOID the same shape. The good
+    // reply (if the retry succeeds) is patched in below.
+    void this.dislikeMemory.record({
+      jid: meta.handle,
+      inbound: meta.inboundText,
+      badReply: meta.replyText,
+      channel: "imessage",
+    });
 
     try {
       const critiqueSystemHint = [
@@ -2346,6 +2395,10 @@ export class IMessageSession {
       }
 
       await this.send(recipientHandle, trimmed);
+      // Patch the dislike record with the accepted correction so
+      // future prompts can show both shapes (BAD + GOOD) for
+      // contextual calibration.
+      void this.dislikeMemory.patchLastWithGood(meta.handle, trimmed);
       this.logger.info({ targetMsgGuid, retriedLen: trimmed.length }, "self-eval: retry delivered (imessage)");
     } catch (err) {
       this.logger.warn({ err, targetMsgGuid }, "self-eval retry exception (imessage)");

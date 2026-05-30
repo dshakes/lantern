@@ -48,6 +48,10 @@ import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actio
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
+import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
+import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
+import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
+import { PresenceTracker } from "@lantern/bridge-core/presence";
 import { extname } from "path";
 
 // MIME map for sendDocument — WhatsApp's UI shows a file-type icon
@@ -962,6 +966,8 @@ export class WhatsAppSession {
   private personal: PersonalClient;
   private calendar: CalendarLookup;
   private ownerProfileStore: OwnerProfileStore;
+  private dislikeMemory: DislikeMemory;
+  private presence: PresenceTracker;
   private socket: ReturnType<typeof makeWASocket> | null = null;
   private listeners: Set<WebSocket> = new Set();
   private currentQR: string | null = null;
@@ -1123,6 +1129,8 @@ export class WhatsAppSession {
     this.personal = new PersonalClient(this.logger);
     this.calendar = new CalendarLookup(this.logger);
     this.ownerProfileStore = new OwnerProfileStore(this.logger);
+    this.dislikeMemory = new DislikeMemory({ logger: this.logger });
+    this.presence = new PresenceTracker({ logger: this.logger });
     this.docs = new PersonalDocs(defaultPersonalDocsConfig(this.authDir), this.logger);
     this.macActions = new MacActions(this.logger);
     // User preferences (monitored groups, paused contacts, mute) live
@@ -2045,6 +2053,20 @@ export class WhatsAppSession {
   ) {
     if (!this.socket || !this.connected) {
       throw new Error("Not connected");
+    }
+    // FINAL PASS — verifiable-claims rewriter. Catches false-action
+    // claims ("I sent him", "I added it") with no matching tool
+    // invocation and rewrites to honest intent. Skip bridge-self
+    // prefixes (acks/nudges) so they don't get mangled.
+    if (text && !isBotSelfMessage(text)) {
+      const verdict = verifyClaims(text);
+      if (verdict.rewrites.length > 0) {
+        this.logger.info(
+          { to, rewrites: verdict.rewrites },
+          "verifiable-claims rewrote outbound (false-action claim guarded)",
+        );
+        text = verdict.text;
+      }
     }
     // Ensure the JID format is correct
     const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
@@ -4147,6 +4169,15 @@ export class WhatsAppSession {
       try { await this.confirmToSelf("noted — what was off?"); } catch {}
       return;
     }
+    // Permanent calibration: persist (inbound, bad-reply) so future
+    // replies to this contact AVOID the same shape. Patched with the
+    // accepted retry below.
+    void this.dislikeMemory.record({
+      jid: meta.jid,
+      inbound: meta.inboundText,
+      badReply: meta.replyText,
+      channel: "whatsapp",
+    });
 
     try {
       const critiqueSystemHint = [
@@ -4193,6 +4224,9 @@ export class WhatsAppSession {
           surface: meta.surface,
         });
       }
+      // Patch the dislike record with the accepted correction so
+      // future prompts can show BAD + GOOD for contextual calibration.
+      void this.dislikeMemory.patchLastWithGood(meta.jid, retried.trim());
       this.logger.info({ jid, originalMsgId: msgId, retriedLength: retried.length }, "self-eval: retry delivered");
     } catch (err) {
       this.logger.warn({ err, jid, msgId }, "self-eval retry exception");
@@ -4365,6 +4399,19 @@ export class WhatsAppSession {
         "language-modality engaged",
       );
     }
+    // World-class authenticity blocks: per-contact style fingerprint,
+    // dislike memory, live presence. Each best-effort — empty string
+    // when data isn't available, persona falls back to prior behavior.
+    const contactStyleBlock = !opts.isGroup ? styleBlockFor(ownerSamples) : "";
+    const dislikeEntries = !opts.isGroup ? await this.dislikeMemory.forJid(from, 3) : [];
+    const dislikeBlock = formatDislikeBlock(dislikeEntries);
+    const presenceSnap = await this.presence.current({
+      nextEvent: async () => {
+        try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
+      },
+    });
+    const presenceLine = presenceSnap.line || "";
+
     let systemHint = agentPersonaPrompt(
       ownerName,
       style,
@@ -4377,6 +4424,9 @@ export class WhatsAppSession {
         relationship,
         recentTranscript,
         languageModality,
+        contactStyleBlock,
+        dislikeBlock,
+        presence: presenceLine,
       }
     );
 
