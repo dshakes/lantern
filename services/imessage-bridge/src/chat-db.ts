@@ -389,6 +389,87 @@ export class ChatDB {
     }));
   }
 
+  // List all iMessage groups (multi-participant chats) with their
+  // names and participant counts. Used by the LLM tool
+  // `list_imessage_groups` so the bot can find a trip/family/etc
+  // group by name. Sorted by recency.
+  listGroups(): Array<{
+    chatRowid: number;
+    name: string;
+    chatIdentifier: string;
+    participantCount: number;
+  }> {
+    if (!this.db) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT
+           c.ROWID                       AS rowid,
+           COALESCE(c.display_name, '')  AS display_name,
+           COALESCE(c.chat_identifier, '') AS chat_identifier,
+           (SELECT COUNT(*) FROM chat_handle_join chj WHERE chj.chat_id = c.ROWID) AS participant_count
+         FROM chat c
+         WHERE (SELECT COUNT(*) FROM chat_handle_join chj WHERE chj.chat_id = c.ROWID) >= 2
+         ORDER BY c.last_read_message_timestamp DESC
+         LIMIT 500`,
+      )
+      .all() as Array<{
+      rowid: number;
+      display_name: string;
+      chat_identifier: string;
+      participant_count: number;
+    }>;
+    return rows.map((r) => ({
+      chatRowid: r.rowid,
+      name: r.display_name || r.chat_identifier,
+      chatIdentifier: r.chat_identifier,
+      participantCount: r.participant_count,
+    }));
+  }
+
+  // Return all members (handles) of a specific group, looked up by
+  // chatRowid OR by group-name (case-insensitive substring). Generic
+  // enough to answer "who's in the Japan trip group?" — works for
+  // ANY chat the user is part of.
+  getGroupMembers(opts: { chatRowid?: number; name?: string }): {
+    chatRowid: number;
+    name: string;
+    chatIdentifier: string;
+    members: string[];
+  } | null {
+    if (!this.db) return null;
+    let target = opts.chatRowid || 0;
+    if (!target && opts.name && opts.name.trim()) {
+      const all = this.listGroups();
+      const needle = opts.name.trim().toLowerCase();
+      const match = all.find((g) => g.name.toLowerCase().includes(needle));
+      if (!match) return null;
+      target = match.chatRowid;
+    }
+    if (!target) return null;
+    const meta = this.db
+      .prepare(
+        `SELECT COALESCE(display_name, '') AS display_name,
+                COALESCE(chat_identifier, '') AS chat_identifier
+         FROM chat WHERE ROWID = ?`,
+      )
+      .get(target) as { display_name: string; chat_identifier: string } | undefined;
+    if (!meta) return null;
+    const handleRows = this.db
+      .prepare(
+        `SELECT COALESCE(h.id, '') AS handle
+         FROM chat_handle_join chj
+         JOIN handle h ON h.ROWID = chj.handle_id
+         WHERE chj.chat_id = ?`,
+      )
+      .all(target) as Array<{ handle: string }>;
+    return {
+      chatRowid: target,
+      name: meta.display_name || meta.chat_identifier,
+      chatIdentifier: meta.chat_identifier,
+      members: handleRows.map((r) => r.handle).filter(Boolean),
+    };
+  }
+
   // For surfacing to the dashboard health view.
   diagnostics(): { path: string; lastSeenRowid: number; open: boolean } {
     return {

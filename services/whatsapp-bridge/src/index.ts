@@ -550,6 +550,35 @@ app.post("/session/:tenantId/personal-docs/read", async (req, res) => {
 // "what did the family group say during my Turkey trip?". Loopback-
 // only, requireToken auth via the existing /session/* middleware.
 
+app.get("/session/:tenantId/whatsapp/groups", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) { res.status(400).json({ error: "session not started" }); return; }
+  try {
+    const groups = await session.listGroups();
+    res.json({ count: groups.length, groups });
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "whatsapp/groups failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/session/:tenantId/whatsapp/group", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) { res.status(400).json({ error: "session not started" }); return; }
+  const { jid, name } = req.body as { jid?: unknown; name?: unknown };
+  try {
+    const out = await session.getGroupMembers({
+      jid: typeof jid === "string" ? jid : undefined,
+      name: typeof name === "string" ? name : undefined,
+    });
+    if (!out) { res.status(404).json({ error: "group not found" }); return; }
+    res.json(out);
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "whatsapp/group failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 app.post("/session/:tenantId/whatsapp/search", async (req, res) => {
   const session = sessions.get(req.params.tenantId);
   if (!session) { res.status(400).json({ error: "session not started" }); return; }

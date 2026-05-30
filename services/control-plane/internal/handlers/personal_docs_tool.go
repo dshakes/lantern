@@ -33,6 +33,10 @@ const (
 	personalDocsReadTool      = "read_personal_file"
 	imessageHistorySearchTool = "search_imessage_history"
 	whatsappHistorySearchTool = "search_whatsapp_history"
+	imessageGroupsListTool    = "list_imessage_groups"
+	imessageGroupMembersTool  = "get_imessage_group"
+	whatsappGroupsListTool    = "list_whatsapp_groups"
+	whatsappGroupMembersTool  = "get_whatsapp_group"
 
 	// Default bridge URLs (loopback). Override via env.
 	personalDocsBridgeDefaultURL = "http://127.0.0.1:3200" // iMessage bridge
@@ -120,6 +124,56 @@ func personalDocsTools() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        imessageGroupsListTool,
+				"description": "List ALL iMessage group chats the user is in (multi-participant chats) with their display name, chat row id, and participant count. Use this FIRST when the user asks about a 'trip', 'family group', 'friends', or anyone-multi-person context — find the group, then call get_imessage_group for the members.",
+				"parameters": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        imessageGroupMembersTool,
+				"description": "Get the full member list (handles) of an iMessage group chat. Look it up by chatRowid OR by group-name (case-insensitive substring match). Use after list_imessage_groups to confirm WHO is in the group.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"chatRowid": map[string]any{"type": "integer", "description": "Group chat row id from list_imessage_groups. Either this OR `name` is required."},
+						"name":      map[string]any{"type": "string", "description": "Case-insensitive substring of the group name. Either this OR `chatRowid` is required."},
+					},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        whatsappGroupsListTool,
+				"description": "List ALL WhatsApp groups the user is in with their name, JID, and participant count. Use this FIRST when the user asks about a 'trip group', 'family chat', any multi-person WhatsApp context. Then call get_whatsapp_group for the members.",
+				"parameters": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name":        whatsappGroupMembersTool,
+				"description": "Get the full member list (with names where known + admin status) of a WhatsApp group. Look up by JID OR by group-name (case-insensitive substring match). This is how you answer 'who's in the X group' or 'who came to the trip' questions.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"jid":  map[string]any{"type": "string", "description": "WhatsApp group JID (from list_whatsapp_groups). Either this OR `name` is required."},
+						"name": map[string]any{"type": "string", "description": "Case-insensitive substring of the group name. Either this OR `jid` is required."},
+					},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name": whatsappHistorySearchTool,
 				"description": "Search the user's WhatsApp message history (the bridge logs all messages going forward). " +
 					"Filter by keyword, date range (Unix milliseconds), specific JID, sender-name substring, or group-only. " +
@@ -151,7 +205,9 @@ func personalDocsTools() []map[string]any {
 func isPersonalDocsTool(name string) bool {
 	switch name {
 	case personalDocsSearchTool, personalDocsReadTool,
-		imessageHistorySearchTool, whatsappHistorySearchTool:
+		imessageHistorySearchTool, whatsappHistorySearchTool,
+		imessageGroupsListTool, imessageGroupMembersTool,
+		whatsappGroupsListTool, whatsappGroupMembersTool:
 		return true
 	}
 	return false
@@ -258,23 +314,60 @@ func executePersonalDocsTool(ctx context.Context, tenantID, name string, params 
 			body["limit"] = int(v)
 		}
 		endpoint = fmt.Sprintf("%s/session/%s/whatsapp/search", waBase, tenantID)
+	case imessageGroupsListTool:
+		endpoint = fmt.Sprintf("%s/session/%s/imessage/groups", base, tenantID)
+	case imessageGroupMembersTool:
+		if v, ok := params["chatRowid"].(float64); ok {
+			body["chatRowid"] = int(v)
+		}
+		if v, ok := params["name"].(string); ok && strings.TrimSpace(v) != "" {
+			body["name"] = strings.TrimSpace(v)
+		}
+		endpoint = fmt.Sprintf("%s/session/%s/imessage/group", base, tenantID)
+	case whatsappGroupsListTool:
+		endpoint = fmt.Sprintf("%s/session/%s/whatsapp/groups", waBase, tenantID)
+	case whatsappGroupMembersTool:
+		if v, ok := params["jid"].(string); ok && strings.TrimSpace(v) != "" {
+			body["jid"] = strings.TrimSpace(v)
+		}
+		if v, ok := params["name"].(string); ok && strings.TrimSpace(v) != "" {
+			body["name"] = strings.TrimSpace(v)
+		}
+		endpoint = fmt.Sprintf("%s/session/%s/whatsapp/group", waBase, tenantID)
 	default:
 		return nil, fmt.Errorf("personal-docs tool: unknown name %q", name)
 	}
 
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("personal-docs tool: marshal: %w", err)
+	// List-tools are GET (no body). Member-fetch and search are POST.
+	isGet := name == imessageGroupsListTool || name == whatsappGroupsListTool
+	httpMethod := http.MethodPost
+	var payload []byte
+	if isGet {
+		httpMethod = http.MethodGet
+	} else {
+		var merr error
+		payload, merr = json.Marshal(body)
+		if merr != nil {
+			return nil, fmt.Errorf("personal-docs tool: marshal: %w", merr)
+		}
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(personalDocsRequestTimeoutSeconds)*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	var bodyReader *bytes.Reader
+	if payload != nil {
+		bodyReader = bytes.NewReader(payload)
+	} else {
+		bodyReader = bytes.NewReader(nil)
+	}
+	req, err := http.NewRequestWithContext(reqCtx, httpMethod, endpoint, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("personal-docs tool: build request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if !isGet {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

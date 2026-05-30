@@ -8,7 +8,7 @@ import { Boom } from "@hapi/boom";
 import { WebSocket } from "ws";
 import * as QRCode from "qrcode";
 import { join } from "path";
-import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, appendFileSync, statSync } from "fs";
 import type { Logger } from "pino";
 import { AgentClient } from "@lantern/bridge-core/agent";
 import { AttentionClassifier } from "./attention.js";
@@ -208,18 +208,21 @@ export class WhatsAppSession {
     this.historyFlushTimer = null;
     if (this.historyAppendBuffer.length === 0) return;
     try {
-      const fs = require("fs") as typeof import("fs");
+      // Use the already-imported fs module — this file is ESM, so
+      // `require` is not defined. The `appendFileSync`/`statSync` etc.
+      // names below come from the top-level `import { ... } from "fs"`
+      // statements at the top of the file.
       const batch = this.historyAppendBuffer.join("\n") + "\n";
       this.historyAppendBuffer = [];
-      fs.appendFileSync(this.historyFile, batch);
+      appendFileSync(this.historyFile, batch);
       // Truncate on overflow — keep the most recent half.
       try {
-        const st = fs.statSync(this.historyFile);
+        const st = statSync(this.historyFile);
         if (st.size > WhatsAppSession.HISTORY_MAX_BYTES) {
-          const raw = fs.readFileSync(this.historyFile, "utf-8");
+          const raw = readFileSync(this.historyFile, "utf-8");
           const lines = raw.split("\n");
           const kept = lines.slice(Math.floor(lines.length / 2)).join("\n");
-          fs.writeFileSync(this.historyFile, kept);
+          writeFileSync(this.historyFile, kept);
           this.logger.info({ before: st.size, after: kept.length }, "wa-history truncated");
         }
       } catch {}
@@ -255,11 +258,10 @@ export class WhatsAppSession {
       clearTimeout(this.historyFlushTimer);
       this.flushHistory();
     }
-    const fs = require("fs") as typeof import("fs");
-    if (!fs.existsSync(this.historyFile)) return [];
+    if (!existsSync(this.historyFile)) return [];
     let raw: string;
     try {
-      raw = fs.readFileSync(this.historyFile, "utf-8");
+      raw = readFileSync(this.historyFile, "utf-8");
     } catch (err) {
       this.logger.warn({ err }, "history read failed");
       return [];
@@ -1495,6 +1497,60 @@ export class WhatsAppSession {
   }
 
   /**
+   * Returns the full member list of a group by JID OR by name (case-
+   * insensitive substring). Member entries include phone-number JID
+   * and the contact's pushName when known. Used by the LLM tool
+   * `get_whatsapp_group` to answer "who's in the Japan trip group?"
+   * queries — generic, works for any group the user is a member of.
+   */
+  async getGroupMembers(opts: { jid?: string; name?: string }): Promise<{
+    jid: string;
+    name: string;
+    members: Array<{ jid: string; name: string; isAdmin: boolean }>;
+  } | null> {
+    if (!this.socket) return null;
+    let targetJid = (opts.jid || "").trim();
+    let targetName = (opts.name || "").trim().toLowerCase();
+    if (!targetJid && !targetName) return null;
+
+    // Resolve by name → JID via the full group list.
+    if (!targetJid && targetName) {
+      try {
+        const groups = await this.listGroups();
+        const match = groups.find((g) => g.name.toLowerCase().includes(targetName));
+        if (!match) return null;
+        targetJid = match.jid;
+      } catch (err) {
+        this.logger.warn({ err, name: opts.name }, "getGroupMembers: name resolution failed");
+        return null;
+      }
+    }
+
+    try {
+      const meta = (await this.socket.groupMetadata(targetJid)) as {
+        id?: string;
+        subject?: string;
+        participants?: Array<{ id?: string; lid?: string; admin?: string | null }>;
+      };
+      const members = (meta.participants || []).map((p) => {
+        const jid = p.id || p.lid || "";
+        const pushName = this.contactNames.get(jid) || "";
+        const local = jid.split("@")[0];
+        const human = pushName || (local.match(/^\d+$/) ? `+${local}` : local);
+        return { jid, name: human, isAdmin: p.admin === "admin" || p.admin === "superadmin" };
+      });
+      return {
+        jid: meta.id || targetJid,
+        name: (meta.subject || "").trim() || targetJid.split("@")[0],
+        members,
+      };
+    } catch (err) {
+      this.logger.warn({ err, targetJid }, "getGroupMembers: groupMetadata failed");
+      return null;
+    }
+  }
+
+  /**
    * Pre-warm group sessions by fetching metadata for every group the
    * user is in. Fire-and-forget — failures are logged but never thrown
    * because the bridge can still function (1-on-1s) without it.
@@ -2310,13 +2366,27 @@ export class WhatsAppSession {
       `  • Style / identity questions — answer from 'Who you are'.`,
       `  • Conversational follow-ups that don't need fresh data.`,
       `Call tools only when you actually need data the profile doesn't have. The full toolkit:`,
-      `  • search_personal_files / read_personal_file — Mac files (Documents, Desktop, iCloud). Passport, license, green card, I-485, taxes, receipts. PDFs/images OCR'd.`,
-      `  • search_imessage_history — chat.db has YEARS of iMessage DMs + group chats. Filter by keyword, date range (Unix ms), contact handle, groupOnly.`,
-      `  • search_whatsapp_history — WhatsApp messages (DMs + groups). Filter by keyword, date range, jid, fromContact (sender-name substring).`,
+      `  • search_personal_files / read_personal_file — Mac files. Passport, license, green card, I-485, taxes, receipts, insurance, visas. PDFs/images OCR'd.`,
+      `  • list_imessage_groups / get_imessage_group — chat.db iMessage GROUPS. Find a trip/family group by name, then pull members.`,
+      `  • search_imessage_history — chat.db messages (DMs + groups). Filter by keyword, date range, contact handle, groupOnly.`,
+      `  • list_whatsapp_groups / get_whatsapp_group — WhatsApp GROUPS. Find a group by name, then pull members.`,
+      `  • search_whatsapp_history — WhatsApp messages (DMs + groups). Filter by keyword, date range, jid, fromContact.`,
       `  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits.`,
       `  • google-calendar_list_events — anything time-bound, next 30 days.`,
-      `For DATE-RANGE questions ('during my Turkey trip', 'when X happened'): FIRST narrow the date range from the most concrete source (visa doc, calendar, flight email), THEN query search_imessage_history + search_whatsapp_history + gmail_search across that range for the FULL picture. Cross-reference, don't stop at the first source.`,
-      `If you DO call tools, search broadly; never reply "I can't access your files/emails/messages".`,
+      ``,
+      `# Multi-source playbook`,
+      `1. 'Who came on X trip' / 'who's in X group' →`,
+      `   a. list_whatsapp_groups + list_imessage_groups in PARALLEL.`,
+      `   b. find the group whose name contains the trip/topic.`,
+      `   c. get_whatsapp_group(name=…) / get_imessage_group(name=…) for the FULL members.`,
+      `   d. cross-check with personal-docs (visa/insurance often lists travelers).`,
+      `   e. answer with ALL the people from the group, not just docs.`,
+      `2. 'During my X trip' →`,
+      `   a. narrow date range from concrete source (visa, calendar, flight email).`,
+      `   b. search_imessage_history + search_whatsapp_history + gmail_search across that range IN PARALLEL.`,
+      `   c. synthesize across all three; never stop at the first source.`,
+      ``,
+      `Never reply "I can't access your files/emails/messages" — the tools are right here.`,
       ``,
       `# Voice`,
       `  • Direct answer first, lowercase, conversational. 1-3 short lines max.`,
