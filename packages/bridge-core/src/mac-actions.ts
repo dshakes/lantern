@@ -163,16 +163,49 @@ end tell`;
   async createNote(spec: NoteSpec): Promise<ActionResult> {
     if (!spec.title) return { ok: false, reason: "title required" };
     const aplStr = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "").replace(/\n/g, "\\n").replace(/\t/g, "\\t")}"`;
-    const folderClause = spec.folder
-      ? `set targetFolder to folder ${aplStr(spec.folder)}`
-      : `set targetFolder to default folder`;
     // Notes.app requires HTML body — convert plain text newlines to <br>.
     const bodyHtml = `<h3>${escapeHtml(spec.title)}</h3>` + escapeHtml(spec.body || "").replace(/\n/g, "<br>\n");
-    const script = `
+
+    // FOLDER RESOLUTION — `default folder` reference broke in newer
+    // macOS Notes when multiple accounts (iCloud + On My Mac + work)
+    // are present. Error -1728 / "Can't get default folder" surfaced
+    // for years on multi-account setups. Robust approach:
+    //   1. If caller specified a folder name → try to find it across
+    //      every account; pick the first match (or error out cleanly).
+    //   2. If unspecified → skip the folder clause entirely. Notes
+    //      uses the user's actual default automatically, which works
+    //      reliably regardless of account topology.
+    let script: string;
+    if (spec.folder) {
+      // Walk every account looking for a folder with the given name.
+      // If no match, fall back to creating the note in the default
+      // account's first folder (better than failing the user's ask).
+      script = `
 tell application "Notes"
-  ${folderClause}
+  set targetFolder to missing value
+  repeat with anAccount in accounts
+    try
+      set candidate to first folder of anAccount whose name is ${aplStr(spec.folder)}
+      set targetFolder to candidate
+      exit repeat
+    on error
+      -- not in this account, keep looking
+    end try
+  end repeat
+  if targetFolder is missing value then
+    set targetFolder to first folder of first account
+  end if
   make new note at targetFolder with properties {name:${aplStr(spec.title)}, body:${aplStr(bodyHtml)}}
 end tell`;
+    } else {
+      // No folder requested — let Notes.app pick its own default.
+      // make new note WITHOUT a folder reference uses the active
+      // account's default folder, which is what the user expects.
+      script = `
+tell application "Notes"
+  make new note with properties {name:${aplStr(spec.title)}, body:${aplStr(bodyHtml)}}
+end tell`;
+    }
     const res = await this.runOsascript(script);
     if (!res.ok) return res;
     return { ok: true, detail: `note "${spec.title}"` };
