@@ -38,6 +38,13 @@ export interface CommandContext {
   // Master kill switch — when true the bridge MUST refuse to do
   // anything except listen for the off command. Survives restarts.
   setKillSwitch?: (engaged: boolean) => Promise<void> | void;
+  // Draft-approval queue toggle. When ON, VIPs + unfamiliar contacts
+  // queue drafts for the owner to approve. Persisted by the bridge.
+  setApprovals?: (enabled: boolean) => Promise<void> | void;
+  // VIP list management. listVips returns a formatted body; clearVips
+  // removes every entry.
+  listVips?: () => Promise<string> | string;
+  clearVips?: () => Promise<number> | number;
   // Channel name shown in human replies ("iMessage" or "WhatsApp").
   channelLabel: string;
 }
@@ -109,6 +116,26 @@ export async function executeCommand(cmd: ParsedCommand, ctx: CommandContext): P
     case "killswitch-off": {
       if (ctx.setKillSwitch) await ctx.setKillSwitch(false);
       await ctx.reply(`${cmd.echo}\nauto-reply + docs are back online.`);
+      return;
+    }
+    case "approvals-on": {
+      if (ctx.setApprovals) await ctx.setApprovals(true);
+      await ctx.reply(`${cmd.echo}\nVIP + unfamiliar inbound now queues a draft. approve in the dashboard at /personal/drafts.`);
+      return;
+    }
+    case "approvals-off": {
+      if (ctx.setApprovals) await ctx.setApprovals(false);
+      await ctx.reply(`${cmd.echo}\nVIPs stay silent (you handle them); unfamiliar contacts get an authentic auto-reply.`);
+      return;
+    }
+    case "vip-list": {
+      const body = ctx.listVips ? await ctx.listVips() : "VIP listing not available on this channel";
+      await ctx.reply(body);
+      return;
+    }
+    case "vip-clear": {
+      const removed = ctx.clearVips ? await ctx.clearVips() : 0;
+      await ctx.reply(removed > 0 ? `${cmd.echo} — removed ${removed}` : "no VIPs to clear");
       return;
     }
   }
