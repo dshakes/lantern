@@ -55,6 +55,7 @@ import {
 import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
 import { detectLanguageHints, languageModalityHint } from "@lantern/bridge-core/language";
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
+import { ScreenContext, defaultScreenContextConfig } from "@lantern/bridge-core/screen-context";
 
 // Normalize a text body for echo dedup. chat.db sometimes mutates
 // whitespace, line endings, or casing on round-trips through iCloud
@@ -280,10 +281,42 @@ export class IMessageSession {
     this.macActions = new MacActions(this.logger);
     this.ownerProfileStore = new OwnerProfileStore(this.logger);
 
+    // Screen-context provider — OPT-IN via LANTERN_SCREEN_OCR=on.
+    // OCR fn directly calls the control-plane /v1/vision/ocr endpoint
+    // (same one personal-docs uses for scanned PDF pages). Bypasses
+    // personal-docs' isAllowedPath check because screen captures live
+    // in /tmp, not the configured roots.
+    this.screenContext = new ScreenContext(
+      defaultScreenContextConfig(),
+      this.logger,
+      async (pngPath: string): Promise<string> => {
+        try {
+          const fs = await import("fs");
+          const { authedFetch } = await import("@lantern/bridge-core/auth");
+          const buf = fs.readFileSync(pngPath);
+          const res = await authedFetch("/v1/vision/ocr", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              imageDataUrl: `data:image/png;base64,${buf.toString("base64")}`,
+              prompt: "OCR this screen. Capture all visible text accurately. Skip pure decorative elements.",
+            }),
+          });
+          if (!res.ok) return "";
+          const data = (await res.json()) as { text?: string };
+          return (data.text || "").trim();
+        } catch {
+          return "";
+        }
+      },
+    );
+
     mkdirSync(this.stateDir, { recursive: true });
     this.loadState();
     this.loadBridgeSends();
   }
+
+  private screenContext: ScreenContext;
 
   // Open chat.db, check Automation, start polling.
   async start(): Promise<void> {
@@ -306,6 +339,8 @@ export class IMessageSession {
     }
 
     this.setState("ready");
+    // Start screen-context capture (no-op when LANTERN_SCREEN_OCR=off).
+    this.screenContext.start();
     this.everConnected = true;
     this.startPolling();
     this.startDailyDigest();
@@ -385,6 +420,7 @@ export class IMessageSession {
     this.digestStopFn = null;
     this.offlineMonitor?.stop();
     this.offlineMonitor = null;
+    this.screenContext?.stop();
     this.db.close();
     this.sockets.forEach((s) => {
       try { s.close(); } catch {}
@@ -1967,6 +2003,9 @@ export class IMessageSession {
       "For ROSTER questions ('who came on X', 'who's in X'): the group rosters above are the truth. If members show as raw phone numbers (no name), their PARTICIPATION in the group already proves they were part of the trip/event. Answer with the FULL roster from the group; mention the unresolved ones as '+ N more (numbers only — names not in contacts yet)'. Do NOT ask the user if they want you to search further; if you can call search_whatsapp_history / search_imessage_history for the trip date range, JUST DO IT in this same turn.",
       apptBlock ? "\n" + apptBlock : "",
       rosterBlock ? "\n" + rosterBlock : "",
+      // Screen-context (opt-in, off by default). Adds recent
+      // foreground-app OCR snippets the user might be referring to.
+      this.screenContext.recentContext() ? "\n" + this.screenContext.recentContext() : "",
     ].filter(Boolean).join("\n");
 
     // First attempt. withTools=true so the agent has the personal-docs
