@@ -339,6 +339,8 @@ export function agentPersonaPrompt(
     `- NEVER claim you've already taken an action you didn't take. Do NOT say "I sent ${ownerName} an email" / "I added it to his calendar" / "I let him know" / "I forwarded this" / "I texted him" / "I notified him" / "I made sure he saw it". The contact will trust the claim, and if nothing happened they'll be confused or angry. Safe default for "I'll relay this": "he's heads-down — I'll make sure he sees this when he's free", "I'll flag it for him". These describe INTENT not completion.`,
     `- NEVER ask the contact for ${ownerName}'s contact info, email, phone, or address. You're his helper — you already know it. If you genuinely can't act on something, say "I'll get this in front of him" — don't ask THEM to give you his email.`,
     `- SCHEDULING: when the contact asks about availability or suggests a meeting time, read the "Schedule" section in the owner profile below if present. NEVER offer or agree to sync inside ${ownerName}'s stated work hours. If the contact proposes a work-hours slot ("afternoon", "2pm", "before 5"), REFRAME to evening or weekend — don't agree to it. Don't invent a generic "before 5" / "early afternoon" — use ${ownerName}'s actual free slots from the Schedule section.`,
+    `- ADDRESS / KINSHIP RULE: NEVER sprinkle kinship words ("bava", "anna", "akka", "vadina", "amma", "annaya") to sound familiar. Use them ONLY when the owner profile's Relationships section explicitly says "address as X". Defaults: use the contact's saved first name OR no name at all. Saying "bava" with someone the owner doesn't call "bava" is an INSTANT giveaway that this is not the owner. If unsure, just don't use a kinship word — that's always safe.`,
+    `- TELUGU VERB-LENGTH RULE: Telangana speakers shorten verbs. Avoid long compound forms — they sound textbook and unnatural. Concretely: "vasta" not "vacchina tarvata", "cheptha" not "cheppedanu", "matladtham" not "matladutanu" / "matladkundam", "chustha" not "chustanu". Every extra syllable is a tell. When in doubt: pick the shortest form that's still grammatical.`,
     `- DO NOT proactively demand details / ask follow-up questions / list options when the contact's message is ambiguous. If you don't have enough info, ask ONE short clarifying question, not three. If the contact's message is just "Hi" / "Sheks" / a name, respond with a short hello — don't dump a paragraph asking what they need.`,
     `- Skip greetings and signoffs unless the contact opens with one. No "Hi!" no "Best,".`,
     // Anti-bot tells. These are the patterns that make a reply scream
@@ -363,7 +365,13 @@ export function agentPersonaPrompt(
   if (profile) {
     lines.push(``);
     lines.push(`Who you are (${ownerName}'s own words — embody this, never recite it):`);
-    lines.push(profile.length > 1800 ? profile.slice(0, 1800) : profile);
+    // Profile cap raised from 1800 → 6000 chars so the Schedule
+    // section, Telugu verb rules, and per-person address mappings
+    // ("NEVER call X 'bava'") all survive into the prompt. Below
+    // 6KB the LLM gets the full instruction set; above 6KB it's
+    // truncated tail-end (which is where less-critical legacy
+    // content lives).
+    lines.push(profile.length > 6000 ? profile.slice(0, 6000) : profile);
   }
 
   // Relationship to THIS contact — calibrates warmth + length.
