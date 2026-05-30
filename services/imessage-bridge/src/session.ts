@@ -2139,16 +2139,25 @@ export class IMessageSession {
       const critiqueSystemHint = [
         meta.systemHint,
         "",
-        "## CRITIQUE-AND-RETRY MODE",
-        "The owner just tapped 👎 on your previous reply. Re-read the inbound + your prior reply below.",
+        "## CRITIQUE-AND-RETRY MODE — IMPORTANT",
+        "The owner just tapped 👎 on your previous reply. The previous reply was BAD. Your job is to produce a STRUCTURALLY DIFFERENT, BETTER reply — NOT a cosmetic tweak.",
         "",
-        "Step 1 (silent — DO NOT include in your output): briefly identify what was wrong about the prior reply. Common failure modes: too long, too formal, wrong language/script, missed nuance, recited generic info instead of using profile/tools, hallucinated facts, sounded like a bot.",
-        "Step 2: produce a SINGLE corrected reply that fixes the failure. Keep the same intent (answer the same question) but execute it the way the owner actually would.",
+        "Step 1 (silent — do NOT include in output): diagnose the failure. The most common failures:",
+        "  - TOO TERSE: returned just a name/word/emoji when the owner asked WHO/WHAT/WHY — a one-word answer to 'who is X' is almost always wrong; the owner wants context (relationship, age, role, recent event).",
+        "  - DIDN'T USE PROFILE: you have full access to owner profile + relationships above (15+ contacts with roles, dates, family tree). The prior reply ignored them and just regurgitated the question token.",
+        "  - WRONG TONE: sounded like a search result instead of a friend.",
+        "  - INCOMPLETE: gave one fact when the question implied more (e.g. 'who is my son' → name AND relationship/age/most-recent context).",
+        "",
+        "Step 2: produce a single corrected reply that:",
+        "  - Is at least 2× longer than the prior reply when the original was a 1-3 word answer (one-word retries are auto-rejected).",
+        "  - Uses concrete context from the owner profile / relationships / recent messages — name + relationship + one specific detail (DOB, role, last interaction, current status).",
+        "  - Speaks like a close friend who actually knows the owner's life, not a directory lookup.",
+        "  - Matches the owner's language/script (e.g. if they use Telugu/Hindi mixed, reply in kind).",
         "",
         `Original inbound: ${meta.inboundText}`,
-        `Your prior reply (rated bad): ${meta.replyText}`,
+        `Your prior reply (rated bad — DO NOT REPEAT IT): ${meta.replyText}`,
         "",
-        "Output ONLY the corrected reply. No preface, no explanation, no markdown headers.",
+        "Output ONLY the corrected reply text. No preface, no explanation, no markdown headers, no '[ATTACH:]' / '[NOTE:]' markers.",
       ].join("\n");
 
       const retried = await this.agent.respondTo(
@@ -2186,6 +2195,26 @@ export class IMessageSession {
         await this.send(
           recipientHandle,
           "(same answer — need a hint on what was off)",
+        );
+        return;
+      }
+
+      // Reject low-effort expansion: the retry is supposed to be
+      // structurally BETTER (add context, use profile, longer when
+      // the original was terse). If the retry is just the original
+      // with one extra token (e.g. "ved" → "ved mudarapu") and the
+      // original was already a 1-3 word answer, the LLM didn't do
+      // the work — fall back to a probe.
+      const origWords = (meta.replyText || "").trim().split(/\s+/).filter(Boolean).length;
+      const newWords = trimmed.split(/\s+/).filter(Boolean).length;
+      if (origWords <= 3 && newWords <= origWords + 1 && trimmed.length < 30) {
+        this.logger.warn(
+          { targetMsgGuid, origWords, newWords, retried: trimmed },
+          "self-eval retry rejected — low-effort expansion of terse original",
+        );
+        await this.send(
+          recipientHandle,
+          "(still too terse — what context were you looking for?)",
         );
         return;
       }
