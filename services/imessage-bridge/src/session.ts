@@ -55,6 +55,7 @@ import {
 import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
 import { detectLanguageHints, languageModalityHint } from "@lantern/bridge-core/language";
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
+import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { ScreenContext, defaultScreenContextConfig } from "@lantern/bridge-core/screen-context";
 
 // Normalize a text body for echo dedup. chat.db sometimes mutates
@@ -1799,6 +1800,141 @@ export class IMessageSession {
   // regex pre-deciders guessing the shape of the question. If the LLM
   // included [ATTACH:/path] / [CALENDAR:...] / [NOTE:...] / [MAIL:...]
   // markers, the bridge fires the corresponding Mac action.
+  // Build the SubTaskAdapters map for multi-agent fan-out. Symmetric
+  // to the WhatsApp bridge but routed inverse: iMessage adapters
+  // hit the local chat.db directly; WhatsApp adapters proxy over
+  // loopback to the WhatsApp bridge.
+  private buildSubTaskAdapters(originalQuery: string): SubTaskAdapters {
+    const tenantId = this.tenantId;
+    const waBase = (process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
+    return {
+      // iMessage adapters — direct chat.db access.
+      imessageHistory: async (_instruction, hints) => {
+        try {
+          const hits = this.db.searchMessages({
+            keyword: hints?.keyword || originalQuery,
+            sinceMs: hints?.sinceMs,
+            untilMs: hints?.untilMs,
+            limit: 15,
+          });
+          if (hits.length === 0) return `(no iMessage matched "${hints?.keyword || originalQuery}")`;
+          return hits.slice(0, 10).map((h) => {
+            const when = new Date(h.unixMs).toISOString().slice(0, 10);
+            const who = h.fromMe ? "you" : (this.contactNames.get(h.handle) || h.handle || "?");
+            return `[${when}] ${who}: ${h.text.slice(0, 200)}`;
+          }).join("\n");
+        } catch (err) {
+          return `(imessage-history error: ${(err as Error).message})`;
+        }
+      },
+      imessageGroups: async () => {
+        try {
+          const groups = this.db.listGroups();
+          if (groups.length === 0) return "(no iMessage groups)";
+          return groups.slice(0, 12).map((g) => `${g.name} — ${g.participantCount} members`).join("\n");
+        } catch (err) {
+          return `(imessage-groups error: ${(err as Error).message})`;
+        }
+      },
+      // WhatsApp adapters — proxy to the WhatsApp bridge over loopback.
+      whatsappHistory: async (_instruction, hints) => {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 5000);
+          const body: Record<string, unknown> = { keyword: hints?.keyword || originalQuery, limit: 15 };
+          if (typeof hints?.sinceMs === "number") body.sinceMs = hints.sinceMs;
+          if (typeof hints?.untilMs === "number") body.untilMs = hints.untilMs;
+          const res = await fetch(`${waBase}/session/${tenantId}/whatsapp/search`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: ctrl.signal,
+          });
+          clearTimeout(t);
+          if (!res.ok) return `(WhatsApp bridge unreachable — HTTP ${res.status})`;
+          const data = (await res.json()) as { results?: Array<{ ts: number; senderName: string; participant: string; text: string }> };
+          const hits = data.results || [];
+          if (hits.length === 0) return `(no WhatsApp matched "${hints?.keyword || originalQuery}")`;
+          return hits.slice(0, 10).map((h) => {
+            const when = new Date(h.ts).toISOString().slice(0, 10);
+            const who = h.senderName || (h.participant || "").split("@")[0] || "?";
+            return `[${when}] ${who}: ${h.text.slice(0, 200)}`;
+          }).join("\n");
+        } catch (err) {
+          return `(WhatsApp bridge unreachable: ${(err as Error).message})`;
+        }
+      },
+      whatsappGroups: async () => {
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 5000);
+          const res = await fetch(`${waBase}/session/${tenantId}/whatsapp/groups`, { signal: ctrl.signal });
+          clearTimeout(t);
+          if (!res.ok) return `(WhatsApp groups list unreachable — HTTP ${res.status})`;
+          const data = (await res.json()) as { groups?: Array<{ name: string; participants: number; monitored?: boolean }> };
+          const groups = data.groups || [];
+          if (groups.length === 0) return "(no WhatsApp groups)";
+          return groups.slice(0, 12).map((g) => `${g.name} — ${g.participants} members${g.monitored ? " (monitored)" : ""}`).join("\n");
+        } catch (err) {
+          return `(WhatsApp groups error: ${(err as Error).message})`;
+        }
+      },
+      personalDocs: async (_instruction, hints) => {
+        try {
+          const hits = await this.docs.search(hints?.keyword || originalQuery);
+          if (hits.length === 0) return `(no files matched "${hints?.keyword || originalQuery}")`;
+          return hits.slice(0, 6).map((h) => `${h.displayPath} (${h.ext.replace(".", "")}, ${Math.round(h.bytes / 1024)}KB)`).join("\n");
+        } catch (err) {
+          return `(personal-docs error: ${(err as Error).message})`;
+        }
+      },
+      ownerProfile: async () => {
+        const prose = this.ownerProfileStore.prose();
+        const rels = this.ownerProfileStore.relationshipsBlock();
+        if (!prose && !rels) return "(no owner profile)";
+        return [prose, rels].filter(Boolean).join("\n\n").slice(0, 1500);
+      },
+      gmail: async (_instruction, hints) => {
+        try {
+          const { defaultConnectorClient } = await import("@lantern/bridge-core/prefetch");
+          const client = defaultConnectorClient(this.logger);
+          const kw = hints?.keyword || originalQuery;
+          const result = await client.execute("gmail", "search", { query: kw, limit: 8 })
+            .catch((err) => ({ ok: false, error: err.message }));
+          if (!result || (result as { ok?: boolean }).ok === false) {
+            const errMsg = (result as { error?: string })?.error || "unknown";
+            return `(gmail search failed: ${errMsg})`;
+          }
+          const msgs = ((result as { messages?: Array<{ from?: string; subject?: string; snippet?: string }> }).messages || []).slice(0, 6);
+          if (msgs.length === 0) return `(no gmail matched "${kw}")`;
+          return msgs.map((m) => `from ${m.from || "?"} — ${m.subject || ""}${m.snippet ? ` — ${m.snippet.slice(0, 150)}` : ""}`).join("\n");
+        } catch (err) {
+          return `(gmail adapter error: ${(err as Error).message})`;
+        }
+      },
+      googleCalendar: async (_instruction, hints) => {
+        try {
+          const { defaultConnectorClient } = await import("@lantern/bridge-core/prefetch");
+          const client = defaultConnectorClient(this.logger);
+          const params: Record<string, string | number> = { limit: 10 };
+          if (typeof hints?.sinceMs === "number") params.timeMin = new Date(hints.sinceMs).toISOString();
+          if (typeof hints?.untilMs === "number") params.timeMax = new Date(hints.untilMs).toISOString();
+          const result = await client.execute("google-calendar", "list_events", params)
+            .catch((err) => ({ ok: false, error: err.message }));
+          if (!result || (result as { ok?: boolean }).ok === false) {
+            const errMsg = (result as { error?: string })?.error || "unknown";
+            return `(calendar query failed: ${errMsg})`;
+          }
+          const events = ((result as { events?: Array<{ summary?: string; start?: { dateTime?: string; date?: string } }> }).events || []).slice(0, 8);
+          if (events.length === 0) return `(no calendar events in range)`;
+          return events.map((e) => `${e.start?.dateTime || e.start?.date || "?"}: ${e.summary || "(no title)"}`).join("\n");
+        } catch (err) {
+          return `(calendar adapter error: ${(err as Error).message})`;
+        }
+      },
+    };
+  }
+
   private async handleOwnerDocQuery(
     jid: string,
     query: string,
@@ -1902,15 +2038,29 @@ export class IMessageSession {
       },
     });
 
-    const [apptBlock, rosterResults] = await Promise.all([
+    // MULTI-AGENT PLAN — symmetric to the WhatsApp bridge. Planner
+    // emits 2-5 sub-tasks; each runs in parallel against a source
+    // adapter; results pack into a synthesis brief the lead LLM
+    // weaves into ONE reply. Roster + appointment prefetches above
+    // are kept (specialized formatting + pre-date the generic
+    // planner); the planner picks up everything else (history
+    // sweeps, doc + gmail correlations, calendar lookups).
+    const plan = planSubTasks(query);
+    const planAdapters = this.buildSubTaskAdapters(query);
+
+    const [apptBlock, rosterResults, subTaskResults] = await Promise.all([
       looksLikeAppointmentQuery(query)
         ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
         : Promise.resolve(null),
       rosterSignal.isRoster
         ? prefetchRoster(rosterSignal, rosterAdapters, { maxGroupsPerSurface: 3 }).catch(() => [])
         : Promise.resolve([]),
+      plan.shouldDecompose
+        ? executeSubTasks(plan.subTasks, planAdapters, { perTaskTimeoutMs: 8000 }).catch(() => [])
+        : Promise.resolve([]),
     ]);
     const rosterBlock = formatRosterBlock(rosterSignal, rosterResults);
+    const planBlock = formatSubTaskBriefs(query, subTaskResults);
     this.logger.info(
       {
         ms: Date.now() - startedAt,
@@ -1918,6 +2068,11 @@ export class IMessageSession {
         isRoster: rosterSignal.isRoster,
         rosterTokens: rosterSignal.tokens,
         rosterMatches: rosterResults.flatMap((r) => r.matches.map((m) => `${r.surface}:${m.groupName}`)),
+        planDecompose: plan.shouldDecompose,
+        planReason: plan.reasoning,
+        subTaskOk: subTaskResults.filter((s) => s.ok).length,
+        subTaskFail: subTaskResults.filter((s) => !s.ok).length,
+        subTaskMs: subTaskResults.map((s) => `${s.source}:${s.durationMs}`).join(","),
       },
       "agentic prefetch done",
     );
@@ -2003,6 +2158,7 @@ export class IMessageSession {
       "For ROSTER questions ('who came on X', 'who's in X'): the group rosters above are the truth. If members show as raw phone numbers (no name), their PARTICIPATION in the group already proves they were part of the trip/event. Answer with the FULL roster from the group; mention the unresolved ones as '+ N more (numbers only — names not in contacts yet)'. Do NOT ask the user if they want you to search further; if you can call search_whatsapp_history / search_imessage_history for the trip date range, JUST DO IT in this same turn.",
       apptBlock ? "\n" + apptBlock : "",
       rosterBlock ? "\n" + rosterBlock : "",
+      planBlock ? "\n" + planBlock : "",
       // Screen-context (opt-in, off by default). Adds recent
       // foreground-app OCR snippets the user might be referring to.
       this.screenContext.recentContext() ? "\n" + this.screenContext.recentContext() : "",
