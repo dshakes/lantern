@@ -2916,7 +2916,7 @@ export class WhatsAppSession {
       );
       this.logActivity(
         "contact_paused",
-        `You took over the thread with ${jid.split("@")[0]} — auto-reply paused 60m`,
+        `You took over the thread with ${jid.split("@")[0]} — auto-reply paused ${Math.round(PAUSE_TTL_MS / 60_000)}m`,
         { jid, scope: "contact" }
       );
     }
@@ -4310,6 +4310,7 @@ export class WhatsAppSession {
     //     relationship AND no captured facts. An unfamiliar contact —
     //     draft, don't send, so the owner trains trust over time. Once
     //     samples accumulate the gate opens automatically.
+    const draftApprovalsOn = (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
     const lowConfidence =
       !opts.isGroup &&
       ownerSamples.length === 0 &&
@@ -4317,6 +4318,26 @@ export class WhatsAppSession {
       !(await this.personal.factsBlock(from));
     const isVIP = !opts.isGroup && (await this.personal.isVIP(from));
     if (isVIP || lowConfidence) {
+      if (!draftApprovalsOn) {
+        // Default: stay silent. No queue, no cross-channel ping. The
+        // owner manages unfamiliar/VIP contacts manually; the bot
+        // never pretends to speak for them with someone it doesn't
+        // know. Re-enable via LANTERN_DRAFT_APPROVALS=on.
+        const why = isVIP ? "VIP" : "unfamiliar contact";
+        this.logger.info({ from, why }, "auto-reply suppressed (draft approvals off)");
+        this.broadcast({
+          type: "activity",
+          data: {
+            kind: "agent_skipped",
+            summary: `silent on ${why} (drafts disabled)`,
+            detail: draft.slice(0, 200),
+            jid: from,
+            pushName: opts.senderName,
+            timestamp: Date.now(),
+          },
+        });
+        return;
+      }
       const queued = await this.personal.queueDraft(
         from,
         opts.senderName ?? this.contactNames.get(from) ?? undefined,
