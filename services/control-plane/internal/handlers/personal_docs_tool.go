@@ -29,14 +29,15 @@ const (
 	// Tool names. Underscore (not __) because these aren't dispatched
 	// through executeConnectorAction — they have their own dispatch
 	// branch in dispatchTool that bypasses the connector_installs gate.
-	personalDocsSearchTool    = "search_personal_files"
-	personalDocsReadTool      = "read_personal_file"
-	imessageHistorySearchTool = "search_imessage_history"
-	whatsappHistorySearchTool = "search_whatsapp_history"
-	imessageGroupsListTool    = "list_imessage_groups"
-	imessageGroupMembersTool  = "get_imessage_group"
-	whatsappGroupsListTool    = "list_whatsapp_groups"
-	whatsappGroupMembersTool  = "get_whatsapp_group"
+	personalDocsSearchTool      = "search_personal_files"
+	personalDocsReadTool        = "read_personal_file"
+	imessageHistorySearchTool   = "search_imessage_history"
+	whatsappHistorySearchTool   = "search_whatsapp_history"
+	imessageGroupsListTool      = "list_imessage_groups"
+	imessageGroupMembersTool    = "get_imessage_group"
+	whatsappGroupsListTool      = "list_whatsapp_groups"
+	whatsappGroupMembersTool    = "get_whatsapp_group"
+	whatsappHistoryBackfillTool = "backfill_whatsapp_history"
 
 	// Default bridge URLs (loopback). Override via env.
 	personalDocsBridgeDefaultURL = "http://127.0.0.1:3200" // iMessage bridge
@@ -174,6 +175,21 @@ func personalDocsTools() []map[string]any {
 		{
 			"type": "function",
 			"function": map[string]any{
+				"name":        whatsappHistoryBackfillTool,
+				"description": "Ask WhatsApp to deliver OLDER history for a specific group/chat. Use this when search_whatsapp_history returns nothing for the date range the user asked about — the bridge only auto-captures messages going forward, so older ones need an explicit fetch. Requires at least ONE existing message in the chat as an anchor. Returns a requestId; results stream into the history log within seconds and become searchable via search_whatsapp_history.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"jid":   map[string]any{"type": "string", "description": "WhatsApp group/chat JID (from list_whatsapp_groups). Required."},
+						"count": map[string]any{"type": "integer", "description": "How many older messages to request (default 50, max 500)."},
+					},
+					"required": []string{"jid"},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
 				"name": whatsappHistorySearchTool,
 				"description": "Search the user's WhatsApp message history (the bridge logs all messages going forward). " +
 					"Filter by keyword, date range (Unix milliseconds), specific JID, sender-name substring, or group-only. " +
@@ -207,7 +223,8 @@ func isPersonalDocsTool(name string) bool {
 	case personalDocsSearchTool, personalDocsReadTool,
 		imessageHistorySearchTool, whatsappHistorySearchTool,
 		imessageGroupsListTool, imessageGroupMembersTool,
-		whatsappGroupsListTool, whatsappGroupMembersTool:
+		whatsappGroupsListTool, whatsappGroupMembersTool,
+		whatsappHistoryBackfillTool:
 		return true
 	}
 	return false
@@ -334,6 +351,17 @@ func executePersonalDocsTool(ctx context.Context, tenantID, name string, params 
 			body["name"] = strings.TrimSpace(v)
 		}
 		endpoint = fmt.Sprintf("%s/session/%s/whatsapp/group", waBase, tenantID)
+	case whatsappHistoryBackfillTool:
+		jid, _ := params["jid"].(string)
+		jid = strings.TrimSpace(jid)
+		if jid == "" {
+			return nil, errors.New("backfill_whatsapp_history: 'jid' is required")
+		}
+		body["jid"] = jid
+		if v, ok := params["count"].(float64); ok && v > 0 {
+			body["count"] = int(v)
+		}
+		endpoint = fmt.Sprintf("%s/session/%s/whatsapp/history/backfill", waBase, tenantID)
 	default:
 		return nil, fmt.Errorf("personal-docs tool: unknown name %q", name)
 	}
