@@ -260,6 +260,22 @@ export class IMessageSession {
   // second-thought 👎 minutes later.
   private recentTapbacks: Array<{ targetGuid: string; type: number; ts: number }> = [];
   private static readonly TAPBACK_DEDUP_MS = 60_000;
+  // PER-CHAT OUTBOUND ECHO QUEUE. Every `send()` enqueues here keyed
+  // by the destination chat's rowid. The fromMe-poll path pops the
+  // FRONT of this queue when it sees an empty-text is_from_me=1 row
+  // for that chat — preserving send-order so a 2-send sequence
+  // (e.g. "🧠 thinking…" then "ved mudarapu") doesn't pair the
+  // queued reply meta with the WRONG empty-fromMe echo. Entries
+  // carry an optional `meta` which is set by `queueReplyMeta` only
+  // for sends we want 👎 self-eval to track. Capped per-chat at 50
+  // entries; older entries fall off.
+  private outboundEcho: Map<number, Array<{
+    text: string;
+    ts: number;
+    meta?: { handle: string; chatRowid: number; inboundText: string; replyText: string; systemHint: string };
+  }>> = new Map();
+  private static readonly OUTBOUND_ECHO_TTL_MS = 90_000;
+  private static readonly OUTBOUND_ECHO_MAX_PER_CHAT = 50;
   // Throttle for the busy-nudge message ("⏳ still working …"). Without
   // this, every inbound while busy fires another nudge, and each
   // nudge cross-device-echoes — easy to send 10+ in a row. Cap at
@@ -637,11 +653,49 @@ export class IMessageSession {
     // Record so the polling loop skips this row when chat.db echoes
     // it back as is_from_me=1.
     this.recordBridgeSend(text);
+    // Push into the per-chat outbound echo FIFO so empty-fromMe
+    // rows can be paired with their originating send in ORDER —
+    // critical when we send multiple messages back-to-back
+    // (e.g. "🧠 thinking…" + the real reply).
+    this.enqueueOutboundEcho(to, text);
     this.broadcast({
       type: "agent_reply",
       data: { to, text, timestamp: Date.now() },
     });
     return { ok: true };
+  }
+
+  private enqueueOutboundEcho(handle: string, text: string): void {
+    const chatRowid = this.lastChatRowidForHandle.get(handle);
+    if (chatRowid === undefined) return;
+    const now = Date.now();
+    let q = this.outboundEcho.get(chatRowid);
+    if (!q) {
+      q = [];
+      this.outboundEcho.set(chatRowid, q);
+    }
+    // GC entries past TTL (in case poll loop fell behind and never
+    // consumed them — rare; protects against unbounded growth).
+    while (q.length > 0 && now - q[0].ts > IMessageSession.OUTBOUND_ECHO_TTL_MS) {
+      q.shift();
+    }
+    q.push({ text, ts: now });
+    if (q.length > IMessageSession.OUTBOUND_ECHO_MAX_PER_CHAT) {
+      q.splice(0, q.length - IMessageSession.OUTBOUND_ECHO_MAX_PER_CHAT);
+    }
+  }
+
+  // Pop the front of the outbound-echo FIFO for `chatRowid`. Returns
+  // the entry if any. Used by the empty-fromMe-row harvest path so
+  // each echo claims the next-in-line send (preserving order across
+  // multi-send sequences). If the popped entry has `meta`, the
+  // caller registers the GUID against bridgeReplyMeta.
+  private popOutboundEcho(chatRowid: number): { text: string; meta?: { handle: string; chatRowid: number; inboundText: string; replyText: string; systemHint: string } } | undefined {
+    const q = this.outboundEcho.get(chatRowid);
+    if (!q || q.length === 0) return undefined;
+    const entry = q.shift()!;
+    if (q.length === 0) this.outboundEcho.delete(chatRowid);
+    return entry;
   }
 
   private recordBridgeSend(text: string): void {
@@ -1917,21 +1971,49 @@ export class IMessageSession {
     }
   }
 
-  // Queue meta keyed by REPLY TEXT — promoted to bridgeReplyMeta by
-  // the next poll's harvestPendingReplyMeta() when chat.db echoes the
-  // send with its assigned GUID. Used by the iMessage agentic-query
-  // path; AppleScript send doesn't return the GUID directly.
+  // Queue meta for a tracked reply send so 👎 self-eval can later
+  // map the chat.db GUID → inbound + system hint + reply text. Two
+  // storage layers, both consulted by harvestPendingReplyMeta:
+  //
+  //   1. PRIMARY — attach the meta to the matching entry in the
+  //      per-chat `outboundEcho` FIFO. The harvest pops in send
+  //      order, so meta moves to bridgeReplyMeta keyed by the
+  //      correct GUID even when other empty-fromMe rows (thinking
+  //      nudges, status acks) interleave.
+  //
+  //   2. FALLBACK — `pendingReplyMeta` text-keyed queue. Used when
+  //      the outboundEcho path can't find a chatRowid (e.g.
+  //      lastChatRowidForHandle hadn't been populated yet) or the
+  //      text echoes through with chat.db populating the `text`
+  //      column. Survives if the FIFO drained early.
   private queueReplyMeta(
     replyText: string,
     meta: { handle: string; chatRowid: number; inboundText: string; replyText: string; systemHint: string },
   ): void {
     if (!replyText) return;
-    // GC stale entries first (>TTL old or duplicate of incoming text).
+    const norm = replyText.trim();
+
+    // PRIMARY: attach meta to the most-recent outboundEcho entry
+    // for this chat whose text matches. The entry was created by
+    // `send(replyText)` immediately before this call, so it should
+    // be at or near the tail of the FIFO.
+    const q = this.outboundEcho.get(meta.chatRowid);
+    if (q) {
+      for (let i = q.length - 1; i >= 0; i--) {
+        if (q[i].text === replyText && !q[i].meta) {
+          q[i].meta = meta;
+          break;
+        }
+      }
+    }
+
+    // FALLBACK text-keyed queue. GC stale entries first
+    // (>TTL old or duplicate of incoming text).
     const now = Date.now();
     this.pendingReplyMeta = this.pendingReplyMeta.filter((e) =>
-      now - e.queuedAt < IMessageSession.PENDING_META_TTL_MS && e.text !== replyText,
+      now - e.queuedAt < IMessageSession.PENDING_META_TTL_MS && e.text !== norm,
     );
-    this.pendingReplyMeta.push({ text: replyText.trim(), meta, queuedAt: now });
+    this.pendingReplyMeta.push({ text: norm, meta, queuedAt: now });
   }
 
   // Called from the fromMe-echo path. If a queued meta matches this
@@ -1953,33 +2035,87 @@ export class IMessageSession {
   private harvestPendingReplyMeta(text: string, guid: string, chatRowid?: number): boolean {
     if (!guid) return false;
     const now = Date.now();
-    // GC stale entries first so the time-based fallback is honest.
+    // GC stale fallback queue entries.
     this.pendingReplyMeta = this.pendingReplyMeta.filter(
       (e) => now - e.queuedAt < IMessageSession.PENDING_META_TTL_MS,
     );
 
     const norm = (text || "").trim();
-    let idx = -1;
-    if (norm) {
-      idx = this.pendingReplyMeta.findIndex((e) => e.text === norm);
+
+    // PRIMARY PATH — per-chat outbound-echo FIFO. Pop the next
+    // expected echo for this chat. This is the ONLY path that
+    // preserves send-order when we send multiple messages
+    // back-to-back (e.g. "🧠 thinking…" then the actual reply):
+    // pairing by text alone can't disambiguate empty-text rows,
+    // and pairing by chat+age can pick the wrong one. The FIFO
+    // does both correctly.
+    if (chatRowid !== undefined) {
+      const popped = this.popOutboundEcho(chatRowid);
+      if (popped) {
+        // Also drop the corresponding fallback queue entry by text
+        // so the same meta can't be double-harvested later.
+        if (popped.meta) {
+          const fbIdx = this.pendingReplyMeta.findIndex(
+            (e) => e.text === popped.text.trim(),
+          );
+          if (fbIdx !== -1) this.pendingReplyMeta.splice(fbIdx, 1);
+          this.recordReplyMeta(guid, popped.meta);
+          this.logger.debug(
+            { guid, matchedBy: "fifo", replyLen: popped.text.length, sentText: popped.text.slice(0, 60) },
+            "self-eval: harvested reply-meta for GUID",
+          );
+          return true;
+        }
+        // Popped a non-tracked send (thinking nudge, status ack,
+        // etc.) — that's expected and consumes the echo without
+        // touching bridgeReplyMeta.
+        this.logger.debug(
+          { guid, sentText: popped.text.slice(0, 60) },
+          "self-eval: consumed untracked outbound echo from FIFO",
+        );
+        return false;
+      }
     }
-    if (idx === -1 && chatRowid !== undefined) {
-      // Empty-text or non-matching-text fromMe row — fall back to
-      // chat+recency match. Oldest-first so multiple back-to-back
-      // sends are paired in send-order.
-      idx = this.pendingReplyMeta.findIndex(
+
+    // FALLBACK PATH 1 — text match against the pending queue.
+    // Useful when chat.db populated the text column (older macOS
+    // or cross-device echo views) and the FIFO had drained.
+    if (norm) {
+      const idx = this.pendingReplyMeta.findIndex((e) => e.text === norm);
+      if (idx !== -1) {
+        const entry = this.pendingReplyMeta[idx];
+        this.pendingReplyMeta.splice(idx, 1);
+        this.recordReplyMeta(guid, entry.meta);
+        this.logger.debug(
+          { guid, matchedBy: "text", replyLen: norm.length },
+          "self-eval: harvested reply-meta for GUID",
+        );
+        return true;
+      }
+    }
+
+    // FALLBACK PATH 2 — chat+recency text-queue lookup. Last
+    // resort when both the FIFO and text match miss (e.g. the
+    // bridge restarted between send + echo and the FIFO was lost
+    // but the persistent fallback queue still has it — currently
+    // it doesn't, but reserves the seam).
+    if (chatRowid !== undefined) {
+      const idx = this.pendingReplyMeta.findIndex(
         (e) => e.meta.chatRowid === chatRowid && now - e.queuedAt < IMessageSession.PENDING_META_TTL_MS,
       );
+      if (idx !== -1) {
+        const entry = this.pendingReplyMeta[idx];
+        this.pendingReplyMeta.splice(idx, 1);
+        this.recordReplyMeta(guid, entry.meta);
+        this.logger.debug(
+          { guid, matchedBy: "chat-time-fallback", replyLen: entry.text.length },
+          "self-eval: harvested reply-meta for GUID",
+        );
+        return true;
+      }
     }
-    if (idx === -1) return false;
-    const entry = this.pendingReplyMeta[idx];
-    this.pendingReplyMeta.splice(idx, 1);
-    this.recordReplyMeta(guid, entry.meta);
-    this.logger.debug(
-      { guid, matchedBy: norm && entry.text === norm ? "text" : "chat-time", replyLen: entry.text.length },
-      "self-eval: harvested reply-meta for GUID",
-    );
-    return true;
+
+    return false;
   }
 
   // SELF-EVAL retry: full critique-and-rewrite pipeline for iMessage.
