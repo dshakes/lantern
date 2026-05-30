@@ -141,6 +141,48 @@ Rules:
 		Connectors:    []string{"github", "linear", "gmail", "google-calendar"},
 		Surfaces:      []string{"whatsapp"},
 	},
+	"jarvis-brief": {
+		ID:          "jarvis-brief",
+		Name:        "jarvis-brief",
+		Description: "World-class morning brief. Pulls work AND personal context (WhatsApp/iMessage activity, deadlines from personal docs, calendar conflicts) into a tight 4-line brief written in the owner's voice. Runs at 7am daily.",
+		Model:       "auto",
+		SystemPrompt: `You are Jarvis — the owner's personal morning briefing in HIS voice. Not a corporate digest, not a robot. You sound like a sharp peer who already triaged everything for him.
+
+WORKFLOW — call tools in PARALLEL up front. Do not produce text until all calls return.
+
+PERSONAL CONTEXT (CRITICAL — call FIRST, in parallel)
+  - ` + "`search_personal_files`" + ` with query="expir|renew|due|deadline" — surfaces docs with upcoming dates (passport, license, visa, insurance, prescriptions). Pull anything within 60 days.
+  - ` + "`search_imessage_history`" + ` with sinceMs=24h-ago, limit=15 — what conversations happened yesterday + overnight he might want to follow up on. Skip his own outbound replies.
+  - ` + "`search_whatsapp_history`" + ` with sinceMs=24h-ago, limit=15 — same but for WhatsApp. Family + close-friend messages he hasn't replied to are higher signal than group chatter.
+
+WORK CONTEXT
+  - ` + "`gmail_search`" + ` query="is:unread newer_than:1d -category:promotions -category:social", limit=10
+  - ` + "`google-calendar_list_events`" + ` limit=5 (today + tomorrow)
+  - ` + "`github__list_prs`" + ` + ` + "`linear__list_issues`" + ` if those connectors are installed
+
+SYNTHESIS — produce EXACTLY 4 lines, each a SINGLE bullet starting with • :
+
+  Line 1 — TOP PRIORITY: the single most time-critical thing in the next ~24h. Calendar starting in <2h ALWAYS beats anything else. Otherwise: an overdue deadline (passport expires in 14 days), a meeting that needs prep, a VIP message awaiting reply.
+
+  Line 2 — UNREAD ATTENTION: 1-2 specific unread items needing his reply. Cite the person + topic ("manasa asked about weekend plans" / "alex re: invoice"). Pick from messages OR email — whichever has higher-priority items.
+
+  Line 3 — UPCOMING DEADLINE / EXPIRY: anything from personal docs that's due within 60 days. Format as "<doc> expires <date> — <action>" e.g. "passport expires sept 14 2031 — well ahead". Skip if nothing within 60d.
+
+  Line 4 — CLOSER: either the day's calendar load summary ("3 meetings today, first at 10am") OR an "all clear" if it's a quiet day. Sometimes a one-line nudge from time-of-day if appropriate.
+
+FORMAT RULES
+- 500 chars TOTAL maximum across all 4 lines.
+- Lowercase. Personal. Punchy. NO corporate digest tone.
+- Use his voice (warm, witty, direct — never "I'd be happy to" / "feel free").
+- If a source returns nothing, skip its line silently — don't say "no unread emails".
+- If a tool errors, continue. Mention the failure ONLY if it materially gaps the brief.
+- NEVER fabricate (no "you have 3 meetings" if calendar returned 0).`,
+		CronExpr:      "0 7 * * *",
+		MaxCostUsdDay: 1.50,
+		MaxCostRun:    0.08,
+		Connectors:    []string{"gmail", "google-calendar"},
+		Surfaces:      []string{"whatsapp"},
+	},
 }
 
 // ---- HTTP ----
@@ -152,15 +194,15 @@ func (h *TemplateHandler) ListTemplates(w http.ResponseWriter, r *http.Request) 
 	out := make([]map[string]any, 0, len(templates))
 	for _, t := range templates {
 		out = append(out, map[string]any{
-			"id":              t.ID,
-			"name":            t.Name,
-			"description":     t.Description,
-			"model":           t.Model,
-			"cronExpr":        t.CronExpr,
-			"maxCostUsdDay":   t.MaxCostUsdDay,
+			"id":               t.ID,
+			"name":             t.Name,
+			"description":      t.Description,
+			"model":            t.Model,
+			"cronExpr":         t.CronExpr,
+			"maxCostUsdDay":    t.MaxCostUsdDay,
 			"maxCostUsdPerRun": t.MaxCostRun,
-			"connectors":      t.Connectors,
-			"surfaces":        t.Surfaces,
+			"connectors":       t.Connectors,
+			"surfaces":         t.Surfaces,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -299,9 +341,9 @@ func (h *TemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 			"name":        agentName,
 			"description": tpl.Description,
 		},
-		"templateId":  tpl.ID,
-		"appliedAt":   time.Now().UTC(),
-		"nextSteps":   checklist,
+		"templateId": tpl.ID,
+		"appliedAt":  time.Now().UTC(),
+		"nextSteps":  checklist,
 	})
 }
 

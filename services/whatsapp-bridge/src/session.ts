@@ -709,6 +709,27 @@ export class WhatsAppSession {
   // echo never arrived — otherwise this Set would grow forever.
   private bridgeSentIds: Map<string, number> = new Map();
   private static readonly BRIDGE_SENT_TTL_MS = 5 * 60_000;
+
+  // SELF-EVAL — per-msgId record of WHAT we sent + WHY. Lets the
+  // critique-retry handler reconstruct the prompt when the owner
+  // reacts with 🔁 / 🤦 on a bot reply. Capped at 200 entries (FIFO);
+  // older entries fall off as new replies are recorded. In-memory
+  // only — retries lose their anchor if the bridge restarts between
+  // send and react, which is fine (the owner can re-send their query).
+  private bridgeReplyMeta: Map<string, {
+    jid: string;
+    inboundText: string;
+    replyText: string;
+    systemHint: string;
+    surface: "contact-reply" | "owner-self-chat";
+    ts: number;
+  }> = new Map();
+  private static readonly REPLY_META_MAX = 200;
+  // Tracks the msg.id of the most recent message confirmToSelf() sent.
+  // Owner-self-chat reply paths read this immediately after their
+  // confirmToSelf() call to pair the sent id with the inbound text +
+  // system hint (so 🔁 can later look it up).
+  private lastSelfSentMsgId: string = "";
   private gcTimer: NodeJS.Timeout | null = null;
   // Ticker that looks for pauses near expiry and buffers warnings; the
   // flush timer is armed lazily when the first warning lands so an empty
@@ -2882,6 +2903,16 @@ export class WhatsAppSession {
     const { reply: polished, offer } = humanizeWithOffer(finalText);
     if (polished) {
       await this.confirmToSelf(polished);
+      // SELF-EVAL — record so 🔁 / 🤦 can re-prompt with critique.
+      if (this.lastSelfSentMsgId) {
+        this.recordReplyMeta(this.lastSelfSentMsgId, {
+          jid,
+          inboundText: query,
+          replyText: polished,
+          systemHint,
+          surface: "owner-self-chat",
+        });
+      }
     }
     if (offer && jid) {
       this.pendingOffers.set(jid, offer);
@@ -3043,7 +3074,18 @@ export class WhatsAppSession {
     try {
       const draft = await this.agent.respondTo(jid, text, systemHint, { withTools: true });
       if (!draft) return;
-      await this.confirmToSelf(draft.trim());
+      const clean = draft.trim();
+      await this.confirmToSelf(clean);
+      // SELF-EVAL — record so 🔁 / 🤦 can re-prompt with critique.
+      if (this.lastSelfSentMsgId) {
+        this.recordReplyMeta(this.lastSelfSentMsgId, {
+          jid,
+          inboundText: text,
+          replyText: clean,
+          systemHint,
+          surface: "owner-self-chat",
+        });
+      }
     } catch (err) {
       this.logger.warn({ err, jid }, "owner natural chat exception (whatsapp)");
     }
@@ -3134,7 +3176,16 @@ export class WhatsAppSession {
     if (!own || !this.socket) return;
     try {
       const sent = await this.socket.sendMessage(own, { text });
-      if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
+      if (sent?.key?.id) {
+        this.bridgeSentIds.set(sent.key.id, Date.now());
+        // Best-effort retry-tracking: confirmToSelf is called from many
+        // sites with no inbound context (status echoes, system acks),
+        // so we don't have a meaningful inboundText to record. The
+        // call sites that DO have one (handleOwnerNaturalChat /
+        // handleOwnerDocQuery) call recordReplyMeta directly via the
+        // sentSelfWithMeta helper below.
+        this.lastSelfSentMsgId = sent.key.id;
+      }
     } catch (err) {
       this.logger.warn({ err }, "could not send confirmation to self");
     }
@@ -3423,21 +3474,106 @@ export class WhatsAppSession {
     }
   }
 
-  // SELF-EVAL feedback handler. On 🔁/🤦 from the owner on a bot
-  // reply, send an acknowledgment + log the signal. Full critique-
-  // and-retry pipeline (re-prompt LLM with prior reply + critique,
-  // edit/replace the bad message) ships in Phase B; this V1 captures
-  // the signal so we have data to tune against and the user sees
-  // their feedback was heard.
+  // Record the metadata of a bot reply so 🔁 / 🤦 reactions can
+  // later look up what we sent + why and re-prompt the LLM with a
+  // critique. Called at every owner-facing send site that wants to
+  // be retry-able. Capped FIFO (oldest dropped at REPLY_META_MAX).
+  private recordReplyMeta(
+    sentMsgId: string,
+    meta: {
+      jid: string;
+      inboundText: string;
+      replyText: string;
+      systemHint: string;
+      surface: "contact-reply" | "owner-self-chat";
+    },
+  ): void {
+    if (!sentMsgId) return;
+    this.bridgeReplyMeta.set(sentMsgId, { ...meta, ts: Date.now() });
+    if (this.bridgeReplyMeta.size > WhatsAppSession.REPLY_META_MAX) {
+      const it = this.bridgeReplyMeta.keys();
+      const drop = this.bridgeReplyMeta.size - WhatsAppSession.REPLY_META_MAX;
+      for (let i = 0; i < drop; i++) {
+        const k = it.next().value;
+        if (k) this.bridgeReplyMeta.delete(k);
+      }
+    }
+  }
+
+  // SELF-EVAL retry: full critique-and-rewrite pipeline.
+  // On 🔁 / 🤦 from the owner on a bot reply, re-prompt the LLM with:
+  //   - the original inbound (what the contact / owner said)
+  //   - the prior bad reply
+  //   - a critique instruction ("the user disliked this — analyze
+  //     why in one private sentence, then write a better version")
+  // Send the better version as a follow-up. WhatsApp doesn't reliably
+  // support editing arbitrary outbound messages, so we don't try to
+  // replace the original — appending the corrected version preserves
+  // conversation continuity AND leaves a paper trail.
   private async handleBadFeedbackRetry(jid: string, msgId: string | undefined): Promise<void> {
     this.logger.info({ jid, msgId }, "self-eval: 🔁 bad-feedback signal");
-    this.logActivity("attention_dm", "🔁 owner flagged bad reply — feedback captured", {
+    this.logActivity("attention_dm", "🔁 owner flagged bad reply — retrying", {
       jid, scope: "self",
     });
+
+    const meta = msgId ? this.bridgeReplyMeta.get(msgId) : undefined;
+    if (!meta) {
+      // No stored meta — earliest entries may have aged out, or this
+      // was a one-off send (status echo, ack, etc.) that we don't
+      // retry-track. Fall back to just acknowledging the signal.
+      try { await this.confirmToSelf("noted — what was off?"); } catch {}
+      return;
+    }
+
     try {
-      await this.confirmToSelf("noted — what was off? (i'll do better next time)");
+      const critiqueSystemHint = [
+        meta.systemHint,
+        "",
+        "## CRITIQUE-AND-RETRY MODE",
+        "The owner just flagged your previous reply as bad. Re-read the inbound + your prior reply below.",
+        "",
+        "Step 1 (silent — DO NOT include in your output): briefly identify what was wrong about the prior reply. Common failure modes: too long, too formal, wrong language/script, missed nuance, recited generic info instead of using profile/tools, hallucinated facts, sounded like a bot.",
+        "Step 2: produce a SINGLE corrected reply that fixes the failure. Keep the same intent (answer the same question) but execute it the way the owner actually would.",
+        "",
+        `Original inbound: ${meta.inboundText}`,
+        `Your prior reply (rated bad): ${meta.replyText}`,
+        "",
+        "Output ONLY the corrected reply. No preface, no explanation, no markdown headers.",
+      ].join("\n");
+
+      const retried = await this.agent.respondTo(
+        jid,
+        meta.inboundText,
+        critiqueSystemHint,
+        { withTools: false }, // critique should fix style/clarity, not run more tool calls
+      );
+
+      if (!retried || retried.trim().length === 0) {
+        await this.confirmToSelf("(couldn't generate a better version — try rephrasing your ask)");
+        return;
+      }
+
+      // Send the retried version. For owner-self-chat we send to
+      // self; for contact-reply we send back to the contact thread.
+      const sendJid = meta.surface === "contact-reply" ? meta.jid : jid;
+      const sent = await this.socket?.sendMessage(sendJid, { text: retried.trim() });
+      if (sent?.key?.id) {
+        this.bridgeSentIds.set(sent.key.id, Date.now());
+        // Also retry-track THIS reply so the owner can 🔁 again if
+        // V2 is also bad (3 strikes and they probably need to give
+        // up + rephrase the original ask).
+        this.recordReplyMeta(sent.key.id, {
+          jid: meta.jid,
+          inboundText: meta.inboundText,
+          replyText: retried.trim(),
+          systemHint: meta.systemHint,
+          surface: meta.surface,
+        });
+      }
+      this.logger.info({ jid, originalMsgId: msgId, retriedLength: retried.length }, "self-eval: retry delivered");
     } catch (err) {
-      this.logger.warn({ err, jid }, "feedback ack send failed");
+      this.logger.warn({ err, jid, msgId }, "self-eval retry exception");
+      try { await this.confirmToSelf("(retry hit an error — try again in a sec)"); } catch {}
     }
   }
 
