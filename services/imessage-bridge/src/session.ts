@@ -885,7 +885,23 @@ export class IMessageSession {
         // SELF-EVAL meta harvest — if this echo matches a queued
         // pending-reply-meta entry, pair its GUID with the meta
         // so the next 👎 tapback can look it up.
-        this.harvestPendingReplyMeta(text, row.guid);
+        this.harvestPendingReplyMeta(text, row.guid, row.chatRowid);
+        return;
+      }
+
+      // Empty-text fromMe row (no attachments → not a voice cmd):
+      // modern macOS stores AppleScript-sent message bodies in the
+      // `attributedBody` blob and leaves `text` empty for the
+      // sender's view. The tapback target GUID points at THIS row,
+      // so we MUST register its GUID against the queued reply meta
+      // — otherwise 👎 self-eval is silently dead.
+      if (!text && !row.hasAttachments) {
+        if (this.harvestPendingReplyMeta("", row.guid, row.chatRowid)) {
+          return;
+        }
+        // No pending meta matched — probably an empty system row.
+        // Drop silently rather than running it through the
+        // owner-command parser (which would no-op anyway).
         return;
       }
 
@@ -1887,17 +1903,51 @@ export class IMessageSession {
   }
 
   // Called from the fromMe-echo path. If a queued meta matches this
-  // text, promote it into bridgeReplyMeta keyed by the row's GUID.
-  // Matched entries are removed from the queue.
-  private harvestPendingReplyMeta(text: string, guid: string): void {
-    if (!text || !guid) return;
-    const norm = text.trim();
-    const idx = this.pendingReplyMeta.findIndex((e) => e.text === norm);
-    if (idx === -1) return;
+  // row, promote it into bridgeReplyMeta keyed by the row's GUID and
+  // remove the matched entry from the queue. Returns true if a meta
+  // was harvested (the caller treats that as "this fromMe row is our
+  // own bridge send" and skips the rest of the owner-command handling).
+  //
+  // Modern macOS Messages stores AppleScript-sent message bodies in
+  // the `attributedBody` BLOB and leaves the `text` column empty for
+  // the SENDER's view of the chat. The tapback (👎) target GUID
+  // points at THIS empty-text row, so we MUST register that GUID even
+  // though we have no text to match on. Two-path strategy:
+  //   1. Text match — works whenever chat.db populated `text`
+  //      (often happens on cross-device echo / older macOS).
+  //   2. Empty-text fallback — match by (chatRowid, recency). Pops
+  //      the OLDEST pending entry for this chat queued in the last
+  //      30s. This is the path that fixes the "👎 didn't work" bug.
+  private harvestPendingReplyMeta(text: string, guid: string, chatRowid?: number): boolean {
+    if (!guid) return false;
+    const now = Date.now();
+    // GC stale entries first so the time-based fallback is honest.
+    this.pendingReplyMeta = this.pendingReplyMeta.filter(
+      (e) => now - e.queuedAt < IMessageSession.PENDING_META_TTL_MS,
+    );
+
+    const norm = (text || "").trim();
+    let idx = -1;
+    if (norm) {
+      idx = this.pendingReplyMeta.findIndex((e) => e.text === norm);
+    }
+    if (idx === -1 && chatRowid !== undefined) {
+      // Empty-text or non-matching-text fromMe row — fall back to
+      // chat+recency match. Oldest-first so multiple back-to-back
+      // sends are paired in send-order.
+      idx = this.pendingReplyMeta.findIndex(
+        (e) => e.meta.chatRowid === chatRowid && now - e.queuedAt < IMessageSession.PENDING_META_TTL_MS,
+      );
+    }
+    if (idx === -1) return false;
     const entry = this.pendingReplyMeta[idx];
     this.pendingReplyMeta.splice(idx, 1);
     this.recordReplyMeta(guid, entry.meta);
-    this.logger.debug({ guid, replyLen: norm.length }, "self-eval: harvested reply-meta for GUID");
+    this.logger.debug(
+      { guid, matchedBy: norm && entry.text === norm ? "text" : "chat-time", replyLen: entry.text.length },
+      "self-eval: harvested reply-meta for GUID",
+    );
+    return true;
   }
 
   // SELF-EVAL retry: full critique-and-rewrite pipeline for iMessage.
