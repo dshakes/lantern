@@ -1576,10 +1576,15 @@ export class IMessageSession {
     //                   is handling unfamiliar contacts — silencing
     //                   them defeats it.
     const draftApprovalsOn = (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
+    // Knowing their name (Contacts.app match → contactNames cache)
+    // counts as familiar — auto-reply directly without going through
+    // the low-confidence approval path.
+    const displayName = (this.contactNames.get(row.handle) || "").trim();
     const lowConfidence =
       !isGroup &&
       ownerSamples.length === 0 &&
       !relationship &&
+      !displayName &&
       !(await this.personal.factsBlock(row.handle));
     const isVIP = !isGroup && (await this.personal.isVIP(row.handle));
 
