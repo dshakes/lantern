@@ -24,7 +24,8 @@
     "./prefetch": "./src/prefetch.ts",
     "./owner-profile": "./src/owner-profile.ts",
     "./bot-self": "./src/bot-self.ts",
-    "./language": "./src/language.ts"
+    "./language": "./src/language.ts",
+    "./roster": "./src/roster.ts"
   },
   "dependencies": {
     "pdf-parse": "^2.4.5",
