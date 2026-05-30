@@ -39,6 +39,7 @@ import {
   isTrivialChatter,
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
+import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
@@ -193,6 +194,13 @@ export class WhatsAppSession {
   // messages spawn parallel pipelines that all reply minutes later.
   // Acquired on owner-query handler entry, released in `finally`.
   private busyChat: Set<string> = new Set();
+
+  // Latest-wins queue (mirrors iMessage bridge). When a user fires
+  // multiple substantive queries while the bot is mid-OCR or mid-tool
+  // call, hold only the most recent one and process it as soon as
+  // the current run finishes.
+  private queuedQuery: Map<string, { text: string; queuedAt: number }> = new Map();
+  private static readonly QUEUED_QUERY_TTL_MS = 5 * 60_000;
   private attention: AttentionClassifier;
   private media: MediaHandler;
   private personal: PersonalClient;
@@ -851,6 +859,22 @@ export class WhatsAppSession {
             msg.message?.extendedTextMessage?.text ||
             "";
           const isGroup = this.isGroupJid(from);
+
+          // BOT-SELF HARD-SKIP. Any WhatsApp message whose body matches
+          // a known bot-emitted prefix (acks, progress nudges, status,
+          // digests, action confirmations) is NEVER a fresh user query.
+          // Without this, the bot's own outputs cycled back through the
+          // event stream — sometimes seconds later, sometimes after a
+          // reconnect — could re-fire the agentic pipeline and trigger
+          // a cascading echo. This is the catastrophic-bug fix that
+          // matches the iMessage-bridge logic.
+          if (text && isBotSelfMessage(text)) {
+            this.logger.debug(
+              { jid: from, textPreview: text.slice(0, 80) },
+              "skipping bot-self message — hard match on bot-emitted pattern",
+            );
+            continue;
+          }
 
           // Voice command path: if the OWNER sent themselves a voice
           // note that starts with "lantern, ..." we transcribe + parse
@@ -1709,13 +1733,21 @@ export class WhatsAppSession {
         void this.confirmToSelf("👍 no worries");
         return;
       }
-      // CHAT-BUSY GATE — drop new owner queries when a prior one is
-      // still in flight. Otherwise rapid-fire messages or history-
-      // sync replays spawn N parallel pipelines.
+      // CHAT-BUSY GATE — queue latest substantive message instead of
+      // dropping it. When the current run finishes, the drain logic in
+      // handleOwnerDocQuery's finally block processes the queued query.
+      // Trivial chatter ("ok", "thanks") is dropped silently. Cap is 1
+      // per chat: a new arrival overwrites the previous queued one
+      // (latest-wins — earlier ones are usually outdated by then).
       if (this.busyChat.has(jid)) {
-        this.logger.info({ jid, textPreview: text.slice(0, 60) }, "skipping — chat busy with prior query");
+        if (!isTrivialChatter(text)) {
+          this.queuedQuery.set(jid, { text, queuedAt: Date.now() });
+          this.logger.info({ jid, textPreview: text.slice(0, 60) }, "queued — chat busy, will process next");
+        } else {
+          this.logger.info({ jid, textPreview: text.slice(0, 60) }, "skipping — chat busy (trivial)");
+        }
         if (text.length > 8) {
-          void this.confirmToSelf("⏳ still working on the previous one — give me a sec");
+          void this.confirmToSelf("⏳ still on the previous one — I'll get to this next");
         }
         return;
       }
@@ -2220,6 +2252,23 @@ export class WhatsAppSession {
     }
     } finally {
       this.busyChat.delete(jid);
+      // Drain queued next-query (latest-wins).
+      const queued = this.queuedQuery.get(jid);
+      if (queued) {
+        this.queuedQuery.delete(jid);
+        const age = Date.now() - queued.queuedAt;
+        if (age < WhatsAppSession.QUEUED_QUERY_TTL_MS) {
+          this.logger.info({ jid, ageMs: age, textPreview: queued.text.slice(0, 60) }, "draining queued query");
+          // Synthesize a minimal `key` placeholder — the real Baileys
+          // key for the QUEUED message isn't carried through. The
+          // doc-query path uses `key` only for sendReaction; safely
+          // skip the reaction if id is missing (sendReaction is best-
+          // effort already).
+          void this.handleOwnerDocQuery(jid, queued.text, { id: null, remoteJid: jid, fromMe: true, participant: null });
+        } else {
+          this.logger.info({ jid, ageMs: age }, "dropping queued query — too old");
+        }
+      }
     }
   }
 

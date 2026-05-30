@@ -51,6 +51,15 @@ import {
   isTrivialChatter,
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
+import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
+
+// Normalize a text body for echo dedup. chat.db sometimes mutates
+// whitespace, line endings, or casing on round-trips through iCloud
+// sync; normalizing to lower-case + collapsed whitespace catches those
+// without false-positives.
+function normalizeForDedup(s: string): string {
+  return (s || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
@@ -143,7 +152,18 @@ export class IMessageSession {
   // dedup by message TEXT for a short window since chat.db doesn't
   // give us back the GUID of an AppleScript send directly.
   private recentBridgeSends: Array<{ text: string; ts: number }> = [];
-  private static readonly BRIDGE_SEND_DEDUP_MS = 60_000;
+  // Long TTL because:
+  //   (a) an SSE-aborted agent turn can leave the bridge idle for 180s,
+  //   (b) iCloud sync can drop a backlog of old bot rows into a single
+  //       poll tick minutes after they were sent.
+  // 1 hour covers both with comfortable margin and the persistent on-
+  // disk store (sent.json) survives bridge restarts so we don't lose
+  // dedup state when launchd respawns the process.
+  private static readonly BRIDGE_SEND_DEDUP_MS = 60 * 60_000; // 1 hour
+  private static readonly BRIDGE_SEND_MAX_ENTRIES = 500;
+  private bridgeSendsPersistPath: string = "";
+  private bridgeSendsDirty: boolean = false;
+  private bridgeSendsPersistTimer: NodeJS.Timeout | null = null;
 
   // INBOUND dedup. When the user has TWO Apple IDs signed into
   // Messages.app on this Mac (a common configuration: primary +
@@ -173,6 +193,13 @@ export class IMessageSession {
   // later — the user sees a flood. The lock auto-clears when the
   // in-flight query finishes (success or error).
   private busyChat: Set<string> = new Set();
+
+  // Latest-wins queue: when a user fires multiple substantive
+  // messages while the bot is mid-query, we hold ONLY the most recent
+  // one and process it as soon as the current run finishes. Capped
+  // implicitly to 1-per-chat because we overwrite on each new message.
+  private queuedQuery: Map<string, { text: string; queuedAt: Date | number }> = new Map();
+  private static readonly QUEUED_QUERY_TTL_MS = 5 * 60_000; // 5 min — past that, the user has moved on
   // Throttle for the busy-nudge message ("⏳ still working …"). Without
   // this, every inbound while busy fires another nudge, and each
   // nudge cross-device-echoes — easy to send 10+ in a row. Cap at
@@ -213,6 +240,7 @@ export class IMessageSession {
 
     mkdirSync(this.stateDir, { recursive: true });
     this.loadState();
+    this.loadBridgeSends();
   }
 
   // Open chat.db, check Automation, start polling.
@@ -502,21 +530,27 @@ export class IMessageSession {
 
   private recordBridgeSend(text: string): void {
     const now = Date.now();
-    // Garbage-collect old entries before appending.
+    // GC + cap so an unbounded conversation doesn't grow the array.
     this.recentBridgeSends = this.recentBridgeSends.filter(
       (e) => now - e.ts < IMessageSession.BRIDGE_SEND_DEDUP_MS,
     );
     this.recentBridgeSends.push({ text, ts: now });
+    if (this.recentBridgeSends.length > IMessageSession.BRIDGE_SEND_MAX_ENTRIES) {
+      this.recentBridgeSends.splice(0, this.recentBridgeSends.length - IMessageSession.BRIDGE_SEND_MAX_ENTRIES);
+    }
+    this.bridgeSendsDirty = true;
+    this.scheduleBridgeSendsPersist();
   }
 
   private isOwnBridgeSend(text: string): boolean {
     const now = Date.now();
-    // Trim before compare so AppleScript whitespace quirks don't miss.
-    const t = text.trim();
+    // Normalize: trim + collapse whitespace + lowercase so chat.db
+    // whitespace mutations / line-ending differences don't miss.
+    const norm = normalizeForDedup(text);
     for (let i = this.recentBridgeSends.length - 1; i >= 0; i--) {
       const e = this.recentBridgeSends[i];
       if (now - e.ts > IMessageSession.BRIDGE_SEND_DEDUP_MS) break;
-      if (e.text.trim() === t) {
+      if (normalizeForDedup(e.text) === norm) {
         // Do NOT consume — the same reply can land in chat.db twice
         // when the Mac is signed into multiple iMessage accounts
         // (once as is_from_me=1 from the sending account, once as
@@ -527,6 +561,42 @@ export class IMessageSession {
       }
     }
     return false;
+  }
+
+  // Persist `recentBridgeSends` to disk so a bridge restart (launchd
+  // respawn after SIGTERM, OS reboot, etc.) doesn't lose dedup state.
+  // Without this, the bot's prior-session ack messages would be re-
+  // processed as fresh queries when chat.db echoes them back on first
+  // poll. Debounced: at most one write per 5s.
+  private static readonly BRIDGE_SENDS_PERSIST_DEBOUNCE_MS = 5_000;
+  private loadBridgeSends(): void {
+    this.bridgeSendsPersistPath = join(this.stateDir, "sent.json");
+    try {
+      if (!existsSync(this.bridgeSendsPersistPath)) return;
+      const raw = readFileSync(this.bridgeSendsPersistPath, "utf-8");
+      const data = JSON.parse(raw) as { sends?: Array<{ text: string; ts: number }> };
+      const now = Date.now();
+      const valid = (data.sends || []).filter(
+        (e) => typeof e.text === "string" && typeof e.ts === "number" && now - e.ts < IMessageSession.BRIDGE_SEND_DEDUP_MS,
+      );
+      this.recentBridgeSends = valid.slice(-IMessageSession.BRIDGE_SEND_MAX_ENTRIES);
+      this.logger.info({ loaded: this.recentBridgeSends.length }, "loaded bridge-send dedup");
+    } catch (err) {
+      this.logger.warn({ err }, "failed to load bridge-send dedup — starting fresh");
+    }
+  }
+  private scheduleBridgeSendsPersist(): void {
+    if (this.bridgeSendsPersistTimer) return;
+    this.bridgeSendsPersistTimer = setTimeout(() => {
+      this.bridgeSendsPersistTimer = null;
+      if (!this.bridgeSendsDirty) return;
+      try {
+        writeFileSync(this.bridgeSendsPersistPath, JSON.stringify({ sends: this.recentBridgeSends }));
+        this.bridgeSendsDirty = false;
+      } catch (err) {
+        this.logger.warn({ err }, "failed to persist bridge-send dedup");
+      }
+    }, IMessageSession.BRIDGE_SENDS_PERSIST_DEBOUNCE_MS);
   }
 
   // --- WS ----------------------------------------------------------------
@@ -558,7 +628,26 @@ export class IMessageSession {
     this.pollTimer = setInterval(() => {
       try {
         const rows = this.db.pollNewMessages();
+        if (rows.length === 0) return;
+
+        // BACKLOG-FLOOD GUARD. If the poll returns a large batch where
+        // most rows are is_from_me=1 (the bot's own historical sends
+        // dumped in one tick by iCloud sync OR by chat.db catching up
+        // after a bridge stall), drop ALL is_from_me=1 rows in the
+        // batch but still process inbound user messages (is_from_me=0)
+        // normally. Without this, the bot would re-process every prior
+        // ack / digest / LLM-reply as a fresh query and either echo
+        // for hours or jam the busy-gate.
+        const fromMeCount = rows.filter((r) => r.isFromMe).length;
+        const isFlood = rows.length >= 8 && fromMeCount / rows.length >= 0.5;
+        if (isFlood) {
+          this.logger.warn(
+            { total: rows.length, fromMe: fromMeCount, lastRowid: rows[rows.length - 1]?.rowid },
+            "backlog-flood detected — skipping bot-authored rows in this batch",
+          );
+        }
         for (const row of rows) {
+          if (isFlood && row.isFromMe) continue;
           this.handleNewRow(row);
         }
       } catch (err) {
@@ -577,6 +666,24 @@ export class IMessageSession {
   // futurism: persona/style, escalation, quiet hours, calendar, facts,
   // VIP draft queue, attachment understanding.
   private handleNewRow(row: IMessageRow): void {
+    // BOT-SELF HARD-SKIP. Any chat.db row whose body matches a known
+    // bot-emitted prefix (acks, progress nudges, status output,
+    // digests, action confirmations) is NEVER a user query. This is
+    // the catastrophic-bug fix: an iCloud sync delay can drop a batch
+    // of old bot replies into a single poll tick MINUTES after they
+    // were authored, by which point the recentBridgeSends entry may
+    // have aged out or been wiped by a restart. Without this gate the
+    // bot reprocesses its own "📁 one sec…" / "📊 *lantern morning
+    // report*" / etc. as fresh queries and the conversation cascades.
+    const rawText = (row.text || "").trim();
+    if (rawText && isBotSelfMessage(rawText)) {
+      this.logger.debug(
+        { rowid: row.rowid, handle: row.handle, textPreview: rawText.slice(0, 80) },
+        "skipping bot-self message — hard match on bot-emitted pattern",
+      );
+      return;
+    }
+
     // REACTION / TAPBACK GUARD. iMessage stores a "love"/"like"/"laugh"
     // tapback as a message row with associated_message_type != 0. These
     // are NOT messages — someone hearting a message in a group is not a
@@ -945,17 +1052,27 @@ export class IMessageSession {
       // in-flight. Drop new ones (with a brief explanation) so we
       // don't spawn parallel pipelines that all reply minutes later.
       if (this.busyChat.has(row.handle)) {
-        this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "skipping — chat busy with prior query");
-        // Throttled nudge — at most ONE per chat per 30s, never on
-        // ultra-short follow-ups (those are usually "yes/ok/no"
-        // handled above OR rapid retries that don't need a separate
-        // ack). Without this throttle, every retry during a busy
-        // period fires another "still working" message which then
-        // cross-device-echoes into another inbound → loop.
+        // QUEUE LATEST. The user shouldn't have to repeat themselves
+        // when they fire off "what about X?" / "and Y?" while the bot
+        // is mid-OCR. Cache the most recent substantive message; when
+        // the current run finishes we pick it up automatically. Cap is
+        // 1 — if the user types three in a row, only the LAST one
+        // matters (earlier ones are usually outdated by then).
+        if (!isTrivialChatter(text)) {
+          this.queuedQuery.set(row.handle, { text, queuedAt: Date.now() });
+          this.logger.info(
+            { chat: row.handle, textPreview: text.slice(0, 60) },
+            "queued — chat busy, will process when current finishes",
+          );
+        } else {
+          this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "skipping — chat busy (trivial chatter)");
+        }
+        // Throttled nudge so the user sees ONE "I heard you, give me a
+        // sec" — never on follow-up bursts.
         const lastNudge = this.lastBusyNudgeAt.get(row.handle) || 0;
         if (text.length > 12 && Date.now() - lastNudge > IMessageSession.BUSY_NUDGE_THROTTLE_MS) {
           this.lastBusyNudgeAt.set(row.handle, Date.now());
-          void this.send(row.handle, "⏳ still working on the previous one — give me a sec");
+          void this.send(row.handle, "⏳ still on the previous one — I'll get to this next");
         }
         return;
       }
@@ -1710,6 +1827,20 @@ export class IMessageSession {
     }
     } finally {
       this.busyChat.delete(jid);
+      // Drain queued next-query (latest-wins). Only one at most; if
+      // older than TTL we drop it (user has moved on). Fire-and-forget
+      // so we don't bottleneck the previous run's cleanup.
+      const queued = this.queuedQuery.get(jid);
+      if (queued) {
+        this.queuedQuery.delete(jid);
+        const age = Date.now() - (queued.queuedAt as number);
+        if (age < IMessageSession.QUEUED_QUERY_TTL_MS) {
+          this.logger.info({ chat: jid, ageMs: age, textPreview: queued.text.slice(0, 60) }, "draining queued query");
+          void this.handleOwnerDocQuery(jid, queued.text);
+        } else {
+          this.logger.info({ chat: jid, ageMs: age }, "dropping queued query — too old");
+        }
+      }
     }
   }
 
