@@ -1624,10 +1624,17 @@ export class IMessageSession {
       }
     }
 
+    // Language modality: even owner self-chat respects the language
+    // they typed in. If he asks something in Telugu, reply in Telugu.
+    const langHint = detectLanguageHints(text);
+    const nativity = this.ownerProfileStore.nativity();
+    const languageModality = languageModalityHint(langHint, { nativity });
+    const ownerProfileProse = this.ownerProfileStore.prose();
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his iMessage self-chat.`,
       `Today is ${today}. Local time of day: ${timeOfDay}.`,
       ``,
+      ownerProfileProse ? `# Who you are\n${ownerProfileProse}\n` : ``,
       `You ARE his Jarvis. Warm, concise, authentic. Like a sharp peer who knows him well.`,
       `  • 1-3 short lines. No corporate filler ("I'd be happy to" / "feel free" / "let me know if").`,
       `  • Lowercase, conversational.`,
@@ -1637,6 +1644,7 @@ export class IMessageSession {
       `  • You can add calendar events, save notes, draft mail on his behalf — offer when relevant.`,
       `  • Use any connector tools attached to this agent in the Lantern dashboard (Gmail, Calendar, etc.) when helpful.`,
       prefetchBlock,
+      languageModality,
     ].filter(Boolean).join("\n");
     try {
       const draft = await this.agent.respondTo(jid, text, systemHint, { withTools: true });
@@ -1779,6 +1787,12 @@ export class IMessageSession {
     const recentTranscript = effectiveChatRowid ? this.buildRecentTranscript(effectiveChatRowid) : "";
     const today = new Date().toISOString().slice(0, 10);
     const ownerName = process.env.LANTERN_OWNER_NAME || "Shekhar";
+    // Language modality applies to owner self-chat too — if he asks
+    // something in Telugu, reply in Telugu (Telangana dialect, owner
+    // vocab preferences from profile).
+    const langHint = detectLanguageHints(query);
+    const nativity = this.ownerProfileStore.nativity();
+    const languageModality = languageModalityHint(langHint, { nativity });
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his iMessage self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
@@ -1786,6 +1800,7 @@ export class IMessageSession {
       ownerProfile ? `# Who you are\n${ownerProfile}` : "",
       relationshipsBlock ? `\n# Your people\n${relationshipsBlock}` : "",
       recentTranscript ? `\n# Just-now conversation (oldest first)\n${recentTranscript}` : "",
+      languageModality ? `\n${languageModality}` : "",
       "",
       "# Decide BEFORE calling tools",
       "Many questions are answerable from the profile above. Skip tool calls for:",
