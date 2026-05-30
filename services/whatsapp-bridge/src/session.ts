@@ -183,6 +183,124 @@ export class WhatsAppSession {
   // Returns null on darwin-non-Macs where docs wasn't initialized.
   getDocs(): PersonalDocs | null { return this.docs; }
 
+  // On-demand backfill for an already-paired session. Baileys only
+  // delivers messaging-history.set automatically on FRESH pair — for an
+  // established device we have to manually request older messages via
+  // fetchMessageHistory(). This walks the JSONL, finds the oldest
+  // known message for the target jid, and asks WhatsApp for `count`
+  // messages older than that. Results stream back through the same
+  // history-sync handler we already wired.
+  //
+  // Returns the request ID + the anchor it used. If no anchor exists
+  // (we've never seen a message in that chat) returns null — the
+  // caller should send at least one message in the chat OR request a
+  // re-pair (which triggers the full automatic sync).
+  async backfillGroup(opts: { jid: string; count?: number }): Promise<{
+    requestId: string;
+    anchorMsgId: string;
+    anchorTs: number;
+    requestedCount: number;
+  } | null> {
+    if (!this.socket) return null;
+    const targetJid = opts.jid.trim();
+    if (!targetJid) return null;
+    const count = Math.min(Math.max(opts.count ?? 50, 1), 500);
+
+    // Find the oldest msgId we have for this jid in the JSONL.
+    let oldestEntry: { ts: number; msgId: string; fromMe: boolean; participant: string } | null = null;
+    if (existsSync(this.historyFile)) {
+      try {
+        const raw = readFileSync(this.historyFile, "utf-8");
+        for (const line of raw.split("\n")) {
+          if (!line) continue;
+          try {
+            const e = JSON.parse(line) as {
+              ts?: number;
+              jid?: string;
+              msgId?: string;
+              fromMe?: boolean;
+              participant?: string;
+            };
+            if (e.jid !== targetJid || !e.msgId || typeof e.ts !== "number") continue;
+            if (!oldestEntry || e.ts < oldestEntry.ts) {
+              oldestEntry = { ts: e.ts, msgId: e.msgId, fromMe: !!e.fromMe, participant: e.participant || "" };
+            }
+          } catch { /* skip malformed */ }
+        }
+      } catch (err) {
+        this.logger.warn({ err, targetJid }, "backfillGroup: failed reading JSONL");
+      }
+    }
+
+    if (!oldestEntry) {
+      this.logger.info({ targetJid }, "backfillGroup: no anchor message found — need at least one message in this chat first");
+      return null;
+    }
+
+    try {
+      const key = {
+        remoteJid: targetJid,
+        id: oldestEntry.msgId,
+        fromMe: oldestEntry.fromMe,
+        participant: oldestEntry.participant || undefined,
+      };
+      // tsRaw is Unix ms; Baileys wants seconds.
+      const tsSeconds = Math.floor(oldestEntry.ts / 1000);
+      const requestId = await this.socket.fetchMessageHistory(count, key, tsSeconds);
+      this.logger.info(
+        { targetJid, anchorMsgId: oldestEntry.msgId, anchorTs: oldestEntry.ts, count, requestId },
+        "backfillGroup: fetchMessageHistory dispatched — results will arrive via messaging-history.set",
+      );
+      return {
+        requestId: String(requestId),
+        anchorMsgId: oldestEntry.msgId,
+        anchorTs: oldestEntry.ts,
+        requestedCount: count,
+      };
+    } catch (err) {
+      this.logger.warn({ err, targetJid }, "backfillGroup: fetchMessageHistory failed");
+      return null;
+    }
+  }
+
+  // Public surface for the dashboard / debugging — how many messages
+  // are in the history log + dedup-set size + oldest/newest ts.
+  historyStats(): {
+    fileBytes: number;
+    seenIds: number;
+    oldestTs: number | null;
+    newestTs: number | null;
+    backfillEnabled: boolean;
+  } {
+    let fileBytes = 0;
+    let oldestTs: number | null = null;
+    let newestTs: number | null = null;
+    try {
+      if (this.historyFile && existsSync(this.historyFile)) {
+        fileBytes = statSync(this.historyFile).size;
+        // Read once to compute bounds. For a 50MB file that's ~50ms.
+        const raw = readFileSync(this.historyFile, "utf-8");
+        for (const line of raw.split("\n")) {
+          if (!line) continue;
+          try {
+            const e = JSON.parse(line) as { ts?: number };
+            if (typeof e.ts === "number") {
+              if (oldestTs === null || e.ts < oldestTs) oldestTs = e.ts;
+              if (newestTs === null || e.ts > newestTs) newestTs = e.ts;
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+    } catch { /* best-effort */ }
+    return {
+      fileBytes,
+      seenIds: this.historySeenIds.size,
+      oldestTs,
+      newestTs,
+      backfillEnabled: WhatsAppSession.HISTORY_BACKFILL_ENABLED,
+    };
+  }
+
   // Append one message to the per-tenant JSONL history log. Debounced
   // (1s) so a burst of inbound doesn't fsync per message.
   appendHistory(entry: {
@@ -193,8 +311,25 @@ export class WhatsAppSession {
     senderName: string;
     participant: string;
     text: string;
+    msgId?: string;
   }): void {
     if (!this.historyFile) return;
+    // De-dupe — same logical message from live + history paths.
+    if (entry.msgId) {
+      if (this.historySeenIds.has(entry.msgId)) return;
+      this.historySeenIds.add(entry.msgId);
+      // FIFO-ish eviction: when the set hits the cap, drop the first
+      // 10% of insertion order. Set.iterator preserves insertion order
+      // per the spec.
+      if (this.historySeenIds.size > WhatsAppSession.HISTORY_DEDUP_MAX_IDS) {
+        const drop = Math.floor(WhatsAppSession.HISTORY_DEDUP_MAX_IDS * 0.1);
+        const it = this.historySeenIds.values();
+        for (let i = 0; i < drop; i++) {
+          const v = it.next().value;
+          if (v) this.historySeenIds.delete(v);
+        }
+      }
+    }
     try {
       this.historyAppendBuffer.push(JSON.stringify(entry));
       if (this.historyFlushTimer) return;
@@ -202,6 +337,131 @@ export class WhatsAppSession {
     } catch (err) {
       this.logger.warn({ err }, "history append failed");
     }
+  }
+
+  // Extract a single text body from a Baileys WAMessage, handling all
+  // common message shapes (conversation, extendedText, image+caption,
+  // video+caption, document+caption, etc.). Returns "" for media-only
+  // or unsupported types — we don't try to OCR/transcribe in the
+  // history backfill (live path already does that for incoming).
+  private extractWAMessageText(msg: { message?: unknown }): string {
+    if (!msg.message) return "";
+    const m = msg.message as Record<string, { text?: string; caption?: string } | string | undefined>;
+    const get = (k: string): string => {
+      const v = m[k];
+      if (!v) return "";
+      if (typeof v === "string") return v;
+      return v.text || v.caption || "";
+    };
+    return (
+      get("conversation") ||
+      get("extendedTextMessage") ||
+      get("imageMessage") ||
+      get("videoMessage") ||
+      get("documentMessage") ||
+      get("ephemeralMessage") ||
+      ""
+    ).trim();
+  }
+
+  // Hook the Baileys `messaging-history.set` event. WhatsApp delivers
+  // server-synced history in batches after pair (and on later
+  // re-syncs). Typical reach: ~14 days of history for a fresh device,
+  // multiple batches per sync, isLatest=true on the final batch.
+  //
+  // Idempotent: appendHistory dedupes by msgId, so re-running the
+  // backfill (after a reconnect) doesn't double-write. Non-blocking:
+  // we don't await anything that could stall the bridge boot.
+  private hookHistorySync(): void {
+    if (!this.socket) return;
+    if (!WhatsAppSession.HISTORY_BACKFILL_ENABLED) {
+      this.logger.info({}, "WhatsApp history backfill disabled by LANTERN_WA_HISTORY_BACKFILL=off");
+      return;
+    }
+    // Pre-seed historySeenIds from the existing JSONL so a restart
+    // doesn't re-append everything that's already on disk. Cheap —
+    // single pass, O(n) lines, ~50ms for 100k.
+    try {
+      if (existsSync(this.historyFile)) {
+        const raw = readFileSync(this.historyFile, "utf-8");
+        let seeded = 0;
+        for (const line of raw.split("\n")) {
+          if (!line) continue;
+          try {
+            const e = JSON.parse(line) as { msgId?: string };
+            if (e.msgId) {
+              this.historySeenIds.add(e.msgId);
+              seeded++;
+              if (this.historySeenIds.size >= WhatsAppSession.HISTORY_DEDUP_MAX_IDS) break;
+            }
+          } catch { /* malformed line, skip */ }
+        }
+        this.logger.info({ seeded }, "WhatsApp history dedup seeded from JSONL");
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "WhatsApp history dedup seed failed (continuing)");
+    }
+
+    this.socket.ev.on("messaging-history.set", (h) => {
+      const startedAt = Date.now();
+      const messages = h.messages || [];
+      let appended = 0;
+      let skippedNoText = 0;
+      let skippedBotSelf = 0;
+      let skippedNoJid = 0;
+      let skippedDuplicate = 0;
+      const startSeen = this.historySeenIds.size;
+
+      for (const msg of messages) {
+        const jid = msg.key?.remoteJid || "";
+        if (!jid) { skippedNoJid++; continue; }
+        const text = this.extractWAMessageText(msg);
+        if (!text) { skippedNoText++; continue; }
+        if (isBotSelfMessage(text)) { skippedBotSelf++; continue; }
+        const msgId = msg.key?.id || "";
+        if (msgId && this.historySeenIds.has(msgId)) { skippedDuplicate++; continue; }
+        // messageTimestamp is seconds (or a Long); coerce to Unix ms.
+        const tsRaw = typeof msg.messageTimestamp === "number"
+          ? msg.messageTimestamp
+          : msg.messageTimestamp ? Number((msg.messageTimestamp as { toString(): string }).toString()) : 0;
+        this.appendHistory({
+          ts: tsRaw * 1000,
+          jid,
+          isGroup: this.isGroupJid(jid),
+          fromMe: !!msg.key?.fromMe,
+          senderName: msg.pushName || "",
+          participant: msg.key?.participant || "",
+          text,
+          msgId,
+        });
+        appended++;
+      }
+
+      this.logger.info({
+        syncType: h.syncType,
+        isLatest: !!h.isLatest,
+        progress: h.progress,
+        batchSize: messages.length,
+        appended,
+        skippedNoText,
+        skippedBotSelf,
+        skippedNoJid,
+        skippedDuplicate,
+        seenIdsBefore: startSeen,
+        seenIdsAfter: this.historySeenIds.size,
+        durationMs: Date.now() - startedAt,
+      }, "WhatsApp history backfill batch");
+
+      this.broadcast({
+        type: "activity",
+        data: {
+          kind: "system",
+          summary: `📥 wa-history sync: +${appended} msgs${h.isLatest ? " (final)" : ""}`,
+          detail: `syncType=${h.syncType} batch=${messages.length} dup=${skippedDuplicate}`,
+          timestamp: Date.now(),
+        },
+      });
+    });
   }
 
   private flushHistory(): void {
@@ -322,12 +582,49 @@ export class WhatsAppSession {
   // message (inbound + outbound, individual + group) is appended as
   // one JSONL line so the LLM tool `search_whatsapp_history` can
   // answer cross-source questions. Cap by file size: when it crosses
-  // HISTORY_MAX_BYTES we truncate the older half. No Baileys backfill
-  // — only accumulates going forward.
-  private static readonly HISTORY_MAX_BYTES = 20 * 1024 * 1024; // 20MB
+  // HISTORY_MAX_BYTES we truncate the older half.
+  //
+  // Two sources feed the log:
+  //   1. LIVE messages.upsert (real-time, ~1s flush debounce).
+  //   2. messaging-history.set BACKFILL on pair + subsequent syncs
+  //      (Baileys delivers WhatsApp's server-side history, typically
+  //      the last ~14 days, in batches of up to ~5000 messages each).
+  // Both paths share appendHistory() + dedupe by message GUID so a
+  // live message that's then replayed via history sync isn't double-
+  // logged.
+  private static readonly HISTORY_MAX_BYTES =
+    Number(process.env.LANTERN_WA_HISTORY_MAX_BYTES) > 0
+      ? Number(process.env.LANTERN_WA_HISTORY_MAX_BYTES)
+      : 50 * 1024 * 1024; // 50MB (history sync can push 10s of MB)
   private historyFile: string = "";
   private historyAppendBuffer: string[] = [];
   private historyFlushTimer: NodeJS.Timeout | null = null;
+
+  // De-dupe set for the history pipeline. Keyed by Baileys message
+  // key.id (globally unique per chat-message). Survives within-
+  // process but resets on restart — that's OK because the JSONL is
+  // re-scanned on load to seed it. Cap at HISTORY_DEDUP_MAX_IDS;
+  // FIFO eviction past that (oldest IDs are least likely to be
+  // re-seen anyway because WhatsApp's history sync only goes ~weeks
+  // back).
+  private static readonly HISTORY_DEDUP_MAX_IDS = 200_000;
+  private historySeenIds: Set<string> = new Set();
+
+  // Auto-backfill bookkeeping: per-jid one-time attempt flag so a
+  // group with sparse history gets ONE automatic fetchMessageHistory
+  // shortly after its first live message arrives. Without this, the
+  // user would have to manually trigger backfill (or wait for the
+  // group to accumulate messages organically) before old-history
+  // searches yield anything.
+  private autoBackfillAttempted: Set<string> = new Set();
+  private static readonly AUTO_BACKFILL_DELAY_MS = 5_000;
+  private static readonly AUTO_BACKFILL_COUNT = 200;
+
+  // History backfill on/off. Default on. Set
+  // LANTERN_WA_HISTORY_BACKFILL=off if a host is memory-constrained
+  // or doesn't want the JSONL to grow.
+  private static readonly HISTORY_BACKFILL_ENABLED =
+    (process.env.LANTERN_WA_HISTORY_BACKFILL ?? "on").toLowerCase() !== "off";
   private attention: AttentionClassifier;
   private media: MediaHandler;
   private personal: PersonalClient;
@@ -693,6 +990,16 @@ export class WhatsAppSession {
         connectTimeoutMs: 60_000,
         keepAliveIntervalMs: 25_000,
         retryRequestDelayMs: 2_000,
+        // Ask WhatsApp for the FULL history sync on initial pair (rather
+        // than the trimmed default of ~3 days). This is what makes
+        // `search_whatsapp_history` actually useful for past questions
+        // like "what did the family group say during my Turkey trip".
+        // Disabled when LANTERN_WA_HISTORY_BACKFILL=off.
+        syncFullHistory: WhatsAppSession.HISTORY_BACKFILL_ENABLED,
+        // Accept every history message regardless of type. Default
+        // returns false for ephemeral/protocol messages; we want
+        // everything text-bearing for the search index.
+        shouldSyncHistoryMessage: () => WhatsAppSession.HISTORY_BACKFILL_ENABLED,
       });
 
       // QR code event
@@ -901,6 +1208,11 @@ export class WhatsAppSession {
       // Save credentials on update
       this.socket.ev.on("creds.update", saveCreds);
 
+      // WhatsApp history sync (backfill ~14 days of past messages
+      // from groups + DMs on initial pair, more on re-syncs). Must be
+      // registered BEFORE the first sync event fires.
+      this.hookHistorySync();
+
       // Incoming messages
       this.socket.ev.on("messages.upsert", async (m) => {
         for (const msg of m.messages) {
@@ -1006,10 +1318,10 @@ export class WhatsAppSession {
 
           // HISTORY LOG. Persist every real text message (not bot-self,
           // not reactions) to a JSONL ring per tenant so the LLM tool
-          // `search_whatsapp_history` can answer cross-source queries
-          // like "what did the family group say during my Turkey trip?".
-          // Accumulates going forward — no historical backfill from
-          // before this deploy.
+          // `search_whatsapp_history` can answer cross-source queries.
+          // appendHistory dedupes by msgId so a message that's also
+          // delivered via the messaging-history.set backfill stream
+          // isn't double-logged.
           if (text && from) {
             this.appendHistory({
               ts: (msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()),
@@ -1019,7 +1331,29 @@ export class WhatsAppSession {
               senderName: msg.pushName || "",
               participant: msg.key.participant || "",
               text,
+              msgId: msg.key.id || "",
             });
+            // AUTO-BACKFILL: first time we see a message in a GROUP
+            // with a valid msgId, schedule a one-time on-demand
+            // history pull. Gives sparse groups (like a trip group
+            // the user rarely chats in) instant searchable depth
+            // without the user having to invoke a tool. Per-jid
+            // dedup so we never fire twice.
+            if (
+              this.isGroupJid(from) &&
+              msg.key.id &&
+              !this.autoBackfillAttempted.has(from) &&
+              WhatsAppSession.HISTORY_BACKFILL_ENABLED
+            ) {
+              this.autoBackfillAttempted.add(from);
+              setTimeout(() => {
+                void this.backfillGroup({ jid: from, count: WhatsAppSession.AUTO_BACKFILL_COUNT })
+                  .then((r) => {
+                    if (r) this.logger.info({ jid: from, requestId: r.requestId }, "auto-backfill dispatched");
+                  })
+                  .catch((err) => this.logger.debug({ err, jid: from }, "auto-backfill failed"));
+              }, WhatsAppSession.AUTO_BACKFILL_DELAY_MS);
+            }
           }
 
           // Voice command path: if the OWNER sent themselves a voice
@@ -2371,6 +2705,7 @@ export class WhatsAppSession {
       `  • search_imessage_history — chat.db messages (DMs + groups). Filter by keyword, date range, contact handle, groupOnly.`,
       `  • list_whatsapp_groups / get_whatsapp_group — WhatsApp GROUPS. Find a group by name, then pull members.`,
       `  • search_whatsapp_history — WhatsApp messages (DMs + groups). Filter by keyword, date range, jid, fromContact.`,
+      `  • backfill_whatsapp_history — when search_whatsapp_history returns empty for an older date range, call this with the group jid to fetch older messages from WhatsApp. Use ONCE per group per session.`,
       `  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits.`,
       `  • google-calendar_list_events — anything time-bound, next 30 days.`,
       ``,

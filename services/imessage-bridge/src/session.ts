@@ -1784,6 +1784,7 @@ export class IMessageSession {
       "  • search_imessage_history — chat.db messages (DMs + groups). Filter by keyword, date range (Unix ms), contact handle, groupOnly.",
       "  • list_whatsapp_groups / get_whatsapp_group — WhatsApp GROUPS. Find a group by name ('japan trip', 'family'), then pull its members.",
       "  • search_whatsapp_history — WhatsApp messages (DMs + groups). Filter by keyword, date range, jid, fromContact.",
+      "  • backfill_whatsapp_history — when search_whatsapp_history returns empty for an older date range, call this with the group jid to ask WhatsApp for older messages. Results appear in search within seconds. Use ONCE per group per session; don't loop.",
       "  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits.",
       "  • google-calendar_list_events — anything time-bound, next 30 days.",
       "",

@@ -579,6 +579,41 @@ app.post("/session/:tenantId/whatsapp/group", async (req, res) => {
   }
 });
 
+app.get("/session/:tenantId/whatsapp/history/stats", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) { res.status(400).json({ error: "session not started" }); return; }
+  res.json(session.historyStats());
+});
+
+// On-demand backfill for an already-paired session. Asks WhatsApp for
+// `count` messages older than the oldest one we've already seen for the
+// given group/chat. Results stream back through the same
+// messaging-history.set handler and append to the JSONL — making them
+// instantly searchable via search_whatsapp_history.
+app.post("/session/:tenantId/whatsapp/history/backfill", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) { res.status(400).json({ error: "session not started" }); return; }
+  const { jid, count } = req.body as { jid?: unknown; count?: unknown };
+  if (typeof jid !== "string" || !jid.trim()) {
+    res.status(400).json({ error: "'jid' required (WhatsApp group/chat JID)" });
+    return;
+  }
+  try {
+    const out = await session.backfillGroup({
+      jid,
+      count: typeof count === "number" ? count : undefined,
+    });
+    if (!out) {
+      res.status(409).json({ error: "no anchor message — send at least one message in this chat first OR re-pair the bridge for a full sync" });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "history/backfill failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 app.post("/session/:tenantId/whatsapp/search", async (req, res) => {
   const session = sessions.get(req.params.tenantId);
   if (!session) { res.status(400).json({ error: "session not started" }); return; }
