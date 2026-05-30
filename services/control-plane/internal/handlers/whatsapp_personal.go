@@ -128,6 +128,12 @@ func (h *WhatsAppPersonalHandler) RemoveVIP(w http.ResponseWriter, r *http.Reque
 type factBody struct {
 	JID     string `json:"jid"`
 	Content string `json:"content"`
+	// Source attribution for dashboard transparency. Allowed values:
+	//   - "owner-remember" — explicit "remember X" command
+	//   - "auto-extract"   — pattern extractor in fact-extractor.ts
+	//   - "user-edit"      — dashboard manual add
+	//   - ""               — back-compat, treated as "manual"
+	Source string `json:"source,omitempty"`
 }
 
 func (h *WhatsAppPersonalHandler) ListFacts(w http.ResponseWriter, r *http.Request) {
@@ -183,11 +189,23 @@ func (h *WhatsAppPersonalHandler) AddFact(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "jid + content required"})
 		return
 	}
+	src := strings.TrimSpace(body.Source)
+	if src == "" {
+		src = "manual"
+	}
+	// Whitelist allowed source labels — protects the column against
+	// arbitrary user-supplied strings showing up on the dashboard.
+	switch src {
+	case "manual", "owner-remember", "auto-extract", "user-edit":
+		// ok
+	default:
+		src = "manual"
+	}
 	var id string
 	if err := h.srv.Pool.QueryRow(r.Context(),
 		`INSERT INTO whatsapp_contact_facts (tenant_id, jid, content, source)
-		 VALUES ($1, $2, $3, 'manual') RETURNING id`,
-		claims.TenantID, body.JID, body.Content,
+		 VALUES ($1, $2, $3, $4) RETURNING id`,
+		claims.TenantID, body.JID, body.Content, src,
 	).Scan(&id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

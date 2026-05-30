@@ -28,6 +28,7 @@ import { IMessageSender } from "./applescript.js";
 import { AgentClient } from "@lantern/bridge-core/agent";
 import { MediaHandler, type MediaAnnotation } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
+import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
   agentPersonaPrompt,
@@ -1176,6 +1177,18 @@ export class IMessageSession {
       this.rememberInbound(row.handle, text);
     }
 
+    // PROACTIVE MEMORY. Scan every contact-inbound for high-confidence
+    // facts ("my birthday is june 3", "I work at Stripe", "we just had
+    // a baby") and auto-save to whatsapp_contact_facts with
+    // source="auto-extract". Surfaces on future replies via factsBlock.
+    // Skipped for owner-self-chat + groups (facts attach to one
+    // person; group authorship is ambiguous).
+    if (text && !isGroup && row.handle && !this.isOwnerChatRow(row)) {
+      void this.scanAndPersistFacts(row.handle, text).catch((err) =>
+        this.logger.debug({ err, handle: row.handle }, "auto-fact scan failed"),
+      );
+    }
+
     // Broadcast the inbound (for the dashboard live feed).
     this.broadcast({
       type: "message",
@@ -1687,6 +1700,28 @@ export class IMessageSession {
     if (!arr) { arr = []; this.inboundHistory.set(handle, arr); }
     arr.push(text);
     if (arr.length > HISTORY_DEPTH) arr.splice(0, arr.length - HISTORY_DEPTH);
+  }
+
+  // PROACTIVE MEMORY — scan the contact's text for high-confidence
+  // facts via the pattern extractor, dedupe against existing facts,
+  // and persist via PersonalClient.addFact(..., "auto-extract").
+  // Fire-and-forget; failures are logged but never block the reply
+  // pipeline. Skipped silently when the extractor finds nothing.
+  private async scanAndPersistFacts(handle: string, text: string): Promise<void> {
+    const facts = extractAutoFacts(text);
+    if (facts.length === 0) return;
+    for (const f of facts) {
+      // perspective === "self" → fact about THIS contact (the sender).
+      // "other" → fact about a third party; we don't have a target
+      // contact for those yet, skip until we add NER. Keeps the
+      // dedup story clean.
+      if (f.perspective !== "self") continue;
+      const ok = await this.personal.addFact(handle, f.content, "auto-extract").catch(() => false);
+      this.logger.info(
+        { handle, fact: f.content, pattern: f.pattern, confidence: f.confidence, ok },
+        ok ? "auto-fact saved" : "auto-fact skipped",
+      );
+    }
   }
 
   private rememberOwnerSent(handle: string, text: string): void {

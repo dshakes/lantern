@@ -96,23 +96,46 @@ export class PersonalClient {
   // vegetarian"). Persists server-side (whatsapp_contact_facts) so it
   // survives restarts and feeds factsBlock on every future reply.
   // Invalidates the local cache so the new fact is visible immediately.
-  async addFact(jid: string, content: string): Promise<boolean> {
+  //
+  // `source` tags origin for dashboard transparency:
+  //   - "owner-remember" (explicit "remember X" command — default)
+  //   - "auto-extract"   (proactive memory pattern extractor)
+  //   - "user-edit"      (dashboard manual add)
+  async addFact(jid: string, content: string, source: string = "owner-remember"): Promise<boolean> {
     const c = content.trim();
     if (!jid || !c) return false;
+
+    // Auto-extracted facts: dedupe against existing facts for the
+    // SAME contact so we don't spam the store with near-duplicates
+    // ("works at stripe" then "works at Stripe Inc"). Owner-remember
+    // facts skip dedup so the user can always force-save.
+    if (source === "auto-extract") {
+      try {
+        const existing = await this.factsFor(jid);
+        const { factsAreSimilar } = await import("./fact-extractor.js");
+        for (const f of existing) {
+          if (factsAreSimilar(f.content, c)) {
+            this.logger.debug({ jid, existing: f.content, candidate: c }, "auto-fact deduped against existing");
+            return false;
+          }
+        }
+      } catch { /* if dedup fails, fall through and save */ }
+    }
+
     try {
       const res = await authedFetch(`/v1/whatsapp/facts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jid, content: c }),
+        body: JSON.stringify({ jid, content: c, source }),
       });
       if (!res.ok) {
-        this.logger.warn({ jid, status: res.status }, "addFact failed");
+        this.logger.warn({ jid, status: res.status, source }, "addFact failed");
         return false;
       }
       this.factsCache.delete(jid); // force refetch incl. the new fact
       return true;
     } catch (err) {
-      this.logger.warn({ err, jid }, "addFact errored");
+      this.logger.warn({ err, jid, source }, "addFact errored");
       return false;
     }
   }

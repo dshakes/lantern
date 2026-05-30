@@ -15,6 +15,7 @@ import { AttentionClassifier } from "./attention.js";
 import { authedFetch } from "@lantern/bridge-core/auth";
 import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
+import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
   agentPersonaPrompt,
@@ -1263,7 +1264,7 @@ export class WhatsAppSession {
               const onBotReply = !!(targetKeyId && this.bridgeSentIds.has(targetKeyId));
               this.logger.info({ emoji, action, threadJid: from, onBotReply }, "reaction command");
               void dispatchReaction(
-                { action, threadJid: from, onBotReply },
+                { action, threadJid: from, onBotReply, targetMsgId: targetKeyId },
                 {
                   pauseContact: (jid) => { this.pauseContact(jid, INDEFINITE_MS); },
                   resumeContact: (jid) => { this.resumeContact(jid); },
@@ -1289,6 +1290,21 @@ export class WhatsAppSession {
                   discardDraft: async () => {},
                   acknowledge: async (jid, ack) => {
                     if (reactionMsg.key) await this.sendReaction(jid, reactionMsg.key, ack);
+                  },
+                  feedbackGood: (jid, msgId) => {
+                    // Log positive feedback — used later for offline
+                    // analysis / per-contact bias tuning. No reply.
+                    this.logger.info({ jid, msgId }, "self-eval: 👏 positive feedback");
+                    this.logActivity("attention_dm", "👏 positive feedback on bot reply", {
+                      jid, scope: "self",
+                    });
+                  },
+                  feedbackBadRetry: async (jid, msgId) => {
+                    if (!msgId) {
+                      this.logger.warn({ jid }, "feedback-bad-retry: no msgId");
+                      return;
+                    }
+                    await this.handleBadFeedbackRetry(jid, msgId);
                   },
                 },
               );
@@ -1497,6 +1513,29 @@ export class WhatsAppSession {
           // Track inbound for style inference. Groups share a single bucket
           // because group register tends to be uniform; DMs are per-contact.
           this.rememberInbound(from, text);
+
+          // PROACTIVE MEMORY (additive — never throws, never blocks the
+          // reply pipeline). Pattern-extract high-confidence facts about
+          // the sender (DMs only — group authorship is ambiguous) and
+          // persist via PersonalClient.addFact with source="auto-extract".
+          // Surfaces on future replies via factsBlock.
+          if (!isGroup && !this.isOwnerChat(from)) {
+            void (async () => {
+              try {
+                const facts = extractAutoFacts(text);
+                for (const f of facts) {
+                  if (f.perspective !== "self") continue;
+                  const ok = await this.personal.addFact(from, f.content, "auto-extract").catch(() => false);
+                  this.logger.info(
+                    { jid: from, fact: f.content, pattern: f.pattern, confidence: f.confidence, ok },
+                    ok ? "auto-fact saved" : "auto-fact skipped",
+                  );
+                }
+              } catch (err) {
+                this.logger.debug({ err, jid: from }, "auto-fact scan failed");
+              }
+            })();
+          }
 
           this.logger.info(
             { from, isGroup, text: text.slice(0, 100) },
@@ -3381,6 +3420,24 @@ export class WhatsAppSession {
       );
     } catch (err) {
       this.logger.warn({ err }, "could not DM attention notice");
+    }
+  }
+
+  // SELF-EVAL feedback handler. On 🔁/🤦 from the owner on a bot
+  // reply, send an acknowledgment + log the signal. Full critique-
+  // and-retry pipeline (re-prompt LLM with prior reply + critique,
+  // edit/replace the bad message) ships in Phase B; this V1 captures
+  // the signal so we have data to tune against and the user sees
+  // their feedback was heard.
+  private async handleBadFeedbackRetry(jid: string, msgId: string | undefined): Promise<void> {
+    this.logger.info({ jid, msgId }, "self-eval: 🔁 bad-feedback signal");
+    this.logActivity("attention_dm", "🔁 owner flagged bad reply — feedback captured", {
+      jid, scope: "self",
+    });
+    try {
+      await this.confirmToSelf("noted — what was off? (i'll do better next time)");
+    } catch (err) {
+      this.logger.warn({ err, jid }, "feedback ack send failed");
     }
   }
 

@@ -25,7 +25,14 @@ export type ReactionAction =
   | "discard-draft"
   | "status"
   | "mark-vip"
-  | "forget";
+  | "forget"
+  // Self-eval signals on bot REPLIES (owner self-chat).
+  //   - feedback-good: positive signal, logged for offline tuning.
+  //   - feedback-bad-retry: re-prompt the LLM with critique + send a
+  //     better version. Replaces the prior reply on the surface that
+  //     supports edit (WhatsApp); appends a new reply on iMessage.
+  | "feedback-good"
+  | "feedback-bad-retry";
 
 const EMOJI_MAP: Record<string, ReactionAction> = {
   // Pause variants
@@ -51,6 +58,18 @@ const EMOJI_MAP: Record<string, ReactionAction> = {
   "❤": "mark-vip",
   "🗑": "forget",
   "🗑️": "forget",
+  // Self-eval reactions on bot replies. Distinct from 👍/👎 (which
+  // are the VIP-draft approve/discard) so the user can both manage
+  // drafts AND rate a reply on the same surface without ambiguity.
+  "👏": "feedback-good",
+  "⭐": "feedback-good",
+  "🌟": "feedback-good",
+  "💯": "feedback-good",
+  "🔁": "feedback-bad-retry",
+  "🔄": "feedback-bad-retry",
+  "🤦": "feedback-bad-retry",
+  "🤦‍♂️": "feedback-bad-retry",
+  "🤦‍♀️": "feedback-bad-retry",
 };
 
 export function reactionToAction(emoji: string): ReactionAction | null {
@@ -72,6 +91,10 @@ export interface ReactionContext {
   // notification in self-chat. Routes approve/discard via the
   // control-plane draft endpoint.
   draftId?: string;
+  // The bridge-message-id of the message the user reacted to. Required
+  // for feedback-* actions so the bridge can look up which inbound
+  // generated this reply and retry with critique.
+  targetMsgId?: string;
 }
 
 export interface ReactionCallbacks {
@@ -85,6 +108,11 @@ export interface ReactionCallbacks {
   // Used to react back with a confirmation emoji on the reaction's
   // target message so the user gets visual feedback.
   acknowledge?: (targetThread: string, emoji: string) => Promise<void> | void;
+  // Self-eval feedback. The bridge implements one or both; when not
+  // implemented dispatchReaction returns {handled:false} and the
+  // reaction is silently ignored.
+  feedbackGood?: (threadJid: string, targetMsgId: string | undefined) => Promise<void> | void;
+  feedbackBadRetry?: (threadJid: string, targetMsgId: string | undefined) => Promise<void> | void;
 }
 
 export async function dispatchReaction(
@@ -119,6 +147,18 @@ export async function dispatchReaction(
     case "forget":
       await cb.forgetContact(ctx.threadJid);
       await cb.acknowledge?.(ctx.threadJid, "🗑");
+      return { handled: true };
+    case "feedback-good":
+      if (!ctx.onBotReply) return { handled: false, reason: "feedback only on bot replies" };
+      if (!cb.feedbackGood) return { handled: false, reason: "feedbackGood not implemented" };
+      await cb.feedbackGood(ctx.threadJid, ctx.targetMsgId);
+      await cb.acknowledge?.(ctx.threadJid, "🙏");
+      return { handled: true };
+    case "feedback-bad-retry":
+      if (!ctx.onBotReply) return { handled: false, reason: "feedback only on bot replies" };
+      if (!cb.feedbackBadRetry) return { handled: false, reason: "feedbackBadRetry not implemented" };
+      await cb.feedbackBadRetry(ctx.threadJid, ctx.targetMsgId);
+      // No ack — the retried reply itself is the acknowledgment.
       return { handled: true };
   }
 }

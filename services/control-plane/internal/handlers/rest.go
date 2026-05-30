@@ -833,7 +833,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 			if provider == "openai" {
 				model = "gpt-4o"
 			} else {
-				model = "claude-sonnet-4-20250514"
+				model = sonnetModel()
 			}
 		} else {
 			h.logger().Warn("inline executor: no LLM key, marking failed", zap.Error(err))
@@ -908,9 +908,9 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 		case "gpt-4o-mini":
 			model = "gpt-4o"
 			logStep("upgrade_model", "completed", "Upgraded gpt-4o-mini → gpt-4o for tool-use reliability")
-		case "claude-haiku-4-20250414":
-			model = "claude-sonnet-4-20250514"
-			logStep("upgrade_model", "completed", "Upgraded haiku-4 → sonnet-4 for tool-use reliability")
+		case "claude-haiku-4-20250414", "claude-haiku-4-5-20251001":
+			model = sonnetModel()
+			logStep("upgrade_model", "completed", "Upgraded haiku → sonnet for tool-use reliability")
 		}
 	}
 	if !hasPrefetch {
