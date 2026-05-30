@@ -190,6 +190,74 @@ export class AgentClient {
     this.saveSessions();
   }
 
+  // STREAMING variant. Calls /v1/jarvis/stream-completion (no tools)
+  // and surfaces text deltas via onDelta as they arrive. Returns the
+  // full assembled text when done. For bridge UX like "send first
+  // sentence as soon as it lands, send the rest at end".
+  //
+  // NO tool loop — for tool-using flows use respondTo() which goes
+  // through /v1/sessions/{id}/messages.
+  async respondToStream(
+    systemPrompt: string,
+    userPrompt: string,
+    onDelta: (chunk: string) => void,
+    opts: { model?: string; signal?: AbortSignal } = {},
+  ): Promise<string> {
+    const body = JSON.stringify({
+      systemPrompt,
+      userPrompt,
+      model: opts.model || "auto",
+    });
+    const ctrl = new AbortController();
+    if (opts.signal) {
+      opts.signal.addEventListener("abort", () => ctrl.abort(), { once: true });
+    }
+    const timeoutId = setTimeout(() => ctrl.abort(), SSE_TIMEOUT_MS);
+    let full = "";
+    try {
+      const res = await authedFetch("/v1/jarvis/stream-completion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body,
+        signal: ctrl.signal,
+      });
+      if (!res.ok || !res.body) {
+        this.logger.error({ status: res.status }, "stream-completion: HTTP error");
+        return "";
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // SSE frames are \n\n delimited. Each frame can have multiple
+        // `data: ...\n` lines (we re-assemble).
+        let sep: number;
+        while ((sep = buf.indexOf("\n\n")) !== -1) {
+          const raw = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          // Concatenate every `data: ` line in this frame.
+          const lines = raw.split("\n").filter((l) => l.startsWith("data: "));
+          if (lines.length === 0) continue;
+          const chunk = lines.map((l) => l.slice(6)).join("\n");
+          if (chunk === "[DONE]") {
+            return full;
+          }
+          full += chunk;
+          onDelta(chunk);
+        }
+      }
+      return full;
+    } catch (err) {
+      if (!ctrl.signal.aborted) this.logger.error({ err }, "stream-completion: exception");
+      return full;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
   async getStylePrompt(): Promise<string | undefined> {
     if (!this.enabled()) return undefined;
     if (Date.now() - this.styleFetchedAt < AgentClient.STYLE_TTL_MS) return this.cachedStylePrompt;

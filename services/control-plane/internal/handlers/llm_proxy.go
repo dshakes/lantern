@@ -538,6 +538,265 @@ func resolveCandidateChain(hasAnthropic, hasOpenAI bool) []struct{ Provider, Mod
 
 // ---------- Complete endpoint ----------
 
+// callLLMStreamingNoTools is the real-token-streaming variant.
+// Skips the tool loop entirely (callers that need tools use
+// callLLMWithTools instead). Emits text chunks via onDelta as they
+// arrive from the provider's SSE stream. Returns the full assembled
+// text + token counts when done. Supports OpenAI + Anthropic; for
+// other providers falls back to non-streaming callLLMSync and emits
+// one final delta.
+//
+// Designed for the "first-sentence-fast" UX: caller buffers deltas,
+// emits a chunk as soon as a sentence terminator + minimum length
+// is hit, sends the remainder when stream completes.
+func (h *LlmProxyHandler) callLLMStreamingNoTools(
+	ctx context.Context,
+	provider, model, apiKey string,
+	systemPrompt, userPrompt string,
+	onDelta func(chunk string),
+) (full string, tokensIn, tokensOut int64, err error) {
+	if onDelta == nil {
+		onDelta = func(string) {}
+	}
+
+	switch provider {
+	case "openai":
+		reqBody := map[string]any{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "system", "content": systemPrompt},
+				{"role": "user", "content": userPrompt},
+			},
+			"max_tokens": 1024,
+			"stream":     true,
+			"stream_options": map[string]any{
+				"include_usage": true,
+			},
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+			"https://api.openai.com/v1/chat/completions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Accept", "text/event-stream")
+		resp, httpErr := http.DefaultClient.Do(req)
+		if httpErr != nil {
+			return "", 0, 0, httpErr
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			body, _ := io.ReadAll(resp.Body)
+			return "", 0, 0, fmt.Errorf("openai stream %d: %s", resp.StatusCode, string(body))
+		}
+		var sb strings.Builder
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+			if payload == "[DONE]" {
+				break
+			}
+			var ev struct {
+				Choices []struct {
+					Delta struct {
+						Content string `json:"content"`
+					} `json:"delta"`
+				} `json:"choices"`
+				Usage *struct {
+					PromptTokens     int64 `json:"prompt_tokens"`
+					CompletionTokens int64 `json:"completion_tokens"`
+				} `json:"usage"`
+			}
+			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+				continue
+			}
+			if ev.Usage != nil {
+				tokensIn = ev.Usage.PromptTokens
+				tokensOut = ev.Usage.CompletionTokens
+			}
+			for _, c := range ev.Choices {
+				if c.Delta.Content != "" {
+					sb.WriteString(c.Delta.Content)
+					onDelta(c.Delta.Content)
+				}
+			}
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			return sb.String(), tokensIn, tokensOut, scanErr
+		}
+		return sb.String(), tokensIn, tokensOut, nil
+
+	case "anthropic":
+		reqBody := map[string]any{
+			"model":      model,
+			"max_tokens": 1024,
+			"stream":     true,
+			"system":     systemPrompt,
+			"messages": []map[string]string{
+				{"role": "user", "content": userPrompt},
+			},
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+			"https://api.anthropic.com/v1/messages", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		req.Header.Set("Accept", "text/event-stream")
+		resp, httpErr := http.DefaultClient.Do(req)
+		if httpErr != nil {
+			return "", 0, 0, httpErr
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			body, _ := io.ReadAll(resp.Body)
+			return "", 0, 0, fmt.Errorf("anthropic stream %d: %s", resp.StatusCode, string(body))
+		}
+		var sb strings.Builder
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			payload := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+			var ev struct {
+				Type  string `json:"type"`
+				Delta struct {
+					Type         string `json:"type"`
+					Text         string `json:"text"`
+					InputTokens  int64  `json:"input_tokens,omitempty"`
+					OutputTokens int64  `json:"output_tokens,omitempty"`
+				} `json:"delta"`
+				Usage *struct {
+					InputTokens  int64 `json:"input_tokens"`
+					OutputTokens int64 `json:"output_tokens"`
+				} `json:"usage"`
+				Message *struct {
+					Usage *struct {
+						InputTokens  int64 `json:"input_tokens"`
+						OutputTokens int64 `json:"output_tokens"`
+					} `json:"usage"`
+				} `json:"message"`
+			}
+			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+				continue
+			}
+			if ev.Type == "content_block_delta" && ev.Delta.Type == "text_delta" && ev.Delta.Text != "" {
+				sb.WriteString(ev.Delta.Text)
+				onDelta(ev.Delta.Text)
+			}
+			if ev.Type == "message_start" && ev.Message != nil && ev.Message.Usage != nil {
+				tokensIn = ev.Message.Usage.InputTokens
+			}
+			if ev.Type == "message_delta" && ev.Usage != nil {
+				tokensOut = ev.Usage.OutputTokens
+			}
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			return sb.String(), tokensIn, tokensOut, scanErr
+		}
+		return sb.String(), tokensIn, tokensOut, nil
+
+	default:
+		// Unknown provider — fall back to non-streaming. Emits one
+		// final delta with the full text so callers don't see broken
+		// streaming contract.
+		text, ti, to, _, e := h.callLLMSync(ctx, provider, model, apiKey, userPrompt)
+		if text != "" {
+			onDelta(text)
+		}
+		return text, ti, to, e
+	}
+}
+
+// HandleStreamCompletion serves POST /v1/jarvis/stream-completion —
+// a no-tools streaming endpoint optimized for the bridges' fast
+// "first-sentence-fast" path. Body: {systemPrompt, userPrompt, model?}.
+// Returns text/event-stream with `data: <chunk>\n\n` events per
+// LLM delta, and a final `data: [DONE]\n\n` sentinel.
+func (h *LlmProxyHandler) HandleStreamCompletion(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		SystemPrompt string `json:"systemPrompt"`
+		UserPrompt   string `json:"userPrompt"`
+		Model        string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if strings.TrimSpace(body.UserPrompt) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "userPrompt required"})
+		return
+	}
+	model := body.Model
+	if model == "" {
+		model = "auto"
+	}
+	provider, resolved := h.resolveModelForTenant(ctx, tenantID, model)
+	apiKey, keyErr := h.resolveProviderKey(ctx, tenantID, provider)
+	if keyErr != nil {
+		alt := "anthropic"
+		if provider == "anthropic" {
+			alt = "openai"
+		}
+		if altKey, altErr := h.resolveProviderKey(ctx, tenantID, alt); altErr == nil {
+			provider = alt
+			apiKey = altKey
+			if provider == "openai" {
+				resolved = "gpt-4o"
+			} else {
+				resolved = sonnetModel()
+			}
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no LLM key configured"})
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, _ := w.(http.Flusher)
+	emit := func(chunk string) {
+		// Escape per SSE: split on \n so multi-line chunks deliver right.
+		for _, ln := range strings.Split(chunk, "\n") {
+			fmt.Fprintf(w, "data: %s\n", ln)
+		}
+		fmt.Fprintf(w, "\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	full, _, _, llmErr := h.callLLMStreamingNoTools(ctx, provider, resolved, apiKey, body.SystemPrompt, body.UserPrompt, emit)
+	if llmErr != nil {
+		// If nothing was streamed yet, send an error frame. Otherwise
+		// the partial text is already on the wire.
+		if full == "" {
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", llmErr.Error())
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return
+		}
+	}
+	fmt.Fprintf(w, "data: [DONE]\n\n")
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
 // Complete handles POST /v1/completions.
 func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	ctx, tenantID, err := h.contextWithTenant(r)
