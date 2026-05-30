@@ -326,6 +326,42 @@ app.post("/session/:tenantId/personal-docs/read", async (req, res) => {
   }
 });
 
+// ---- iMessage history search ------------------------------------------
+//
+// Exposes chat.db keyword + date-range search so the control-plane's
+// LLM tool `search_imessage_history` can answer cross-source questions
+// like "what did the family group say during my Turkey trip?".
+// Path-restricted (owner self-chat allowed roots already enforced via
+// requireToken), bound to loopback, returns at most 50 messages per
+// query to keep LLM context tight.
+
+app.post("/session/:tenantId/imessage/search", async (req, res) => {
+  const s = sessions.get(req.params.tenantId);
+  if (!s) { res.status(400).json({ error: "session not started" }); return; }
+  const { keyword, sinceMs, untilMs, handle, groupOnly, limit } = req.body as {
+    keyword?: unknown;
+    sinceMs?: unknown;
+    untilMs?: unknown;
+    handle?: unknown;
+    groupOnly?: unknown;
+    limit?: unknown;
+  };
+  try {
+    const hits = s.searchHistory({
+      keyword: typeof keyword === "string" ? keyword : undefined,
+      sinceMs: typeof sinceMs === "number" ? sinceMs : undefined,
+      untilMs: typeof untilMs === "number" ? untilMs : undefined,
+      handle: typeof handle === "string" ? handle : undefined,
+      groupOnly: !!groupOnly,
+      limit: typeof limit === "number" ? limit : undefined,
+    });
+    res.json({ count: hits.length, results: hits });
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "imessage/search failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // ---- WebSocket ---------------------------------------------------------
 
 wss.on("connection", (ws, req) => {

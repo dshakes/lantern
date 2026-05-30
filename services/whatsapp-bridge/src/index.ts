@@ -541,6 +541,45 @@ app.post("/session/:tenantId/personal-docs/read", async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// WhatsApp message-history search
+// ---------------------------------------------------------------------------
+//
+// Exposes the per-tenant JSONL history (built up by the session as
+// messages flow through) so the control-plane LLM tool
+// `search_whatsapp_history` can answer cross-source questions like
+// "what did the family group say during my Turkey trip?". Loopback-
+// only, requireToken auth via the existing /session/* middleware.
+
+app.post("/session/:tenantId/whatsapp/search", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) { res.status(400).json({ error: "session not started" }); return; }
+  const { keyword, sinceMs, untilMs, jid, groupOnly, fromContact, limit } = req.body as {
+    keyword?: unknown;
+    sinceMs?: unknown;
+    untilMs?: unknown;
+    jid?: unknown;
+    groupOnly?: unknown;
+    fromContact?: unknown;
+    limit?: unknown;
+  };
+  try {
+    const hits = session.searchHistory({
+      keyword: typeof keyword === "string" ? keyword : undefined,
+      sinceMs: typeof sinceMs === "number" ? sinceMs : undefined,
+      untilMs: typeof untilMs === "number" ? untilMs : undefined,
+      jid: typeof jid === "string" ? jid : undefined,
+      groupOnly: !!groupOnly,
+      fromContact: typeof fromContact === "string" ? fromContact : undefined,
+      limit: typeof limit === "number" ? limit : undefined,
+    });
+    res.json({ count: hits.length, results: hits });
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "whatsapp/search failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // WebSocket
 // ---------------------------------------------------------------------------
 

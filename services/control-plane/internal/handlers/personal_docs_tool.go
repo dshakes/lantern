@@ -29,12 +29,14 @@ const (
 	// Tool names. Underscore (not __) because these aren't dispatched
 	// through executeConnectorAction — they have their own dispatch
 	// branch in dispatchTool that bypasses the connector_installs gate.
-	personalDocsSearchTool = "search_personal_files"
-	personalDocsReadTool   = "read_personal_file"
+	personalDocsSearchTool    = "search_personal_files"
+	personalDocsReadTool      = "read_personal_file"
+	imessageHistorySearchTool = "search_imessage_history"
+	whatsappHistorySearchTool = "search_whatsapp_history"
 
-	// Tenant ID is included in the URL path because the bridge keys its
-	// PersonalDocs instance + audit log per tenant.
-	personalDocsBridgeDefaultURL = "http://127.0.0.1:3200"
+	// Default bridge URLs (loopback). Override via env.
+	personalDocsBridgeDefaultURL = "http://127.0.0.1:3200" // iMessage bridge
+	whatsappBridgeDefaultURL     = "http://127.0.0.1:3100" // WhatsApp bridge
 
 	// Caps that protect both bridge resources and LLM context. The
 	// bridge enforces the same limits server-side; these are belt-and-
@@ -44,8 +46,8 @@ const (
 	personalDocsRequestTimeoutSeconds = 90 // OCR-backed reads can take 30s+
 )
 
-// personalDocsTools returns the two built-in tool definitions in
-// OpenAI tool-call format. Called from toolsForTenant().
+// personalDocsTools returns the built-in tool definitions in OpenAI
+// tool-call format. Called from toolsForTenant().
 func personalDocsTools() []map[string]any {
 	return []map[string]any{
 		{
@@ -92,14 +94,67 @@ func personalDocsTools() []map[string]any {
 				},
 			},
 		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name": imessageHistorySearchTool,
+				"description": "Search the user's iMessage history (chat.db on their Mac — has YEARS of messages, both DMs and group chats). " +
+					"Filter by keyword, date range (Unix milliseconds), specific contact handle, or group-only. " +
+					"Returns up to 25 messages with timestamp, sender, group/DM context, and text. " +
+					"USE THIS when a question references a past period ('during my Turkey trip', 'last summer', 'when I was in NYC'), " +
+					"a person's recent chats, or anything that lived in messaging. " +
+					"For date ranges, ALWAYS pair with other sources (gmail_search, search_personal_files) for the FULL picture.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"keyword":   map[string]any{"type": "string", "description": "Substring match on message text. Optional."},
+						"sinceMs":   map[string]any{"type": "integer", "description": "Unix milliseconds (inclusive). Optional."},
+						"untilMs":   map[string]any{"type": "integer", "description": "Unix milliseconds (inclusive). Optional."},
+						"handle":    map[string]any{"type": "string", "description": "Exact contact handle (phone or email). Optional."},
+						"groupOnly": map[string]any{"type": "boolean", "description": "Only return group-chat messages. Optional."},
+						"limit":     map[string]any{"type": "integer", "description": "Max results (default 25, max 50)."},
+					},
+				},
+			},
+		},
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name": whatsappHistorySearchTool,
+				"description": "Search the user's WhatsApp message history (the bridge logs all messages going forward). " +
+					"Filter by keyword, date range (Unix milliseconds), specific JID, sender-name substring, or group-only. " +
+					"Returns up to 25 messages with timestamp, sender, group/DM context, and text. " +
+					"USE THIS when the user references something said in a WhatsApp group/DM, especially for date-range " +
+					"questions ('during my Turkey trip', 'last weekend'). " +
+					"For the FULL picture combine with search_imessage_history and gmail_search.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"keyword":     map[string]any{"type": "string", "description": "Substring match on message text. Optional."},
+						"sinceMs":     map[string]any{"type": "integer", "description": "Unix milliseconds (inclusive). Optional."},
+						"untilMs":     map[string]any{"type": "integer", "description": "Unix milliseconds (inclusive). Optional."},
+						"jid":         map[string]any{"type": "string", "description": "Exact WhatsApp JID. Optional."},
+						"groupOnly":   map[string]any{"type": "boolean", "description": "Only return group messages. Optional."},
+						"fromContact": map[string]any{"type": "string", "description": "Case-insensitive substring on sender name (e.g. 'harika'). Optional."},
+						"limit":       map[string]any{"type": "integer", "description": "Max results (default 25, max 50)."},
+					},
+				},
+			},
+		},
 	}
 }
 
 // isPersonalDocsTool returns true when `name` is one of the built-in
-// personal-docs tools. Used by dispatchTool to branch before the
+// bridge-proxied tools (personal-docs, iMessage history, WhatsApp
+// history). Used by dispatchTool to branch before the
 // connector-install gate.
 func isPersonalDocsTool(name string) bool {
-	return name == personalDocsSearchTool || name == personalDocsReadTool
+	switch name {
+	case personalDocsSearchTool, personalDocsReadTool,
+		imessageHistorySearchTool, whatsappHistorySearchTool:
+		return true
+	}
+	return false
 }
 
 // executePersonalDocsTool proxies the call to the bridge running on the
@@ -122,6 +177,13 @@ func executePersonalDocsTool(ctx context.Context, tenantID, name string, params 
 
 	if tenantID == "" {
 		return nil, errors.New("personal-docs tool: tenant_id required")
+	}
+
+	// WhatsApp history searches go to the WhatsApp bridge (default
+	// :3100), everything else to the iMessage bridge (default :3200).
+	waBase := strings.TrimRight(os.Getenv("LANTERN_WHATSAPP_BRIDGE_URL"), "/")
+	if waBase == "" {
+		waBase = whatsappBridgeDefaultURL
 	}
 
 	var endpoint string
@@ -152,6 +214,50 @@ func executePersonalDocsTool(ctx context.Context, tenantID, name string, params 
 		}
 		body["path"] = path
 		endpoint = fmt.Sprintf("%s/session/%s/personal-docs/read", base, tenantID)
+	case imessageHistorySearchTool:
+		// All filters optional — bridge handles the empty case.
+		if v, ok := params["keyword"].(string); ok && strings.TrimSpace(v) != "" {
+			body["keyword"] = strings.TrimSpace(v)
+		}
+		if v, ok := params["sinceMs"].(float64); ok {
+			body["sinceMs"] = int64(v)
+		}
+		if v, ok := params["untilMs"].(float64); ok {
+			body["untilMs"] = int64(v)
+		}
+		if v, ok := params["handle"].(string); ok && strings.TrimSpace(v) != "" {
+			body["handle"] = strings.TrimSpace(v)
+		}
+		if v, ok := params["groupOnly"].(bool); ok {
+			body["groupOnly"] = v
+		}
+		if v, ok := params["limit"].(float64); ok && v > 0 {
+			body["limit"] = int(v)
+		}
+		endpoint = fmt.Sprintf("%s/session/%s/imessage/search", base, tenantID)
+	case whatsappHistorySearchTool:
+		if v, ok := params["keyword"].(string); ok && strings.TrimSpace(v) != "" {
+			body["keyword"] = strings.TrimSpace(v)
+		}
+		if v, ok := params["sinceMs"].(float64); ok {
+			body["sinceMs"] = int64(v)
+		}
+		if v, ok := params["untilMs"].(float64); ok {
+			body["untilMs"] = int64(v)
+		}
+		if v, ok := params["jid"].(string); ok && strings.TrimSpace(v) != "" {
+			body["jid"] = strings.TrimSpace(v)
+		}
+		if v, ok := params["groupOnly"].(bool); ok {
+			body["groupOnly"] = v
+		}
+		if v, ok := params["fromContact"].(string); ok && strings.TrimSpace(v) != "" {
+			body["fromContact"] = strings.TrimSpace(v)
+		}
+		if v, ok := params["limit"].(float64); ok && v > 0 {
+			body["limit"] = int(v)
+		}
+		endpoint = fmt.Sprintf("%s/session/%s/whatsapp/search", waBase, tenantID)
 	default:
 		return nil, fmt.Errorf("personal-docs tool: unknown name %q", name)
 	}

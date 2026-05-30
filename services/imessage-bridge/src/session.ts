@@ -174,8 +174,12 @@ export class IMessageSession {
   // user sees two slightly different replies. Window is short (5s)
   // because the dual-row gap is sub-second; longer than 5s means a
   // legitimate retry by the user.
-  private recentInbound: Array<{ key: string; ts: number }> = [];
-  private static readonly INBOUND_DEDUP_MS = 5_000;
+  private recentInbound: Array<{ key: string; ts: number; isFromMe: boolean }> = [];
+  // 10s catches the cross-device-echo race where the same message
+  // lands as is_from_me=1 in one view, then is_from_me=0 in another
+  // view ~1-3 seconds later. Generous enough for that gap; tight
+  // enough that a legitimate retype-after-typo isn't suppressed.
+  private static readonly INBOUND_DEDUP_MS = 10_000;
 
   // Per-chat cache of the most recent offer we made (e.g. "want me
   // to add a renewal reminder?"). When the user confirms with
@@ -217,6 +221,21 @@ export class IMessageSession {
   // Public accessor so the HTTP layer can proxy path-restricted
   // personal-docs search/read for the control-plane's LLM tools.
   getDocs(): PersonalDocs { return this.docs; }
+
+  // Public accessor for chat.db search. Exposed to the control-plane
+  // LLM tool `search_imessage_history` so cross-source queries like
+  // "what did the family group say during my Turkey trip?" can be
+  // answered. Returns at most 50 hits.
+  searchHistory(opts: {
+    keyword?: string;
+    sinceMs?: number;
+    untilMs?: number;
+    handle?: string;
+    groupOnly?: boolean;
+    limit?: number;
+  }): ReturnType<ChatDB["searchMessages"]> {
+    return this.db.searchMessages(opts);
+  }
   private ownerProfileStore: OwnerProfileStore;
   private macActions: MacActions;
 
@@ -701,24 +720,34 @@ export class IMessageSession {
     const unixMs = appleNsToUnixMs(row.date);
     const isGroup = row.chatDisplayName !== "" || row.handle === "";
 
-    // INBOUND DEDUP. When the user has 2+ Apple IDs signed into
-    // Messages on this Mac, the same logical message lands twice
-    // (one row per account view) with different rowids. Key on
-    // (handle, isFromMe, text) within a 5s window — too tight for
-    // false legitimate retries; loose enough to catch the dual-row
-    // race even on a busy laptop.
+    // CROSS-DEVICE / MULTI-APPLE-ID DEDUP. The same owner message lands
+    // in chat.db twice (with different rowids) when:
+    //   (a) Two Apple IDs are signed into Messages — one row per view.
+    //   (b) The user typed on their phone AND it cross-device-synced
+    //       to the bridge Mac — sometimes as is_from_me=1 from one
+    //       account's view, then again as is_from_me=0 from the other.
+    // Without dedup, handleNewRow fires twice → handleOwnerDocQuery
+    // runs twice → user sees the same reply twice and the LLM is
+    // billed twice.
+    //
+    // Key on (handle, text) ONLY (NOT isFromMe) within a 10s window.
+    // Including isFromMe in the key let cross-device duplicates slip
+    // through because the SAME message can appear as both is_from_me=1
+    // and is_from_me=0 in different account views. 10s window is
+    // generous for legitimate "user retyped the same thing" — that's
+    // not noise-rate user behavior anyway.
     const text = (row.text || "").trim();
     if (text && row.handle) {
-      const key = `${row.handle}|${row.isFromMe ? 1 : 0}|${text}`;
+      const key = `${row.handle}|${text}`;
       const now = Date.now();
       // GC first
       this.recentInbound = this.recentInbound.filter((e) => now - e.ts < IMessageSession.INBOUND_DEDUP_MS);
       const seen = this.recentInbound.find((e) => e.key === key);
       if (seen) {
-        this.logger.debug({ rowid: row.rowid, handle: row.handle, textPreview: text.slice(0, 60) }, "duplicate inbound — skipping (multi-Apple-ID echo)");
+        this.logger.info({ rowid: row.rowid, handle: row.handle, textPreview: text.slice(0, 60), priorIsFromMe: seen.isFromMe, thisIsFromMe: row.isFromMe }, "duplicate inbound — skipping (cross-device echo)");
         return;
       }
-      this.recentInbound.push({ key, ts: now });
+      this.recentInbound.push({ key, ts: now, isFromMe: row.isFromMe });
     }
 
     // KILL SWITCH gate. When engaged, the bridge IGNORES every inbound
@@ -1724,11 +1753,14 @@ export class IMessageSession {
       "  • Relationship / family questions ('who is my son', 'what's my wife's name', 'my brother-in-law') — answer from 'Your people' above.",
       "  • Style / identity questions ('what do I work on', 'where do I live') — answer from 'Who you are'.",
       "  • Conversational follow-ups that don't need fresh data.",
-      "Call tools only when you actually need data the profile doesn't have:",
+      "Call tools only when you actually need data the profile doesn't have. The full toolkit:",
       "  • search_personal_files / read_personal_file — Mac files (Documents, Desktop, iCloud). Passport, license, green card, I-485, taxes, receipts. PDFs/images OCR'd.",
+      "  • search_imessage_history — chat.db has YEARS of iMessage DMs + group chats. Filter by keyword, date range (Unix ms), contact handle, groupOnly.",
+      "  • search_whatsapp_history — WhatsApp messages (DMs + groups). Filter by keyword, date range, jid, fromContact (sender-name substring).",
       "  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits.",
       "  • google-calendar_list_events — anything time-bound, next 30 days.",
-      "If you DO call tools, search broadly and answer concretely; never reply 'I can't access your files/emails'.",
+      "For DATE-RANGE questions ('during my Turkey trip', 'when X happened', 'last summer'): FIRST narrow the date range from the most concrete source (visa doc, calendar event, flight email), THEN query search_imessage_history + search_whatsapp_history + gmail_search across that range for the FULL picture. Don't stop at the first source — cross-reference all three.",
+      "If you DO call tools, search broadly; never reply 'I can't access your files/emails/messages'.",
       "",
       "# Voice",
       "  • Direct answer first, lowercase, conversational. 1-3 short lines max.",
