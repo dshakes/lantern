@@ -3321,6 +3321,8 @@ export class WhatsAppSession {
       // case any provider stream chokes mid-rollout.
       const streamEnabled = (process.env.LANTERN_JARVIS_STREAM ?? "on").toLowerCase() !== "off";
       if (streamEnabled) {
+        const streamT0 = Date.now();
+        let firstChunkAt = 0;
         let firstSentText = ""; // EXACT text we sent as the first chunk
         let buffer = "";
         // First-sentence terminator: . ? ! followed by whitespace OR end.
@@ -3347,13 +3349,28 @@ export class WhatsAppSession {
             });
           }
         };
+        // SPEED MATTERS for natural-chat. Force a fast model:
+        // - Opus 4.8 (the default 'auto') takes 5-15s for trivial
+        //   conversational replies — overkill for "hi" → "hey".
+        // - Sonnet 4.6 is the sweet spot: ~1-2s, conversational
+        //   quality indistinguishable from opus at this length.
+        // - Override per-deploy via LANTERN_NATURAL_CHAT_MODEL
+        //   (e.g., "claude-haiku-4-5-20251001" for sub-second).
+        const fastModel =
+          process.env.LANTERN_NATURAL_CHAT_MODEL ||
+          "reasoning-large"; // resolves to sonnet
         const draft = await this.agent.respondToStream(systemHint, text, (chunk) => {
+          if (!firstChunkAt) firstChunkAt = Date.now() - streamT0;
           buffer += chunk;
           if (!firstSentText && buffer.length > 30) {
             // Async fire-and-forget — don't block the stream consumer.
             void sendFirstSentenceIfReady().catch(() => {});
           }
-        });
+        }, { model: fastModel });
+        this.logger.info(
+          { jid, model: fastModel, firstChunkAt, totalMs: Date.now() - streamT0, draftLen: (draft || "").length, firstSentEarly: !!firstSentText },
+          "jarvis-stream: done",
+        );
         const clean = (draft || "").trim();
         if (!clean) return;
         if (!firstSentText) {
