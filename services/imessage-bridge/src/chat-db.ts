@@ -66,6 +66,11 @@ export interface IMessageRow {
   // The bridge must NEVER treat a reaction as an inbound message —
   // someone hearting a message in a group is not a prompt to reply.
   associatedMessageType: number;
+  // When this row IS a tapback (associatedMessageType != 0), this is
+  // the GUID of the message it's reacting to. Empty for normal messages.
+  // Lets the bridge look up which bot-reply the owner reacted to so
+  // 👎 can trigger critique-retry on THAT specific message.
+  associatedMessageGuid: string;
 }
 
 export interface Attachment {
@@ -156,6 +161,7 @@ export class ChatDB {
            m.service                            AS service,
            m.cache_has_attachments              AS has_attachments,
            COALESCE(m.associated_message_type, 0) AS associated_message_type,
+           COALESCE(m.associated_message_guid, '') AS associated_message_guid,
            c.ROWID                              AS chat_rowid,
            COALESCE(c.display_name, '')         AS chat_display_name,
            COALESCE(c.chat_identifier, '')      AS chat_identifier
@@ -177,6 +183,7 @@ export class ChatDB {
       service: string;
       has_attachments: number;
       associated_message_type: number;
+      associated_message_guid: string;
       chat_rowid: number;
       chat_display_name: string;
       chat_identifier: string;
@@ -198,6 +205,10 @@ export class ChatDB {
       chatIdentifier: r.chat_identifier,
       hasAttachments: !!r.has_attachments,
       associatedMessageType: r.associated_message_type ?? 0,
+      // The associated_message_guid column has prefixes in newer
+      // macOS (e.g. "p:0/<guid>" for the part-index variant) —
+      // strip them so a downstream GUID compare matches.
+      associatedMessageGuid: (r.associated_message_guid || "").replace(/^p:\d+\//, ""),
     }));
   }
 
