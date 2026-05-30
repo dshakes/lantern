@@ -88,6 +88,7 @@ interface PersistedState {
   enabledContacts?: string[];
   personalDocsEnabled?: boolean; // owner toggle for local-file Q&A; default true
   killSwitch?: boolean;          // master OFF — bot refuses everything except killswitch-off
+  draftApprovalsEnabled?: boolean; // owner toggle for VIP/low-conf draft queue; default false
   // Per-contact tail of messages the owner actually sent (from their
   // phone). Few-shot exemplars for "my voice". Persisted so the voice
   // model isn't reset on every restart (WhatsApp already persisted this;
@@ -133,6 +134,13 @@ export class IMessageSession {
   // (auto-reply, doc queries, commands, mentions) EXCEPT the
   // killswitch-off command itself. Survives restart.
   private killSwitch = false;
+  // Draft-approval queue toggle. When ON, VIPs + unfamiliar contacts
+  // queue a draft for owner approval (dashboard /personal/drafts).
+  // When OFF (default), VIPs go silent + unfamiliar contacts get an
+  // authentic auto-reply. Seeded from LANTERN_DRAFT_APPROVALS env on
+  // first boot; persisted on disk so phone commands stick.
+  private draftApprovalsEnabled =
+    (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
 
   // Subscribers
   private sockets: Set<WebSocket> = new Set();
@@ -1575,7 +1583,10 @@ export class IMessageSession {
     //                   auto-replies normally. The bot's whole purpose
     //                   is handling unfamiliar contacts — silencing
     //                   them defeats it.
-    const draftApprovalsOn = (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
+    // Reads the persisted toggle (NOT the env var). Env is only the
+    // first-boot default; runtime is owned by phone commands so
+    // "approvals on"/"approvals off" sticks across restarts.
+    const draftApprovalsOn = this.draftApprovalsEnabled;
     // Knowing their name (Contacts.app match → contactNames cache)
     // counts as familiar — auto-reply directly without going through
     // the low-confidence approval path.
@@ -1759,6 +1770,7 @@ export class IMessageSession {
           `🟢 *Lantern iMessage*`,
           `• bot: ${this.killSwitch ? "🚨 KILL SWITCH ENGAGED" : diag.muted ? "off" : "on"}`,
           `• personal-docs: ${this.personalDocsEnabled ? "on" : "off"}`,
+          `• approval queue: ${this.draftApprovalsEnabled ? "on" : "off"}`,
           `• paused contacts: ${pausedCount}`,
           `• monitored chats: ${diag.monitoredChats.length}`,
           `• uptime: ${Math.round(diag.uptimeMs / 60_000)}m`,
@@ -1805,6 +1817,51 @@ export class IMessageSession {
         // want a confirmation outside the chat).
         if (engaged) {
           void this.mirrorToEmail("🚨 KILL SWITCH ENGAGED — Lantern iMessage bridge is silent until you release it.");
+        }
+      },
+      setApprovals: async (enabled: boolean) => {
+        this.draftApprovalsEnabled = enabled;
+        this.persist();
+        this.broadcast({
+          type: "activity",
+          data: { kind: "system", summary: `approval queue ${enabled ? "ENABLED" : "DISABLED"}`, timestamp: Date.now() },
+        });
+      },
+      listVips: async () => {
+        try {
+          const { authedFetch } = await import("@lantern/bridge-core/auth");
+          const res = await authedFetch("/v1/whatsapp/vips");
+          if (!res.ok) return `⚠️ couldn't fetch VIPs (HTTP ${res.status})`;
+          const data = (await res.json()) as { vips?: Array<{ jid: string; displayName?: string }> };
+          const vips = data.vips ?? [];
+          if (vips.length === 0) return "📭 no VIPs.";
+          return [
+            `👑 VIPs (${vips.length}):`,
+            ...vips.map((v) => `• ${v.displayName || v.jid.split("@")[0]}`),
+            "",
+            "tap ❤️ on a contact's message to add; 🗑 to remove.",
+          ].join("\n");
+        } catch (err) {
+          this.logger.warn({ err }, "vip-list failed");
+          return "⚠️ couldn't fetch VIPs (network error)";
+        }
+      },
+      clearVips: async () => {
+        try {
+          const { authedFetch } = await import("@lantern/bridge-core/auth");
+          const list = await authedFetch("/v1/whatsapp/vips");
+          if (!list.ok) return 0;
+          const data = (await list.json()) as { vips?: Array<{ jid: string }> };
+          const vips = data.vips ?? [];
+          let removed = 0;
+          for (const v of vips) {
+            const r = await authedFetch(`/v1/whatsapp/vips?jid=${encodeURIComponent(v.jid)}`, { method: "DELETE" });
+            if (r.ok) removed++;
+          }
+          return removed;
+        } catch (err) {
+          this.logger.warn({ err }, "vip-clear failed");
+          return 0;
         }
       },
     });
@@ -2854,6 +2911,7 @@ export class IMessageSession {
         enabledContacts: [...this.enabledContacts],
         personalDocsEnabled: this.personalDocsEnabled,
         killSwitch: this.killSwitch,
+        draftApprovalsEnabled: this.draftApprovalsEnabled,
         ownerSentHistory: Object.fromEntries(this.ownerSentHistory),
       };
       writeFileSync(this.stateFile, JSON.stringify(data, null, 2));
@@ -2876,6 +2934,7 @@ export class IMessageSession {
       // Only honor the persisted value when present.
       if (typeof data.personalDocsEnabled === "boolean") this.personalDocsEnabled = data.personalDocsEnabled;
       if (typeof data.killSwitch === "boolean") this.killSwitch = data.killSwitch;
+      if (typeof data.draftApprovalsEnabled === "boolean") this.draftApprovalsEnabled = data.draftApprovalsEnabled;
       for (const [jid, msgs] of Object.entries(data.ownerSentHistory ?? {})) {
         if (Array.isArray(msgs)) {
           const clean = msgs.filter((m): m is string => typeof m === "string");

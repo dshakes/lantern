@@ -1023,6 +1023,15 @@ export class WhatsAppSession {
   // When ENGAGED the bridge ignores every inbound except a
   // "kill switch off" command from the owner's self-chat.
   private killSwitch = false;
+  // Draft-approval queue toggle. When OFF (default), VIPs stay silent
+  // and unfamiliar contacts auto-reply. When ON, both queue a draft
+  // for owner approval via the dashboard. Seeded from env var
+  // LANTERN_DRAFT_APPROVALS on first boot; once persisted in
+  // agent_state.json, the saved value wins so phone commands stick.
+  // Toggle from self-chat: "approvals on" / "approvals off" /
+  // /lantern approvals on|off.
+  private draftApprovalsEnabled =
+    (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
   private stateFile: string;
   // Opted-in group JIDs. Groups not in this set are ignored entirely; in
   // opted-in groups the agent runs the attention classifier on every message
@@ -2425,11 +2434,13 @@ export class WhatsAppSession {
           ownerSentHistory?: Record<string, string[]>;
           personalDocsEnabled?: boolean;
           killSwitch?: boolean;
+          draftApprovalsEnabled?: boolean;
         };
         this.muted = !!raw.muted;
         // Toggles default to safe values: docs ON, killswitch OFF.
         if (typeof raw.personalDocsEnabled === "boolean") this.personalDocsEnabled = raw.personalDocsEnabled;
         if (typeof raw.killSwitch === "boolean") this.killSwitch = raw.killSwitch;
+        if (typeof raw.draftApprovalsEnabled === "boolean") this.draftApprovalsEnabled = raw.draftApprovalsEnabled;
         const now = Date.now();
         for (const [jid, v] of Object.entries(raw.pausedUntil ?? {})) {
           const entry = this.coercePauseEntry(v);
@@ -2509,6 +2520,7 @@ export class WhatsAppSession {
         ownerSentHistory,
         personalDocsEnabled: this.personalDocsEnabled,
         killSwitch: this.killSwitch,
+        draftApprovalsEnabled: this.draftApprovalsEnabled,
       };
       writeFileSync(this.stateFile, JSON.stringify(payload, null, 2));
     } catch (err) {
@@ -3071,6 +3083,7 @@ export class WhatsAppSession {
           `🟢 *Lantern WhatsApp*`,
           `• bot: ${this.killSwitch ? "🚨 KILL SWITCH ENGAGED" : this.muted ? "off" : "on"}`,
           `• personal-docs: ${this.personalDocsEnabled ? "on" : "off"}`,
+          `• approval queue: ${this.draftApprovalsEnabled ? "on" : "off"}`,
           `• paired: ${phone}`,
           `• paused contacts: ${pausedCount}`,
           `• monitored groups: ${this.monitoredGroups.size}`,
@@ -3108,6 +3121,46 @@ export class WhatsAppSession {
         this.killSwitch = engaged;
         this.saveState();
         this.logActivity(engaged ? "bot_off" : "bot_on", `🚨 kill switch ${engaged ? "ENGAGED" : "RELEASED"}`, { scope: "self" });
+      },
+      setApprovals: async (enabled: boolean) => {
+        this.draftApprovalsEnabled = enabled;
+        this.saveState();
+        this.logActivity(enabled ? "bot_on" : "bot_off", `approval queue ${enabled ? "ENABLED" : "DISABLED"}`, { scope: "self" });
+      },
+      listVips: async () => {
+        try {
+          const res = await authedFetch("/v1/whatsapp/vips");
+          if (!res.ok) return `⚠️ couldn't fetch VIPs (HTTP ${res.status})`;
+          const data = (await res.json()) as { vips?: Array<{ jid: string; displayName?: string }> };
+          const vips = data.vips ?? [];
+          if (vips.length === 0) return "📭 no VIPs.";
+          return [
+            `👑 VIPs (${vips.length}):`,
+            ...vips.map((v) => `• ${v.displayName || v.jid.split("@")[0]}`),
+            "",
+            `tap ❤️ on a contact's message to add; 🗑 to remove.`,
+          ].join("\n");
+        } catch (err) {
+          this.logger.warn({ err }, "vip-list failed");
+          return "⚠️ couldn't fetch VIPs (network error)";
+        }
+      },
+      clearVips: async () => {
+        try {
+          const list = await authedFetch("/v1/whatsapp/vips");
+          if (!list.ok) return 0;
+          const data = (await list.json()) as { vips?: Array<{ jid: string }> };
+          const vips = data.vips ?? [];
+          let removed = 0;
+          for (const v of vips) {
+            const r = await authedFetch(`/v1/whatsapp/vips?jid=${encodeURIComponent(v.jid)}`, { method: "DELETE" });
+            if (r.ok) removed++;
+          }
+          return removed;
+        } catch (err) {
+          this.logger.warn({ err }, "vip-clear failed");
+          return 0;
+        }
       },
     });
   }
@@ -4366,7 +4419,11 @@ export class WhatsAppSession {
     //                   contact is the bot's job to handle, and
     //                   silencing them defeats the purpose of having
     //                   an assistant.
-    const draftApprovalsOn = (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
+    // Reads the persisted toggle (NOT the env var). Env is only the
+    // first-boot default; runtime is owned by `approvals on|off`
+    // commands from self-chat / dashboard so phone control sticks
+    // across restarts.
+    const draftApprovalsOn = this.draftApprovalsEnabled;
     // If we know their name (push name OR a saved contact name), the
     // contact is FAMILIAR even without a stored relationship/facts —
     // the user explicitly asked: "anything that has a name should be

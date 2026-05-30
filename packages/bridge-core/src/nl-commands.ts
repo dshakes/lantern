@@ -39,7 +39,11 @@ export type NLCommandAction =
   | "docs-on"          // enable personal-docs Q&A
   | "docs-off"         // disable personal-docs Q&A
   | "killswitch-on"    // master kill — disable ALL bot activity
-  | "killswitch-off";  // restore from killswitch
+  | "killswitch-off"   // restore from killswitch
+  | "approvals-on"     // VIP + low-conf contacts queue drafts for approval
+  | "approvals-off"    // VIPs go silent, low-conf falls through to auto-reply
+  | "vip-list"         // show all VIPs
+  | "vip-clear";       // remove every VIP entry
 
 export interface ParsedCommand {
   action: NLCommandAction;
@@ -83,6 +87,15 @@ const KILLSWITCH_ON_VERBS =
   /^(?:kill\s*switch\s+on|kill\s+(?:all|everything|the\s+bot)|emergency\s+stop|shut\s*down|panic)$/i;
 const KILLSWITCH_OFF_VERBS =
   /^(?:kill\s*switch\s+off|undo\s+kill|bring\s+(?:it|bot)\s+back|recover|reactivate\s+all)$/i;
+// Approval-queue toggle. Strict anchored regex so plain chat doesn't
+// trip ("approved!" / "thanks for the approval" never match).
+const APPROVALS_ON_VERBS =
+  /^(?:approvals?|drafts?|queue|vip\s+(?:approvals?|queue))\s+(?:on|enable|enabled)$/i;
+const APPROVALS_OFF_VERBS =
+  /^(?:approvals?|drafts?|queue|vip\s+(?:approvals?|queue))\s+(?:off|disable|disabled)$/i;
+// VIP list / clear management.
+const VIP_LIST_VERBS = /^(?:vips?|list\s+vips?|show\s+vips?|who'?s\s+(?:a\s+)?vip)$/i;
+const VIP_CLEAR_VERBS = /^(?:vips?\s+(?:clear|reset|none|empty)|clear\s+vips?|reset\s+vips?|remove\s+all\s+vips?)$/i;
 
 // Parse a duration phrase like "for 2 hours", "for 30 min", "until 9am",
 // "for tonight", "for an hour". Returns ms, or undefined when none.
@@ -165,7 +178,7 @@ export function parseNLCommand(input: string): ParsedCommand | null {
     const wordCount = raw.split(/\s+/).length;
     if (wordCount > 8) return null;
     const startsWithVerb =
-      /^(pause|mute|stop|off|hush|quiet|silence|sleep|resume|unmute|wake|on|status|ping|help|what'?s|how'?s|how\s+are|list|show)\b/i.test(raw);
+      /^(pause|mute|stop|off|hush|quiet|silence|sleep|resume|unmute|wake|on|status|ping|help|what'?s|how'?s|how\s+are|list|show|approvals?|drafts?|queue|vips?|clear|reset|who'?s)\b/i.test(raw);
     if (!startsWithVerb) return null;
   }
 
@@ -183,6 +196,18 @@ export function parseNLCommand(input: string): ParsedCommand | null {
   }
   if (DOCS_OFF_VERBS.test(body)) {
     return { action: "docs-off", echo: "🔒 personal-docs Q&A DISABLED", explicit };
+  }
+  if (APPROVALS_ON_VERBS.test(body)) {
+    return { action: "approvals-on", echo: "👁️ VIP + unfamiliar drafts will queue for your approval", explicit };
+  }
+  if (APPROVALS_OFF_VERBS.test(body)) {
+    return { action: "approvals-off", echo: "🤐 VIPs go silent, unfamiliar contacts auto-reply", explicit };
+  }
+  if (VIP_CLEAR_VERBS.test(body)) {
+    return { action: "vip-clear", echo: "🧹 cleared all VIPs", explicit };
+  }
+  if (VIP_LIST_VERBS.test(body)) {
+    return { action: "vip-list", echo: "listing VIPs", explicit };
   }
   if (RESUME_ALL_VERBS.test(body)) {
     return { action: "resume-all", echo: "resumed all paused contacts", explicit };
@@ -258,6 +283,18 @@ function parseSlash(raw: string): ParsedCommand | null {
         if (arg === "off" || arg === "disable") return { action: "docs-off", echo: "🔒 personal-docs DISABLED", explicit };
         return { action: "status", echo: "status (with docs state)", explicit };
       }
+      case "approvals": case "drafts": case "queue": {
+        const arg = (rest[0] || "").toLowerCase();
+        if (arg === "on" || arg === "enable") return { action: "approvals-on", echo: "👁️ approval queue ENABLED", explicit };
+        if (arg === "off" || arg === "disable") return { action: "approvals-off", echo: "🤐 approval queue DISABLED", explicit };
+        return { action: "status", echo: "status (with approvals state)", explicit };
+      }
+      case "vip": case "vips": {
+        const arg = (rest[0] || "").toLowerCase();
+        if (arg === "clear" || arg === "reset" || arg === "empty") return { action: "vip-clear", echo: "🧹 cleared all VIPs", explicit };
+        if (arg === "list" || arg === "" || arg === "show") return { action: "vip-list", echo: "listing VIPs", explicit };
+        return { action: "vip-list", echo: "listing VIPs", explicit };
+      }
       case "killswitch": case "kill": case "panic": {
         const arg = (rest[0] || "").toLowerCase();
         if (arg === "on" || arg === "engage" || arg === "" ) return { action: "killswitch-on", echo: "🚨 kill switch ENGAGED", explicit };
@@ -286,6 +323,14 @@ export function renderHelp(): string {
     "*personal docs* (self-chat only — never replies in DMs or groups)",
     "• *docs on* / *docs off* — toggle local-file Q&A",
     "• `/lantern docs on|off` — slash form",
+    "",
+    "*VIP + approval queue*",
+    "• *approvals on* — VIPs + unfamiliar contacts queue drafts for your approval (instead of auto-reply)",
+    "• *approvals off* — VIPs go silent, unfamiliar contacts auto-reply",
+    "• *vips* / *list vips* — show your VIP list",
+    "• *vips clear* — remove every VIP",
+    "• tap ❤️ on a contact's message to mark them VIP; 🗑 to remove",
+    "• `/lantern approvals on|off`, `/lantern vips clear` — slash forms",
     "",
     "*safety*",
     "• *kill switch on* — 🚨 emergency stop (mutes ALL bot activity until released)",
