@@ -282,6 +282,13 @@ export interface PersonaOptions {
   // ago) and match the live tone, instead of answering the last line in
   // a vacuum. Kept short (last ~10 turns) so the prompt stays tight.
   recentTranscript?: string;
+  // Pre-formatted language-modality block (from
+  // bridge-core/language.ts → languageModalityHint). When the inbound
+  // is in a non-English language, this tells the model to reply in
+  // the same language + same script + matching dialect (biased by
+  // ownerNativity below). When the inbound is English, leave empty
+  // and the model defaults to English.
+  languageModality?: string;
 }
 
 export function agentPersonaPrompt(
@@ -391,6 +398,17 @@ export function agentPersonaPrompt(
     lines.push(``);
     lines.push(`Recent conversation on this thread (oldest first — reply to the LAST message, in context):`);
     lines.push(transcript.length > 2000 ? transcript.slice(-2000) : transcript);
+  }
+
+  // Language modality goes LAST (closest to the reply instruction) so
+  // the model treats it as the dominant constraint when picking output
+  // language. Only present when the inbound was detected as non-English
+  // with sufficient confidence — keep it out of the prompt entirely
+  // for plain English inbound so we don't accidentally bias against it.
+  const langBlock = opts.languageModality?.trim();
+  if (langBlock) {
+    lines.push(``);
+    lines.push(langBlock);
   }
 
   lines.push(``);

@@ -1374,6 +1374,47 @@ export function WhatsAppPairing({
             </p>
           </section>
 
+          {/* Re-pair for full history sync. The bridge captures every
+              new message in real-time, but WhatsApp only pushes the
+              FULL history (~weeks of past group + DM messages) on
+              initial pair. After re-pairing, search_whatsapp_history /
+              the LLM tools can answer questions about past trips,
+              past group conversations, etc. */}
+          <section className="rounded-xl border border-amber-500/15 bg-amber-500/[0.03] p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-amber-300">Re-pair for full history sync</h3>
+                <p className="mt-1 text-[12px] leading-relaxed text-zinc-500">
+                  Same phone, same number. Wipes the local session so
+                  the next pair triggers WhatsApp's <b>full history sync</b> —
+                  the bridge will receive ~14 days of past group + DM
+                  messages and add them to the searchable history index.
+                  Required if you want the assistant to answer questions
+                  like &ldquo;who came on my Japan trip&rdquo; from your real
+                  group conversations.
+                </p>
+                <p className="mt-2 text-[11px] text-zinc-600">
+                  Bot stays linked to the same phone — only the cached
+                  session is wiped. You'll see a fresh QR; scan it from
+                  your phone exactly like the first time.
+                </p>
+              </div>
+              <Button
+                onClick={async () => {
+                  if (typeof window !== "undefined" && !window.confirm(
+                    "Re-pair WhatsApp for full history sync? You'll need to scan a new QR on your phone. The bot will be offline for ~30s while you re-pair."
+                  )) return;
+                  await handleReset();
+                }}
+                variant="secondary"
+                size="sm"
+                icon={<RefreshCw className="h-3 w-3" />}
+              >
+                Re-pair + sync history
+              </Button>
+            </div>
+          </section>
+
           {/* Danger zone: forget device. Distinct from Disconnect — wipes
               the on-disk auth credentials so the next pair issues a fresh
               QR. Required when switching to a different WhatsApp number. */}

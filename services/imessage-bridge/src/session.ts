@@ -52,6 +52,7 @@ import {
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
+import { detectLanguageHints, languageModalityHint } from "@lantern/bridge-core/language";
 
 // Normalize a text body for echo dedup. chat.db sometimes mutates
 // whitespace, line endings, or casing on round-trips through iCloud
@@ -1283,6 +1284,18 @@ export class IMessageSession {
     // Recent thread transcript (real back-and-forth from chat.db) so the
     // reply is grounded in what's actually being discussed.
     const recentTranscript = this.buildRecentTranscript(row.chatRowid);
+    // Detect inbound language so the reply matches the same script +
+    // dialect. Owner nativity biases regional flavor (e.g. "Karimnagar,
+    // Telangana" → Telangana Telugu rather than coastal Andhra Telugu).
+    const langHint = detectLanguageHints(text);
+    const nativity = this.ownerProfileStore.nativity();
+    const languageModality = languageModalityHint(langHint, { nativity });
+    if (languageModality) {
+      this.logger.info(
+        { handle: row.handle, lang: langHint.primary, confidence: langHint.confidence, nativeScript: langHint.hasNativeScript, romanized: langHint.hasRomanized },
+        "language-modality engaged",
+      );
+    }
     let systemHint = agentPersonaPrompt(ownerName, style, isGroup, {
       ownerSamples,
       disclosed: false,
@@ -1290,6 +1303,7 @@ export class IMessageSession {
       ownerProfile,
       relationship,
       recentTranscript,
+      languageModality,
     });
     // Per-contact memory: facts the user has captured about this
     // contact (their daughter is Maya, works at Stripe, etc).
