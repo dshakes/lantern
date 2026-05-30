@@ -99,7 +99,10 @@ const POLL_INTERVAL_MS = 1500;
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-const PAUSE_DURATION_MS = 60 * 60_000; // 60 minutes after owner types
+// Default 60 minutes; override via LANTERN_AGENT_PAUSE_MIN (matches the
+// WhatsApp bridge's env var so the owner sets it once in shared config).
+const PAUSE_DURATION_MS =
+  Math.max(1, Number(process.env.LANTERN_AGENT_PAUSE_MIN) || 60) * 60_000;
 const HISTORY_DEPTH = 20; // per-contact inbound/outbound message ring buffer
 const OWNER_NAME = process.env.LANTERN_OWNER_NAME || "the owner";
 
@@ -1550,14 +1553,23 @@ export class IMessageSession {
 
     // CONFIDENCE GATE + VIP gate. Both route the draft to human approval
     // instead of auto-sending:
-    //   - VIP: contact is on the owner's VIP list (boss, parents, top
-    //     customers) — never auto-send to them.
-    //   - Low confidence: the bot doesn't have enough signal to be sure
-    //     it sounds like the owner for THIS contact. Heuristic: no prior
-    //     owner-sent samples AND no captured facts AND no known
-    //     relationship. That's an unfamiliar contact — draft, don't send,
-    //     so the owner trains trust over time. Once the owner replies to
-    //     them a few times (samples accumulate) the gate opens.
+    //   - VIP: contact is on the owner's VIP list.
+    //   - Low confidence: unfamiliar contact (no prior owner samples,
+    //     no facts, no relationship).
+    //
+    // Both paths are OPT-IN via `LANTERN_DRAFT_APPROVALS=on`. When off
+    // (the default), the bridge does NOT queue drafts for approval and
+    // does NOT cross-channel-ping the owner. Behavior in OFF mode:
+    //   - VIP contact: stay silent (safer than auto-sending to someone
+    //     the owner explicitly flagged as sensitive).
+    //   - Low-confidence: stay silent (don't auto-send to a stranger,
+    //     don't spam owner with approval pings).
+    //   - Familiar contact (relationship/facts/samples present):
+    //     auto-send as normal — unchanged.
+    // The owner can manually reply to the silent cases from their
+    // phone; the bot never pretends to speak for them with someone it
+    // doesn't know.
+    const draftApprovalsOn = (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
     const lowConfidence =
       !isGroup &&
       ownerSamples.length === 0 &&
@@ -1565,6 +1577,25 @@ export class IMessageSession {
       !(await this.personal.factsBlock(row.handle));
     const isVIP = !isGroup && (await this.personal.isVIP(row.handle));
     if (isVIP || lowConfidence) {
+      if (!draftApprovalsOn) {
+        // Default path: stay silent. No queue, no cross-channel ping.
+        const why = isVIP ? "VIP" : "unfamiliar contact";
+        this.logger.info(
+          { from: row.handle, why },
+          "auto-reply suppressed (draft approvals off)",
+        );
+        this.broadcast({
+          type: "activity",
+          data: {
+            kind: "agent_skipped",
+            summary: `silent on ${why} (drafts disabled)`,
+            detail: draft.slice(0, 200),
+            jid: row.handle,
+            timestamp: Date.now(),
+          },
+        });
+        return;
+      }
       const queued = await this.personal.queueDraft(
         row.handle,
         this.contactNames.get(row.handle) ?? undefined,
@@ -2582,6 +2613,12 @@ export class IMessageSession {
       "  • Note:           [NOTE:Title|Body text]",
       "  • Mail draft:     [MAIL:to@x.com|Subject|Body]",
       "OFFER-then-CONFIRM applies ONLY to state-modifying actions (calendar, note, mail, attach). For READ operations (search, list, look up, find), NEVER ask permission — just execute and report results. The user already asked; asking 'shall I search?' is wasted turns.",
+      "# No-permission-to-read rule (HARD)",
+      "When the user asks a question that needs data ('do you know my X', 'what is my X', 'find my X', 'when is my X', 'who is X', 'show me X'):",
+      "  • DO NOT respond with 'want me to dig?' / 'should I search?' / 'do you want me to look up?' / 'shall I check?' — these are bot-tells that waste a turn.",
+      "  • EXHAUST the tools FIRST, then answer. If the first sweep is empty, broaden: try synonyms (endoscopy → colonoscopy → GI → gastroenterology; address → lease, utility bill, tax return, bank statement, driver license), search older date ranges, check connector + personal-docs in parallel.",
+      "  • Only after you've actually tried multiple angles do you say 'no clean hit on X — here's the closest I found' and stop. Never end with a 'want me to search more?' question.",
+      "  • The ONE exception: a state-modifying follow-up ('saved to calendar?', 'want a reminder?') — that's allowed because it changes state.",
       "For ROSTER questions ('who came on X', 'who's in X'): the group rosters above are the truth. If members show as raw phone numbers (no name), their PARTICIPATION in the group already proves they were part of the trip/event. Answer with the FULL roster from the group; mention the unresolved ones as '+ N more (numbers only — names not in contacts yet)'. Do NOT ask the user if they want you to search further; if you can call search_whatsapp_history / search_imessage_history for the trip date range, JUST DO IT in this same turn.",
       apptBlock ? "\n" + apptBlock : "",
       rosterBlock ? "\n" + rosterBlock : "",
