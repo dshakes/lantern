@@ -4367,10 +4367,16 @@ export class WhatsAppSession {
     //                   silencing them defeats the purpose of having
     //                   an assistant.
     const draftApprovalsOn = (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
+    // If we know their name (push name OR a saved contact name), the
+    // contact is FAMILIAR even without a stored relationship/facts —
+    // the user explicitly asked: "anything that has a name should be
+    // familiar". Falls through to auto-reply.
+    const displayName = (opts.senderName || this.contactNames.get(from) || "").trim();
     const lowConfidence =
       !opts.isGroup &&
       ownerSamples.length === 0 &&
       !relationship &&
+      !displayName &&
       !(await this.personal.factsBlock(from));
     const isVIP = !opts.isGroup && (await this.personal.isVIP(from));
 
