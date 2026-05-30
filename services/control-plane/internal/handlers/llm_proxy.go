@@ -328,14 +328,47 @@ type modelOption struct {
 	speed        int     // 1-10, higher is faster
 }
 
-// All available models with their characteristics.
-var modelCatalog = []modelOption{
-	{"anthropic", "claude-opus-4-20250514", 15.0, 75.0, 10, 4},
-	{"anthropic", "claude-sonnet-4-20250514", 3.0, 15.0, 9, 7},
-	{"anthropic", "claude-haiku-4-20250414", 0.25, 1.25, 6, 10},
-	{"openai", "gpt-4o", 2.5, 10.0, 8, 8},
-	{"openai", "gpt-4o-mini", 0.15, 0.60, 5, 10},
+// Live model IDs — kept here so a single env override (e.g.
+// LANTERN_OPUS_MODEL=claude-opus-4-8) flips every consumer at once
+// without grep-and-replace through the codebase. Defaults track the
+// latest Claude 4.X family at time of writing (4.7 for opus / 4.6 for
+// sonnet / 4.5 for haiku). If Anthropic releases a newer ID (4.8+),
+// set LANTERN_OPUS_MODEL=claude-opus-4-8 and restart — no rebuild.
+//
+// The multi-provider failover wrapper (newFailoverProvider) catches
+// 4xx from an invalid/unauthorised model ID and tries the next
+// candidate in the chain, so a misconfigured env doesn't take the
+// agent offline.
+func envModel(envKey, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(envKey)); v != "" {
+		return v
+	}
+	return fallback
 }
+
+// Default to the latest opus (4.8); env override flips to 4-7 / 4-6 /
+// older as needed. Failover wrapper catches 4xx if the model isn't
+// available on this tenant's API key.
+func opusModel() string   { return envModel("LANTERN_OPUS_MODEL", "claude-opus-4-8") }
+func sonnetModel() string { return envModel("LANTERN_SONNET_MODEL", "claude-sonnet-4-6") }
+func haikuModel() string  { return envModel("LANTERN_HAIKU_MODEL", "claude-haiku-4-5-20251001") }
+
+// All available models with their characteristics. modelCatalog is now
+// derived dynamically so envModel overrides are honored at every
+// resolveAutoModel call (not just at process startup).
+func currentModelCatalog() []modelOption {
+	return []modelOption{
+		{"anthropic", opusModel(), 15.0, 75.0, 10, 4},
+		{"anthropic", sonnetModel(), 3.0, 15.0, 9, 7},
+		{"anthropic", haikuModel(), 0.25, 1.25, 6, 10},
+		{"openai", "gpt-4o", 2.5, 10.0, 8, 8},
+		{"openai", "gpt-4o-mini", 0.15, 0.60, 5, 10},
+	}
+}
+
+// Compatibility shim — old call sites use modelCatalog directly. Keep
+// it pointing at the dynamic catalog so they pick up env overrides.
+var modelCatalog = currentModelCatalog()
 
 // resolveModel maps a capability name to a concrete provider + model.
 // "auto" requires tenant context so we can consult llm_provider_configs — use
@@ -351,15 +384,15 @@ func resolveModel(capability string) (provider, model string) {
 	case "chat-large":
 		return "openai", "gpt-4o"
 	case "reasoning-frontier":
-		return "anthropic", "claude-opus-4-20250514"
+		return "anthropic", opusModel()
 	case "reasoning-large":
-		return "anthropic", "claude-sonnet-4-20250514"
+		return "anthropic", sonnetModel()
 	case "reasoning-small":
-		return "anthropic", "claude-haiku-4-20250414"
+		return "anthropic", haikuModel()
 	case "chat-small":
 		return "openai", "gpt-4o-mini"
 	case "code-large":
-		return "anthropic", "claude-sonnet-4-20250514"
+		return "anthropic", sonnetModel()
 	case "vision-large":
 		return "openai", "gpt-4o"
 	default:
@@ -574,7 +607,7 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		if provider == "openai" {
 			model = "gpt-4o"
 		} else {
-			model = "claude-sonnet-4-20250514"
+			model = sonnetModel()
 		}
 	}
 
@@ -1248,7 +1281,7 @@ func (h *LlmProxyHandler) testOpenAI(ctx context.Context, apiKey string) error {
 
 func (h *LlmProxyHandler) testAnthropic(ctx context.Context, apiKey string) error {
 	body := map[string]any{
-		"model": "claude-sonnet-4-20250514",
+		"model": sonnetModel(),
 		"messages": []map[string]string{
 			{"role": "user", "content": "Say hi in exactly one word."},
 		},
@@ -1363,7 +1396,7 @@ Generate a thoughtful, well-structured agent with appropriate steps for the task
 		if provider == "openai" {
 			model = "gpt-4o"
 		} else {
-			model = "claude-sonnet-4-20250514"
+			model = sonnetModel()
 		}
 	}
 
@@ -1464,7 +1497,7 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
 		if provider == "openai" {
 			model = "gpt-4o"
 		} else {
-			model = "claude-sonnet-4-20250514"
+			model = sonnetModel()
 		}
 	}
 

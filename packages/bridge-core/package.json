@@ -25,7 +25,8 @@
     "./owner-profile": "./src/owner-profile.ts",
     "./bot-self": "./src/bot-self.ts",
     "./language": "./src/language.ts",
-    "./roster": "./src/roster.ts"
+    "./roster": "./src/roster.ts",
+    "./fact-extractor": "./src/fact-extractor.ts"
   },
   "dependencies": {
     "pdf-parse": "^2.4.5",

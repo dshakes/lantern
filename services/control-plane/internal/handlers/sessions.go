@@ -309,7 +309,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 			if provider == "openai" {
 				model = "gpt-4o"
 			} else {
-				model = "claude-sonnet-4-20250514"
+				model = sonnetModel()
 			}
 		} else {
 			h.logger().Warn("session: no LLM key", zap.Error(err))
