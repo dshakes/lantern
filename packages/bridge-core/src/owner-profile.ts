@@ -108,6 +108,60 @@ export class OwnerProfileStore {
   prose(): string {
     return this.get()?.prose ?? "";
   }
+
+  /** Formatted "Name → relationship" lines for prompt injection. Used
+   *  by the agentic pipeline so the LLM can answer "who is my son?" /
+   *  "what's my wife's name?" directly from profile knowledge, without
+   *  a tool-loop timeout. Returns "" when no relationships are set. */
+  relationshipsBlock(): string {
+    const prof = this.get();
+    if (!prof || prof.relationships.size === 0) return "";
+    // Dedup by relationship-label so the same person doesn't appear
+    // twice when they're keyed by both display-name and phone-number.
+    const seenLabel = new Set<string>();
+    const lines: string[] = [];
+    for (const [name, rel] of prof.relationships) {
+      // Skip the all-digits keys (phone-number fallbacks) — keep the
+      // human-readable name key for the prompt.
+      if (/^\d+$/.test(name)) continue;
+      const key = `${name}|${rel}`;
+      if (seenLabel.has(key)) continue;
+      seenLabel.add(key);
+      // Title-case the name for prompt readability.
+      const titled = name
+        .split(/\s+/)
+        .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ""))
+        .join(" ");
+      lines.push(`- ${titled}: ${rel}`);
+    }
+    if (lines.length === 0) return "";
+    return ["The owner's people (use these names directly when asked about family/friends — do not call tools):", ...lines].join("\n");
+  }
+
+  /** Reverse lookup: given a role label like "son" / "wife" / "elder
+   *  brother", return the names that match. Used for instant deterministic
+   *  answers like "who is my son?". Case-insensitive, substring match
+   *  (so "brother" matches "elder brother" and "brother-in-law"). */
+  findByRelationship(role: string): string[] {
+    const prof = this.get();
+    if (!prof) return [];
+    const r = role.toLowerCase().trim();
+    if (!r) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const [name, rel] of prof.relationships) {
+      if (/^\d+$/.test(name)) continue;
+      if (rel.toLowerCase().includes(r) && !seen.has(name)) {
+        seen.add(name);
+        const titled = name
+          .split(/\s+/)
+          .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ""))
+          .join(" ");
+        out.push(titled);
+      }
+    }
+    return out;
+  }
 }
 
 /** Parse the markdown profile. The "## Relationships" section (if present)

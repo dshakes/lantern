@@ -1052,12 +1052,13 @@ export class IMessageSession {
       // in-flight. Drop new ones (with a brief explanation) so we
       // don't spawn parallel pipelines that all reply minutes later.
       if (this.busyChat.has(row.handle)) {
-        // QUEUE LATEST. The user shouldn't have to repeat themselves
-        // when they fire off "what about X?" / "and Y?" while the bot
-        // is mid-OCR. Cache the most recent substantive message; when
-        // the current run finishes we pick it up automatically. Cap is
-        // 1 — if the user types three in a row, only the LAST one
-        // matters (earlier ones are usually outdated by then).
+        // QUEUE LATEST silently — no nudge. The user is mid-stream,
+        // they already know they typed a second thing; injecting "⏳
+        // still on the previous one — I'll get to this next" clutters
+        // the chat and is the noise the user explicitly asked to kill.
+        // The queued message will land its real answer as soon as
+        // the current run finishes (drained in handleOwnerDocQuery's
+        // finally block).
         if (!isTrivialChatter(text)) {
           this.queuedQuery.set(row.handle, { text, queuedAt: Date.now() });
           this.logger.info(
@@ -1066,13 +1067,6 @@ export class IMessageSession {
           );
         } else {
           this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "skipping — chat busy (trivial chatter)");
-        }
-        // Throttled nudge so the user sees ONE "I heard you, give me a
-        // sec" — never on follow-up bursts.
-        const lastNudge = this.lastBusyNudgeAt.get(row.handle) || 0;
-        if (text.length > 12 && Date.now() - lastNudge > IMessageSession.BUSY_NUDGE_THROTTLE_MS) {
-          this.lastBusyNudgeAt.set(row.handle, Date.now());
-          void this.send(row.handle, "⏳ still on the previous one — I'll get to this next");
         }
         return;
       }
@@ -1675,75 +1669,107 @@ export class IMessageSession {
       },
     });
 
-    // Immediate ack — tool-driven runs can take 10-15s for OCR'd PDFs.
-    // Without this signal, the user thinks the bot is dead.
-    await this.send(jid, "🧠 on it…");
-
-    // ONE progress nudge if the work runs long (>8s). The LLM may
-    // chain search → read → another search, plus OCR; let the user
-    // know the bot's still alive.
+    // LATENCY-FIRST UX:
+    //   • No upfront ack — fast queries (<3s) land their answer with
+    //     ZERO noise. The chat reads like a real person replying.
+    //   • If the work runs >3s, send ONE subtle "🧠 thinking…" so the
+    //     user knows the bot's alive. Never a second nudge — repeated
+    //     "still working" messages make the chat unreadable.
+    //   • Anything longer than that hits the auto-retry path on
+    //     timeout (see below).
     const startedAt = Date.now();
-    let progressFired = false;
-    const progressTimer = setTimeout(() => {
-      progressFired = true;
-      void this.send(jid, "📷 still working — almost there…");
-    }, 8000);
-    const clearProgress = () => {
-      clearTimeout(progressTimer);
-      if (progressFired) { /* nothing — the user already saw it */ }
-    };
+    let thinkingSent = false;
+    const thinkingTimer = setTimeout(() => {
+      thinkingSent = true;
+      void this.send(jid, "🧠 thinking…");
+    }, 3000);
 
     // Appointment-y queries get an additional deterministic Gmail +
     // Calendar prefetch in parallel — strictly an optimization (the
     // LLM could also call those tools) but gets results in the prompt
-    // before the first round-trip, cutting latency on the common case.
+    // before the first round-trip.
     const client = defaultConnectorClient(this.logger);
     const apptBlock = looksLikeAppointmentQuery(query)
       ? await prefetchAppointmentContext(client, query, this.logger).catch(() => null)
       : null;
     this.logger.info({ ms: Date.now() - startedAt, hasAppt: !!apptBlock }, "agentic prefetch done");
 
+    // OWNER PROFILE: who I am, my voice, my people. This is the SAME
+    // context the natural-chat path uses. Without it, "who is my son?"
+    // burns 180s in a Gmail tool-loop because the LLM has no idea
+    // Ved Mudarapu is the answer. With it, profile-answerable
+    // questions resolve in one round-trip with NO tool calls.
+    const ownerProfile = this.ownerProfileStore.prose();
+    const relationshipsBlock = this.ownerProfileStore.relationshipsBlock();
+    // Recent thread transcript so the LLM understands what came just
+    // before. "yeah do it" / "send me the second one" / "what about
+    // the other one" all need the recent history to make sense.
+    // Pull from any known self-chat rowid for this handle — the set
+    // is populated lazily by isSelfChat() on first poll, so by the
+    // time the user has typed once this is reliable.
+    const chatRowidGuess = this.selfChatRowIds.size > 0 ? Array.from(this.selfChatRowIds)[0] : 0;
+    const recentTranscript = chatRowidGuess ? this.buildRecentTranscript(chatRowidGuess) : "";
     const today = new Date().toISOString().slice(0, 10);
+    const ownerName = process.env.LANTERN_OWNER_NAME || "Shekhar";
     const systemHint = [
-      "You are Lantern — Shekhar's personal agent, replying in his iMessage self-chat.",
+      `You are Lantern — ${ownerName}'s personal agent, replying in his iMessage self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
       "",
-      "TOOLS — call them. Don't ask the user for data you can fetch yourself.",
-      "  • search_personal_files / read_personal_file — local Mac files (Documents, Desktop, iCloud Drive). Passport, license, green card, I-485, taxes, receipts, contracts, prescriptions all live here. PDFs and images are OCR'd automatically. ALWAYS search first when the question is about a document, ID, expiry, number, or file. Try multiple queries (formal name AND everyday name — 'I-485', 'green card', 'permanent resident').",
-      "  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits live in email. ALWAYS check Gmail for anything that arrived as a confirmation.",
+      ownerProfile ? `# Who you are\n${ownerProfile}` : "",
+      relationshipsBlock ? `\n# Your people\n${relationshipsBlock}` : "",
+      recentTranscript ? `\n# Just-now conversation (oldest first)\n${recentTranscript}` : "",
+      "",
+      "# Decide BEFORE calling tools",
+      "Many questions are answerable from the profile above. Skip tool calls for:",
+      "  • Relationship / family questions ('who is my son', 'what's my wife's name', 'my brother-in-law') — answer from 'Your people' above.",
+      "  • Style / identity questions ('what do I work on', 'where do I live') — answer from 'Who you are'.",
+      "  • Conversational follow-ups that don't need fresh data.",
+      "Call tools only when you actually need data the profile doesn't have:",
+      "  • search_personal_files / read_personal_file — Mac files (Documents, Desktop, iCloud). Passport, license, green card, I-485, taxes, receipts. PDFs/images OCR'd.",
+      "  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits.",
       "  • google-calendar_list_events — anything time-bound, next 30 days.",
-      "  • Other connectors (sheets, drive, github, etc.) when relevant.",
-      "NEVER respond with 'I can't access your files / emails / calendar' — the tools are right here. Call them. If a tool returns nothing, say so concretely and name what queries you tried.",
+      "If you DO call tools, search broadly and answer concretely; never reply 'I can't access your files/emails'.",
       "",
-      "STYLE — sophisticated, natural, agentic. Like Jarvis: warm, concise, never robotic.",
-      "  • Direct answers first. No 'I'd be happy to' / 'feel free'.",
-      "  • Lowercase, conversational. 1-3 short lines max.",
-      "  • State the FACT directly when you have it. Don't say 'check the file' / 'check your inbox'.",
+      "# Voice",
+      "  • Direct answer first, lowercase, conversational. 1-3 short lines max.",
+      "  • No 'I'd be happy to' / 'feel free' / 'certainly' — sound like Shekhar would.",
+      "  • State the FACT when you have it. No 'check the file' / 'check your inbox' if a tool returned the data.",
       "",
-      "AGENTIC FOLLOW-UPS — MANDATORY when applicable:",
-      "  • Answer mentions an EXPIRY / DUE DATE / DEADLINE → end with ONE short question offering a calendar reminder 60 days before.",
-      "  • Answer mentions a NUMBER worth remembering (passport #, license #, account #) → offer to save it as a Note.",
-      "  • Answer references a FILE the user might want → offer to attach it.",
+      "# Agentic follow-ups (mandatory when applicable)",
+      "  • Answer mentions an EXPIRY / DEADLINE → end with ONE short question offering a calendar reminder ~60 days before.",
+      "  • Answer mentions a NUMBER worth remembering (passport #, license #) → offer to save as Note.",
+      "  • Answer references a FILE → offer to attach it.",
       "",
-      "ACTIONS — emit ONE marker per action on its own line at the END of your reply.",
-      "  • Attach file:    `[ATTACH:/absolute/path]`  (COPY the path you got from read_personal_file — never invent paths)",
-      "  • Calendar event: `[CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]`  (local TZ, ISO)",
-      "  • Note:           `[NOTE:Title|Body text]`",
-      "  • Mail draft:     `[MAIL:to@x.com|Subject|Body]`",
-      "",
-      "OFFER-then-CONFIRM rule: Don't fire an action on the FIRST mention. End with one short question. On the user's next-turn confirmation ('yes', 'sure', 'do it') THEN emit the marker.",
+      "# Actions — emit ONE marker per action on its own line at the END",
+      "  • Attach file:    [ATTACH:/absolute/path]   (COPY paths from read_personal_file output — never invent)",
+      "  • Calendar:       [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]",
+      "  • Note:           [NOTE:Title|Body text]",
+      "  • Mail draft:     [MAIL:to@x.com|Subject|Body]",
+      "OFFER-then-CONFIRM: never fire an action on first mention. End with one short question. Only emit the marker on the user's next-turn confirmation ('yes', 'sure', 'do it').",
       apptBlock ? "\n" + apptBlock : "",
-    ].join("\n");
+    ].filter(Boolean).join("\n");
 
-    // withTools=true so the agent can call the personal-docs + connector
-    // tools. The control-plane registers search_personal_files /
-    // read_personal_file as built-in tools (no install required) — they
-    // proxy back to this bridge over loopback.
-    const draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
-    clearProgress();
-    this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft }, "doc query done");
+    // First attempt. withTools=true so the agent has the personal-docs
+    // + connector tools — but the profile context above lets the LLM
+    // skip them for profile-answerable questions.
+    let draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
+
+    // SILENT AUTO-RETRY on null (timeout, transient failure). The
+    // AgentClient already retries once on session-not-active 409; this
+    // handles the broader "LLM hung / SSE aborted" case. ONE retry
+    // total — beyond that the user sees a graceful fallback, never the
+    // raw "couldn't reach the agent" message.
     if (!draft) {
-      void this.send(jid, "couldn't reach the agent — try again in a sec.");
+      this.logger.warn({ totalMs: Date.now() - startedAt }, "agent returned null — retrying once");
+      draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
+    }
+
+    clearTimeout(thinkingTimer);
+    this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft, thinkingSent }, "doc query done");
+    if (!draft) {
+      // Graceful fallback — never "couldn't reach the agent — try
+      // again". The bot OWNS the retry; the user should not have to.
+      void this.send(jid, "hmm, that one took longer than I'd like. give me another minute and ask again");
       return;
     }
 
