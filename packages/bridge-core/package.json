@@ -27,7 +27,8 @@
     "./language": "./src/language.ts",
     "./roster": "./src/roster.ts",
     "./fact-extractor": "./src/fact-extractor.ts",
-    "./multi-agent": "./src/multi-agent.ts"
+    "./multi-agent": "./src/multi-agent.ts",
+    "./screen-context": "./src/screen-context.ts"
   },
   "dependencies": {
     "pdf-parse": "^2.4.5",

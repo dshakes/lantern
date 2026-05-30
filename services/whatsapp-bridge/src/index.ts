@@ -474,6 +474,47 @@ app.post("/session/:tenantId/send-self", async (req, res) => {
 // reachable only via loopback (BIND defaults to 127.0.0.1) + bridge
 // token (mounted under /session/* middleware).
 
+// JARVIS-ASK — single-turn voice/text endpoint for iOS Shortcut + CLI
+// + any external client. The caller sends { text } and gets back the
+// owner-self-chat agentic pipeline reply (same persona, same tools,
+// same nativity/dialect rules). No WhatsApp messages are sent; the
+// reply is returned as JSON.
+//
+// Usage from iOS Shortcut:
+//   1. Tap "Hey Lantern" (or use Siri).
+//   2. Shortcut prompts "What's up?" → records voice → transcribes
+//      via Apple's Dictation (or Whisper).
+//   3. Shortcut POSTs { text: "<transcript>" } to
+//      http://<host>:3100/session/<tenantId>/jarvis/ask
+//   4. The bridge runs the full agentic pipeline (profile + tools +
+//      language modality) and returns { reply }.
+//   5. Shortcut speaks the reply via Speak Text action.
+//
+// Auth: requireToken middleware on /session/* — the shortcut must
+// send Authorization: Bearer <token>. For localhost-only usage
+// (bridge bound 127.0.0.1) token is optional; for tunneled access
+// (ngrok / Cloudflare) ALWAYS set LANTERN_BRIDGE_TOKEN.
+app.post("/session/:tenantId/jarvis/ask", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) { res.status(400).json({ error: "session not started" }); return; }
+  const { text } = req.body as { text?: unknown };
+  if (typeof text !== "string" || text.trim().length === 0) {
+    res.status(400).json({ error: "'text' required (non-empty string)" });
+    return;
+  }
+  if (text.length > 2000) {
+    res.status(400).json({ error: "'text' too long (max 2000 chars)" });
+    return;
+  }
+  try {
+    const reply = await session.askJarvis(text.trim());
+    res.json({ reply, model: process.env.LANTERN_OPUS_MODEL || "claude-opus-4-8" });
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "jarvis/ask failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 app.post("/session/:tenantId/personal-docs/search", async (req, res) => {
   const session = sessions.get(req.params.tenantId);
   if (!session) { res.status(400).json({ error: "session not started" }); return; }

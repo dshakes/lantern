@@ -186,6 +186,42 @@ export class WhatsAppSession {
   // Returns null on darwin-non-Macs where docs wasn't initialized.
   getDocs(): PersonalDocs | null { return this.docs; }
 
+  // JARVIS-ASK — synchronous single-turn endpoint for iOS Shortcut,
+  // Siri, CLI, dashboard, voice-out. Runs the FULL owner-self-chat
+  // pipeline (profile + tools + language modality) and returns the
+  // bot's reply as a string. No message is sent on any surface; the
+  // caller decides what to do with it (speak it, render it, etc.).
+  // Throws if the LLM round-trip fails completely.
+  async askJarvis(text: string): Promise<string> {
+    const ownJid = this.ownJid() || "self";
+    const today = new Date().toISOString().slice(0, 10);
+    const hour = new Date().getHours();
+    const timeOfDay = hour < 5 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 22 ? "evening" : "late night";
+    const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+
+    const langHint = detectLanguageHints(text);
+    const nativity = this.ownerProfileStore.nativity();
+    const languageModality = languageModalityHint(langHint, { nativity });
+    const ownerProfileProse = this.ownerProfileStore.prose();
+    const relationshipsBlock = this.ownerProfileStore.relationshipsBlock();
+    const systemHint = [
+      `You are Lantern — ${ownerName}'s Jarvis, replying via voice/iOS shortcut. Answer is going to be SPOKEN aloud, so:`,
+      `  • One short sentence is ideal. Two short sentences max.`,
+      `  • No markdown, no bullet lists, no emoji. Just words.`,
+      `  • Direct and confident. Don't hedge.`,
+      `  • Conversational tone — sound like a person, not a chatbot.`,
+      `Today is ${today}, ${timeOfDay}.`,
+      ``,
+      ownerProfileProse ? `# Who you are\n${ownerProfileProse}\n` : ``,
+      relationshipsBlock ? `# Your people\n${relationshipsBlock}\n` : ``,
+      `Use tools if needed for the answer — search_personal_files, gmail_search, calendar, etc. Don't ask permission for read operations; just execute and answer.`,
+      languageModality,
+    ].filter(Boolean).join("\n");
+
+    const reply = await this.agent.respondTo(ownJid, text, systemHint, { withTools: true });
+    return (reply || "").trim() || "i couldn't get an answer right now — try again";
+  }
+
   // On-demand backfill for an already-paired session. Baileys only
   // delivers messaging-history.set automatically on FRESH pair — for an
   // established device we have to manually request older messages via
