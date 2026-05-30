@@ -1569,6 +1569,12 @@ export class IMessageSession {
     // The owner can manually reply to the silent cases from their
     // phone; the bot never pretends to speak for them with someone it
     // doesn't know.
+    // Two-layer gate (matches WhatsApp bridge semantics):
+    //   APPROVALS=on  → VIP + low-conf both queue a draft for approval.
+    //   APPROVALS=off → VIP stays silent; low-conf FALLS THROUGH and
+    //                   auto-replies normally. The bot's whole purpose
+    //                   is handling unfamiliar contacts — silencing
+    //                   them defeats it.
     const draftApprovalsOn = (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
     const lowConfidence =
       !isGroup &&
@@ -1576,19 +1582,15 @@ export class IMessageSession {
       !relationship &&
       !(await this.personal.factsBlock(row.handle));
     const isVIP = !isGroup && (await this.personal.isVIP(row.handle));
-    if (isVIP || lowConfidence) {
+
+    if (isVIP) {
       if (!draftApprovalsOn) {
-        // Default path: stay silent. No queue, no cross-channel ping.
-        const why = isVIP ? "VIP" : "unfamiliar contact";
-        this.logger.info(
-          { from: row.handle, why },
-          "auto-reply suppressed (draft approvals off)",
-        );
+        this.logger.info({ from: row.handle }, "auto-reply suppressed — VIP (drafts off)");
         this.broadcast({
           type: "activity",
           data: {
             kind: "agent_skipped",
-            summary: `silent on ${why} (drafts disabled)`,
+            summary: "silent on VIP (drafts disabled)",
             detail: draft.slice(0, 200),
             jid: row.handle,
             timestamp: Date.now(),
@@ -1603,10 +1605,36 @@ export class IMessageSession {
         draft,
         { channel: "imessage" },
       );
-      const why = isVIP ? "VIP" : "low-confidence (unfamiliar contact)";
       this.broadcast({
         type: "activity",
-        data: { kind: "agent_skipped", summary: queued ? `draft queued for approval — ${why}` : `${why} — auto-reply suppressed (queue failed)`, detail: draft.slice(0, 200), jid: row.handle, timestamp: Date.now() },
+        data: {
+          kind: "agent_skipped",
+          summary: queued ? "VIP draft queued for approval" : "VIP — auto-reply suppressed (queue failed)",
+          detail: draft.slice(0, 200),
+          jid: row.handle,
+          timestamp: Date.now(),
+        },
+      });
+      return;
+    }
+
+    if (lowConfidence && draftApprovalsOn) {
+      const queued = await this.personal.queueDraft(
+        row.handle,
+        this.contactNames.get(row.handle) ?? undefined,
+        text,
+        draft,
+        { channel: "imessage" },
+      );
+      this.broadcast({
+        type: "activity",
+        data: {
+          kind: "agent_skipped",
+          summary: queued ? "draft queued for approval — low-confidence (unfamiliar contact)" : "low-confidence — auto-reply suppressed (queue failed)",
+          detail: draft.slice(0, 200),
+          jid: row.handle,
+          timestamp: Date.now(),
+        },
       });
       return;
     }

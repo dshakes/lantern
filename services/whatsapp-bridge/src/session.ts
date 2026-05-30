@@ -4356,6 +4356,16 @@ export class WhatsAppSession {
     //     relationship AND no captured facts. An unfamiliar contact —
     //     draft, don't send, so the owner trains trust over time. Once
     //     samples accumulate the gate opens automatically.
+    // Two-layer gate, controlled by LANTERN_DRAFT_APPROVALS (default off):
+    //
+    //   APPROVALS=on  → VIP + low-conf both queue a draft for the owner
+    //                   to approve (old behavior, opt-in).
+    //   APPROVALS=off → VIP stays silent (the owner explicitly flagged
+    //                   them as sensitive — never auto-send). Low-conf
+    //                   FALLS THROUGH to auto-reply: an unfamiliar
+    //                   contact is the bot's job to handle, and
+    //                   silencing them defeats the purpose of having
+    //                   an assistant.
     const draftApprovalsOn = (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
     const lowConfidence =
       !opts.isGroup &&
@@ -4363,19 +4373,16 @@ export class WhatsAppSession {
       !relationship &&
       !(await this.personal.factsBlock(from));
     const isVIP = !opts.isGroup && (await this.personal.isVIP(from));
-    if (isVIP || lowConfidence) {
+
+    // VIP: always-special. Either queue-for-approval or stay silent.
+    if (isVIP) {
       if (!draftApprovalsOn) {
-        // Default: stay silent. No queue, no cross-channel ping. The
-        // owner manages unfamiliar/VIP contacts manually; the bot
-        // never pretends to speak for them with someone it doesn't
-        // know. Re-enable via LANTERN_DRAFT_APPROVALS=on.
-        const why = isVIP ? "VIP" : "unfamiliar contact";
-        this.logger.info({ from, why }, "auto-reply suppressed (draft approvals off)");
+        this.logger.info({ from }, "auto-reply suppressed — VIP (drafts off)");
         this.broadcast({
           type: "activity",
           data: {
             kind: "agent_skipped",
-            summary: `silent on ${why} (drafts disabled)`,
+            summary: "silent on VIP (drafts disabled)",
             detail: draft.slice(0, 200),
             jid: from,
             pushName: opts.senderName,
@@ -4391,21 +4398,46 @@ export class WhatsAppSession {
         draft,
         { channel: "whatsapp" },
       );
-      const why = isVIP ? "VIP" : "low-confidence (unfamiliar contact)";
       this.broadcast({
         type: "activity",
         data: {
           kind: "agent_skipped",
-          summary: queued
-            ? `draft queued for approval — ${why}`
-            : `${why} — auto-reply suppressed (queue failed)`,
+          summary: queued ? "VIP draft queued for approval" : "VIP — auto-reply suppressed (queue failed)",
           detail: draft.slice(0, 200),
           jid: from,
           pushName: opts.senderName,
           timestamp: Date.now(),
         },
       });
-      this.logger.info({ from, queued: !!queued, why }, "draft queued for approval");
+      this.logger.info({ from, queued: !!queued }, "VIP draft queued for approval");
+      return;
+    }
+
+    // Low-confidence: only queue-for-approval when explicitly opted in.
+    // Default = fall through to auto-reply. The downstream bot-tell
+    // filter + naturalize still guards against obviously-wooden replies.
+    if (lowConfidence && draftApprovalsOn) {
+      const queued = await this.personal.queueDraft(
+        from,
+        opts.senderName ?? this.contactNames.get(from) ?? undefined,
+        text,
+        draft,
+        { channel: "whatsapp" },
+      );
+      this.broadcast({
+        type: "activity",
+        data: {
+          kind: "agent_skipped",
+          summary: queued
+            ? "draft queued for approval — low-confidence (unfamiliar contact)"
+            : "low-confidence — auto-reply suppressed (queue failed)",
+          detail: draft.slice(0, 200),
+          jid: from,
+          pushName: opts.senderName,
+          timestamp: Date.now(),
+        },
+      });
+      this.logger.info({ from, queued: !!queued }, "low-conf draft queued for approval");
       return;
     }
 
