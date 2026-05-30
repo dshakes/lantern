@@ -429,6 +429,76 @@ export class WhatsAppSession {
   // Idempotent: appendHistory dedupes by msgId, so re-running the
   // backfill (after a reconnect) doesn't double-write. Non-blocking:
   // we don't await anything that could stall the bridge boot.
+  // Persistent JID → name index. Populated from contacts.upsert /
+  // contacts.update events Baileys fires on pair + when contacts
+  // change. Survives restarts via the same JSONL pattern as wa-history.
+  // The historyNameMap layers OVER this for group-roster resolution.
+  private contactNamesFile: string = "";
+  private contactNameBuffer: Array<{ jid: string; name: string }> = [];
+  private contactNameFlushTimer: NodeJS.Timeout | null = null;
+
+  private hookContactsSync(): void {
+    if (!this.socket) return;
+    this.contactNamesFile = join(this.authDir, "wa-contact-names.jsonl");
+
+    // Pre-seed the in-memory contactNames Map from the persisted file
+    // on every boot. Means a paired-once-then-restart bridge starts
+    // with full name resolution from previous sessions' contacts events.
+    try {
+      if (existsSync(this.contactNamesFile)) {
+        const raw = readFileSync(this.contactNamesFile, "utf-8");
+        let n = 0;
+        for (const line of raw.split("\n")) {
+          if (!line) continue;
+          try {
+            const e = JSON.parse(line) as { jid?: string; name?: string };
+            if (e.jid && e.name) { this.contactNames.set(e.jid, e.name); n++; }
+          } catch {}
+        }
+        this.logger.info({ loaded: n }, "wa-contact-names seeded from disk");
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "wa-contact-names seed failed");
+    }
+
+    const ingest = (contacts: Array<{ id?: string; name?: string; notify?: string; verifiedName?: string }>) => {
+      for (const c of contacts) {
+        const jid = c.id || "";
+        // Names come in order of preference: explicit name > notify
+        // (the pushName the contact set) > verifiedName (business).
+        const name = (c.name || c.notify || c.verifiedName || "").trim();
+        if (!jid || !name) continue;
+        // Don't overwrite an existing better mapping with a worse one.
+        const existing = this.contactNames.get(jid);
+        if (existing && existing.length > 0 && existing === name) continue;
+        this.contactNames.set(jid, name);
+        this.contactNameBuffer.push({ jid, name });
+      }
+      if (this.contactNameBuffer.length > 0) this.scheduleContactNameFlush();
+      // Invalidate the cached history-name map so the next group
+      // members query sees the new names.
+      this.historyNameCache = null;
+    };
+
+    this.socket.ev.on("contacts.upsert", (cs) => ingest(cs));
+    this.socket.ev.on("contacts.update", (cs) => ingest(cs as Array<{ id?: string; name?: string; notify?: string; verifiedName?: string }>));
+  }
+
+  private scheduleContactNameFlush(): void {
+    if (this.contactNameFlushTimer) return;
+    this.contactNameFlushTimer = setTimeout(() => {
+      this.contactNameFlushTimer = null;
+      if (this.contactNameBuffer.length === 0) return;
+      try {
+        const batch = this.contactNameBuffer.map((e) => JSON.stringify(e)).join("\n") + "\n";
+        this.contactNameBuffer = [];
+        appendFileSync(this.contactNamesFile, batch);
+      } catch (err) {
+        this.logger.warn({ err }, "wa-contact-names flush failed");
+      }
+    }, 2000);
+  }
+
   private hookHistorySync(): void {
     if (!this.socket) return;
     if (!WhatsAppSession.HISTORY_BACKFILL_ENABLED) {
@@ -1291,6 +1361,12 @@ export class WhatsAppSession {
       // registered BEFORE the first sync event fires.
       this.hookHistorySync();
 
+      // Hook contacts events so we capture pushName / notify name /
+      // verifiedName the moment WhatsApp pushes them — critical for
+      // group-roster name resolution since backfilled history
+      // messages don't carry senderName.
+      this.hookContactsSync();
+
       // Incoming messages
       this.socket.ev.on("messages.upsert", async (m) => {
         for (const msg of m.messages) {
@@ -1995,7 +2071,23 @@ export class WhatsAppSession {
           || historyNames.get(jid)
           || "";
         const local = jid.split("@")[0];
-        const human = pushName || (local.match(/^\d+$/) ? `+${local}` : local);
+        const isLid = jid.endsWith("@lid");
+        // @lid local-parts are NOT phone numbers — they're opaque
+        // privacy-preserving identifiers WhatsApp generates for
+        // group-member visibility without leaking phone numbers.
+        // Showing them as "+xxx" would be misleading. Real
+        // @s.whatsapp.net JIDs DO have phone-number local parts and
+        // should be shown as "+number".
+        let human: string;
+        if (pushName) {
+          human = pushName;
+        } else if (isLid) {
+          human = "(name unknown — group privacy)";
+        } else if (local.match(/^\d+$/)) {
+          human = `+${local}`;
+        } else {
+          human = local;
+        }
         return { jid, name: human, isAdmin: p.admin === "admin" || p.admin === "superadmin" };
       });
       return {
@@ -2941,7 +3033,7 @@ export class WhatsAppSession {
       `  • Note:           [NOTE:Title|Body text]`,
       `  • Mail draft:     [MAIL:to@x.com|Subject|Body]`,
       `OFFER-then-CONFIRM applies ONLY to state-modifying actions (calendar, note, mail). For READ operations (search, list, look up, find), NEVER ask permission — just execute and report results. The user already asked; asking "shall I search?" is wasted turns.`,
-      `For ROSTER questions ("who came on X", "who's in X"): the group rosters above are the truth. If members appear as raw phone numbers (no name), it means we haven't seen them DM us — but their PARTICIPATION in the group already proves they were part of the trip/event. Answer with the FULL roster from the group regardless of whether names are resolved; mention the few that show as numbers as "+ N more (numbers only — names not resolved yet)". Do NOT ask the user if they want you to search further; if you can search WhatsApp/iMessage history for the trip date range, JUST DO IT.`,
+      `For ROSTER questions ("who came on X", "who's in X"): the group rosters above are the truth. If a member appears as "(name unknown — group privacy)", that's WhatsApp's new privacy-preserving identifier (@lid) — we genuinely don't have their name because they haven't DM'd us. State the FULL roster size from the group AND list every name we DO have; for the rest say "N others (WhatsApp doesn't expose names of non-contacts in groups, unless they DM you)". Their PARTICIPATION in the group still proves they were on the trip. Do NOT ask the user if they want you to search further; if you can search WhatsApp/iMessage history for the trip date range, JUST DO IT in this same turn.`,
       apptBlock ? "\n" + apptBlock : "",
       rosterBlock ? "\n" + rosterBlock : "",
     ].filter(Boolean).join("\n");
