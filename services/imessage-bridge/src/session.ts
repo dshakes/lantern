@@ -223,6 +223,34 @@ export class IMessageSession {
   // the correct recent transcript for the active chat — generic,
   // works for any handle, not just the first self-chat we saw.
   private lastChatRowidForHandle: Map<string, number> = new Map();
+
+  // SELF-EVAL — per-msgGuid record of WHAT we sent + WHY. Lets the
+  // tapback handler reconstruct the prompt when the owner taps 👎
+  // (dislike) on a bot reply. Capped FIFO at 200 entries; older
+  // entries fall off. In-memory only — retries lose their anchor if
+  // the bridge restarts between send and react (fine; rare).
+  private bridgeReplyMeta: Map<string, {
+    handle: string;
+    chatRowid: number;
+    inboundText: string;
+    replyText: string;
+    systemHint: string;
+    ts: number;
+  }> = new Map();
+  private static readonly REPLY_META_MAX = 200;
+
+  // PENDING-REPLY-META QUEUE — iMessage's AppleScript send doesn't
+  // return the new GUID, so we can't directly key bridgeReplyMeta by
+  // GUID at send time. Instead we push {text, meta} into this short
+  // queue; the poll loop matches the next fromMe row whose text
+  // equals one of the queued entries, harvests THAT row's GUID, and
+  // promotes the meta into bridgeReplyMeta keyed by GUID.
+  private pendingReplyMeta: Array<{
+    text: string;
+    meta: { handle: string; chatRowid: number; inboundText: string; replyText: string; systemHint: string };
+    queuedAt: number;
+  }> = [];
+  private static readonly PENDING_META_TTL_MS = 30_000;
   // Throttle for the busy-nudge message ("⏳ still working …"). Without
   // this, every inbound while busy fires another nudge, and each
   // nudge cross-device-echoes — easy to send 10+ in a row. Cap at
@@ -763,15 +791,33 @@ export class IMessageSession {
       return;
     }
 
-    // REACTION / TAPBACK GUARD. iMessage stores a "love"/"like"/"laugh"
-    // tapback as a message row with associated_message_type != 0. These
-    // are NOT messages — someone hearting a message in a group is not a
-    // prompt for the bot to reply. Without this, a heart reaction in a
-    // group came through as inbound text and the bot replied with a
-    // heart of its own (and as a DM, not in the group). Drop entirely.
+    // REACTION / TAPBACK HANDLING.
+    //   - 👎 dislike (2002) on a bot-self message in owner self-chat
+    //     → trigger critique-retry on that specific reply
+    //   - all other tapbacks → ignore (not a reply prompt)
     if (row.associatedMessageType && row.associatedMessageType !== 0) {
+      // SELF-EVAL: 👎 (dislike, type 2002) from the OWNER on a
+      // message we sent. Look up the original via the
+      // associated_message_guid → bridgeReplyMeta → re-prompt LLM.
+      if (
+        row.associatedMessageType === 2002 &&
+        row.associatedMessageGuid &&
+        !(row.chatDisplayName !== "" || row.handle === "") &&
+        this.isOwnerChatRow(row) &&
+        this.bridgeReplyMeta.has(row.associatedMessageGuid)
+      ) {
+        this.logger.info(
+          { rowid: row.rowid, targetGuid: row.associatedMessageGuid },
+          "self-eval: 👎 tapback on bot reply — triggering critique-retry",
+        );
+        // Fire-and-forget; never blocks the poll loop.
+        void this.handleTapbackRetry(row.associatedMessageGuid, row.handle).catch((err) =>
+          this.logger.warn({ err }, "tapback retry failed"),
+        );
+        return;
+      }
       this.logger.debug(
-        { rowid: row.rowid, handle: row.handle, type: row.associatedMessageType },
+        { rowid: row.rowid, handle: row.handle, type: row.associatedMessageType, targetGuid: row.associatedMessageGuid },
         "skipping reaction/tapback row — not a real message",
       );
       return;
@@ -836,6 +882,10 @@ export class IMessageSession {
       // typing (which would pause auto-reply for an hour after
       // every bot response). De-dup by text within a 60s window.
       if (text && this.isOwnBridgeSend(text)) {
+        // SELF-EVAL meta harvest — if this echo matches a queued
+        // pending-reply-meta entry, pair its GUID with the meta
+        // so the next 👎 tapback can look it up.
+        this.harvestPendingReplyMeta(text, row.guid);
         return;
       }
 
@@ -1800,6 +1850,109 @@ export class IMessageSession {
   // regex pre-deciders guessing the shape of the question. If the LLM
   // included [ATTACH:/path] / [CALENDAR:...] / [NOTE:...] / [MAIL:...]
   // markers, the bridge fires the corresponding Mac action.
+  // Record meta of a bot reply so 👎 tapback can later look up what
+  // we sent + why and re-prompt the LLM with a critique. Capped
+  // FIFO at REPLY_META_MAX.
+  private recordReplyMeta(
+    sentGuid: string,
+    meta: { handle: string; chatRowid: number; inboundText: string; replyText: string; systemHint: string },
+  ): void {
+    if (!sentGuid) return;
+    this.bridgeReplyMeta.set(sentGuid, { ...meta, ts: Date.now() });
+    if (this.bridgeReplyMeta.size > IMessageSession.REPLY_META_MAX) {
+      const it = this.bridgeReplyMeta.keys();
+      const drop = this.bridgeReplyMeta.size - IMessageSession.REPLY_META_MAX;
+      for (let i = 0; i < drop; i++) {
+        const k = it.next().value;
+        if (k) this.bridgeReplyMeta.delete(k);
+      }
+    }
+  }
+
+  // Queue meta keyed by REPLY TEXT — promoted to bridgeReplyMeta by
+  // the next poll's harvestPendingReplyMeta() when chat.db echoes the
+  // send with its assigned GUID. Used by the iMessage agentic-query
+  // path; AppleScript send doesn't return the GUID directly.
+  private queueReplyMeta(
+    replyText: string,
+    meta: { handle: string; chatRowid: number; inboundText: string; replyText: string; systemHint: string },
+  ): void {
+    if (!replyText) return;
+    // GC stale entries first (>TTL old or duplicate of incoming text).
+    const now = Date.now();
+    this.pendingReplyMeta = this.pendingReplyMeta.filter((e) =>
+      now - e.queuedAt < IMessageSession.PENDING_META_TTL_MS && e.text !== replyText,
+    );
+    this.pendingReplyMeta.push({ text: replyText.trim(), meta, queuedAt: now });
+  }
+
+  // Called from the fromMe-echo path. If a queued meta matches this
+  // text, promote it into bridgeReplyMeta keyed by the row's GUID.
+  // Matched entries are removed from the queue.
+  private harvestPendingReplyMeta(text: string, guid: string): void {
+    if (!text || !guid) return;
+    const norm = text.trim();
+    const idx = this.pendingReplyMeta.findIndex((e) => e.text === norm);
+    if (idx === -1) return;
+    const entry = this.pendingReplyMeta[idx];
+    this.pendingReplyMeta.splice(idx, 1);
+    this.recordReplyMeta(guid, entry.meta);
+    this.logger.debug({ guid, replyLen: norm.length }, "self-eval: harvested reply-meta for GUID");
+  }
+
+  // SELF-EVAL retry: full critique-and-rewrite pipeline for iMessage.
+  // Triggered when the owner taps 👎 (dislike, type 2002) on a bot
+  // reply in their self-chat. Re-prompts the LLM with the original
+  // inbound + prior reply + a critique instruction, sends the
+  // corrected version as a follow-up. iMessage doesn't reliably
+  // support editing arbitrary outbound, so we append rather than
+  // replace.
+  private async handleTapbackRetry(targetMsgGuid: string, recipientHandle: string): Promise<void> {
+    const meta = this.bridgeReplyMeta.get(targetMsgGuid);
+    if (!meta) {
+      this.logger.info({ targetMsgGuid }, "tapback-retry: no meta (probably aged out or non-tracked send)");
+      // No meta — best-effort ack so the owner knows the signal landed.
+      try { await this.send(recipientHandle, "noted — what was off?"); } catch {}
+      return;
+    }
+    this.logger.info({ targetMsgGuid, inboundLen: meta.inboundText.length }, "self-eval: 👎 tapback → critique-retry");
+
+    try {
+      const critiqueSystemHint = [
+        meta.systemHint,
+        "",
+        "## CRITIQUE-AND-RETRY MODE",
+        "The owner just tapped 👎 on your previous reply. Re-read the inbound + your prior reply below.",
+        "",
+        "Step 1 (silent — DO NOT include in your output): briefly identify what was wrong about the prior reply. Common failure modes: too long, too formal, wrong language/script, missed nuance, recited generic info instead of using profile/tools, hallucinated facts, sounded like a bot.",
+        "Step 2: produce a SINGLE corrected reply that fixes the failure. Keep the same intent (answer the same question) but execute it the way the owner actually would.",
+        "",
+        `Original inbound: ${meta.inboundText}`,
+        `Your prior reply (rated bad): ${meta.replyText}`,
+        "",
+        "Output ONLY the corrected reply. No preface, no explanation, no markdown headers.",
+      ].join("\n");
+
+      const retried = await this.agent.respondTo(
+        recipientHandle,
+        meta.inboundText,
+        critiqueSystemHint,
+        { withTools: false }, // critique fixes style/clarity, not new tool calls
+      );
+
+      if (!retried || retried.trim().length === 0) {
+        await this.send(recipientHandle, "(couldn't generate a better version — try rephrasing your ask)");
+        return;
+      }
+
+      await this.send(recipientHandle, retried.trim());
+      this.logger.info({ targetMsgGuid, retriedLen: retried.length }, "self-eval: retry delivered (imessage)");
+    } catch (err) {
+      this.logger.warn({ err, targetMsgGuid }, "self-eval retry exception (imessage)");
+      try { await this.send(recipientHandle, "(retry hit an error — try again in a sec)"); } catch {}
+    }
+  }
+
   // Build the SubTaskAdapters map for multi-agent fan-out. Symmetric
   // to the WhatsApp bridge but routed inverse: iMessage adapters
   // hit the local chat.db directly; WhatsApp adapters proxy over
@@ -2203,6 +2356,16 @@ export class IMessageSession {
 
     if (polished) {
       await this.send(jid, polished);
+      // SELF-EVAL: queue meta so 👎 tapback on this reply can find
+      // the inbound + system hint + reply text to re-prompt with.
+      // The poll loop pairs this with the GUID on the echo poll.
+      this.queueReplyMeta(polished, {
+        handle: jid,
+        chatRowid: effectiveChatRowid,
+        inboundText: query,
+        replyText: polished,
+        systemHint,
+      });
     }
 
     // Cache the offer keyed by chat so the followup ("yes") in the
