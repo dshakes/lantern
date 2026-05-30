@@ -797,6 +797,106 @@ func (h *LlmProxyHandler) HandleStreamCompletion(w http.ResponseWriter, r *http.
 	}
 }
 
+// HandleTTS — POST /v1/voice/tts. Body: {text, voice?, format?}.
+// Returns audio bytes (mp3 by default) via OpenAI's TTS API using the
+// tenant's configured OpenAI key. Used by the bridges' outbound voice
+// path when LANTERN_VOICE_OUT=on.
+//
+// Voices: alloy, echo, fable, onyx, nova, shimmer. Defaults to "nova"
+// (warm + clear; pleasant for self-chat consumption).
+// Cost: ~$15/1M chars = ~$0.0001/char. A 100-char reply costs ~$0.01.
+func (h *LlmProxyHandler) HandleTTS(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		Text   string `json:"text"`
+		Voice  string `json:"voice"`
+		Format string `json:"format"`
+		Model  string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	body.Text = strings.TrimSpace(body.Text)
+	if body.Text == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "text required"})
+		return
+	}
+	if len(body.Text) > 4000 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "text > 4000 chars (TTS limit)"})
+		return
+	}
+	voice := body.Voice
+	if voice == "" {
+		voice = "nova"
+	}
+	format := body.Format
+	if format == "" {
+		format = "mp3"
+	}
+	// "opus" format = Opus codec (good for WhatsApp voice notes which
+	// natively use Opus in OGG container). But OpenAI TTS returns raw
+	// opus frames; we'd need to wrap. mp3 is universally playable on
+	// iMessage/WhatsApp/dashboard with no extra work.
+	model := body.Model
+	if model == "" {
+		model = "tts-1" // tts-1 is faster + cheaper than tts-1-hd
+	}
+
+	apiKey, keyErr := h.resolveProviderKey(ctx, tenantID, "openai")
+	if keyErr != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "openai key required for TTS"})
+		return
+	}
+
+	reqBody := map[string]any{
+		"model":           model,
+		"input":           body.Text,
+		"voice":           voice,
+		"response_format": format,
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+		"https://api.openai.com/v1/audio/speech", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, httpErr := http.DefaultClient.Do(req)
+	if httpErr != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": httpErr.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(resp.Body)
+		writeJSON(w, resp.StatusCode, map[string]string{"error": fmt.Sprintf("openai tts %d: %s", resp.StatusCode, string(errBody))})
+		return
+	}
+	audio, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": readErr.Error()})
+		return
+	}
+	contentType := "audio/mpeg"
+	switch format {
+	case "opus":
+		contentType = "audio/opus"
+	case "aac":
+		contentType = "audio/aac"
+	case "flac":
+		contentType = "audio/flac"
+	case "wav":
+		contentType = "audio/wav"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(audio)))
+	_, _ = w.Write(audio)
+}
+
 // Complete handles POST /v1/completions.
 func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	ctx, tenantID, err := h.contextWithTenant(r)

@@ -186,6 +186,57 @@ export class WhatsAppSession {
   // Returns null on darwin-non-Macs where docs wasn't initialized.
   getDocs(): PersonalDocs | null { return this.docs; }
 
+  // Outbound TTS via control-plane → OpenAI tts-1. Returns Buffer
+  // (mp3 bytes) or null if disabled / errored. Called by the
+  // owner-self-chat sender when LANTERN_VOICE_OUT=on and the reply
+  // is short enough to make sense as a voice note.
+  private async ttsAudio(text: string): Promise<Buffer | null> {
+    if ((process.env.LANTERN_VOICE_OUT ?? "off").toLowerCase() !== "on") return null;
+    const t = text.trim();
+    if (!t || t.length > 1000) return null;
+    try {
+      const { authedFetch } = await import("@lantern/bridge-core/auth");
+      const voice = process.env.LANTERN_VOICE_OUT_VOICE || "nova";
+      const res = await authedFetch("/v1/voice/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: t, voice, format: "mp3" }),
+      });
+      if (!res.ok) {
+        this.logger.warn({ status: res.status }, "tts: http error");
+        return null;
+      }
+      const arr = await res.arrayBuffer();
+      return Buffer.from(arr);
+    } catch (err) {
+      this.logger.warn({ err }, "tts: exception");
+      return null;
+    }
+  }
+
+  // Send an audio voice note to self-chat. Used as the TTS delivery
+  // path. Falls back to text-only when TTS fails.
+  private async sendVoiceToSelf(text: string, audio: Buffer): Promise<void> {
+    const own = this.ownJid();
+    if (!own || !this.socket) return;
+    try {
+      // Baileys voice-note shape: audioMessage with ptt=true (push-to-
+      // talk = renders as voice waveform on WhatsApp clients).
+      const sent = await this.socket.sendMessage(own, {
+        audio,
+        mimetype: "audio/mp4",
+        ptt: true,
+      } as never);
+      if (sent?.key?.id) {
+        this.bridgeSentIds.set(sent.key.id, Date.now());
+        this.lastSelfSentMsgId = sent.key.id;
+      }
+      this.logger.info({ bytes: audio.length, textLen: text.length }, "voice-out delivered");
+    } catch (err) {
+      this.logger.warn({ err }, "voice-out send failed");
+    }
+  }
+
   // JARVIS-ASK — synchronous single-turn endpoint for iOS Shortcut,
   // Siri, CLI, dashboard, voice-out. Runs the FULL owner-self-chat
   // pipeline (profile + tools + language modality) and returns the
