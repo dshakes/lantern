@@ -1733,21 +1733,16 @@ export class WhatsAppSession {
         void this.confirmToSelf("👍 no worries");
         return;
       }
-      // CHAT-BUSY GATE — queue latest substantive message instead of
-      // dropping it. When the current run finishes, the drain logic in
-      // handleOwnerDocQuery's finally block processes the queued query.
-      // Trivial chatter ("ok", "thanks") is dropped silently. Cap is 1
-      // per chat: a new arrival overwrites the previous queued one
-      // (latest-wins — earlier ones are usually outdated by then).
+      // CHAT-BUSY GATE — queue latest substantive message silently.
+      // No nudge: the user knows they typed a second message, and the
+      // real answer to the queued one lands when the current run
+      // finishes (drained in handleOwnerDocQuery's finally block).
       if (this.busyChat.has(jid)) {
         if (!isTrivialChatter(text)) {
           this.queuedQuery.set(jid, { text, queuedAt: Date.now() });
           this.logger.info({ jid, textPreview: text.slice(0, 60) }, "queued — chat busy, will process next");
         } else {
           this.logger.info({ jid, textPreview: text.slice(0, 60) }, "skipping — chat busy (trivial)");
-        }
-        if (text.length > 8) {
-          void this.confirmToSelf("⏳ still on the previous one — I'll get to this next");
         }
         return;
       }
@@ -2127,77 +2122,85 @@ export class WhatsAppSession {
     this.busyChat.add(jid);
     try {
     this.logger.info({ query: query.slice(0, 80) }, "owner doc query (whatsapp)");
-    this.logActivity("attention_dm", `📁 doc query: ${query.slice(0, 60)}`, { scope: "self" });
-    // Acknowledge so the user sees instant feedback. We do BOTH a
-    // reaction (subtle, on their message) AND a text ack (impossible
-    // to miss). Doc queries can take 10-15s for OCR'd PDFs and the
-    // reaction alone isn't loud enough.
-    try { await this.sendReaction(jid, key, "📁"); } catch {}
-    await this.confirmToSelf("📁 one sec — looking through your files…");
+    this.logActivity("attention_dm", `🧠 owner query: ${query.slice(0, 60)}`, { scope: "self" });
 
-    // If the heavy work runs long (>6s), nudge once so the user
-    // knows we're still chewing. Cancelled when the work finishes.
+    // LATENCY-FIRST UX (mirrors iMessage):
+    //   • Subtle reaction so the user knows we received them — no
+    //     text ack on fast paths so the chat reads like a real reply.
+    //   • A single "🧠 thinking…" text only if work runs >3s.
+    //   • Nothing further until the answer (or graceful fallback).
+    try { await this.sendReaction(jid, key, "🧠"); } catch {}
     const startedAt = Date.now();
-    let progressFired = false;
-    const progressTimer = setTimeout(() => {
-      progressFired = true;
-      void this.confirmToSelf("📷 still scanning — almost there…");
-    }, 6000);
-    const clearProgress = () => {
-      clearTimeout(progressTimer);
-      if (progressFired) { /* already informed */ }
-    };
+    let thinkingSent = false;
+    const thinkingTimer = setTimeout(() => {
+      thinkingSent = true;
+      void this.confirmToSelf("🧠 thinking…");
+    }, 3000);
 
     // Deterministic Gmail + Calendar prefetch in parallel for
     // appointment-y queries — optimization only (the LLM could call
-    // those tools too). The personal-docs path is now tool-driven:
-    // the model calls search_personal_files / read_personal_file
-    // itself instead of us pre-OCR'ing every match.
+    // those tools too).
     const client = defaultConnectorClient(this.logger);
     const apptBlock = looksLikeAppointmentQuery(query)
       ? await prefetchAppointmentContext(client, query, this.logger).catch(() => null)
       : null;
     this.logger.info({ ms: Date.now() - startedAt, hasAppt: !!apptBlock }, "agentic prefetch done (whatsapp)");
+
+    // OWNER PROFILE — same context the natural-chat path uses, so
+    // profile-answerable questions ("who is my son", "what do I work
+    // on") resolve in one round-trip without a tool-loop timeout.
+    const ownerProfile = this.ownerProfileStore.prose();
+    const relationshipsBlock = this.ownerProfileStore.relationshipsBlock();
     const today = new Date().toISOString().slice(0, 10);
+    const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
     const systemHint = [
-      `You are Lantern — Shekhar's personal agent, replying in his WhatsApp self-chat.`,
+      `You are Lantern — ${ownerName}'s personal agent, replying in his WhatsApp self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
       ``,
-      `TOOLS — call them. Don't ask the user for data you can fetch yourself.`,
-      `  • search_personal_files / read_personal_file — local Mac files (Documents, Desktop, iCloud Drive). Passport, license, green card, I-485, taxes, receipts, contracts, prescriptions all live here. PDFs and images are OCR'd automatically. ALWAYS search first when the question is about a document, ID, expiry, number, or file. Try multiple queries (formal name AND everyday name — 'I-485', 'green card', 'permanent resident').`,
-      `  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits live in email. ALWAYS check Gmail for anything that arrived as a confirmation.`,
+      ownerProfile ? `# Who you are\n${ownerProfile}` : "",
+      relationshipsBlock ? `\n# Your people\n${relationshipsBlock}` : "",
+      ``,
+      `# Decide BEFORE calling tools`,
+      `Many questions are answerable from the profile above. Skip tool calls for:`,
+      `  • Relationship / family questions ('who is my son', 'what's my wife's name') — answer from 'Your people'.`,
+      `  • Style / identity questions — answer from 'Who you are'.`,
+      `  • Conversational follow-ups that don't need fresh data.`,
+      `Call tools only when you actually need data the profile doesn't have:`,
+      `  • search_personal_files / read_personal_file — Mac files (Documents, Desktop, iCloud). Passport, license, green card, I-485, taxes, receipts. PDFs/images OCR'd.`,
+      `  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits.`,
       `  • google-calendar_list_events — anything time-bound, next 30 days.`,
-      `  • Other connectors (sheets, drive, etc.) when relevant.`,
-      `NEVER say "I can't access your files/emails/calendar" — the tools are right here. Call them. If empty, name what you tried.`,
+      `If you DO call tools, search broadly and answer concretely; never reply "I can't access your files/emails".`,
       ``,
-      `STYLE — sophisticated, natural, agentic. Like Jarvis: warm, concise, never robotic.`,
-      `  • Direct answers first. No "I'd be happy to" / "feel free".`,
-      `  • Lowercase, conversational. 1-3 short lines max.`,
-      `  • State the FACT directly. Don't say "check the file" / "check your inbox" if a tool returns the data.`,
+      `# Voice`,
+      `  • Direct answer first, lowercase, conversational. 1-3 short lines max.`,
+      `  • No "I'd be happy to" / "feel free" / "certainly" — sound like ${ownerName}.`,
+      `  • State the FACT when you have it.`,
       ``,
-      `AGENTIC FOLLOW-UPS — MANDATORY when applicable:`,
-      `  • Answer mentions an EXPIRY/DUE DATE/DEADLINE → end with ONE short question offering a calendar reminder 60 days before.`,
-      `  • Answer mentions a NUMBER worth remembering (passport #, license #, account #) → offer to save it as a Note.`,
-      `  • Answer references a FILE the user might want → offer to attach it.`,
+      `# Agentic follow-ups (mandatory when applicable)`,
+      `  • Answer mentions an EXPIRY / DEADLINE → end with ONE short question offering a calendar reminder ~60 days before.`,
+      `  • Answer mentions a NUMBER worth remembering (passport #, license #) → offer to save as Note.`,
+      `  • Answer references a FILE → offer to attach it.`,
       ``,
-      `ACTIONS — emit ONE marker per action on its own line at the END of your reply. The bridge executes them.`,
-      `  • Attach file:    [ATTACH:/absolute/path]  (COPY the path you got from read_personal_file — never invent paths)`,
-      `  • Calendar event: [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]  (local TZ, ISO)`,
+      `# Actions — emit ONE marker per action on its own line at the END`,
+      `  • Attach file:    [ATTACH:/absolute/path]  (COPY paths from read_personal_file — never invent)`,
+      `  • Calendar event: [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]`,
       `  • Note:           [NOTE:Title|Body text]`,
       `  • Mail draft:     [MAIL:to@x.com|Subject|Body]`,
-      ``,
-      `OFFER-then-CONFIRM rule: Don't fire an action on first mention. End reply with a short suggestion. If user confirms next turn ("yes", "sure", "do it"), THEN emit the marker.`,
+      `OFFER-then-CONFIRM: never fire an action on first mention. End with one short question. Only emit the marker on the user's next-turn confirmation.`,
       apptBlock ? "\n" + apptBlock : "",
-    ].join("\n");
+    ].filter(Boolean).join("\n");
 
-    // withTools=true: gives the LLM Gmail / Calendar / Sheets etc. even
-    // on the docs path. Appointment / receipt / order queries often live
-    // in emails, not Mac files.
-    const draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
-    clearProgress();
-    this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft }, "doc query done (whatsapp)");
+    // First attempt + silent auto-retry on null (timeout / transient).
+    let draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
     if (!draft) {
-      await this.confirmToSelf("(couldn't reach the agent — try again in a sec.)");
+      this.logger.warn({ totalMs: Date.now() - startedAt }, "agent returned null — retrying once");
+      draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
+    }
+
+    clearTimeout(thinkingTimer);
+    this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft, thinkingSent }, "doc query done (whatsapp)");
+    if (!draft) {
+      await this.confirmToSelf("hmm, that one took longer than I'd like. give me another minute and ask again");
       return;
     }
 
