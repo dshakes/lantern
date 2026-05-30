@@ -182,6 +182,120 @@ export class WhatsAppSession {
   // personal-docs search/read for the control-plane's LLM tools.
   // Returns null on darwin-non-Macs where docs wasn't initialized.
   getDocs(): PersonalDocs | null { return this.docs; }
+
+  // Append one message to the per-tenant JSONL history log. Debounced
+  // (1s) so a burst of inbound doesn't fsync per message.
+  appendHistory(entry: {
+    ts: number;
+    jid: string;
+    isGroup: boolean;
+    fromMe: boolean;
+    senderName: string;
+    participant: string;
+    text: string;
+  }): void {
+    if (!this.historyFile) return;
+    try {
+      this.historyAppendBuffer.push(JSON.stringify(entry));
+      if (this.historyFlushTimer) return;
+      this.historyFlushTimer = setTimeout(() => this.flushHistory(), 1000);
+    } catch (err) {
+      this.logger.warn({ err }, "history append failed");
+    }
+  }
+
+  private flushHistory(): void {
+    this.historyFlushTimer = null;
+    if (this.historyAppendBuffer.length === 0) return;
+    try {
+      const fs = require("fs") as typeof import("fs");
+      const batch = this.historyAppendBuffer.join("\n") + "\n";
+      this.historyAppendBuffer = [];
+      fs.appendFileSync(this.historyFile, batch);
+      // Truncate on overflow — keep the most recent half.
+      try {
+        const st = fs.statSync(this.historyFile);
+        if (st.size > WhatsAppSession.HISTORY_MAX_BYTES) {
+          const raw = fs.readFileSync(this.historyFile, "utf-8");
+          const lines = raw.split("\n");
+          const kept = lines.slice(Math.floor(lines.length / 2)).join("\n");
+          fs.writeFileSync(this.historyFile, kept);
+          this.logger.info({ before: st.size, after: kept.length }, "wa-history truncated");
+        }
+      } catch {}
+    } catch (err) {
+      this.logger.warn({ err }, "history flush failed");
+    }
+  }
+
+  // Search the WhatsApp history log. Returns at most `limit` messages
+  // (default 25, max 50) matching the filters. Sub-second on typical
+  // ~MB history files because we stream + early-exit.
+  searchHistory(opts: {
+    keyword?: string;
+    sinceMs?: number;
+    untilMs?: number;
+    jid?: string;
+    groupOnly?: boolean;
+    fromContact?: string; // case-insensitive substring on senderName
+    limit?: number;
+  }): Array<{
+    ts: number;
+    jid: string;
+    isGroup: boolean;
+    fromMe: boolean;
+    senderName: string;
+    participant: string;
+    text: string;
+  }> {
+    if (!this.historyFile) return [];
+    // Flush pending writes so a query immediately after sending
+    // includes the just-arrived message.
+    if (this.historyFlushTimer) {
+      clearTimeout(this.historyFlushTimer);
+      this.flushHistory();
+    }
+    const fs = require("fs") as typeof import("fs");
+    if (!fs.existsSync(this.historyFile)) return [];
+    let raw: string;
+    try {
+      raw = fs.readFileSync(this.historyFile, "utf-8");
+    } catch (err) {
+      this.logger.warn({ err }, "history read failed");
+      return [];
+    }
+    const limit = Math.min(Math.max(opts.limit ?? 25, 1), 50);
+    const kw = (opts.keyword || "").trim().toLowerCase();
+    const fromContact = (opts.fromContact || "").trim().toLowerCase();
+    const since = typeof opts.sinceMs === "number" ? opts.sinceMs : -Infinity;
+    const until = typeof opts.untilMs === "number" ? opts.untilMs : Infinity;
+    const out: Array<{ ts: number; jid: string; isGroup: boolean; fromMe: boolean; senderName: string; participant: string; text: string }> = [];
+    // Walk newest first by parsing lines in reverse.
+    const lines = raw.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (!line) continue;
+      let e: { ts?: number; jid?: string; isGroup?: boolean; fromMe?: boolean; senderName?: string; participant?: string; text?: string };
+      try { e = JSON.parse(line); } catch { continue; }
+      if (typeof e.ts !== "number" || typeof e.text !== "string") continue;
+      if (e.ts < since || e.ts > until) continue;
+      if (opts.jid && e.jid !== opts.jid) continue;
+      if (opts.groupOnly && !e.isGroup) continue;
+      if (kw && !e.text.toLowerCase().includes(kw)) continue;
+      if (fromContact && !(e.senderName || "").toLowerCase().includes(fromContact)) continue;
+      out.push({
+        ts: e.ts,
+        jid: e.jid || "",
+        isGroup: !!e.isGroup,
+        fromMe: !!e.fromMe,
+        senderName: e.senderName || "",
+        participant: e.participant || "",
+        text: e.text,
+      });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
   private macActions: MacActions | null = null;
   // Per-chat cache of the most recent offer (humanize follow-up).
   // On next-turn "yes" we execute it deterministically — bypasses
@@ -201,6 +315,17 @@ export class WhatsAppSession {
   // the current run finishes.
   private queuedQuery: Map<string, { text: string; queuedAt: number }> = new Map();
   private static readonly QUEUED_QUERY_TTL_MS = 5 * 60_000;
+
+  // Persistent message-history ring (per tenant). Every real text
+  // message (inbound + outbound, individual + group) is appended as
+  // one JSONL line so the LLM tool `search_whatsapp_history` can
+  // answer cross-source questions. Cap by file size: when it crosses
+  // HISTORY_MAX_BYTES we truncate the older half. No Baileys backfill
+  // — only accumulates going forward.
+  private static readonly HISTORY_MAX_BYTES = 20 * 1024 * 1024; // 20MB
+  private historyFile: string = "";
+  private historyAppendBuffer: string[] = [];
+  private historyFlushTimer: NodeJS.Timeout | null = null;
   private attention: AttentionClassifier;
   private media: MediaHandler;
   private personal: PersonalClient;
@@ -320,6 +445,7 @@ export class WhatsAppSession {
     this.logger = logger.child({ tenant: tenantId });
     this.authDir = join(process.cwd(), "auth_sessions", tenantId);
     mkdirSync(this.authDir, { recursive: true });
+    this.historyFile = join(this.authDir, "wa-history.jsonl");
     this.agent = new AgentClient(this.logger, {
       agentName: process.env.LANTERN_AGENT_NAME || "whatsapp-assistant",
       sessionsFile: join(this.authDir, "agent_sessions.json"),
@@ -874,6 +1000,24 @@ export class WhatsAppSession {
               "skipping bot-self message — hard match on bot-emitted pattern",
             );
             continue;
+          }
+
+          // HISTORY LOG. Persist every real text message (not bot-self,
+          // not reactions) to a JSONL ring per tenant so the LLM tool
+          // `search_whatsapp_history` can answer cross-source queries
+          // like "what did the family group say during my Turkey trip?".
+          // Accumulates going forward — no historical backfill from
+          // before this deploy.
+          if (text && from) {
+            this.appendHistory({
+              ts: (msg.messageTimestamp ? Number(msg.messageTimestamp) * 1000 : Date.now()),
+              jid: from,
+              isGroup: this.isGroupJid(from),
+              fromMe: !!msg.key.fromMe,
+              senderName: msg.pushName || "",
+              participant: msg.key.participant || "",
+              text,
+            });
           }
 
           // Voice command path: if the OWNER sent themselves a voice
@@ -2165,11 +2309,14 @@ export class WhatsAppSession {
       `  • Relationship / family questions ('who is my son', 'what's my wife's name') — answer from 'Your people'.`,
       `  • Style / identity questions — answer from 'Who you are'.`,
       `  • Conversational follow-ups that don't need fresh data.`,
-      `Call tools only when you actually need data the profile doesn't have:`,
+      `Call tools only when you actually need data the profile doesn't have. The full toolkit:`,
       `  • search_personal_files / read_personal_file — Mac files (Documents, Desktop, iCloud). Passport, license, green card, I-485, taxes, receipts. PDFs/images OCR'd.`,
+      `  • search_imessage_history — chat.db has YEARS of iMessage DMs + group chats. Filter by keyword, date range (Unix ms), contact handle, groupOnly.`,
+      `  • search_whatsapp_history — WhatsApp messages (DMs + groups). Filter by keyword, date range, jid, fromContact (sender-name substring).`,
       `  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits.`,
       `  • google-calendar_list_events — anything time-bound, next 30 days.`,
-      `If you DO call tools, search broadly and answer concretely; never reply "I can't access your files/emails".`,
+      `For DATE-RANGE questions ('during my Turkey trip', 'when X happened'): FIRST narrow the date range from the most concrete source (visa doc, calendar, flight email), THEN query search_imessage_history + search_whatsapp_history + gmail_search across that range for the FULL picture. Cross-reference, don't stop at the first source.`,
+      `If you DO call tools, search broadly; never reply "I can't access your files/emails/messages".`,
       ``,
       `# Voice`,
       `  • Direct answer first, lowercase, conversational. 1-3 short lines max.`,

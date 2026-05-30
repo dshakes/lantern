@@ -299,6 +299,96 @@ export class ChatDB {
     }));
   }
 
+  // Powerful keyword + date-range search across the entire chat.db.
+  // Used by the LLM tool `search_imessage_history` to answer cross-
+  // source questions like "what did the family group say during my
+  // Turkey trip?". All filters are optional; an empty filter set
+  // returns the most recent `limit` messages overall.
+  //
+  // Performance: chat.db is well-indexed on date — typical query is
+  // sub-100ms even on tens of thousands of messages. We cap `limit`
+  // to 50 to keep LLM context small.
+  searchMessages(opts: {
+    keyword?: string;
+    sinceMs?: number; // Unix ms (inclusive)
+    untilMs?: number; // Unix ms (inclusive)
+    handle?: string;  // exact match on contact phone/email
+    groupOnly?: boolean;
+    limit?: number;
+  }): Array<{
+    rowid: number;
+    text: string;
+    unixMs: number;
+    fromMe: boolean;
+    handle: string;
+    chatDisplayName: string;
+    chatIdentifier: string;
+    isGroup: boolean;
+  }> {
+    if (!this.db) return [];
+    const limit = Math.min(Math.max(opts.limit ?? 25, 1), 50);
+    const APPLE_EPOCH_MS = 978307200_000;
+    // chat.db stores date as nanoseconds-since-Apple-epoch on modern
+    // macOS. Convert our Unix-ms bounds to that scale.
+    const toAppleNs = (unixMs: number) => (unixMs - APPLE_EPOCH_MS) * 1_000_000;
+    const where: string[] = ["COALESCE(m.associated_message_type, 0) = 0", "COALESCE(m.text, '') <> ''"];
+    const params: Array<string | number> = [];
+    if (opts.keyword && opts.keyword.trim()) {
+      where.push("m.text LIKE ?");
+      params.push("%" + opts.keyword.trim() + "%");
+    }
+    if (typeof opts.sinceMs === "number" && Number.isFinite(opts.sinceMs)) {
+      where.push("m.date >= ?");
+      params.push(toAppleNs(opts.sinceMs));
+    }
+    if (typeof opts.untilMs === "number" && Number.isFinite(opts.untilMs)) {
+      where.push("m.date <= ?");
+      params.push(toAppleNs(opts.untilMs));
+    }
+    if (opts.handle && opts.handle.trim()) {
+      where.push("h.id = ?");
+      params.push(opts.handle.trim());
+    }
+    if (opts.groupOnly) {
+      where.push("COALESCE(c.display_name, '') <> ''");
+    }
+    const sql = `
+      SELECT
+        m.ROWID                              AS rowid,
+        COALESCE(m.text, '')                 AS text,
+        m.date                               AS date,
+        m.is_from_me                         AS is_from_me,
+        COALESCE(h.id, '')                   AS handle,
+        COALESCE(c.display_name, '')         AS chat_display_name,
+        COALESCE(c.chat_identifier, '')      AS chat_identifier
+      FROM message m
+      LEFT JOIN handle h               ON m.handle_id = h.ROWID
+      LEFT JOIN chat_message_join cmj  ON cmj.message_id = m.ROWID
+      LEFT JOIN chat c                 ON c.ROWID = cmj.chat_id
+      WHERE ${where.join(" AND ")}
+      ORDER BY m.date DESC
+      LIMIT ?`;
+    const rows = this.db.prepare(sql).all(...params, limit) as Array<{
+      rowid: number;
+      text: string;
+      date: number;
+      is_from_me: number;
+      handle: string;
+      chat_display_name: string;
+      chat_identifier: string;
+    }>;
+    return rows.map((r) => ({
+      rowid: r.rowid,
+      text: r.text,
+      unixMs: appleNsToUnixMs(r.date),
+      fromMe: !!r.is_from_me,
+      handle: r.handle,
+      chatDisplayName: r.chat_display_name,
+      chatIdentifier: r.chat_identifier,
+      isGroup: r.chat_display_name !== "",
+    }));
+  }
+
   // For surfacing to the dashboard health view.
   diagnostics(): { path: string; lastSeenRowid: number; open: boolean } {
     return {

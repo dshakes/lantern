@@ -644,7 +644,7 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 			}
 			writeEvt(evt)
 		}
-		text, _, _, _, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, onToolCall, 5)
+		text, _, _, _, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, onToolCall, 12)
 		if err != nil {
 			writeEvt(map[string]any{"type": "error", "message": err.Error()})
 			return
@@ -659,7 +659,7 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 	}
 
 	// Non-streaming: assemble + return JSON.
-	text, _, tin, tout, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, nil, 5)
+	text, _, tin, tout, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, nil, 12)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -1525,7 +1525,12 @@ func (h *LlmProxyHandler) callLLMWithTools(
 		return txt, nil, ti, to, e
 	}
 	if maxTurns <= 0 {
-		maxTurns = 5
+		// Cross-source queries (docs + Gmail + Calendar + WhatsApp
+		// history) routinely need 8-10 tool calls before the model has
+		// enough to synthesize. 5 was too tight; 12 covers the
+		// realistic worst case (search → read multiple → cross-check
+		// across 3+ sources) without inviting runaway loops.
+		maxTurns = 12
 	}
 
 	// Local working copy of messages; we append assistant + tool messages
@@ -1650,8 +1655,49 @@ func (h *LlmProxyHandler) callLLMWithTools(
 		}
 	}
 
-	// Hit the turn budget without a terminal response. Return what we have.
-	return "I was unable to finish synthesizing a response within the tool-call budget. The data fetched is summarized above.", invocations, tokensIn, tokensOut, nil
+	// Hit the turn budget without a terminal response. Do ONE final
+	// synthesis call with tools DISABLED so the model is forced to
+	// produce a real answer from the data it's already pulled — instead
+	// of dumping the previous boilerplate "unable to finish synthesizing"
+	// message which is useless to the user.
+	msgs = append(msgs, map[string]any{
+		"role":    "user",
+		"content": "Tool-call budget reached. Synthesize the BEST possible answer NOW from what you've already fetched. Be concrete. If you genuinely don't have enough, say so in one short line plus suggest the most useful next step.",
+	})
+	finalReq := map[string]any{
+		"model":      model,
+		"messages":   msgs,
+		"max_tokens": 1024,
+	}
+	finalBytes, _ := json.Marshal(finalReq)
+	finalHTTPReq, _ := http.NewRequestWithContext(ctx, "POST",
+		"https://api.openai.com/v1/chat/completions", bytes.NewReader(finalBytes))
+	finalHTTPReq.Header.Set("Content-Type", "application/json")
+	finalHTTPReq.Header.Set("Authorization", "Bearer "+apiKey)
+	if resp, ferr := http.DefaultClient.Do(finalHTTPReq); ferr == nil {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var parsed struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+			Usage struct {
+				PromptTokens     int64 `json:"prompt_tokens"`
+				CompletionTokens int64 `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+		if jerr := json.Unmarshal(body, &parsed); jerr == nil && len(parsed.Choices) > 0 {
+			tokensIn += parsed.Usage.PromptTokens
+			tokensOut += parsed.Usage.CompletionTokens
+			if strings.TrimSpace(parsed.Choices[0].Message.Content) != "" {
+				return parsed.Choices[0].Message.Content, invocations, tokensIn, tokensOut, nil
+			}
+		}
+	}
+	// Final-synthesis call also failed — last-resort short message.
+	return "i pulled a bunch of data but ran out of room to wrap up. ask again in a sec — i'll try a tighter angle.", invocations, tokensIn, tokensOut, nil
 }
 
 // flattenMessages converts the messages-with-tool-calls shape into a single
@@ -1714,7 +1760,11 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 	maxTurns int,
 ) (finalText string, invocations []ToolInvocation, tokensIn, tokensOut int64, err error) {
 	if maxTurns <= 0 {
-		maxTurns = 5
+		// Cross-source queries (docs + Gmail + Calendar + WhatsApp
+		// history) routinely need 8-10 tool calls before the model has
+		// enough to synthesize. 5 was too tight; 12 covers the realistic
+		// worst case without inviting runaway loops.
+		maxTurns = 12
 	}
 
 	// Pull the system message out — Anthropic wants it as a top-level field.
@@ -1874,7 +1924,55 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 		})
 	}
 
-	return "I was unable to finish synthesizing a response within the tool-call budget. The data fetched is summarized above.", invocations, tokensIn, tokensOut, nil
+	// Hit the turn budget. Force ONE final synthesis turn with tools
+	// disabled so the model produces a real answer from data it's
+	// already pulled — instead of dumping the boilerplate.
+	antMessages = append(antMessages, map[string]any{
+		"role":    "user",
+		"content": "Tool-call budget reached. Synthesize the BEST possible answer NOW from what you've already fetched. Be concrete. If you genuinely don't have enough, say so in one short line plus suggest the most useful next step.",
+	})
+	finalReq := map[string]any{
+		"model":      model,
+		"max_tokens": 1024,
+		"messages":   antMessages,
+	}
+	if systemPrompt != "" {
+		finalReq["system"] = systemPrompt
+	}
+	finalBytes, _ := json.Marshal(finalReq)
+	finalHTTPReq, _ := http.NewRequestWithContext(ctx, "POST",
+		"https://api.anthropic.com/v1/messages", bytes.NewReader(finalBytes))
+	finalHTTPReq.Header.Set("Content-Type", "application/json")
+	finalHTTPReq.Header.Set("x-api-key", apiKey)
+	finalHTTPReq.Header.Set("anthropic-version", "2023-06-01")
+	if resp, ferr := http.DefaultClient.Do(finalHTTPReq); ferr == nil {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var parsed struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+			Usage struct {
+				InputTokens  int64 `json:"input_tokens"`
+				OutputTokens int64 `json:"output_tokens"`
+			} `json:"usage"`
+		}
+		if jerr := json.Unmarshal(body, &parsed); jerr == nil {
+			tokensIn += parsed.Usage.InputTokens
+			tokensOut += parsed.Usage.OutputTokens
+			var sb strings.Builder
+			for _, c := range parsed.Content {
+				if c.Type == "text" {
+					sb.WriteString(c.Text)
+				}
+			}
+			if strings.TrimSpace(sb.String()) != "" {
+				return sb.String(), invocations, tokensIn, tokensOut, nil
+			}
+		}
+	}
+	return "i pulled a bunch of data but ran out of room to wrap up. ask again in a sec — i'll try a tighter angle.", invocations, tokensIn, tokensOut, nil
 }
 
 // ---------------------------------------------------------------------------
