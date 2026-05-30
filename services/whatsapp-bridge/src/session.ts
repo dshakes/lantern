@@ -1038,6 +1038,13 @@ export class WhatsAppSession {
   // echo never arrived — otherwise this Set would grow forever.
   private bridgeSentIds: Map<string, number> = new Map();
   private static readonly BRIDGE_SENT_TTL_MS = 5 * 60_000;
+  // jid -> epoch_ms of last live/static-location ack. Live locations
+  // re-emit on every coordinate update (every few seconds while
+  // sharing), so we ack the FIRST share per jid and stay silent for
+  // every subsequent update. TTL is generous so a re-share an hour
+  // later still gets acked.
+  private lastLocationAckAt: Map<string, number> = new Map();
+  private static readonly LOCATION_ACK_TTL_MS = 60 * 60_000;
 
   // SELF-EVAL — per-msgId record of WHAT we sent + WHY. Lets the
   // critique-retry handler reconstruct the prompt when the owner
@@ -1666,6 +1673,45 @@ export class WhatsAppSession {
               );
             }
             continue; // reactions don't fall through to text processing
+          }
+
+          // LIVE / STATIC LOCATION SHARE — WhatsApp Web/Desktop can't
+          // render `liveLocationMessage` / `locationMessage`, so the
+          // bridge never sees text. We surface ONE acknowledgement per
+          // jid per LOCATION_ACK_TTL_MS so the sender knows it landed,
+          // then stay silent for the subsequent coord updates (a single
+          // live-location share fires `liveLocationMessage` every few
+          // seconds while active).
+          const liveLoc = (msg.message as any)?.liveLocationMessage;
+          const staticLoc = (msg.message as any)?.locationMessage;
+          const isOwnerOnThisChan = this.isOwnerChat(from);
+          if (
+            !msg.key?.fromMe &&
+            !isOwnerOnThisChan &&
+            !this.isGroupJid(from) &&
+            (liveLoc || staticLoc)
+          ) {
+            const now = Date.now();
+            const lastAck = this.lastLocationAckAt.get(from) || 0;
+            if (now - lastAck < WhatsAppSession.LOCATION_ACK_TTL_MS) {
+              // Within the ack window — drop silently. This is the
+              // common case for the live-location stream.
+              continue;
+            }
+            this.lastLocationAckAt.set(from, now);
+            // Best-effort ack. Failures are logged but don't block the
+            // poll loop.
+            const ack = liveLoc ? "got your location, watching 👀" : "got it 📍";
+            try {
+              await this.sendMessage(from, ack);
+              this.logger.info(
+                { jid: from, kind: liveLoc ? "live" : "static" },
+                "location share acknowledged",
+              );
+            } catch (err) {
+              this.logger.warn({ err, jid: from }, "location ack send failed");
+            }
+            continue; // location messages don't fall through to text
           }
 
           let text =
