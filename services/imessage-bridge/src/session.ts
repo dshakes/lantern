@@ -250,6 +250,12 @@ export class IMessageSession {
   }): ReturnType<ChatDB["searchMessages"]> {
     return this.db.searchMessages(opts);
   }
+
+  // Pass-through accessors for the iMessage group tools.
+  listGroups(): ReturnType<ChatDB["listGroups"]> { return this.db.listGroups(); }
+  getGroupMembers(opts: { chatRowid?: number; name?: string }): ReturnType<ChatDB["getGroupMembers"]> {
+    return this.db.getGroupMembers(opts);
+  }
   private ownerProfileStore: OwnerProfileStore;
   private macActions: MacActions;
 
@@ -1773,13 +1779,27 @@ export class IMessageSession {
       "  • Style / identity questions ('what do I work on', 'where do I live') — answer from 'Who you are'.",
       "  • Conversational follow-ups that don't need fresh data.",
       "Call tools only when you actually need data the profile doesn't have. The full toolkit:",
-      "  • search_personal_files / read_personal_file — Mac files (Documents, Desktop, iCloud). Passport, license, green card, I-485, taxes, receipts. PDFs/images OCR'd.",
-      "  • search_imessage_history — chat.db has YEARS of iMessage DMs + group chats. Filter by keyword, date range (Unix ms), contact handle, groupOnly.",
-      "  • search_whatsapp_history — WhatsApp messages (DMs + groups). Filter by keyword, date range, jid, fromContact (sender-name substring).",
+      "  • search_personal_files / read_personal_file — Mac files. Passport, license, green card, I-485, taxes, receipts, insurance, visas. PDFs/images OCR'd.",
+      "  • list_imessage_groups / get_imessage_group — chat.db iMessage GROUPS (multi-person chats). Find a trip/family/friends group by name, then pull its members.",
+      "  • search_imessage_history — chat.db messages (DMs + groups). Filter by keyword, date range (Unix ms), contact handle, groupOnly.",
+      "  • list_whatsapp_groups / get_whatsapp_group — WhatsApp GROUPS. Find a group by name ('japan trip', 'family'), then pull its members.",
+      "  • search_whatsapp_history — WhatsApp messages (DMs + groups). Filter by keyword, date range, jid, fromContact.",
       "  • gmail_search / gmail_list_messages — appointment confirmations, receipts, orders, doctor visits.",
       "  • google-calendar_list_events — anything time-bound, next 30 days.",
-      "For DATE-RANGE questions ('during my Turkey trip', 'when X happened', 'last summer'): FIRST narrow the date range from the most concrete source (visa doc, calendar event, flight email), THEN query search_imessage_history + search_whatsapp_history + gmail_search across that range for the FULL picture. Don't stop at the first source — cross-reference all three.",
-      "If you DO call tools, search broadly; never reply 'I can't access your files/emails/messages'.",
+      "",
+      "# Multi-source playbook (use this for ANY 'who/when/what during X' query)",
+      "1. 'Who came on X trip' / 'who's in X group' →",
+      "   a. list_whatsapp_groups + list_imessage_groups in PARALLEL.",
+      "   b. find the group whose name contains the trip/topic.",
+      "   c. get_whatsapp_group(name=…) and/or get_imessage_group(name=…) for the FULL member list.",
+      "   d. cross-check with personal-docs (visa/insurance often lists travelers).",
+      "   e. answer with ALL the people from the group, not just the ones in the doc.",
+      "2. 'During my X trip' temporal queries →",
+      "   a. narrow date range from most concrete source (visa doc, calendar event, flight email).",
+      "   b. search_imessage_history + search_whatsapp_history + gmail_search across that range IN PARALLEL.",
+      "   c. synthesize across all three; never stop at the first source.",
+      "",
+      "Never reply 'I can't access your files/emails/messages' — the tools are right here. Call them.",
       "",
       "# Voice",
       "  • Direct answer first, lowercase, conversational. 1-3 short lines max.",

@@ -335,6 +335,35 @@ app.post("/session/:tenantId/personal-docs/read", async (req, res) => {
 // requireToken), bound to loopback, returns at most 50 messages per
 // query to keep LLM context tight.
 
+app.get("/session/:tenantId/imessage/groups", async (req, res) => {
+  const s = sessions.get(req.params.tenantId);
+  if (!s) { res.status(400).json({ error: "session not started" }); return; }
+  try {
+    const groups = s.listGroups();
+    res.json({ count: groups.length, groups });
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "imessage/groups failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.post("/session/:tenantId/imessage/group", async (req, res) => {
+  const s = sessions.get(req.params.tenantId);
+  if (!s) { res.status(400).json({ error: "session not started" }); return; }
+  const { chatRowid, name } = req.body as { chatRowid?: unknown; name?: unknown };
+  try {
+    const out = s.getGroupMembers({
+      chatRowid: typeof chatRowid === "number" ? chatRowid : undefined,
+      name: typeof name === "string" ? name : undefined,
+    });
+    if (!out) { res.status(404).json({ error: "group not found" }); return; }
+    res.json(out);
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "imessage/group failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 app.post("/session/:tenantId/imessage/search", async (req, res) => {
   const s = sessions.get(req.params.tenantId);
   if (!s) { res.status(400).json({ error: "session not started" }); return; }
