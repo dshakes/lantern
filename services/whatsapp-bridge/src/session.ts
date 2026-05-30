@@ -266,6 +266,60 @@ export class WhatsAppSession {
     }
   }
 
+  // Build a JID → pushName map by scanning the wa-history JSONL.
+  // Cached for 5 minutes — re-built lazily on next call. The most
+  // RECENT non-empty senderName per JID wins (handles cases where
+  // someone changes their WhatsApp display name).
+  private historyNameCache: Map<string, string> | null = null;
+  private historyNameCacheAt: number = 0;
+  private static readonly HISTORY_NAME_TTL_MS = 5 * 60_000;
+  private buildHistoryNameMap(): Map<string, string> {
+    const now = Date.now();
+    if (this.historyNameCache && now - this.historyNameCacheAt < WhatsAppSession.HISTORY_NAME_TTL_MS) {
+      return this.historyNameCache;
+    }
+    const map = new Map<string, string>();
+    if (this.historyFile && existsSync(this.historyFile)) {
+      try {
+        const raw = readFileSync(this.historyFile, "utf-8");
+        // The JSONL stores per-message {jid, participant, senderName, ts}.
+        // The KEY for individual-person resolution is `participant` in
+        // groups (the actual sender JID) and `jid` in DMs.
+        for (const line of raw.split("\n")) {
+          if (!line) continue;
+          try {
+            const e = JSON.parse(line) as {
+              jid?: string;
+              participant?: string;
+              senderName?: string;
+              isGroup?: boolean;
+              fromMe?: boolean;
+              ts?: number;
+            };
+            const name = (e.senderName || "").trim();
+            if (!name) continue;
+            // Skip outgoing messages — pushName there is OUR own name.
+            if (e.fromMe) continue;
+            // In groups the participant JID is the real sender; in DMs
+            // the jid IS the sender.
+            const personJid = e.isGroup ? (e.participant || "") : (e.jid || "");
+            if (!personJid) continue;
+            // Most-recent wins — JSONL is append-order so later entries
+            // overwrite. (If we want strict latest-ts we'd need to sort
+            // but order is good enough.)
+            map.set(personJid, name);
+          } catch { /* malformed */ }
+        }
+      } catch (err) {
+        this.logger.warn({ err }, "buildHistoryNameMap: read failed");
+      }
+    }
+    this.historyNameCache = map;
+    this.historyNameCacheAt = now;
+    this.logger.info({ size: map.size }, "buildHistoryNameMap: built");
+    return map;
+  }
+
   // Public surface for the dashboard / debugging — how many messages
   // are in the history log + dedup-set size + oldest/newest ts.
   historyStats(): {
@@ -1928,9 +1982,18 @@ export class WhatsAppSession {
         subject?: string;
         participants?: Array<{ id?: string; lid?: string; admin?: string | null }>;
       };
+      // Build a JID → name map from the wa-history JSONL. Five years
+      // of message history is a much richer name source than the
+      // in-memory contactNames map (which only has names for contacts
+      // who DM'd US recently). For each group member's JID, we want
+      // the most-recent pushName they used in ANY chat we've seen.
+      const historyNames = this.buildHistoryNameMap();
       const members = (meta.participants || []).map((p) => {
         const jid = p.id || p.lid || "";
-        const pushName = this.contactNames.get(jid) || "";
+        const pushName =
+          this.contactNames.get(jid)
+          || historyNames.get(jid)
+          || "";
         const local = jid.split("@")[0];
         const human = pushName || (local.match(/^\d+$/) ? `+${local}` : local);
         return { jid, name: human, isAdmin: p.admin === "admin" || p.admin === "superadmin" };
@@ -2877,7 +2940,8 @@ export class WhatsAppSession {
       `  • Calendar event: [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]`,
       `  • Note:           [NOTE:Title|Body text]`,
       `  • Mail draft:     [MAIL:to@x.com|Subject|Body]`,
-      `OFFER-then-CONFIRM: never fire an action on first mention. End with one short question. Only emit the marker on the user's next-turn confirmation.`,
+      `OFFER-then-CONFIRM applies ONLY to state-modifying actions (calendar, note, mail). For READ operations (search, list, look up, find), NEVER ask permission — just execute and report results. The user already asked; asking "shall I search?" is wasted turns.`,
+      `For ROSTER questions ("who came on X", "who's in X"): the group rosters above are the truth. If members appear as raw phone numbers (no name), it means we haven't seen them DM us — but their PARTICIPATION in the group already proves they were part of the trip/event. Answer with the FULL roster from the group regardless of whether names are resolved; mention the few that show as numbers as "+ N more (numbers only — names not resolved yet)". Do NOT ask the user if they want you to search further; if you can search WhatsApp/iMessage history for the trip date range, JUST DO IT.`,
       apptBlock ? "\n" + apptBlock : "",
       rosterBlock ? "\n" + rosterBlock : "",
     ].filter(Boolean).join("\n");
