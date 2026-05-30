@@ -168,29 +168,119 @@ export function planSubTasks(query: string): DecomposedPlan {
   };
 }
 
+// ---- Sub-task executor ---------------------------------------------------
+//
+// Each SubTask gets dispatched to a SOURCE-SPECIFIC adapter the bridge
+// supplies. The adapter does the actual data fetch (already-wired
+// methods like session.searchHistory, db.searchMessages, etc.) and
+// returns a string brief. All sub-tasks run in PARALLEL. The final
+// briefs go through formatSubTaskBriefs into the synthesis LLM call.
+//
+// Why deterministic fan-out instead of LLM-per-source: each sub-task
+// would otherwise be a separate Claude/GPT call, multiplying cost by
+// N. Direct data fetches are free, fast, and produce identical
+// downstream synthesis quality (the lead LLM is the smart one).
+
+export interface SubTaskAdapters {
+  /** personal-docs source: search the user's local files. */
+  personalDocs?: (instruction: string, hints?: SubTask["hints"]) => Promise<string>;
+  /** gmail source: search email. */
+  gmail?: (instruction: string, hints?: SubTask["hints"]) => Promise<string>;
+  /** google-calendar source: list / search calendar events. */
+  googleCalendar?: (instruction: string, hints?: SubTask["hints"]) => Promise<string>;
+  /** whatsapp-history source: keyword/date search in JSONL. */
+  whatsappHistory?: (instruction: string, hints?: SubTask["hints"]) => Promise<string>;
+  /** whatsapp-groups source: list groups + member resolution. */
+  whatsappGroups?: (instruction: string, hints?: SubTask["hints"]) => Promise<string>;
+  /** imessage-history source: keyword/date search in chat.db. */
+  imessageHistory?: (instruction: string, hints?: SubTask["hints"]) => Promise<string>;
+  /** imessage-groups source: list groups + members. */
+  imessageGroups?: (instruction: string, hints?: SubTask["hints"]) => Promise<string>;
+  /** owner-profile source: re-read profile prose + relationships. */
+  ownerProfile?: (instruction: string, hints?: SubTask["hints"]) => Promise<string>;
+}
+
+export interface SubTaskResult {
+  source: SubAgentSource;
+  brief: string;
+  ok: boolean;
+  errorMsg?: string;
+  durationMs: number;
+}
+
+/** Execute each sub-task in parallel via the supplied adapters.
+ *  Adapters are optional — when no adapter exists for a source, the
+ *  sub-task is recorded as "skipped: no adapter". A failed adapter
+ *  doesn't fail the rest. Per-task timeout = 8s. */
+export async function executeSubTasks(
+  subTasks: SubTask[],
+  adapters: SubTaskAdapters,
+  opts: { perTaskTimeoutMs?: number } = {},
+): Promise<SubTaskResult[]> {
+  const timeoutMs = Math.max(1000, opts.perTaskTimeoutMs ?? 8000);
+  const withTimeout = <T,>(p: Promise<T>): Promise<T> => {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("sub-task timeout")), timeoutMs);
+      p.then(
+        (v) => { clearTimeout(t); resolve(v); },
+        (e) => { clearTimeout(t); reject(e); },
+      );
+    });
+  };
+
+  return Promise.all(subTasks.map(async (st): Promise<SubTaskResult> => {
+    const t0 = Date.now();
+    const adapter = pickAdapter(st.source, adapters);
+    if (!adapter) {
+      return { source: st.source, brief: "", ok: false, errorMsg: "no adapter registered", durationMs: Date.now() - t0 };
+    }
+    try {
+      const brief = await withTimeout(adapter(st.instruction, st.hints));
+      return { source: st.source, brief, ok: true, durationMs: Date.now() - t0 };
+    } catch (err) {
+      return { source: st.source, brief: "", ok: false, errorMsg: (err as Error).message || "exec failed", durationMs: Date.now() - t0 };
+    }
+  }));
+}
+
+function pickAdapter(source: SubAgentSource, a: SubTaskAdapters): ((instruction: string, hints?: SubTask["hints"]) => Promise<string>) | undefined {
+  switch (source) {
+    case "personal-docs": return a.personalDocs;
+    case "gmail": return a.gmail;
+    case "google-calendar": return a.googleCalendar;
+    case "whatsapp-history": return a.whatsappHistory;
+    case "whatsapp-groups": return a.whatsappGroups;
+    case "imessage-history": return a.imessageHistory;
+    case "imessage-groups": return a.imessageGroups;
+    case "owner-profile": return a.ownerProfile;
+  }
+}
+
 // ---- Synthesis prompt builder --------------------------------------------
 
 /** Format sub-agent briefs into a synthesis prompt block. The lead
- *  LLM gets this in its system hint and produces the user-facing reply. */
+ *  LLM gets this in its system hint and produces the user-facing reply.
+ *  Accepts either the lite shape (just brief/ok) or the full SubTaskResult
+ *  (includes durationMs) — the duration is logged but not surfaced to
+ *  the LLM. */
 export function formatSubTaskBriefs(
   query: string,
-  briefs: Array<{ source: SubAgentSource; brief: string; ok: boolean; errorMsg?: string }>,
+  briefs: Array<{ source: SubAgentSource; brief: string; ok: boolean; errorMsg?: string; durationMs?: number }>,
 ): string {
-  if (briefs.length === 0) return "";
+  // Filter out empty briefs entirely — no point putting "(no data)" in
+  // the prompt; the LLM will just hallucinate that the source was
+  // checked when it really wasn't useful.
+  const useful = briefs.filter((b) => b.ok && b.brief.trim().length > 0);
+  if (useful.length === 0) return "";
   const lines: string[] = [];
   lines.push(`## Multi-source intelligence brief`);
   lines.push(`The user asked: ${query}`);
-  lines.push(`Below are independent briefs from ${briefs.length} parallel sub-agents, one per data source. Synthesize a single reply that draws on ALL of them — not just one.`);
+  lines.push(`Below are ${useful.length} parallel sub-agent briefs, one per data source. Synthesize ONE coherent reply that draws on ALL of them — not just one. Don't enumerate "source 1 / source 2"; weave them into a natural answer. If sources disagree, note the discrepancy briefly.`);
   lines.push(``);
-  for (const b of briefs) {
+  for (const b of useful) {
     lines.push(`### Source: ${b.source}`);
-    if (!b.ok) {
-      lines.push(`(sub-agent failed: ${b.errorMsg || "unknown"})`);
-    } else {
-      lines.push(b.brief.trim() || "(no data)");
-    }
+    lines.push(b.brief.trim());
     lines.push(``);
   }
-  lines.push(`Now produce ONE coherent reply (1-4 short lines) that cross-references the sources. Do not list "source 1 said X / source 2 said Y" — weave them into a natural answer. If sources disagree, note the discrepancy briefly.`);
   return lines.join("\n");
 }
