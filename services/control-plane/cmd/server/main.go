@@ -265,6 +265,10 @@ func main() {
 	// `data: [DONE]`. No tool-call loop — tool-using queries should go
 	// through /v1/sessions/{id}/messages (full agentic pipeline).
 	httpMux.HandleFunc("POST /v1/jarvis/stream-completion", llmProxyHandler.HandleStreamCompletion)
+	// Outbound TTS — OpenAI tts-1. Returns raw audio bytes (mp3 by
+	// default). Used by the bridges' voice-out path when the owner
+	// opts in via LANTERN_VOICE_OUT=on.
+	httpMux.HandleFunc("POST /v1/voice/tts", llmProxyHandler.HandleTTS)
 
 	// Agent AI generation endpoints.
 	httpMux.HandleFunc("POST /v1/agents/generate-spec", llmProxyHandler.GenerateAgentSpec)
