@@ -3270,17 +3270,20 @@ export class WhatsAppSession {
       // case any provider stream chokes mid-rollout.
       const streamEnabled = (process.env.LANTERN_JARVIS_STREAM ?? "on").toLowerCase() !== "off";
       if (streamEnabled) {
-        let firstSentSent = false;
+        let firstSentText = ""; // EXACT text we sent as the first chunk
         let buffer = "";
-        // ~3s race: if first sentence completes within 3s, send it
-        // mid-stream. Otherwise wait for the full reply and send once.
+        // First-sentence terminator: . ? ! followed by whitespace OR end.
+        // Use a regex that matches all three terminators — the prior
+        // code used indexOf(".") which silently failed for the much-
+        // more-common "?" / "!" endings, causing the remainder calc
+        // to slice from offset 0 and re-send the whole message.
         const sendFirstSentenceIfReady = async () => {
-          if (firstSentSent) return;
+          if (firstSentText) return;
           const m = buffer.match(/^[\s\S]*?[.!?](?=\s|$)/);
           if (!m) return;
           const first = m[0].trim();
           if (first.length < 12) return; // too short, wait for more
-          firstSentSent = true;
+          firstSentText = first;
           this.logger.info({ jid, firstLen: first.length }, "jarvis-stream: first sentence");
           await this.confirmToSelf(first);
           if (this.lastSelfSentMsgId) {
@@ -3295,14 +3298,14 @@ export class WhatsAppSession {
         };
         const draft = await this.agent.respondToStream(systemHint, text, (chunk) => {
           buffer += chunk;
-          if (!firstSentSent && buffer.length > 30) {
+          if (!firstSentText && buffer.length > 30) {
             // Async fire-and-forget — don't block the stream consumer.
             void sendFirstSentenceIfReady().catch(() => {});
           }
         });
         const clean = (draft || "").trim();
         if (!clean) return;
-        if (!firstSentSent) {
+        if (!firstSentText) {
           // Never sent the first chunk early — send the whole thing.
           await this.confirmToSelf(clean);
           if (this.lastSelfSentMsgId) {
@@ -3315,9 +3318,29 @@ export class WhatsAppSession {
             });
           }
         } else {
-          // Already sent the first sentence. Send the REMAINDER if any
-          // and it's substantively more (>= 25 chars new).
-          const remainder = clean.slice(buffer.indexOf(".") + 1).trim();
+          // Already sent firstSentText. Compute the REMAINDER as the
+          // portion of `clean` after that exact prefix. Tolerate
+          // whitespace differences (trim variants from the LLM).
+          let remainder = "";
+          if (clean.startsWith(firstSentText)) {
+            remainder = clean.slice(firstSentText.length).trim();
+          } else {
+            // The LLM rephrased its own first sentence between stream
+            // and end (rare) — try substring fallback.
+            const idx = clean.indexOf(firstSentText);
+            if (idx >= 0) {
+              remainder = clean.slice(idx + firstSentText.length).trim();
+            } else {
+              // Couldn't locate the first sentence in the final — give
+              // up on the remainder rather than risk duplicating.
+              this.logger.warn(
+                { jid, firstSentText: firstSentText.slice(0, 60), cleanPreview: clean.slice(0, 80) },
+                "jarvis-stream: first sentence not found in final draft — skipping remainder",
+              );
+              return;
+            }
+          }
+          // Send only if substantively more content (>=25 chars).
           if (remainder.length >= 25) {
             await this.confirmToSelf(remainder);
           }
