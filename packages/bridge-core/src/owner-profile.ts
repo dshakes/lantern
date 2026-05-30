@@ -55,6 +55,22 @@ export class OwnerProfileStore {
       join(homedir(), ".lantern", "owner-profile.md");
   }
 
+  /** Absolute path on disk. Exposed so auto-updaters can write
+   *  back to the same file the store reads from. */
+  getPath(): string {
+    return this.path;
+  }
+
+  /** Force an immediate reload on the next `get()`. Call this after
+   *  externally mutating the profile file (e.g. auto-updater appended
+   *  new facts) so the LLM sees fresh content without waiting for
+   *  TTL expiry. */
+  invalidate(): void {
+    this.cache = null;
+    this.cachedAt = 0;
+    this.lastMtimeMs = 0;
+  }
+
   /** Return the parsed profile, reloading if the file changed or the TTL
    *  expired. Returns null when no profile file exists (feature off). */
   get(): OwnerProfile | null {

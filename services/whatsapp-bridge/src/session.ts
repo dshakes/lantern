@@ -2779,6 +2779,10 @@ export class WhatsAppSession {
       }
       if (this.personalDocsEnabled && this.docs) {
         this.logger.info({ jid, textPreview: text.slice(0, 60) }, "owner self-chat → agentic pipeline (LLM-driven tools)");
+        // Fire-and-forget: scan for durable facts and auto-append to
+        // the owner profile. Sends a one-line ack if anything was
+        // learned. Never blocks the doc-query path.
+        void this.maybeAutoUpdateOwnerProfileFromSelfChat(jid, text);
         void this.handleOwnerDocQuery(jid, text, key);
         return;
       }
@@ -3163,6 +3167,40 @@ export class WhatsAppSession {
         }
       },
     });
+  }
+
+  // Owner self-chat auto-profile-update hook. Inspects each owner
+  // self-chat message for durable facts and appends them to the
+  // shared ~/.lantern/owner-profile.md via the LLM-backed extractor.
+  // Sends a one-line ack so the owner sees what was committed.
+  // Fire-and-forget — never blocks the doc-query path.
+  private async maybeAutoUpdateOwnerProfileFromSelfChat(
+    jid: string,
+    text: string,
+  ): Promise<void> {
+    try {
+      const { maybeAutoUpdateOwnerProfile, formatAck } = await import(
+        "@lantern/bridge-core/owner-profile-auto-update"
+      );
+      const result = await maybeAutoUpdateOwnerProfile(text, {
+        profilePath: this.ownerProfileStore.getPath(),
+        llmCall: async (prompt: string) => {
+          const out = await this.agent.respondTo(jid, prompt, "", { withTools: false });
+          return out || "";
+        },
+        logger: this.logger as any,
+      });
+      if (result.appended.length === 0) return;
+      this.ownerProfileStore.invalidate();
+      const ack = formatAck(result.appended);
+      if (ack) {
+        // Mirror to self-chat. confirmToSelf handles the
+        // bridge-sent dedup + email/telegram mirroring.
+        await this.confirmToSelf(ack);
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "owner-profile auto-update failed");
+    }
   }
 
   // Personal-docs Q&A in WhatsApp self-chat. Owner asked about a

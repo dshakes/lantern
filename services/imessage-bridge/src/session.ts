@@ -1343,6 +1343,11 @@ export class IMessageSession {
       // Cache the chatRowid against the handle so the queue drain can
       // pull recent transcript correctly even when it fires later.
       this.lastChatRowidForHandle.set(row.handle, row.chatRowid);
+      // Fire-and-forget: scan this self-chat message for durable
+      // facts about the owner's world and auto-append them to the
+      // profile. If anything was learned, send a short ack so the
+      // owner can SEE what landed in memory.
+      void this.maybeAutoUpdateOwnerProfileFromSelfChat(row.handle, text);
       void this.handleOwnerDocQuery(row.handle, text, row.chatRowid);
       return;
     }
@@ -2481,6 +2486,48 @@ export class IMessageSession {
         }
       },
     };
+  }
+
+  // Owner self-chat auto-profile-update hook. Inspects each self-chat
+  // message for durable facts (locations, address-form preferences,
+  // schedule updates, life events) and appends them to
+  // ~/.lantern/owner-profile.md via the LLM-backed extractor in
+  // bridge-core. Sends a one-line ack on successful save so the
+  // owner sees what was learned.
+  //
+  // Fire-and-forget: never blocks the doc-query path.
+  private async maybeAutoUpdateOwnerProfileFromSelfChat(
+    jid: string,
+    text: string,
+  ): Promise<void> {
+    try {
+      const { maybeAutoUpdateOwnerProfile, formatAck } = await import(
+        "@lantern/bridge-core/owner-profile-auto-update"
+      );
+      const result = await maybeAutoUpdateOwnerProfile(text, {
+        profilePath: this.ownerProfileStore.getPath(),
+        llmCall: async (prompt: string) => {
+          // Cheapest model — the extractor is structured + tight.
+          // Reuse the agent's completion path so we benefit from
+          // the same failover + retry logic.
+          const out = await this.agent.respondTo(jid, prompt, "", { withTools: false });
+          return out || "";
+        },
+        logger: this.logger as any,
+      });
+      if (result.appended.length === 0) return;
+      // Force a fresh profile re-read on the next reply so the new
+      // facts influence the very next message.
+      this.ownerProfileStore.invalidate();
+      // Ack the owner with what we just learned. Keep it terse;
+      // this is a memo, not a conversation.
+      const ack = formatAck(result.appended);
+      if (ack) {
+        await this.send(jid, ack);
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "owner-profile auto-update failed");
+    }
   }
 
   private async handleOwnerDocQuery(
