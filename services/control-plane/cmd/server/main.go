@@ -260,6 +260,11 @@ func main() {
 	// LLM proxy / completions endpoint.
 	httpMux.HandleFunc("POST /v1/completions", llmProxyHandler.Complete)
 	httpMux.HandleFunc("POST /v1/vision/ocr", llmProxyHandler.OCR)
+	// Streaming no-tools completion for the bridges' "first-sentence-fast"
+	// path. text/event-stream with per-token `data:` chunks + final
+	// `data: [DONE]`. No tool-call loop — tool-using queries should go
+	// through /v1/sessions/{id}/messages (full agentic pipeline).
+	httpMux.HandleFunc("POST /v1/jarvis/stream-completion", llmProxyHandler.HandleStreamCompletion)
 
 	// Agent AI generation endpoints.
 	httpMux.HandleFunc("POST /v1/agents/generate-spec", llmProxyHandler.GenerateAgentSpec)

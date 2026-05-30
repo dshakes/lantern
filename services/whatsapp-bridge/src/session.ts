@@ -3264,11 +3264,72 @@ export class WhatsAppSession {
       languageModality,
     ].filter(Boolean).join("\n");
     try {
+      // STREAMING path — only for the natural-chat surface (no tools,
+      // pure synthesis). The agentic doc-query path uses respondTo
+      // (with tools) and is untouched. Streaming opt-out via env in
+      // case any provider stream chokes mid-rollout.
+      const streamEnabled = (process.env.LANTERN_JARVIS_STREAM ?? "on").toLowerCase() !== "off";
+      if (streamEnabled) {
+        let firstSentSent = false;
+        let buffer = "";
+        // ~3s race: if first sentence completes within 3s, send it
+        // mid-stream. Otherwise wait for the full reply and send once.
+        const sendFirstSentenceIfReady = async () => {
+          if (firstSentSent) return;
+          const m = buffer.match(/^[\s\S]*?[.!?](?=\s|$)/);
+          if (!m) return;
+          const first = m[0].trim();
+          if (first.length < 12) return; // too short, wait for more
+          firstSentSent = true;
+          this.logger.info({ jid, firstLen: first.length }, "jarvis-stream: first sentence");
+          await this.confirmToSelf(first);
+          if (this.lastSelfSentMsgId) {
+            this.recordReplyMeta(this.lastSelfSentMsgId, {
+              jid,
+              inboundText: text,
+              replyText: first,
+              systemHint,
+              surface: "owner-self-chat",
+            });
+          }
+        };
+        const draft = await this.agent.respondToStream(systemHint, text, (chunk) => {
+          buffer += chunk;
+          if (!firstSentSent && buffer.length > 30) {
+            // Async fire-and-forget — don't block the stream consumer.
+            void sendFirstSentenceIfReady().catch(() => {});
+          }
+        });
+        const clean = (draft || "").trim();
+        if (!clean) return;
+        if (!firstSentSent) {
+          // Never sent the first chunk early — send the whole thing.
+          await this.confirmToSelf(clean);
+          if (this.lastSelfSentMsgId) {
+            this.recordReplyMeta(this.lastSelfSentMsgId, {
+              jid,
+              inboundText: text,
+              replyText: clean,
+              systemHint,
+              surface: "owner-self-chat",
+            });
+          }
+        } else {
+          // Already sent the first sentence. Send the REMAINDER if any
+          // and it's substantively more (>= 25 chars new).
+          const remainder = clean.slice(buffer.indexOf(".") + 1).trim();
+          if (remainder.length >= 25) {
+            await this.confirmToSelf(remainder);
+          }
+        }
+        return;
+      }
+
+      // Non-streaming fallback (kept for env-disabled deployments).
       const draft = await this.agent.respondTo(jid, text, systemHint, { withTools: true });
       if (!draft) return;
       const clean = draft.trim();
       await this.confirmToSelf(clean);
-      // SELF-EVAL — record so 🔁 / 🤦 can re-prompt with critique.
       if (this.lastSelfSentMsgId) {
         this.recordReplyMeta(this.lastSelfSentMsgId, {
           jid,
