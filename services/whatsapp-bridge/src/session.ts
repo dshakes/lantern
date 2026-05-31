@@ -4465,6 +4465,57 @@ export class WhatsAppSession {
       })();
     }
 
+    // 6. PUSHOVER PRIORITY-2 push — pierces iPhone silent + Do Not
+    // Disturb with a siren-style alert that repeats every 30s until
+    // the owner ack's. Works as a no-Twilio alternative for ringing
+    // the phone. Requires LANTERN_PUSHOVER_TOKEN (app API key) and
+    // LANTERN_PUSHOVER_USER (user key) in env. Both come from
+    // pushover.net dashboard. Skipped silently when either is unset.
+    if (opts.kind === "life-threat") {
+      void (async () => {
+        try {
+          const token = process.env.LANTERN_PUSHOVER_TOKEN;
+          const user = process.env.LANTERN_PUSHOVER_USER;
+          if (!token || !user) return;
+          const senderLabel = who.replace(/[^A-Za-z0-9\s]/g, " ").trim() || "an unknown contact";
+          const msg = `${senderLabel} flagged an emergency. They said: "${opts.contactText.slice(0, 400)}"`;
+          // Priority 2 = emergency — Pushover keeps re-alerting on
+          // the device every `retry` seconds (min 30) until either
+          // the user acks OR `expire` seconds (max 10800) elapse.
+          // We use 30s retry / 3600s expire so it nags for an hour
+          // unless ack'd. Sound "siren" overrides phone silent mode.
+          const body = new URLSearchParams({
+            token,
+            user,
+            title: "🚨 LANTERN — life-threat alert",
+            message: msg,
+            priority: "2",
+            retry: "30",
+            expire: "3600",
+            sound: "siren",
+          });
+          const res = await fetch("https://api.pushover.net/1/messages.json", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString(),
+          });
+          if (!res.ok) {
+            const txt = await res.text();
+            this.logger.error(
+              { status: res.status, body: txt.slice(0, 200) },
+              "owner escalation: Pushover send FAILED",
+            );
+          } else {
+            this.logger.info(
+              "owner escalation: Pushover priority-2 alert sent",
+            );
+          }
+        } catch (err) {
+          this.logger.error({ err }, "owner escalation: Pushover exception");
+        }
+      })();
+    }
+
     this.logger.info(
       { kind: opts.kind, reason: opts.reason, from: opts.from },
       "owner escalation fired",
