@@ -111,8 +111,12 @@ func (h *ConnectorHandler) ListConnectors(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// We also pull oauth_token_encrypted (just whether it's non-null) so
+	// the read path can label each row's authMethod for the dashboard
+	// without leaking the actual credential payload.
 	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id, connector_id, display_name, status, config, scopes, installed_by, installed_at, updated_at
+		SELECT id, connector_id, display_name, status, config, scopes, installed_by, installed_at, updated_at,
+		       (oauth_token_encrypted IS NOT NULL) AS has_oauth_token
 		FROM connector_installs
 		WHERE tenant_id = $1
 		ORDER BY installed_at DESC
@@ -132,8 +136,9 @@ func (h *ConnectorHandler) ListConnectors(w http.ResponseWriter, r *http.Request
 			scopes                               []string
 			installedBy                          *string
 			installedAt, updatedAt               time.Time
+			hasOAuthToken                        bool
 		)
-		if err := rows.Scan(&id, &connectorID, &displayName, &status, &config, &scopes, &installedBy, &installedAt, &updatedAt); err != nil {
+		if err := rows.Scan(&id, &connectorID, &displayName, &status, &config, &scopes, &installedBy, &installedAt, &updatedAt, &hasOAuthToken); err != nil {
 			h.logger().Error("scan connector row failed", zap.Error(err))
 			continue
 		}
@@ -151,6 +156,7 @@ func (h *ConnectorHandler) ListConnectors(w http.ResponseWriter, r *http.Request
 			"scopes":      scopes,
 			"installedAt": installedAt,
 			"updatedAt":   updatedAt,
+			"authMethod":  inferAuthMethod(hasOAuthToken, configMap),
 		}
 		if installedBy != nil {
 			entry["installedBy"] = *installedBy
@@ -159,6 +165,38 @@ func (h *ConnectorHandler) ListConnectors(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+// inferAuthMethod tells the dashboard HOW each connector was
+// authenticated so it can render the right badge + offer the right
+// re-auth flow when credentials go stale. Three values today:
+//   "oauth"        — OAuth2 access/refresh token in oauth_token_encrypted.
+//                    Refreshes silently when GOOGLE_CLIENT_ID/SECRET is set.
+//   "app-password" — Google App Password flow; SMTP/IMAP-style cred in
+//                    the config blob. Doesn't refresh; user must rotate.
+//   "api-key"      — generic API-key/bot-token install (Slack, Notion,
+//                    Linear, etc.) — non-OAuth, non-app-password.
+//   ""             — unknown / not yet installed; dashboard hides badge.
+func inferAuthMethod(hasOAuthToken bool, config map[string]any) string {
+	if hasOAuthToken {
+		return "oauth"
+	}
+	if config == nil {
+		return ""
+	}
+	// App Password indicator: the Google manual-connect modal stores
+	// `appPassword` (and usually `email`) in config.
+	if _, ok := config["appPassword"]; ok {
+		return "app-password"
+	}
+	if _, ok := config["app_password"]; ok {
+		return "app-password"
+	}
+	// Any other non-empty cred → generic api-key.
+	if len(config) > 0 {
+		return "api-key"
+	}
+	return ""
 }
 
 // ---------- Get connector ----------
@@ -183,12 +221,14 @@ func (h *ConnectorHandler) GetConnector(w http.ResponseWriter, r *http.Request) 
 		scopes                           []string
 		installedBy                      *string
 		installedAt, updatedAt           time.Time
+		hasOAuthToken                    bool
 	)
 	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT connector_id, display_name, status, config, scopes, installed_by, installed_at, updated_at
+		SELECT connector_id, display_name, status, config, scopes, installed_by, installed_at, updated_at,
+		       (oauth_token_encrypted IS NOT NULL) AS has_oauth_token
 		FROM connector_installs
 		WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&connectorID, &displayName, &status, &config, &scopes, &installedBy, &installedAt, &updatedAt)
+	`, id, tenantID).Scan(&connectorID, &displayName, &status, &config, &scopes, &installedBy, &installedAt, &updatedAt, &hasOAuthToken)
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "connector not found"})
 		return
@@ -212,6 +252,7 @@ func (h *ConnectorHandler) GetConnector(w http.ResponseWriter, r *http.Request) 
 		"scopes":      scopes,
 		"installedAt": installedAt,
 		"updatedAt":   updatedAt,
+		"authMethod":  inferAuthMethod(hasOAuthToken, configMap),
 	}
 	if installedBy != nil {
 		entry["installedBy"] = *installedBy

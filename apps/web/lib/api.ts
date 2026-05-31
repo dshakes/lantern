@@ -98,6 +98,15 @@ export interface ConnectorInstall {
   installedBy?: string;
   installedAt: string;
   updatedAt: string;
+  // How this connector was authenticated. Surfaced so the dashboard
+  // can render a badge + offer the right re-auth flow when creds
+  // go stale:
+  //   "oauth"        → OAuth2 refresh token present, silent refresh.
+  //   "app-password" → Google App Password (SMTP/IMAP-style). Doesn't
+  //                    refresh; must be rotated manually.
+  //   "api-key"      → generic API-key / bot-token install.
+  //   ""             → unknown / not installed.
+  authMethod?: "oauth" | "app-password" | "api-key" | "";
 }
 
 export interface InstallConnectorInput {

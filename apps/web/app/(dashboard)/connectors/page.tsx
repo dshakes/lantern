@@ -15,7 +15,7 @@ import { api } from "@/lib/api";
 
 interface Field { key: string; label: string; placeholder: string; type?: "text" | "password"; prefix?: string; minLength?: number; helpUrl?: string; helpText?: string; required?: boolean }
 interface ConnectorDef { id: string; name: string; description: string; category: string; icon: typeof Mail; iconColor: string; iconBg: string; oauthProvider?: string; oauthLabel?: string; fields: Field[]; manualLabel?: string }
-interface ConnectorState { installed: boolean; connectedAccount?: string; installedAt?: string; backendId?: string; credentials?: Record<string, string> }
+interface ConnectorState { installed: boolean; connectedAccount?: string; installedAt?: string; backendId?: string; credentials?: Record<string, string>; authMethod?: "oauth" | "app-password" | "api-key" | "" }
 
 const googleFields: Field[] = [
   { key: "email", label: "Email address", placeholder: "you@gmail.com", type: "text", minLength: 5, required: true },
@@ -158,6 +158,7 @@ export default function ConnectorsPage() {
           connectedAccount: ci.displayName,
           installedAt: ci.installedAt,
           backendId: ci.id,
+          authMethod: ci.authMethod,
         };
       }
       setStates(m);
@@ -474,7 +475,30 @@ export default function ConnectorsPage() {
                 </div>
                 <h3 className="mt-3 text-sm font-semibold text-zinc-100">{con.name}</h3>
                 <p className="mt-1 text-[11px] text-zinc-500 leading-relaxed line-clamp-2">{con.description}</p>
-                {on && s?.connectedAccount && <p className="mt-1.5 truncate text-[11px] text-emerald-400/70">{s.connectedAccount}</p>}
+                {on && s?.connectedAccount && (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <p className="truncate text-[11px] text-emerald-400/70">{s.connectedAccount}</p>
+                    {s.authMethod && (
+                      <span
+                        className={clsx(
+                          "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider",
+                          s.authMethod === "oauth" && "border border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+                          s.authMethod === "app-password" && "border border-amber-500/30 bg-amber-500/10 text-amber-300",
+                          s.authMethod === "api-key" && "border border-zinc-600 bg-zinc-700/40 text-zinc-300",
+                        )}
+                        title={
+                          s.authMethod === "oauth"
+                            ? "OAuth — refreshes silently"
+                            : s.authMethod === "app-password"
+                            ? "App Password — rotate manually when stale"
+                            : "API key"
+                        }
+                      >
+                        {s.authMethod === "oauth" ? "OAuth" : s.authMethod === "app-password" ? "App PW" : "API Key"}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <span
                   className={clsx(
                     "mt-3 inline-flex w-full items-center justify-center rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
@@ -594,9 +618,30 @@ export default function ConnectorsPage() {
 
               {view === "config" && (<>
                 <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
-                  <div className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-400" /><p className="text-sm font-medium text-emerald-400">Connected</p></div>
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                    <p className="text-sm font-medium text-emerald-400">Connected</p>
+                    {states[mc.id]?.authMethod && (
+                      <span
+                        className={clsx(
+                          "ml-auto rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+                          states[mc.id]!.authMethod === "oauth" && "border border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+                          states[mc.id]!.authMethod === "app-password" && "border border-amber-500/30 bg-amber-500/10 text-amber-300",
+                          states[mc.id]!.authMethod === "api-key" && "border border-zinc-600 bg-zinc-700/40 text-zinc-300",
+                        )}
+                      >
+                        {states[mc.id]!.authMethod === "oauth" ? "OAuth" : states[mc.id]!.authMethod === "app-password" ? "App Password" : "API Key"}
+                      </span>
+                    )}
+                  </div>
                   <p className="mt-1 text-xs text-zinc-500">Account: {states[mc.id]?.connectedAccount ?? "unknown"}</p>
                   {states[mc.id]?.installedAt && <p className="mt-0.5 text-xs text-zinc-600">Since {new Date(states[mc.id]!.installedAt!).toLocaleDateString()}</p>}
+                  {states[mc.id]?.authMethod === "app-password" && (
+                    <p className="mt-2 text-[11px] text-amber-400/80">⚠ App Password does not auto-refresh. If Gmail/Calendar reads start failing, disconnect and reconnect via &quot;Sign in with Google&quot; for silent OAuth refresh.</p>
+                  )}
+                  {states[mc.id]?.authMethod === "oauth" && (
+                    <p className="mt-2 text-[11px] text-emerald-400/70">✓ OAuth refreshes silently while GOOGLE_CLIENT_ID/SECRET are configured on the control-plane.</p>
+                  )}
                 </div>
                 {msg && <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3"><div className="flex items-center gap-2"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /><p className="text-xs font-medium text-emerald-400">{msg}</p></div></div>}
               </>)}
