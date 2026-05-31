@@ -126,6 +126,7 @@ func main() {
 	// --- Domain-specific handlers ---
 	connectorHandler := handlers.NewConnectorHandler(srv, authHandler)
 	connectorExecutor := handlers.NewConnectorExecutor(srv, authHandler)
+	smsHandler := handlers.NewSMSHandler(logger, "http://127.0.0.1:8080")
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
 	waPersonalHandler := handlers.NewWhatsAppPersonalHandler(srv, authHandler)
 	shortcutsHandler := handlers.NewShortcutsHandler(srv, authHandler)
@@ -213,6 +214,11 @@ func main() {
 	// Connector executor — registered before {id} to avoid path conflict.
 	httpMux.HandleFunc("GET /v1/connectors/{connectorId}/execute", connectorExecutor.Execute)
 	httpMux.HandleFunc("POST /v1/connectors/{connectorId}/execute", connectorExecutor.Execute)
+	// Twilio webhooks — owner's private agent channel. NO auth
+	// middleware (Twilio HMAC verification is done inside the handler).
+	httpMux.HandleFunc("POST /v1/sms/twilio/webhook", smsHandler.SMSWebhook)
+	httpMux.HandleFunc("POST /v1/voice/twilio/webhook", smsHandler.VoiceWebhook)
+	httpMux.HandleFunc("POST /v1/voice/twilio/turn", smsHandler.VoiceTurn)
 	httpMux.HandleFunc("GET /v1/connectors/{id}", connectorHandler.GetConnector)
 	httpMux.HandleFunc("POST /v1/connectors/{id}/test", connectorHandler.TestConnector)
 	httpMux.HandleFunc("DELETE /v1/connectors/{id}", connectorHandler.UninstallConnector)

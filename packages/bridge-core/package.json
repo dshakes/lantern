@@ -42,7 +42,8 @@
     "./call-risk-tier": "./src/call-risk-tier.ts",
     "./call-commitments": "./src/call-commitments.ts",
     "./outbound-call": "./src/outbound-call.ts",
-    "./call-orchestrator": "./src/call-orchestrator.ts"
+    "./call-orchestrator": "./src/call-orchestrator.ts",
+    "./contact-resolver": "./src/contact-resolver.ts"
   },
   "dependencies": {
     "pdf-parse": "^2.4.5",

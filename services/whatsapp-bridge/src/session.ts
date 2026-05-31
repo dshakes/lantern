@@ -3289,34 +3289,28 @@ export class WhatsAppSession {
     }
   }
 
+  private lastResolveSuggestions: Array<{ name: string; phone?: string; relationship?: string }> = [];
+
   private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string } | null> {
-    const s = input.trim();
-    if (!s) return null;
-    const digits = s.replace(/[^\d+]/g, "");
-    if (digits.startsWith("+") && digits.length >= 10) return { phone: digits };
-    if (/^\d{10}$/.test(digits)) return { phone: "+1" + digits };
-    if (/^1\d{10}$/.test(digits)) return { phone: "+" + digits };
-    const lower = s.toLowerCase();
-    const profile = this.ownerProfileStore.get();
-    if (profile) {
-      for (const [name, rel] of profile.relationships) {
-        if (name.toLowerCase().includes(lower) || lower.includes(name.toLowerCase())) {
-          for (const [jid, contactName] of this.contactNames) {
-            if (contactName.toLowerCase().includes(lower)) {
-              const phone = jid.split("@")[0].replace(/^(\d{11})$/, "+$1");
-              if (phone.startsWith("+")) return { phone, name: contactName, relationship: rel };
-            }
-          }
-        }
-      }
-    }
-    for (const [jid, contactName] of this.contactNames) {
-      if (contactName.toLowerCase().includes(lower)) {
-        const phone = jid.split("@")[0].replace(/^(\d{11})$/, "+$1");
-        if (phone.startsWith("+")) return { phone, name: contactName };
-      }
-    }
-    return null;
+    const { resolveContact: universalResolve } = await import("@lantern/bridge-core/contact-resolver");
+    const result = await universalResolve(input, {
+      ownerPhone: process.env.LANTERN_OWNER_PHONE,
+      bridgeContactCache: this.contactNames,
+      profileRelationships: this.ownerProfileStore.get()?.relationships,
+      logger: this.logger as any,
+    });
+    this.lastResolveSuggestions = result.suggestions;
+    if (!result.resolved) return null;
+    return {
+      phone: result.resolved.phone,
+      name: result.resolved.name,
+      relationship: result.resolved.relationship,
+    };
+  }
+
+  getLastResolveSuggestions(): string {
+    const { formatSuggestions } = require("@lantern/bridge-core/contact-resolver") as typeof import("@lantern/bridge-core/contact-resolver");
+    return formatSuggestions(this.lastResolveSuggestions);
   }
 
   private makeVoiceRenderer(
