@@ -3459,6 +3459,12 @@ export class WhatsAppSession {
       }
     }
     if (offer && jid) {
+      // Attach context for freeform-followup offers so the
+      // confirmation-execute path can re-prompt the LLM correctly.
+      if (offer.kind === "freeform-followup") {
+        offer.freeformInbound = query;
+        offer.freeformPriorReply = polished;
+      }
       this.pendingOffers.set(jid, offer);
     }
     for (const claimedPath of paths) {
@@ -3564,6 +3570,26 @@ export class WhatsAppSession {
         this.logger.error({ err }, "note offer execution failed");
         await this.confirmToSelf(`(note save failed — try again)`);
       }
+      return;
+    }
+    // Freeform follow-up — bot offered something arbitrary ("attach
+    // the receipt", "forward the link") and owner confirmed. Re-prompt
+    // the LLM with the original context + an explicit fulfillment
+    // instruction. Routes through the agentic doc-query path so tools
+    // are attached.
+    if (offer.kind === "freeform-followup" && offer.freeformAction) {
+      this.logger.info(
+        { jid, action: offer.freeformAction.slice(0, 80) },
+        "executing freeform-followup — re-prompting LLM to fulfill",
+      );
+      const fulfillmentText = [
+        `[CONFIRMED ACTION: ${offer.freeformAction}]`,
+        offer.freeformInbound ? `Original ask: ${offer.freeformInbound}` : "",
+        offer.freeformPriorReply ? `Your prior reply (containing the offer): ${offer.freeformPriorReply}` : "",
+        "",
+        `The owner just said YES to your offer. Now FULFILL it: call the right tool (gmail_search, calendar lookup, attach file, etc.) and deliver the result. Don't re-offer; don't ask for permission. Execute and reply with what you found / did.`,
+      ].filter(Boolean).join("\n");
+      void this.handleOwnerDocQuery(jid, fulfillmentText, "" as any);
       return;
     }
   }

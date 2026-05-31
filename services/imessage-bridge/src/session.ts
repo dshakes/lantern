@@ -1960,6 +1960,32 @@ export class IMessageSession {
       }
       return;
     }
+    // Freeform follow-up: bot offered something arbitrary ("attach
+    // the receipt email", "forward the link", etc.) and the owner
+    // confirmed. We re-prompt the LLM with full context — original
+    // inbound, the offer text, and an explicit instruction to
+    // FULFILL the action (call tools, attach, etc.) rather than
+    // re-offer it. Routes through the agentic pipeline so tools
+    // are available.
+    if (offer.kind === "freeform-followup" && offer.freeformAction) {
+      this.logger.info(
+        { jid, action: offer.freeformAction.slice(0, 80) },
+        "executing freeform-followup — re-prompting LLM to fulfill",
+      );
+      const chatRowid = this.lastChatRowidForHandle.get(jid) || 0;
+      // Construct a fulfillment prompt: tell the LLM the user just
+      // approved the offer, supply the original turn's context, and
+      // ask it to EXECUTE (not re-offer).
+      const fulfillmentText = [
+        `[CONFIRMED ACTION: ${offer.freeformAction}]`,
+        offer.freeformInbound ? `Original ask: ${offer.freeformInbound}` : "",
+        offer.freeformPriorReply ? `Your prior reply (containing the offer): ${offer.freeformPriorReply}` : "",
+        "",
+        `The owner just said YES to your offer. Now FULFILL it: call the right tool (gmail_search, calendar lookup, attach file, etc.) and deliver the result. Don't re-offer; don't ask for permission. Execute and reply with what you found / did. Output a normal-style reply, NOT a marker.`,
+      ].filter(Boolean).join("\n");
+      void this.handleOwnerDocQuery(jid, fulfillmentText, chatRowid);
+      return;
+    }
   }
 
   // Owner free-form chat — anything that isn't a command, doc query,
@@ -2873,6 +2899,13 @@ export class IMessageSession {
     // same self-chat can find + execute it. Overwrites any prior
     // offer (we only care about the most recent one).
     if (offer && jid) {
+      // For freeform-followups, attach the original inbound + the
+      // bot's prior reply so the confirmation-execute path has full
+      // context to re-prompt the LLM with.
+      if (offer.kind === "freeform-followup") {
+        offer.freeformInbound = query;
+        offer.freeformPriorReply = polished;
+      }
       this.pendingOffers.set(jid, offer);
     }
 

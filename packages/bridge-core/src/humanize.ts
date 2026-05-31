@@ -181,7 +181,7 @@ export function humanizeReply(text: string): string {
 // marker. With this offer cache, the bridge fires the AppleScript
 // itself — no LLM round trip needed for the action.
 export interface PendingOffer {
-  kind: "calendar-reminder" | "save-note";
+  kind: "calendar-reminder" | "save-note" | "freeform-followup";
   // For calendar reminders: the underlying expiry/event date and
   // how many days before to schedule the reminder.
   targetIsoDate?: string;       // e.g. "2031-09-14"
@@ -190,6 +190,14 @@ export interface PendingOffer {
   // For note saving: the content to save.
   noteTitle?: string;
   noteBody?: string;
+  // For freeform follow-ups: the action the bot offered ("attach
+  // the full receipt email", "forward you the calendar link", etc.)
+  // captured verbatim from the bot's prior reply so the
+  // confirmation-execute path can re-prompt the LLM with full
+  // context.
+  freeformAction?: string;       // "attach the full receipt email or any details"
+  freeformInbound?: string;      // the original user inbound that prompted the offer
+  freeformPriorReply?: string;   // the bot's reply that contained the offer
   // When the offer was made (for window-based expiry).
   issuedAt: number;
 }
@@ -235,6 +243,39 @@ export function detectOfferInReply(text: string, primaryDate?: DetectedDate): Pe
         issuedAt: Date.now(),
       };
     }
+  }
+  // Freeform follow-up offer — broadest match: any "want me to X?" /
+  // "shall I X?" / "should I X?" / "happy to X if you want" /
+  // "let me know if you want X" pattern. This is the catch-all for
+  // offers the schema doesn't have a specific kind for yet —
+  // "attach the receipt email", "forward you the link", "pull up the
+  // calendar event", etc. The text after the verb is captured verbatim
+  // so the confirmation-execute path can re-prompt the LLM with the
+  // full context and tools attached.
+  //
+  // We match the LAST such offer in the reply (multiple "?"s — the
+  // most recent is the freshest intent).
+  const freeformPatterns = [
+    /\bwant\s+me\s+to\s+([^?]{3,180})\?/gi,
+    /\bshall\s+i\s+([^?]{3,180})\?/gi,
+    /\bshould\s+i\s+([^?]{3,180})\?/gi,
+    /\bhappy\s+to\s+([^.!?\n]{3,180})\s+(?:if|when)\s+you\s+(?:want|need|like)/gi,
+    /\blet\s+me\s+know\s+if\s+you\s+(?:want|need)\s+(?:me\s+to\s+)?([^.!?\n]{3,180})/gi,
+  ];
+  let bestFreeform: string | null = null;
+  for (const re of freeformPatterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t)) !== null) {
+      const captured = m[1].trim().replace(/[,.\s]+$/, "");
+      if (captured.length >= 3) bestFreeform = captured;
+    }
+  }
+  if (bestFreeform) {
+    return {
+      kind: "freeform-followup",
+      freeformAction: bestFreeform,
+      issuedAt: Date.now(),
+    };
   }
   return null;
 }
