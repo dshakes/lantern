@@ -50,6 +50,18 @@ export interface CommandContext {
   setEscalation?: (enabled: boolean) => Promise<void> | void;
   // Just the Pushover siren channel toggle.
   setPushover?: (enabled: boolean) => Promise<void> | void;
+  // Outbound-call dispatcher. Receives the parsed intent (target +
+  // optional message + reason) and is responsible for: resolving the
+  // contact name → phone, classifying risk tier, drafting the
+  // pre-flight summary, getting owner ack via pendingOffers, and
+  // placing the actual Twilio call. Bridges implement this with their
+  // own contact-resolution + pendingOffers cache.
+  placeOutboundCall?: (req: {
+    intent: "conference" | "voicemail" | "task";
+    target: string;
+    message?: string;
+    reason?: string;
+  }) => Promise<{ ok: boolean; reason?: string }>;
   // Channel name shown in human replies ("iMessage" or "WhatsApp").
   channelLabel: string;
 }
@@ -161,6 +173,31 @@ export async function executeCommand(cmd: ParsedCommand, ctx: CommandContext): P
     case "pushover-off": {
       if (ctx.setPushover) await ctx.setPushover(false);
       await ctx.reply(`${cmd.echo}\nPushover siren disabled. other channels (WA/iM/email/voice/macOS) unchanged.`);
+      return;
+    }
+    case "call-conference":
+    case "call-voicemail":
+    case "call-task": {
+      if (!ctx.placeOutboundCall) {
+        await ctx.reply("outbound calls aren't wired on this channel yet");
+        return;
+      }
+      const intent = cmd.action === "call-conference" ? "conference" :
+                     cmd.action === "call-voicemail" ? "voicemail" : "task";
+      const target = (cmd as ParsedCommand).callTarget || "";
+      if (!target) {
+        await ctx.reply("who should I call? format: *call <name>* or *conference me with <name>*");
+        return;
+      }
+      const res = await ctx.placeOutboundCall({
+        intent,
+        target,
+        message: (cmd as ParsedCommand).callMessage,
+        reason: (cmd as ParsedCommand).callReason,
+      });
+      if (!res.ok) {
+        await ctx.reply(`📞 couldn't place call: ${res.reason || "unknown error"}`);
+      }
       return;
     }
   }

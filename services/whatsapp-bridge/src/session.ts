@@ -1870,6 +1870,15 @@ export class WhatsAppSession {
                 },
               });
             }
+            // If annotation produced nothing usable, synthesize a
+            // minimal placeholder so the bot doesn't go stone-silent
+            // on attachments it couldn't decode. This was the bug:
+            // owner sends a screenshot → vision fails → text stays
+            // empty → reply path drops the message. Now: bot at least
+            // ACKS that something arrived and can ask what's in it.
+            if (!text) {
+              text = "[they sent an attachment I couldn't decode]";
+            }
           }
 
           // Messages flagged fromMe include both:
@@ -3229,7 +3238,112 @@ export class WhatsAppSession {
         this.saveState();
         this.logActivity(enabled ? "bot_on" : "bot_off", `pushover siren ${enabled ? "ENABLED" : "DISABLED"}`, { scope: "self" });
       },
+      placeOutboundCall: async (req) => {
+        return this.placeOutboundCallFromOwner(req);
+      },
     });
+  }
+
+  private async placeOutboundCallFromOwner(
+    intent: { intent: "conference" | "voicemail" | "task"; target: string; message?: string; reason?: string },
+  ): Promise<{ ok: boolean; reason?: string }> {
+    try {
+      const { authedFetch } = await import("@lantern/bridge-core/auth");
+      const listRes = await authedFetch("/v1/connectors");
+      if (!listRes.ok) return { ok: false, reason: "couldn't fetch connectors" };
+      const installs = (await listRes.json()) as Array<{ connectorId: string; config?: Record<string, unknown> }>;
+      const twilio = installs.find((i) => i.connectorId === "twilio");
+      const twilioFrom = twilio?.config?.phoneNumber as string | undefined;
+      if (!twilio || !twilioFrom) {
+        return { ok: false, reason: "Twilio connector not installed — set up via dashboard /connectors → Twilio" };
+      }
+      const { executeOutboundCall: exec, renderTextWithElevenLabs: render } =
+        await import("@lantern/bridge-core/call-orchestrator");
+      const ownJid = this.ownJid();
+      const deps = {
+        logger: this.logger as any,
+        twilioFromNumber: twilioFrom,
+        ownerPhone: process.env.LANTERN_OWNER_PHONE,
+        resolveContact: async (nameOrNumber: string) => this.resolveCallTarget(nameOrNumber),
+        authedFetch: authedFetch as any,
+        notifyOwner: async (text: string) => {
+          if (ownJid) await this.sendSelf(text).catch(() => {});
+        },
+        cachePendingOffer: (offer: any) => {
+          if (!ownJid) return;
+          this.pendingOffers.set(ownJid, {
+            kind: "freeform-followup",
+            freeformAction: `place ${offer.payload.mode} to ${offer.payload.to}`,
+            freeformInbound: `outbound call request: ${offer.payload.contactName || offer.payload.to}`,
+            freeformPriorReply: offer.planSummary,
+            issuedAt: offer.issuedAt,
+          } as any);
+        },
+        renderVoice: this.makeVoiceRenderer(render),
+      };
+      const res = await exec(intent, deps, { ownerInitiated: true });
+      return { ok: res.ok, reason: res.reason };
+    } catch (err) {
+      this.logger.error({ err }, "outbound call orchestrator failed (wa)");
+      return { ok: false, reason: (err as Error).message };
+    }
+  }
+
+  private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string } | null> {
+    const s = input.trim();
+    if (!s) return null;
+    const digits = s.replace(/[^\d+]/g, "");
+    if (digits.startsWith("+") && digits.length >= 10) return { phone: digits };
+    if (/^\d{10}$/.test(digits)) return { phone: "+1" + digits };
+    if (/^1\d{10}$/.test(digits)) return { phone: "+" + digits };
+    const lower = s.toLowerCase();
+    const profile = this.ownerProfileStore.get();
+    if (profile) {
+      for (const [name, rel] of profile.relationships) {
+        if (name.toLowerCase().includes(lower) || lower.includes(name.toLowerCase())) {
+          for (const [jid, contactName] of this.contactNames) {
+            if (contactName.toLowerCase().includes(lower)) {
+              const phone = jid.split("@")[0].replace(/^(\d{11})$/, "+$1");
+              if (phone.startsWith("+")) return { phone, name: contactName, relationship: rel };
+            }
+          }
+        }
+      }
+    }
+    for (const [jid, contactName] of this.contactNames) {
+      if (contactName.toLowerCase().includes(lower)) {
+        const phone = jid.split("@")[0].replace(/^(\d{11})$/, "+$1");
+        if (phone.startsWith("+")) return { phone, name: contactName };
+      }
+    }
+    return null;
+  }
+
+  private makeVoiceRenderer(
+    render: (text: string, o: { apiKey: string; voiceId: string }) => Promise<Buffer | null>,
+  ): ((text: string) => Promise<string | null>) | undefined {
+    const apiKey = process.env.LANTERN_ELEVENLABS_KEY;
+    const voiceId = process.env.LANTERN_ELEVENLABS_VOICE_ID;
+    const publicUrlBase = process.env.LANTERN_VOICE_CACHE_PUBLIC_URL;
+    if (!apiKey || !voiceId || !publicUrlBase) return undefined;
+    return async (text: string) => {
+      try {
+        const buf = await render(text, { apiKey, voiceId });
+        if (!buf) return null;
+        const { createHash } = await import("node:crypto");
+        const { writeFile, mkdir } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const { homedir } = await import("node:os");
+        const cacheDir = join(homedir(), ".lantern", "voice-cache");
+        await mkdir(cacheDir, { recursive: true });
+        const sha = createHash("sha1").update(text + voiceId).digest("hex");
+        await writeFile(join(cacheDir, `${sha}.mp3`), buf);
+        return `${publicUrlBase.replace(/\/$/, "")}/voice-cache/${sha}.mp3`;
+      } catch (err) {
+        this.logger.warn({ err }, "ElevenLabs render failed");
+        return null;
+      }
+    };
   }
 
   // Owner self-chat auto-profile-update hook. Inspects each owner

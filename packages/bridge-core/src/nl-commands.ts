@@ -47,7 +47,10 @@ export type NLCommandAction =
   | "escalation-on"    // master switch for panic channels (push + voice + macOS notif)
   | "escalation-off"   // disable panic channels; primary alerts (WA/iM/email) still fire
   | "pushover-on"      // just the Pushover siren channel
-  | "pushover-off";    // disable Pushover siren
+  | "pushover-off"     // disable Pushover siren
+  | "call-conference"  // dial X, ask if free, conference owner in
+  | "call-voicemail"   // dial X, speak message, hang up
+  | "call-task";       // dial business/IVR with a one-shot task
 
 export interface ParsedCommand {
   action: NLCommandAction;
@@ -62,6 +65,17 @@ export interface ParsedCommand {
   // than a bare verb. Mostly informational — the bridge can choose to
   // be more verbose in its reply when it's not invoked explicitly.
   explicit: boolean;
+  // ── Outbound call commands (call-conference / call-voicemail /
+  //    call-task) populate these fields. Caller resolves `target`
+  //    to a phone number via the owner profile / contact lookup
+  //    before dialing.
+  // Who to call. Either a contact name ("Madhu", "mom") or a raw
+  // phone-ish ("+15125551234", "1-800-MY-CVS").
+  callTarget?: string;
+  // For voicemail / agent-task: the spoken message body.
+  callMessage?: string;
+  // Stated reason for the call (for risk-tier classification).
+  callReason?: string;
 }
 
 const INVOCATION_PREFIX = /^(?:hey\s+)?lantern[,!:\s]+/i;
@@ -165,6 +179,78 @@ function parseDuration(text: string): { ms?: number; phrase?: string } {
   return {};
 }
 
+// Outbound-call NL forms. We accept these only when the message
+// LOOKS like a call request — bare verbs like "call" misfire on
+// conversational text ("can you call me back later?"), so we require
+// a recognizable target word after the verb.
+//
+//   "lantern, call Madhu"
+//   "call mom and tell her i'll be late"
+//   "ring CVS to refill metformin"
+//   "leave a voicemail for Sarika saying happy birthday"
+//   "conference me with Manasa"
+//   "get me on a call with Madhu"
+//
+// All forms return:
+//   action:       "call-conference" | "call-voicemail" | "call-task"
+//   callTarget:   the name or number after the verb
+//   callMessage:  the spoken body (for voicemail/task)
+//   callReason:   1-line context for risk-tier classifier
+const CALL_CONFERENCE_RE =
+  /^(?:lantern,?\s+)?(?:(?:get|put)\s+me\s+on\s+(?:a\s+)?(?:call|line)\s+with|conference\s+me\s+with|(?:three[-\s]?way|3[-\s]?way)\s+(?:me\s+)?with|bridge\s+me\s+with|connect\s+me\s+(?:with|to)|dial\s+me\s+in\s+with)\s+(\S.+)$/i;
+const CALL_VOICEMAIL_RE =
+  /^(?:lantern,?\s+)?leave\s+(?:a\s+)?(?:voice\s*mail|voicemail|message|note)\s+(?:for|to|with)\s+([\w'.\s+-]+?)\s+(?:saying|that\s+says|with|telling|that|—|-)\s+(.+)$/i;
+const CALL_TASK_RE =
+  /^(?:lantern,?\s+)?(?:call|ring|dial|phone)\s+([\w'.\s+-]+?)(?:\s+(?:and|to|about|for|regarding|saying|that|—|-)\s+(.+))?$/i;
+
+function parseCallCommands(body: string): ParsedCommand | null {
+  // Conference takes priority — most specific phrasing.
+  const conf = body.match(CALL_CONFERENCE_RE);
+  if (conf) {
+    return {
+      action: "call-conference",
+      callTarget: conf[1].trim().replace(/[?.!,]+$/, ""),
+      echo: `📞 conferencing you with ${conf[1].trim()}`,
+      explicit: false,
+    };
+  }
+  const vm = body.match(CALL_VOICEMAIL_RE);
+  if (vm) {
+    return {
+      action: "call-voicemail",
+      callTarget: vm[1].trim(),
+      callMessage: vm[2].trim().replace(/^"|"$/g, ""),
+      echo: `📞 voicemail for ${vm[1].trim()}: "${vm[2].trim().slice(0, 80)}"`,
+      explicit: false,
+    };
+  }
+  const task = body.match(CALL_TASK_RE);
+  if (task) {
+    const target = task[1].trim().replace(/[?.!,]+$/, "");
+    // "call madhu" with no body → confer with them (they're a person).
+    // "call cvs to refill" with a body → task. Heuristic: target is a
+    // single proper noun (no spaces or short) → conference;
+    // otherwise → task. Owner can override with explicit "conference".
+    if (!task[2]) {
+      return {
+        action: "call-conference",
+        callTarget: target,
+        echo: `📞 conferencing you with ${target}`,
+        explicit: false,
+      };
+    }
+    return {
+      action: "call-task",
+      callTarget: target,
+      callMessage: task[2].trim(),
+      callReason: task[2].trim(),
+      echo: `📞 calling ${target}: ${task[2].trim().slice(0, 80)}`,
+      explicit: false,
+    };
+  }
+  return null;
+}
+
 // Main entry. Returns null when the text isn't a command (so the
 // bridge knows to treat it as a regular owner-typed message).
 export function parseNLCommand(input: string): ParsedCommand | null {
@@ -175,6 +261,13 @@ export function parseNLCommand(input: string): ParsedCommand | null {
   if (/^\/(?:bot|lantern)\b/i.test(raw)) {
     return parseSlash(raw);
   }
+
+  // Call commands have their own dedicated parser (they need to
+  // capture the target + message; the regex set is tuned to avoid
+  // misfiring on conversational text). Run this BEFORE the generic
+  // verb-prefix gate below since "call Madhu" is 2 words.
+  const callCmd = parseCallCommands(raw);
+  if (callCmd) return callCmd;
 
   // Natural language path. Two acceptance modes:
   //   (a) explicit "lantern, ..." invocation — strip the prefix and
@@ -193,7 +286,7 @@ export function parseNLCommand(input: string): ParsedCommand | null {
     const wordCount = raw.split(/\s+/).length;
     if (wordCount > 8) return null;
     const startsWithVerb =
-      /^(pause|mute|stop|off|hush|quiet|silence|sleep|resume|unmute|wake|on|status|ping|help|what'?s|how'?s|how\s+are|list|show|approvals?|drafts?|queue|vips?|clear|reset|who'?s|escalations?|panic|sirens?|pushover|push)\b/i.test(raw);
+      /^(pause|mute|stop|off|hush|quiet|silence|sleep|resume|unmute|wake|on|status|ping|help|what'?s|how'?s|how\s+are|list|show|approvals?|drafts?|queue|vips?|clear|reset|who'?s|escalations?|panic|sirens?|pushover|push|call|ring|dial|phone|conference|voicemail|leave|get|put|bridge|connect)\b/i.test(raw);
     if (!startsWithVerb) return null;
   }
 
@@ -333,6 +426,32 @@ function parseSlash(raw: string): ParsedCommand | null {
         if (arg === "on" || arg === "enable") return { action: "pushover-on", echo: "📲 pushover siren ENABLED", explicit };
         if (arg === "off" || arg === "disable") return { action: "pushover-off", echo: "🔕 pushover siren DISABLED", explicit };
         return { action: "status", echo: "status (with pushover state)", explicit };
+      }
+      case "call": case "ring": case "dial": case "phone": {
+        // /lantern call <target> [reason...]
+        // /lantern call-vm <target> | <message>
+        // /lantern conference <target>
+        const target = rest[0];
+        if (!target) return { action: "help", echo: "usage: /lantern call <name>", explicit };
+        const reason = rest.slice(1).join(" ");
+        return reason
+          ? { action: "call-task", callTarget: target, callMessage: reason, callReason: reason, echo: `📞 call ${target}`, explicit }
+          : { action: "call-conference", callTarget: target, echo: `📞 conference with ${target}`, explicit };
+      }
+      case "conference": {
+        const target = rest.join(" ").trim();
+        if (!target) return { action: "help", echo: "usage: /lantern conference <name>", explicit };
+        return { action: "call-conference", callTarget: target, echo: `📞 conference with ${target}`, explicit };
+      }
+      case "voicemail": case "vm": {
+        // /lantern vm <target> | <message>
+        const joined = rest.join(" ");
+        const split = joined.indexOf("|");
+        if (split === -1) return { action: "help", echo: "usage: /lantern vm <name> | <message>", explicit };
+        const target = joined.slice(0, split).trim();
+        const message = joined.slice(split + 1).trim();
+        if (!target || !message) return { action: "help", echo: "usage: /lantern vm <name> | <message>", explicit };
+        return { action: "call-voicemail", callTarget: target, callMessage: message, echo: `📞 voicemail for ${target}`, explicit };
       }
       case "killswitch": case "kill": case "panic": {
         const arg = (rest[0] || "").toLowerCase();
