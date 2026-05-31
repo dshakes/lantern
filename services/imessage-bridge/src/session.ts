@@ -89,6 +89,7 @@ import {
   type OrchestratorDeps,
 } from "@lantern/bridge-core/call-orchestrator";
 import { CallCommitments } from "@lantern/bridge-core/call-commitments";
+import { resolveContact as universalResolveContact, formatSuggestions } from "@lantern/bridge-core/contact-resolver";
 
 export type IMessageConnectionState =
   | "starting"
@@ -2210,42 +2211,33 @@ export class IMessageSession {
     }
   }
 
-  // Resolve "Madhu" / "mom" / "+15125551234" → { phone, name, relationship }.
-  // Best-effort: checks owner profile relationships first, then the
-  // contact-names cache, then accepts raw phone-ish strings.
+  // Universal contact resolver: tries self-tokens ("me", "yourself"),
+  // phone-number parsing, the bridge's chat.db contact cache, owner
+  // profile relationships, and finally macOS Contacts.app via
+  // AppleScript. On miss returns null + populates `lastSuggestions`
+  // so the bridge can include "did you mean…" in the error reply.
+  private lastResolveSuggestions: Array<{ name: string; phone?: string; relationship?: string }> = [];
+
   private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string } | null> {
-    const s = input.trim();
-    if (!s) return null;
-    // If it looks like a phone number already, take it as-is (E.164-ify
-    // best-effort: assume US if 10 digits).
-    const digits = s.replace(/[^\d+]/g, "");
-    if (digits.startsWith("+") && digits.length >= 10) return { phone: digits };
-    if (/^\d{10}$/.test(digits)) return { phone: "+1" + digits };
-    if (/^1\d{10}$/.test(digits)) return { phone: "+" + digits };
-    // Try owner profile relationships.
-    const lower = s.toLowerCase();
-    const profile = this.ownerProfileStore.get();
-    if (profile) {
-      for (const [name, rel] of profile.relationships) {
-        if (name.toLowerCase().includes(lower) || lower.includes(name.toLowerCase())) {
-          // Need to resolve name → phone. Profile doesn't store
-          // phones directly — we'd need a contact-DB lookup. For
-          // now, check if iMessage chat.db has a handle for this name.
-          for (const [handle, contactName] of this.contactNames) {
-            if (contactName.toLowerCase().includes(lower)) {
-              if (handle.startsWith("+")) return { phone: handle, name: contactName, relationship: rel };
-            }
-          }
-        }
-      }
-    }
-    // Try contact-names cache directly.
-    for (const [handle, contactName] of this.contactNames) {
-      if (contactName.toLowerCase().includes(lower)) {
-        if (handle.startsWith("+")) return { phone: handle, name: contactName };
-      }
-    }
-    return null;
+    const result = await universalResolveContact(input, {
+      ownerPhone: process.env.LANTERN_OWNER_PHONE,
+      bridgeContactCache: this.contactNames,
+      profileRelationships: this.ownerProfileStore.get()?.relationships,
+      logger: this.logger as any,
+    });
+    this.lastResolveSuggestions = result.suggestions;
+    if (!result.resolved) return null;
+    return {
+      phone: result.resolved.phone,
+      name: result.resolved.name,
+      relationship: result.resolved.relationship,
+    };
+  }
+
+  /** Public accessor for the most recent resolve failure's hint
+   *  candidates — bridge surfaces these in the error reply. */
+  getLastResolveSuggestions(): string {
+    return formatSuggestions(this.lastResolveSuggestions);
   }
 
   // Build the optional ElevenLabs voice-clone renderer. Returns a

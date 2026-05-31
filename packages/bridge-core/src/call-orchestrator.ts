@@ -90,7 +90,16 @@ export async function executeOutboundCall(
   // 1. Resolve target.
   const resolved = await deps.resolveContact(intent.target);
   if (!resolved) {
-    return { ok: false, reason: `couldn't resolve contact "${intent.target}" to a phone number` };
+    // Bridge may have populated last-resolve suggestions on its
+    // contact resolver; surface them in the error so the owner can
+    // re-try with the right name.
+    const suggestion = (deps as any).lastSuggestions?.() || "";
+    return {
+      ok: false,
+      reason: suggestion
+        ? `couldn't resolve "${intent.target}" to a phone. ${suggestion}`
+        : `couldn't resolve "${intent.target}" to a phone. try the full name, or paste a phone number directly`,
+    };
   }
 
   // 2. Build request + plan.
