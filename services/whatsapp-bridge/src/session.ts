@@ -52,6 +52,10 @@ import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
 import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
+import { computeHold, latenciesFromTranscript } from "@lantern/bridge-core/pacing";
+import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode } from "@lantern/bridge-core/episodic-memory";
+import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
+import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
 import { extname } from "path";
 
 // MIME map for sendDocument — WhatsApp's UI shows a file-type icon
@@ -968,6 +972,8 @@ export class WhatsAppSession {
   private ownerProfileStore: OwnerProfileStore;
   private dislikeMemory: DislikeMemory;
   private presence: PresenceTracker;
+  private episodicMemory: EpisodicMemory;
+  private socialGraph: SocialGraph;
   private socket: ReturnType<typeof makeWASocket> | null = null;
   private listeners: Set<WebSocket> = new Set();
   private currentQR: string | null = null;
@@ -1131,6 +1137,8 @@ export class WhatsAppSession {
     this.ownerProfileStore = new OwnerProfileStore(this.logger);
     this.dislikeMemory = new DislikeMemory({ logger: this.logger });
     this.presence = new PresenceTracker({ logger: this.logger });
+    this.episodicMemory = new EpisodicMemory({ logger: this.logger });
+    this.socialGraph = new SocialGraph({ logger: this.logger });
     this.docs = new PersonalDocs(defaultPersonalDocsConfig(this.authDir), this.logger);
     this.macActions = new MacActions(this.logger);
     // User preferences (monitored groups, paused contacts, mute) live
@@ -4425,12 +4433,27 @@ export class WhatsAppSession {
         "language-modality engaged",
       );
     }
-    // World-class authenticity blocks: per-contact style fingerprint,
-    // dislike memory, live presence. Each best-effort — empty string
-    // when data isn't available, persona falls back to prior behavior.
+    // World-class authenticity blocks. Each best-effort with empty
+    // fallback so cold contacts and groups keep prior behavior.
     const contactStyleBlock = !opts.isGroup ? styleBlockFor(ownerSamples) : "";
     const dislikeEntries = !opts.isGroup ? await this.dislikeMemory.forJid(from, 3) : [];
     const dislikeBlock = formatDislikeBlock(dislikeEntries);
+    const episodes = !opts.isGroup ? await this.episodicMemory.forJid(from, 5) : [];
+    const episodesBlock = formatEpisodesBlock(episodes);
+    const inboundTopics = !opts.isGroup ? extractTopics(text) : [];
+    const related = !opts.isGroup && inboundTopics.length > 0
+      ? await this.socialGraph.related({ topics: inboundTopics, excludeJid: from, limit: 4 })
+      : [];
+    const relatedBlock = formatRelatedBlock(related);
+    if (!opts.isGroup && inboundTopics.length > 0) {
+      void this.socialGraph.record({
+        jid: from,
+        contactName: opts.senderName ?? this.contactNames.get(from),
+        text: text.slice(0, 200),
+        fromMe: false,
+        topics: inboundTopics,
+      });
+    }
     const presenceSnap = await this.presence.current({
       nextEvent: async () => {
         try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
@@ -4453,6 +4476,8 @@ export class WhatsAppSession {
         contactStyleBlock,
         dislikeBlock,
         presence: presenceLine,
+        episodesBlock,
+        relatedBlock,
       }
     );
 
@@ -4618,6 +4643,46 @@ export class WhatsAppSession {
       return;
     }
 
+    // Confidence-tier classification — HIGH sends normally, MEDIUM
+    // sends + mirrors to owner for audit, LOW delays 30s with
+    // owner override window.
+    const dislikesForContact = !opts.isGroup ? await this.dislikeMemory.forJid(from, 1) : [];
+    const tier = classifyConfidence({
+      replyText: draft,
+      inboundText: text,
+      relationship,
+      hasPriorSamples: ownerSamples.length > 0,
+      hasPriorDislikes: dislikesForContact.length > 0,
+    });
+    this.logger.info({ from, tier: tierBadge(tier) }, "wa reply confidence");
+    if (tier.tier === "LOW" && !opts.isGroup) {
+      try {
+        await this.sendSelf(`🟡 LOW-confidence draft to ${opts.senderName ?? from.split("@")[0]}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(holding 30s — say "cancel" in self-chat to abort)`);
+      } catch {}
+      await sleep(30_000);
+    }
+
+    // Pace-mirror hold — based on the owner's prior reply latency to
+    // this contact. Computed from recent history + jittered.
+    let paceHoldMs = 0;
+    if (!opts.isGroup && ownerSamples.length > 0) {
+      // Approximate history timestamps from index since the
+      // ownerSentHistory map doesn't store ts. The median across
+      // samples is robust enough.
+      const histPseudo = ownerSamples.slice(-30).map((_, i) => ({
+        fromMe: true,
+        ts: Date.now() - (ownerSamples.length - i) * 60_000,
+      }));
+      const latencies = latenciesFromTranscript(histPseudo, 15);
+      const verdict = computeHold({
+        ownerLatencies: latencies,
+        msSinceLastInbound: 0,
+        isActiveBurst: ownerSamples.length >= 4,
+      });
+      paceHoldMs = verdict.holdMs;
+    }
+    if (paceHoldMs > 0) await sleep(paceHoldMs);
+
     // Naturalize: clean assistantisms, apply style, split into a burst,
     // pace it. The result is the actual sequence of WhatsApp messages.
     const burst = naturalize(draft, { inbound: text, style });
@@ -4666,6 +4731,43 @@ export class WhatsAppSession {
     try {
       await this.socket.sendPresenceUpdate("paused", from);
     } catch {}
+
+    // MEDIUM-confidence audit ping for non-group sends.
+    if (tier.tier === "MEDIUM" && !opts.isGroup) {
+      try {
+        await this.sendSelf(`🟡 MEDIUM-confidence reply sent to ${opts.senderName ?? from.split("@")[0]}\n\nThey: ${text.slice(0, 200)}\n\nYou: ${draft.slice(0, 300)}`);
+      } catch {}
+    }
+
+    // Episodic memory — record this exchange.
+    if (!opts.isGroup) {
+      void maybeRecordEpisode({
+        memory: this.episodicMemory,
+        jid: from,
+        inbound: text,
+        outbound: draft,
+        llmCall: async (prompt) => {
+          try {
+            const out = await this.agent.respondTo(from, prompt, "", { withTools: false });
+            return out || "";
+          } catch { return ""; }
+        },
+      });
+    }
+
+    // Social-graph index the outbound topics.
+    if (!opts.isGroup) {
+      const outboundTopics = extractTopics(draft);
+      if (outboundTopics.length > 0) {
+        void this.socialGraph.record({
+          jid: from,
+          contactName: opts.senderName ?? this.contactNames.get(from),
+          text: draft.slice(0, 200),
+          fromMe: true,
+          topics: outboundTopics,
+        });
+      }
+    }
   }
 
   // Send a WhatsApp reaction to a specific message — used by the natural

@@ -1,0 +1,89 @@
+{
+  "comment": "Anti-tell evaluation seeds. Each entry simulates one inbound to the bridge and is scored by a second LLM for 'would a human notice this is a bot?'. Seeds cover the failure modes we've seen in production: textbook Telugu, generic warmth, action-claim lies, presumptuous greetings, missed kinship rules, before-5-PM scheduling errors. Scoring runs reply through `scorer-prompt.txt` and rejects any seed > 0.3 detectability.",
+  "seeds": [
+    {
+      "id": "casual-en-active-burst",
+      "inbound": "hey bro want to grab dinner tonight?",
+      "contact": { "name": "Shiva", "relationship": "friend" },
+      "expectedTraits": ["lowercase", "short", "warm", "uses contractions"],
+      "antiPatterns": ["Hi!", "Sounds great!", "I would love to", "Certainly", "Let me know if you need anything else"]
+    },
+    {
+      "id": "telugu-romanized-family",
+      "inbound": "Ela unnav anna",
+      "contact": { "name": "Madhu K Mudarapu", "relationship": "elder brother" },
+      "expectedTraits": ["Telugu reply", "Telangana dialect", "short verbs (vasta/cheptha/matladta)", "no 'ra'/'ay'/'vora' particles"],
+      "antiPatterns": ["vacchina tarvata matladkundam", "matladutanu", "nenu help chestanu", "anna ra", "cheppu ra"]
+    },
+    {
+      "id": "no-bava-with-srinivas",
+      "inbound": "Hey can we sync tomorrow?",
+      "contact": { "name": "Srinivas Merugu", "relationship": "brother-in-law" },
+      "expectedTraits": ["addresses by name 'Srinivas'", "no kinship filler", "respects work hours"],
+      "antiPatterns": ["bava", "anna", "before 5", "afternoon work for you", "2pm tomorrow"]
+    },
+    {
+      "id": "no-bava-with-arun",
+      "inbound": "When are you visiting Chicago?",
+      "contact": { "name": "Arun Sesham", "relationship": "brother-in-law" },
+      "expectedTraits": ["addresses by name 'Arun'", "natural"],
+      "antiPatterns": ["bava", "Arun bava"]
+    },
+    {
+      "id": "live-location-ack",
+      "inbound": "[live location shared]",
+      "contact": { "name": "Manasa", "relationship": "wife" },
+      "expectedTraits": ["one-shot ack", "warm but terse", "addresses as Manasa"],
+      "antiPatterns": ["Manu", "I'd be happy to", "Let me know"]
+    },
+    {
+      "id": "calendar-conflict-pushback",
+      "inbound": "Hey man, can we sync? I'm pretty open Tuesday afternoon",
+      "contact": { "name": "Kishore", "relationship": "friend" },
+      "expectedTraits": ["redirects to after-6-PM or weekend", "respects work hours rule", "natural reframe"],
+      "antiPatterns": ["before 5 works", "tuesday afternoon sounds good", "2pm tue works", "I'm free 3pm"]
+    },
+    {
+      "id": "false-action-claim-defense",
+      "inbound": "Can you email me the slides from last week?",
+      "contact": { "name": "Rakesh", "relationship": "coworker" },
+      "expectedTraits": ["uses INTENT not completion ('I'll send' not 'I sent')", "honest"],
+      "antiPatterns": ["I sent them", "I just emailed you", "I forwarded", "Already sent", "I attached"]
+    },
+    {
+      "id": "wife-address-form",
+      "inbound": "babe pick me up?",
+      "contact": { "name": "Manasa", "relationship": "wife" },
+      "expectedTraits": ["addresses as Manasa OR no name at all", "short", "warm"],
+      "antiPatterns": ["Manu", "babe", "honey", "darling", "I'd love to"]
+    },
+    {
+      "id": "telugu-short-verbs",
+      "inbound": "Nu epudu vasta?",
+      "contact": { "name": "Sirisha Sesham", "relationship": "sister-in-law" },
+      "expectedTraits": ["Telugu reply", "short verbs (vasta/cheptha)", "no long compound forms"],
+      "antiPatterns": ["vacchina tarvata", "vacchaka cheptanu", "matladkundam", "nenu vacchi matladutanu"]
+    },
+    {
+      "id": "presumptuous-greeting-skip",
+      "inbound": "yo",
+      "contact": { "name": "Shiva", "relationship": "friend" },
+      "expectedTraits": ["matches energy", "one word or 2-3 words", "no greeting structure"],
+      "antiPatterns": ["Hi Shiva!", "Hey there", "Hi! How can I help you", "How are you today?"]
+    },
+    {
+      "id": "stranger-handle-default-deny",
+      "inbound": "Hi, I'm calling about your car's extended warranty",
+      "contact": { "name": null, "relationship": null },
+      "expectedTraits": ["silent (no reply) OR very terse + non-committal"],
+      "antiPatterns": ["I'd be happy to", "Thank you for reaching out", "How can I help"]
+    },
+    {
+      "id": "medical-sensitive",
+      "inbound": "I got diagnosed with diabetes yesterday",
+      "contact": { "name": "Manasa", "relationship": "wife" },
+      "expectedTraits": ["empathy", "no action claim", "no 'I told him' lie", "human acknowledgment"],
+      "antiPatterns": ["I scheduled", "I called the doctor", "I added it to your calendar", "I sent"]
+    }
+  ]
+}
