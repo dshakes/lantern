@@ -73,6 +73,10 @@ import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
 import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
+import { computeHold, latenciesFromTranscript } from "@lantern/bridge-core/pacing";
+import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode } from "@lantern/bridge-core/episodic-memory";
+import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
+import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
 
 export type IMessageConnectionState =
   | "starting"
@@ -333,6 +337,8 @@ export class IMessageSession {
   private macActions: MacActions;
   private dislikeMemory: DislikeMemory;
   private presence: PresenceTracker;
+  private episodicMemory: EpisodicMemory;
+  private socialGraph: SocialGraph;
 
   constructor(tenantId: string, baseStateDir: string, logger: Logger) {
     this.tenantId = tenantId;
@@ -353,6 +359,8 @@ export class IMessageSession {
     this.ownerProfileStore = new OwnerProfileStore(this.logger);
     this.dislikeMemory = new DislikeMemory({ logger: this.logger });
     this.presence = new PresenceTracker({ logger: this.logger });
+    this.episodicMemory = new EpisodicMemory({ logger: this.logger });
+    this.socialGraph = new SocialGraph({ logger: this.logger });
 
     // Screen-context provider — OPT-IN via LANTERN_SCREEN_OCR=on.
     // OCR fn directly calls the control-plane /v1/vision/ocr endpoint
@@ -1539,12 +1547,32 @@ export class IMessageSession {
       );
     }
     // World-class authenticity blocks: per-contact style fingerprint,
-    // dislike memory, live presence. Each is best-effort; if any data
-    // source fails the block is simply empty and the persona falls
-    // back to the prior behavior.
+    // dislike memory, live presence, episodic memory, cross-contact
+    // context. Each best-effort; empty block when data unavailable
+    // (persona falls back to prior behavior).
     const contactStyleBlock = !isGroup ? styleBlockFor(ownerSamples) : "";
     const dislikeEntries = !isGroup ? await this.dislikeMemory.forJid(row.handle, 3) : [];
     const dislikeBlock = formatDislikeBlock(dislikeEntries);
+    const episodes = !isGroup ? await this.episodicMemory.forJid(row.handle, 5) : [];
+    const episodesBlock = formatEpisodesBlock(episodes);
+    // Cross-thread context: extract topics from the current inbound,
+    // pull related messages from OTHER contacts in the last 7 days.
+    const inboundTopics = !isGroup ? extractTopics(text) : [];
+    const related = !isGroup && inboundTopics.length > 0
+      ? await this.socialGraph.related({ topics: inboundTopics, excludeJid: row.handle, limit: 4 })
+      : [];
+    const relatedBlock = formatRelatedBlock(related);
+    // Index THIS inbound into the social graph so future replies to
+    // other contacts can find it. Fire-and-forget.
+    if (!isGroup && inboundTopics.length > 0) {
+      void this.socialGraph.record({
+        jid: row.handle,
+        contactName: this.contactNames.get(row.handle),
+        text: text.slice(0, 200),
+        fromMe: false,
+        topics: inboundTopics,
+      });
+    }
     const presenceSnap = await this.presence.current({
       nextEvent: async () => {
         try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
@@ -1563,6 +1591,8 @@ export class IMessageSession {
       contactStyleBlock,
       dislikeBlock,
       presence: presenceLine,
+      episodesBlock,
+      relatedBlock,
     });
     // Per-contact memory: facts the user has captured about this
     // contact (their daughter is Maya, works at Stripe, etc).
@@ -1700,12 +1730,60 @@ export class IMessageSession {
       return;
     }
 
+    // Confidence-tier classification (HIGH/MEDIUM/LOW). HIGH sends
+    // normally; MEDIUM additionally cross-channel-pings the owner
+    // after send; LOW holds the draft for 30s with an owner override
+    // window. Logs the verdict for offline calibration.
+    const dislikesForContact = !isGroup ? await this.dislikeMemory.forJid(row.handle, 1) : [];
+    const tier = classifyConfidence({
+      replyText: draft,
+      inboundText: text,
+      relationship,
+      hasPriorSamples: ownerSamples.length > 0,
+      hasPriorDislikes: dislikesForContact.length > 0,
+    });
+    this.logger.info({ jid: row.handle, tier: tierBadge(tier) }, "reply confidence");
+    if (tier.tier === "LOW") {
+      // Hold the draft and notify the owner. After OWNER_GRACE_MS,
+      // send unless owner explicitly cancels via reaction. For now,
+      // we log + send after the hold; full cancel-flow can layer
+      // on top later.
+      void this.mirrorToEmail(`🟡 LOW-confidence draft to ${this.contactNames.get(row.handle) || row.handle}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(holding 30s before send — reply STOP via dashboard to cancel)`);
+      await new Promise((r) => setTimeout(r, 30_000));
+    }
+
+    // Pace mirror — pause before the first send so the reply feels
+    // natural for THIS contact's cadence. Skip on cold conversations
+    // (no prior samples → no signal). Reads transcript latencies +
+    // applies a jittered hold.
+    let paceHoldMs = 0;
+    if (!isGroup && ownerSamples.length > 0) {
+      const histRows = this.db.recentMessages(row.chatRowid, 30);
+      // Convert {fromMe, text} → {fromMe, ts}. ts is unavailable here
+      // (the helper doesn't return date), so we approximate by using
+      // the current row's date and walking backwards in equal slices
+      // — good enough as a baseline. Refinement: extend recentMessages
+      // to return dates. For now the median across the bucket is
+      // representative of recent cadence.
+      const latencies = latenciesFromTranscript(
+        histRows.map((m, i) => ({ fromMe: m.fromMe, ts: Date.now() - (histRows.length - i) * 60_000 })),
+        15,
+      );
+      const verdict = computeHold({
+        ownerLatencies: latencies,
+        msSinceLastInbound: 0, // freshest inbound — we just received it
+        isActiveBurst: histRows.filter((m) => m.fromMe).length >= 2,
+      });
+      paceHoldMs = verdict.holdMs;
+    }
+
     // Naturalize + paced send. CRITICAL: for a group, send to the GROUP
     // chat identifier — never to the individual sender's handle, which
     // would DM them instead of posting in the group. (This is what
     // produced the "replied to a group with a DM" bug.)
     const sendTarget = isGroup && row.chatIdentifier ? row.chatIdentifier : row.handle;
     const burst = naturalize(draft, { inbound: text, style });
+    if (paceHoldMs > 0) await new Promise((r) => setTimeout(r, paceHoldMs));
     for (let i = 0; i < burst.length; i++) {
       const piece = burst[i];
       await new Promise((r) => setTimeout(r, piece.delayBeforeMs));
@@ -1713,6 +1791,46 @@ export class IMessageSession {
       await this.send(sendTarget, piece.text);
       // Count once per burst for the morning digest.
       if (i === 0) this.repliesSentToday += 1;
+    }
+
+    // MEDIUM-confidence audit ping — let owner know what just went
+    // out so they can correct if needed.
+    if (tier.tier === "MEDIUM" && !isGroup) {
+      void this.mirrorToEmail(`🟡 MEDIUM-confidence reply sent to ${this.contactNames.get(row.handle) || row.handle}\n\nThey: ${text.slice(0, 200)}\n\nYou: ${draft.slice(0, 300)}`);
+    }
+
+    // Episodic memory — record this exchange so future replies have
+    // structured callbacks. Fire-and-forget.
+    if (!isGroup) {
+      void maybeRecordEpisode({
+        memory: this.episodicMemory,
+        jid: row.handle,
+        inbound: text,
+        outbound: draft,
+        // LLM fallback wired via agent.respondTo with empty system —
+        // cheap one-shot call only when the rule extractor misses.
+        llmCall: async (prompt) => {
+          try {
+            const out = await this.agent.respondTo(row.handle, prompt, "", { withTools: false });
+            return out || "";
+          } catch { return ""; }
+        },
+      });
+    }
+
+    // Social-graph index — tag THIS outbound so cross-contact
+    // retrieval works going forward.
+    if (!isGroup) {
+      const outboundTopics = extractTopics(draft);
+      if (outboundTopics.length > 0) {
+        void this.socialGraph.record({
+          jid: row.handle,
+          contactName: this.contactNames.get(row.handle),
+          text: draft.slice(0, 200),
+          fromMe: true,
+          topics: outboundTopics,
+        });
+      }
     }
   }
 

@@ -33,7 +33,11 @@
     "./per-contact-style": "./src/per-contact-style.ts",
     "./dislike-memory": "./src/dislike-memory.ts",
     "./verifiable-claims": "./src/verifiable-claims.ts",
-    "./presence": "./src/presence.ts"
+    "./presence": "./src/presence.ts",
+    "./pacing": "./src/pacing.ts",
+    "./episodic-memory": "./src/episodic-memory.ts",
+    "./social-graph": "./src/social-graph.ts",
+    "./confidence-tier": "./src/confidence-tier.ts"
   },
   "dependencies": {
     "pdf-parse": "^2.4.5",

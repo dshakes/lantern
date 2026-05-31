@@ -301,6 +301,17 @@ export interface PersonaOptions {
   // promise to follow up; free → normal pacing. Empty when presence
   // can't be detected.
   presence?: string;
+  // Episodic memory block (from episodic-memory.ts →
+  // formatEpisodesBlock). Recent (date, topic, outcome) tuples with
+  // this contact so the bot can do callbacks: "did you ever connect
+  // with Sarah?" answers correctly. Empty when no episodes recorded.
+  episodesBlock?: string;
+  // Related-context block (from social-graph.ts → formatRelatedBlock).
+  // Messages from OTHER contacts that mentioned the same topics in
+  // the last 7 days — gives the bot cross-thread awareness without
+  // crossing tenant boundaries. The block tells the LLM not to
+  // volunteer cross-thread details unless asked.
+  relatedBlock?: string;
   // Pre-formatted language-modality block (from
   // bridge-core/language.ts → languageModalityHint). When the inbound
   // is in a non-English language, this tells the model to reply in
@@ -444,6 +455,24 @@ export function agentPersonaPrompt(
   if (presence) {
     lines.push(``);
     lines.push(`Owner's current state: ${presence}. Reflect this in the reply (e.g. "in a meeting, will ping you after" if mid-meeting; normal pacing if free).`);
+  }
+
+  // Episodic memory — recent (date, topic, outcome) events with THIS
+  // contact. Lets the bot do callbacks and follow-ups instead of
+  // treating every reply as a cold start.
+  const episodes = opts.episodesBlock?.trim();
+  if (episodes) {
+    lines.push(``);
+    lines.push(episodes);
+  }
+
+  // Cross-contact context — what OTHER threads mentioned the same
+  // topics in the last 7 days. The block itself instructs the LLM
+  // not to volunteer details from other threads unless asked.
+  const related = opts.relatedBlock?.trim();
+  if (related) {
+    lines.push(``);
+    lines.push(related);
   }
 
   // Recent conversation — placed LAST (freshest, closest to the reply
