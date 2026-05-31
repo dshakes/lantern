@@ -780,16 +780,53 @@ func (h *LlmProxyHandler) HandleStreamCompletion(w http.ResponseWriter, r *http.
 	}
 
 	full, _, _, llmErr := h.callLLMStreamingNoTools(ctx, provider, resolved, apiKey, body.SystemPrompt, body.UserPrompt, emit)
-	if llmErr != nil {
-		// If nothing was streamed yet, send an error frame. Otherwise
-		// the partial text is already on the wire.
-		if full == "" {
-			fmt.Fprintf(w, "event: error\ndata: %s\n\n", llmErr.Error())
-			if flusher != nil {
-				flusher.Flush()
-			}
-			return
+	if llmErr != nil && full == "" {
+		// Primary provider died before emitting anything (no-credit, 401,
+		// 5xx). Try the OTHER hosted provider, then fall back to local
+		// `claude -p` so the bridges never surface a raw API error to the
+		// user. Streaming providers don't support claude-code natively,
+		// so we emit the whole reply as a single chunk.
+		altProv := "openai"
+		if provider == "openai" {
+			altProv = "anthropic"
 		}
+		if altKey, err := h.resolveProviderKey(ctx, tenantID, altProv); err == nil {
+			altModel := "gpt-4o"
+			if altProv == "anthropic" {
+				altModel = sonnetModel()
+			}
+			h.logger().Warn("primary provider stream failed; failing over",
+				zap.String("from", provider), zap.String("to", altProv), zap.Error(llmErr))
+			altFull, _, _, altErr := h.callLLMStreamingNoTools(ctx, altProv, altModel, altKey, body.SystemPrompt, body.UserPrompt, emit)
+			if altErr == nil {
+				full = altFull
+				llmErr = nil
+			} else if altFull == "" {
+				llmErr = altErr
+			}
+		}
+	}
+	if llmErr != nil && full == "" {
+		// Last resort: local `claude -p`. Free, no API key needed.
+		// Streams as one chunk since the CLI doesn't expose deltas.
+		h.logger().Warn("hosted providers failed; falling back to claude -p", zap.Error(llmErr))
+		prompt := strings.TrimSpace(body.SystemPrompt + "\n\n" + body.UserPrompt)
+		if local, err := callClaudeCode(ctx, prompt); err == nil && strings.TrimSpace(local) != "" {
+			emit(local)
+			full = local
+			llmErr = nil
+		} else if err != nil {
+			h.logger().Warn("claude -p fallback failed", zap.Error(err))
+		}
+	}
+	if llmErr != nil && full == "" {
+		// All providers exhausted — emit a friendly error, not the raw
+		// vendor error string.
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", "agent temporarily unavailable")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return
 	}
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	if flusher != nil {
