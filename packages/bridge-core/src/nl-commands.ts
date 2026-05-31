@@ -43,7 +43,11 @@ export type NLCommandAction =
   | "approvals-on"     // VIP + low-conf contacts queue drafts for approval
   | "approvals-off"    // VIPs go silent, low-conf falls through to auto-reply
   | "vip-list"         // show all VIPs
-  | "vip-clear";       // remove every VIP entry
+  | "vip-clear"        // remove every VIP entry
+  | "escalation-on"    // master switch for panic channels (push + voice + macOS notif)
+  | "escalation-off"   // disable panic channels; primary alerts (WA/iM/email) still fire
+  | "pushover-on"      // just the Pushover siren channel
+  | "pushover-off";    // disable Pushover siren
 
 export interface ParsedCommand {
   action: NLCommandAction;
@@ -96,6 +100,17 @@ const APPROVALS_OFF_VERBS =
 // VIP list / clear management.
 const VIP_LIST_VERBS = /^(?:vips?|list\s+vips?|show\s+vips?|who'?s\s+(?:a\s+)?vip)$/i;
 const VIP_CLEAR_VERBS = /^(?:vips?\s+(?:clear|reset|none|empty)|clear\s+vips?|reset\s+vips?|remove\s+all\s+vips?)$/i;
+// Escalation master switch — life-threat panic channels (push +
+// voice + macOS notif). Primary alerts always fire regardless.
+const ESCALATION_ON_VERBS =
+  /^(?:escalations?|panic|sirens?)\s+(?:on|enable|enabled)$/i;
+const ESCALATION_OFF_VERBS =
+  /^(?:escalations?|panic|sirens?)\s+(?:off|disable|disabled|mute)$/i;
+// Pushover channel toggle.
+const PUSHOVER_ON_VERBS =
+  /^(?:pushover|push)\s+(?:on|enable|enabled)$/i;
+const PUSHOVER_OFF_VERBS =
+  /^(?:pushover|push)\s+(?:off|disable|disabled|mute)$/i;
 
 // Parse a duration phrase like "for 2 hours", "for 30 min", "until 9am",
 // "for tonight", "for an hour". Returns ms, or undefined when none.
@@ -178,7 +193,7 @@ export function parseNLCommand(input: string): ParsedCommand | null {
     const wordCount = raw.split(/\s+/).length;
     if (wordCount > 8) return null;
     const startsWithVerb =
-      /^(pause|mute|stop|off|hush|quiet|silence|sleep|resume|unmute|wake|on|status|ping|help|what'?s|how'?s|how\s+are|list|show|approvals?|drafts?|queue|vips?|clear|reset|who'?s)\b/i.test(raw);
+      /^(pause|mute|stop|off|hush|quiet|silence|sleep|resume|unmute|wake|on|status|ping|help|what'?s|how'?s|how\s+are|list|show|approvals?|drafts?|queue|vips?|clear|reset|who'?s|escalations?|panic|sirens?|pushover|push)\b/i.test(raw);
     if (!startsWithVerb) return null;
   }
 
@@ -208,6 +223,18 @@ export function parseNLCommand(input: string): ParsedCommand | null {
   }
   if (VIP_LIST_VERBS.test(body)) {
     return { action: "vip-list", echo: "listing VIPs", explicit };
+  }
+  if (ESCALATION_ON_VERBS.test(body)) {
+    return { action: "escalation-on", echo: "🚨 panic channels ENABLED (pushover + voice + macOS notif)", explicit };
+  }
+  if (ESCALATION_OFF_VERBS.test(body)) {
+    return { action: "escalation-off", echo: "🔕 panic channels DISABLED — primary WA/iM/email still fire", explicit };
+  }
+  if (PUSHOVER_ON_VERBS.test(body)) {
+    return { action: "pushover-on", echo: "📲 pushover siren ENABLED", explicit };
+  }
+  if (PUSHOVER_OFF_VERBS.test(body)) {
+    return { action: "pushover-off", echo: "🔕 pushover siren DISABLED", explicit };
   }
   if (RESUME_ALL_VERBS.test(body)) {
     return { action: "resume-all", echo: "resumed all paused contacts", explicit };
@@ -295,6 +322,18 @@ function parseSlash(raw: string): ParsedCommand | null {
         if (arg === "list" || arg === "" || arg === "show") return { action: "vip-list", echo: "listing VIPs", explicit };
         return { action: "vip-list", echo: "listing VIPs", explicit };
       }
+      case "escalation": case "escalations": case "panic": case "siren": case "sirens": {
+        const arg = (rest[0] || "").toLowerCase();
+        if (arg === "on" || arg === "enable") return { action: "escalation-on", echo: "🚨 panic channels ENABLED", explicit };
+        if (arg === "off" || arg === "disable") return { action: "escalation-off", echo: "🔕 panic channels DISABLED", explicit };
+        return { action: "status", echo: "status (with escalation state)", explicit };
+      }
+      case "pushover": case "push": {
+        const arg = (rest[0] || "").toLowerCase();
+        if (arg === "on" || arg === "enable") return { action: "pushover-on", echo: "📲 pushover siren ENABLED", explicit };
+        if (arg === "off" || arg === "disable") return { action: "pushover-off", echo: "🔕 pushover siren DISABLED", explicit };
+        return { action: "status", echo: "status (with pushover state)", explicit };
+      }
       case "killswitch": case "kill": case "panic": {
         const arg = (rest[0] || "").toLowerCase();
         if (arg === "on" || arg === "engage" || arg === "" ) return { action: "killswitch-on", echo: "🚨 kill switch ENGAGED", explicit };
@@ -336,6 +375,11 @@ export function renderHelp(): string {
     "• *kill switch on* — 🚨 emergency stop (mutes ALL bot activity until released)",
     "• *kill switch off* — release the kill switch",
     "• `/lantern killswitch on|off` — slash form",
+    "",
+    "*life-threat escalation channels*",
+    "• *escalation on* / *escalation off* — master switch for panic channels (pushover + voice + macOS notif). Primary alerts (WA/iM/email) always fire regardless.",
+    "• *pushover on* / *pushover off* — just the Pushover siren channel",
+    "• `/lantern escalation on|off`, `/lantern pushover on|off` — slash forms",
     "",
     "*diagnostics*",
     "• *status* — current state (incl. docs + killswitch toggles)",
