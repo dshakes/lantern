@@ -962,9 +962,63 @@ func executeTwilio(config map[string]any, action string, params map[string]any) 
 		}
 		return result, nil
 
+	case "place_call":
+		// Place an outbound voice call. Used by the bridges' life-threat
+		// escalation path to actually RING the owner's phone — not just
+		// drop a DM that might sit unread for an hour.
+		//
+		// Required: to (owner's phone), from (Twilio number).
+		// Optional: message → wrapped in TwiML <Say>. Defaults to a
+		// generic Lantern alert if absent.
+		to := stringParam(params, "to")
+		from := stringParam(params, "from")
+		if to == "" || from == "" {
+			return nil, fmt.Errorf("'to' and 'from' parameters are required")
+		}
+		msg := stringParam(params, "message")
+		if msg == "" {
+			msg = "This is Lantern. An urgent alert was triggered. Please check your phone."
+		}
+		// Inline TwiML — we don't host a callback URL because we want
+		// this to work zero-infra. Twilio supports inline TwiML via
+		// the `Twiml` POST param (vs Url which fetches remote).
+		twiml := fmt.Sprintf(
+			`<Response><Say voice="Polly.Joanna" loop="2">%s</Say><Pause length="1"/><Say voice="Polly.Joanna">Hanging up now.</Say></Response>`,
+			escapeTwimlText(msg),
+		)
+		data := url.Values{
+			"To":    {to},
+			"From":  {from},
+			"Twiml": {twiml},
+		}
+		headers["Content-Type"] = "application/x-www-form-urlencoded"
+		result, err := doJSONRequest("POST", baseURL+"/Calls.json", headers, strings.NewReader(data.Encode()))
+		if err != nil {
+			return nil, fmt.Errorf("Twilio place_call failed: %w", err)
+		}
+		return result, nil
+
 	default:
-		return nil, fmt.Errorf("unknown Twilio action: %s (supported: send_sms, list_messages)", action)
+		return nil, fmt.Errorf("unknown Twilio action: %s (supported: send_sms, list_messages, place_call)", action)
 	}
+}
+
+// escapeTwimlText escapes a string for safe inclusion inside a TwiML
+// <Say> element. TwiML is XML; ampersands and angle brackets must be
+// entity-encoded. We strip any other characters that could break the
+// XML parser to be defensive — TwiML <Say> only needs words anyway.
+func escapeTwimlText(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	s = strings.ReplaceAll(s, "'", "&apos;")
+	// Keep TwiML <Say> short (Twilio truncates at ~4000 chars; we
+	// stay well under).
+	if len(s) > 1200 {
+		s = s[:1200]
+	}
+	return s
 }
 
 // ---------------------------------------------------------------------------
