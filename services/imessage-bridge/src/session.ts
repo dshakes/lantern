@@ -83,6 +83,12 @@ import {
   detectRelayPromise,
   refusalReply as escalationRefusalReply,
 } from "@lantern/bridge-core/escalation-detector";
+import {
+  executeOutboundCall,
+  renderTextWithElevenLabs,
+  type OrchestratorDeps,
+} from "@lantern/bridge-core/call-orchestrator";
+import { CallCommitments } from "@lantern/bridge-core/call-commitments";
 
 export type IMessageConnectionState =
   | "starting"
@@ -1289,6 +1295,43 @@ export class IMessageSession {
       return;
     }
 
+    // Media: attach a synthetic-text annotation when an attachment is
+    // present and no text was sent. We do this EARLY (before any
+    // text-gated branch) so images sent to owner self-chat OR to a
+    // contact thread both produce a meaningful inbound for the LLM.
+    // Previously the annotation ran after the owner-self-chat gate,
+    // which itself required `text` — so attachment-only messages
+    // bypassed the self-chat agent entirely.
+    if (!text && row.hasAttachments) {
+      const annotation = await this.annotateAttachments(row.rowid);
+      if (annotation) {
+        text = annotation.syntheticText;
+        this.broadcast({
+          type: "activity",
+          data: {
+            kind: "message_in",
+            summary:
+              annotation.kind === "voice"
+                ? "voice note transcribed"
+                : annotation.kind === "image"
+                  ? "image described"
+                  : `received ${annotation.kind}`,
+            detail: annotation.syntheticText.slice(0, 200),
+            jid: row.handle,
+            timestamp: Date.now(),
+          },
+        });
+      }
+      // If annotation produced nothing usable, synthesize a minimal
+      // placeholder so downstream branches at least know SOMETHING
+      // arrived. Keeps the bot from going stone-silent on attachments
+      // it couldn't decode — owner sees the placeholder and can ask
+      // for follow-up if needed.
+      if (!text) {
+        text = "[they sent an attachment I couldn't decode]";
+      }
+    }
+
     // Visibility into the inbound pipeline. Every inbound logs the
     // gating signals so future "why didn't it reply" issues are
     // diagnosable from the log alone.
@@ -1396,30 +1439,7 @@ export class IMessageSession {
       return;
     }
 
-    // Media: attach a synthetic-text annotation when an attachment is
-    // present and no text was sent. Reply pipeline treats the
-    // annotation as the inbound body.
-    if (!text && row.hasAttachments) {
-      const annotation = await this.annotateAttachments(row.rowid);
-      if (annotation) {
-        text = annotation.syntheticText;
-        this.broadcast({
-          type: "activity",
-          data: {
-            kind: "message_in",
-            summary:
-              annotation.kind === "voice"
-                ? "voice note transcribed"
-                : annotation.kind === "image"
-                  ? "image described"
-                  : `received ${annotation.kind}`,
-            detail: annotation.syntheticText.slice(0, 200),
-            jid: row.handle,
-            timestamp: Date.now(),
-          },
-        });
-      }
-    }
+    // (Media annotation moved earlier — see top of handleInbound.)
 
     // Style learning — remember the contact's text for inferStyle.
     if (text && !isGroup && row.handle) {
@@ -2130,7 +2150,137 @@ export class IMessageSession {
           data: { kind: "system", summary: `pushover siren ${enabled ? "ENABLED" : "DISABLED"}`, timestamp: Date.now() },
         });
       },
+      placeOutboundCall: async (req) => {
+        // Wire to the orchestrator with iMessage's contact resolver
+        // + ElevenLabs voice clone hook (when configured).
+        return this.placeOutboundCallFromOwner(jid, req);
+      },
     });
+  }
+
+  // Owner-issued outbound call. Resolves target → phone, classifies
+  // risk tier, surfaces pre-flight summary, places call via Twilio.
+  // Symmetric in shape to the WhatsApp bridge's implementation.
+  private async placeOutboundCallFromOwner(
+    jid: string,
+    intent: { intent: "conference" | "voicemail" | "task"; target: string; message?: string; reason?: string },
+  ): Promise<{ ok: boolean; reason?: string }> {
+    try {
+      const { authedFetch } = await import("@lantern/bridge-core/auth");
+      // Pull the Twilio "from" number from the connector config.
+      const listRes = await authedFetch("/v1/connectors");
+      if (!listRes.ok) return { ok: false, reason: "couldn't fetch connectors" };
+      const installs = (await listRes.json()) as Array<{
+        connectorId: string;
+        config?: Record<string, unknown>;
+      }>;
+      const twilio = installs.find((i) => i.connectorId === "twilio");
+      const twilioFrom = twilio?.config?.phoneNumber as string | undefined;
+      if (!twilio || !twilioFrom) {
+        return { ok: false, reason: "Twilio connector not installed — set up via dashboard /connectors → Twilio" };
+      }
+      const deps: OrchestratorDeps = {
+        logger: this.logger as any,
+        twilioFromNumber: twilioFrom,
+        ownerPhone: process.env.LANTERN_OWNER_PHONE,
+        resolveContact: async (nameOrNumber) => this.resolveCallTarget(nameOrNumber),
+        authedFetch: authedFetch as any,
+        notifyOwner: async (text) => { await this.send(jid, text); },
+        cachePendingOffer: (offer) => {
+          // Stash in pendingOffers as a freeform-followup so the
+          // existing "yes" intercept fires the call placement.
+          this.pendingOffers.set(jid, {
+            kind: "freeform-followup",
+            freeformAction: `place ${offer.payload.mode} to ${offer.payload.to}`,
+            freeformInbound: `outbound call request: ${offer.payload.contactName || offer.payload.to}`,
+            freeformPriorReply: offer.planSummary,
+            issuedAt: offer.issuedAt,
+            // Stash the payload for retrieval on yes — encoded in
+            // freeformInbound for now; expansion of PendingOffer
+            // schema would be cleaner in a follow-up.
+          } as any);
+        },
+        renderVoice: this.makeVoiceRenderer(),
+      };
+      const res = await executeOutboundCall(intent, deps, { ownerInitiated: true });
+      return { ok: res.ok, reason: res.reason };
+    } catch (err) {
+      this.logger.error({ err }, "outbound call orchestrator failed");
+      return { ok: false, reason: (err as Error).message };
+    }
+  }
+
+  // Resolve "Madhu" / "mom" / "+15125551234" → { phone, name, relationship }.
+  // Best-effort: checks owner profile relationships first, then the
+  // contact-names cache, then accepts raw phone-ish strings.
+  private async resolveCallTarget(input: string): Promise<{ phone: string; name?: string; relationship?: string } | null> {
+    const s = input.trim();
+    if (!s) return null;
+    // If it looks like a phone number already, take it as-is (E.164-ify
+    // best-effort: assume US if 10 digits).
+    const digits = s.replace(/[^\d+]/g, "");
+    if (digits.startsWith("+") && digits.length >= 10) return { phone: digits };
+    if (/^\d{10}$/.test(digits)) return { phone: "+1" + digits };
+    if (/^1\d{10}$/.test(digits)) return { phone: "+" + digits };
+    // Try owner profile relationships.
+    const lower = s.toLowerCase();
+    const profile = this.ownerProfileStore.get();
+    if (profile) {
+      for (const [name, rel] of profile.relationships) {
+        if (name.toLowerCase().includes(lower) || lower.includes(name.toLowerCase())) {
+          // Need to resolve name → phone. Profile doesn't store
+          // phones directly — we'd need a contact-DB lookup. For
+          // now, check if iMessage chat.db has a handle for this name.
+          for (const [handle, contactName] of this.contactNames) {
+            if (contactName.toLowerCase().includes(lower)) {
+              if (handle.startsWith("+")) return { phone: handle, name: contactName, relationship: rel };
+            }
+          }
+        }
+      }
+    }
+    // Try contact-names cache directly.
+    for (const [handle, contactName] of this.contactNames) {
+      if (contactName.toLowerCase().includes(lower)) {
+        if (handle.startsWith("+")) return { phone: handle, name: contactName };
+      }
+    }
+    return null;
+  }
+
+  // Build the optional ElevenLabs voice-clone renderer. Returns a
+  // function that takes text and produces a URL Twilio can <Play>,
+  // OR null if ElevenLabs isn't configured (caller falls back to
+  // inline Polly TwiML). The MP3 is served from the bridge's HTTP
+  // server at /voice-cache/<sha1>.mp3 — Twilio fetches it when it
+  // dials. (Requires LANTERN_VOICE_CACHE_PUBLIC_URL to be set to a
+  // publicly-reachable host the bridge serves, e.g. via Cloudflare
+  // Tunnel or ngrok.)
+  private makeVoiceRenderer(): ((text: string) => Promise<string | null>) | undefined {
+    const apiKey = process.env.LANTERN_ELEVENLABS_KEY;
+    const voiceId = process.env.LANTERN_ELEVENLABS_VOICE_ID;
+    const publicUrlBase = process.env.LANTERN_VOICE_CACHE_PUBLIC_URL;
+    if (!apiKey || !voiceId || !publicUrlBase) return undefined;
+    return async (text: string) => {
+      try {
+        const buf = await renderTextWithElevenLabs(text, { apiKey, voiceId });
+        if (!buf) return null;
+        // Write to disk + return URL. Caching by sha1 of text so
+        // repeated phrases re-use the same audio (saves $).
+        const { createHash } = await import("node:crypto");
+        const { writeFile, mkdir } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const { homedir } = await import("node:os");
+        const cacheDir = join(homedir(), ".lantern", "voice-cache");
+        await mkdir(cacheDir, { recursive: true });
+        const sha = createHash("sha1").update(text + voiceId).digest("hex");
+        await writeFile(join(cacheDir, `${sha}.mp3`), buf);
+        return `${publicUrlBase.replace(/\/$/, "")}/voice-cache/${sha}.mp3`;
+      } catch (err) {
+        this.logger.warn({ err }, "ElevenLabs render failed");
+        return null;
+      }
+    };
   }
 
   // Execute a cached offer from humanize's detectOfferInReply.

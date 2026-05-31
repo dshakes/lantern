@@ -694,8 +694,8 @@ func executeGitHub(config map[string]any, action string, params map[string]any) 
 	}
 
 	headers := map[string]string{
-		"Authorization": "Bearer " + token,
-		"Accept":        "application/vnd.github+json",
+		"Authorization":        "Bearer " + token,
+		"Accept":               "application/vnd.github+json",
 		"X-GitHub-Api-Version": "2022-11-28",
 	}
 
@@ -963,33 +963,42 @@ func executeTwilio(config map[string]any, action string, params map[string]any) 
 		return result, nil
 
 	case "place_call":
-		// Place an outbound voice call. Used by the bridges' life-threat
-		// escalation path to actually RING the owner's phone — not just
-		// drop a DM that might sit unread for an hour.
+		// Place an outbound voice call with inline TwiML. Used by both
+		// the life-threat escalation path AND the new outbound-call
+		// agent orchestrator (voicemail-delivery + agent-task modes).
 		//
-		// Required: to (owner's phone), from (Twilio number).
-		// Optional: message → wrapped in TwiML <Say>. Defaults to a
-		// generic Lantern alert if absent.
+		// Required: to, from.
+		// Optional: message (wrapped in default TwiML if `twiml` absent),
+		//           twiml (raw TwiML — overrides message; lets bridge-core
+		//                  build conference/multi-step flows),
+		//           statusCallback (Twilio POSTs lifecycle events here).
 		to := stringParam(params, "to")
 		from := stringParam(params, "from")
 		if to == "" || from == "" {
 			return nil, fmt.Errorf("'to' and 'from' parameters are required")
 		}
-		msg := stringParam(params, "message")
-		if msg == "" {
-			msg = "This is Lantern. An urgent alert was triggered. Please check your phone."
+		twiml := stringParam(params, "twiml")
+		if twiml == "" {
+			msg := stringParam(params, "message")
+			if msg == "" {
+				msg = "This is Lantern. An urgent alert was triggered. Please check your phone."
+			}
+			twiml = fmt.Sprintf(
+				`<Response><Say voice="Polly.Joanna" loop="2">%s</Say><Pause length="1"/><Say voice="Polly.Joanna">Hanging up now.</Say></Response>`,
+				escapeTwimlText(msg),
+			)
 		}
-		// Inline TwiML — we don't host a callback URL because we want
-		// this to work zero-infra. Twilio supports inline TwiML via
-		// the `Twiml` POST param (vs Url which fetches remote).
-		twiml := fmt.Sprintf(
-			`<Response><Say voice="Polly.Joanna" loop="2">%s</Say><Pause length="1"/><Say voice="Polly.Joanna">Hanging up now.</Say></Response>`,
-			escapeTwimlText(msg),
-		)
 		data := url.Values{
 			"To":    {to},
 			"From":  {from},
 			"Twiml": {twiml},
+		}
+		// Twilio fires lifecycle webhooks (initiated → ringing → answered
+		// → completed) at this URL if provided. Used downstream to
+		// capture duration + cost. Optional — calls work without it.
+		if cb := stringParam(params, "statusCallback"); cb != "" {
+			data.Set("StatusCallback", cb)
+			data.Set("StatusCallbackEvent", "completed")
 		}
 		headers["Content-Type"] = "application/x-www-form-urlencoded"
 		result, err := doJSONRequest("POST", baseURL+"/Calls.json", headers, strings.NewReader(data.Encode()))
@@ -998,8 +1007,42 @@ func executeTwilio(config map[string]any, action string, params map[string]any) 
 		}
 		return result, nil
 
+	case "add_conference_participant":
+		// Add a participant to a Twilio Conference room by dialing
+		// their phone number. Used to bridge a third party into an
+		// existing conference (e.g. "lantern, get me on with Madhu" →
+		// bridge dials Madhu first with conference TwiML; once Madhu
+		// is in the room, this action dials the owner with the same
+		// conference name and they're now both in the room).
+		//
+		// Required: conferenceName, to, from.
+		// The TwiML for the participant's leg is built dynamically —
+		// dropping them into the named conference.
+		confName := stringParam(params, "conferenceName")
+		to2 := stringParam(params, "to")
+		from2 := stringParam(params, "from")
+		if confName == "" || to2 == "" || from2 == "" {
+			return nil, fmt.Errorf("'conferenceName', 'to', 'from' are required")
+		}
+		// Owner leg: drop straight into the conference, no preamble.
+		participantTwiml := fmt.Sprintf(
+			`<Response><Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">%s</Conference></Dial></Response>`,
+			escapeTwimlText(confName),
+		)
+		data := url.Values{
+			"To":    {to2},
+			"From":  {from2},
+			"Twiml": {participantTwiml},
+		}
+		headers["Content-Type"] = "application/x-www-form-urlencoded"
+		result, err := doJSONRequest("POST", baseURL+"/Calls.json", headers, strings.NewReader(data.Encode()))
+		if err != nil {
+			return nil, fmt.Errorf("Twilio add_conference_participant failed: %w", err)
+		}
+		return result, nil
+
 	default:
-		return nil, fmt.Errorf("unknown Twilio action: %s (supported: send_sms, list_messages, place_call)", action)
+		return nil, fmt.Errorf("unknown Twilio action: %s (supported: send_sms, list_messages, place_call, add_conference_participant)", action)
 	}
 }
 
