@@ -126,14 +126,14 @@ func main() {
 	// --- Domain-specific handlers ---
 	connectorHandler := handlers.NewConnectorHandler(srv, authHandler)
 	connectorExecutor := handlers.NewConnectorExecutor(srv, authHandler)
-	smsHandler := handlers.NewSMSHandler(logger, "http://127.0.0.1:8080")
+	llmProxyHandler := handlers.NewLlmProxyHandler(srv, authHandler)
+	smsHandler := handlers.NewSMSHandler(logger, srv.Pool, llmProxyHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
 	waPersonalHandler := handlers.NewWhatsAppPersonalHandler(srv, authHandler)
 	shortcutsHandler := handlers.NewShortcutsHandler(srv, authHandler)
 	apiKeyHandler := handlers.NewApiKeyHandler(srv, authHandler)
 	deploymentHandler := handlers.NewDeploymentHandler(srv, authHandler)
 	a2aHandler := handlers.NewA2AHandler(srv, authHandler)
-	llmProxyHandler := handlers.NewLlmProxyHandler(srv, authHandler)
 	gmailHandler := handlers.NewGmailHandler(srv, authHandler)
 	sessionHandler := handlers.NewSessionHandler(srv, authHandler, llmProxyHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution

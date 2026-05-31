@@ -2536,6 +2536,23 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 	return "", nil, "", "", 0, 0, fmt.Errorf("all configured providers failed: %w", lastErr)
 }
 
+// CompleteInternal is the in-process entry point for one-shot
+// completions issued by other Go handlers (SMS, voice, escalation).
+// It reuses callLLMWithFailover so the same provider chain + retry
+// behavior the dashboard sees applies here, but bypasses the HTTP
+// surface entirely — no loopback, no JWT.
+func (h *LlmProxyHandler) CompleteInternal(ctx context.Context, tenantID, system, user string, _ int) (string, error) {
+	messages := []map[string]any{
+		{"role": "system", "content": system},
+		{"role": "user", "content": user},
+	}
+	text, _, _, _, _, _, err := h.callLLMWithFailover(ctx, tenantID, messages, nil, nil, nil, nil, 1)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(text), nil
+}
+
 // ---------- OCR / Vision endpoint ----------
 
 // OCRRequest is the body of POST /v1/vision/ocr. The image is passed as

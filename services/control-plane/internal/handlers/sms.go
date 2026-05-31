@@ -58,28 +58,37 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
 // SMSHandler routes Twilio inbound SMS + Voice from the owner to the
-// agent pipeline via HTTP loopback to the control-plane's existing
-// /v1/completions + /v1/connectors/twilio/execute routes.
+// agent pipeline using INTERNAL Go calls (no HTTP loopback, no JWT
+// dance). The control-plane already has executeConnectorAction at
+// package scope + the LLM proxy exposes an internal completions
+// method, so we depend on both directly.
 type SMSHandler struct {
 	logger        *zap.Logger
-	apiBaseURL    string // self-loopback, e.g. http://127.0.0.1:8080
+	pool          *pgxpool.Pool
+	llm           *LlmProxyHandler
+	defaultTenant string
 	twilioAuthOff bool
+
 	// Cached Twilio auth token from the installed connector. Loaded
-	// lazily; refreshed on signature-verification failures.
+	// lazily from the DB; refreshed when the cache TTL expires.
 	authTokenMu sync.RWMutex
 	authToken   string
 	authTokenAt time.Time
 }
 
-// NewSMSHandler wires the handler.
-func NewSMSHandler(logger *zap.Logger, apiBaseURL string) *SMSHandler {
+// NewSMSHandler constructs the handler with all internal dependencies.
+// llm is used for completion calls; pool for direct connector lookups.
+func NewSMSHandler(logger *zap.Logger, pool *pgxpool.Pool, llm *LlmProxyHandler) *SMSHandler {
 	return &SMSHandler{
 		logger:        logger.Named("sms"),
-		apiBaseURL:    strings.TrimRight(apiBaseURL, "/"),
+		pool:          pool,
+		llm:           llm,
+		defaultTenant: getEnvOr("LANTERN_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
 		twilioAuthOff: strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) == "off",
 	}
 }
@@ -279,9 +288,8 @@ func (h *SMSHandler) VoiceTurn(w http.ResponseWriter, r *http.Request) {
 	writeTwiML(w, twiml)
 }
 
-// askOwnerAgent runs the LLM with the owner-agent persona. Uses an
-// HTTP loopback to /v1/completions so we benefit from the same
-// failover routing the dashboard uses.
+// askOwnerAgent runs the LLM with the owner-agent persona. Uses the
+// LLM proxy's internal completions method — no HTTP, no JWT.
 func (h *SMSHandler) askOwnerAgent(ctx context.Context, userText string) (string, error) {
 	ownerName := getEnvOr("LANTERN_OWNER_NAME", "Shekhar")
 	system := strings.Join([]string{
@@ -293,70 +301,25 @@ func (h *SMSHandler) askOwnerAgent(ctx context.Context, userText string) (string
 		"Never say 'I'm an AI/bot/assistant'. If asked, you're his helper.",
 		"When you don't know, say 'not sure'. Don't invent.",
 	}, "\n")
-
-	payload := map[string]any{
-		"model": "auto",
-		"messages": []map[string]string{
-			{"role": "system", "content": system},
-			{"role": "user", "content": userText},
-		},
-		"max_tokens": 200,
+	if h.llm == nil {
+		return "", fmt.Errorf("LLM proxy unavailable")
 	}
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, "POST", h.apiBaseURL+"/v1/completions", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	// Loopback — control-plane normally requires auth, but the SMS
-	// handler runs inside the same process. We synth an internal-auth
-	// header that the auth middleware accepts.
-	if internalKey := os.Getenv("LANTERN_INTERNAL_SECRET"); internalKey != "" {
-		req.Header.Set("X-Internal-Secret", internalKey)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("completions HTTP %d: %s", resp.StatusCode, smsTruncate(string(respBody), 200))
-	}
-	// Tolerant parser — handle the OpenAI-shaped + content-shaped
-	// responses both. We don't depend on a single key.
-	return extractReplyText(respBody), nil
+	return h.llm.CompleteInternal(ctx, h.defaultTenant, system, userText, 200)
 }
 
-// sendSMS fires Twilio's send_sms via the existing connector
-// executor route through HTTP loopback. Both numbers in E.164.
+// sendSMS fires Twilio's send_sms via the in-process connector
+// executor. No HTTP loopback, no auth dance.
 func (h *SMSHandler) sendSMS(ctx context.Context, fromTwilio, toOwner, body string) error {
-	payload := map[string]any{
+	if h.pool == nil {
+		return fmt.Errorf("DB pool unavailable")
+	}
+	params := map[string]any{
 		"to":   toOwner,
 		"from": fromTwilio,
 		"body": body,
 	}
-	bodyJSON, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		h.apiBaseURL+"/v1/connectors/twilio/execute?action=send_sms",
-		bytes.NewReader(bodyJSON))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if internalKey := os.Getenv("LANTERN_INTERNAL_SECRET"); internalKey != "" {
-		req.Header.Set("X-Internal-Secret", internalKey)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("twilio send_sms HTTP %d: %s", resp.StatusCode, smsTruncate(string(respBody), 200))
-	}
-	return nil
+	_, err := executeConnectorAction(ctx, h.pool, h.defaultTenant, "twilio", "send_sms", params)
+	return err
 }
 
 // verifyTwilioSignature does the standard X-Twilio-Signature HMAC
@@ -395,9 +358,10 @@ func (h *SMSHandler) verifyTwilioSignature(r *http.Request, bodyBytes []byte) (b
 	return false, "signature mismatch"
 }
 
-// getTwilioAuthToken pulls authToken from the installed Twilio
-// connector via HTTP loopback. Cached for 5 min — auth tokens are
-// stable enough to cache without refresh penalty.
+// getTwilioAuthToken reads authToken directly from the
+// connector_installs table. Cached for 5 min — Twilio auth tokens
+// are stable; a 5-min window catches a rotation within the same
+// process lifetime without per-request DB hits.
 func (h *SMSHandler) getTwilioAuthToken(ctx context.Context) string {
 	h.authTokenMu.RLock()
 	if h.authToken != "" && time.Since(h.authTokenAt) < 5*time.Minute {
@@ -407,41 +371,31 @@ func (h *SMSHandler) getTwilioAuthToken(ctx context.Context) string {
 	}
 	h.authTokenMu.RUnlock()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", h.apiBaseURL+"/v1/connectors", nil)
+	if h.pool == nil {
+		return ""
+	}
+	var configJSON []byte
+	err := h.pool.QueryRow(ctx, `
+		SELECT config FROM connector_installs
+		WHERE tenant_id = $1 AND connector_id = 'twilio' AND status = 'connected'
+		LIMIT 1
+	`, h.defaultTenant).Scan(&configJSON)
 	if err != nil {
 		return ""
 	}
-	if internalKey := os.Getenv("LANTERN_INTERNAL_SECRET"); internalKey != "" {
-		req.Header.Set("X-Internal-Secret", internalKey)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
+	var cfg map[string]any
+	if err := json.Unmarshal(configJSON, &cfg); err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
+	tok, _ := cfg["authToken"].(string)
+	if tok == "" {
 		return ""
 	}
-	body, _ := io.ReadAll(resp.Body)
-	var installs []struct {
-		ConnectorID string         `json:"connectorId"`
-		Config      map[string]any `json:"config"`
-	}
-	if err := json.Unmarshal(body, &installs); err != nil {
-		return ""
-	}
-	for _, i := range installs {
-		if i.ConnectorID == "twilio" {
-			if v, ok := i.Config["authToken"].(string); ok && v != "" {
-				h.authTokenMu.Lock()
-				h.authToken = v
-				h.authTokenAt = time.Now()
-				h.authTokenMu.Unlock()
-				return v
-			}
-		}
-	}
-	return ""
+	h.authTokenMu.Lock()
+	h.authToken = tok
+	h.authTokenAt = time.Now()
+	h.authTokenMu.Unlock()
+	return tok
 }
 
 // deriveOwnPublicURL reconstructs the URL Twilio is calling — used
@@ -533,33 +487,4 @@ func getEnvOr(k, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-func extractReplyText(b []byte) string {
-	type completionsResp struct {
-		Content string `json:"content"`
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	}
-	var d completionsResp
-	if err := json.Unmarshal(b, &d); err == nil {
-		if s := strings.TrimSpace(d.Content); s != "" {
-			return s
-		}
-		if s := strings.TrimSpace(d.Message.Content); s != "" {
-			return s
-		}
-		if len(d.Choices) > 0 {
-			if s := strings.TrimSpace(d.Choices[0].Message.Content); s != "" {
-				return s
-			}
-		}
-	}
-	return ""
 }
