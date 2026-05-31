@@ -37,7 +37,8 @@
     "./pacing": "./src/pacing.ts",
     "./episodic-memory": "./src/episodic-memory.ts",
     "./social-graph": "./src/social-graph.ts",
-    "./confidence-tier": "./src/confidence-tier.ts"
+    "./confidence-tier": "./src/confidence-tier.ts",
+    "./escalation-detector": "./src/escalation-detector.ts"
   },
   "dependencies": {
     "pdf-parse": "^2.4.5",

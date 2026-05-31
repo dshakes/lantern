@@ -77,6 +77,12 @@ import { computeHold, latenciesFromTranscript } from "@lantern/bridge-core/pacin
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
+import {
+  detectLifeThreat,
+  detectPromptInjection,
+  detectRelayPromise,
+  refusalReply as escalationRefusalReply,
+} from "@lantern/bridge-core/escalation-detector";
 
 export type IMessageConnectionState =
   | "starting"
@@ -1473,6 +1479,57 @@ export class IMessageSession {
       }
     }
 
+    // ─────────────────────────────────────────────────────
+    // SAFETY GUARDS — run BEFORE the LLM. Hard-fail on
+    // life-threat + prompt-injection. See escalation-detector.ts.
+    // ─────────────────────────────────────────────────────
+    if (!isGroup) {
+      const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+      const lifeThreat = detectLifeThreat(text);
+      if (lifeThreat) {
+        this.logger.warn(
+          { from: row.handle, reason: lifeThreat.reason, pattern: lifeThreat.pattern, textPreview: text.slice(0, 140) },
+          "🚨 LIFE-THREAT detected (iMessage) — escalating + voice-calling owner",
+        );
+        await this.fireOwnerEscalation({
+          kind: "life-threat",
+          reason: lifeThreat.reason,
+          from: row.handle,
+          senderName: this.contactNames.get(row.handle),
+          contactText: text,
+        });
+        try {
+          await this.send(row.handle, escalationRefusalReply("life-threat", ownerName));
+        } catch (err) {
+          this.logger.error({ err }, "life-threat refusal send failed (imessage)");
+        }
+        // Pause the contact so any follow-up doesn't trigger
+        // another full LLM round — owner is paged.
+        this.pauseContact(row.handle);
+        return;
+      }
+      const injection = detectPromptInjection(text);
+      if (injection) {
+        this.logger.warn(
+          { from: row.handle, reason: injection.reason, pattern: injection.pattern, textPreview: text.slice(0, 140) },
+          "🛡 PROMPT-INJECTION detected (iMessage) — refusing + escalating",
+        );
+        await this.fireOwnerEscalation({
+          kind: "prompt-injection",
+          reason: injection.reason,
+          from: row.handle,
+          senderName: this.contactNames.get(row.handle),
+          contactText: text,
+        });
+        try {
+          await this.send(row.handle, escalationRefusalReply("prompt-injection", ownerName));
+        } catch (err) {
+          this.logger.error({ err }, "prompt-injection refusal send failed (imessage)");
+        }
+        return;
+      }
+    }
+
     // shouldRespond: cheap text-only filter for "k" / "👍" — react
     // instead of replying, or stay silent entirely.
     const verdict = shouldRespond(text);
@@ -1775,6 +1832,28 @@ export class IMessageSession {
         isActiveBurst: histRows.filter((m) => m.fromMe).length >= 2,
       });
       paceHoldMs = verdict.holdMs;
+    }
+
+    // Relay-promise truth-up: if the draft says "i'll let him know"
+    // / "i'll alert" / "ok cheptha", actually fire the escalation so
+    // the bot isn't lying. Side-effect approach: keep the message
+    // promise, force the underlying action to be real.
+    if (!isGroup) {
+      const relayP = detectRelayPromise(draft);
+      if (relayP) {
+        this.logger.info(
+          { from: row.handle, reason: relayP.reason, draftPreview: draft.slice(0, 120) },
+          "RELAY-PROMISE detected (imessage) — firing owner escalation",
+        );
+        void this.fireOwnerEscalation({
+          kind: "relay-promise",
+          reason: relayP.reason,
+          from: row.handle,
+          senderName: this.contactNames.get(row.handle),
+          contactText: text,
+          botReplyPreview: draft,
+        });
+      }
     }
 
     // Naturalize + paced send. CRITICAL: for a group, send to the GROUP
@@ -3125,6 +3204,173 @@ export class IMessageSession {
   // bridge uses — control-plane wraps OAuth/labels/skip-inbox.
   private lastEmailedAt: Map<string, number> = new Map();
   private static readonly EMAIL_DEDUP_MS = 30_000;
+  // Multi-channel owner escalation (iMessage bridge version).
+  // Symmetric in intent to the WhatsApp bridge's. Fires:
+  //   1. iMessage self-chat send (to LANTERN_IMESSAGE_OWNER_HANDLE)
+  //   2. WhatsApp self-chat via the WA bridge's loopback
+  //   3. Email via Gmail connector (skip-inbox=false so it's seen)
+  //   4. macOS desktop notification (life-threat only)
+  //   5. Outbound voice call via Twilio (life-threat only) — actually
+  //      RINGS the owner's phone with a TwiML <Say>
+  // All channels parallel + best-effort.
+  private async fireOwnerEscalation(opts: {
+    kind: "life-threat" | "prompt-injection" | "relay-promise";
+    reason: string;
+    from: string;
+    senderName?: string;
+    contactText: string;
+    botReplyPreview?: string;
+  }): Promise<void> {
+    const who = opts.senderName || opts.from;
+    const prefix =
+      opts.kind === "life-threat" ? "🚨🚨 LIFE-THREAT ESCALATION" :
+      opts.kind === "prompt-injection" ? "🛡 PROMPT-INJECTION (bot refused + paged you)" :
+      "📨 bot promised to relay — here's what they said";
+    const lines = [
+      prefix,
+      `from: ${who} (${opts.from})`,
+      `signal: ${opts.reason}`,
+      "",
+      `they said:`,
+      `"${opts.contactText.slice(0, 600)}"`,
+    ];
+    if (opts.botReplyPreview) {
+      lines.push("");
+      lines.push(`bot's reply (already sent):`);
+      lines.push(`"${opts.botReplyPreview.slice(0, 400)}"`);
+    }
+    const body = lines.join("\n");
+
+    // 1. iMessage self-chat send (primary on this bridge).
+    const ownerSelf = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+    if (ownerSelf) {
+      void this.send(ownerSelf, body).catch((err) =>
+        this.logger.warn({ err }, "owner escalation: iMessage self-send failed"),
+      );
+    }
+
+    // 2. WhatsApp loopback — secondary channel.
+    const waUrl = process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100";
+    const tenantId = process.env.LANTERN_DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
+    void (async () => {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 3000);
+        await fetch(`${waUrl}/session/${tenantId}/send-self`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: body }),
+          signal: ctrl.signal,
+        });
+        clearTimeout(t);
+      } catch (err) {
+        this.logger.debug({ err }, "owner escalation: WhatsApp loopback skipped");
+      }
+    })();
+
+    // 3. Email via Gmail connector (inbox-grabbing, not skip-inbox).
+    void (async () => {
+      try {
+        const ownerEmail = process.env.LANTERN_OWNER_EMAIL;
+        if (!ownerEmail) return;
+        const { authedFetch } = await import("@lantern/bridge-core/auth");
+        const subject =
+          opts.kind === "life-threat" ? `🚨 LIFE-THREAT alert from ${who}` :
+          opts.kind === "prompt-injection" ? `🛡 prompt-injection probe from ${who}` :
+          `📨 bot promised relay from ${who}`;
+        await authedFetch("/v1/connectors/gmail/execute?action=send_message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: ownerEmail,
+            subject,
+            body,
+            label: "lantern",
+            skipInbox: false,
+          }),
+        });
+      } catch (err) {
+        this.logger.warn({ err, kind: opts.kind }, "owner escalation: email failed");
+      }
+    })();
+
+    if (opts.kind === "life-threat") {
+      // 4. macOS desktop notification with sound.
+      void (async () => {
+        try {
+          const { execFile } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileP = promisify(execFile);
+          const safeBody = body.replace(/"/g, '\\"').slice(0, 300);
+          await execFileP(
+            "osascript",
+            ["-e", `display notification "${safeBody}" with title "🚨 Lantern: ${prefix}" sound name "Sosumi"`],
+            { timeout: 2000 },
+          );
+        } catch (err) {
+          this.logger.debug({ err }, "owner escalation: macOS notification skipped");
+        }
+      })();
+
+      // 5. Twilio voice call to LANTERN_OWNER_PHONE.
+      void (async () => {
+        try {
+          const ownerPhone = process.env.LANTERN_OWNER_PHONE;
+          if (!ownerPhone) {
+            this.logger.warn(
+              "owner escalation: LANTERN_OWNER_PHONE not set — voice call skipped",
+            );
+            return;
+          }
+          const { authedFetch } = await import("@lantern/bridge-core/auth");
+          const listRes = await authedFetch("/v1/connectors");
+          if (!listRes.ok) return;
+          const installs = (await listRes.json()) as Array<{ connectorId: string; config?: Record<string, unknown> }>;
+          const twilio = installs.find((i) => i.connectorId === "twilio");
+          const twilioFrom = twilio?.config?.phoneNumber as string | undefined;
+          if (!twilio || !twilioFrom) {
+            this.logger.warn("owner escalation: Twilio connector not configured — voice call skipped");
+            return;
+          }
+          const senderLabel = (who || "").replace(/[^A-Za-z0-9\s]/g, " ").trim() || "an unknown contact";
+          const safeMsg = opts.contactText.replace(/\s+/g, " ").slice(0, 400);
+          const speech = `This is Lantern, an urgent alert. ${senderLabel} just messaged you saying: ${safeMsg}. They said it is an emergency. Please open your phone now.`;
+          const callRes = await authedFetch(
+            "/v1/connectors/twilio/execute?action=place_call",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                to: ownerPhone,
+                from: twilioFrom,
+                message: speech,
+              }),
+            },
+          );
+          if (!callRes.ok) {
+            const errBody = await callRes.text();
+            this.logger.error(
+              { status: callRes.status, body: errBody.slice(0, 300) },
+              "owner escalation: Twilio voice call FAILED (iMessage)",
+            );
+          } else {
+            this.logger.info(
+              { to: ownerPhone.slice(0, 6) + "***" },
+              "owner escalation: Twilio voice call placed (iMessage)",
+            );
+          }
+        } catch (err) {
+          this.logger.error({ err }, "owner escalation: Twilio voice call exception (iMessage)");
+        }
+      })();
+    }
+
+    this.logger.info(
+      { kind: opts.kind, reason: opts.reason, from: opts.from },
+      "owner escalation fired (iMessage)",
+    );
+  }
+
   private async mirrorToEmail(text: string): Promise<void> {
     const to = process.env.LANTERN_OWNER_EMAIL;
     if (!to) return;
