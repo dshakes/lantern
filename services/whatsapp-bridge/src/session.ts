@@ -1050,6 +1050,16 @@ export class WhatsAppSession {
   // /lantern approvals on|off.
   private draftApprovalsEnabled =
     (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
+  // Master switch for the panic channels on life-threat escalation
+  // (Pushover siren + Twilio voice call + macOS notification).
+  // Default ON — life-threat is the one event class where the
+  // default MUST be "fire". Primary alerts (WA self / iMessage self /
+  // email) always fire regardless of this flag.
+  private escalationEnabled = true;
+  // Just the Pushover siren channel toggle. Inside escalationEnabled
+  // so turning the master off also turns this off; setting this off
+  // while master stays on just mutes Pushover.
+  private pushoverEnabled = true;
   private stateFile: string;
   // Opted-in group JIDs. Groups not in this set are ignored entirely; in
   // opted-in groups the agent runs the attention classifier on every message
@@ -2471,12 +2481,16 @@ export class WhatsAppSession {
           personalDocsEnabled?: boolean;
           killSwitch?: boolean;
           draftApprovalsEnabled?: boolean;
+          escalationEnabled?: boolean;
+          pushoverEnabled?: boolean;
         };
         this.muted = !!raw.muted;
         // Toggles default to safe values: docs ON, killswitch OFF.
         if (typeof raw.personalDocsEnabled === "boolean") this.personalDocsEnabled = raw.personalDocsEnabled;
         if (typeof raw.killSwitch === "boolean") this.killSwitch = raw.killSwitch;
         if (typeof raw.draftApprovalsEnabled === "boolean") this.draftApprovalsEnabled = raw.draftApprovalsEnabled;
+        if (typeof raw.escalationEnabled === "boolean") this.escalationEnabled = raw.escalationEnabled;
+        if (typeof raw.pushoverEnabled === "boolean") this.pushoverEnabled = raw.pushoverEnabled;
         const now = Date.now();
         for (const [jid, v] of Object.entries(raw.pausedUntil ?? {})) {
           const entry = this.coercePauseEntry(v);
@@ -2557,6 +2571,8 @@ export class WhatsAppSession {
         personalDocsEnabled: this.personalDocsEnabled,
         killSwitch: this.killSwitch,
         draftApprovalsEnabled: this.draftApprovalsEnabled,
+        escalationEnabled: this.escalationEnabled,
+        pushoverEnabled: this.pushoverEnabled,
       };
       writeFileSync(this.stateFile, JSON.stringify(payload, null, 2));
     } catch (err) {
@@ -3124,6 +3140,7 @@ export class WhatsAppSession {
           `• bot: ${this.killSwitch ? "🚨 KILL SWITCH ENGAGED" : this.muted ? "off" : "on"}`,
           `• personal-docs: ${this.personalDocsEnabled ? "on" : "off"}`,
           `• approval queue: ${this.draftApprovalsEnabled ? "on" : "off"}`,
+          `• panic channels: ${this.escalationEnabled ? "on" : "off"} (pushover: ${this.pushoverEnabled ? "on" : "off"})`,
           `• paired: ${phone}`,
           `• paused contacts: ${pausedCount}`,
           `• monitored groups: ${this.monitoredGroups.size}`,
@@ -3201,6 +3218,16 @@ export class WhatsAppSession {
           this.logger.warn({ err }, "vip-clear failed");
           return 0;
         }
+      },
+      setEscalation: async (enabled: boolean) => {
+        this.escalationEnabled = enabled;
+        this.saveState();
+        this.logActivity(enabled ? "bot_on" : "bot_off", `panic channels ${enabled ? "ENABLED" : "DISABLED"}`, { scope: "self" });
+      },
+      setPushover: async (enabled: boolean) => {
+        this.pushoverEnabled = enabled;
+        this.saveState();
+        this.logActivity(enabled ? "bot_on" : "bot_off", `pushover siren ${enabled ? "ENABLED" : "DISABLED"}`, { scope: "self" });
       },
     });
   }
@@ -4372,7 +4399,10 @@ export class WhatsAppSession {
     // the owner is heads-down. Cheap; best-effort. Only fires for
     // life-threat (we don't want injection probes to pop a dialog
     // every time someone tests).
-    if (opts.kind === "life-threat") {
+    // Panic channels (macOS notif + voice + pushover) are gated by the
+    // master `escalationEnabled` toggle so the owner can mute the siren
+    // batch without losing primary alerts (WA/iM/email always fire).
+    if (opts.kind === "life-threat" && this.escalationEnabled) {
       void (async () => {
         try {
           const { execFile } = await import("node:child_process");
@@ -4400,7 +4430,7 @@ export class WhatsAppSession {
     //   - Twilio connector installed with accountSid/authToken/from
     // If either is missing we silently skip — the other 4 channels
     // still deliver the alert.
-    if (opts.kind === "life-threat") {
+    if (opts.kind === "life-threat" && this.escalationEnabled) {
       void (async () => {
         try {
           const ownerPhone = process.env.LANTERN_OWNER_PHONE;
@@ -4470,8 +4500,9 @@ export class WhatsAppSession {
     // the owner ack's. Works as a no-Twilio alternative for ringing
     // the phone. Requires LANTERN_PUSHOVER_TOKEN (app API key) and
     // LANTERN_PUSHOVER_USER (user key) in env. Both come from
-    // pushover.net dashboard. Skipped silently when either is unset.
-    if (opts.kind === "life-threat") {
+    // pushover.net dashboard. Skipped silently when either is unset
+    // OR when the master escalationEnabled / pushoverEnabled is off.
+    if (opts.kind === "life-threat" && this.escalationEnabled && this.pushoverEnabled) {
       void (async () => {
         try {
           const token = process.env.LANTERN_PUSHOVER_TOKEN;

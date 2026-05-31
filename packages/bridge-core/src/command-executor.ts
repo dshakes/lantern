@@ -45,6 +45,11 @@ export interface CommandContext {
   // removes every entry.
   listVips?: () => Promise<string> | string;
   clearVips?: () => Promise<number> | number;
+  // Master switch for panic channels (Pushover/Twilio voice/macOS
+  // notification). Primary alerts (WA/iM/email) always fire regardless.
+  setEscalation?: (enabled: boolean) => Promise<void> | void;
+  // Just the Pushover siren channel toggle.
+  setPushover?: (enabled: boolean) => Promise<void> | void;
   // Channel name shown in human replies ("iMessage" or "WhatsApp").
   channelLabel: string;
 }
@@ -136,6 +141,26 @@ export async function executeCommand(cmd: ParsedCommand, ctx: CommandContext): P
     case "vip-clear": {
       const removed = ctx.clearVips ? await ctx.clearVips() : 0;
       await ctx.reply(removed > 0 ? `${cmd.echo} — removed ${removed}` : "no VIPs to clear");
+      return;
+    }
+    case "escalation-on": {
+      if (ctx.setEscalation) await ctx.setEscalation(true);
+      await ctx.reply(`${cmd.echo}\nphone-ring channels (pushover siren, voice call, macOS notif) will fire on life-threat. primary alerts (WA/iM/email) were already on.`);
+      return;
+    }
+    case "escalation-off": {
+      if (ctx.setEscalation) await ctx.setEscalation(false);
+      await ctx.reply(`${cmd.echo}\nyou'll still get WA/iM/email on life-threat — just no phone siren or call. say *escalation on* to re-enable.`);
+      return;
+    }
+    case "pushover-on": {
+      if (ctx.setPushover) await ctx.setPushover(true);
+      await ctx.reply(`${cmd.echo}\nPushover siren (priority-2, bypasses iPhone silent + DND) will fire on life-threat.`);
+      return;
+    }
+    case "pushover-off": {
+      if (ctx.setPushover) await ctx.setPushover(false);
+      await ctx.reply(`${cmd.echo}\nPushover siren disabled. other channels (WA/iM/email/voice/macOS) unchanged.`);
       return;
     }
   }

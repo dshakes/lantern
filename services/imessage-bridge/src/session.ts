@@ -103,6 +103,8 @@ interface PersistedState {
   personalDocsEnabled?: boolean; // owner toggle for local-file Q&A; default true
   killSwitch?: boolean;          // master OFF — bot refuses everything except killswitch-off
   draftApprovalsEnabled?: boolean; // owner toggle for VIP/low-conf draft queue; default false
+  escalationEnabled?: boolean;    // panic-channels master switch; default true
+  pushoverEnabled?: boolean;      // Pushover siren channel; default true
   // Per-contact tail of messages the owner actually sent (from their
   // phone). Few-shot exemplars for "my voice". Persisted so the voice
   // model isn't reset on every restart (WhatsApp already persisted this;
@@ -155,6 +157,11 @@ export class IMessageSession {
   // first boot; persisted on disk so phone commands stick.
   private draftApprovalsEnabled =
     (process.env.LANTERN_DRAFT_APPROVALS || "").toLowerCase() === "on";
+  // Panic-channels master switch (Pushover siren + Twilio voice +
+  // macOS notif). Default ON. Primary alerts (WA self / iMessage
+  // self / email) always fire on life-threat regardless of this.
+  private escalationEnabled = true;
+  private pushoverEnabled = true;
 
   // Subscribers
   private sockets: Set<WebSocket> = new Set();
@@ -2013,6 +2020,7 @@ export class IMessageSession {
           `• bot: ${this.killSwitch ? "🚨 KILL SWITCH ENGAGED" : diag.muted ? "off" : "on"}`,
           `• personal-docs: ${this.personalDocsEnabled ? "on" : "off"}`,
           `• approval queue: ${this.draftApprovalsEnabled ? "on" : "off"}`,
+          `• panic channels: ${this.escalationEnabled ? "on" : "off"} (pushover: ${this.pushoverEnabled ? "on" : "off"})`,
           `• paused contacts: ${pausedCount}`,
           `• monitored chats: ${diag.monitoredChats.length}`,
           `• uptime: ${Math.round(diag.uptimeMs / 60_000)}m`,
@@ -2105,6 +2113,22 @@ export class IMessageSession {
           this.logger.warn({ err }, "vip-clear failed");
           return 0;
         }
+      },
+      setEscalation: async (enabled: boolean) => {
+        this.escalationEnabled = enabled;
+        this.persist();
+        this.broadcast({
+          type: "activity",
+          data: { kind: "system", summary: `panic channels ${enabled ? "ENABLED" : "DISABLED"}`, timestamp: Date.now() },
+        });
+      },
+      setPushover: async (enabled: boolean) => {
+        this.pushoverEnabled = enabled;
+        this.persist();
+        this.broadcast({
+          type: "activity",
+          data: { kind: "system", summary: `pushover siren ${enabled ? "ENABLED" : "DISABLED"}`, timestamp: Date.now() },
+        });
       },
     });
   }
@@ -3294,7 +3318,9 @@ export class IMessageSession {
       }
     })();
 
-    if (opts.kind === "life-threat") {
+    // Panic channels (macOS notif + voice + pushover) gated by the
+    // master `escalationEnabled` toggle; primary alerts always fire.
+    if (opts.kind === "life-threat" && this.escalationEnabled) {
       // 4. macOS desktop notification with sound.
       void (async () => {
         try {
@@ -3366,10 +3392,10 @@ export class IMessageSession {
 
       // 6. PUSHOVER priority-2 alert — no-Twilio alternative that
       // still pierces iPhone silent + DND with a siren that repeats
-      // until ack'd. Skipped silently when LANTERN_PUSHOVER_TOKEN /
-      // LANTERN_PUSHOVER_USER are unset.
+      // until ack'd. Gated by the pushoverEnabled toggle too.
       void (async () => {
         try {
+          if (!this.pushoverEnabled) return;
           const token = process.env.LANTERN_PUSHOVER_TOKEN;
           const user = process.env.LANTERN_PUSHOVER_USER;
           if (!token || !user) return;
@@ -3449,6 +3475,8 @@ export class IMessageSession {
         personalDocsEnabled: this.personalDocsEnabled,
         killSwitch: this.killSwitch,
         draftApprovalsEnabled: this.draftApprovalsEnabled,
+        escalationEnabled: this.escalationEnabled,
+        pushoverEnabled: this.pushoverEnabled,
         ownerSentHistory: Object.fromEntries(this.ownerSentHistory),
       };
       writeFileSync(this.stateFile, JSON.stringify(data, null, 2));
@@ -3472,6 +3500,8 @@ export class IMessageSession {
       if (typeof data.personalDocsEnabled === "boolean") this.personalDocsEnabled = data.personalDocsEnabled;
       if (typeof data.killSwitch === "boolean") this.killSwitch = data.killSwitch;
       if (typeof data.draftApprovalsEnabled === "boolean") this.draftApprovalsEnabled = data.draftApprovalsEnabled;
+      if (typeof data.escalationEnabled === "boolean") this.escalationEnabled = data.escalationEnabled;
+      if (typeof data.pushoverEnabled === "boolean") this.pushoverEnabled = data.pushoverEnabled;
       for (const [jid, msgs] of Object.entries(data.ownerSentHistory ?? {})) {
         if (Array.isArray(msgs)) {
           const clean = msgs.filter((m): m is string => typeof m === "string");
