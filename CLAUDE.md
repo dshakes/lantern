@@ -471,17 +471,21 @@ encrypted at rest (see `internal/secrets`).
 Voice spend counts against the same `agent_budgets` as runs: a Twilio
 inbound call over a hard-fail budget is declined with `<Reject>` (no
 carrier cost); a LiveKit join token is refused with HTTP 402 (no token →
-no media). The estimated per-call cost accrues into `agent_usage_daily`
-on connect via `RecordUsage`.
+no media). A flat estimate accrues into `agent_usage_daily` on connect via
+`RecordUsage`, then the provider's status callback
+(`/v1/voice/calls/status/{provider}`) reconciles it to the actual
+duration-based cost via `AdjustUsageCost` when the call ends (a short or
+declined call refunds the reservation).
 
-| Method   | Path                           | Description                                                                      |
-| -------- | ------------------------------ | -------------------------------------------------------------------------------- |
-| `POST`   | `/v1/voice/numbers`            | Link a phone number to an agent (provider + config)                              |
-| `GET`    | `/v1/voice/numbers`            | List linked numbers                                                              |
-| `DELETE` | `/v1/voice/numbers/{id}`       | Unlink                                                                           |
-| `GET`    | `/v1/voice/calls`              | Recent calls with duration + cost                                                |
-| `POST`   | `/v1/voice/token`              | Mint a short-lived LiveKit join token for a room (agent worker / browser client) |
-| `POST`   | `/v1/voice/webhook/{provider}` | Provider POSTs here on inbound call (TwiML for Twilio; verified JWT for LiveKit) |
+| Method   | Path                                | Description                                                                                                                                                                   |
+| -------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/v1/voice/numbers`                 | Link a phone number to an agent (provider + config)                                                                                                                           |
+| `GET`    | `/v1/voice/numbers`                 | List linked numbers                                                                                                                                                           |
+| `DELETE` | `/v1/voice/numbers/{id}`            | Unlink                                                                                                                                                                        |
+| `GET`    | `/v1/voice/calls`                   | Recent calls with duration + cost                                                                                                                                             |
+| `POST`   | `/v1/voice/token`                   | Mint a short-lived LiveKit join token for a room (agent worker / browser client)                                                                                              |
+| `POST`   | `/v1/voice/webhook/{provider}`      | Provider POSTs here on inbound call (TwiML for Twilio; verified JWT for LiveKit)                                                                                              |
+| `POST`   | `/v1/voice/calls/status/{provider}` | Provider status callback on call end — reconciles actual duration + cost into `voice_calls` and the agent's budget rollup (point Twilio's "call status changes" webhook here) |
 
 ### Bridge heartbeat (WhatsApp surface)
 
