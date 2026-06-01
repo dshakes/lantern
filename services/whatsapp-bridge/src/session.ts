@@ -1002,6 +1002,18 @@ export class WhatsAppSession {
   // session closes. Capped so we never storm. Reset on a clean connect.
   private conflictBackoffMs = 60_000;
   private static readonly CONFLICT_BACKOFF_MAX_MS = 300_000;
+  // Conflict-storm watchdog. A single transient 440 is fine (stray double
+  // instance, recovers in ~60s). But SUSTAINED conflicts mean a second
+  // long-lived bridge genuinely owns this WhatsApp slot — fighting it
+  // forever just flaps the connection every 60s and drops inbound messages.
+  // After CONFLICT_STORM_THRESHOLD conflicts within CONFLICT_STORM_WINDOW_MS
+  // we go dormant (stop reconnecting) so the OTHER instance can hold the slot
+  // cleanly. The owner recovers with POST /start once the duplicate is gone.
+  private conflictStormCount = 0;
+  private conflictStormStartedAt = 0;
+  private conflictDormant = false;
+  private static readonly CONFLICT_STORM_THRESHOLD = 5;
+  private static readonly CONFLICT_STORM_WINDOW_MS = 360_000; // 6 min
   // Decrypt-storm watchdog. When the Signal pre-key state corrupts
   // (bridge killed mid-write, multi-process race, etc.), Baileys's
   // libsignal logs continuous "failed to decrypt message" errors at
@@ -1352,6 +1364,13 @@ export class WhatsAppSession {
   }
 
   async start() {
+    // A manual start() is the recovery path out of conflict dormancy:
+    // clear the storm so we genuinely re-attempt instead of immediately
+    // re-dormant. (Reconnect-timer-driven starts never reach here while
+    // dormant because we cancel the timer when going dormant.)
+    this.conflictDormant = false;
+    this.conflictStormCount = 0;
+    this.conflictStormStartedAt = 0;
     this.setConnectionState("starting");
     try {
       const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
@@ -1458,8 +1477,17 @@ export class WhatsAppSession {
           this.qrIssuedAt = null;
           this.reconnectAttempts = 0;
           this.conflictBackoffMs = 60_000; // clean connect resets conflict backoff
+          this.conflictDormant = false;
           this.lastConnectionEventAt = Date.now();
           this.lastError = null;
+          // A connection that survives past the storm window is genuinely
+          // stable — clear the storm counter so a future isolated conflict
+          // starts fresh. Flap cycles (open→440→open every ~60s) re-arm it
+          // faster than this fires, so sustained fighting still trips dormancy.
+          const stableFor = setTimeout(() => {
+            if (this.connected) { this.conflictStormCount = 0; this.conflictStormStartedAt = 0; }
+          }, WhatsAppSession.CONFLICT_STORM_WINDOW_MS);
+          stableFor.unref?.();
           // Each fresh connection gets its own bootstrap quota — the
           // peer device's session state may have changed under us.
           this.bootstrappedJids.clear();
@@ -1580,6 +1608,32 @@ export class WhatsAppSession {
           }
 
           if (isConflict) {
+            // Track the conflict storm. A real competing bridge produces a
+            // steady drumbeat of 440s; count them within a rolling window.
+            const now = Date.now();
+            if (now - this.conflictStormStartedAt > WhatsAppSession.CONFLICT_STORM_WINDOW_MS) {
+              this.conflictStormStartedAt = now;
+              this.conflictStormCount = 0;
+            }
+            this.conflictStormCount += 1;
+            if (this.conflictStormCount >= WhatsAppSession.CONFLICT_STORM_THRESHOLD) {
+              // Sustained fighting → another instance genuinely owns this
+              // slot. Stop reconnecting (going dormant) so it can hold the
+              // connection cleanly instead of both flapping every 60s and
+              // dropping inbound messages. Owner resumes via POST /start
+              // once the duplicate bridge is shut down.
+              this.conflictDormant = true;
+              if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+              this.setConnectionState(
+                "conflict",
+                "Another Lantern bridge is using this WhatsApp session. Went dormant to stop fighting — shut down the duplicate, then Reconnect.",
+              );
+              this.logger.error(
+                { conflicts: this.conflictStormCount, windowMs: WhatsAppSession.CONFLICT_STORM_WINDOW_MS },
+                "conflict storm — going dormant; a second bridge instance owns this WhatsApp slot",
+              );
+              return;
+            }
             // Self-healing conflict recovery (was previously terminal,
             // which left the bridge DOWN until a manual reconnect — the
             // opposite of "always up"). Schedule a single backed-off
