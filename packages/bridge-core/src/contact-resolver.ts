@@ -209,9 +209,9 @@ async function searchMacosContacts(
         set hits to (every person whose name contains "${safeQuery}")
         if (count of hits) is 0 then return ""
         set thePerson to item 1 of hits
-        set phones to value of every phone of thePerson
-        if (count of phones) is 0 then return ""
-        return (name of thePerson) & "|" & (item 1 of phones)
+        set phoneList to (value of phones of thePerson)
+        if (count of phoneList) is 0 then return ""
+        return (name of thePerson) & "|" & (item 1 of phoneList)
       end tell
     end run
   `;
