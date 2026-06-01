@@ -21,6 +21,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -345,8 +346,12 @@ func (h *JarvisHandler) twilioFromNumber(ctx context.Context, tenantID string) s
 	if err := h.srv.Pool.QueryRow(ctx,
 		`SELECT config FROM connector_installs WHERE tenant_id = $1 AND connector_id = 'twilio' LIMIT 1`,
 		tenantID).Scan(&cfg); err == nil {
+		dec, decErr := secrets.Decrypt(cfg)
+		if decErr != nil {
+			return ""
+		}
 		m := map[string]any{}
-		if json.Unmarshal(cfg, &m) == nil {
+		if json.Unmarshal(dec, &m) == nil {
 			if p, ok := m["phoneNumber"].(string); ok {
 				return strings.TrimSpace(p)
 			}

@@ -19,19 +19,19 @@
 
 ## Surfaces shipped at launch
 
-| Surface | Type | Inbound | Outbound | E2E? |
-|---|---|---|---|---|
-| **iOS app** | Native (Swift) + PWA fallback | Tap to start, voice, photo upload | Push, in-app stream | Yes |
-| **Android app** | Native (Kotlin) + PWA fallback | Tap to start, voice, photo upload | Push, in-app stream | Yes |
-| **Slack** | Bot + slash commands + Block Kit cards | `/lantern run ...`, mention, message in DM | Card replies, status updates | Per workspace policy |
-| **Discord** | Bot + slash commands + components | `/lantern run ...`, mention, DM | Components, embeds | No (Discord constraint) |
-| **Telegram** | Bot | `/start`, message, voice, photo | Inline buttons, message edits | Yes (Telegram E2E channel) |
-| **WhatsApp Business** | Cloud API | Message, voice, photo | Buttons, list messages | Per WhatsApp policy |
-| **iMessage** | Apple Business Chat | Message | Rich messages, list pickers | Yes |
-| **SMS** | Twilio | Inbound message | Outbound message | No |
-| **Voice** | Twilio Voice + Whisper + ElevenLabs | Inbound call | Synthesized speech with barge-in | No |
-| **Email** | Per-tenant `<id>.lantern.email` | Reply to thread | New thread or reply, with attachments | Optional PGP |
-| **Web Push** | VAPID | n/a | Notification → opens dashboard or mobile app | n/a |
+| Surface               | Type                                   | Inbound                                    | Outbound                                     | E2E?                       |
+| --------------------- | -------------------------------------- | ------------------------------------------ | -------------------------------------------- | -------------------------- |
+| **iOS app**           | Native (Swift) + PWA fallback          | Tap to start, voice, photo upload          | Push, in-app stream                          | Yes                        |
+| **Android app**       | Native (Kotlin) + PWA fallback         | Tap to start, voice, photo upload          | Push, in-app stream                          | Yes                        |
+| **Slack**             | Bot + slash commands + Block Kit cards | `/lantern run ...`, mention, message in DM | Card replies, status updates                 | Per workspace policy       |
+| **Discord**           | Bot + slash commands + components      | `/lantern run ...`, mention, DM            | Components, embeds                           | No (Discord constraint)    |
+| **Telegram**          | Bot                                    | `/start`, message, voice, photo            | Inline buttons, message edits                | Yes (Telegram E2E channel) |
+| **WhatsApp Business** | Cloud API                              | Message, voice, photo                      | Buttons, list messages                       | Per WhatsApp policy        |
+| **iMessage**          | Apple Business Chat                    | Message                                    | Rich messages, list pickers                  | Yes                        |
+| **SMS**               | Twilio                                 | Inbound message                            | Outbound message                             | No                         |
+| **Voice**             | Twilio (TwiML) or LiveKit (realtime)   | Inbound call                               | TwiML speech, or LiveKit Agents barge-in     | No                         |
+| **Email**             | Per-tenant `<id>.lantern.email`        | Reply to thread                            | New thread or reply, with attachments        | Optional PGP               |
+| **Web Push**          | VAPID                                  | n/a                                        | Notification → opens dashboard or mobile app | n/a                        |
 
 ---
 
@@ -115,7 +115,7 @@ In agent code:
 
 ```ts
 const decision = await ctx.ask({
-  surface: "auto",                       // or pin to "slack"
+  surface: "auto", // or pin to "slack"
   message: "Should I send the offer to the customer?",
   options: ["Send", "Edit and send", "Cancel"],
   timeout: "30m",
@@ -123,6 +123,7 @@ const decision = await ctx.ask({
 ```
 
 Under the hood:
+
 1. The workflow engine writes a `WaitingForUser` journal entry with the question payload.
 2. It tells the surface-gateway: "for session X, deliver this question."
 3. The adapter renders it natively (Slack interactive card, iMessage list picker, SMS numbered options, voice call IVR menu, email with reply tags).
@@ -158,23 +159,40 @@ Mobile push notifications fire when the agent enters states like "needs help," "
 
 ### Voice surface
 
+Voice is **provider-pluggable** via the `VoiceProvider` interface in
+`services/control-plane/internal/handlers/voice.go`. The control-plane owns the
+number→agent mapping, per-call state, webhook authentication, and (for LiveKit)
+access-token minting. The realtime audio loop runs in a separately-deployed
+media worker — this is the last mile.
+
+**Two shipped providers:**
+
+- **Twilio** (`provider: twilio`) — inbound calls hit
+  `POST /v1/voice/webhook/twilio`; we verify `X-Twilio-Signature` and reply
+  with TwiML. One-shot speech (`<Say>`/`<Gather>`) works today; full
+  bidirectional streaming requires Twilio Media Streams (the last mile).
+
+- **LiveKit** (`provider: livekit`) — the recommended path for low-latency
+  conversational voice. The control-plane mints LiveKit access tokens
+  (`POST /v1/voice/token`) and verifies LiveKit's signed webhooks. Inbound
+  PSTN reaches a room through a LiveKit SIP trunk + dispatch rule; a LiveKit
+  Agents worker joins the room and runs the realtime STT→LLM→TTS loop:
+
 ```
-phone caller ──► Twilio ──► WebSocket (raw audio) ──► surface-gateway
-                                                            │
-                                                            ▼
-                                              Whisper streaming ASR
-                                                            │
-                                                            ▼
-                                                ctx.ask reply (text)
-                                                            │
-                                                            ▼
-                                              ElevenLabs streaming TTS
-                                                            │
-                                                            ▼
-                                              Twilio ◀── audio stream
+phone caller ──► Twilio SIP / LiveKit SIP ──► LiveKit room
+                                                  │
+        control-plane mints join token  ─────────►│
+                                                  ▼
+                              LiveKit Agents worker (deployed by operator)
+                                  Whisper/Deepgram ASR → LLM → ElevenLabs TTS
+                                  barge-in + VAD turn-taking
 ```
 
-Barge-in supported (the user can interrupt the agent's voice). VAD-based turn taking. Voice is one of the first-class surfaces, not an afterthought — voice will be how most non-technical users interact with their agents.
+The worker authenticates with a token minted by `/v1/voice/token`, which is
+the real handoff between the control-plane (token authority) and the media
+worker. Barge-in and VAD turn-taking are properties of the LiveKit Agents
+worker, not the control-plane. Voice is a first-class surface — voice will be
+how most non-technical users interact with their agents.
 
 ### End-to-end encryption (personal mode)
 
@@ -191,6 +209,7 @@ This means **even Lantern operators can't read the contents of a personal user's
 ### Push notifications
 
 Web Push (VAPID), APNs, and FCM, all routed through the notifier. Notification types:
+
 - Run completed
 - Run failed (with error summary)
 - Approval required
@@ -205,7 +224,7 @@ Web Push (VAPID), APNs, and FCM, all routed through the notifier. Notification t
 ```ts
 // Inside an agent
 await ctx.ask({
-  surface: "auto",          // or "slack" / "imessage" / etc
+  surface: "auto", // or "slack" / "imessage" / etc
   message: "What's your preferred meeting time?",
   options: ["Tue 2pm", "Wed 10am", "Thu 4pm"],
   timeout: "1d",
@@ -238,6 +257,7 @@ await ctx.screen.share({
 `apps/mobile-ios` (Swift, SwiftUI, MQTT for live updates) and `apps/mobile-android` (Kotlin, Jetpack Compose) — both thin shells over the surface-gateway. PWA fallback at `app.lantern.run` for first-time users on platforms without native installs.
 
 Features at launch:
+
 - Inbox of all conversations across surfaces
 - Tap to start runs from a curated template list
 - Live agent screen-share with takeover
@@ -246,6 +266,7 @@ Features at launch:
 - Push notifications
 
 Post-launch:
+
 - Apple Watch / Wear OS complications for "approvals waiting"
 - Shortcuts / Quick actions to start agents from anywhere
 
@@ -265,6 +286,6 @@ See [`10-security.md`](10-security.md) for the threat model.
 
 ## What's intentionally NOT here
 
-- We don't build our own chat client. We're not Discord; we're an entrypoint to *your* agents from the apps you already use.
+- We don't build our own chat client. We're not Discord; we're an entrypoint to _your_ agents from the apps you already use.
 - We don't store chat history beyond what's needed to resume a session. The chat platform (Slack, etc.) is the long-term store.
 - We don't build a video conferencing platform. Voice is enough; video means computer-use screen-share, which is one-way.

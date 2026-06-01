@@ -61,6 +61,62 @@ func TestValidTwilioSignature(t *testing.T) {
 	}
 }
 
+// signTwilioCanonical is a reference signer that handles repeated parameters
+// the way Twilio's official libraries do: every (name, value) pair sorted by
+// name then value, concatenated. Used to verify the multi-value path.
+func signTwilioCanonical(token, fullURL string, form url.Values) string {
+	type kv struct{ k, v string }
+	pairs := make([]kv, 0, len(form))
+	for k, vals := range form {
+		for _, v := range vals {
+			pairs = append(pairs, kv{k, v})
+		}
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].k != pairs[j].k {
+			return pairs[i].k < pairs[j].k
+		}
+		return pairs[i].v < pairs[j].v
+	})
+	var b strings.Builder
+	b.WriteString(fullURL)
+	for _, p := range pairs {
+		b.WriteString(p.k)
+		b.WriteString(p.v)
+	}
+	mac := hmac.New(sha1.New, []byte(token))
+	mac.Write([]byte(b.String()))
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// TestValidTwilioSignatureMultiValue is a regression test for a webhook with a
+// repeated parameter (Twilio sends MediaUrl0..N as repeated keys on MMS). The
+// old implementation hashed only the first value and rejected these requests.
+func TestValidTwilioSignatureMultiValue(t *testing.T) {
+	const token = "test-auth-token"
+	const fullURL = "https://example.com/v1/sms/twilio/webhook"
+	form := url.Values{
+		"From":     {"+15125551234"},
+		"To":       {"+15125550000"},
+		"Body":     {"see attached"},
+		"MediaUrl": {"https://m.twilio.com/a", "https://m.twilio.com/b"},
+	}
+	good := signTwilioCanonical(token, fullURL, form)
+	if !validTwilioSignature(token, fullURL, form, good) {
+		t.Fatal("valid multi-value signature rejected (regression: only first value hashed)")
+	}
+	// Dropping one of the repeated values must change the digest.
+	fewer := url.Values{
+		"From":     {"+15125551234"},
+		"To":       {"+15125550000"},
+		"Body":     {"see attached"},
+		"MediaUrl": {"https://m.twilio.com/a"},
+	}
+	if validTwilioSignature(token, fullURL, fewer, good) {
+		t.Error("signature accepted after a repeated value was dropped")
+	}
+}
+
 func TestPinMatches(t *testing.T) {
 	// No PIN configured: never matches (channel falls back to caller-ID gate).
 	noPin := &SMSHandler{}

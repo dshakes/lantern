@@ -20,6 +20,7 @@ import (
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
+	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 	"github.com/dshakes/lantern/services/control-plane/internal/workflow"
 )
@@ -38,23 +39,35 @@ func resolveGmailToken(ctx context.Context, pool interface {
 		WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'
 	`, tenantID).Scan(&oauthTokenJSON)
 	if err == nil && len(oauthTokenJSON) > 0 {
-		var tokenData map[string]any
-		if jsonErr := json.Unmarshal(oauthTokenJSON, &tokenData); jsonErr == nil {
-			if at, ok := tokenData["access_token"].(string); ok && at != "" {
-				return at
+		if dec, decErr := secrets.Decrypt(oauthTokenJSON); decErr == nil {
+			var tokenData map[string]any
+			if jsonErr := json.Unmarshal(dec, &tokenData); jsonErr == nil {
+				if at, ok := tokenData["access_token"].(string); ok && at != "" {
+					return at
+				}
 			}
 		}
 	}
 
-	// Fall back to config->>'accessToken'.
-	var accessToken string
-	_ = pool.QueryRow(ctx, `
-		SELECT config->>'accessToken'
+	// Fall back to config.accessToken. The config is an encrypted JSONB
+	// envelope, so load + decrypt it in Go rather than via `config->>`.
+	var configRaw []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT config
 		FROM connector_installs
 		WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'
-	`, tenantID).Scan(&accessToken)
+	`, tenantID).Scan(&configRaw); err == nil {
+		if dec, decErr := secrets.Decrypt(configRaw); decErr == nil {
+			var cfg map[string]any
+			if json.Unmarshal(dec, &cfg) == nil {
+				if at, ok := cfg["accessToken"].(string); ok {
+					return at
+				}
+			}
+		}
+	}
 
-	return accessToken
+	return ""
 }
 
 // RESTHandler wraps the gRPC service handlers to expose them over HTTP/JSON.
@@ -1374,6 +1387,13 @@ func dispatchConnectorInProc(ctx context.Context, pool *pgxpool.Pool, tenantID, 
 	if err != nil {
 		return nil, fmt.Errorf("connector %s not installed for this tenant", connectorID)
 	}
+	// Credentials are encrypted at rest; decrypt before parsing.
+	if configRaw, err = secrets.Decrypt(configRaw); err != nil {
+		return nil, fmt.Errorf("decrypt connector config: %w", err)
+	}
+	if oauthRaw, err = secrets.Decrypt(oauthRaw); err != nil {
+		return nil, fmt.Errorf("decrypt connector oauth: %w", err)
+	}
 	cfg := map[string]any{}
 	_ = json.Unmarshal(configRaw, &cfg)
 	if len(oauthRaw) > 0 {
@@ -1520,8 +1540,12 @@ func (h *RESTHandler) tryRefreshGmailToken(ctx context.Context, tenantID string)
 		return "", fmt.Errorf("no Gmail connector: %w", err)
 	}
 
+	decToken, err := secrets.Decrypt(oauthTokenJSON)
+	if err != nil {
+		return "", fmt.Errorf("decrypt token: %w", err)
+	}
 	var tokenData map[string]any
-	if err := json.Unmarshal(oauthTokenJSON, &tokenData); err != nil {
+	if err := json.Unmarshal(decToken, &tokenData); err != nil {
 		return "", fmt.Errorf("parse token: %w", err)
 	}
 
@@ -1535,12 +1559,16 @@ func (h *RESTHandler) tryRefreshGmailToken(ctx context.Context, tenantID string)
 		return "", err
 	}
 
-	// Update the stored token.
+	// Re-encrypt and update the stored token.
 	tokenData["access_token"] = newAccessToken
 	updatedJSON, _ := json.Marshal(tokenData)
+	encUpdated, err := secrets.EncryptString(string(updatedJSON))
+	if err != nil {
+		return "", fmt.Errorf("encrypt token: %w", err)
+	}
 	_, _ = h.srv.Pool.Exec(ctx,
 		`UPDATE connector_installs SET oauth_token_encrypted = $1::jsonb WHERE tenant_id = $2 AND connector_id = 'gmail'`,
-		string(updatedJSON), tenantID,
+		encUpdated, tenantID,
 	)
 
 	return newAccessToken, nil

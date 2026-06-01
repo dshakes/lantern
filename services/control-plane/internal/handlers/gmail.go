@@ -298,42 +298,29 @@ func (h *GmailHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Try to get the OAuth access token from connector_installs.
+	// Try to get the OAuth access token from connector_installs. Credentials
+	// are encrypted at rest, so load + decrypt in Go (no `config->>` in SQL).
 	var accessToken string
 
 	// First check oauth_token_encrypted (set by OAuth flow).
-	var oauthTokenJSON []byte
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT oauth_token_encrypted
-		FROM connector_installs
-		WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'
-	`, tenantID).Scan(&oauthTokenJSON)
-	if err == nil && len(oauthTokenJSON) > 0 {
-		var tokenData map[string]any
-		if jsonErr := json.Unmarshal(oauthTokenJSON, &tokenData); jsonErr == nil {
-			if at, ok := tokenData["access_token"].(string); ok {
-				accessToken = at
-			}
+	if tokenData := loadDecryptedOAuth(ctx, h.srv.Pool, tenantID, "gmail"); len(tokenData) > 0 {
+		if at, ok := tokenData["access_token"].(string); ok {
+			accessToken = at
 		}
 	}
 
-	// Fall back to config->>'accessToken' (set by manual install).
+	// Load the decrypted config once for the manual-install + IMAP fallbacks.
+	cfg := loadDecryptedConfig(ctx, h.srv.Pool, tenantID, "gmail")
+
+	// Fall back to config.accessToken (set by manual install).
 	if accessToken == "" {
-		_ = h.srv.Pool.QueryRow(ctx, `
-			SELECT config->>'accessToken'
-			FROM connector_installs
-			WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'
-		`, tenantID).Scan(&accessToken)
+		accessToken, _ = cfg["accessToken"].(string)
 	}
 
-	// Fall back to config->>'email' + config->>'appPassword' for IMAP mode.
+	// Fall back to config.email + config.appPassword for IMAP mode.
 	if accessToken == "" {
-		var email, appPassword string
-		_ = h.srv.Pool.QueryRow(ctx, `
-			SELECT config->>'email', config->>'appPassword'
-			FROM connector_installs
-			WHERE tenant_id = $1 AND connector_id = 'gmail' AND status = 'connected'
-		`, tenantID).Scan(&email, &appPassword)
+		email, _ := cfg["email"].(string)
+		appPassword, _ := cfg["appPassword"].(string)
 
 		if email != "" && appPassword != "" {
 			messages, fetchErr := FetchGmailViaIMAP(email, appPassword, limit)
