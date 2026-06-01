@@ -2188,21 +2188,16 @@ export class IMessageSession {
         authedFetch: authedFetch as any,
         notifyOwner: async (text) => { await this.send(jid, text); },
         cachePendingOffer: (offer) => {
-          // Stash in pendingOffers as a freeform-followup so the
-          // existing "yes" intercept fires the call placement.
           this.pendingOffers.set(jid, {
-            kind: "freeform-followup",
-            freeformAction: `place ${offer.payload.mode} to ${offer.payload.to}`,
-            freeformInbound: `outbound call request: ${offer.payload.contactName || offer.payload.to}`,
-            freeformPriorReply: offer.planSummary,
+            kind: "outbound-call",
+            callRequest: offer.payload,
+            callPlan: offer.plan,
             issuedAt: offer.issuedAt,
-            // Stash the payload for retrieval on yes — encoded in
-            // freeformInbound for now; expansion of PendingOffer
-            // schema would be cleaner in a follow-up.
           } as any);
         },
         renderVoice: this.makeVoiceRenderer(),
       };
+      this.lastCallDeps = deps;
       const res = await executeOutboundCall(intent, deps, { ownerInitiated: true });
       return { ok: res.ok, reason: res.reason };
     } catch (err) {
@@ -2277,8 +2272,31 @@ export class IMessageSession {
 
   // Execute a cached offer from humanize's detectOfferInReply.
   // Bypasses the LLM entirely for confirmations — deterministic.
+  // Cached orchestrator deps from the most recent outbound-call setup.
+  private lastCallDeps: any = null;
+
   // Sends a natural confirmation back to the chat.
   private async executeCachedOffer(jid: string, offer: PendingOffer): Promise<void> {
+    // Outbound call — owner approved the pre-flight plan. Fire the
+    // dialer directly via the cached orchestrator deps.
+    if (offer.kind === "outbound-call" && (offer as any).callRequest && (offer as any).callPlan) {
+      try {
+        const { placeCallNow } = await import("@lantern/bridge-core/call-orchestrator");
+        const deps = this.lastCallDeps;
+        if (!deps) {
+          await this.send(jid, "(can't place the call — orchestrator deps missing, ask me again)");
+          return;
+        }
+        const res = await placeCallNow((offer as any).callRequest, (offer as any).callPlan, deps);
+        if (!res.ok) {
+          await this.send(jid, `(couldn't place call: ${res.reason || "unknown"})`);
+        }
+      } catch (err) {
+        this.logger.error({ err }, "outbound-call offer execution failed");
+        await this.send(jid, `(call failed — ${(err as Error).message})`);
+      }
+      return;
+    }
     if (offer.kind === "calendar-reminder" && offer.targetIsoDate && offer.leadDays) {
       // Compute the reminder date: targetIsoDate minus leadDays.
       const target = new Date(`${offer.targetIsoDate}T09:00:00`);
