@@ -93,35 +93,27 @@ export class MediaHandler {
   }
 
   private async transcribeVoice(buf: Buffer): Promise<MediaAnnotation> {
-    // Use OpenAI Whisper via the control-plane proxy. We bypass the
-    // /v1/completions path here because Whisper has its own endpoint;
-    // we call OpenAI directly when LANTERN_OPENAI_API_KEY is set, else
-    // surface a clear error so the user knows what's missing.
-    const apiKey = process.env.OPENAI_API_KEY || process.env.LANTERN_OPENAI_API_KEY;
-    if (!apiKey) {
-      return {
-        ok: false,
-        kind: "voice",
-        syntheticText:
-          "[voice note — transcription unavailable. Set OPENAI_API_KEY to enable Whisper.]",
-      };
-    }
+    // Transcribe via the control-plane Whisper proxy (POST
+    // /v1/audio/transcriptions), which uses the tenant's stored OpenAI key.
+    // This keeps the key out of the bridge process and respects the
+    // model-router invariant (no service calls api.openai.com directly).
+    // A raw OPENAI_API_KEY env var, if present, is honoured as an offline
+    // fallback only.
     try {
-      const form = new FormData();
-      form.append("file", new Blob([new Uint8Array(buf)], { type: "audio/ogg" }), "voice.ogg");
-      form.append("model", "whisper-1");
-      const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      const res = await authedFetch("/v1/audio/transcriptions", {
         method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}` },
-        body: form,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audioBase64: buf.toString("base64"), filename: "voice.ogg" }),
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
-        this.logger.warn({ status: res.status, body: body.slice(0, 200) }, "whisper failed");
+        this.logger.warn({ status: res.status, body: body.slice(0, 200) }, "transcription proxy failed");
+        const fallback = await this.transcribeVoiceDirect(buf);
+        if (fallback) return fallback;
         return {
           ok: false,
           kind: "voice",
-          syntheticText: `[voice note — Whisper returned ${res.status}]`,
+          syntheticText: `[voice note — transcription unavailable (${res.status}). Add an OpenAI key in Settings.]`,
         };
       }
       const data = (await res.json()) as { text?: string };
@@ -137,8 +129,35 @@ export class MediaHandler {
         syntheticText: `[voice note transcribed] ${transcript}`,
       };
     } catch (err) {
-      this.logger.warn({ err }, "whisper exception");
+      this.logger.warn({ err }, "transcription proxy exception");
+      const fallback = await this.transcribeVoiceDirect(buf);
+      if (fallback) return fallback;
       return { ok: false, kind: "voice", syntheticText: "[voice note — transcription errored]" };
+    }
+  }
+
+  // Offline/dev fallback: call OpenAI Whisper directly when a raw key is in
+  // the env. Returns null when no key is set so the caller can surface a
+  // clear "add a key" message. Not the prod path — see transcribeVoice.
+  private async transcribeVoiceDirect(buf: Buffer): Promise<MediaAnnotation | null> {
+    const apiKey = process.env.OPENAI_API_KEY || process.env.LANTERN_OPENAI_API_KEY;
+    if (!apiKey) return null;
+    try {
+      const form = new FormData();
+      form.append("file", new Blob([new Uint8Array(buf)], { type: "audio/ogg" }), "voice.ogg");
+      form.append("model", "whisper-1");
+      const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { text?: string };
+      const transcript = (data.text || "").trim();
+      if (!transcript) return null;
+      return { ok: true, kind: "voice", syntheticText: `[voice note transcribed] ${transcript}` };
+    } catch {
+      return null;
     }
   }
 

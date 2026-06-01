@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -2713,4 +2715,112 @@ func (h *LlmProxyHandler) OCR(w http.ResponseWriter, r *http.Request) {
 		text = result.Choices[0].Message.Content
 	}
 	writeJSON(w, http.StatusOK, ocrResponse{Text: text, Model: model, Provider: "openai"})
+}
+
+// transcribeRequest is the body of POST /v1/audio/transcriptions. Audio is
+// passed base64-encoded so the bridge doesn't have to construct a multipart
+// upload itself. Filename carries the container hint (WhatsApp voice notes
+// are OGG/Opus); Language is an optional ISO-639-1 bias for Whisper.
+type transcribeRequest struct {
+	AudioBase64 string `json:"audioBase64"`
+	Filename    string `json:"filename,omitempty"`
+	Language    string `json:"language,omitempty"`
+}
+
+type transcribeResponse struct {
+	Text     string `json:"text"`
+	Provider string `json:"provider"`
+}
+
+// Transcribe handles POST /v1/audio/transcriptions. Uses the tenant's OpenAI
+// key + Whisper to transcribe a base64 audio clip. This keeps the bridge from
+// calling api.openai.com directly (model-router invariant) and means the key
+// lives only in the control-plane. Returns 400 if no OpenAI key is configured.
+func (h *LlmProxyHandler) Transcribe(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := h.contextWithTenant(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	var req transcribeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.AudioBase64 == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "audioBase64 required"})
+		return
+	}
+	audio, err := base64.StdEncoding.DecodeString(req.AudioBase64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "audioBase64 is not valid base64"})
+		return
+	}
+
+	apiKey, err := h.resolveProviderKey(ctx, tenantID, "openai")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "transcription requires an OpenAI key — add one in Settings > LLM Providers (Whisper)",
+		})
+		return
+	}
+
+	filename := req.Filename
+	if filename == "" {
+		filename = "audio.ogg"
+	}
+
+	var form bytes.Buffer
+	mw := multipart.NewWriter(&form)
+	part, err := mw.CreateFormFile("file", filename)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to build multipart form"})
+		return
+	}
+	if _, err := part.Write(audio); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to write audio to form"})
+		return
+	}
+	_ = mw.WriteField("model", "whisper-1")
+	if req.Language != "" {
+		_ = mw.WriteField("language", req.Language)
+	}
+	if err := mw.Close(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to finalize multipart form"})
+		return
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/audio/transcriptions", &form)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to build request"})
+		return
+	}
+	httpReq.Header.Set("Content-Type", mw.FormDataContentType())
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := &http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		h.logger().Error("transcription request failed", zap.Error(err))
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to reach OpenAI: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(resp.Body)
+		h.logger().Warn("transcription returned non-200", zap.Int("status", resp.StatusCode), zap.String("body", string(errBody)))
+		writeJSON(w, resp.StatusCode, map[string]string{"error": "OpenAI transcription error", "details": string(errBody)})
+		return
+	}
+
+	var result struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to parse OpenAI response"})
+		return
+	}
+	writeJSON(w, http.StatusOK, transcribeResponse{Text: result.Text, Provider: "openai"})
 }
