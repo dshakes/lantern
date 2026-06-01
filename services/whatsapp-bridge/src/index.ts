@@ -38,6 +38,7 @@ const logger = pino({ level: process.env.LOG_LEVEL || "info" });
 // (using LANTERN_BRIDGE_EMAIL / PASSWORD, defaults to admin@lantern.dev
 // for dev). Survives JWT expiry + API restarts via auto-relogin on 401.
 import { initAuth, authEnabled } from "@lantern/bridge-core/auth";
+import { buildLabel } from "@lantern/bridge-core/build-info";
 initAuth(logger);
 
 // Resolve the bridge's package version once at boot so /diagnostics can
@@ -141,6 +142,7 @@ app.get("/health", (_, res) => {
     status: "ok",
     authRequired: !!BRIDGE_TOKEN,
     version: SERVICE_VERSION,
+    build: buildLabel(),
   });
 });
 
@@ -861,7 +863,7 @@ function autoResumeSessions(): void {
 }
 
 server.listen(PORT, BIND, () => {
-  logger.info({ bind: BIND, port: PORT }, "WhatsApp bridge service started");
+  logger.info({ bind: BIND, port: PORT, build: buildLabel() }, "WhatsApp bridge service started");
   // Auto-resume runs AFTER listen so the bridge accepts requests
   // immediately. Sessions reconnect in the background; their state
   // flows out via the existing WebSocket broadcast.

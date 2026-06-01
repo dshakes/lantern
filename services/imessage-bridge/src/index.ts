@@ -65,6 +65,7 @@ import { dirname } from "path";
 
 import { IMessageSession } from "./session.js";
 import { initAuth } from "@lantern/bridge-core/auth";
+import { buildLabel } from "@lantern/bridge-core/build-info";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -121,7 +122,7 @@ function getOrCreateSession(tenantId: string): IMessageSession {
 // ---- HTTP --------------------------------------------------------------
 
 app.get("/health", (_, res) => {
-  res.json({ status: "ok", authRequired: !!BRIDGE_TOKEN, version: "0.1.0", platform: process.platform });
+  res.json({ status: "ok", authRequired: !!BRIDGE_TOKEN, version: "0.1.0", build: buildLabel(), platform: process.platform });
 });
 
 // Guard the macOS-only routes — if running on Linux/Windows the bridge
@@ -425,7 +426,7 @@ const DEFAULT_TENANT = process.env.LANTERN_DEFAULT_TENANT_ID || "00000000-0000-0
 const AUTOSTART = (process.env.LANTERN_IMESSAGE_AUTOSTART ?? "1") !== "0";
 
 server.listen(PORT, BIND, async () => {
-  logger.info({ port: PORT, bind: BIND, platform: process.platform }, "lantern-imessage-bridge listening");
+  logger.info({ port: PORT, bind: BIND, build: buildLabel(), platform: process.platform }, "lantern-imessage-bridge listening");
   if (process.platform !== "darwin") {
     logger.warn("not running on macOS — /session/* routes will return 501");
     return;

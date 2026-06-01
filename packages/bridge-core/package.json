@@ -6,6 +6,7 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./build-info": "./src/build-info.ts",
     "./natural": "./src/natural.ts",
     "./auth": "./src/auth.ts",
     "./agent": "./src/agent.ts",
