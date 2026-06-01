@@ -647,7 +647,61 @@ const REASONING_LEAK_PATTERNS: { re: RegExp; reason: string }[] = [
     re: /\b(?:i'?ll|i\s+will|i'?d|let\s+me|i\s+should|best\s+to|safer\s+to|i'?m\s+going\s+to|going\s+to)\b[^.!?\n]{0,20}\b(?:stay\s+silent|not\s+reply|not\s+respond|hold\s+off|skip\s+(?:this|it|the\s+reply))\b/i,
     reason: "narrates a stay-silent decision",
   },
+  {
+    re: /\bnothing\s+(?:new\s+|else\s+|more\s+)?to\s+(?:add|say)\b/i,
+    reason: "narrates 'nothing to add'",
+  },
+  {
+    re: /\bno(?:thing)?\s+(?:more|else)\s+to\s+(?:add|say)\b/i,
+    reason: "narrates 'nothing more to say'",
+  },
+  {
+    re: /\bi(?:'?ve|\s+have)?\s+already\s+(?:answered|replied|responded|said|told|covered|addressed)\b/i,
+    reason: "narrates 'I already answered'",
+  },
+  {
+    re: /\b(?:already\s+)?answered\s+(?:this|that)\s+(?:exact\s+)?(?:question|one)\b/i,
+    reason: "narrates 'answered this question'",
+  },
+  {
+    re: /\b(?:is\s+|just\s+|keeps?\s+|are\s+)?repeating\b[^.!?\n]{0,30}(?:question|message|themselves|itself|"|“)/i,
+    reason: "narrates that the inbound is repeating",
+  },
+  {
+    re: /\bthe\s+(?:contact|sender|recipient|user)\s+(?:is|just|keeps?|said|asked|wrote|sent|repeated)\b/i,
+    reason: "narrates the contact's action in the third person",
+  },
 ];
+
+// Bare meta-tokens: the WHOLE draft is just a stand-in the model typed when
+// it meant "stay silent" — e.g. it literally sent "empty" instead of an empty
+// string, or "none" / "no reply" / "skip". These are never real messages.
+// Matched against the entire draft (stripped of wrapping punctuation/brackets),
+// so a normal sentence that merely contains the word "empty" is unaffected.
+const BARE_NO_REPLY_DRAFTS = new Set([
+  "empty",
+  "empty string",
+  "empty reply",
+  "empty response",
+  "none",
+  "n/a",
+  "na",
+  "null",
+  "undefined",
+  "nil",
+  "skip",
+  "skipped",
+  "silent",
+  "stay silent",
+  "no reply",
+  "no response",
+  "no reply needed",
+  "nothing",
+  "nothing to add",
+  "nothing new to add",
+  "pass",
+  "ignore",
+]);
 
 // Words that are dead giveaways of AI ghost-writing in a casual text.
 // A friend texting a friend doesn't say "kindly" or "delve" or
@@ -674,6 +728,18 @@ const AI_TELL_WORDS = [
 export function detectBotTells(draft: string): BotTellVerdict {
   const text = (draft || "").trim();
   if (!text) return { ok: false, reason: "empty draft (stay silent)" };
+
+  // Whole-draft bare meta-token: the model typed a placeholder ("empty",
+  // "none", "no reply", "nothing to add"…) instead of returning an actual
+  // empty string. Compare the entire draft with wrapping punctuation/brackets
+  // stripped so a real sentence containing these words is unaffected.
+  const bareToken = text
+    .toLowerCase()
+    .replace(/^[\s"'`([{*_~]+|[\s"'`)\]}*_~.!?:;,]+$/g, "")
+    .trim();
+  if (BARE_NO_REPLY_DRAFTS.has(bareToken)) {
+    return { ok: false, reason: `bare no-reply token ("${bareToken}")` };
+  }
 
   for (const { re, reason } of META_PATTERNS) {
     if (re.test(text)) return { ok: false, reason };
