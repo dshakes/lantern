@@ -128,6 +128,31 @@ export function isTrivialChatter(text: string): boolean {
   return TRIVIAL_CHATTER_RE.test(t);
 }
 
+// Greetings + pure small-talk ("hi", "hi how are you", "good morning",
+// "what's up"). Distinct from isTrivialChatter (which is acks/rejections):
+// these are openers that warrant a warm reply but NEVER need the agentic
+// tool pipeline. Routing them to natural chat saves the ~1.2s tool spin-up.
+// Deliberately tight — any actionable tail ("hi, when does my passport
+// expire") fails to match and falls through to the pipeline.
+const GREETING_WORD =
+  "(?:hi+|hey+|hello+|heya|hiya|yo+|sup|wassup|wazzup|gm|gn|" +
+  "good\\s*(?:morning|night|evening|afternoon)|namaste|hola)";
+const SMALLTALK_PHRASE =
+  "(?:how\\s*(?:are|r)\\s*(?:you|u|ya)(?:\\s*doing)?|how\\s*(?:are|r)\\s*(?:you|u)\\s*doing|" +
+  "how(?:'s|\\s+is)\\s+it\\s+going|how(?:'s|\\s+are)\\s+things|how\\s+have\\s+you\\s+been|" +
+  "what(?:'s|s)?\\s*up|whats\\s+up|" +
+  "hope\\s+(?:you(?:'re|\\s+are)?|u\\s+are)\\s+(?:well|good|doing\\s+well|great))";
+const GREETING_SMALLTALK_RE = new RegExp(
+  `^(?:${GREETING_WORD}|${SMALLTALK_PHRASE})(?:[\\s,.!?]+(?:${GREETING_WORD}|${SMALLTALK_PHRASE}))*[\\s!.?]*$`,
+  "i",
+);
+
+export function isGreetingSmallTalk(text: string): boolean {
+  const t = (text || "").trim();
+  if (!t || t.length > 40) return false;
+  return GREETING_SMALLTALK_RE.test(t);
+}
+
 // ---- the class ------------------------------------------------------------
 
 export class PersonalDocs {
