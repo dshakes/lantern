@@ -16,6 +16,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -112,8 +113,13 @@ func (h *LlmProxyHandler) resolveProviderKey(ctx context.Context, tenantID, prov
 		WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
 	`, tenantID, provider).Scan(&apiKeyEncrypted)
 	if err == nil && apiKeyEncrypted != "" {
-		// In production, decrypt. For spike, stored as plaintext.
-		return apiKeyEncrypted, nil
+		// Decrypt at rest (internal/secrets). Legacy plaintext keys pass
+		// through unchanged; encrypted keys are AES-256-GCM enveloped.
+		dec, decErr := secrets.Decrypt([]byte(apiKeyEncrypted))
+		if decErr != nil {
+			return "", fmt.Errorf("decrypt provider key: %w", decErr)
+		}
+		return string(dec), nil
 	}
 
 	// 2. Fall back to environment variables.
@@ -1500,13 +1506,19 @@ func (h *LlmProxyHandler) SaveLlmProvider(w http.ResponseWriter, r *http.Request
 	// Normalize provider names.
 	body.Provider = strings.ToLower(body.Provider)
 
-	// In production, encrypt the key. For spike, store as-is.
+	// Encrypt the key at rest (pass-through plaintext when no key configured).
+	encKey, err := secrets.EncryptString(body.ApiKey)
+	if err != nil {
+		h.logger().Error("encrypt llm provider key failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to secure provider key"})
+		return
+	}
 	_, err = h.srv.Pool.Exec(ctx, `
 		INSERT INTO llm_provider_configs (tenant_id, provider, api_key_encrypted, status)
 		VALUES ($1, $2, $3, 'active')
 		ON CONFLICT (tenant_id, provider)
 		DO UPDATE SET api_key_encrypted = $3, status = 'active', updated_at = now()
-	`, tenantID, body.Provider, body.ApiKey)
+	`, tenantID, body.Provider, encKey)
 	if err != nil {
 		h.logger().Error("save llm provider config failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save provider config"})

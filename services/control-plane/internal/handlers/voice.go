@@ -16,16 +16,20 @@ package handlers
 // pipeline plugs in via VoiceProvider implementations.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -44,6 +48,7 @@ func NewVoiceHandler(srv *server.Server, auth *AuthHandler) *VoiceHandler {
 	// Register the built-in providers. Adding a new provider is two
 	// lines: implement VoiceProvider and register it here.
 	h.providers["twilio"] = &twilioProvider{}
+	h.providers["livekit"] = &livekitProvider{}
 	return h
 }
 
@@ -62,6 +67,13 @@ type VoiceProvider interface {
 	// required fields. Called when the user saves a voice number, so
 	// invalid configs never make it to "active" status.
 	Validate(config map[string]any) error
+
+	// VerifyWebhook authenticates an inbound webhook using the provider's
+	// own scheme (Twilio: X-Twilio-Signature over the URL+params; LiveKit:
+	// an Authorization JWT over the API secret + body hash). fullURL is the
+	// absolute request URL; body is the raw request body. Returns nil when
+	// the request is authentic. Returning an error fails the webhook closed.
+	VerifyWebhook(config map[string]any, fullURL string, headers http.Header, body []byte) error
 
 	// HandleInboundWebhook is called by the provider's webhook (e.g.
 	// Twilio POSTs to /v1/voice/webhook/twilio when a call arrives).
@@ -93,11 +105,29 @@ func (p *twilioProvider) Validate(config map[string]any) error {
 	return nil
 }
 
+// VerifyWebhook checks the X-Twilio-Signature over the absolute URL + POST
+// params using the install's auth token. Verification is performed by the
+// generic webhook handler before this provider runs, but exposing it on the
+// provider keeps the contract uniform and lets callers re-verify.
+func (p *twilioProvider) VerifyWebhook(config map[string]any, fullURL string, headers http.Header, body []byte) error {
+	token, _ := config["authToken"].(string)
+	if token == "" {
+		return fmt.Errorf("twilio authToken not configured")
+	}
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return fmt.Errorf("parse form: %w", err)
+	}
+	if !validTwilioSignature(token, fullURL, form, headers.Get("X-Twilio-Signature")) {
+		return fmt.Errorf("invalid Twilio signature")
+	}
+	return nil
+}
+
 func (p *twilioProvider) HandleInboundWebhook(_ context.Context, _ map[string]any, _ []byte, headers http.Header) ([]byte, string, InboundCall, error) {
-	// Twilio sends form-urlencoded params: CallSid, From, To, etc.
-	// In real production we'd verify the X-Twilio-Signature header
-	// against the auth token + URL. For now we extract the form
-	// fields directly from the parsed request.
+	// Twilio sends form-urlencoded params (CallSid, From, To, ...). The
+	// generic webhook handler verifies the X-Twilio-Signature and injects
+	// the relevant fields as X-Lantern-* headers before calling this.
 	meta := InboundCall{
 		ProviderCallID: headers.Get("X-Lantern-Call-Sid"),
 		FromNumber:     headers.Get("X-Lantern-From"),
@@ -147,7 +177,7 @@ func (h *VoiceHandler) CreateNumber(w http.ResponseWriter, r *http.Request) {
 	provider, ok := h.providers[body.Provider]
 	if !ok {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("unknown provider %q (built-in: twilio)", body.Provider),
+			"error": fmt.Sprintf("unknown provider %q (built-in: twilio, livekit)", body.Provider),
 		})
 		return
 	}
@@ -156,7 +186,14 @@ func (h *VoiceHandler) CreateNumber(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	configJSON, _ := json.Marshal(body.ProviderConfig)
+	// Provider configs hold secrets (Twilio authToken, LiveKit apiSecret),
+	// so encrypt at rest (pass-through when no key is configured).
+	rawConfigJSON, _ := json.Marshal(body.ProviderConfig)
+	configJSON, err := secrets.EncryptString(string(rawConfigJSON))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to secure credentials"})
+		return
+	}
 	var id string
 	err = h.srv.Pool.QueryRow(ctx, `
 		INSERT INTO voice_numbers
@@ -271,12 +308,16 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse form data into headers so the provider adapter sees a
-	// uniform request shape. Real providers POST x-www-form-urlencoded.
+	// Read the raw body once: providers verify against it (LiveKit hashes
+	// it; Twilio signs over the parsed params) and we restore it for
+	// ParseForm below.
+	bodyBytes, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	// Parse form data into headers so form-based providers (Twilio) see a
+	// uniform request shape. Non-form providers (LiveKit) post JSON; the
+	// form is simply empty.
 	_ = r.ParseForm()
-	// Re-inject the form values as headers (X-Lantern-*) so providers
-	// can read them with the headers map alone — keeps the adapter
-	// interface narrow.
 	headers := r.Header.Clone()
 	if v := r.FormValue("CallSid"); v != "" {
 		headers.Set("X-Lantern-Call-Sid", v)
@@ -288,54 +329,88 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		headers.Set("X-Lantern-To", v)
 	}
 
-	// Look up the matching voice_numbers row by the dialed number.
-	to := headers.Get("X-Lantern-To")
-	if to == "" {
-		http.Error(w, "missing destination number", http.StatusBadRequest)
-		return
-	}
-
 	ctx := r.Context()
 	var tenantID, numberID, agentName string
 	var configRaw []byte
-	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT tenant_id::text, id::text, agent_name,
-		       COALESCE(provider_config, '{}'::jsonb)::text::bytea
-		FROM voice_numbers
-		WHERE phone_number = $1 AND status = 'active'
-		LIMIT 1
-	`, to).Scan(&tenantID, &numberID, &agentName, &configRaw)
-	if err != nil {
-		h.logger().Warn("voice webhook: unknown number", zap.String("to", to))
-		http.Error(w, "no agent configured for this number", http.StatusNotFound)
-		return
+
+	// Resolve the voice_numbers row. Form-based providers identify the
+	// dialed number directly (To); others (LiveKit SIP) don't carry it in
+	// the webhook, so we resolve by the single active number for that
+	// provider — the common one-project-per-deployment case.
+	if to := headers.Get("X-Lantern-To"); to != "" {
+		err := h.srv.Pool.QueryRow(ctx, `
+			SELECT tenant_id::text, id::text, agent_name,
+			       COALESCE(provider_config, '{}'::jsonb)::text::bytea
+			FROM voice_numbers
+			WHERE phone_number = $1 AND status = 'active'
+			LIMIT 1
+		`, to).Scan(&tenantID, &numberID, &agentName, &configRaw)
+		if err != nil {
+			h.logger().Warn("voice webhook: unknown number", zap.String("to", to))
+			http.Error(w, "no agent configured for this number", http.StatusNotFound)
+			return
+		}
+	} else {
+		err := h.srv.Pool.QueryRow(ctx, `
+			SELECT tenant_id::text, id::text, agent_name,
+			       COALESCE(provider_config, '{}'::jsonb)::text::bytea
+			FROM voice_numbers
+			WHERE provider = $1 AND status = 'active'
+			ORDER BY created_at
+			LIMIT 1
+		`, providerName).Scan(&tenantID, &numberID, &agentName, &configRaw)
+		if err != nil {
+			h.logger().Warn("voice webhook: no active number for provider", zap.String("provider", providerName))
+			http.Error(w, "no agent configured for this provider", http.StatusNotFound)
+			return
+		}
 	}
 
+	if dec, decErr := secrets.Decrypt(configRaw); decErr == nil {
+		configRaw = dec
+	}
 	cfg := map[string]any{}
 	_ = json.Unmarshal(configRaw, &cfg)
 
-	// Verify provider webhook authenticity before acting on it. The
-	// number's provider_config holds the credentials we sign against.
-	if providerName == "twilio" && strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) != "off" {
-		token, _ := cfg["authToken"].(string)
+	// Verify provider webhook authenticity before acting on it, using the
+	// number's provider_config credentials. Twilio honors a dev-only bypass.
+	skipVerify := providerName == "twilio" && strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) == "off"
+	if !skipVerify {
 		fullURL := derivePublicURL(r) + r.URL.Path
-		if !validTwilioSignature(token, fullURL, r.PostForm, r.Header.Get("X-Twilio-Signature")) {
-			h.logger().Warn("voice webhook: invalid Twilio signature", zap.String("to", to))
+		if verr := provider.VerifyWebhook(cfg, fullURL, headers, bodyBytes); verr != nil {
+			h.logger().Warn("voice webhook: verification failed",
+				zap.String("provider", providerName), zap.Error(verr))
 			http.Error(w, "invalid signature", http.StatusForbidden)
 			return
 		}
 	}
 
-	respBody, contentType, meta, err := provider.HandleInboundWebhook(ctx, cfg, nil, headers)
+	// Budget gate: voice spend counts against the agent's budget, the same
+	// way LLM runs do. A hard-fail-blocked agent declines the call BEFORE it
+	// connects so no carrier/media cost is incurred.
+	if bc := CheckBudget(ctx, h.srv.Pool, tenantID, agentName, estimatedInboundVoiceUsd); !bc.Allowed && bc.HardFail {
+		h.logger().Warn("voice call blocked by budget",
+			zap.String("agent", agentName), zap.String("reason", bc.Reason))
+		if providerName == "twilio" {
+			// <Reject> declines before answering, so Twilio does not bill it.
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><Response><Reject reason="busy"/></Response>`))
+			return
+		}
+		http.Error(w, "agent voice budget exhausted", http.StatusPaymentRequired)
+		return
+	}
+
+	respBody, contentType, meta, err := provider.HandleInboundWebhook(ctx, cfg, bodyBytes, headers)
 	if err != nil {
 		h.logger().Error("voice provider failed", zap.Error(err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Record the call so the dashboard can surface it. duration + cost
-	// land later via /v1/voice/calls/{id}/end emitted by the provider
-	// when the call hangs up.
+	// Record the call so the dashboard can surface it. duration + actual cost
+	// land later via /v1/voice/calls/{id}/end emitted by the provider when the
+	// call hangs up.
 	_, _ = h.srv.Pool.Exec(ctx, `
 		INSERT INTO voice_calls (tenant_id, voice_number_id, agent_name,
 		                          direction, from_number, to_number,
@@ -343,8 +418,99 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1, $2, $3, 'inbound', $4, $5, $6, 'ringing')
 	`, tenantID, numberID, agentName, meta.FromNumber, meta.ToNumber, meta.ProviderCallID)
 
+	// Accrue the estimated cost into the daily rollup immediately so the
+	// budget reflects in-flight voice spend (reconciled to actual on call end).
+	if err := RecordUsage(ctx, h.srv.Pool, tenantID, agentName, 0, 0, estimatedInboundVoiceUsd, map[string]int{"voice_call": 1}); err != nil {
+		h.logger().Warn("record voice usage failed", zap.Error(err))
+	}
+
 	w.Header().Set("Content-Type", contentType)
 	_, _ = w.Write(respBody)
+}
+
+// estimatedInboundVoiceUsd is the pre-call cost reservation charged against an
+// agent's budget when a voice call connects. It's deliberately a small flat
+// estimate (a few minutes of PSTN + STT/TTS/LLM); actual per-call cost is
+// reconciled into voice_calls.cost_usd when the call ends.
+const estimatedInboundVoiceUsd = 0.05
+
+// ---------- Access tokens (LiveKit) ----------
+
+// MintToken handles POST /v1/voice/token. It issues a short-lived LiveKit
+// access token so a browser client or the LiveKit Agents worker can join a
+// room. This is the real handoff between the control-plane (token authority)
+// and the media worker (the realtime audio loop). Owner/JWT-authenticated.
+//
+// Body: { "room": "...", "identity": "...", "name"?: "...", "provider"?: "livekit" }
+// Returns: { "token": "<jwt>", "url": "wss://..." }
+func (h *VoiceHandler) MintToken(w http.ResponseWriter, r *http.Request) {
+	ctx, tenantID, err := authCtx(h.auth, r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body struct {
+		Provider string `json:"provider"`
+		Room     string `json:"room"`
+		Identity string `json:"identity"`
+		Name     string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if body.Room == "" || body.Identity == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "room and identity are required"})
+		return
+	}
+	providerName := body.Provider
+	if providerName == "" {
+		providerName = "livekit"
+	}
+	if providerName != "livekit" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token minting is only supported for the livekit provider"})
+		return
+	}
+
+	var configRaw []byte
+	var agentName string
+	err = h.srv.Pool.QueryRow(ctx, `
+		SELECT agent_name, COALESCE(provider_config, '{}'::jsonb)::text::bytea
+		FROM voice_numbers
+		WHERE tenant_id = $1 AND provider = 'livekit' AND status = 'active'
+		ORDER BY created_at
+		LIMIT 1
+	`, tenantID).Scan(&agentName, &configRaw)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no active livekit voice number configured"})
+		return
+	}
+
+	// Budget gate: deny the join token when the agent is over a hard-fail
+	// budget. No token → the LiveKit Agents worker can't join → no media spend.
+	if bc := CheckBudget(ctx, h.srv.Pool, tenantID, agentName, estimatedInboundVoiceUsd); !bc.Allowed && bc.HardFail {
+		h.logger().Warn("livekit token denied by budget",
+			zap.String("agent", agentName), zap.String("reason", bc.Reason))
+		writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "agent voice budget exhausted: " + bc.Reason})
+		return
+	}
+
+	if dec, decErr := secrets.Decrypt(configRaw); decErr == nil {
+		configRaw = dec
+	}
+	cfg := map[string]any{}
+	_ = json.Unmarshal(configRaw, &cfg)
+	apiKey, _ := cfg["apiKey"].(string)
+	apiSecret, _ := cfg["apiSecret"].(string)
+	wsURL, _ := cfg["wsUrl"].(string)
+
+	token, err := mintLiveKitToken(apiKey, apiSecret, body.Room, body.Identity, body.Name, 15*time.Minute)
+	if err != nil {
+		h.logger().Error("mint livekit token failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to mint token"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": token, "url": wsURL})
 }
 
 // ---------- Recent calls ----------
