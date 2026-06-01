@@ -991,6 +991,31 @@ export class IMessageSession {
     // generous for legitimate "user retyped the same thing" — that's
     // not noise-rate user behavior anyway.
     const text = (row.text || "").trim();
+
+    // EARLY CONFIRMATION INTERCEPT — must run BEFORE cross-device dedup and
+    // the fromMe-handling path below, both of which were swallowing the
+    // owner's "yes" to a pending offer. Symptom: a perfect call pre-flight,
+    // owner replies "Yes", but the duplicate-inbound dedup (keyed on
+    // handle|text) dropped the actionable copy and the offer never executed
+    // → no call. Safe against the duplicate arrival: executeCachedOffer is
+    // one-shot (deletes the offer first), so the second "yes" finds nothing.
+    if (this.personalDocsEnabled && !isGroup && text && this.isOwnerChatRow(row)) {
+      this.gcPendingOffers();
+      const pending = this.pendingOffers.get(row.handle);
+      if (pending && looksLikeConfirmation(text)) {
+        this.logger.info({ kind: pending.kind, chat: row.handle }, "executing cached offer on confirmation (early intercept)");
+        this.pendingOffers.delete(row.handle);
+        void this.executeCachedOffer(row.handle, pending);
+        return;
+      }
+      if (pending && looksLikeRejection(text)) {
+        this.logger.info({ kind: pending.kind, chat: row.handle }, "dropping cached offer on rejection (early intercept)");
+        this.pendingOffers.delete(row.handle);
+        void this.send(row.handle, "👍 no worries");
+        return;
+      }
+    }
+
     if (text && row.handle) {
       const key = `${row.handle}|${text}`;
       const now = Date.now();
