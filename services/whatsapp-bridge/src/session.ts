@@ -3374,8 +3374,18 @@ export class WhatsAppSession {
         },
         logger: this.logger as any,
       });
-      if (result.appended.length === 0) return;
+      if (result.appended.length === 0) {
+        // Even when nothing was profile-worthy, the message may
+        // still be a cross-contact context ping ("Sujith reached
+        // home", "driving Madhu to the airport"). Try to capture
+        // it as a mention-tagged episode so the next inbound from
+        // that person surfaces it.
+        await this.maybeRecordMentionEpisode(jid, text);
+        return;
+      }
       this.ownerProfileStore.invalidate();
+      // Also try a mention-tagged episode — orthogonal to profile.
+      await this.maybeRecordMentionEpisode(jid, text);
       const ack = formatAck(result.appended);
       if (ack) {
         // Mirror to self-chat. confirmToSelf handles the
@@ -3384,6 +3394,32 @@ export class WhatsAppSession {
       }
     } catch (err) {
       this.logger.warn({ err }, "owner-profile auto-update failed");
+    }
+  }
+
+  // Capture cross-contact context from owner self-chat utterances.
+  // ("Sujith reached home" → episode tagged ["sujith"] under self-jid.)
+  // Used to surface the right context when the mentioned contact
+  // messages later.
+  private async maybeRecordMentionEpisode(jid: string, text: string): Promise<void> {
+    try {
+      const { extractMentionEpisodeFromSelfChat } = await import(
+        "@lantern/bridge-core/episodic-memory"
+      );
+      const knownNames = this.ownerProfileStore.knownFirstNames();
+      const ep = extractMentionEpisodeFromSelfChat({
+        selfJid: jid,
+        text,
+        knownNames,
+      });
+      if (!ep) return;
+      await this.episodicMemory.record(ep);
+      this.logger.info(
+        { mentions: ep.mentions, topic: ep.topic },
+        "mention-tagged episode recorded from self-chat",
+      );
+    } catch (err) {
+      this.logger.warn({ err }, "mention-episode capture failed");
     }
   }
 
@@ -4951,7 +4987,35 @@ export class WhatsAppSession {
     const dislikeEntries = !opts.isGroup ? await this.dislikeMemory.forJid(from, 3) : [];
     const dislikeBlock = formatDislikeBlock(dislikeEntries);
     const episodes = !opts.isGroup ? await this.episodicMemory.forJid(from, 5) : [];
-    const episodesBlock = formatEpisodesBlock(episodes);
+    // Cross-contact recall: pull episodes from OTHER chats (most
+    // importantly self-chat) that mention this contact by first name.
+    // This is how "Sujith was here this weekend" — said in self-chat —
+    // surfaces when Sujith messages two days later.
+    const contactFirstNames: string[] = [];
+    const senderName = opts.senderName || this.contactNames.get(from);
+    if (senderName && !opts.isGroup) {
+      const first = senderName.split(/\s+/)[0]?.toLowerCase();
+      if (first && first.length >= 2) contactFirstNames.push(first);
+    }
+    const mentionEpisodes = !opts.isGroup && contactFirstNames.length > 0
+      ? await this.episodicMemory.forMentions(contactFirstNames, { excludeJid: from, limit: 3, maxAgeDays: 30 })
+      : [];
+    const allEpisodes = [...episodes, ...mentionEpisodes]
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, 6);
+    const episodesBlock = formatEpisodesBlock(allEpisodes);
+    // Ambiguity-guardrail signal: if the inbound is short AND we have
+    // no recent context for this contact, the persona prompt should
+    // suppress speculative forward commitments. We pass this as a
+    // hint via the stylePrompt-merge path so the model gets a clear
+    // "don't invent plans" instruction inline.
+    const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+    const lowContext =
+      !opts.isGroup &&
+      wordCount <= 6 &&
+      allEpisodes.length === 0 &&
+      dislikeEntries.length === 0 &&
+      (!recentTranscript || recentTranscript.trim().length < 20);
     const inboundTopics = !opts.isGroup ? extractTopics(text) : [];
     const related = !opts.isGroup && inboundTopics.length > 0
       ? await this.socialGraph.related({ topics: inboundTopics, excludeJid: from, limit: 4 })
@@ -4990,6 +5054,7 @@ export class WhatsAppSession {
         presence: presenceLine,
         episodesBlock,
         relatedBlock,
+        lowContext,
       }
     );
 
@@ -4997,8 +5062,12 @@ export class WhatsAppSession {
     // Stripe") so the assistant doesn't cold-start each conversation.
     // Empty string when no facts exist — zero overhead.
     if (!opts.isGroup) {
-      const factsBlock = await this.personal.factsBlock(from);
-      if (factsBlock) systemHint += factsBlock;
+      // Unified cross-channel memory: facts + semantically-relevant
+      // timeline for this person regardless of which channel they last
+      // used. Passing the inbound text ranks memories by relevance (vector
+      // recall). Degrades to the per-jid facts block if unreachable.
+      const memBlock = await this.personal.unifiedBlock("whatsapp", from, text);
+      if (memBlock) systemHint += memBlock;
     }
 
     // Calendar-aware availability: cheap keyword probe gates the
@@ -5290,6 +5359,14 @@ export class WhatsAppSession {
           } catch { return ""; }
         },
       });
+    }
+
+    // Unified cross-channel timeline — record this exchange against the
+    // canonical person so it surfaces on every other channel (iMessage,
+    // SMS, voice, email). Best-effort; never blocks the reply.
+    if (!opts.isGroup) {
+      void this.personal.ingestEvent("whatsapp", from, "message_in", "in", text);
+      void this.personal.ingestEvent("whatsapp", from, "message_out", "out", draft);
     }
 
     // Social-graph index the outbound topics.

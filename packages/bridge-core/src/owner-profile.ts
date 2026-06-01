@@ -165,6 +165,27 @@ export class OwnerProfileStore {
     return ["The owner's people (use these names directly when asked about family/friends — do not call tools):", ...lines].join("\n");
   }
 
+  /** Lowercase FIRST names parsed from the Relationships section.
+   *  Used by the cross-contact episode extractor so the bot can spot
+   *  "Sujith reached home" in self-chat and tag the episode with
+   *  ["sujith"] for later recall when Sujith messages. Always includes
+   *  the owner's own first name too (when known) so phrases like "had
+   *  lunch with Sujith" tag him correctly. */
+  knownFirstNames(): string[] {
+    const prof = this.get();
+    const out = new Set<string>();
+    if (prof) {
+      for (const [name] of prof.relationships) {
+        if (/^\d+$/.test(name)) continue;
+        const first = name.split(/\s+/)[0]?.toLowerCase();
+        if (first && first.length >= 2) out.add(first);
+      }
+    }
+    const ownerName = (process.env.LANTERN_OWNER_NAME || "").trim().toLowerCase();
+    if (ownerName) out.add(ownerName);
+    return Array.from(out);
+  }
+
   /** Reverse lookup: given a role label like "son" / "wife" / "elder
    *  brother", return the names that match. Used for instant deterministic
    *  answers like "who is my son?". Case-insensitive, substring match

@@ -1639,7 +1639,29 @@ export class IMessageSession {
     const dislikeEntries = !isGroup ? await this.dislikeMemory.forJid(row.handle, 3) : [];
     const dislikeBlock = formatDislikeBlock(dislikeEntries);
     const episodes = !isGroup ? await this.episodicMemory.forJid(row.handle, 5) : [];
-    const episodesBlock = formatEpisodesBlock(episodes);
+    // Cross-contact recall — episodes from other chats (self-chat
+    // especially) that mention this contact by first name. Surfaces
+    // "Sujith was here this weekend" when Sujith messages later.
+    const senderFirstNames: string[] = [];
+    const senderDisplay = this.contactNames.get(row.handle);
+    if (senderDisplay && !isGroup) {
+      const f = senderDisplay.split(/\s+/)[0]?.toLowerCase();
+      if (f && f.length >= 2) senderFirstNames.push(f);
+    }
+    const mentionEpisodes = !isGroup && senderFirstNames.length > 0
+      ? await this.episodicMemory.forMentions(senderFirstNames, { excludeJid: row.handle, limit: 3, maxAgeDays: 30 })
+      : [];
+    const allEpisodes = [...episodes, ...mentionEpisodes]
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, 6);
+    const episodesBlock = formatEpisodesBlock(allEpisodes);
+    const imWordCount = text.trim().split(/\s+/).filter(Boolean).length;
+    const lowContext =
+      !isGroup &&
+      imWordCount <= 6 &&
+      allEpisodes.length === 0 &&
+      dislikeEntries.length === 0 &&
+      (!recentTranscript || recentTranscript.trim().length < 20);
     // Cross-thread context: extract topics from the current inbound,
     // pull related messages from OTHER contacts in the last 7 days.
     const inboundTopics = !isGroup ? extractTopics(text) : [];
@@ -1678,6 +1700,7 @@ export class IMessageSession {
       presence: presenceLine,
       episodesBlock,
       relatedBlock,
+      lowContext,
     });
     // Per-contact memory: facts the user has captured about this
     // contact (their daughter is Maya, works at Stripe, etc).
@@ -2975,18 +2998,45 @@ export class IMessageSession {
         },
         logger: this.logger as any,
       });
+      // Always try the mention-tagged episode capture, even when the
+      // profile-update extractor said "nothing durable here". A
+      // current-state ping like "Sujith reached home" is rarely a
+      // profile fact but is critical context for the next inbound
+      // from that person.
+      await this.maybeRecordMentionEpisode(jid, text);
       if (result.appended.length === 0) return;
-      // Force a fresh profile re-read on the next reply so the new
-      // facts influence the very next message.
       this.ownerProfileStore.invalidate();
-      // Ack the owner with what we just learned. Keep it terse;
-      // this is a memo, not a conversation.
       const ack = formatAck(result.appended);
       if (ack) {
         await this.send(jid, ack);
       }
     } catch (err) {
       this.logger.warn({ err }, "owner-profile auto-update failed");
+    }
+  }
+
+  // Cross-contact context capture from self-chat. Tag episodes with
+  // the mentioned person's first name so the next inbound from them
+  // surfaces it via forMentions().
+  private async maybeRecordMentionEpisode(jid: string, text: string): Promise<void> {
+    try {
+      const { extractMentionEpisodeFromSelfChat } = await import(
+        "@lantern/bridge-core/episodic-memory"
+      );
+      const knownNames = this.ownerProfileStore.knownFirstNames();
+      const ep = extractMentionEpisodeFromSelfChat({
+        selfJid: jid,
+        text,
+        knownNames,
+      });
+      if (!ep) return;
+      await this.episodicMemory.record(ep);
+      this.logger.info(
+        { mentions: ep.mentions, topic: ep.topic },
+        "mention-tagged episode recorded from self-chat",
+      );
+    } catch (err) {
+      this.logger.warn({ err }, "mention-episode capture failed");
     }
   }
 
