@@ -385,6 +385,22 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Budget gate: voice spend counts against the agent's budget, the same
+	// way LLM runs do. A hard-fail-blocked agent declines the call BEFORE it
+	// connects so no carrier/media cost is incurred.
+	if bc := CheckBudget(ctx, h.srv.Pool, tenantID, agentName, estimatedInboundVoiceUsd); !bc.Allowed && bc.HardFail {
+		h.logger().Warn("voice call blocked by budget",
+			zap.String("agent", agentName), zap.String("reason", bc.Reason))
+		if providerName == "twilio" {
+			// <Reject> declines before answering, so Twilio does not bill it.
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><Response><Reject reason="busy"/></Response>`))
+			return
+		}
+		http.Error(w, "agent voice budget exhausted", http.StatusPaymentRequired)
+		return
+	}
+
 	respBody, contentType, meta, err := provider.HandleInboundWebhook(ctx, cfg, bodyBytes, headers)
 	if err != nil {
 		h.logger().Error("voice provider failed", zap.Error(err))
@@ -392,9 +408,9 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Record the call so the dashboard can surface it. duration + cost
-	// land later via /v1/voice/calls/{id}/end emitted by the provider
-	// when the call hangs up.
+	// Record the call so the dashboard can surface it. duration + actual cost
+	// land later via /v1/voice/calls/{id}/end emitted by the provider when the
+	// call hangs up.
 	_, _ = h.srv.Pool.Exec(ctx, `
 		INSERT INTO voice_calls (tenant_id, voice_number_id, agent_name,
 		                          direction, from_number, to_number,
@@ -402,9 +418,21 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1, $2, $3, 'inbound', $4, $5, $6, 'ringing')
 	`, tenantID, numberID, agentName, meta.FromNumber, meta.ToNumber, meta.ProviderCallID)
 
+	// Accrue the estimated cost into the daily rollup immediately so the
+	// budget reflects in-flight voice spend (reconciled to actual on call end).
+	if err := RecordUsage(ctx, h.srv.Pool, tenantID, agentName, 0, 0, estimatedInboundVoiceUsd, map[string]int{"voice_call": 1}); err != nil {
+		h.logger().Warn("record voice usage failed", zap.Error(err))
+	}
+
 	w.Header().Set("Content-Type", contentType)
 	_, _ = w.Write(respBody)
 }
+
+// estimatedInboundVoiceUsd is the pre-call cost reservation charged against an
+// agent's budget when a voice call connects. It's deliberately a small flat
+// estimate (a few minutes of PSTN + STT/TTS/LLM); actual per-call cost is
+// reconciled into voice_calls.cost_usd when the call ends.
+const estimatedInboundVoiceUsd = 0.05
 
 // ---------- Access tokens (LiveKit) ----------
 
@@ -445,17 +473,28 @@ func (h *VoiceHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var configRaw []byte
+	var agentName string
 	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT COALESCE(provider_config, '{}'::jsonb)::text::bytea
+		SELECT agent_name, COALESCE(provider_config, '{}'::jsonb)::text::bytea
 		FROM voice_numbers
 		WHERE tenant_id = $1 AND provider = 'livekit' AND status = 'active'
 		ORDER BY created_at
 		LIMIT 1
-	`, tenantID).Scan(&configRaw)
+	`, tenantID).Scan(&agentName, &configRaw)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no active livekit voice number configured"})
 		return
 	}
+
+	// Budget gate: deny the join token when the agent is over a hard-fail
+	// budget. No token → the LiveKit Agents worker can't join → no media spend.
+	if bc := CheckBudget(ctx, h.srv.Pool, tenantID, agentName, estimatedInboundVoiceUsd); !bc.Allowed && bc.HardFail {
+		h.logger().Warn("livekit token denied by budget",
+			zap.String("agent", agentName), zap.String("reason", bc.Reason))
+		writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "agent voice budget exhausted: " + bc.Reason})
+		return
+	}
+
 	if dec, decErr := secrets.Decrypt(configRaw); decErr == nil {
 		configRaw = dec
 	}
