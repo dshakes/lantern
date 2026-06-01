@@ -461,6 +461,9 @@ func main() {
 	// Gmail + Calendar → unified timeline ingestion (Phase 2c).
 	go handlers.NewMemoryIngestor(pool, logger, identityHandler).Run(ctx)
 
+	// Proactive Jarvis morning brief (opt-in via LANTERN_JARVIS_BRIEF_HOUR).
+	go jarvisHandler.RunBriefScheduler(ctx)
+
 	// --- Wait for shutdown ---
 	select {
 	case <-ctx.Done():

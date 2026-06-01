@@ -13,7 +13,10 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -50,21 +53,23 @@ func (h *JarvisHandler) Brief(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	ctx := r.Context()
-	tenantID := claims.TenantID
-
-	calendar := h.upcomingCalendar(ctx, tenantID)
-	emails := h.recentEmails(ctx, tenantID)
-	awaiting := h.awaitingReply(ctx, tenantID)
-
-	brief := h.phraseBrief(ctx, tenantID, calendar, emails, awaiting)
-
+	brief, calendar, emails, awaiting := h.composeBrief(r.Context(), claims.TenantID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"brief":         brief,
 		"calendar":      calendar,
 		"recentEmails":  emails,
 		"awaitingReply": awaiting,
 	})
+}
+
+// composeBrief gathers the sections + phrases the brief. Shared by the
+// HTTP endpoint and the scheduled morning push.
+func (h *JarvisHandler) composeBrief(ctx context.Context, tenantID string) (string, []string, []briefEmail, []briefReply) {
+	calendar := h.upcomingCalendar(ctx, tenantID)
+	emails := h.recentEmails(ctx, tenantID)
+	awaiting := h.awaitingReply(ctx, tenantID)
+	brief := h.phraseBrief(ctx, tenantID, calendar, emails, awaiting)
+	return brief, calendar, emails, awaiting
 }
 
 // upcomingCalendar returns event-kind timeline rows from now through the
@@ -198,4 +203,79 @@ func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calend
 		return fallback
 	}
 	return strings.TrimSpace(out)
+}
+
+// ---- proactive morning push ------------------------------------------------
+
+// RunBriefScheduler delivers the brief once a day at LANTERN_JARVIS_BRIEF_HOUR
+// (0-23, local time). Disabled when unset. Delivers via SMS when
+// LANTERN_TWILIO_NUMBER + LANTERN_OWNER_PHONE are set, else via email to
+// LANTERN_OWNER_EMAIL. Best-effort; loops until ctx is cancelled.
+func (h *JarvisHandler) RunBriefScheduler(ctx context.Context) {
+	hourStr := strings.TrimSpace(os.Getenv("LANTERN_JARVIS_BRIEF_HOUR"))
+	if hourStr == "" {
+		h.logger().Info("jarvis morning brief disabled (LANTERN_JARVIS_BRIEF_HOUR unset)")
+		return
+	}
+	hour, err := strconv.Atoi(hourStr)
+	if err != nil || hour < 0 || hour > 23 {
+		h.logger().Warn("invalid LANTERN_JARVIS_BRIEF_HOUR — disabling brief push", zap.String("value", hourStr))
+		return
+	}
+	tenantID := getEnvOr("LANTERN_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001")
+	h.logger().Info("jarvis morning brief scheduled", zap.Int("hour", hour))
+
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	lastSentDay := ""
+	for {
+		// Check immediately on each tick (and once right away).
+		now := time.Now()
+		today := now.Format("2006-01-02")
+		if now.Hour() == hour && lastSentDay != today {
+			lastSentDay = today // mark up front so a delivery error doesn't spam the hour
+			brief, cal, emails, awaiting := h.composeBrief(ctx, tenantID)
+			if len(cal) == 0 && len(emails) == 0 && len(awaiting) == 0 {
+				h.logger().Info("morning brief: nothing to report, skipping send")
+			} else {
+				h.deliverBrief(ctx, tenantID, brief)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// deliverBrief sends the brief to the owner over the best available
+// channel. Best-effort with logging.
+func (h *JarvisHandler) deliverBrief(ctx context.Context, tenantID, brief string) {
+	twilioNum := strings.TrimSpace(os.Getenv("LANTERN_TWILIO_NUMBER"))
+	ownerPhone := strings.TrimSpace(os.Getenv("LANTERN_OWNER_PHONE"))
+	if twilioNum != "" && ownerPhone != "" {
+		body := brief
+		if len(body) > 600 {
+			body = body[:590] + " […]"
+		}
+		if _, err := executeConnectorAction(ctx, h.srv.Pool, tenantID, "twilio", "send_sms",
+			map[string]any{"to": ownerPhone, "from": twilioNum, "body": body}); err != nil {
+			h.logger().Warn("morning brief SMS failed", zap.Error(err))
+			return
+		}
+		h.logger().Info("morning brief sent via SMS")
+		return
+	}
+	ownerEmail := strings.TrimSpace(os.Getenv("LANTERN_OWNER_EMAIL"))
+	if ownerEmail != "" {
+		if _, err := executeConnectorAction(ctx, h.srv.Pool, tenantID, "gmail", "send_message",
+			map[string]any{"to": ownerEmail, "subject": "Your Lantern brief", "body": brief, "label": "lantern", "skipInbox": false}); err != nil {
+			h.logger().Warn("morning brief email failed", zap.Error(err))
+			return
+		}
+		h.logger().Info("morning brief sent via email")
+		return
+	}
+	h.logger().Warn("morning brief: no delivery channel configured (set LANTERN_TWILIO_NUMBER+LANTERN_OWNER_PHONE or LANTERN_OWNER_EMAIL)")
 }
