@@ -89,6 +89,9 @@ func (m *MemoryIngestor) tick(ctx context.Context) {
 	if g > 0 || c > 0 {
 		m.logger.Info("memory ingest tick", zap.Int("gmail", g), zap.Int("calendar", c))
 	}
+	// Eventual-consistency: embed any rows that still lack an embedding
+	// (rate-limited earlier, or written before embeddings were enabled).
+	m.identity.backfillEmbeddings(tctx, m.tenantID, 50)
 }
 
 // ownerEmail returns the lowercased owner email, used to skip self.

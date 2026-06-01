@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -58,14 +59,30 @@ func NewIdentityHandler(srv *server.Server, auth *AuthHandler, llm *LlmProxyHand
 	return &IdentityHandler{srv: srv, auth: auth, llm: llm}
 }
 
-// embedAsync computes + stores the embedding for a just-inserted event,
-// off the request path. Best-effort: any failure is logged and dropped,
-// leaving the row searchable by recency/keyword.
+// embedSem bounds concurrent embedding calls so an ingest burst (100+
+// rows in one tick) can't fan out into a thundering herd of OpenAI
+// requests and trip rate limits. Cap is small + env-overridable.
+var embedSem = make(chan struct{}, embedConcurrency())
+
+func embedConcurrency() int {
+	if v := strings.TrimSpace(os.Getenv("LANTERN_EMBED_CONCURRENCY")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 32 {
+			return n
+		}
+	}
+	return 4
+}
+
+// embedAsync computes + stores the embedding for an event off the request
+// path, capped by embedSem. Best-effort: a failed embed leaves the row
+// searchable by recency/keyword and is retried later by backfillEmbeddings.
 func (h *IdentityHandler) embedAsync(tenantID, eventID, text string) {
 	if h.llm == nil {
 		return
 	}
 	go func() {
+		embedSem <- struct{}{}
+		defer func() { <-embedSem }()
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
 		vec, err := h.llm.EmbedText(ctx, tenantID, text)
@@ -79,6 +96,38 @@ func (h *IdentityHandler) embedAsync(tenantID, eventID, text string) {
 			h.logger().Warn("embed store failed", zap.Error(err))
 		}
 	}()
+}
+
+// backfillEmbeddings embeds up to `limit` events that still lack an
+// embedding (rate-limited or pre-embedding rows), making semantic recall
+// eventually consistent. Called periodically by the memory ingestor.
+func (h *IdentityHandler) backfillEmbeddings(ctx context.Context, tenantID string, limit int) {
+	if h.llm == nil {
+		return
+	}
+	rows, err := h.srv.Pool.Query(ctx, `
+		SELECT id::text, content FROM memory_events
+		WHERE tenant_id = $1 AND embedding IS NULL
+		ORDER BY occurred_at DESC LIMIT $2
+	`, tenantID, limit)
+	if err != nil {
+		return
+	}
+	type pending struct{ id, content string }
+	var todo []pending
+	for rows.Next() {
+		var p pending
+		if rows.Scan(&p.id, &p.content) == nil {
+			todo = append(todo, p)
+		}
+	}
+	rows.Close()
+	for _, p := range todo {
+		h.embedAsync(tenantID, p.id, p.content)
+	}
+	if len(todo) > 0 {
+		h.logger().Debug("embedding backfill queued", zap.Int("count", len(todo)))
+	}
 }
 
 func (h *IdentityHandler) logger() *zap.Logger {

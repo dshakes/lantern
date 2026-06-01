@@ -69,7 +69,7 @@ func TestResolveAutoModel_StrategyQuality(t *testing.T) {
 	// When quality is the axis and both providers are available, we expect
 	// Claude Opus (quality 10) to win.
 	prov, model := resolveAutoModel(true, true)
-	if prov != "anthropic" || model != "claude-opus-4-20250514" {
+	if prov != "anthropic" || model != "claude-opus-4-8" {
 		t.Errorf("quality strategy should pick Opus, got %s/%s", prov, model)
 	}
 }
@@ -87,7 +87,7 @@ func TestResolveAutoModel_StrategyFast(t *testing.T) {
 	t.Setenv("LANTERN_ROUTE_STRATEGY", "fast")
 	// Fastest: haiku (10) and gpt-4o-mini (10) tie. Either is acceptable.
 	prov, model := resolveAutoModel(true, true)
-	if !(model == "claude-haiku-4-20250414" || model == "gpt-4o-mini") {
+	if !(model == "claude-haiku-4-5-20251001" || model == "gpt-4o-mini") {
 		t.Errorf("fast strategy should pick haiku or gpt-4o-mini, got %s/%s", prov, model)
 	}
 }
@@ -138,10 +138,10 @@ func TestResolveModel_KnownCapabilities(t *testing.T) {
 	}{
 		{"chat-large", "openai", "gpt-4o"},
 		{"chat-small", "openai", "gpt-4o-mini"},
-		{"reasoning-frontier", "anthropic", "claude-opus-4-20250514"},
-		{"reasoning-large", "anthropic", "claude-sonnet-4-20250514"},
-		{"reasoning-small", "anthropic", "claude-haiku-4-20250414"},
-		{"code-large", "anthropic", "claude-sonnet-4-20250514"},
+		{"reasoning-frontier", "anthropic", "claude-opus-4-8"},
+		{"reasoning-large", "anthropic", "claude-sonnet-4-6"},
+		{"reasoning-small", "anthropic", "claude-haiku-4-5-20251001"},
+		{"code-large", "anthropic", "claude-sonnet-4-6"},
 		{"vision-large", "openai", "gpt-4o"},
 	}
 	for _, tc := range cases {
