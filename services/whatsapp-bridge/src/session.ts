@@ -45,7 +45,7 @@ import { detectLanguageHints, languageModalityHint } from "@lantern/bridge-core/
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
-import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
 import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
@@ -1907,9 +1907,21 @@ export class WhatsAppSession {
                 await this.handleSelfChatCommand(voiceCmd, from);
                 continue;
               }
+              // Not a "lantern …" command — treat the transcript as a normal
+              // owner message so a voice note gets a conversational reply
+              // exactly like typed text (was: silently dropped because `text`
+              // stayed empty → the fromMe `if (!text) continue` below ate it).
+              this.logger.info({ transcript: transcript.slice(0, 80) }, "owner voice note → routing as chat");
+              this.broadcast({
+                type: "activity",
+                data: { kind: "message_in", summary: "🎙️ voice note transcribed", detail: transcript.slice(0, 200), jid: from, timestamp: Date.now() },
+              });
+              text = transcript;
+            } else if (annotation.kind === "voice") {
+              // Transcription failed — acknowledge instead of going silent.
+              await this.confirmToSelf("🎙️ i couldn't make out that voice note — mind typing it or re-recording?");
+              continue;
             }
-            // Non-command voice from owner self-chat — let it fall
-            // through; the bridge can still record it as exemplar etc.
           }
 
           // Media: voice notes → Whisper transcription; images → vision
@@ -2195,11 +2207,35 @@ export class WhatsAppSession {
     }
     const sent = await this.socket.sendMessage(own, { text });
     if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
+    // If this delivery (e.g. a morning brief or concierge summary) ends in
+    // a "want me to X?" offer, arm it so the owner's "yes" executes the
+    // follow-up instead of falling through to generic chatter.
+    this.cacheOwnerFollowupOffer(text, own);
     // Mirror to email + telegram so the user still gets it if WA
     // itself is degraded. mirrorToEmail is throttled per-text.
     void this.mirrorToEmail(text);
     void this.mirrorToTelegram(text);
     return own;
+  }
+
+  // Detect a "want me to X?" follow-up offer in an owner-facing delivery and
+  // cache it under the owner JID so a later "yes" / "do it" runs the offer via
+  // the existing pendingOffer → executeCachedOffer (freeform-followup) path.
+  // Scoped to freeform-followup so action acks ("✅ done") never arm a
+  // confirmation. This is what was missing for the proactive morning brief:
+  // its closing question was delivered via sendSelf, which never ran offer
+  // detection, so "yes" hit the chat handler instead.
+  private cacheOwnerFollowupOffer(text: string, ownJid: string): void {
+    if (!ownJid) return;
+    const offer = detectOfferInReply(text);
+    if (!offer || offer.kind !== "freeform-followup") return;
+    offer.issuedAt = Date.now();
+    offer.freeformPriorReply = text;
+    this.pendingOffers.set(ownJid, offer);
+    this.logger.info(
+      { action: (offer.freeformAction || "").slice(0, 80) },
+      "armed owner follow-up offer from delivered message",
+    );
   }
 
   /**
