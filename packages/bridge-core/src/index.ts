@@ -1,6 +1,7 @@
 // Barrel re-exports for @lantern/bridge-core.
 // Both bridges import from this single source.
 
+export * from "./build-info.js";
 export * from "./auth.js";
 export * from "./agent.js";
 export * from "./natural.js";
