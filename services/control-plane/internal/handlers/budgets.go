@@ -340,19 +340,24 @@ func RecordUsage(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName st
 	return err
 }
 
-// AdjustUsageCost adds deltaUsd (which may be negative) to TODAY's cost rollup
-// for an agent WITHOUT touching runs_count or tokens. Used to reconcile an
-// estimated charge to its actual value — e.g. when a voice call ends and the
-// flat connect-time reservation is replaced by the duration-based cost. The
-// resulting cost is clamped at >= 0 so a refund can't drive the rollup negative.
-func AdjustUsageCost(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName string, deltaUsd float64) error {
-	today := time.Now().UTC().Format("2006-01-02")
+// AdjustUsageCost adds deltaUsd (which may be negative) to the cost rollup for
+// an agent on usageDate (a "YYYY-MM-DD" UTC date) WITHOUT touching runs_count
+// or tokens. Used to reconcile an estimated charge to its actual value — e.g.
+// when a voice call ends and the flat connect-time reservation is replaced by
+// the duration-based cost. The delta must land on the SAME day the estimate was
+// charged (the reservation day), so a call crossing UTC midnight doesn't leave
+// the start day over-charged. The resulting cost is clamped at >= 0 so a refund
+// can't drive the rollup negative.
+func AdjustUsageCost(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName, usageDate string, deltaUsd float64) error {
+	if usageDate == "" {
+		usageDate = time.Now().UTC().Format("2006-01-02")
+	}
 	_, err := pool.Exec(ctx, `
 		INSERT INTO agent_usage_daily
 		  (tenant_id, agent_name, usage_date, runs_count, tokens_in, tokens_out, cost_usd, tool_counts)
 		VALUES ($1, $2, $3, 0, 0, 0, GREATEST($4, 0), '{}'::jsonb)
 		ON CONFLICT (tenant_id, agent_name, usage_date) DO UPDATE SET
 		  cost_usd = GREATEST(agent_usage_daily.cost_usd + $4, 0)
-	`, tenantID, agentName, today, deltaUsd)
+	`, tenantID, agentName, usageDate, deltaUsd)
 	return err
 }

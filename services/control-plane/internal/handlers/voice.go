@@ -572,35 +572,54 @@ func (h *VoiceHandler) CallStatus(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	// Find the recorded call + its number's encrypted config (for sig verify).
-	var callID, tenantID, agentName, status string
+	// Constrain by provider so a Twilio CallSid can't be reconciled by a
+	// LiveKit callback (or vice-versa). reservationDay is the UTC date the
+	// connect-time estimate was charged on, so the delta lands on the same day.
+	var callID, tenantID, agentName, status, reservationDay string
 	var cfgRaw []byte
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT vc.id::text, vc.tenant_id::text, vc.agent_name, vc.status,
+		       to_char(vc.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'),
 		       COALESCE(vn.provider_config, '{}'::jsonb)::text::bytea
 		FROM voice_calls vc
 		JOIN voice_numbers vn ON vn.id = vc.voice_number_id
-		WHERE vc.provider_call_id = $1
+		WHERE vc.provider_call_id = $1 AND vn.provider = $2
 		ORDER BY vc.started_at DESC
 		LIMIT 1
-	`, providerCallID).Scan(&callID, &tenantID, &agentName, &status, &cfgRaw)
+	`, providerCallID, providerName).Scan(&callID, &tenantID, &agentName, &status, &reservationDay, &cfgRaw)
 	if err != nil {
 		// Unknown call — ack so the provider stops retrying.
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	// Verify the provider signature (Twilio) before mutating state, unless
-	// dev-bypassed. The credentials come from the number's encrypted config.
-	if providerName == "twilio" && strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) != "off" {
+	// Verify the provider's webhook authenticity before mutating state, using
+	// the number's encrypted config. Twilio: X-Twilio-Signature (with a dev
+	// bypass). LiveKit: the Authorization JWT over the API secret + body hash,
+	// same scheme as inbound LiveKit webhooks — these callbacks adjust budget,
+	// so they must be authenticated too.
+	skipVerify := providerName == "twilio" && strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) == "off"
+	if !skipVerify {
 		if dec, decErr := secrets.Decrypt(cfgRaw); decErr == nil {
 			cfgRaw = dec
 		}
 		cfg := map[string]any{}
 		_ = json.Unmarshal(cfgRaw, &cfg)
-		token, _ := cfg["authToken"].(string)
-		fullURL := derivePublicURL(r) + r.URL.Path
-		if !validTwilioSignature(token, fullURL, r.PostForm, r.Header.Get("X-Twilio-Signature")) {
-			h.logger().Warn("voice status callback: invalid Twilio signature", zap.String("callSid", providerCallID))
+		var verr error
+		switch providerName {
+		case "twilio":
+			token, _ := cfg["authToken"].(string)
+			fullURL := derivePublicURL(r) + r.URL.Path
+			if !validTwilioSignature(token, fullURL, r.PostForm, r.Header.Get("X-Twilio-Signature")) {
+				verr = fmt.Errorf("invalid Twilio signature")
+			}
+		case "livekit":
+			secret, _ := cfg["apiSecret"].(string)
+			verr = verifyLiveKitWebhook(secret, r.Header.Get("Authorization"), bodyBytes)
+		}
+		if verr != nil {
+			h.logger().Warn("voice status callback: verification failed",
+				zap.String("provider", providerName), zap.Error(verr))
 			http.Error(w, "invalid signature", http.StatusForbidden)
 			return
 		}
@@ -634,9 +653,10 @@ func (h *VoiceHandler) CallStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reconcile the budget: estimatedInboundVoiceUsd was charged at connect.
-	// Apply the delta (negative on short/declined calls = a refund).
-	if err := AdjustUsageCost(ctx, h.srv.Pool, tenantID, agentName, actual-estimatedInboundVoiceUsd); err != nil {
+	// Reconcile the budget on the call's reservation day: estimatedInboundVoiceUsd
+	// was charged at connect. Apply the delta (negative on short/declined calls
+	// = a refund).
+	if err := AdjustUsageCost(ctx, h.srv.Pool, tenantID, agentName, reservationDay, actual-estimatedInboundVoiceUsd); err != nil {
 		h.logger().Warn("reconcile voice usage failed", zap.Error(err))
 	}
 	w.WriteHeader(http.StatusNoContent)
