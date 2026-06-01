@@ -277,6 +277,7 @@ func main() {
 	// LLM proxy / completions endpoint.
 	httpMux.HandleFunc("POST /v1/completions", llmProxyHandler.Complete)
 	httpMux.HandleFunc("POST /v1/vision/ocr", llmProxyHandler.OCR)
+	httpMux.HandleFunc("POST /v1/audio/transcriptions", llmProxyHandler.Transcribe)
 	// Streaming no-tools completion for the bridges' "first-sentence-fast"
 	// path. text/event-stream with per-token `data:` chunks + final
 	// `data: [DONE]`. No tool-call loop — tool-using queries should go
