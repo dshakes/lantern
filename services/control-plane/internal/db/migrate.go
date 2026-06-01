@@ -920,4 +920,112 @@ var migrations = []string{
 
 	`CREATE INDEX IF NOT EXISTS runtime_vms_tenant_created_idx
 		ON runtime_vms (tenant_id, created_at DESC)`,
+
+	// ---------------------------------------------------------------
+	// Identity graph + unified cross-channel timeline (Jarvis memory).
+	//
+	// The keystone for "context memory across channels". Today facts +
+	// episodes are keyed by a single channel handle (a WhatsApp JID),
+	// so something learned on WhatsApp is invisible on iMessage/SMS/
+	// email. These tables introduce a canonical PERSON that unifies all
+	// of a contact's handles, and a single timeline keyed by that
+	// person — so one conversation that spans WhatsApp + email + a call
+	// is one history.
+	//
+	//   * people          — canonical contact (+ the owner as is_owner).
+	//   * person_handles  — every channel handle that maps to a person
+	//                       (phone/whatsapp/imessage/sms/voice/email).
+	//                       Phone-like channels unify by digits.
+	//   * memory_events   — the unified timeline. Recency + keyword
+	//                       retrieval today; a vector embedding column is
+	//                       added in a later migration when semantic
+	//                       recall is wired (kept out here so startup
+	//                       never depends on the vector extension).
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS people (
+		id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		display_name TEXT,
+		relationship TEXT,
+		is_owner     BOOLEAN NOT NULL DEFAULT false,
+		notes        TEXT,
+		created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS people_tenant_idx ON people (tenant_id)`,
+
+	`CREATE TABLE IF NOT EXISTS person_handles (
+		id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		person_id   UUID NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+		channel     TEXT NOT NULL,
+		handle      TEXT NOT NULL,
+		created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+		UNIQUE (tenant_id, channel, handle)
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS person_handles_person_idx ON person_handles (person_id)`,
+
+	// Fast cross-channel phone unification: match any phone-like handle
+	// by its normalized digits regardless of which channel stored it.
+	`CREATE INDEX IF NOT EXISTS person_handles_tenant_handle_idx
+		ON person_handles (tenant_id, handle)`,
+
+	`CREATE TABLE IF NOT EXISTS memory_events (
+		id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+		person_id   UUID REFERENCES people(id) ON DELETE CASCADE,
+		channel     TEXT NOT NULL,
+		kind        TEXT NOT NULL,
+		direction   TEXT,
+		content     TEXT NOT NULL,
+		occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		metadata    JSONB NOT NULL DEFAULT '{}'::jsonb,
+		created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS memory_events_person_time_idx
+		ON memory_events (tenant_id, person_id, occurred_at DESC)`,
+
+	`CREATE INDEX IF NOT EXISTS memory_events_tenant_time_idx
+		ON memory_events (tenant_id, occurred_at DESC)`,
+
+	// Link existing facts to the identity graph. Nullable + backfilled
+	// as handles resolve; jid stays for backward-compat.
+	`ALTER TABLE whatsapp_contact_facts ADD COLUMN IF NOT EXISTS person_id UUID REFERENCES people(id) ON DELETE SET NULL`,
+
+	`CREATE INDEX IF NOT EXISTS whatsapp_contact_facts_person_idx
+		ON whatsapp_contact_facts (tenant_id, person_id, updated_at DESC)`,
+
+	// ---------------------------------------------------------------
+	// Semantic recall + external ingestion (Phase 2c).
+	//
+	// pgvector embeddings on the unified timeline turn "what did Madhu
+	// and I discuss about jobs" into a similarity search instead of a
+	// keyword match. The embedding column is nullable: rows are written
+	// immediately and embedded asynchronously, so ingestion never blocks
+	// on the embedding provider, and recency/keyword retrieval works for
+	// rows that haven't been embedded yet.
+	//
+	// external_id dedups events pulled from external sources (Gmail
+	// message id, Calendar event id) so the periodic ingestor is
+	// idempotent — re-pulling the same message is a no-op.
+	//
+	// Dimension 1536 = OpenAI text-embedding-3-small (cheap, good). If a
+	// different embed model is configured its vectors must match this
+	// width or the insert is skipped (logged), never crashing ingest.
+	// ---------------------------------------------------------------
+	`CREATE EXTENSION IF NOT EXISTS vector`,
+
+	`ALTER TABLE memory_events ADD COLUMN IF NOT EXISTS embedding vector(1536)`,
+
+	`ALTER TABLE memory_events ADD COLUMN IF NOT EXISTS external_id TEXT`,
+
+	`CREATE UNIQUE INDEX IF NOT EXISTS memory_events_external_idx
+		ON memory_events (tenant_id, kind, external_id)
+		WHERE external_id IS NOT NULL`,
+
+	`CREATE INDEX IF NOT EXISTS memory_events_embedding_idx
+		ON memory_events USING hnsw (embedding vector_cosine_ops)`,
 }

@@ -130,6 +130,7 @@ func main() {
 	smsHandler := handlers.NewSMSHandler(logger, srv.Pool, llmProxyHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
 	waPersonalHandler := handlers.NewWhatsAppPersonalHandler(srv, authHandler)
+	identityHandler := handlers.NewIdentityHandler(srv, authHandler, llmProxyHandler)
 	shortcutsHandler := handlers.NewShortcutsHandler(srv, authHandler)
 	apiKeyHandler := handlers.NewApiKeyHandler(srv, authHandler)
 	deploymentHandler := handlers.NewDeploymentHandler(srv, authHandler)
@@ -242,6 +243,12 @@ func main() {
 	httpMux.HandleFunc("POST /v1/whatsapp/drafts", waPersonalHandler.CreateDraft)
 	httpMux.HandleFunc("GET /v1/whatsapp/drafts", waPersonalHandler.ListDrafts)
 	httpMux.HandleFunc("POST /v1/whatsapp/drafts/{id}/act", waPersonalHandler.ActOnDraft)
+
+	// Identity graph + unified cross-channel timeline (Jarvis memory).
+	httpMux.HandleFunc("POST /v1/people/resolve", identityHandler.ResolvePerson)
+	httpMux.HandleFunc("GET /v1/people", identityHandler.ListPeople)
+	httpMux.HandleFunc("POST /v1/memory/events", identityHandler.IngestEvent)
+	httpMux.HandleFunc("GET /v1/memory/context", identityHandler.GetContext)
 
 	// iOS Shortcuts / Siri endpoints — single-purpose actions that map
 	// 1:1 to Shortcut steps. Plain-text responses so Siri can speak
@@ -446,6 +453,9 @@ func main() {
 	})
 	go sched.Start(ctx)
 	defer sched.Stop()
+
+	// Gmail + Calendar → unified timeline ingestion (Phase 2c).
+	go handlers.NewMemoryIngestor(pool, logger, identityHandler).Run(ctx)
 
 	// --- Wait for shutdown ---
 	select {

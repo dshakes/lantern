@@ -52,7 +52,7 @@ export interface OrchestratorDeps {
   notifyOwner: (text: string) => Promise<void>;
   // Get + set a pending offer keyed by the owner's chat jid. The
   // orchestrator uses this for pre-flight approval flow.
-  cachePendingOffer?: (offer: { kind: "outbound-call"; payload: OutboundCallRequest; planSummary: string; issuedAt: number }) => void;
+  cachePendingOffer?: (offer: { kind: "outbound-call"; payload: OutboundCallRequest; plan: CallPlan; planSummary: string; issuedAt: number }) => void;
   // Optional voice renderer for ElevenLabs clones. When set, the
   // orchestrator uses this to render TTS instead of relying on
   // inline Polly <Say>. Returns a URL Twilio can <Play> — must be

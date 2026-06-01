@@ -9,6 +9,23 @@ import type { Logger } from "pino";
 interface VIPEntry { jid: string; displayName: string }
 interface Fact { id: string; content: string; source: string; updatedAt: string }
 
+// Response shape of GET /v1/memory/context — the unified person view.
+interface UnifiedTimelineEvent {
+  channel: string;
+  kind: string;
+  direction: string;
+  content: string;
+  occurredAt: string;
+}
+interface UnifiedContext {
+  personId: string;
+  displayName?: string;
+  relationship?: string;
+  handles?: { channel: string; handle: string }[];
+  facts?: string[];
+  events?: UnifiedTimelineEvent[];
+}
+
 // Detect an owner "teach the bot a fact about this contact" instruction
 // typed in a contact's own thread: "remember she's vegetarian",
 // "note that he just had a baby", "fyi they're moving to Austin",
@@ -147,6 +164,98 @@ export class PersonalClient {
     if (facts.length === 0) return "";
     const top = facts.slice(0, 10).map((f) => `- ${f.content}`).join("\n");
     return `\n\nThings you know about this contact (use these when relevant — do not recite them verbatim):\n${top}`;
+  }
+
+  // ── Identity graph + unified cross-channel memory ──────────────────
+  // These power the "context memory across channels" goal: a contact is
+  // ONE person regardless of whether they reach you on WhatsApp, iMessage,
+  // SMS, a call, or email — and their facts + timeline are unified.
+
+  private contextCache: Map<string, { ctx: UnifiedContext | null; fetchedAt: number }> = new Map();
+  private static readonly CONTEXT_TTL_MS = 60_000;
+
+  // Fetch the unified context (facts + cross-channel timeline) for the
+  // person behind a (channel, handle). When `query` is given the timeline
+  // is ranked by semantic similarity (vector recall) instead of recency —
+  // so a reply pulls the MOST RELEVANT memories, not just the newest.
+  // Cached briefly only for the no-query case (per-message queries are
+  // unique, so caching them is pointless). Never throws.
+  async unifiedContext(channel: string, handle: string, query?: string): Promise<UnifiedContext | null> {
+    const q = (query || "").trim();
+    const key = `${channel}:${handle}`;
+    if (!q) {
+      const hit = this.contextCache.get(key);
+      if (hit && Date.now() - hit.fetchedAt < PersonalClient.CONTEXT_TTL_MS) return hit.ctx;
+    }
+    try {
+      let qs = `channel=${encodeURIComponent(channel)}&handle=${encodeURIComponent(handle)}&limit=12`;
+      if (q) qs += `&q=${encodeURIComponent(q.slice(0, 400))}`;
+      const res = await authedFetch(`/v1/memory/context?${qs}`);
+      if (!res.ok) {
+        if (!q) this.contextCache.set(key, { ctx: null, fetchedAt: Date.now() });
+        return null;
+      }
+      const ctx = (await res.json()) as UnifiedContext;
+      if (!q) this.contextCache.set(key, { ctx, fetchedAt: Date.now() });
+      return ctx;
+    } catch (err) {
+      this.logger.debug({ err, channel, handle }, "unified context fetch failed");
+      return null;
+    }
+  }
+
+  // Record a timeline event (inbound/outbound message, call, email, etc.)
+  // against the person behind (channel, handle). Fire-and-forget; a memory
+  // write must NEVER block or break a reply.
+  async ingestEvent(
+    channel: string,
+    handle: string,
+    kind: string,
+    direction: "in" | "out" | "",
+    content: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    const c = (content || "").trim();
+    if (!handle || !c) return;
+    try {
+      await authedFetch(`/v1/memory/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel, handle, kind, direction, content: c.slice(0, 4000), metadata }),
+      });
+      this.contextCache.delete(`${channel}:${handle}`); // surface the new event next read
+    } catch (err) {
+      this.logger.debug({ err, channel, handle }, "memory event ingest failed");
+    }
+  }
+
+  // Persona-prompt block built from the UNIFIED person view: facts learned
+  // on ANY channel + a short recent cross-channel timeline. Falls back to
+  // the per-jid factsBlock when the identity graph is unreachable, so this
+  // is always safe to call in place of factsBlock.
+  async unifiedBlock(channel: string, handle: string, query?: string): Promise<string> {
+    const ctx = await this.unifiedContext(channel, handle, query);
+    if (!ctx) return this.factsBlock(handle);
+
+    let block = "";
+    const facts = (ctx.facts ?? []).slice(0, 10);
+    if (facts.length > 0) {
+      block += `\n\nThings you know about this contact across all channels (use when relevant — don't recite verbatim):\n` +
+        facts.map((f) => `- ${f}`).join("\n");
+    }
+    // Recent timeline from OTHER channels — the current thread is already
+    // in the live transcript, so the value-add is what happened elsewhere.
+    const other = (ctx.events ?? [])
+      .filter((e) => e.channel && e.channel !== channel)
+      .slice(0, 6);
+    if (other.length > 0) {
+      block += `\n\nRecent across your other channels with them:\n` +
+        other.map((e) => {
+          const who = e.direction === "out" ? "you" : "them";
+          return `- [${e.channel}] ${who}: ${(e.content || "").slice(0, 140)}`;
+        }).join("\n");
+    }
+    return block;
   }
 
   // Post a draft for human approval. Bridge calls this for VIPs
