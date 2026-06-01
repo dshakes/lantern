@@ -193,8 +193,11 @@ func (p *livekitProvider) HandleInboundWebhook(_ context.Context, _ map[string]a
 		} `json:"participant"`
 	}
 	_ = json.Unmarshal(body, &event)
+	// Identify the call by the ROOM, not the participant: the call-end
+	// reconciliation arrives as a `room_finished` event that carries only the
+	// room (no participant), so both sides must key on room.sid to correlate.
 	meta := InboundCall{
-		ProviderCallID: firstNonEmpty(event.Participant.Sid, event.Room.Sid),
+		ProviderCallID: firstNonEmpty(event.Room.Sid, event.Participant.Sid),
 		FromNumber:     event.Participant.Identity,
 		ToNumber:       event.Room.Name,
 	}

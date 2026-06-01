@@ -379,6 +379,7 @@ func main() {
 	httpMux.HandleFunc("GET /v1/voice/numbers", voiceHandler.ListNumbers)
 	httpMux.HandleFunc("DELETE /v1/voice/numbers/{id}", voiceHandler.DeleteNumber)
 	httpMux.HandleFunc("GET /v1/voice/calls", voiceHandler.ListCalls)
+	httpMux.HandleFunc("POST /v1/voice/calls/status/{provider}", voiceHandler.CallStatus)
 	httpMux.HandleFunc("POST /v1/voice/token", voiceHandler.MintToken)
 	httpMux.HandleFunc("POST /v1/voice/webhook/{provider}", voiceHandler.Webhook)
 

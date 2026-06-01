@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -409,8 +410,8 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record the call so the dashboard can surface it. duration + actual cost
-	// land later via /v1/voice/calls/{id}/end emitted by the provider when the
-	// call hangs up.
+	// are reconciled later via POST /v1/voice/calls/status/{provider}, which
+	// the provider's status callback hits when the call ends.
 	_, _ = h.srv.Pool.Exec(ctx, `
 		INSERT INTO voice_calls (tenant_id, voice_number_id, agent_name,
 		                          direction, from_number, to_number,
@@ -511,6 +512,154 @@ func (h *VoiceHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"token": token, "url": wsURL})
+}
+
+// ---------- Call-end cost reconciliation ----------
+
+// CallStatus handles POST /v1/voice/calls/status/{provider}. The provider's
+// platform POSTs here when a call's status changes — Twilio's "call status
+// changes" callback (CallSid, CallStatus, CallDuration), or a LiveKit
+// room_finished webhook. On a terminal status we reconcile the flat
+// connect-time estimate to the actual duration-based cost: we persist
+// cost_usd + duration on the voice_calls row and adjust the agent's daily
+// budget rollup by (actual − estimate). A zero-duration call refunds the
+// reservation in full.
+//
+// Wiring: point the number's status callback at
+//
+//	<public-url>/v1/voice/calls/status/twilio
+//
+// Idempotent: a duplicate terminal callback is a no-op (guarded in the UPDATE).
+func (h *VoiceHandler) CallStatus(w http.ResponseWriter, r *http.Request) {
+	providerName := r.PathValue("provider")
+	bodyBytes, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	_ = r.ParseForm()
+
+	// Extract the provider call id, duration, and whether the call reached a
+	// terminal state, per provider.
+	var providerCallID string
+	var durationSec int
+	var terminal bool
+	switch providerName {
+	case "twilio":
+		providerCallID = r.FormValue("CallSid")
+		durationSec, _ = strconv.Atoi(r.FormValue("CallDuration"))
+		switch r.FormValue("CallStatus") {
+		case "completed", "busy", "failed", "no-answer", "canceled":
+			terminal = true
+		}
+	case "livekit":
+		var ev struct {
+			Event string `json:"event"`
+			Room  struct {
+				Sid      string  `json:"sid"`
+				Duration float64 `json:"duration"`
+			} `json:"room"`
+		}
+		_ = json.Unmarshal(bodyBytes, &ev)
+		providerCallID = ev.Room.Sid
+		durationSec = int(ev.Room.Duration)
+		terminal = ev.Event == "room_finished"
+	default:
+		http.Error(w, "unknown provider", http.StatusBadRequest)
+		return
+	}
+	if providerCallID == "" {
+		http.Error(w, "missing provider call id", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	// Find the recorded call + its number's encrypted config (for sig verify).
+	// Constrain by provider so a Twilio CallSid can't be reconciled by a
+	// LiveKit callback (or vice-versa). reservationDay is the UTC date the
+	// connect-time estimate was charged on, so the delta lands on the same day.
+	var callID, tenantID, agentName, status, reservationDay string
+	var cfgRaw []byte
+	err := h.srv.Pool.QueryRow(ctx, `
+		SELECT vc.id::text, vc.tenant_id::text, vc.agent_name, vc.status,
+		       to_char(vc.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'),
+		       COALESCE(vn.provider_config, '{}'::jsonb)::text::bytea
+		FROM voice_calls vc
+		JOIN voice_numbers vn ON vn.id = vc.voice_number_id
+		WHERE vc.provider_call_id = $1 AND vn.provider = $2
+		ORDER BY vc.started_at DESC
+		LIMIT 1
+	`, providerCallID, providerName).Scan(&callID, &tenantID, &agentName, &status, &reservationDay, &cfgRaw)
+	if err != nil {
+		// Unknown call — ack so the provider stops retrying.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// Verify the provider's webhook authenticity before mutating state, using
+	// the number's encrypted config. Twilio: X-Twilio-Signature (with a dev
+	// bypass). LiveKit: the Authorization JWT over the API secret + body hash,
+	// same scheme as inbound LiveKit webhooks — these callbacks adjust budget,
+	// so they must be authenticated too.
+	skipVerify := providerName == "twilio" && strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) == "off"
+	if !skipVerify {
+		if dec, decErr := secrets.Decrypt(cfgRaw); decErr == nil {
+			cfgRaw = dec
+		}
+		cfg := map[string]any{}
+		_ = json.Unmarshal(cfgRaw, &cfg)
+		var verr error
+		switch providerName {
+		case "twilio":
+			token, _ := cfg["authToken"].(string)
+			fullURL := derivePublicURL(r) + r.URL.Path
+			if !validTwilioSignature(token, fullURL, r.PostForm, r.Header.Get("X-Twilio-Signature")) {
+				verr = fmt.Errorf("invalid Twilio signature")
+			}
+		case "livekit":
+			secret, _ := cfg["apiSecret"].(string)
+			verr = verifyLiveKitWebhook(secret, r.Header.Get("Authorization"), bodyBytes)
+		}
+		if verr != nil {
+			h.logger().Warn("voice status callback: verification failed",
+				zap.String("provider", providerName), zap.Error(verr))
+			http.Error(w, "invalid signature", http.StatusForbidden)
+			return
+		}
+	}
+
+	if !terminal {
+		// Non-terminal update (ringing/in-progress) — nothing to reconcile.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if status == "completed" || status == "failed" {
+		w.WriteHeader(http.StatusNoContent) // already reconciled
+		return
+	}
+
+	actual := voiceCallCostUsd(providerName, durationSec)
+	newStatus := "completed"
+	if durationSec <= 0 {
+		newStatus = "failed"
+	}
+
+	// Persist actual cost + duration. The WHERE guard makes a concurrent or
+	// duplicate callback a no-op (atomic idempotency).
+	tag, err := h.srv.Pool.Exec(ctx, `
+		UPDATE voice_calls
+		SET status = $2, duration_ms = $3, cost_usd = $4, ended_at = now()
+		WHERE id = $1 AND status NOT IN ('completed','failed')
+	`, callID, newStatus, int64(durationSec)*1000, actual)
+	if err != nil || tag.RowsAffected() == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// Reconcile the budget on the call's reservation day: estimatedInboundVoiceUsd
+	// was charged at connect. Apply the delta (negative on short/declined calls
+	// = a refund).
+	if err := AdjustUsageCost(ctx, h.srv.Pool, tenantID, agentName, reservationDay, actual-estimatedInboundVoiceUsd); err != nil {
+		h.logger().Warn("reconcile voice usage failed", zap.Error(err))
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------- Recent calls ----------
