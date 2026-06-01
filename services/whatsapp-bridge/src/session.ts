@@ -1706,7 +1706,7 @@ export class WhatsAppSession {
                     this.agent.clearHistory(jid);
                   },
                   sendStatus: async () => {
-                    await this.handleSelfChatCommand({ action: "status", echo: "status", explicit: true }, jid);
+                    await this.handleSelfChatCommand({ action: "status", echo: "status", explicit: true }, from);
                   },
                   approveDraft: async () => { /* WhatsApp reaction-to-draft path is dashboard-only for now */ },
                   discardDraft: async () => {},
