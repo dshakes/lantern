@@ -1369,6 +1369,7 @@ export class WhatsAppSession {
       const origError = baileysLogger.error.bind(baileysLogger);
       baileysLogger.error = (obj: unknown, msg?: string) => {
         let probe = "";
+        let remoteJid = "";
         try {
           const m = (typeof obj === "object" && obj && (obj as { msg?: string }).msg) || msg || "";
           probe = String(m);
@@ -1376,11 +1377,17 @@ export class WhatsAppSession {
           // Buffers/circular refs that throw. Failure here MUST NOT
           // break logging.
           probe += " " + JSON.stringify(obj, (_k, v) => (v instanceof Error ? v.message : v));
+          // Grab the offending remoteJid so we can targeted-bootstrap
+          // the session via assertSessions(jid, force=true). Pattern
+          // matches both libsignal error envelopes + Baileys' own
+          // shape (key.remoteJid).
+          const m2 = probe.match(/"remoteJid"\s*:\s*"([^"]+)"/);
+          if (m2) remoteJid = m2[1];
         } catch {
           // Probe falls back to just the msg string
         }
-        if (/failed to decrypt message|No matching sessions|MessageCounterError|Bad MAC/i.test(probe)) {
-          this.noteDecryptError();
+        if (/failed to decrypt message|No session record|No matching sessions|MessageCounterError|Bad MAC/i.test(probe)) {
+          this.noteDecryptError(remoteJid);
         }
         origError(obj, msg);
       };
@@ -1453,6 +1460,9 @@ export class WhatsAppSession {
           this.conflictBackoffMs = 60_000; // clean connect resets conflict backoff
           this.lastConnectionEventAt = Date.now();
           this.lastError = null;
+          // Each fresh connection gets its own bootstrap quota — the
+          // peer device's session state may have changed under us.
+          this.bootstrappedJids.clear();
 
           // Get user info
           const user = this.socket?.user;
@@ -2653,15 +2663,46 @@ export class WhatsAppSession {
     return false;
   }
 
-  // Increment decrypt-error counter; trigger self-heal when the
-  // storm crosses threshold inside the rolling window.
-  private noteDecryptError(): void {
+  // Set of remoteJids we've already force-bootstrapped this connection
+  // — assertSessions() is idempotent but fetching pre-key bundles
+  // has a server-side rate-limit risk so we only do it once per JID
+  // per connection lifetime.
+  private bootstrappedJids: Set<string> = new Set();
+
+  // Increment decrypt-error counter; trigger targeted assertSessions
+  // for the offending remoteJid, AND self-heal when the storm crosses
+  // threshold inside the rolling window.
+  //
+  // assertSessions(jid, force=true) force-fetches a fresh pre-key
+  // bundle from the WhatsApp server for the peer device and
+  // establishes a new Signal session — bypassing the retry-receipt
+  // round-trip that the multi-device protocol gets stuck on when
+  // the peer device's session state has diverged from ours (common
+  // after multiple bridge restarts / re-pairs).
+  private noteDecryptError(remoteJid?: string): void {
     const now = Date.now();
     if (now - this.decryptErrorWindowStart > WhatsAppSession.DECRYPT_STORM_WINDOW_MS) {
       this.decryptErrorWindowStart = now;
       this.decryptErrorCount = 0;
     }
     this.decryptErrorCount++;
+
+    // Targeted bootstrap: force a fresh session with the failing peer
+    // device. This is what unsticks the "phone keeps sending with a
+    // session the bridge has no record of" deadlock.
+    if (remoteJid && !this.bootstrappedJids.has(remoteJid) && this.socket) {
+      this.bootstrappedJids.add(remoteJid);
+      const sock = this.socket;
+      void (async () => {
+        try {
+          await sock.assertSessions([remoteJid], true);
+          this.logger.info({ remoteJid }, "force-bootstrapped Signal session for failing peer");
+        } catch (err) {
+          this.logger.warn({ err, remoteJid }, "assertSessions force-bootstrap failed");
+        }
+      })();
+    }
+
     if (this.decryptErrorCount >= WhatsAppSession.DECRYPT_STORM_THRESHOLD && !this.selfHealing) {
       this.selfHealing = true;
       this.logger.warn(
