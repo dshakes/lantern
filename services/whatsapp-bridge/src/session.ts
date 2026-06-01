@@ -3759,6 +3759,8 @@ export class WhatsAppSession {
       `  • Calendar event: [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]`,
       `  • Note:           [NOTE:Title|Body text]`,
       `  • Mail draft:     [MAIL:to@x.com|Subject|Body]`,
+      `  • Phone call:     [CALL:Manasa|conference|why you're calling]   (mode = conference | voicemail | task)`,
+      `CALLS: when ${ownerName} asks you to call / phone / dial / ring / conference / reach someone (ANY phrasing, any language, typos and all — e.g. "call manu", "conference me withe manmanu", "can you ring her") you MUST emit a [CALL:...] marker. The bridge places the real call via Twilio and asks ${ownerName} to confirm before dialing. NEVER say "I'll call" / "calling her" / "will do" WITHOUT the [CALL:...] marker — a reply that claims a call without the marker is a lie, because no call happens. "conference me with X" → mode conference. "leave X a voicemail saying Y" → mode voicemail, message Y. "call the pharmacy to refill" → mode task, message the task. Use the contact's real name as target; the bridge resolves it to a number.`,
       `OFFER-then-CONFIRM applies ONLY to state-modifying actions (calendar, note, mail). For READ operations (search, list, look up, find), NEVER ask permission — just execute and report results. The user already asked; asking "shall I search?" is wasted turns.`,
       `For ROSTER questions ("who came on X", "who's in X"): the group rosters above are the truth. If a member appears as "(name unknown — group privacy)", that's WhatsApp's new privacy-preserving identifier (@lid) — we genuinely don't have their name because they haven't DM'd us. State the FULL roster size from the group AND list every name we DO have; for the rest say "N others (WhatsApp doesn't expose names of non-contacts in groups, unless they DM you)". Their PARTICIPATION in the group still proves they were on the trip. Do NOT ask the user if they want you to search further; if you can search WhatsApp/iMessage history for the trip date range, JUST DO IT in this same turn.`,
       apptBlock ? "\n" + apptBlock : "",
@@ -3781,7 +3783,7 @@ export class WhatsAppSession {
     }
 
     const { cleanedText: textNoAttach, paths } = extractAttachMarkers(draft);
-    const { cleanedText: finalText, calendarEvents, notes, mailDrafts } = extractActionMarkers(textNoAttach);
+    const { cleanedText: finalText, calendarEvents, notes, mailDrafts, calls } = extractActionMarkers(textNoAttach);
     // Humanize: friendly dates + guaranteed offer + deterministic
     // execution path on next-turn confirmation.
     const { reply: polished, offer } = humanizeWithOffer(finalText);
@@ -3843,6 +3845,29 @@ export class WhatsAppSession {
           const res = await this.macActions.createMailDraft(m);
           await this.confirmToSelf(res.ok ? `✉️ draft opened in Mail — review + send when ready` : `(mail draft failed: ${res.reason})`);
         } catch (err) { this.logger.warn({ err }, "mail action exception"); }
+      }
+    }
+    // Outbound calls — LLM emitted a [CALL:...] marker. Route through the
+    // real Twilio orchestrator (risk-tier classify → pre-flight summary →
+    // owner ack → dial). Runs regardless of macActions (calls are Twilio,
+    // not AppleScript). This is the intelligent replacement for the brittle
+    // "call X" regexes: the model understands intent in any phrasing.
+    for (const c of calls) {
+      try {
+        this.logger.info({ target: c.target, mode: c.mode }, "LLM [CALL] marker → outbound orchestrator");
+        const res = await this.placeOutboundCallFromOwner({
+          intent: c.mode,
+          target: c.target,
+          message: c.message,
+          reason: c.message,
+          chatJid: jid,
+        });
+        if (!res.ok) {
+          await this.confirmToSelf(`(couldn't set up the call — ${res.reason || "unknown"})`);
+        }
+      } catch (err) {
+        this.logger.warn({ err, target: c.target }, "outbound [CALL] marker exception");
+        await this.confirmToSelf(`(call failed — ${(err as Error).message})`);
       }
     }
     } finally {

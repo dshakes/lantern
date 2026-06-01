@@ -3260,6 +3260,8 @@ export class IMessageSession {
       "  • Calendar:       [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]",
       "  • Note:           [NOTE:Title|Body text]",
       "  • Mail draft:     [MAIL:to@x.com|Subject|Body]",
+      "  • Phone call:     [CALL:Manasa|conference|why you're calling]   (mode = conference | voicemail | task)",
+      "CALLS: when the owner asks you to call / phone / dial / ring / conference / reach someone (ANY phrasing, any language, typos and all — e.g. 'call manu', 'conference me withe manu', 'can you ring her') you MUST emit a [CALL:...] marker. The bridge places the real call via Twilio and asks the owner to confirm before dialing. NEVER say 'I'll call' / 'calling her' / 'will do' WITHOUT the [CALL:...] marker — a reply that claims a call without the marker is a lie, because no call happens. 'conference me with X' → mode conference. 'leave X a voicemail saying Y' → mode voicemail, message Y. 'call the pharmacy to refill' → mode task. Use the contact's real name as target; the bridge resolves it to a number.",
       "OFFER-then-CONFIRM applies ONLY to state-modifying actions (calendar, note, mail, attach). For READ operations (search, list, look up, find), NEVER ask permission — just execute and report results. The user already asked; asking 'shall I search?' is wasted turns.",
       "# No-permission-to-read rule (HARD)",
       "When the user asks a question that needs data ('do you know my X', 'what is my X', 'find my X', 'when is my X', 'who is X', 'show me X'):",
@@ -3305,7 +3307,7 @@ export class IMessageSession {
     // reads cleanly. Actions then execute one-by-one with concise
     // confirmations back to the chat.
     const { cleanedText: textNoAttach, paths } = extractAttachMarkers(draft);
-    const { cleanedText: finalText, calendarEvents, notes, mailDrafts } = extractActionMarkers(textNoAttach);
+    const { cleanedText: finalText, calendarEvents, notes, mailDrafts, calls } = extractActionMarkers(textNoAttach);
 
     // Humanize: friendly dates + guaranteed follow-up offer. The
     // returned `offer` lets us deterministically execute the action
@@ -3393,6 +3395,28 @@ export class IMessageSession {
         this.logger.info({ to: m.to, subject: m.subject, ok: res.ok }, "mail action");
       } catch (err) {
         this.logger.warn({ err, subject: m.subject }, "mail action exception");
+      }
+    }
+    // Outbound calls — LLM emitted a [CALL:...] marker. Route through the
+    // real Twilio orchestrator (risk-tier → owner ack → dial). The
+    // intelligent replacement for brittle "call X" regexes: the model
+    // understands intent in any phrasing and only a marker places a call,
+    // so it can't claim "i'll call her" without one actually happening.
+    for (const c of calls) {
+      try {
+        this.logger.info({ target: c.target, mode: c.mode }, "LLM [CALL] marker → outbound orchestrator");
+        const res = await this.placeOutboundCallFromOwner(jid, {
+          intent: c.mode,
+          target: c.target,
+          message: c.message,
+          reason: c.message,
+        });
+        if (!res.ok) {
+          await this.send(jid, `(couldn't set up the call — ${res.reason || "unknown"})`);
+        }
+      } catch (err) {
+        this.logger.warn({ err, target: c.target }, "outbound [CALL] marker exception");
+        await this.send(jid, `(call failed — ${(err as Error).message})`);
       }
     }
     } finally {
