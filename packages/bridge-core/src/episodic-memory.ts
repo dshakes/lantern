@@ -45,6 +45,12 @@ export interface Episode {
   // Optional rich context — the inbound + outbound that produced
   // this episode. Used for debugging + re-extraction. Kept short.
   context?: { inbound?: string; outbound?: string };
+  // Lowercase first names this episode references besides the jid
+  // owner. Lets cross-contact recall work: when the owner says
+  // "Sujith was here this weekend" in self-chat, the episode lives
+  // in the self-chat bucket BUT mentions ["sujith"], so Sujith's
+  // next inbound message surfaces it via forMentions("sujith").
+  mentions?: string[];
   ts: number; // epoch ms when recorded
 }
 
@@ -87,6 +93,36 @@ export class EpisodicMemory {
     await this.refreshIfStale();
     const bucket = this.cache?.get(jid) ?? [];
     return bucket.slice(0, limit);
+  }
+
+  /**
+   * Newest-first episodes whose `mentions` array contains ANY of the
+   * supplied lowercase names. Excludes episodes already in the jid's
+   * own bucket so the reply pipeline can stack jid + mention recall
+   * without duplicates. Default cap 5, time-windowed to 30 days so an
+   * arrival report from 2 years ago doesn't poison a fresh exchange.
+   */
+  async forMentions(
+    names: string[],
+    opts: { excludeJid?: string; limit?: number; maxAgeDays?: number } = {},
+  ): Promise<Episode[]> {
+    if (names.length === 0) return [];
+    const lower = names.map((n) => n.trim().toLowerCase()).filter(Boolean);
+    if (lower.length === 0) return [];
+    await this.refreshIfStale();
+    const maxAgeMs = (opts.maxAgeDays ?? 30) * 86_400_000;
+    const cutoff = Date.now() - maxAgeMs;
+    const out: Episode[] = [];
+    for (const bucket of this.cache?.values() ?? []) {
+      for (const ep of bucket) {
+        if (ep.ts < cutoff) continue;
+        if (opts.excludeJid && ep.jid === opts.excludeJid) continue;
+        if (!ep.mentions || ep.mentions.length === 0) continue;
+        if (ep.mentions.some((m) => lower.includes(m))) out.push(ep);
+      }
+    }
+    out.sort((a, b) => b.ts - a.ts);
+    return out.slice(0, opts.limit ?? 5);
   }
 
   private async refreshIfStale(): Promise<void> {
@@ -136,6 +172,54 @@ export function formatEpisodesBlock(episodes: Episode[]): string {
     lines.push(`- ${ep.date} — ${topic}${ep.outcome}`);
   }
   return lines.join("\n");
+}
+
+/**
+ * Extract a cross-contact episode from an owner self-chat utterance.
+ * Catches statements like:
+ *   "Sujith is visiting this weekend"
+ *   "Driving Madhu to the airport tomorrow"
+ *   "Sarika just flew back to India"
+ *   "Mom is in town for two weeks"
+ *
+ * The episode is stored under the OWNER's self-chat jid but tagged
+ * with the mentioned first-name(s) so it surfaces when those people
+ * message later. Tries to grab a few known relationship-section
+ * names from the profile so the bot doesn't have to LLM-extract
+ * every passing reference; falls back to capitalized first-token
+ * heuristic for unknowns.
+ *
+ * Returns null when nothing extractable.
+ */
+const ACTIVITY_HINTS =
+  /\b(visit(?:ing|ed)?|in town|here this (?:weekend|week)|here for|came over|came down|came up|drove (?:back|home|down|up)|flew (?:back|in|out|home)|landed|leaving|left for|driving (?:to|back)|going to|reached|arrived|moved to|moving to|staying|hosting|hosted|picked up|drop(?:ping|ped) off)\b/i;
+
+export function extractMentionEpisodeFromSelfChat(opts: {
+  selfJid: string;
+  text: string;
+  knownNames: string[]; // lowercase first names from the owner's profile
+}): Omit<Episode, "ts"> | null {
+  const text = opts.text.trim();
+  if (text.length < 8 || text.length > 400) return null;
+  if (!ACTIVITY_HINTS.test(text)) return null;
+  const lowerText = text.toLowerCase();
+  const matched: string[] = [];
+  for (const name of opts.knownNames) {
+    if (!name) continue;
+    // Word-boundary match against the lowercased text.
+    const re = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+    if (re.test(lowerText)) matched.push(name);
+  }
+  if (matched.length === 0) return null;
+  const activity = (text.match(ACTIVITY_HINTS)?.[0] || "").toLowerCase();
+  return {
+    jid: opts.selfJid,
+    date: new Date().toISOString().slice(0, 10),
+    topic: activity || "context",
+    outcome: text.replace(/\s+/g, " ").slice(0, 140),
+    mentions: matched,
+    context: { inbound: text.slice(0, 200) },
+  };
 }
 
 // Rule-based extractor — runs first, free, catches obvious patterns.
