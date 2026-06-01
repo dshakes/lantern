@@ -61,7 +61,18 @@ export interface CommandContext {
     target: string;
     message?: string;
     reason?: string;
+    // Chat jid where the call command was received. The bridge keys
+    // the pre-flight pendingOffer under this jid so the confirmation
+    // ("yes") arriving in the same chat fires the dialer. Without
+    // it the offer ends up keyed under the bridge's own device
+    // identity which is different from the owner's phone @lid in
+    // multi-device WhatsApp — the confirmation misses, falls into
+    // trivial chatter, dialer never fires.
+    chatJid: string;
   }) => Promise<{ ok: boolean; reason?: string }>;
+  // Chat jid for the current command execution context. Passed to
+  // placeOutboundCall so the bridge can key offers correctly.
+  chatJid?: string;
   // Channel name shown in human replies ("iMessage" or "WhatsApp").
   channelLabel: string;
 }
@@ -194,6 +205,7 @@ export async function executeCommand(cmd: ParsedCommand, ctx: CommandContext): P
         target,
         message: (cmd as ParsedCommand).callMessage,
         reason: (cmd as ParsedCommand).callReason,
+        chatJid: ctx.chatJid || "",
       });
       if (!res.ok) {
         await ctx.reply(`📞 couldn't place call: ${res.reason || "unknown error"}`);

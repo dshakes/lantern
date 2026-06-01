@@ -1706,7 +1706,7 @@ export class WhatsAppSession {
                     this.agent.clearHistory(jid);
                   },
                   sendStatus: async () => {
-                    await this.handleSelfChatCommand({ action: "status", echo: "status", explicit: true });
+                    await this.handleSelfChatCommand({ action: "status", echo: "status", explicit: true }, jid);
                   },
                   approveDraft: async () => { /* WhatsApp reaction-to-draft path is dashboard-only for now */ },
                   discardDraft: async () => {},
@@ -1850,7 +1850,7 @@ export class WhatsAppSession {
                   type: "activity",
                   data: { kind: "system", summary: `🎙️ voice cmd: ${voiceCmd.action}`, detail: transcript.slice(0, 200), jid: from, timestamp: Date.now() },
                 });
-                await this.handleSelfChatCommand(voiceCmd);
+                await this.handleSelfChatCommand(voiceCmd, from);
                 continue;
               }
             }
@@ -2824,7 +2824,7 @@ export class WhatsAppSession {
           };
           const emoji = reactionFor[parsed.action] || "✅";
           await this.sendReaction(jid, key, emoji);
-          await this.handleSelfChatCommand(parsed);
+          await this.handleSelfChatCommand(parsed, jid);
           await this.deleteCommand(jid, key, self);
           return;
         }
@@ -3164,9 +3164,10 @@ export class WhatsAppSession {
   // unmute, status, list, etc.) — same shape iMessage uses, so future
   // command additions need exactly one edit (in nl-commands.ts +
   // command-executor.ts) and both channels pick them up.
-  private async handleSelfChatCommand(parsed: ParsedCommand): Promise<void> {
+  private async handleSelfChatCommand(parsed: ParsedCommand, chatJid?: string): Promise<void> {
     await executeCommand(parsed, {
       channelLabel: "WhatsApp",
+      chatJid: chatJid || this.ownJid() || "",
       reply: async (text: string) => {
         // confirmToSelf already broadcasts + mirrors via email/telegram.
         await this.confirmToSelf(text);
@@ -3294,7 +3295,7 @@ export class WhatsAppSession {
   }
 
   private async placeOutboundCallFromOwner(
-    intent: { intent: "conference" | "voicemail" | "task"; target: string; message?: string; reason?: string },
+    intent: { intent: "conference" | "voicemail" | "task"; target: string; message?: string; reason?: string; chatJid: string },
   ): Promise<{ ok: boolean; reason?: string }> {
     try {
       const { authedFetch } = await import("@lantern/bridge-core/auth");
@@ -3308,7 +3309,11 @@ export class WhatsAppSession {
       }
       const { executeOutboundCall: exec, renderTextWithElevenLabs: render } =
         await import("@lantern/bridge-core/call-orchestrator");
-      const ownJid = this.ownJid();
+      // chatJid is the jid of the chat where the call command was
+      // issued — pendingOffer + notify go here so the "yes" arriving
+      // in the SAME chat fires the intercept. Falls back to ownJid()
+      // when the caller didn't pass one (e.g. test path).
+      const offerJid = intent.chatJid || this.ownJid() || "";
       const deps = {
         logger: this.logger as any,
         twilioFromNumber: twilioFrom,
@@ -3316,11 +3321,13 @@ export class WhatsAppSession {
         resolveContact: async (nameOrNumber: string) => this.resolveCallTarget(nameOrNumber),
         authedFetch: authedFetch as any,
         notifyOwner: async (text: string) => {
-          if (ownJid) await this.sendSelf(text).catch(() => {});
+          // sendSelf fans out across all linked devices (including
+          // the owner's phone) — that's where the "yes" will arrive.
+          await this.sendSelf(text).catch(() => {});
         },
         cachePendingOffer: (offer: any) => {
-          if (!ownJid) return;
-          this.pendingOffers.set(ownJid, {
+          if (!offerJid) return;
+          this.pendingOffers.set(offerJid, {
             kind: "outbound-call",
             callRequest: offer.payload,
             callPlan: offer.plan,
