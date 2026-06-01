@@ -1060,6 +1060,14 @@ export class WhatsAppSession {
   // so turning the master off also turns this off; setting this off
   // while master stays on just mutes Pushover.
   private pushoverEnabled = true;
+  // Anti-weaponization: dedup/cooldown for owner escalations. A hostile
+  // inbound that trips the regex (or quoted text) must not be able to
+  // spam the owner with calls + sirens. Keyed by `${kind}:${jid}:${reason}`
+  // → last-fired epoch ms. Duplicate escalations inside the window are
+  // suppressed (logged, not sent). Real emergencies re-firing within 90s
+  // are the same incident — suppressing the dupes is correct.
+  private escalationLastFired = new Map<string, number>();
+  private static readonly ESCALATION_COOLDOWN_MS = 90_000;
   private stateFile: string;
   // Opted-in group JIDs. Groups not in this set are ignored entirely; in
   // opted-in groups the agent runs the attention classifier on every message
@@ -3272,15 +3280,15 @@ export class WhatsAppSession {
         cachePendingOffer: (offer: any) => {
           if (!ownJid) return;
           this.pendingOffers.set(ownJid, {
-            kind: "freeform-followup",
-            freeformAction: `place ${offer.payload.mode} to ${offer.payload.to}`,
-            freeformInbound: `outbound call request: ${offer.payload.contactName || offer.payload.to}`,
-            freeformPriorReply: offer.planSummary,
+            kind: "outbound-call",
+            callRequest: offer.payload,
+            callPlan: offer.plan,
             issuedAt: offer.issuedAt,
           } as any);
         },
         renderVoice: this.makeVoiceRenderer(render),
       };
+      this.lastCallDeps = deps;
       const res = await exec(intent, deps, { ownerInitiated: true });
       return { ok: res.ok, reason: res.reason };
     } catch (err) {
@@ -3288,6 +3296,11 @@ export class WhatsAppSession {
       return { ok: false, reason: (err as Error).message };
     }
   }
+
+  // Cached orchestrator deps from the most recent placeOutboundCallFromOwner
+  // call. Used by the pendingOffer 'yes' path to call placeCallNow without
+  // rebuilding the entire deps surface (renderVoice closure, etc.).
+  private lastCallDeps: any = null;
 
   private lastResolveSuggestions: Array<{ name: string; phone?: string; relationship?: string }> = [];
 
@@ -3721,6 +3734,28 @@ export class WhatsAppSession {
       }
       return;
     }
+    // Outbound call — owner approved the pre-flight plan. Fire the
+    // dialer directly via the cached orchestrator deps; no LLM
+    // round-trip needed.
+    if (offer.kind === "outbound-call" && (offer as any).callRequest && (offer as any).callPlan) {
+      try {
+        const { placeCallNow } = await import("@lantern/bridge-core/call-orchestrator");
+        const deps = this.lastCallDeps;
+        if (!deps) {
+          await this.confirmToSelf("(can't place the call — orchestrator deps missing, ask me again)");
+          return;
+        }
+        const res = await placeCallNow((offer as any).callRequest, (offer as any).callPlan, deps);
+        if (!res.ok) {
+          await this.confirmToSelf(`(couldn't place call: ${res.reason || "unknown"})`);
+        }
+      } catch (err) {
+        this.logger.error({ err }, "outbound-call offer execution failed");
+        await this.confirmToSelf(`(call failed — ${(err as Error).message})`);
+      }
+      return;
+    }
+
     // Freeform follow-up — bot offered something arbitrary ("attach
     // the receipt", "forward the link") and owner confirmed. Re-prompt
     // the LLM with the original context + an explicit fulfillment
@@ -4429,6 +4464,26 @@ export class WhatsAppSession {
     contactText: string;
     botReplyPreview?: string;
   }): Promise<void> {
+    // Cooldown/dedup — suppress the same (kind, sender, reason) within the
+    // window so a hostile or quoted message can't weaponize the escalation
+    // into call + siren spam. Cleanup keeps the map from growing unbounded.
+    const dedupKey = `${opts.kind}:${opts.from}:${opts.reason}`;
+    const now = Date.now();
+    const last = this.escalationLastFired.get(dedupKey);
+    if (last !== undefined && now - last < WhatsAppSession.ESCALATION_COOLDOWN_MS) {
+      this.logger.warn(
+        { kind: opts.kind, reason: opts.reason, from: opts.from, sinceMs: now - last },
+        "owner escalation suppressed (cooldown) — duplicate within window",
+      );
+      return;
+    }
+    this.escalationLastFired.set(dedupKey, now);
+    if (this.escalationLastFired.size > 256) {
+      for (const [k, t] of this.escalationLastFired) {
+        if (now - t > WhatsAppSession.ESCALATION_COOLDOWN_MS) this.escalationLastFired.delete(k);
+      }
+    }
+
     const who = opts.senderName || opts.from.split("@")[0];
     const prefix =
       opts.kind === "life-threat" ? "🚨🚨 LIFE-THREAT ESCALATION" :

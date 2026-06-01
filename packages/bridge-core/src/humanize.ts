@@ -181,7 +181,12 @@ export function humanizeReply(text: string): string {
 // marker. With this offer cache, the bridge fires the AppleScript
 // itself — no LLM round trip needed for the action.
 export interface PendingOffer {
-  kind: "calendar-reminder" | "save-note" | "freeform-followup";
+  kind: "calendar-reminder" | "save-note" | "freeform-followup" | "outbound-call";
+  // For outbound-call: serialized OutboundCallRequest + the plan
+  // summary the owner already saw. Bridge replays placeCallNow on
+  // "yes" without any LLM round-trip.
+  callRequest?: any;
+  callPlan?: any;
   // For calendar reminders: the underlying expiry/event date and
   // how many days before to schedule the reminder.
   targetIsoDate?: string;       // e.g. "2031-09-14"

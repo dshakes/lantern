@@ -126,6 +126,7 @@ export async function executeOutboundCall(
     deps.cachePendingOffer({
       kind: "outbound-call",
       payload: req,
+      plan,
       planSummary: plan.summary,
       issuedAt: Date.now(),
     });
