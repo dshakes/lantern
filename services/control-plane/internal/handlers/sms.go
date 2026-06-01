@@ -58,6 +58,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -569,16 +570,30 @@ func validTwilioSignature(authToken, fullURL string, form url.Values, providedSi
 	if providedSig == "" || authToken == "" {
 		return false
 	}
-	keys := make([]string, 0, len(form))
-	for k := range form {
-		keys = append(keys, k)
+	// Twilio's algorithm: append the full URL, then every POST parameter
+	// name+value concatenated, with the (name, value) pairs sorted. This
+	// must include EVERY value of a repeated parameter — using only the
+	// first value (url.Values.Get) produces a wrong digest and rejects
+	// legitimate multi-value webhooks (e.g. media MediaUrl0..N variants).
+	// Matches twilio-python's `sorted(params.items())` over its MultiDict.
+	type kv struct{ k, v string }
+	pairs := make([]kv, 0, len(form))
+	for k, vals := range form {
+		for _, v := range vals {
+			pairs = append(pairs, kv{k, v})
+		}
 	}
-	sort.Strings(keys)
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].k != pairs[j].k {
+			return pairs[i].k < pairs[j].k
+		}
+		return pairs[i].v < pairs[j].v
+	})
 	var b strings.Builder
 	b.WriteString(fullURL)
-	for _, k := range keys {
-		b.WriteString(k)
-		b.WriteString(form.Get(k))
+	for _, p := range pairs {
+		b.WriteString(p.k)
+		b.WriteString(p.v)
 	}
 	mac := hmac.New(sha1.New, []byte(authToken))
 	mac.Write([]byte(b.String()))
@@ -608,6 +623,10 @@ func (h *SMSHandler) getTwilioAuthToken(ctx context.Context) string {
 		WHERE tenant_id = $1 AND connector_id = 'twilio' AND status = 'connected'
 		LIMIT 1
 	`, h.defaultTenant).Scan(&configJSON)
+	if err != nil {
+		return ""
+	}
+	configJSON, err = secrets.Decrypt(configJSON)
 	if err != nil {
 		return ""
 	}

@@ -18,15 +18,15 @@ For the full vision read `README.md`. For the architecture read `docs/architectu
 
 This is a **polyglot monorepo on purpose**. Pick the right tool for the layer; do not unify for unification's sake.
 
-| Layer | Language | Why |
-|---|---|---|
-| Control plane, workflow engine, scheduler, memory, notifier, billing | **Go 1.23** | K8s-native, single binary, mature gRPC + Postgres ecosystem |
-| Gateway, model router, runtime manager, surface gateway | **Rust 2024** | Hot path; Firecracker is Rust; predictable latency and memory |
-| Dashboard, landing, docs site | **TypeScript / Next.js 15** | RSC + streaming, our SDK's primary language already |
-| Primary SDK | **TypeScript** | Where the agent ecosystem lives |
-| Secondary SDKs | **Python 3.11+**, **Go** | Python for AI/ML users, Go for infra users |
-| CLI (`lantern`) | **Go / Cobra** | Static binary, cross-compile easy, reuses our gRPC client |
-| API contracts | **protobuf3** | Single source of truth for cross-service types |
+| Layer                                                                | Language                    | Why                                                           |
+| -------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------- |
+| Control plane, workflow engine, scheduler, memory, notifier, billing | **Go 1.23**                 | K8s-native, single binary, mature gRPC + Postgres ecosystem   |
+| Gateway, model router, runtime manager, surface gateway              | **Rust 2024**               | Hot path; Firecracker is Rust; predictable latency and memory |
+| Dashboard, landing, docs site                                        | **TypeScript / Next.js 15** | RSC + streaming, our SDK's primary language already           |
+| Primary SDK                                                          | **TypeScript**              | Where the agent ecosystem lives                               |
+| Secondary SDKs                                                       | **Python 3.11+**, **Go**    | Python for AI/ML users, Go for infra users                    |
+| CLI (`lantern`)                                                      | **Go / Cobra**              | Static binary, cross-compile easy, reuses our gRPC client     |
+| API contracts                                                        | **protobuf3**               | Single source of truth for cross-service types                |
 
 **Do not introduce a new language without an ADR.** See `docs/adr/0001-language-stack.md`.
 
@@ -71,15 +71,15 @@ make dev
 
 ### Dev credentials
 
-| Service | Value |
-|---|---|
-| PostgreSQL | `postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` |
-| Redis | `redis://localhost:6379` |
-| MinIO | `lantern:lanternsecret` at `localhost:9000` (console `:9001`) |
-| Dashboard login | `admin@lantern.dev` / `lantern` (email+password) |
-| JWT secret | `lantern-dev-jwt-secret-do-not-use-in-production` |
-| Dev tenant ID | `00000000-0000-0000-0000-000000000001` (slug: `dev`) |
-| Dev user ID | `00000000-0000-0000-0000-000000000002` (role: `owner`) |
+| Service         | Value                                                               |
+| --------------- | ------------------------------------------------------------------- |
+| PostgreSQL      | `postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` |
+| Redis           | `redis://localhost:6379`                                            |
+| MinIO           | `lantern:lanternsecret` at `localhost:9000` (console `:9001`)       |
+| Dashboard login | `admin@lantern.dev` / `lantern` (email+password)                    |
+| JWT secret      | `lantern-dev-jwt-secret-do-not-use-in-production`                   |
+| Dev tenant ID   | `00000000-0000-0000-0000-000000000001` (slug: `dev`)                |
+| Dev user ID     | `00000000-0000-0000-0000-000000000002` (role: `owner`)              |
 
 ### Google OAuth (optional)
 
@@ -98,20 +98,20 @@ Without these env vars, Google OAuth is disabled and the sign-in button will sho
 
 ### Service ports
 
-| Service | Port | Protocol |
-|---|---|---|
-| control-plane | `:8080` | HTTP (REST + health + SSE) |
-| control-plane (gRPC) | `:50051` | gRPC |
-| dashboard | `:3001` | HTTP (Next.js dev, turbopack) |
-| workflow-engine | `:50052` | gRPC |
-| model-router | `:50053` | gRPC |
-| runtime-manager | `:50054` | gRPC |
-| runtime-scheduler | `:50055` (gRPC) / `:8085` (REST) | Placement engine for headless agent microVMs |
-| gateway | `:8443` | HTTPS (TLS) |
-| surface-gateway | `:8000` | HTTP (webhooks) |
-| PostgreSQL | `:5432` | postgres |
-| Redis | `:6379` | redis |
-| MinIO | `:9000` / `:9001` | S3 / console |
+| Service              | Port                             | Protocol                                     |
+| -------------------- | -------------------------------- | -------------------------------------------- |
+| control-plane        | `:8080`                          | HTTP (REST + health + SSE)                   |
+| control-plane (gRPC) | `:50051`                         | gRPC                                         |
+| dashboard            | `:3001`                          | HTTP (Next.js dev, turbopack)                |
+| workflow-engine      | `:50052`                         | gRPC                                         |
+| model-router         | `:50053`                         | gRPC                                         |
+| runtime-manager      | `:50054`                         | gRPC                                         |
+| runtime-scheduler    | `:50055` (gRPC) / `:8085` (REST) | Placement engine for headless agent microVMs |
+| gateway              | `:8443`                          | HTTPS (TLS)                                  |
+| surface-gateway      | `:8000`                          | HTTP (webhooks)                              |
+| PostgreSQL           | `:5432`                          | postgres                                     |
+| Redis                | `:6379`                          | redis                                        |
+| MinIO                | `:9000` / `:9001`                | S3 / console                                 |
 
 ### Frontend dev
 
@@ -128,6 +128,7 @@ short primary set (the daily-driver) and a collapsible Workspace section
 working — they live under Workspace now.
 
 **Primary (always visible):**
+
 1. **Inbox** (`/inbox`) — cross-agent activity feed. Recent runs, runs
    needing review, live runs in flight. New in W6.
 2. **Agents** (`/agents`)
@@ -139,8 +140,9 @@ Runs · Channels (`/surfaces`) · Integrations (`/connectors`) · Deployments ·
 Budgets · Experiments · Eval Suites · Marketplace
 
 **Additional dashboard surfaces:**
+
 - `/embed` — webchat install center (W10)
-- `/proof` — public receipt verifier (W8) — *no auth required*
+- `/proof` — public receipt verifier (W8) — _no auth required_
 
 Keyboard shortcuts: `1` = Inbox, `2` = Agents, `3` = Analytics, `4` = Settings.
 
@@ -148,14 +150,14 @@ Keyboard shortcuts: `1` = Inbox, `2` = Agents, `3` = Analytics, `4` = Settings.
 
 When editing dashboard pages, **reuse these primitives** instead of hand-rolling page chrome. Consistency is the reason the dashboard feels Vercel-quality — do not inline yet another `<div className="border-b px-8 py-5">` header or yet another modal backdrop.
 
-| Component | Purpose |
-|---|---|
-| `components/page-header.tsx` | `<PageHeader title description badge action secondaryAction />` — every page uses this. Exports `CountBadge`, `DemoBadge` helpers. |
-| `components/modal.tsx` | `<Modal open onClose title description size footer>` with Escape handler and body scroll-lock. Exports `ModalField` for labelled form rows. |
-| `components/button.tsx` | `<Button variant size icon loading>` (primary/secondary/ghost/danger × sm/md/lg) and `<LinkButton>` for Next.js routing. Both are `forwardRef`. |
-| `components/empty-state.tsx` | `<EmptyState icon title description actionLabel onAction actionHref />` for zero-states. |
-| `components/skeleton.tsx` | `<Skeleton>` and `<HeaderSkeleton>` for loading states — use during the initial fetch of every page. |
-| `components/toast.tsx` | `useToast()` → `.success/.error/.warning/.info`. Mount `<ToastProvider>` once at layout level. |
+| Component                    | Purpose                                                                                                                                         |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `components/page-header.tsx` | `<PageHeader title description badge action secondaryAction />` — every page uses this. Exports `CountBadge`, `DemoBadge` helpers.              |
+| `components/modal.tsx`       | `<Modal open onClose title description size footer>` with Escape handler and body scroll-lock. Exports `ModalField` for labelled form rows.     |
+| `components/button.tsx`      | `<Button variant size icon loading>` (primary/secondary/ghost/danger × sm/md/lg) and `<LinkButton>` for Next.js routing. Both are `forwardRef`. |
+| `components/empty-state.tsx` | `<EmptyState icon title description actionLabel onAction actionHref />` for zero-states.                                                        |
+| `components/skeleton.tsx`    | `<Skeleton>` and `<HeaderSkeleton>` for loading states — use during the initial fetch of every page.                                            |
+| `components/toast.tsx`       | `useToast()` → `.success/.error/.warning/.info`. Mount `<ToastProvider>` once at layout level.                                                  |
 
 Rule: if you're writing Tailwind classes like `rounded-xl border border-zinc-800 bg-surface-1 px-5 py-4` for header/modal/button chrome, stop and use the primitive.
 
@@ -185,36 +187,36 @@ Do not introduce a new database without an ADR. These three cover all current ne
 
 Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `CREATE TABLE IF NOT EXISTS`). In production, use a proper migration tool (golang-migrate or Atlas).
 
-| Table | Purpose | Key columns |
-|---|---|---|
-| `tenants` | Multi-tenant root | `id`, `slug`, `tier`, `k8s_namespace`, `settings` (JSONB) |
-| `users` | Auth, linked to tenant | `tenant_id`, `email`, `auth_provider`, `password_hash`, `role` |
-| `agents` | Agent definitions | `tenant_id`, `name`, `current_version_id`, `labels` (JSONB) |
-| `agent_versions` | Immutable versioned bundles | `agent_id`, `version`, `digest`, `bundle_uri`, `manifest` (JSONB) |
-| `runs` | Run lifecycle | `tenant_id`, `agent_id`, `status`, `input`/`output` (JSONB), `cost_usd`, `tokens_in`/`out` |
-| `journal_events` | Event-sourced run log | `run_id`, `seq`, `kind`, `step_id`, `payload` (PK: `run_id, seq`) |
-| `run_locks` | Distributed run locking | `run_id`, `worker_id`, `expires_at` |
-| `sessions` | Interactive multi-turn agent sessions | `tenant_id`, `agent_name`, `status`, `messages` (JSONB) |
-| `schedules` | Cron-based agent execution | `tenant_id`, `agent_name`, `cron_expr`, `enabled`, `next_fire_at`, `config` (JSONB) |
-| `connector_installs` | OAuth / API-key integration state | `tenant_id`, `connector_id`, `oauth_token_encrypted`, `config` (JSONB) |
-| `surface_configs` | Channel configuration | `tenant_id`, `surface_id`, `webhook_url` |
-| `api_keys` | API key management | `tenant_id`, `key_hash`, `key_prefix`, `scopes` |
-| `deployments` | Deployment tracking | `tenant_id`, `agent_name`, `version`, `environment`, `status` |
-| `data_planes` | Registered data planes | `tenant_id`, `cloud`, `region`, `status`, `last_heartbeat` |
-| `llm_provider_configs` | LLM API keys per tenant | `tenant_id`, `provider`, `api_key_encrypted` |
-| `agent_budgets` | Policy-as-code spend + rate limits | `tenant_id`, `agent_name`, `max_cost_usd_per_day`, `max_cost_usd_per_run`, `tool_limits` (JSONB), `hard_fail` |
-| `agent_usage_daily` | Daily rollup for budget enforcement | `tenant_id`, `agent_name`, `usage_date`, `cost_usd`, `runs_count`, `tool_counts` (JSONB) |
-| `cost_forecasts` | Pre-run cost forecast audit trail | `tenant_id`, `agent_name`, `estimated_tokens_in/out`, `estimated_cost_usd`, `confidence` |
-| `marketplace_agents` | Public marketplace entries | `slug`, `source_tenant_id`, `source_agent_id`, `category`, `tags`, `manifest`, `card`, `stars_count`, `forks_count` |
-| `marketplace_stars` | Star relation | `tenant_id`, `marketplace_id` (PK pair) |
-| `mcp_servers` | Curated MCP server registry | `slug`, `name`, `category`, `endpoint`, `tools` (JSONB), `installs_count` |
-| `agent_mcp_attachments` | Agent-MCP attachments | `tenant_id`, `agent_name`, `mcp_slug`, `config` (JSONB) |
-| `eval_suites` | Declarative eval test cases | `tenant_id`, `agent_name`, `name`, `cases` (JSONB) |
-| `eval_runs` | One execution of a suite | `tenant_id`, `suite_id`, `agent_version`, `commit_sha`, `branch`, `passed`, `score`, `cases_result` (JSONB) |
-| `eval_baselines` | Branch pinned baseline | `tenant_id`, `agent_name`, `branch`, `eval_run_id` |
-| `agent_experiments` | A/B traffic splits with auto-promotion | `tenant_id`, `agent_name`, `variant_a_version`, `variant_b_version`, `traffic_split_b`, `auto_promote`, `a_score`, `b_score` |
-| `run_receipts` | HMAC-signed verifiable execution receipts | `run_id` (PK), `tenant_id`, `signature`, `payload` (JSONB), `issued_at` |
-| `run_feedback` | Per-run RLHF reactions | `run_id`, `tenant_id`, `score` (1-5), `comment`, `preferred_output`, `source` |
+| Table                   | Purpose                                                                                                                                                                                          | Key columns                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `tenants`               | Multi-tenant root                                                                                                                                                                                | `id`, `slug`, `tier`, `k8s_namespace`, `settings` (JSONB)                                                                    |
+| `users`                 | Auth, linked to tenant                                                                                                                                                                           | `tenant_id`, `email`, `auth_provider`, `password_hash`, `role`                                                               |
+| `agents`                | Agent definitions                                                                                                                                                                                | `tenant_id`, `name`, `current_version_id`, `labels` (JSONB)                                                                  |
+| `agent_versions`        | Immutable versioned bundles                                                                                                                                                                      | `agent_id`, `version`, `digest`, `bundle_uri`, `manifest` (JSONB)                                                            |
+| `runs`                  | Run lifecycle                                                                                                                                                                                    | `tenant_id`, `agent_id`, `status`, `input`/`output` (JSONB), `cost_usd`, `tokens_in`/`out`                                   |
+| `journal_events`        | Event-sourced run log                                                                                                                                                                            | `run_id`, `seq`, `kind`, `step_id`, `payload` (PK: `run_id, seq`)                                                            |
+| `run_locks`             | Distributed run locking                                                                                                                                                                          | `run_id`, `worker_id`, `expires_at`                                                                                          |
+| `sessions`              | Interactive multi-turn agent sessions                                                                                                                                                            | `tenant_id`, `agent_name`, `status`, `messages` (JSONB)                                                                      |
+| `schedules`             | Cron-based agent execution                                                                                                                                                                       | `tenant_id`, `agent_name`, `cron_expr`, `enabled`, `next_fire_at`, `config` (JSONB)                                          |
+| `connector_installs`    | OAuth / API-key integration state. `config` + `oauth_token_encrypted` are AES-256-GCM-encrypted at rest via `internal/secrets` (set `LANTERN_CREDENTIAL_KEY`; plaintext pass-through when unset) | `tenant_id`, `connector_id`, `oauth_token_encrypted`, `config` (JSONB)                                                       |
+| `surface_configs`       | Channel configuration                                                                                                                                                                            | `tenant_id`, `surface_id`, `webhook_url`                                                                                     |
+| `api_keys`              | API key management                                                                                                                                                                               | `tenant_id`, `key_hash`, `key_prefix`, `scopes`                                                                              |
+| `deployments`           | Deployment tracking                                                                                                                                                                              | `tenant_id`, `agent_name`, `version`, `environment`, `status`                                                                |
+| `data_planes`           | Registered data planes                                                                                                                                                                           | `tenant_id`, `cloud`, `region`, `status`, `last_heartbeat`                                                                   |
+| `llm_provider_configs`  | LLM API keys per tenant. `api_key_encrypted` is AES-256-GCM-encrypted at rest via `internal/secrets` (`LANTERN_CREDENTIAL_KEY`; plaintext pass-through when unset)                               | `tenant_id`, `provider`, `api_key_encrypted`                                                                                 |
+| `agent_budgets`         | Policy-as-code spend + rate limits                                                                                                                                                               | `tenant_id`, `agent_name`, `max_cost_usd_per_day`, `max_cost_usd_per_run`, `tool_limits` (JSONB), `hard_fail`                |
+| `agent_usage_daily`     | Daily rollup for budget enforcement                                                                                                                                                              | `tenant_id`, `agent_name`, `usage_date`, `cost_usd`, `runs_count`, `tool_counts` (JSONB)                                     |
+| `cost_forecasts`        | Pre-run cost forecast audit trail                                                                                                                                                                | `tenant_id`, `agent_name`, `estimated_tokens_in/out`, `estimated_cost_usd`, `confidence`                                     |
+| `marketplace_agents`    | Public marketplace entries                                                                                                                                                                       | `slug`, `source_tenant_id`, `source_agent_id`, `category`, `tags`, `manifest`, `card`, `stars_count`, `forks_count`          |
+| `marketplace_stars`     | Star relation                                                                                                                                                                                    | `tenant_id`, `marketplace_id` (PK pair)                                                                                      |
+| `mcp_servers`           | Curated MCP server registry                                                                                                                                                                      | `slug`, `name`, `category`, `endpoint`, `tools` (JSONB), `installs_count`                                                    |
+| `agent_mcp_attachments` | Agent-MCP attachments                                                                                                                                                                            | `tenant_id`, `agent_name`, `mcp_slug`, `config` (JSONB)                                                                      |
+| `eval_suites`           | Declarative eval test cases                                                                                                                                                                      | `tenant_id`, `agent_name`, `name`, `cases` (JSONB)                                                                           |
+| `eval_runs`             | One execution of a suite                                                                                                                                                                         | `tenant_id`, `suite_id`, `agent_version`, `commit_sha`, `branch`, `passed`, `score`, `cases_result` (JSONB)                  |
+| `eval_baselines`        | Branch pinned baseline                                                                                                                                                                           | `tenant_id`, `agent_name`, `branch`, `eval_run_id`                                                                           |
+| `agent_experiments`     | A/B traffic splits with auto-promotion                                                                                                                                                           | `tenant_id`, `agent_name`, `variant_a_version`, `variant_b_version`, `traffic_split_b`, `auto_promote`, `a_score`, `b_score` |
+| `run_receipts`          | HMAC-signed verifiable execution receipts                                                                                                                                                        | `run_id` (PK), `tenant_id`, `signature`, `payload` (JSONB), `issued_at`                                                      |
+| `run_feedback`          | Per-run RLHF reactions                                                                                                                                                                           | `run_id`, `tenant_id`, `score` (1-5), `comment`, `preferred_output`, `source`                                                |
 
 Row-Level Security is enabled on `agents` and `runs` with tenant isolation policies.
 
@@ -227,177 +229,197 @@ A dev tenant (`slug: dev`) and admin user (`admin@lantern.dev` / `lantern`) are 
 The control-plane exposes REST on `:8080`. All authenticated endpoints require a `Bearer` JWT token.
 
 ### Auth
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/auth/register` | Register new user |
-| `POST` | `/auth/login` | Email+password login |
-| `GET` | `/auth/me` | Current user info |
-| `GET` | `/auth/oauth/google/...` | Google OAuth flow |
+
+| Method | Path                     | Description          |
+| ------ | ------------------------ | -------------------- |
+| `POST` | `/auth/register`         | Register new user    |
+| `POST` | `/auth/login`            | Email+password login |
+| `GET`  | `/auth/me`               | Current user info    |
+| `GET`  | `/auth/oauth/google/...` | Google OAuth flow    |
 
 ### Agents
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/agents` | Create agent |
-| `GET` | `/v1/agents` | List agents |
-| `GET` | `/v1/agents/{name}` | Get agent by name |
-| `DELETE` | `/v1/agents/{name}` | Delete agent |
-| `POST` | `/v1/agents/generate-spec` | AI-generate agent spec from description |
-| `POST` | `/v1/agents/generate-code` | AI-generate agent code |
+
+| Method   | Path                       | Description                             |
+| -------- | -------------------------- | --------------------------------------- |
+| `POST`   | `/v1/agents`               | Create agent                            |
+| `GET`    | `/v1/agents`               | List agents                             |
+| `GET`    | `/v1/agents/{name}`        | Get agent by name                       |
+| `DELETE` | `/v1/agents/{name}`        | Delete agent                            |
+| `POST`   | `/v1/agents/generate-spec` | AI-generate agent spec from description |
+| `POST`   | `/v1/agents/generate-code` | AI-generate agent code                  |
 
 ### Runs
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/runs` | Create and execute a run |
-| `GET` | `/v1/runs` | List runs |
-| `GET` | `/v1/runs/{id}` | Get run details |
-| `GET` | `/v1/runs/{id}/events` | Stream run events (SSE) |
+
+| Method | Path                   | Description              |
+| ------ | ---------------------- | ------------------------ |
+| `POST` | `/v1/runs`             | Create and execute a run |
+| `GET`  | `/v1/runs`             | List runs                |
+| `GET`  | `/v1/runs/{id}`        | Get run details          |
+| `GET`  | `/v1/runs/{id}/events` | Stream run events (SSE)  |
 
 ### Sessions (interactive)
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/sessions` | Create a new session |
-| `GET` | `/v1/sessions` | List sessions |
-| `GET` | `/v1/sessions/{id}` | Get session details |
-| `POST` | `/v1/sessions/{id}/messages` | Send message (triggers LLM response) |
-| `GET` | `/v1/sessions/{id}/events` | Stream session events (SSE) |
-| `POST` | `/v1/sessions/{id}/stop` | Stop a running session |
-| `DELETE` | `/v1/sessions/{id}` | Delete session |
+
+| Method   | Path                         | Description                          |
+| -------- | ---------------------------- | ------------------------------------ |
+| `POST`   | `/v1/sessions`               | Create a new session                 |
+| `GET`    | `/v1/sessions`               | List sessions                        |
+| `GET`    | `/v1/sessions/{id}`          | Get session details                  |
+| `POST`   | `/v1/sessions/{id}/messages` | Send message (triggers LLM response) |
+| `GET`    | `/v1/sessions/{id}/events`   | Stream session events (SSE)          |
+| `POST`   | `/v1/sessions/{id}/stop`     | Stop a running session               |
+| `DELETE` | `/v1/sessions/{id}`          | Delete session                       |
 
 ### Connectors
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/connectors/install` | Install a connector |
-| `GET` | `/v1/connectors` | List installed connectors |
-| `GET` | `/v1/connectors/{connectorId}/execute?action=...` | Execute connector action |
-| `POST` | `/v1/connectors/{connectorId}/execute` | Execute connector action (with body) |
-| `POST` | `/v1/connectors/{id}/test` | Test connector connection |
-| `DELETE` | `/v1/connectors/{id}` | Uninstall connector |
+
+| Method   | Path                                              | Description                          |
+| -------- | ------------------------------------------------- | ------------------------------------ |
+| `POST`   | `/v1/connectors/install`                          | Install a connector                  |
+| `GET`    | `/v1/connectors`                                  | List installed connectors            |
+| `GET`    | `/v1/connectors/{connectorId}/execute?action=...` | Execute connector action             |
+| `POST`   | `/v1/connectors/{connectorId}/execute`            | Execute connector action (with body) |
+| `POST`   | `/v1/connectors/{id}/test`                        | Test connector connection            |
+| `DELETE` | `/v1/connectors/{id}`                             | Uninstall connector                  |
 
 ### Schedules
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/schedules` | Create/upsert schedule |
-| `GET` | `/v1/schedules` | List schedules |
-| `PUT` | `/v1/schedules/{id}` | Update schedule |
-| `DELETE` | `/v1/schedules/{id}` | Delete schedule |
+
+| Method   | Path                 | Description            |
+| -------- | -------------------- | ---------------------- |
+| `POST`   | `/v1/schedules`      | Create/upsert schedule |
+| `GET`    | `/v1/schedules`      | List schedules         |
+| `PUT`    | `/v1/schedules/{id}` | Update schedule        |
+| `DELETE` | `/v1/schedules/{id}` | Delete schedule        |
 
 ### Completions (LLM proxy)
-| Method | Path | Description |
-|---|---|---|
+
+| Method | Path              | Description                                     |
+| ------ | ----------------- | ----------------------------------------------- |
 | `POST` | `/v1/completions` | LLM completion (routes to configured providers) |
 
 ### Settings
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/settings/llm-providers` | Save LLM provider API key |
-| `GET` | `/v1/settings/llm-providers` | List configured providers |
-| `POST` | `/v1/settings/llm-providers/{provider}/test` | Test provider connection |
+
+| Method | Path                                         | Description               |
+| ------ | -------------------------------------------- | ------------------------- |
+| `POST` | `/v1/settings/llm-providers`                 | Save LLM provider API key |
+| `GET`  | `/v1/settings/llm-providers`                 | List configured providers |
+| `POST` | `/v1/settings/llm-providers/{provider}/test` | Test provider connection  |
 
 ### Deployments
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/deployments` | Create deployment |
-| `GET` | `/v1/deployments` | List deployments |
-| `GET` | `/v1/deployments/{id}` | Get deployment |
-| `POST` | `/v1/agents/{name}/deploy` | One-click managed cloud deploy |
-| `POST` | `/v1/data-planes` | Register data plane |
-| `GET` | `/v1/data-planes` | List data planes |
-| `DELETE` | `/v1/data-planes/{id}` | Remove data plane |
+
+| Method   | Path                       | Description                    |
+| -------- | -------------------------- | ------------------------------ |
+| `POST`   | `/v1/deployments`          | Create deployment              |
+| `GET`    | `/v1/deployments`          | List deployments               |
+| `GET`    | `/v1/deployments/{id}`     | Get deployment                 |
+| `POST`   | `/v1/agents/{name}/deploy` | One-click managed cloud deploy |
+| `POST`   | `/v1/data-planes`          | Register data plane            |
+| `GET`    | `/v1/data-planes`          | List data planes               |
+| `DELETE` | `/v1/data-planes/{id}`     | Remove data plane              |
 
 ### A2A (Agent-to-Agent)
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/v1/agents/{name}/card` | Get agent's A2A card |
-| `GET` | `/.well-known/agent.json` | Well-known A2A discovery endpoint |
+
+| Method | Path                      | Description                       |
+| ------ | ------------------------- | --------------------------------- |
+| `GET`  | `/v1/agents/{name}/card`  | Get agent's A2A card              |
+| `GET`  | `/.well-known/agent.json` | Well-known A2A discovery endpoint |
 
 ### Cost forecast + budgets (wedge #1)
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/runs/forecast` | Forecast tokens/cost/confidence for a prospective run. Returns `wouldExceedBudget` + block reason |
-| `PUT` | `/v1/agents/{name}/budget` | Upsert per-agent budget (cost/day, cost/run, tokens/day, runs/day, per-tool limits, hard-fail) |
-| `GET` | `/v1/agents/{name}/budget` | Get agent budget |
-| `DELETE` | `/v1/agents/{name}/budget` | Remove budget |
-| `GET` | `/v1/budgets` | List all tenant budgets |
+
+| Method   | Path                       | Description                                                                                       |
+| -------- | -------------------------- | ------------------------------------------------------------------------------------------------- |
+| `POST`   | `/v1/runs/forecast`        | Forecast tokens/cost/confidence for a prospective run. Returns `wouldExceedBudget` + block reason |
+| `PUT`    | `/v1/agents/{name}/budget` | Upsert per-agent budget (cost/day, cost/run, tokens/day, runs/day, per-tool limits, hard-fail)    |
+| `GET`    | `/v1/agents/{name}/budget` | Get agent budget                                                                                  |
+| `DELETE` | `/v1/agents/{name}/budget` | Remove budget                                                                                     |
+| `GET`    | `/v1/budgets`              | List all tenant budgets                                                                           |
 
 ### Eval suites + CI gating (wedge #2)
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/eval-suites` | Upsert suite (by `tenant_id, agent_name, name`) |
-| `GET` | `/v1/eval-suites` | List suites (optional `?agentName=`) |
-| `GET` | `/v1/eval-suites/{id}` | Get suite |
-| `DELETE` | `/v1/eval-suites/{id}` | Delete suite |
-| `POST` | `/v1/eval-runs` | Record a run's case results. Returns HTTP 422 if regressed vs. branch baseline |
-| `GET` | `/v1/eval-runs` | List runs (`?suiteId=`, `?agentName=`, `?branch=`) |
-| `POST` | `/v1/eval-baselines` | Pin a run as the baseline for `(agent, branch)` |
-| `GET` | `/v1/eval-baselines?agentName=&branch=` | Get baseline |
+
+| Method   | Path                                    | Description                                                                    |
+| -------- | --------------------------------------- | ------------------------------------------------------------------------------ |
+| `POST`   | `/v1/eval-suites`                       | Upsert suite (by `tenant_id, agent_name, name`)                                |
+| `GET`    | `/v1/eval-suites`                       | List suites (optional `?agentName=`)                                           |
+| `GET`    | `/v1/eval-suites/{id}`                  | Get suite                                                                      |
+| `DELETE` | `/v1/eval-suites/{id}`                  | Delete suite                                                                   |
+| `POST`   | `/v1/eval-runs`                         | Record a run's case results. Returns HTTP 422 if regressed vs. branch baseline |
+| `GET`    | `/v1/eval-runs`                         | List runs (`?suiteId=`, `?agentName=`, `?branch=`)                             |
+| `POST`   | `/v1/eval-baselines`                    | Pin a run as the baseline for `(agent, branch)`                                |
+| `GET`    | `/v1/eval-baselines?agentName=&branch=` | Get baseline                                                                   |
 
 ### A/B experiments
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/experiments` | Create experiment with deterministic FNV-1a traffic split |
-| `GET` | `/v1/experiments` | List |
-| `GET` | `/v1/experiments/{id}` | Get |
-| `POST` | `/v1/experiments/{id}/record` | Record a variant outcome (score 0..1). Auto-promotes on >2% lift + min-runs/arm |
-| `POST` | `/v1/experiments/{id}/conclude` | Manually conclude + optionally promote winner |
+
+| Method | Path                            | Description                                                                     |
+| ------ | ------------------------------- | ------------------------------------------------------------------------------- |
+| `POST` | `/v1/experiments`               | Create experiment with deterministic FNV-1a traffic split                       |
+| `GET`  | `/v1/experiments`               | List                                                                            |
+| `GET`  | `/v1/experiments/{id}`          | Get                                                                             |
+| `POST` | `/v1/experiments/{id}/record`   | Record a variant outcome (score 0..1). Auto-promotes on >2% lift + min-runs/arm |
+| `POST` | `/v1/experiments/{id}/conclude` | Manually conclude + optionally promote winner                                   |
 
 ### Marketplace
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/v1/marketplace` | List public agents (`?category=`, `?q=`) |
-| `POST` | `/v1/marketplace/publish` | Publish a tenant-local agent to the marketplace |
-| `GET` | `/v1/marketplace/{slug}` | Get marketplace entry |
-| `DELETE` | `/v1/marketplace/{slug}` | Unpublish |
-| `POST` | `/v1/marketplace/{slug}/fork` | Fork into caller's tenant |
-| `POST` | `/v1/marketplace/{slug}/star` | Star |
-| `DELETE` | `/v1/marketplace/{slug}/star` | Unstar |
+
+| Method   | Path                          | Description                                     |
+| -------- | ----------------------------- | ----------------------------------------------- |
+| `GET`    | `/v1/marketplace`             | List public agents (`?category=`, `?q=`)        |
+| `POST`   | `/v1/marketplace/publish`     | Publish a tenant-local agent to the marketplace |
+| `GET`    | `/v1/marketplace/{slug}`      | Get marketplace entry                           |
+| `DELETE` | `/v1/marketplace/{slug}`      | Unpublish                                       |
+| `POST`   | `/v1/marketplace/{slug}/fork` | Fork into caller's tenant                       |
+| `POST`   | `/v1/marketplace/{slug}/star` | Star                                            |
+| `DELETE` | `/v1/marketplace/{slug}/star` | Unstar                                          |
 
 ### MCP server registry
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/v1/mcp/servers` | List curated MCP servers (`?category=`, `?q=`) |
-| `GET` | `/v1/mcp/servers/{slug}` | Get one |
-| `POST` | `/v1/agents/{name}/mcp-servers` | Attach an MCP server to an agent |
-| `GET` | `/v1/agents/{name}/mcp-servers` | List attachments |
-| `DELETE` | `/v1/agents/{name}/mcp-servers/{slug}` | Detach |
+
+| Method   | Path                                   | Description                                    |
+| -------- | -------------------------------------- | ---------------------------------------------- |
+| `GET`    | `/v1/mcp/servers`                      | List curated MCP servers (`?category=`, `?q=`) |
+| `GET`    | `/v1/mcp/servers/{slug}`               | Get one                                        |
+| `POST`   | `/v1/agents/{name}/mcp-servers`        | Attach an MCP server to an agent               |
+| `GET`    | `/v1/agents/{name}/mcp-servers`        | List attachments                               |
+| `DELETE` | `/v1/agents/{name}/mcp-servers/{slug}` | Detach                                         |
 
 ### Verifiable receipts
+
 Tamper-evident HMAC-SHA256-signed proof of execution. Every receipt includes
 the SHA-256 of the run's `journal_events` stream so any post-hoc tampering
 invalidates the signature. Self-hosted deployments expose the signing key
 fingerprint via `/.well-known/lantern-receipts` for external verifiers.
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/runs/{id}/receipt` | Issue + persist a signed receipt for a completed run |
-| `POST` | `/v1/runs/receipts/verify` | Verify a receipt signature (no auth required) |
-| `GET` | `/.well-known/lantern-receipts` | Signing algorithm + key fingerprint |
+| Method | Path                            | Description                                          |
+| ------ | ------------------------------- | ---------------------------------------------------- |
+| `POST` | `/v1/runs/{id}/receipt`         | Issue + persist a signed receipt for a completed run |
+| `POST` | `/v1/runs/receipts/verify`      | Verify a receipt signature (no auth required)        |
+| `GET`  | `/.well-known/lantern-receipts` | Signing algorithm + key fingerprint                  |
 
 ### Run feedback (RLHF loop)
+
 Per-run human reactions feed the eval suite as positive examples and the
 rehearsal queue as failures to replay. Score is 1..5; 4-5 is "thumbs up", 1-2
 is "thumbs down".
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/runs/{id}/feedback` | Submit score (1-5), optional comment + preferred output |
-| `GET` | `/v1/runs/{id}/feedback` | List per-run feedback history |
-| `GET` | `/v1/agents/{name}/feedback` | Aggregate summary (avg score, thumbs up/down, 7-day trend) |
+| Method | Path                         | Description                                                |
+| ------ | ---------------------------- | ---------------------------------------------------------- |
+| `POST` | `/v1/runs/{id}/feedback`     | Submit score (1-5), optional comment + preferred output    |
+| `GET`  | `/v1/runs/{id}/feedback`     | List per-run feedback history                              |
+| `GET`  | `/v1/agents/{name}/feedback` | Aggregate summary (avg score, thumbs up/down, 7-day trend) |
 
 ### Rehearsals
+
 Replay past production failures (status=failed OR feedback score <= 2) as
 synthetic test cases against a candidate agent version BEFORE traffic flips.
 Reuses the eval-in-CI baseline machinery to gate merges.
 
-| Method | Path | Description |
-|---|---|---|
+| Method | Path                | Description                                                                            |
+| ------ | ------------------- | -------------------------------------------------------------------------------------- |
 | `POST` | `/v1/runs/rehearse` | Pull synthetic test cases from past failed/low-score runs (`window`, `limit`, filters) |
 
 ### Webchat embed (W10)
+
 Static JS widget served at `/widget.js` from the same origin. Embed with
 one `<script>` tag; talks to the same `/v1/sessions` endpoints the
 dashboard uses, so no parallel widget API to maintain.
 
 ### Workflow runtime (W11b)
+
 When `agents.workflow` JSONB contains a graph saved by the visual editor,
 the inline run executor dispatches to the workflow interpreter at
 `services/control-plane/internal/workflow/interpreter.go`. Supported node
@@ -407,59 +429,74 @@ emits `step_started` + `step_completed`/`step_failed` to `journal_events`
 so the run-detail waterfall renders the graph automatically.
 
 ### Human takeover (W11a)
+
 Workflow `approval` nodes block on a `takeover_requests` row. Operators
 flip the row from `pending` → `granted` (optionally posting SDP for live
 WebRTC takeover) → `released` to resume the workflow. Real microVM video
 streaming is the last mile; the contract + persistence + workflow wait
 are fully wired today.
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/runs/{id}/takeover/request` | Create a pending takeover row |
-| `GET` | `/v1/runs/{id}/takeover` | List takeover requests for a run |
-| `POST` | `/v1/runs/{id}/takeover/{id}/grant` | Operator approves; optional SDP offer |
-| `POST` | `/v1/runs/{id}/takeover/{id}/answer` | Browser-side SDP answer |
-| `POST` | `/v1/runs/{id}/takeover/{id}/release` | Workflow resumes |
+| Method | Path                                  | Description                           |
+| ------ | ------------------------------------- | ------------------------------------- |
+| `POST` | `/v1/runs/{id}/takeover/request`      | Create a pending takeover row         |
+| `GET`  | `/v1/runs/{id}/takeover`              | List takeover requests for a run      |
+| `POST` | `/v1/runs/{id}/takeover/{id}/grant`   | Operator approves; optional SDP offer |
+| `POST` | `/v1/runs/{id}/takeover/{id}/answer`  | Browser-side SDP answer               |
+| `POST` | `/v1/runs/{id}/takeover/{id}/release` | Workflow resumes                      |
 
 ### Marketplace commerce (W11c)
+
 Cross-tenant agent invocations with HMAC-signed settlement. Buyer tenant
 invokes a published marketplace agent; the run executes on the seller's
 tenant (their LLM keys, their budgets); the buyer receives the output
 plus a signed receipt verifiable via the same `/proof` endpoint as run
 receipts.
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/marketplace/{slug}/invoke` | Buyer invokes a seller agent. Returns output + HMAC-signed receipt |
-| `GET` | `/v1/marketplace/invocations?role=buyer\|seller` | List buyer- or seller-side history |
+| Method | Path                                             | Description                                                        |
+| ------ | ------------------------------------------------ | ------------------------------------------------------------------ |
+| `POST` | `/v1/marketplace/{slug}/invoke`                  | Buyer invokes a seller agent. Returns output + HMAC-signed receipt |
+| `GET`  | `/v1/marketplace/invocations?role=buyer\|seller` | List buyer- or seller-side history                                 |
 
 ### Voice channel (W11d)
+
 Phone numbers (purchased or BYO via SIP) route inbound calls to a
 Lantern agent. Provider-pluggable via the `VoiceProvider` interface in
-`services/control-plane/internal/handlers/voice.go`. Built-in: Twilio.
-Audio streaming + STT/TTS are the documented last-mile that ships when
-the user provides credentials.
+`services/control-plane/internal/handlers/voice.go`. Built-in providers:
+**Twilio** (TwiML webhooks) and **LiveKit** (realtime). The control-plane
+mints LiveKit access tokens and verifies both providers' webhook
+signatures; the realtime audio loop runs in a separately-deployed LiveKit
+Agents worker (the media last-mile). `voice_numbers.provider_config` is
+encrypted at rest (see `internal/secrets`).
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/voice/numbers` | Link a phone number to an agent (provider + config) |
-| `GET` | `/v1/voice/numbers` | List linked numbers |
-| `DELETE` | `/v1/voice/numbers/{id}` | Unlink |
-| `GET` | `/v1/voice/calls` | Recent calls with duration + cost |
-| `POST` | `/v1/voice/webhook/{provider}` | Provider POSTs here on inbound call (TwiML response for Twilio) |
+Voice spend counts against the same `agent_budgets` as runs: a Twilio
+inbound call over a hard-fail budget is declined with `<Reject>` (no
+carrier cost); a LiveKit join token is refused with HTTP 402 (no token →
+no media). The estimated per-call cost accrues into `agent_usage_daily`
+on connect via `RecordUsage`.
+
+| Method   | Path                           | Description                                                                      |
+| -------- | ------------------------------ | -------------------------------------------------------------------------------- |
+| `POST`   | `/v1/voice/numbers`            | Link a phone number to an agent (provider + config)                              |
+| `GET`    | `/v1/voice/numbers`            | List linked numbers                                                              |
+| `DELETE` | `/v1/voice/numbers/{id}`       | Unlink                                                                           |
+| `GET`    | `/v1/voice/calls`              | Recent calls with duration + cost                                                |
+| `POST`   | `/v1/voice/token`              | Mint a short-lived LiveKit join token for a room (agent worker / browser client) |
+| `POST`   | `/v1/voice/webhook/{provider}` | Provider POSTs here on inbound call (TwiML for Twilio; verified JWT for LiveKit) |
 
 ### Bridge heartbeat (WhatsApp surface)
+
 Bridge POSTs its current pairing state to the control-plane every 30s so
 the dashboard can render status without depending on direct bridge
 reachability (matters in multi-host prod). Optional — when the bridge
 env vars are unset, dashboard falls back to direct bridge probe.
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/surfaces/whatsapp/heartbeat` | Shared-token auth. Upserts pairing state per tenant |
-| `GET` | `/v1/surfaces/whatsapp/status` | JWT auth. Returns last-known pairing state with `stale` flag |
+| Method | Path                              | Description                                                  |
+| ------ | --------------------------------- | ------------------------------------------------------------ |
+| `POST` | `/v1/surfaces/whatsapp/heartbeat` | Shared-token auth. Upserts pairing state per tenant          |
+| `GET`  | `/v1/surfaces/whatsapp/status`    | JWT auth. Returns last-known pairing state with `stale` flag |
 
 ### MicroVM headless runtime (W12)
+
 Productionized headless agent execution: control-plane schedules a spec,
 `runtime-scheduler` picks a node (warm-pool / region / fair-share / cost /
 health), `runtime-manager` spawns the workload in the right isolation
@@ -471,24 +508,25 @@ contract is in `packages/proto/lantern/v1/runtime.proto`; arch overview is
 component is in ADRs 0002–0007. Quota is per tenant; cap exceeded returns
 HTTP 402.
 
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/v1/runtime/schedule` | Submit an AgentSpec (image, isolation, limits, egress, secrets). Returns `vm_id`. 402 if quota exceeded |
-| `GET` | `/v1/runtime/vms` | List VMs (`?state=running&limit=50`) |
-| `GET` | `/v1/runtime/vms/{id}` | VM detail + recent audit events |
-| `DELETE` | `/v1/runtime/vms/{id}?grace=30s` | Drain + terminate |
-| `GET` | `/v1/runtime/vms/{id}/logs` | SSE log stream from the harness |
-| `POST` | `/v1/runtime/vms/{id}/exec` | One-shot exec into a running VM (operator debugging) |
-| `GET` | `/v1/runtime/cluster` | Owner-only. Node load + warm-pool capacity |
-| `GET` | `/v1/runtime/audit` | Recent runtime audit events for the tenant |
-| `GET` | `/v1/runtime/quota` | Current quota + today's usage |
-| `PUT` | `/v1/runtime/quota` | Owner-only. Update max concurrent VMs / cost-per-day |
+| Method   | Path                             | Description                                                                                             |
+| -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `POST`   | `/v1/runtime/schedule`           | Submit an AgentSpec (image, isolation, limits, egress, secrets). Returns `vm_id`. 402 if quota exceeded |
+| `GET`    | `/v1/runtime/vms`                | List VMs (`?state=running&limit=50`)                                                                    |
+| `GET`    | `/v1/runtime/vms/{id}`           | VM detail + recent audit events                                                                         |
+| `DELETE` | `/v1/runtime/vms/{id}?grace=30s` | Drain + terminate                                                                                       |
+| `GET`    | `/v1/runtime/vms/{id}/logs`      | SSE log stream from the harness                                                                         |
+| `POST`   | `/v1/runtime/vms/{id}/exec`      | One-shot exec into a running VM (operator debugging)                                                    |
+| `GET`    | `/v1/runtime/cluster`            | Owner-only. Node load + warm-pool capacity                                                              |
+| `GET`    | `/v1/runtime/audit`              | Recent runtime audit events for the tenant                                                              |
+| `GET`    | `/v1/runtime/quota`              | Current quota + today's usage                                                                           |
+| `PUT`    | `/v1/runtime/quota`              | Owner-only. Update max concurrent VMs / cost-per-day                                                    |
 
 CLI surface (`lantern run`, `lantern vm …`) and dashboard pages
 (`/runtime`, `/runtime/{vm}`) consume these endpoints. End-to-end demo
 agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-research,04-ml-inference}/`.
 
 **Wiring env vars (set on control-plane + scheduler):**
+
 - `LANTERN_SCHEDULER_GRPC_ADDR=localhost:50055` — control-plane dials
   the scheduler. Unset → falls back to `stubSchedulerClient` (synthesizes
   vm-ids, returns `node-stub`/`az-stub`; useful for dashboard-only work).
@@ -514,6 +552,7 @@ tonic-generated server.
 ## What to do, and what NOT to do
 
 ### DO
+
 - Read the relevant ADR before changing a load-bearing decision.
 - Add a test for every bug fix (regression test) and every new code path.
 - Prefer **editing existing files** over creating new ones. The repo already has its shape.
@@ -523,6 +562,7 @@ tonic-generated server.
 - Run `make ci-local` before committing -- it runs the same matrix as CI.
 
 ### DO NOT
+
 - Do not add a new dependency without checking it against `cargo-audit` / `npm audit` / `govulncheck`.
 - Do not add error handling for situations that cannot happen ("just in case"). Trust internal invariants; validate at boundaries.
 - Do not write defensive shims for "future flexibility". YAGNI.
@@ -544,6 +584,7 @@ the owner confirms a suggested follow-up. Lives in
 into both bridges' session handlers.
 
 ### Security model
+
 - **Owner-only.** Both bridges enforce `isOwnerChatRow` / `isOwnerChat`
   before any doc query, agentic action, or command fires. Two topologies
   supported: (a) self-chat (single Apple ID / WhatsApp number — owner
@@ -561,6 +602,7 @@ into both bridges' session handlers.
   in self-chat — bridge ignores ALL inbound until released.
 
 ### Agentic action layer
+
 - `mac-actions.ts` wraps AppleScript for `Calendar.app`, `Notes.app`, and
   `Mail.app`. Dates are constructed component-by-component (locale-safe;
   `date "YYYY-MM-DD"` literals are NOT locale-safe and produce garbage
@@ -576,17 +618,19 @@ into both bridges' session handlers.
   was set without ever emitting a `[CALENDAR:...]` marker.
 
 ### Required env (bridge process)
-| Var | Purpose |
-|---|---|
-| `LANTERN_OWNER_NAME` | First name used for ranker boost ("Shekhar" → boost files whose path contains "shekhar" when the query says "my") |
-| `LANTERN_OWNER_EMAIL` | Mirror destination for bot status updates |
-| `LANTERN_IMESSAGE_OWNER_HANDLE` | (Optional) Owner's primary iMessage handle (phone or email). When set, bridge accepts DMs from this handle as owner-channel (dedicated-bot mode). When unset, falls back to self-chat detection. |
-| `LANTERN_WA_OWNER_JID` | (Optional) Owner's primary WhatsApp JID — `15125551234` or `15125551234@s.whatsapp.net`. Same role as the iMessage env. |
-| `LANTERN_PERSONAL_DOCS_ROOTS` | Colon-separated allowed roots (default `~/Documents:~/Desktop:~/Library/Mobile Documents/com~apple~CloudDocs`) |
-| `LANTERN_PERSONAL_DOCS_OCR_MAX_PAGES` | Max PDF pages to render+OCR per file (default 3) |
-| `LANTERN_DEFAULT_CALENDAR` | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`) |
+
+| Var                                   | Purpose                                                                                                                                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `LANTERN_OWNER_NAME`                  | First name used for ranker boost ("Shekhar" → boost files whose path contains "shekhar" when the query says "my")                                                                                |
+| `LANTERN_OWNER_EMAIL`                 | Mirror destination for bot status updates                                                                                                                                                        |
+| `LANTERN_IMESSAGE_OWNER_HANDLE`       | (Optional) Owner's primary iMessage handle (phone or email). When set, bridge accepts DMs from this handle as owner-channel (dedicated-bot mode). When unset, falls back to self-chat detection. |
+| `LANTERN_WA_OWNER_JID`                | (Optional) Owner's primary WhatsApp JID — `15125551234` or `15125551234@s.whatsapp.net`. Same role as the iMessage env.                                                                          |
+| `LANTERN_PERSONAL_DOCS_ROOTS`         | Colon-separated allowed roots (default `~/Documents:~/Desktop:~/Library/Mobile Documents/com~apple~CloudDocs`)                                                                                   |
+| `LANTERN_PERSONAL_DOCS_OCR_MAX_PAGES` | Max PDF pages to render+OCR per file (default 3)                                                                                                                                                 |
+| `LANTERN_DEFAULT_CALENDAR`            | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`)                                                                                          |
 
 ### Always-on
+
 WhatsApp + API + dashboard run under user LaunchAgents
 (`~/Library/LaunchAgents/dev.lantern.*.plist`). The iMessage bridge needs
 Full Disk Access (chat.db) + Automation permission (Messages.app), which
@@ -596,6 +640,7 @@ is per-binary in macOS TCC — easiest path is to run it via Terminal
 `docs/personal/BOT-SETUP.md`.
 
 ### Self-heal (WhatsApp Signal protocol)
+
 The bridge hooks Baileys' logger and counts decrypt failures
 (`failed to decrypt message` / `Bad MAC` / `MessageCounterError`). When
 20+ errors hit inside 60s, it forces a socket-level reconnect to
@@ -605,11 +650,12 @@ needs a one-time re-pair; `POST /session/:tenant/reset` wipes creds and
 `/start` issues a fresh QR.
 
 ### Endpoints added
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/v1/vision/ocr` | OCR a base64 image via tenant's OpenAI vision key. Used by personal-docs for scanned PDFs. |
-| `GET` | `/session/:tenantId/has-creds` (WA bridge) | Dashboard probe — when true, show "Reconnect" instead of "Pair with QR" |
-| `POST` | `/session/:tenantId/reset` (WA bridge) | Wipe creds (destructive — forces fresh QR pair) |
+
+| Method | Path                                       | Purpose                                                                                    |
+| ------ | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `POST` | `/v1/vision/ocr`                           | OCR a base64 image via tenant's OpenAI vision key. Used by personal-docs for scanned PDFs. |
+| `GET`  | `/session/:tenantId/has-creds` (WA bridge) | Dashboard probe — when true, show "Reconnect" instead of "Pair with QR"                    |
+| `POST` | `/session/:tenantId/reset` (WA bridge)     | Wipe creds (destructive — forces fresh QR pair)                                            |
 
 ---
 
@@ -649,23 +695,23 @@ The four-Makefile-target dance below still works for power users, but
 
 ## Make targets (still supported)
 
-| Target | Purpose |
-|---|---|
-| `make dev` | Full docker-compose stack (containerized API + dashboard) |
-| `make dev-infra` | Postgres + Redis + MinIO only |
-| `make run-api` | Control-plane with dev env vars on `:8080` (host go run) |
-| `make dashboard-dev` | Next.js dashboard on `:3001` |
-| `make run-whatsapp-bridge` | WhatsApp bridge on `:3100` |
-| `make landing-dev` | Landing page dev server |
-| `make build` | Compile Go + Rust + TypeScript |
-| `make proto` | Regenerate from proto definitions |
-| `make test` | All test suites |
-| `make lint` | All linters |
-| `make audit` | Security audit (all languages) |
-| `make ci-local` | Lint + test + audit (same as CI) |
-| `make clean` | Remove artifacts + docker volumes |
-| `make seed` | Seed sample data into running services |
-| `make docker-build` | Build all container images |
+| Target                     | Purpose                                                   |
+| -------------------------- | --------------------------------------------------------- |
+| `make dev`                 | Full docker-compose stack (containerized API + dashboard) |
+| `make dev-infra`           | Postgres + Redis + MinIO only                             |
+| `make run-api`             | Control-plane with dev env vars on `:8080` (host go run)  |
+| `make dashboard-dev`       | Next.js dashboard on `:3001`                              |
+| `make run-whatsapp-bridge` | WhatsApp bridge on `:3100`                                |
+| `make landing-dev`         | Landing page dev server                                   |
+| `make build`               | Compile Go + Rust + TypeScript                            |
+| `make proto`               | Regenerate from proto definitions                         |
+| `make test`                | All test suites                                           |
+| `make lint`                | All linters                                               |
+| `make audit`               | Security audit (all languages)                            |
+| `make ci-local`            | Lint + test + audit (same as CI)                          |
+| `make clean`               | Remove artifacts + docker volumes                         |
+| `make seed`                | Seed sample data into running services                    |
+| `make docker-build`        | Build all container images                                |
 
 ---
 

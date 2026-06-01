@@ -72,19 +72,25 @@ Lantern is a serverless platform for running production AI agents reliably at an
 ## Components in one paragraph each
 
 ### API Gateway (Rust, Axum + Tower)
+
 The single edge. Terminates TLS, validates JWTs / API keys, applies per-tenant rate limits, and proxies streaming responses (SSE + WebSocket + gRPC bidi). Speaks gRPC inward over mTLS. Stateless and horizontally scaled. Written in Rust for predictable tail latency on the streaming hot path.
 
 ### Control Plane (Go)
+
 The system of record for agents, agent versions (bundles), runs, tenants, users, RBAC, API keys, and policies. Postgres-backed. Exposes a public REST + gRPC API and an internal gRPC API consumed by the workflow engine and runtime manager. Uses the K8s API client to create per-tenant namespaces and resource quotas. **Never touches user code or runs anything itself** — it only orchestrates the engine and runtime manager.
 
 ### Workflow Engine (Go)
+
 The durable execution heart of Lantern. Event-sourced: every step start, step complete, step failure, and signal becomes an event in a Postgres journal partitioned by run. On crash or restart, the engine replays the journal to reconstruct in-memory state. Implements `step()`, `step.map`, `step.race`, `step.sleep`, signals, queries, child workflows, and the abort/cancel protocol. Scales horizontally via run-id sharding.
 
 ### Runtime Manager (Rust)
+
 Owns all interaction with physical compute. Receives "schedule this run on this isolation class" gRPC calls from the workflow engine. Translates to a K8s Job, a Firecracker microVM, a Kata pod, a Wasmtime invocation, or a devcontainer attach. Owns snapshot/restore for fast cold start (<200ms target). Enforces seccomp + egress filtering for untrusted classes. Streams stdout/stderr/events back over gRPC to the engine and gateway.
 
 ### Model Router (Rust)
+
 The single point of contact with all LLM providers. Implements a Vercel-AI-Gateway-style unified API: one endpoint, OpenAI Chat Completions and Responses–compatible. Adds:
+
 - **Capability addressing** (`reasoning-large` → vendor model picked at runtime)
 - **Cost-aware big/small routing** (tries the cheapest model that historically succeeds at this prompt class; falls back up the ladder on failure or low confidence)
 - **Prompt cache** (deduplicates identical prompts within a window)
@@ -94,7 +100,9 @@ The single point of contact with all LLM providers. Implements a Vercel-AI-Gatew
 - **Streaming generation IDs** injected on the first token (Vercel pattern) so dashboard reconnects can resume
 
 ### Memory Service (Go)
+
 Three-tier memory model borrowed from Letta:
+
 - **Core** — small, always-included scratchpad in the prompt (key-value)
 - **Recall** — recent run history searchable by vector + lexical
 - **Archival** — long-term knowledge base, vector + structured
@@ -102,12 +110,15 @@ Three-tier memory model borrowed from Letta:
 Backed by Postgres + pgvector for vector search, Redis for hot KV, and S3 for blob attachments. Multi-scope: tenant, user, agent, run. Encryption at rest with per-tenant keys.
 
 ### Notifier (Go)
-Listens to engine events. Delivers notifications via webhook, email (SES/Resend), Slack, SMS (Twilio), in-app, and web push. At-least-once with idempotency keys. Per-tenant rate limits and provider failover.
+
+Listens to engine events. Delivers notifications via webhook, email (SES/Resend), Slack, Discord, and SMS (Twilio — supports A2P 10DLC via a Messaging Service SID). At-least-once with per-channel retry + exponential backoff and idempotency keys. In-app and web push are planned. Cross-provider failover is not yet implemented.
 
 ### Billing (Go)
+
 Captures usage events (CPU-seconds, memory-GB-seconds, GPU-seconds, tokens by model, sandbox-hours, storage, egress). Aggregates into a metering pipeline. Per-tenant cost attribution by tag. Hard budget enforcement integrated with the model router.
 
 ### Scheduler (Go)
+
 Cron triggers, delayed jobs, retries-with-backoff queue, dead-letter queue. Implements per-tenant fair-share scheduling on top of the engine's run queue.
 
 ## End-to-end run lifecycle
@@ -164,13 +175,13 @@ Cron triggers, delayed jobs, retries-with-backoff queue, dead-letter queue. Impl
 
 ## Why each language
 
-| Language | Where | Justification |
-|---|---|---|
-| **Go** | control-plane, workflow-engine, memory, notifier, billing, scheduler, CLI | K8s native (most operators are Go), excellent gRPC + sqlc, single-binary deploys, strong stdlib for the kind of CRUD-and-coordinate work these services do |
-| **Rust** | runtime-manager, gateway, model-router, snapshotter | Hot path. Firecracker is Rust. Predictable tail latency, no GC pauses on streaming proxies, native SIMD for embedding hashing in the cache layer |
-| **TypeScript** | sdk-ts (primary), web dashboard, landing, docs site | The agent ecosystem already lives here. RSC + streaming in Next.js 15 maps perfectly onto our streaming protocol |
-| **Python** | sdk-python | Where AI/ML users live |
-| **protobuf3** | packages/proto | Single source of truth for cross-service types; codegens to all four languages |
+| Language       | Where                                                                     | Justification                                                                                                                                              |
+| -------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Go**         | control-plane, workflow-engine, memory, notifier, billing, scheduler, CLI | K8s native (most operators are Go), excellent gRPC + sqlc, single-binary deploys, strong stdlib for the kind of CRUD-and-coordinate work these services do |
+| **Rust**       | runtime-manager, gateway, model-router, snapshotter                       | Hot path. Firecracker is Rust. Predictable tail latency, no GC pauses on streaming proxies, native SIMD for embedding hashing in the cache layer           |
+| **TypeScript** | sdk-ts (primary), web dashboard, landing, docs site                       | The agent ecosystem already lives here. RSC + streaming in Next.js 15 maps perfectly onto our streaming protocol                                           |
+| **Python**     | sdk-python                                                                | Where AI/ML users live                                                                                                                                     |
+| **protobuf3**  | packages/proto                                                            | Single source of truth for cross-service types; codegens to all four languages                                                                             |
 
 See [`docs/adr/0001-language-stack.md`](../adr/0001-language-stack.md) for the full reasoning.
 

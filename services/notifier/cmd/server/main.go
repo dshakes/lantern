@@ -80,6 +80,7 @@ func main() {
 	dispatcher.RegisterChannel(delivery.NewEmailDeliverer(logger))
 	dispatcher.RegisterChannel(delivery.NewSlackDeliverer(logger))
 	dispatcher.RegisterChannel(delivery.NewDiscordDeliverer(logger))
+	dispatcher.RegisterChannel(delivery.NewSMSDeliverer(logger))
 
 	// --- gRPC server ---
 	grpcServer := grpc.NewServer(
