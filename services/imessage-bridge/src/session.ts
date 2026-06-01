@@ -2035,6 +2035,7 @@ export class IMessageSession {
     await executeCommand(parsed, {
       reply,
       channelLabel: "iMessage",
+      chatJid: jid,
       mute: async (durationMs?: number) => {
         this.muted = true;
         this.persist();
