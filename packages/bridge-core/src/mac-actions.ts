@@ -315,12 +315,28 @@ function formatHuman(d: Date): string {
 const RE_CALENDAR = /\[CALENDAR:([^\]]+)\]/g;
 const RE_NOTE = /\[NOTE:([^\]]+)\]/g;
 const RE_MAIL = /\[MAIL:([^\]]+)\]/g;
+// Outbound call marker — the intelligent replacement for brittle "call X"
+// regexes. The LLM understands call intent in ANY phrasing (typos, "can
+// you call manu", voice notes, other languages) and emits this marker; the
+// bridge runs it through the real Twilio orchestrator (risk-tier + owner
+// ack). No marker = no call, which also kills the "i'll call her" text
+// hallucination.
+//   [CALL:target|mode|message-or-reason]
+//   mode ∈ conference | voicemail | task
+const RE_CALL = /\[CALL:([^\]]+)\]/g;
+
+export interface CallSpec {
+  target: string;
+  mode: "conference" | "voicemail" | "task";
+  message?: string;
+}
 
 export interface ExtractedActions {
   cleanedText: string;
   calendarEvents: CalendarEventSpec[];
   notes: NoteSpec[];
   mailDrafts: MailDraftSpec[];
+  calls: CallSpec[];
 }
 
 export function extractActionMarkers(text: string): ExtractedActions {
@@ -328,6 +344,7 @@ export function extractActionMarkers(text: string): ExtractedActions {
   const calendarEvents: CalendarEventSpec[] = [];
   const notes: NoteSpec[] = [];
   const mailDrafts: MailDraftSpec[] = [];
+  const calls: CallSpec[] = [];
 
   for (const m of text.matchAll(RE_CALENDAR)) {
     const parts = m[1].split("|").map((p) => p.trim());
@@ -359,5 +376,16 @@ export function extractActionMarkers(text: string): ExtractedActions {
     }
     cleaned = cleaned.replace(m[0], "");
   }
-  return { cleanedText: cleaned.replace(/\n{3,}/g, "\n\n").trim(), calendarEvents, notes, mailDrafts };
+  for (const m of text.matchAll(RE_CALL)) {
+    const parts = m[1].split("|").map((p) => p.trim());
+    const target = parts[0];
+    if (target) {
+      const rawMode = (parts[1] || "conference").toLowerCase();
+      const mode: CallSpec["mode"] =
+        rawMode === "voicemail" ? "voicemail" : rawMode === "task" ? "task" : "conference";
+      calls.push({ target, mode, message: parts[2] || undefined });
+    }
+    cleaned = cleaned.replace(m[0], "");
+  }
+  return { cleanedText: cleaned.replace(/\n{3,}/g, "\n\n").trim(), calendarEvents, notes, mailDrafts, calls };
 }
