@@ -1738,8 +1738,21 @@ export class WhatsAppSession {
             const action = reactionToAction(emoji);
             if (action) {
               const targetKeyId = reactionMsg.key?.id || undefined;
-              const onBotReply = !!(targetKeyId && this.bridgeSentIds.has(targetKeyId));
+              // A reaction is "on a bot reply" if we sent that message id OR
+              // we have reply-meta for it. Checking both is more robust than
+              // bridgeSentIds alone (which is cleared on restart).
+              const onBotReply = !!(targetKeyId && (this.bridgeSentIds.has(targetKeyId) || this.bridgeReplyMeta.has(targetKeyId)));
               this.logger.info({ emoji, action, threadJid: from, onBotReply }, "reaction command");
+              // 👎 / ❌ on a BOT REPLY is the intuitive "that was bad" gesture.
+              // The default mapping (discard VIP draft) is a no-op on WhatsApp,
+              // so thumbs-down silently did NOTHING. Route it to real negative
+              // feedback: record the dislike (future replies calibrate away from
+              // it) + ack the owner. No auto-retry — that's 🔁's explicit job,
+              // and we must never auto-send a fresh message into a contact thread.
+              if (action === "discard-draft" && onBotReply) {
+                void this.recordDislikeFromReaction(from, targetKeyId);
+                continue;
+              }
               void dispatchReaction(
                 { action, threadJid: from, onBotReply, targetMsgId: targetKeyId },
                 {
@@ -4556,6 +4569,29 @@ export class WhatsAppSession {
         if (k) this.bridgeReplyMeta.delete(k);
       }
     }
+  }
+
+  // 👎 / ❌ on a bot reply: record the dislike for permanent calibration
+  // and acknowledge to the owner — WITHOUT retrying/sending anything into
+  // the contact thread. This is the lightweight counterpart to the 🔁
+  // retry path: "noted, learn from it" vs "noted, try again now".
+  private async recordDislikeFromReaction(jid: string, msgId: string | undefined): Promise<void> {
+    this.logger.info({ jid, msgId }, "self-eval: 👎 negative feedback");
+    this.logActivity("attention_dm", "👎 owner flagged a bad reply", { jid, scope: "self" });
+    const meta = msgId ? this.bridgeReplyMeta.get(msgId) : undefined;
+    if (!meta) {
+      // Reply-meta aged out or predates the last restart — still acknowledge
+      // so the owner sees the thumbs-down registered.
+      try { await this.confirmToSelf("👎 noted — what was off about that one?"); } catch {}
+      return;
+    }
+    void this.dislikeMemory.record({
+      jid: meta.jid,
+      inbound: meta.inboundText,
+      badReply: meta.replyText,
+      channel: "whatsapp",
+    });
+    try { await this.confirmToSelf("👎 noted — I'll steer clear of that next time."); } catch {}
   }
 
   // SELF-EVAL retry: full critique-and-rewrite pipeline.
