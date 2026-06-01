@@ -203,7 +203,7 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `api_keys`              | API key management                                                                                                                                                                               | `tenant_id`, `key_hash`, `key_prefix`, `scopes`                                                                              |
 | `deployments`           | Deployment tracking                                                                                                                                                                              | `tenant_id`, `agent_name`, `version`, `environment`, `status`                                                                |
 | `data_planes`           | Registered data planes                                                                                                                                                                           | `tenant_id`, `cloud`, `region`, `status`, `last_heartbeat`                                                                   |
-| `llm_provider_configs`  | LLM API keys per tenant                                                                                                                                                                          | `tenant_id`, `provider`, `api_key_encrypted`                                                                                 |
+| `llm_provider_configs`  | LLM API keys per tenant. `api_key_encrypted` is AES-256-GCM-encrypted at rest via `internal/secrets` (`LANTERN_CREDENTIAL_KEY`; plaintext pass-through when unset)                               | `tenant_id`, `provider`, `api_key_encrypted`                                                                                 |
 | `agent_budgets`         | Policy-as-code spend + rate limits                                                                                                                                                               | `tenant_id`, `agent_name`, `max_cost_usd_per_day`, `max_cost_usd_per_run`, `tool_limits` (JSONB), `hard_fail`                |
 | `agent_usage_daily`     | Daily rollup for budget enforcement                                                                                                                                                              | `tenant_id`, `agent_name`, `usage_date`, `cost_usd`, `runs_count`, `tool_counts` (JSONB)                                     |
 | `cost_forecasts`        | Pre-run cost forecast audit trail                                                                                                                                                                | `tenant_id`, `agent_name`, `estimated_tokens_in/out`, `estimated_cost_usd`, `confidence`                                     |
@@ -467,6 +467,12 @@ mints LiveKit access tokens and verifies both providers' webhook
 signatures; the realtime audio loop runs in a separately-deployed LiveKit
 Agents worker (the media last-mile). `voice_numbers.provider_config` is
 encrypted at rest (see `internal/secrets`).
+
+Voice spend counts against the same `agent_budgets` as runs: a Twilio
+inbound call over a hard-fail budget is declined with `<Reject>` (no
+carrier cost); a LiveKit join token is refused with HTTP 402 (no token →
+no media). The estimated per-call cost accrues into `agent_usage_daily`
+on connect via `RecordUsage`.
 
 | Method   | Path                           | Description                                                                      |
 | -------- | ------------------------------ | -------------------------------------------------------------------------------- |
