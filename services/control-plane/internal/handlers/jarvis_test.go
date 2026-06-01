@@ -48,3 +48,18 @@ func TestEmbedConcurrency(t *testing.T) {
 		}
 	}
 }
+
+func TestStripAssistantPreamble(t *testing.T) {
+	cases := map[string]string{
+		"This is a writing task, not a coding task. Let me write it.\n\n---\n\nYou're mostly clear.": "You're mostly clear.",
+		"Let me help.\nReal line one.\nReal line two.":                                               "Real line one.\nReal line two.",
+		"Clean output already.":                  "Clean output already.",
+		"Here's the brief:\n\nupcoming: standup": "upcoming: standup",
+		"":                                       "",
+	}
+	for in, want := range cases {
+		if got := stripAssistantPreamble(in); got != want {
+			t.Errorf("stripAssistantPreamble(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

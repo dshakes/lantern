@@ -458,7 +458,13 @@ func (h *SMSHandler) askOwnerAgent(ctx context.Context, userText string) (string
 	// the memories most relevant to what he just asked, drawn from the
 	// unified cross-channel timeline.
 	system += h.ownerMemoryBlock(ctx, userText)
-	return h.llm.CompleteInternal(ctx, h.defaultTenant, system, userText, 200)
+	reply, err := h.llm.CompleteInternal(ctx, h.defaultTenant, system, userText, 200)
+	if err != nil {
+		return "", err
+	}
+	// Strip any model preamble (claude-code-local likes to prepend "Let
+	// me…/This is a…") so SMS/voice replies are clean.
+	return stripAssistantPreamble(reply), nil
 }
 
 // ownerMemoryBlock builds a context block for the owner agent from the

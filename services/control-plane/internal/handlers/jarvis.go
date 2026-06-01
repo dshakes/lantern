@@ -202,7 +202,43 @@ func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calend
 		h.logger().Debug("brief LLM phrasing failed; returning raw sections", zap.Error(err))
 		return fallback
 	}
-	return strings.TrimSpace(out)
+	return stripAssistantPreamble(out)
+}
+
+// stripAssistantPreamble removes meta-preamble some models (notably the
+// claude-code-local backend) prepend to user-facing output — e.g. "This
+// is a writing task… Let me write…\n\n---\n\n<actual content>". Keeps the
+// reply clean for SMS/voice/brief surfaces.
+func stripAssistantPreamble(s string) string {
+	s = strings.TrimSpace(s)
+	// If a "---" fence appears near the top, the real content is after it.
+	if idx := strings.Index(s, "\n---\n"); idx >= 0 && idx < 320 {
+		s = strings.TrimSpace(s[idx+len("\n---\n"):])
+	}
+	metaPrefixes := []string{
+		"this is a ", "let me ", "here's ", "here is ", "sure,", "okay,",
+		"ok,", "i'll write", "i will write", "got it,", "alright,",
+	}
+	lines := strings.Split(s, "\n")
+	for len(lines) > 0 {
+		l := strings.ToLower(strings.TrimSpace(lines[0]))
+		if l == "" {
+			lines = lines[1:]
+			continue
+		}
+		matched := false
+		for _, p := range metaPrefixes {
+			if strings.HasPrefix(l, p) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			break
+		}
+		lines = lines[1:]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // ---- proactive morning push ------------------------------------------------
@@ -249,12 +285,22 @@ func (h *JarvisHandler) RunBriefScheduler(ctx context.Context) {
 	}
 }
 
-// deliverBrief sends the brief to the owner over the best available
-// channel. Best-effort with logging.
+// deliverBrief sends the brief to the owner. Channel order is
+// WhatsApp → SMS → email (LANTERN_JARVIS_BRIEF_CHANNEL can force one).
+// WhatsApp is the default because it's where the owner lives and it
+// bypasses US A2P 10DLC SMS filtering. Each channel falls through to the
+// next on failure. Best-effort with logging.
 func (h *JarvisHandler) deliverBrief(ctx context.Context, tenantID, brief string) {
+	forced := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_JARVIS_BRIEF_CHANNEL")))
+
+	if (forced == "" || forced == "whatsapp") && h.sendBriefWhatsApp(ctx, tenantID, brief) {
+		h.logger().Info("morning brief sent via WhatsApp")
+		return
+	}
+
 	twilioNum := strings.TrimSpace(os.Getenv("LANTERN_TWILIO_NUMBER"))
 	ownerPhone := strings.TrimSpace(os.Getenv("LANTERN_OWNER_PHONE"))
-	if twilioNum != "" && ownerPhone != "" {
+	if (forced == "" || forced == "sms") && twilioNum != "" && ownerPhone != "" {
 		body := brief
 		if len(body) > 600 {
 			body = body[:590] + " […]"
@@ -262,20 +308,42 @@ func (h *JarvisHandler) deliverBrief(ctx context.Context, tenantID, brief string
 		if _, err := executeConnectorAction(ctx, h.srv.Pool, tenantID, "twilio", "send_sms",
 			map[string]any{"to": ownerPhone, "from": twilioNum, "body": body}); err != nil {
 			h.logger().Warn("morning brief SMS failed", zap.Error(err))
+		} else {
+			h.logger().Info("morning brief sent via SMS")
 			return
 		}
-		h.logger().Info("morning brief sent via SMS")
-		return
 	}
+
 	ownerEmail := strings.TrimSpace(os.Getenv("LANTERN_OWNER_EMAIL"))
-	if ownerEmail != "" {
+	if (forced == "" || forced == "email") && ownerEmail != "" {
 		if _, err := executeConnectorAction(ctx, h.srv.Pool, tenantID, "gmail", "send_message",
 			map[string]any{"to": ownerEmail, "subject": "Your Lantern brief", "body": brief, "label": "lantern", "skipInbox": false}); err != nil {
 			h.logger().Warn("morning brief email failed", zap.Error(err))
+		} else {
+			h.logger().Info("morning brief sent via email")
 			return
 		}
-		h.logger().Info("morning brief sent via email")
-		return
 	}
-	h.logger().Warn("morning brief: no delivery channel configured (set LANTERN_TWILIO_NUMBER+LANTERN_OWNER_PHONE or LANTERN_OWNER_EMAIL)")
+	h.logger().Warn("morning brief: no delivery channel succeeded")
+}
+
+// sendBriefWhatsApp posts the brief to the owner's WhatsApp self-chat via
+// the bridge's send-self endpoint. Returns true on a 2xx.
+func (h *JarvisHandler) sendBriefWhatsApp(ctx context.Context, tenantID, brief string) bool {
+	bridgeURL := getEnvOr("LANTERN_BRIDGE_URL", "http://localhost:3100")
+	payload := `{"message":` + strconv.Quote("🌅 *Morning brief*\n\n"+brief) + `}`
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(bridgeURL, "/")+"/session/"+tenantID+"/send-self", strings.NewReader(payload))
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		h.logger().Debug("brief WhatsApp send failed", zap.Error(err))
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode/100 == 2
 }
