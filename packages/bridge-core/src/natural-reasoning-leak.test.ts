@@ -20,6 +20,18 @@ const LEAKS = [
   `I'll stay silent on this one.`,
   `The sender is just acknowledging; I won't respond.`,
   `Empty string is the right call.`,
+  // Second report (DM with Manu): bare token + decision narration that
+  // slipped past the first pass.
+  `empty`,
+  `Empty`,
+  `(empty)`,
+  `Nothing new to add`,
+  `nothing to add`,
+  `none`,
+  `no reply`,
+  `The contact is just repeating "Did u start?" — I already answered this exact question earlier ("yeah around 12 min" / "yep")`,
+  `I already answered this earlier`,
+  `they're just repeating the question, nothing to add`,
 ];
 
 for (const leak of LEAKS) {
@@ -38,6 +50,10 @@ const REAL_REPLIES = [
   "ok cool",
   "got it, thanks!",
   "you made a good call on the venue tbh", // 'call' but not a decision-narration
+  "the place was totally empty lol", // contains 'empty' but not a bare token
+  "anything else you want me to add?", // 'add' but not 'nothing to add'
+  "i already ate, thanks though", // 'already' but not 'already answered'
+  "yeah i'm repeating the same playlist haha", // 'repeating' but not about the inbound
 ];
 
 for (const reply of REAL_REPLIES) {
