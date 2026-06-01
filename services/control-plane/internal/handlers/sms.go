@@ -454,7 +454,68 @@ func (h *SMSHandler) askOwnerAgent(ctx context.Context, userText string) (string
 	if h.llm == nil {
 		return "", fmt.Errorf("LLM proxy unavailable")
 	}
+	// Make Jarvis memory-aware: inject the owner's upcoming calendar +
+	// the memories most relevant to what he just asked, drawn from the
+	// unified cross-channel timeline.
+	system += h.ownerMemoryBlock(ctx, userText)
 	return h.llm.CompleteInternal(ctx, h.defaultTenant, system, userText, 200)
+}
+
+// ownerMemoryBlock builds a context block for the owner agent from the
+// unified timeline: upcoming calendar events (always) + the events most
+// semantically relevant to the query (vector recall). Best-effort —
+// returns "" on any failure so the agent still answers.
+func (h *SMSHandler) ownerMemoryBlock(ctx context.Context, query string) string {
+	if h.llm == nil || h.pool == nil {
+		return ""
+	}
+	var b strings.Builder
+
+	// Upcoming calendar (kind='event', not yet past).
+	if rows, err := h.pool.Query(ctx, `
+		SELECT content FROM memory_events
+		WHERE tenant_id = $1 AND kind = 'event' AND occurred_at >= now() - interval '1 hour'
+		ORDER BY occurred_at ASC LIMIT 5
+	`, h.defaultTenant); err == nil {
+		var cals []string
+		for rows.Next() {
+			var c string
+			if rows.Scan(&c) == nil {
+				cals = append(cals, c)
+			}
+		}
+		rows.Close()
+		if len(cals) > 0 {
+			b.WriteString("\n\nupcoming on your calendar:\n- " + strings.Join(cals, "\n- "))
+		}
+	}
+
+	// Semantically-relevant memories for this query.
+	if vec, err := h.llm.EmbedText(ctx, h.defaultTenant, query); err == nil {
+		if rows, err := h.pool.Query(ctx, `
+			SELECT me.channel, COALESCE(p.display_name, ''), me.content
+			FROM memory_events me LEFT JOIN people p ON p.id = me.person_id
+			WHERE me.tenant_id = $1 AND me.embedding IS NOT NULL AND me.kind <> 'event'
+			ORDER BY me.embedding <=> $2::vector LIMIT 6
+		`, h.defaultTenant, vectorLiteral(vec)); err == nil {
+			var lines []string
+			for rows.Next() {
+				var ch, nm, ct string
+				if rows.Scan(&ch, &nm, &ct) == nil {
+					who := nm
+					if who == "" {
+						who = "?"
+					}
+					lines = append(lines, fmt.Sprintf("[%s] %s: %s", ch, who, smsTruncate(ct, 140)))
+				}
+			}
+			rows.Close()
+			if len(lines) > 0 {
+				b.WriteString("\n\nrelevant from your memory:\n- " + strings.Join(lines, "\n- "))
+			}
+		}
+	}
+	return b.String()
 }
 
 // sendSMS fires Twilio's send_sms via the in-process connector
