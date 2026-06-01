@@ -78,18 +78,25 @@ export async function resolveContact(
     return { resolved: { phone, source: "phone-input" }, suggestions: [] };
   }
 
-  // 3. Bridge cache — exact + substring match.
+  // 3. Bridge cache — exact + substring match. Only short-circuit if the
+  // cached handle is a DIALABLE number; a name match whose handle is a
+  // WhatsApp @lid / email must fall through to macOS Contacts (which has
+  // the real phone), not return a bogus "phone".
   const cacheHit = matchFromCache(lower, opts.bridgeContactCache);
   if (cacheHit.exact) {
-    return {
-      resolved: {
-        phone: cacheHit.exact.handle,
-        name: cacheHit.exact.name,
-        relationship: opts.profileRelationships?.get(cacheHit.exact.name),
-        source: "bridge-cache",
-      },
-      suggestions: [],
-    };
+    const cachePhone = handleToPhone(cacheHit.exact.handle);
+    if (cachePhone) {
+      return {
+        resolved: {
+          phone: cachePhone,
+          name: cacheHit.exact.name,
+          relationship: opts.profileRelationships?.get(cacheHit.exact.name),
+          source: "bridge-cache",
+        },
+        suggestions: [],
+      };
+    }
+    // exact name, un-dialable handle → fall through to profile + Contacts.
   }
 
   // 4. Profile relationships — match name against profile entries.
@@ -184,9 +191,14 @@ function matchFromProfile(
 function handleToPhone(handle: string): string | null {
   // iMessage handles can be email (skip) or phone.
   if (handle.includes("@")) {
-    // WhatsApp jid: digits@s.whatsapp.net → digits.
+    // WhatsApp @lid is a PRIVACY identifier (random long digit string),
+    // NOT a phone — never dialable. @g.us is a group. Only real-number
+    // jids (<phone>@s.whatsapp.net / @c.us) carry a dialable number.
+    if (handle.endsWith("@lid") || handle.endsWith("@g.us")) return null;
     const m = handle.match(/^(\d+)@/);
-    if (m) return "+" + m[1];
+    // Plausible E.164 length only (country + subscriber = 8..15 digits);
+    // rejects lid-shaped garbage that slips past the suffix check.
+    if (m && m[1].length >= 8 && m[1].length <= 15) return "+" + m[1];
     return null;
   }
   if (handle.startsWith("+")) return handle;
