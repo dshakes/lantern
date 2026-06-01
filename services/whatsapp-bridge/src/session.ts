@@ -38,6 +38,7 @@ import {
   PersonalDocs,
   defaultPersonalDocsConfig,
   isTrivialChatter,
+  isGreetingSmallTalk,
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
@@ -2970,9 +2971,12 @@ export class WhatsAppSession {
     // the model is the router.
     if (self && !group && text) {
       const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
-      if (isTrivialChatter(text)) {
+      // Acks/rejections AND greetings/small-talk skip the agentic tool
+      // pipeline — they never need file/Gmail/Calendar tools, and routing
+      // them to natural chat replies in a fraction of the time.
+      if (isTrivialChatter(text) || isGreetingSmallTalk(text)) {
         if (nlEnabled && !this.muted) {
-          this.logger.info({ jid, textPreview: text.slice(0, 60) }, "owner trivial chatter → natural chat");
+          this.logger.info({ jid, textPreview: text.slice(0, 60) }, "owner greeting/chatter → natural chat (fast-path)");
           void this.handleOwnerNaturalChat(jid, text);
         }
         return;
