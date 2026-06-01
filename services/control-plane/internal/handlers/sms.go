@@ -74,6 +74,24 @@ type SMSHandler struct {
 	defaultTenant string
 	twilioAuthOff bool
 
+	// Caller-ID spoof defense. Twilio's signature proves the request
+	// came from Twilio, but the `From` value can still be spoofed at
+	// the telco level — so caller ID alone must not authorize the
+	// full-tool owner agent. When ownerPIN is set, the owner unlocks a
+	// verified window (verifyTTL) by texting the PIN or entering it via
+	// DTMF on a call. When unset, behavior is unchanged (caller-ID gate
+	// only) and a warning is logged at startup.
+	ownerPIN  string
+	verifyTTL time.Duration
+
+	verifyMu      sync.Mutex
+	verifiedUntil time.Time
+
+	// In-memory inbound rate limiter — bounds LLM + SMS cost and blunts
+	// a spoofed-owner flood. Sliding 1-minute window.
+	rlMu   sync.Mutex
+	rlHits []time.Time
+
 	// Cached Twilio auth token from the installed connector. Loaded
 	// lazily from the DB; refreshed when the cache TTL expires.
 	authTokenMu sync.RWMutex
@@ -81,15 +99,89 @@ type SMSHandler struct {
 	authTokenAt time.Time
 }
 
+// smsInboundPerMinute caps owner-line inbound processed per rolling minute.
+const smsInboundPerMinute = 20
+
 // NewSMSHandler constructs the handler with all internal dependencies.
 // llm is used for completion calls; pool for direct connector lookups.
 func NewSMSHandler(logger *zap.Logger, pool *pgxpool.Pool, llm *LlmProxyHandler) *SMSHandler {
-	return &SMSHandler{
+	ttl := 12 * time.Hour
+	if v := strings.TrimSpace(os.Getenv("LANTERN_OWNER_VERIFY_TTL")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			ttl = d
+		}
+	}
+	h := &SMSHandler{
 		logger:        logger.Named("sms"),
 		pool:          pool,
 		llm:           llm,
 		defaultTenant: getEnvOr("LANTERN_DEFAULT_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
 		twilioAuthOff: strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) == "off",
+		ownerPIN:      strings.TrimSpace(os.Getenv("LANTERN_OWNER_VERIFY_PIN")),
+		verifyTTL:     ttl,
+	}
+	if h.ownerPIN == "" {
+		h.logger.Warn("LANTERN_OWNER_VERIFY_PIN unset — owner Twilio line authorizes on caller ID alone (spoofable); set a PIN for spoof-resistant access")
+	}
+	return h
+}
+
+// allowInbound is the sliding-window rate limiter for owner-line inbound.
+func (h *SMSHandler) allowInbound() bool {
+	h.rlMu.Lock()
+	defer h.rlMu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-time.Minute)
+	kept := h.rlHits[:0]
+	for _, t := range h.rlHits {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	h.rlHits = kept
+	if len(h.rlHits) >= smsInboundPerMinute {
+		return false
+	}
+	h.rlHits = append(h.rlHits, now)
+	return true
+}
+
+// isVerified reports whether the owner has an active verified window. When
+// no PIN is configured the channel falls back to the caller-ID gate only.
+func (h *SMSHandler) isVerified() bool {
+	if h.ownerPIN == "" {
+		return true
+	}
+	h.verifyMu.Lock()
+	defer h.verifyMu.Unlock()
+	return time.Now().Before(h.verifiedUntil)
+}
+
+func (h *SMSHandler) markVerified() {
+	h.verifyMu.Lock()
+	h.verifiedUntil = time.Now().Add(h.verifyTTL)
+	h.verifyMu.Unlock()
+}
+
+// pinMatches accepts a bare PIN or "pin <PIN>" / "unlock <PIN>", compared
+// constant-time. Returns false when no PIN is configured.
+func (h *SMSHandler) pinMatches(s string) bool {
+	if h.ownerPIN == "" {
+		return false
+	}
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimPrefix(s, "pin ")
+	s = strings.TrimPrefix(s, "unlock ")
+	s = strings.TrimSpace(s)
+	return hmac.Equal([]byte(s), []byte(strings.ToLower(h.ownerPIN)))
+}
+
+// sendSMSAsync fires an owner-line reply with its own short-lived context.
+func (h *SMSHandler) sendSMSAsync(fromTwilio, toOwner, body string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := h.sendSMS(ctx, fromTwilio, toOwner, body); err != nil {
+		h.logger.Warn("async SMS send failed", zap.Error(err))
 	}
 }
 
@@ -131,6 +223,31 @@ func (h *SMSHandler) SMSWebhook(w http.ResponseWriter, r *http.Request) {
 			zap.String("from", maskPhone(from)))
 		writeTwiML(w, "")
 		return
+	}
+
+	// Rate limit — bounds cost and blunts a spoofed-owner flood.
+	if !h.allowInbound() {
+		h.logger.Warn("owner SMS rate-limited — dropping", zap.String("from", maskPhone(from)))
+		writeTwiML(w, "")
+		return
+	}
+
+	// PIN gate (caller-ID spoof defense). A PIN message unlocks the
+	// verified window; while locked, the agent never runs.
+	if h.ownerPIN != "" {
+		if h.pinMatches(body) {
+			h.markVerified()
+			h.logger.Info("owner verified via PIN (SMS)")
+			writeTwiML(w, "")
+			go h.sendSMSAsync(to, from, "✓ unlocked")
+			return
+		}
+		if !h.isVerified() {
+			h.logger.Warn("owner SMS while locked — prompting for PIN", zap.String("from", maskPhone(from)))
+			writeTwiML(w, "")
+			go h.sendSMSAsync(to, from, "🔒 locked — reply with your PIN to unlock.")
+			return
+		}
 	}
 
 	h.logger.Info("owner SMS inbound via Twilio",
@@ -215,6 +332,16 @@ func (h *SMSHandler) VoiceWebhook(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("owner voice call inbound via Twilio",
 		zap.String("from", maskPhone(from)))
 
+	// PIN gate (caller-ID spoof defense). If locked, collect the PIN via
+	// DTMF and verify it on the turn endpoint before the agent runs.
+	if h.ownerPIN != "" && !h.isVerified() {
+		pinPrompt := `<Say voice="Polly.Joanna">Enter your PIN, then press pound.</Say>` +
+			fmt.Sprintf(`<Gather input="dtmf" finishOnKey="#" timeout="15" action="%s" method="POST"></Gather>`, escapeXML(turnURL)) +
+			`<Say voice="Polly.Joanna">No PIN entered. Goodbye.</Say><Hangup/>`
+		writeTwiML(w, pinPrompt)
+		return
+	}
+
 	greet := `<Say voice="Polly.Joanna">Hey, what's up?</Say>` +
 		fmt.Sprintf(`<Gather input="speech" action="%s" method="POST" speechTimeout="auto" timeout="10"></Gather>`, escapeXML(turnURL)) +
 		`<Say voice="Polly.Joanna">Didn't catch that. Try again or text me instead. Bye.</Say><Hangup/>`
@@ -246,6 +373,29 @@ func (h *SMSHandler) VoiceTurn(w http.ResponseWriter, r *http.Request) {
 	ownerPhone := strings.TrimSpace(os.Getenv("LANTERN_OWNER_PHONE"))
 	if normalizePhone(from) != normalizePhone(ownerPhone) {
 		writeTwiML(w, "<Hangup/>")
+		return
+	}
+
+	// DTMF PIN entry (voice unlock). Twilio posts Digits when a dtmf
+	// Gather completes.
+	if digits := strings.TrimSpace(r.Form.Get("Digits")); digits != "" {
+		if h.pinMatches(digits) {
+			h.markVerified()
+			h.logger.Info("owner verified via PIN (voice DTMF)")
+			turnURL := h.deriveOwnPublicURL(r) + "/v1/voice/twilio/turn"
+			ok := `<Say voice="Polly.Joanna">Unlocked. What's up?</Say>` +
+				fmt.Sprintf(`<Gather input="speech" action="%s" method="POST" speechTimeout="auto" timeout="10"></Gather>`, escapeXML(turnURL)) +
+				`<Say voice="Polly.Joanna">Talk to you later.</Say><Hangup/>`
+			writeTwiML(w, ok)
+			return
+		}
+		writeTwiML(w, `<Say voice="Polly.Joanna">Wrong PIN. Goodbye.</Say><Hangup/>`)
+		return
+	}
+
+	// No agent access until the session is verified.
+	if h.ownerPIN != "" && !h.isVerified() {
+		writeTwiML(w, `<Say voice="Polly.Joanna">Locked. Text your PIN first. Goodbye.</Say><Hangup/>`)
 		return
 	}
 
@@ -323,7 +473,7 @@ func (h *SMSHandler) sendSMS(ctx context.Context, fromTwilio, toOwner, body stri
 }
 
 // verifyTwilioSignature does the standard X-Twilio-Signature HMAC
-// check.
+// check for the owner SMS/voice line.
 func (h *SMSHandler) verifyTwilioSignature(r *http.Request, bodyBytes []byte) (bool, string) {
 	sig := r.Header.Get("X-Twilio-Signature")
 	if sig == "" {
@@ -333,10 +483,24 @@ func (h *SMSHandler) verifyTwilioSignature(r *http.Request, bodyBytes []byte) (b
 	if token == "" {
 		return false, "Twilio auth token unavailable"
 	}
-	publicURL := h.deriveOwnPublicURL(r) + r.URL.Path
 	form, err := url.ParseQuery(string(bodyBytes))
 	if err != nil {
 		return false, "parse failed"
+	}
+	fullURL := h.deriveOwnPublicURL(r) + r.URL.Path
+	if validTwilioSignature(token, fullURL, form, sig) {
+		return true, ""
+	}
+	return false, "signature mismatch"
+}
+
+// validTwilioSignature verifies the X-Twilio-Signature header per Twilio's
+// scheme: HMAC-SHA1 over (fullURL + each sorted form key+value), keyed by
+// the account auth token, base64-encoded, constant-time compared. Shared
+// by the owner line (sms.go) and the W11d voice webhook (voice.go).
+func validTwilioSignature(authToken, fullURL string, form url.Values, providedSig string) bool {
+	if providedSig == "" || authToken == "" {
+		return false
 	}
 	keys := make([]string, 0, len(form))
 	for k := range form {
@@ -344,18 +508,15 @@ func (h *SMSHandler) verifyTwilioSignature(r *http.Request, bodyBytes []byte) (b
 	}
 	sort.Strings(keys)
 	var b strings.Builder
-	b.WriteString(publicURL)
+	b.WriteString(fullURL)
 	for _, k := range keys {
 		b.WriteString(k)
 		b.WriteString(form.Get(k))
 	}
-	mac := hmac.New(sha1.New, []byte(token))
+	mac := hmac.New(sha1.New, []byte(authToken))
 	mac.Write([]byte(b.String()))
 	expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
-	if hmac.Equal([]byte(expected), []byte(sig)) {
-		return true, ""
-	}
-	return false, "signature mismatch"
+	return hmac.Equal([]byte(expected), []byte(providedSig))
 }
 
 // getTwilioAuthToken reads authToken directly from the
@@ -399,9 +560,15 @@ func (h *SMSHandler) getTwilioAuthToken(ctx context.Context) string {
 }
 
 // deriveOwnPublicURL reconstructs the URL Twilio is calling — used
-// for signature verification + composing <Gather action> URLs. Falls
-// back to LANTERN_PUBLIC_BASE_URL when X-Forwarded headers absent.
+// for signature verification + composing <Gather action> URLs.
 func (h *SMSHandler) deriveOwnPublicURL(r *http.Request) string {
+	return derivePublicURL(r)
+}
+
+// derivePublicURL reconstructs the externally-visible base URL of a
+// request. Prefers LANTERN_PUBLIC_BASE_URL, then X-Forwarded-* headers,
+// then the raw Host. Shared across Twilio webhook handlers.
+func derivePublicURL(r *http.Request) string {
 	if override := strings.TrimSpace(os.Getenv("LANTERN_PUBLIC_BASE_URL")); override != "" {
 		return strings.TrimRight(override, "/")
 	}

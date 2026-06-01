@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -258,10 +260,9 @@ func (h *VoiceHandler) DeleteNumber(w http.ResponseWriter, r *http.Request) {
 // platform calls this URL when a call arrives; we look up the number,
 // record the call, and ask the provider to handle the response.
 //
-// Auth: per-provider signature verification (X-Twilio-Signature etc.).
-// For now we accept all requests but stash the headers + body so misuse
-// is auditable; signature verification is per-provider work that lives
-// inside HandleInboundWebhook.
+// Auth: per-provider signature verification (X-Twilio-Signature etc.),
+// using the credentials from the looked-up number's provider_config.
+// Fails closed unless LANTERN_TWILIO_WEBHOOK_AUTH=off (dev only).
 func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	providerName := r.PathValue("provider")
 	provider, ok := h.providers[providerName]
@@ -312,6 +313,18 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 
 	cfg := map[string]any{}
 	_ = json.Unmarshal(configRaw, &cfg)
+
+	// Verify provider webhook authenticity before acting on it. The
+	// number's provider_config holds the credentials we sign against.
+	if providerName == "twilio" && strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) != "off" {
+		token, _ := cfg["authToken"].(string)
+		fullURL := derivePublicURL(r) + r.URL.Path
+		if !validTwilioSignature(token, fullURL, r.PostForm, r.Header.Get("X-Twilio-Signature")) {
+			h.logger().Warn("voice webhook: invalid Twilio signature", zap.String("to", to))
+			http.Error(w, "invalid signature", http.StatusForbidden)
+			return
+		}
+	}
 
 	respBody, contentType, meta, err := provider.HandleInboundWebhook(ctx, cfg, nil, headers)
 	if err != nil {
