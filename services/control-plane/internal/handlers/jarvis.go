@@ -12,6 +12,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"strconv"
@@ -285,46 +286,104 @@ func (h *JarvisHandler) RunBriefScheduler(ctx context.Context) {
 	}
 }
 
-// deliverBrief sends the brief to the owner. Channel order is
-// WhatsApp → SMS → email (LANTERN_JARVIS_BRIEF_CHANNEL can force one).
-// WhatsApp is the default because it's where the owner lives and it
-// bypasses US A2P 10DLC SMS filtering. Each channel falls through to the
-// next on failure. Best-effort with logging.
+// deliverBrief sends the brief to the owner. The preferred channel (from
+// briefChannel) is tried first, then the remaining channels as fallbacks,
+// so a brief never silently vanishes. WhatsApp is the default — it's where
+// the owner lives and bypasses US A2P 10DLC SMS filtering.
 func (h *JarvisHandler) deliverBrief(ctx context.Context, tenantID, brief string) {
-	forced := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_JARVIS_BRIEF_CHANNEL")))
-
-	if (forced == "" || forced == "whatsapp") && h.sendBriefWhatsApp(ctx, tenantID, brief) {
-		h.logger().Info("morning brief sent via WhatsApp")
-		return
-	}
-
-	twilioNum := strings.TrimSpace(os.Getenv("LANTERN_TWILIO_NUMBER"))
-	ownerPhone := strings.TrimSpace(os.Getenv("LANTERN_OWNER_PHONE"))
-	if (forced == "" || forced == "sms") && twilioNum != "" && ownerPhone != "" {
-		body := brief
-		if len(body) > 600 {
-			body = body[:590] + " […]"
+	order := []string{"whatsapp", "sms", "email"}
+	if pref := h.briefChannel(); pref != "" {
+		reordered := []string{pref}
+		for _, c := range order {
+			if c != pref {
+				reordered = append(reordered, c)
+			}
 		}
-		if _, err := executeConnectorAction(ctx, h.srv.Pool, tenantID, "twilio", "send_sms",
-			map[string]any{"to": ownerPhone, "from": twilioNum, "body": body}); err != nil {
-			h.logger().Warn("morning brief SMS failed", zap.Error(err))
-		} else {
-			h.logger().Info("morning brief sent via SMS")
-			return
-		}
+		order = reordered
 	}
-
-	ownerEmail := strings.TrimSpace(os.Getenv("LANTERN_OWNER_EMAIL"))
-	if (forced == "" || forced == "email") && ownerEmail != "" {
-		if _, err := executeConnectorAction(ctx, h.srv.Pool, tenantID, "gmail", "send_message",
-			map[string]any{"to": ownerEmail, "subject": "Your Lantern brief", "body": brief, "label": "lantern", "skipInbox": false}); err != nil {
-			h.logger().Warn("morning brief email failed", zap.Error(err))
-		} else {
-			h.logger().Info("morning brief sent via email")
+	for _, ch := range order {
+		ok := false
+		switch ch {
+		case "whatsapp":
+			ok = h.sendBriefWhatsApp(ctx, tenantID, brief)
+		case "sms":
+			ok = h.sendBriefSMS(ctx, tenantID, brief)
+		case "email":
+			ok = h.sendBriefEmail(ctx, tenantID, brief)
+		}
+		if ok {
+			h.logger().Info("morning brief sent", zap.String("channel", ch))
 			return
 		}
 	}
 	h.logger().Warn("morning brief: no delivery channel succeeded")
+}
+
+// briefChannel resolves the preferred delivery channel. A runtime override
+// file (~/.lantern/brief-channel, written by the A2P watcher on approval)
+// wins over the LANTERN_JARVIS_BRIEF_CHANNEL env — so the channel can flip
+// without restarting the control-plane.
+func (h *JarvisHandler) briefChannel() string {
+	if home := os.Getenv("HOME"); home != "" {
+		if b, err := os.ReadFile(home + "/.lantern/brief-channel"); err == nil {
+			if c := strings.ToLower(strings.TrimSpace(string(b))); c != "" {
+				return c
+			}
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_JARVIS_BRIEF_CHANNEL")))
+}
+
+// twilioFromNumber resolves the SMS sending number: env override, else the
+// phoneNumber on the installed twilio connector — so SMS works without a
+// dedicated env var once the connector is configured.
+func (h *JarvisHandler) twilioFromNumber(ctx context.Context, tenantID string) string {
+	if n := strings.TrimSpace(os.Getenv("LANTERN_TWILIO_NUMBER")); n != "" {
+		return n
+	}
+	var cfg []byte
+	if err := h.srv.Pool.QueryRow(ctx,
+		`SELECT config FROM connector_installs WHERE tenant_id = $1 AND connector_id = 'twilio' LIMIT 1`,
+		tenantID).Scan(&cfg); err == nil {
+		m := map[string]any{}
+		if json.Unmarshal(cfg, &m) == nil {
+			if p, ok := m["phoneNumber"].(string); ok {
+				return strings.TrimSpace(p)
+			}
+		}
+	}
+	return ""
+}
+
+func (h *JarvisHandler) sendBriefSMS(ctx context.Context, tenantID, brief string) bool {
+	from := h.twilioFromNumber(ctx, tenantID)
+	owner := strings.TrimSpace(os.Getenv("LANTERN_OWNER_PHONE"))
+	if from == "" || owner == "" {
+		return false
+	}
+	body := brief
+	if len(body) > 600 {
+		body = body[:590] + " […]"
+	}
+	_, err := executeConnectorAction(ctx, h.srv.Pool, tenantID, "twilio", "send_sms",
+		map[string]any{"to": owner, "from": from, "body": body})
+	if err != nil {
+		h.logger().Warn("brief SMS failed", zap.Error(err))
+	}
+	return err == nil
+}
+
+func (h *JarvisHandler) sendBriefEmail(ctx context.Context, tenantID, brief string) bool {
+	owner := strings.TrimSpace(os.Getenv("LANTERN_OWNER_EMAIL"))
+	if owner == "" {
+		return false
+	}
+	_, err := executeConnectorAction(ctx, h.srv.Pool, tenantID, "gmail", "send_message",
+		map[string]any{"to": owner, "subject": "Your Lantern brief", "body": brief, "label": "lantern", "skipInbox": false})
+	if err != nil {
+		h.logger().Warn("brief email failed", zap.Error(err))
+	}
+	return err == nil
 }
 
 // sendBriefWhatsApp posts the brief to the owner's WhatsApp self-chat via

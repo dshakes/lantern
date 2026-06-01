@@ -48,17 +48,32 @@ if not approved:
     print("a2p: not yet approved")
     raise SystemExit
 
-msg = ("✅ Twilio A2P 10DLC is fully approved — your number (+15128819998) "
-       "can now send SMS. Say \"switch briefs to text\" and I'll flip it + verify.")
+# Auto-switch: flip the brief channel to SMS via the runtime override file
+# the control-plane reads at send time — no restart needed.
+lantern = os.path.expanduser("~/.lantern")
+os.makedirs(lantern, exist_ok=True)
+switched = False
+try:
+    with open(os.path.join(lantern, "brief-channel"), "w") as f:
+        f.write("sms")
+    switched = True
+except Exception as e:
+    print("a2p: channel flip failed:", e)
+
+if switched:
+    msg = ("✅ Twilio A2P 10DLC approved — I switched your briefs to TEXT. "
+           "From now on your daily brief comes by SMS (+15128819998 → your phone).")
+else:
+    msg = ("✅ Twilio A2P 10DLC approved — your number can send SMS now. "
+           "Say \"switch briefs to text\" to flip it.")
 try:
     urllib.request.urlopen(urllib.request.Request(
         "http://localhost:3100/session/00000000-0000-0000-0000-000000000001/send-self",
         data=json.dumps({"message": msg}).encode(),
         headers={"Content-Type": "application/json"}, method="POST"), timeout=15)
-    print("a2p: APPROVED — pinged WhatsApp")
+    print("a2p: APPROVED — switched to SMS + pinged WhatsApp")
 except Exception as e:
-    print("a2p: APPROVED but WhatsApp ping failed:", e)
+    print("a2p: APPROVED, channel switched, but WhatsApp ping failed:", e)
 
-os.makedirs(os.path.expanduser("~/.lantern"), exist_ok=True)
-open(os.path.expanduser("~/.lantern/a2p-approved"), "w").close()
+open(os.path.join(lantern, "a2p-approved"), "w").close()
 PY

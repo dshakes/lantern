@@ -2,9 +2,36 @@ package handlers
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestBriefChannel(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	h := &JarvisHandler{}
+
+	t.Setenv("LANTERN_JARVIS_BRIEF_CHANNEL", "")
+	if got := h.briefChannel(); got != "" {
+		t.Errorf("no env/file → want empty, got %q", got)
+	}
+	t.Setenv("LANTERN_JARVIS_BRIEF_CHANNEL", "email")
+	if got := h.briefChannel(); got != "email" {
+		t.Errorf("env only → want email, got %q", got)
+	}
+	// Runtime override file wins over env (and is trimmed + lowercased).
+	if err := os.MkdirAll(filepath.Join(tmp, ".lantern"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".lantern", "brief-channel"), []byte(" SMS\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.briefChannel(); got != "sms" {
+		t.Errorf("file override → want sms, got %q", got)
+	}
+}
 
 // With no LLM configured, phraseBrief must still return useful output:
 // a status line when empty, and the raw assembled sections otherwise.
