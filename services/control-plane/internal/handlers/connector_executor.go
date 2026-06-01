@@ -14,11 +14,61 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
+
+// credRowQuerier is the subset of pgx used to load a single connector row. Both
+// *pgxpool.Pool and pgx.Tx satisfy it.
+type credRowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// loadDecryptedConfig fetches connector_installs.config for an install,
+// decrypts it (legacy plaintext passes through), and unmarshals it. Returns an
+// empty map when the row is missing or the config is empty — callers treat a
+// missing field as "not configured". Use this instead of `config->>'field'` in
+// SQL, which cannot read an encrypted JSONB envelope.
+func loadDecryptedConfig(ctx context.Context, q credRowQuerier, tenantID, connectorID string) map[string]any {
+	out := map[string]any{}
+	var raw []byte
+	if err := q.QueryRow(ctx, `
+		SELECT config FROM connector_installs
+		WHERE tenant_id = $1 AND connector_id = $2 AND status = 'connected'
+		LIMIT 1
+	`, tenantID, connectorID).Scan(&raw); err != nil {
+		return out
+	}
+	dec, err := secrets.Decrypt(raw)
+	if err != nil {
+		return out
+	}
+	_ = json.Unmarshal(dec, &out)
+	return out
+}
+
+// loadDecryptedOAuth fetches + decrypts connector_installs.oauth_token_encrypted
+// and unmarshals it. Returns an empty map when absent.
+func loadDecryptedOAuth(ctx context.Context, q credRowQuerier, tenantID, connectorID string) map[string]any {
+	out := map[string]any{}
+	var raw []byte
+	if err := q.QueryRow(ctx, `
+		SELECT oauth_token_encrypted FROM connector_installs
+		WHERE tenant_id = $1 AND connector_id = $2 AND status = 'connected'
+	`, tenantID, connectorID).Scan(&raw); err != nil {
+		return out
+	}
+	dec, err := secrets.Decrypt(raw)
+	if err != nil {
+		return out
+	}
+	_ = json.Unmarshal(dec, &out)
+	return out
+}
 
 // ConnectorExecutor routes execute requests to the right connector implementation.
 type ConnectorExecutor struct {
@@ -161,6 +211,15 @@ func executeConnectorAction(
 		return nil, &errConnectorNotInstalled{ConnectorID: connectorID}
 	}
 
+	// Credentials are stored encrypted-at-rest (see internal/secrets).
+	// Decrypt transparently; legacy plaintext rows pass through unchanged.
+	if configJSON, err = secrets.Decrypt(configJSON); err != nil {
+		return nil, fmt.Errorf("decrypt connector config: %w", err)
+	}
+	if oauthTokenJSON, err = secrets.Decrypt(oauthTokenJSON); err != nil {
+		return nil, fmt.Errorf("decrypt connector oauth token: %w", err)
+	}
+
 	config := make(map[string]any)
 	if len(configJSON) > 0 {
 		_ = json.Unmarshal(configJSON, &config)
@@ -185,10 +244,12 @@ func executeConnectorAction(
 				"refresh_token": rt,
 				"token_type":    "Bearer",
 			})
-			_, _ = pool.Exec(ctx,
-				`UPDATE connector_installs SET oauth_token_encrypted = $1 WHERE tenant_id = $2 AND connector_id = $3`,
-				string(updatedOAuth), tenantID, connectorID,
-			)
+			if encOAuth, encErr := secrets.Encrypt(updatedOAuth); encErr == nil {
+				_, _ = pool.Exec(ctx,
+					`UPDATE connector_installs SET oauth_token_encrypted = $1 WHERE tenant_id = $2 AND connector_id = $3`,
+					string(encOAuth), tenantID, connectorID,
+				)
+			}
 		}
 	}
 

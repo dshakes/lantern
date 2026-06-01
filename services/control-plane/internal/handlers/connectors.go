@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -54,10 +55,10 @@ func (h *ConnectorHandler) InstallConnector(w http.ResponseWriter, r *http.Reque
 	}
 
 	var body struct {
-		ConnectorID string            `json:"connectorId"`
-		DisplayName string            `json:"displayName"`
-		Config      map[string]any    `json:"config"`
-		Scopes      []string          `json:"scopes"`
+		ConnectorID string         `json:"connectorId"`
+		DisplayName string         `json:"displayName"`
+		Config      map[string]any `json:"config"`
+		Scopes      []string       `json:"scopes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -70,6 +71,13 @@ func (h *ConnectorHandler) InstallConnector(w http.ResponseWriter, r *http.Reque
 	}
 
 	configJSON, _ := json.Marshal(body.Config)
+	// Encrypt credentials at rest (no-op pass-through when no key is configured).
+	encConfig, err := secrets.EncryptString(string(configJSON))
+	if err != nil {
+		h.logger().Error("encrypt connector config failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to secure credentials"})
+		return
+	}
 
 	var id string
 	err = h.srv.Pool.QueryRow(ctx, `
@@ -82,7 +90,7 @@ func (h *ConnectorHandler) InstallConnector(w http.ResponseWriter, r *http.Reque
 			status = 'connected',
 			updated_at = now()
 		RETURNING id
-	`, tenantID, body.ConnectorID, body.DisplayName, string(configJSON), body.Scopes, tenantID).Scan(&id)
+	`, tenantID, body.ConnectorID, body.DisplayName, encConfig, body.Scopes, tenantID).Scan(&id)
 	if err != nil {
 		h.logger().Error("install connector failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to install connector"})
@@ -144,7 +152,9 @@ func (h *ConnectorHandler) ListConnectors(w http.ResponseWriter, r *http.Request
 		}
 
 		var configMap map[string]any
-		json.Unmarshal(config, &configMap) //nolint:errcheck
+		if dec, decErr := secrets.Decrypt(config); decErr == nil {
+			json.Unmarshal(dec, &configMap) //nolint:errcheck
+		}
 
 		entry := map[string]any{
 			"id":          id,
@@ -170,13 +180,14 @@ func (h *ConnectorHandler) ListConnectors(w http.ResponseWriter, r *http.Request
 // inferAuthMethod tells the dashboard HOW each connector was
 // authenticated so it can render the right badge + offer the right
 // re-auth flow when credentials go stale. Three values today:
-//   "oauth"        — OAuth2 access/refresh token in oauth_token_encrypted.
-//                    Refreshes silently when GOOGLE_CLIENT_ID/SECRET is set.
-//   "app-password" — Google App Password flow; SMTP/IMAP-style cred in
-//                    the config blob. Doesn't refresh; user must rotate.
-//   "api-key"      — generic API-key/bot-token install (Slack, Notion,
-//                    Linear, etc.) — non-OAuth, non-app-password.
-//   ""             — unknown / not yet installed; dashboard hides badge.
+//
+//	"oauth"        — OAuth2 access/refresh token in oauth_token_encrypted.
+//	                 Refreshes silently when GOOGLE_CLIENT_ID/SECRET is set.
+//	"app-password" — Google App Password flow; SMTP/IMAP-style cred in
+//	                 the config blob. Doesn't refresh; user must rotate.
+//	"api-key"      — generic API-key/bot-token install (Slack, Notion,
+//	                 Linear, etc.) — non-OAuth, non-app-password.
+//	""             — unknown / not yet installed; dashboard hides badge.
 func inferAuthMethod(hasOAuthToken bool, config map[string]any) string {
 	if hasOAuthToken {
 		return "oauth"
@@ -476,10 +487,16 @@ func (h *ConnectorHandler) OAuthCallback(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Encrypt and store the token. In production this uses an envelope encryption
-	// scheme with KMS. For the spike we store the JSON directly (still in a JSONB
-	// column marked as "encrypted" so the schema is ready).
+	// Encrypt and store the token via AES-256-GCM envelope encryption
+	// (internal/secrets). When LANTERN_CREDENTIAL_KEY is unset the value is
+	// stored as plaintext JSON (pass-through) so local dev needs no key.
 	tokenJSON, _ := json.Marshal(tokenResp)
+	encToken, err := secrets.EncryptString(string(tokenJSON))
+	if err != nil {
+		h.logger().Error("encrypt connector token failed", zap.Error(err))
+		h.renderOAuthPopupClose(w, false, "Failed to secure credentials")
+		return
+	}
 
 	_, err = h.srv.Pool.Exec(ctx, `
 		INSERT INTO connector_installs (tenant_id, connector_id, display_name, status, oauth_token_encrypted, scopes, installed_by)
@@ -489,7 +506,7 @@ func (h *ConnectorHandler) OAuthCallback(w http.ResponseWriter, r *http.Request)
 			oauth_token_encrypted = EXCLUDED.oauth_token_encrypted,
 			scopes = EXCLUDED.scopes,
 			updated_at = now()
-	`, stateData.TenantID, stateData.ConnectorID, stateData.ConnectorID, string(tokenJSON), provider.Scopes, stateData.TenantID)
+	`, stateData.TenantID, stateData.ConnectorID, stateData.ConnectorID, encToken, provider.Scopes, stateData.TenantID)
 	if err != nil {
 		h.logger().Error("failed to store connector token", zap.Error(err))
 		h.renderOAuthPopupClose(w, false, "Failed to save credentials")

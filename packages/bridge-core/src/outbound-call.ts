@@ -26,9 +26,17 @@
 // Live-conversation mode with ElevenLabs voice clone is Phase 2.
 
 import type { Logger } from "pino";
-import { classifyOutboundCall, tierBadge, type CallContext, type TierVerdict } from "./call-risk-tier.js";
+import {
+  classifyOutboundCall,
+  tierBadge,
+  type CallContext,
+  type TierVerdict,
+} from "./call-risk-tier.js";
 
-export type CallMode = "VOICEMAIL_DELIVERY" | "CONFERENCE_BRIDGE" | "AGENT_TASK";
+export type CallMode =
+  | "VOICEMAIL_DELIVERY"
+  | "CONFERENCE_BRIDGE"
+  | "AGENT_TASK";
 
 export interface OutboundCallRequest {
   mode: CallMode;
@@ -58,11 +66,51 @@ export interface CallPlan {
   // owner in the pre-flight approval message.
   summary: string;
   // Per-relationship voice (Polly identifier) — measured/warm/casual.
-  voice: "Polly.Joanna" | "Polly.Matthew" | "Polly.Salli" | "Polly.Ivy" | "Polly.Kendra" | "Polly.Brian" | "Polly.Amy";
+  voice:
+    | "Polly.Joanna"
+    | "Polly.Matthew"
+    | "Polly.Salli"
+    | "Polly.Ivy"
+    | "Polly.Kendra"
+    | "Polly.Brian"
+    | "Polly.Amy";
   // Two-party state hint — when true, bot must announce "this call
   // may be saved for Shekhar's records".
   twoPartyConsent: boolean;
+  // Pre-flight cost forecast (USD). Shown in the approval gate so the
+  // owner sees the spend before the call is placed — the same
+  // "forecast before every run" posture Lantern applies to LLM runs.
+  estimatedCostUsd: number;
   request: OutboundCallRequest;
+}
+
+// Rough Twilio US outbound voice pricing. Conference bridges dial two
+// legs, so their per-minute cost doubles. SMS + ElevenLabs TTS are billed
+// separately and not included here — this is a floor estimate for the
+// voice legs, deliberately conservative for an approval-gate preview.
+const TWILIO_VOICE_USD_PER_MIN = 0.014;
+
+// Expected call duration (minutes) per mode, used only for the estimate.
+function estimatedCallMinutes(mode: CallMode): number {
+  switch (mode) {
+    case "VOICEMAIL_DELIVERY":
+      return 0.5;
+    case "AGENT_TASK":
+      return 0.6;
+    case "CONFERENCE_BRIDGE":
+      return 3;
+  }
+}
+
+/**
+ * Estimate the USD cost of an outbound call before placing it. Used for the
+ * pre-flight approval message. Rounded to the cent-ish (3 dp).
+ */
+export function estimateCallCostUsd(mode: CallMode): number {
+  const legs = mode === "CONFERENCE_BRIDGE" ? 2 : 1;
+  return Number(
+    (estimatedCallMinutes(mode) * legs * TWILIO_VOICE_USD_PER_MIN).toFixed(3),
+  );
 }
 
 // Two-party-consent states (require all-party consent to record).
@@ -74,31 +122,146 @@ export interface CallPlan {
 // record without notice.
 const TWO_PARTY_AREA_CODES = new Set([
   // CA
-  "209","213","279","310","323","341","408","415","424","442","510","530","559","562","619","626","628","650","657","661","669","707","714","747","760","805","818","820","831","858","909","916","925","949","951",
+  "209",
+  "213",
+  "279",
+  "310",
+  "323",
+  "341",
+  "408",
+  "415",
+  "424",
+  "442",
+  "510",
+  "530",
+  "559",
+  "562",
+  "619",
+  "626",
+  "628",
+  "650",
+  "657",
+  "661",
+  "669",
+  "707",
+  "714",
+  "747",
+  "760",
+  "805",
+  "818",
+  "820",
+  "831",
+  "858",
+  "909",
+  "916",
+  "925",
+  "949",
+  "951",
   // FL
-  "239","305","321","352","386","407","561","689","727","754","772","786","813","850","863","904","941","954",
+  "239",
+  "305",
+  "321",
+  "352",
+  "386",
+  "407",
+  "561",
+  "689",
+  "727",
+  "754",
+  "772",
+  "786",
+  "813",
+  "850",
+  "863",
+  "904",
+  "941",
+  "954",
   // IL
-  "217","224","309","312","331","447","464","618","630","708","773","779","815","847","872",
+  "217",
+  "224",
+  "309",
+  "312",
+  "331",
+  "447",
+  "464",
+  "618",
+  "630",
+  "708",
+  "773",
+  "779",
+  "815",
+  "847",
+  "872",
   // PA
-  "215","223","267","272","412","445","484","570","582","610","717","724","814","835","878",
+  "215",
+  "223",
+  "267",
+  "272",
+  "412",
+  "445",
+  "484",
+  "570",
+  "582",
+  "610",
+  "717",
+  "724",
+  "814",
+  "835",
+  "878",
   // MA
-  "339","351","413","508","617","774","781","857","978",
+  "339",
+  "351",
+  "413",
+  "508",
+  "617",
+  "774",
+  "781",
+  "857",
+  "978",
   // MD
-  "227","240","301","410","443","667",
+  "227",
+  "240",
+  "301",
+  "410",
+  "443",
+  "667",
   // WA
-  "206","253","360","425","509","564",
+  "206",
+  "253",
+  "360",
+  "425",
+  "509",
+  "564",
   // MI
-  "231","248","269","313","517","586","616","679","734","810","906","947","989",
+  "231",
+  "248",
+  "269",
+  "313",
+  "517",
+  "586",
+  "616",
+  "679",
+  "734",
+  "810",
+  "906",
+  "947",
+  "989",
   // MT
   "406",
   // NH
   "603",
   // CT
-  "203","475","860","959",
+  "203",
+  "475",
+  "860",
+  "959",
   // DE
   "302",
   // OR
-  "458","503","541","971",
+  "458",
+  "503",
+  "541",
+  "971",
 ]);
 
 function inferTwoPartyConsent(to: string): boolean {
@@ -116,8 +279,10 @@ function pickVoice(relationship?: string): CallPlan["voice"] {
   if (!r) return "Polly.Joanna"; // measured default
   if (/wife|spouse|partner|girlfriend|boyfriend/.test(r)) return "Polly.Joanna";
   if (/brother|son|father|husband|dad|grandpa/.test(r)) return "Polly.Matthew";
-  if (/sister|daughter|mother|wife|mom|grandma|aunt|akka|amma/.test(r)) return "Polly.Salli";
-  if (/friend|cousin|colleague|coworker|teammate/.test(r)) return "Polly.Kendra";
+  if (/sister|daughter|mother|wife|mom|grandma|aunt|akka|amma/.test(r))
+    return "Polly.Salli";
+  if (/friend|cousin|colleague|coworker|teammate/.test(r))
+    return "Polly.Kendra";
   if (/manager|boss|investor|client|customer/.test(r)) return "Polly.Joanna";
   return "Polly.Joanna";
 }
@@ -127,7 +292,10 @@ function pickVoice(relationship?: string): CallPlan["voice"] {
  * voice, compute consent posture, draft a 1-line summary. The plan
  * is what gets shown to the owner for pre-flight approval.
  */
-export function planCall(req: OutboundCallRequest, opts: { ownerName?: string; relationship?: string } = {}): CallPlan {
+export function planCall(
+  req: OutboundCallRequest,
+  opts: { ownerName?: string; relationship?: string } = {},
+): CallPlan {
   const ctx: CallContext = {
     to: req.to,
     contactName: req.contactName,
@@ -156,8 +324,18 @@ export function planCall(req: OutboundCallRequest, opts: { ownerName?: string; r
   if (twoPartyConsent) {
     summary += `\n⚠ 2-party-consent state — bot will announce recording`;
   }
+  const estimatedCostUsd = estimateCallCostUsd(req.mode);
+  summary += `\n💸 est. ~$${estimatedCostUsd.toFixed(2)}`;
   void ownerName;
-  return { mode: req.mode, tier, summary, voice, twoPartyConsent, request: req };
+  return {
+    mode: req.mode,
+    tier,
+    summary,
+    voice,
+    twoPartyConsent,
+    estimatedCostUsd,
+    request: req,
+  };
 }
 
 /**
@@ -193,7 +371,11 @@ export function buildTwiml(plan: CallPlan): string {
     case "AGENT_TASK": {
       // For now: speak the task once, then hang up. Multi-turn IVR
       // (gather/transcribe response) is Phase 2 with Realtime API.
-      const msg = escape(plan.request.message || plan.request.reason || "Calling on behalf of Shekhar.");
+      const msg = escape(
+        plan.request.message ||
+          plan.request.reason ||
+          "Calling on behalf of Shekhar.",
+      );
       const intro = `Hi, this is calling on behalf of Shekhar Mudarapu.`;
       return `<Response>${consent}<Say voice="${plan.voice}">${intro}</Say><Pause length="1"/><Say voice="${plan.voice}">${msg}</Say><Pause length="1"/><Say voice="${plan.voice}">Please call back when you have a moment. Thank you.</Say></Response>`;
     }
@@ -226,7 +408,10 @@ export function newConferenceName(): string {
  * used for the CONFERENCE_BRIDGE flow so the bridge can dial the
  * owner with the SAME conference name.
  */
-export function buildConferenceTwiml(plan: CallPlan, conferenceName: string): string {
+export function buildConferenceTwiml(
+  plan: CallPlan,
+  conferenceName: string,
+): string {
   const escape = (s: string) =>
     s
       .replace(/&/g, "&amp;")

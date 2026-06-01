@@ -20,6 +20,7 @@ const (
 	ChannelEmail   Channel = "email"
 	ChannelSlack   Channel = "slack"
 	ChannelDiscord Channel = "discord"
+	ChannelSMS     Channel = "sms"
 )
 
 // Notification represents a notification to be delivered.
@@ -126,6 +127,11 @@ func MaxRetries(ch Channel) int {
 		return 3
 	case ChannelSlack, ChannelDiscord:
 		return 3
+	case ChannelSMS:
+		// SMS failures from Twilio are usually permanent (bad number, A2P
+		// block, unconfigured creds); a couple of retries covers transient
+		// 5xx/network blips without burning carrier spend on dead sends.
+		return 2
 	default:
 		return 3
 	}
