@@ -131,7 +131,8 @@ func TestLiveKitHandleInboundWebhookParsesEvent(t *testing.T) {
 	if ct != "application/json" {
 		t.Errorf("content type = %q", ct)
 	}
-	if meta.ToNumber != "+15125550000" || meta.FromNumber != "+15125551234" || meta.ProviderCallID != "PA_9" {
+	// ProviderCallID keys on room.sid so call-end (room_finished) reconciles.
+	if meta.ToNumber != "+15125550000" || meta.FromNumber != "+15125551234" || meta.ProviderCallID != "RM_1" {
 		t.Errorf("unexpected meta: %+v", meta)
 	}
 }
