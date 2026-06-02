@@ -237,15 +237,15 @@ end tell`;
 
   // ------- low-level -------
 
-  private runOsascript(script: string): Promise<ActionResult> {
+  private runOsascript(script: string, timeoutMs = OSASCRIPT_TIMEOUT_MS): Promise<ActionResult> {
     return new Promise((resolve) => {
       const proc = spawn("osascript", ["-e", script]);
       let stdout = "";
       let stderr = "";
       const timer = setTimeout(() => {
         try { proc.kill("SIGKILL"); } catch {}
-        resolve({ ok: false, reason: "osascript timed out (12s)" });
-      }, OSASCRIPT_TIMEOUT_MS);
+        resolve({ ok: false, reason: `osascript timed out (${Math.round(timeoutMs / 1000)}s)` });
+      }, timeoutMs);
       proc.stdout.on("data", (d) => (stdout += d.toString()));
       proc.stderr.on("data", (d) => (stderr += d.toString()));
       proc.on("close", (code) => {
@@ -266,6 +266,103 @@ end tell`;
       });
     });
   }
+
+  // ------- Calendar (read) -------
+  //
+  // Read upcoming events from Calendar.app across ALL calendars (iCloud +
+  // Google + subscribed). This is the authoritative source for what the owner
+  // actually sees — the bridge WRITES events here, so it must also READ here.
+  // Previously appointment queries only hit the Google Calendar connector, so
+  // an iCloud/Apple-only appointment was invisible ("no upcoming haircut
+  // appointment" even though it was on the calendar).
+  async readUpcomingEvents(opts: { days?: number; max?: number } = {}): Promise<CalendarEventRead[]> {
+    const days = Math.max(1, Math.min(opts.days ?? 60, 180));
+    // Fields joined by " ||| " (unlikely in a summary); events by linefeed.
+    // Dates emitted numerically (Y-M-D-H-Min) so parsing is locale-independent.
+    const script = `
+set theStart to (current date)
+set theEnd to theStart + (${days} * days)
+set out to ""
+tell application "Calendar"
+  repeat with cal in calendars
+    set calName to (name of cal)
+    try
+      repeat with ev in (every event of cal whose start date is greater than or equal to theStart and start date is less than or equal to theEnd)
+        set s to (start date of ev)
+        set e to (end date of ev)
+        set out to out & calName & " ||| " & (summary of ev) & " ||| " & ((year of s) as string) & "-" & ((month of s) as integer) & "-" & (day of s) & "-" & (hours of s) & "-" & (minutes of s) & " ||| " & ((year of e) as string) & "-" & ((month of e) as integer) & "-" & (day of e) & "-" & (hours of e) & "-" & (minutes of e) & linefeed
+      end repeat
+    end try
+  end repeat
+end tell
+return out`;
+    const res = await this.runOsascript(script, 25_000);
+    if (!res.ok) {
+      this.logger.warn({ reason: res.reason }, "calendar read failed");
+      return [];
+    }
+    return parseAppleCalendarOutput(res.detail || "").slice(0, opts.max ?? 30);
+  }
+}
+
+// ---------- Calendar read: parsing + formatting (pure, testable) ----------
+
+export interface CalendarEventRead {
+  calendar: string;
+  title: string;
+  start: Date;
+  end: Date | null;
+}
+
+function parseStamp(str: string): Date | null {
+  const m = (str || "").trim().match(/^(\d+)-(\d+)-(\d+)-(\d+)-(\d+)$/);
+  if (!m) return null;
+  const [y, mo, d, h, mi] = m.slice(1).map(Number);
+  const dt = new Date(y, mo - 1, d, h, mi);
+  return isNaN(dt.getTime()) ? null : dt;
+}
+
+/** Parse the delimited Calendar.app AppleScript output into sorted events. */
+export function parseAppleCalendarOutput(raw: string): CalendarEventRead[] {
+  const out: CalendarEventRead[] = [];
+  for (const line of (raw || "").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const parts = line.split(" ||| ");
+    if (parts.length < 3) continue;
+    const start = parseStamp(parts[2]);
+    if (!start) continue;
+    out.push({
+      calendar: (parts[0] || "").trim(),
+      title: (parts[1] || "").trim(),
+      start,
+      end: parts[3] ? parseStamp(parts[3]) : null,
+    });
+  }
+  out.sort((a, b) => a.start.getTime() - b.start.getTime());
+  return out;
+}
+
+/**
+ * Format upcoming Apple Calendar events as a prompt-injection block. Only
+ * events that haven't ended yet are included. Returns "" when there are none.
+ */
+export function formatAppleCalendarBlock(
+  events: CalendarEventRead[],
+  opts: { max?: number; now?: number } = {},
+): string {
+  const now = opts.now ?? Date.now();
+  const upcoming = events
+    .filter((e) => (e.end ?? e.start).getTime() >= now)
+    .slice(0, opts.max ?? 12);
+  if (upcoming.length === 0) return "";
+  const lines = upcoming.map((e) => {
+    const when = e.start.toLocaleString("en-US", {
+      weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    });
+    const cal = e.calendar ? ` [${e.calendar}]` : "";
+    return `- ${when} — ${e.title || "(no title)"}${cal}`;
+  });
+  return `\n\nUser's device calendar (Apple Calendar.app — includes iCloud + Google + subscribed; the source of truth for appointments the user sees):\n${lines.join("\n")}\n`;
 }
 
 // ---------- helpers ----------
