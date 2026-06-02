@@ -509,3 +509,66 @@ export function renderHelp(): string {
     "starting messages with *lantern,* is the explicit way (e.g. *lantern, pause for 2h*).",
   ].join("\n");
 }
+
+// ── Presence / "I'm away" status ────────────────────────────────────
+// Owner sets a timed, free-text status from self-chat so the bot can tell
+// contacts where they are + offer to take a message. Returns null when the
+// text isn't a presence command (caller falls through to normal handling).
+export type PresenceCommand =
+  | { action: "set"; label: string; place?: string; durationMs?: number }
+  | { action: "clear" };
+
+const PRESENCE_CLEAR_RE =
+  /^(?:lantern,?\s+)?(?:i'?m\s+back|back\s+now|status\s+off|clear\s+(?:my\s+)?status|i'?m\s+(?:free|available|around)|presence\s+off|status\s+clear)\s*[!.]?$/i;
+
+// "I'm at the temple", "I'm in a meeting", "I'm driving", "set status: at the gym",
+// "away: lunch", "status: at the dentist" — optionally "for 2h" / "until 5pm".
+const PRESENCE_SET_RE =
+  /^(?:lantern,?\s+)?(?:(?:set\s+)?status\s*[:=]\s*|away\s*[:=]\s*|presence\s*[:=]\s*|i'?m\s+(?:at\s+|in\s+|on\s+)?)(.+?)(?:\s+(?:for\s+(\d+)\s*(h|hr|hrs|hours?|m|min|mins|minutes?)|until\s+(.+?)))?\s*[!.]?$/i;
+
+function parseDurationMs(num?: string, unit?: string, untilText?: string): number | undefined {
+  if (num && unit) {
+    const n = parseInt(num, 10);
+    if (!Number.isFinite(n) || n <= 0) return undefined;
+    return /^m/i.test(unit) ? n * 60_000 : n * 3_600_000;
+  }
+  if (untilText) {
+    // "5pm", "5:30 pm", "17:00"
+    const m = untilText.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+    if (m) {
+      let hr = parseInt(m[1], 10);
+      const min = m[2] ? parseInt(m[2], 10) : 0;
+      const mer = m[3]?.toLowerCase();
+      if (mer === "pm" && hr < 12) hr += 12;
+      if (mer === "am" && hr === 12) hr = 0;
+      const now = new Date();
+      const target = new Date(now);
+      target.setHours(hr, min, 0, 0);
+      if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1); // next occurrence
+      return target.getTime() - now.getTime();
+    }
+  }
+  return undefined;
+}
+
+export function parsePresenceCommand(input: string): PresenceCommand | null {
+  const raw = (input || "").trim();
+  if (!raw || raw.length > 160) return null;
+  if (PRESENCE_CLEAR_RE.test(raw)) return { action: "clear" };
+  const m = raw.match(PRESENCE_SET_RE);
+  if (!m) return null;
+  let label = (m[1] || "").trim().replace(/[?.!,]+$/, "");
+  if (!label || label.length < 2) return null;
+  // Reject obvious non-status sentences ("i'm at a loss", questions, etc.)
+  if (/[?]/.test(raw)) return null;
+  const durationMs = parseDurationMs(m[2], m[3], m[4]);
+  // Derive a place from the label when it reads like a location.
+  const placeMatch = label.match(/^(?:the\s+)?(.+)$/i);
+  const place = placeMatch ? placeMatch[1] : undefined;
+  // Normalize label into a natural "at the temple" / "in a meeting" phrasing.
+  const lower = label.toLowerCase();
+  const naturalLabel = /^(?:at|in|on)\b/.test(lower) || /meeting|driving|lunch|gym|busy|away|sleep/.test(lower)
+    ? label
+    : `at ${label}`;
+  return { action: "set", label: naturalLabel, place, durationMs };
+}

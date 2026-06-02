@@ -42,6 +42,13 @@ export interface PresenceSnapshot {
   capturedAt: number;
   // Optional source for debugging.
   source: "override" | "focus" | "calendar" | "default";
+  // Free-text place the owner set ("the temple", "the gym"), if any.
+  place?: string;
+  // Owner wants the bot to offer to take a message while away.
+  takeMessage?: boolean;
+  // True when the owner is unavailable (busy/meeting/driving/dnd/sleep or an
+  // explicit away status) — contacts should be told he'll get back.
+  away?: boolean;
 }
 
 export interface PresenceLookupOpts {
@@ -60,6 +67,11 @@ export interface ManualOverride {
   state: PresenceSnapshot["state"];
   label: string;
   expiresAt: number;
+  // Free-text place/status the owner set ("at the temple", "at the gym").
+  place?: string;
+  // When true, the bot should OFFER to take a message from a contact while
+  // the owner is away ("…he'll get back to you — want me to pass a message?").
+  takeMessage?: boolean;
 }
 
 export class PresenceTracker {
@@ -95,6 +107,35 @@ export class PresenceTracker {
     this.cache = null; // force recompute on next read
   }
 
+  /**
+   * Set a free-text status with an optional place + duration, e.g. the owner
+   * texts "I'm at the temple for 2h". Distinct from setOverride's fixed
+   * enum states — this carries arbitrary place/label text and a take-message
+   * flag for the contact-facing "can I pass a message?" offer.
+   */
+  setStatus(opts: {
+    label: string;
+    place?: string;
+    state?: PresenceSnapshot["state"];
+    durationMs?: number;
+    takeMessage?: boolean;
+  }): void {
+    const label = opts.label.trim();
+    this.manualOverride = {
+      state: opts.state ?? "busy",
+      label,
+      place: opts.place?.trim() || undefined,
+      takeMessage: opts.takeMessage ?? true,
+      expiresAt: Date.now() + (opts.durationMs ?? 4 * 60 * 60_000),
+    };
+    this.cache = null;
+  }
+
+  /** True if there's an active manual status. */
+  hasActiveStatus(): boolean {
+    return !!(this.manualOverride && Date.now() < this.manualOverride.expiresAt);
+  }
+
   /** Clear any active manual override. */
   clearOverride(): void {
     this.manualOverride = null;
@@ -123,6 +164,9 @@ export class PresenceTracker {
         state: override.state,
         capturedAt: now,
         source: "override",
+        place: override.place,
+        takeMessage: override.takeMessage,
+        away: override.state !== "free",
       };
       this.cache = snap;
       return snap;
@@ -150,6 +194,7 @@ export class PresenceTracker {
               state: "meeting",
               capturedAt: now,
               source: "calendar",
+              away: true,
             };
             this.cache = snap;
             return snap;
@@ -161,6 +206,7 @@ export class PresenceTracker {
               state: "meeting",
               capturedAt: now,
               source: "calendar",
+              away: true,
             };
             this.cache = snap;
             return snap;
@@ -177,6 +223,7 @@ export class PresenceTracker {
       state: "free",
       capturedAt: now,
       source: "default",
+      away: false,
     };
     this.cache = snap;
     return snap;
@@ -205,6 +252,7 @@ export class PresenceTracker {
           state,
           capturedAt: Date.now(),
           source: "focus",
+          away: state !== "free",
         };
       }
     } catch {
