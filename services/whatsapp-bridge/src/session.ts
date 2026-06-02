@@ -2128,6 +2128,12 @@ export class WhatsAppSession {
           if (isBroadcast) continue;
 
           if (!this.agent.enabled()) continue;
+          // PROACTIVE INGESTER (unknown senders): appointment confirmations →
+          // surface + offer to add to calendar; marketing/spam → suppress.
+          if (text && !this.isGroupJid(from)) {
+            const ingest = await this.maybeIngestUnknownInbound(from, text).catch(() => "pass" as const);
+            if (ingest === "handled") continue;
+          }
           if (this.muted) {
             this.logger.info({ from }, "agent skipped — globally muted");
             continue;
@@ -2269,6 +2275,43 @@ export class WhatsAppSession {
       end: e.end ? e.end.toISOString() : null,
       calendar: e.calendar,
     }));
+  }
+
+  // Proactive ingester for UNKNOWN-sender inbound. Appointment confirmation →
+  // DM the owner + arm a "yes" offer that adds it to the calendar (via the
+  // freeform-followup → [CALENDAR:] path). Marketing/spam → suppress. Returns
+  // "handled" to skip the auto-reply path. Best-effort + flag-gated.
+  private async maybeIngestUnknownInbound(from: string, text: string): Promise<"handled" | "pass"> {
+    if ((process.env.LANTERN_APPT_INGEST || "on").toLowerCase() === "off") return "pass";
+    if (!from || !text || this.isGroupJid(from)) return "pass";
+    if (this.contactNames.has(from)) return "pass";
+    if (this.ownerProfileStore.relationshipFor(from, undefined)) return "pass";
+    let kind: "appointment" | "spam" | "other";
+    let signals: string[];
+    try {
+      const { classifyUnknownInbound } = await import("@lantern/bridge-core/inbound-classifier");
+      ({ kind, signals } = classifyUnknownInbound(text));
+    } catch { return "pass"; }
+    if (kind === "other") return "pass";
+    if (kind === "spam") {
+      this.logger.info({ from, signals }, "ingest: suppressed marketing/spam from unknown sender");
+      return "handled";
+    }
+    this.logger.info({ from, signals }, "ingest: appointment confirmation from unknown sender");
+    const ownJid = this.ownJid();
+    const snippet = text.replace(/\s+/g, " ").trim().slice(0, 240);
+    if (ownJid) {
+      const offerText = `📅 Looks like an appointment text from ${from.split("@")[0]}:\n"${snippet}"\nReply "yes" to add it to your calendar.`;
+      await this.confirmToSelf(offerText).catch(() => {});
+      this.pendingOffers.set(ownJid, {
+        kind: "freeform-followup",
+        freeformAction: `Add this appointment to my calendar — emit a [CALENDAR:Title|start-ISO|end-ISO?|notes] marker with the correct title, date, and time parsed from: "${snippet}"`,
+        freeformInbound: text,
+        freeformPriorReply: offerText,
+        issuedAt: Date.now(),
+      } as any);
+    }
+    return "handled";
   }
 
   /**
