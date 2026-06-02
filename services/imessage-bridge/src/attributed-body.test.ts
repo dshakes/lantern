@@ -17,7 +17,7 @@ function blobShort(text: string): Buffer {
     Buffer.from("streamtyped...NSString", "latin1"),
     Buffer.from([0x01, 0x94, 0x84, 0x01, 0x2b, body.length]),
     body,
-    Buffer.from([0x86], "latin1"), // trailing class-end byte (ignored)
+    Buffer.from([0x86]), // trailing class-end byte (ignored)
   ]);
 }
 
