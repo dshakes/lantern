@@ -706,6 +706,45 @@ export class IMessageSession {
     }));
   }
 
+  // Proactive ingester for UNKNOWN-sender inbound. Appointment confirmation →
+  // DM the owner + arm a "yes" offer that adds it to the calendar (reusing the
+  // freeform-followup → [CALENDAR:] path). Marketing/spam → suppress. Returns
+  // "handled" to skip the normal auto-reply path. Best-effort + flag-gated.
+  private async maybeIngestUnknownInbound(handle: string, text: string): Promise<"handled" | "pass"> {
+    if ((process.env.LANTERN_APPT_INGEST || "on").toLowerCase() === "off") return "pass";
+    if (!handle || !text) return "pass";
+    // Only UNKNOWN senders — never reclassify a saved contact / known person.
+    if (this.contactNames.has(handle)) return "pass";
+    if (this.ownerProfileStore.relationshipFor(handle, undefined)) return "pass";
+    let kind: "appointment" | "spam" | "other";
+    let signals: string[];
+    try {
+      const { classifyUnknownInbound } = await import("@lantern/bridge-core/inbound-classifier");
+      ({ kind, signals } = classifyUnknownInbound(text));
+    } catch { return "pass"; }
+    if (kind === "other") return "pass";
+    if (kind === "spam") {
+      this.logger.info({ handle, signals }, "ingest: suppressed marketing/spam from unknown sender");
+      return "handled"; // marketing from a stranger → silence
+    }
+    // appointment
+    this.logger.info({ handle, signals }, "ingest: appointment confirmation from unknown sender");
+    const ownerHandle = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+    const snippet = text.replace(/\s+/g, " ").trim().slice(0, 240);
+    if (ownerHandle) {
+      const offerText = `📅 Looks like an appointment text from ${handle}:\n"${snippet}"\nReply "yes" to add it to your calendar.`;
+      await this.send(ownerHandle, offerText).catch(() => {});
+      this.pendingOffers.set(ownerHandle, {
+        kind: "freeform-followup",
+        freeformAction: `Add this appointment to my calendar — emit a [CALENDAR:Title|start-ISO|end-ISO?|notes] marker with the correct title, date, and time parsed from: "${snippet}"`,
+        freeformInbound: text,
+        freeformPriorReply: offerText,
+        issuedAt: Date.now(),
+      } as any);
+    }
+    return "handled"; // don't auto-reply to the unknown sender
+  }
+
   // Public contact search over the macOS AddressBook (name → phones + emails).
   // Backs the `search_contacts` agentic tool.
   async searchContacts(query: string, limit?: number) {
@@ -1519,6 +1558,12 @@ export class IMessageSession {
     // like a bot. The owner can read the attachment themselves; bot's
     // job is to be invisible when it has nothing real to say.
     if (!text) return;
+
+    // PROACTIVE INGESTER (unknown senders): appointment confirmations →
+    // surface to the owner + offer to add to the calendar; marketing/spam →
+    // suppress (no auto-reply). Behind LANTERN_APPT_INGEST (default on).
+    const ingest = await this.maybeIngestUnknownInbound(row.handle, text).catch(() => "pass" as const);
+    if (ingest === "handled") return;
 
     // NOTE: no hard allow-list gate here (removed — it was an
     // over-correction that silenced every contact). The real spam
