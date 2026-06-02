@@ -110,10 +110,16 @@ export async function resolveContact(
     }
   }
 
-  // 5. macOS Contacts.app via AppleScript. Best-effort — fails
-  // gracefully if Contacts permission isn't granted to the script
-  // process or the user is on a non-Mac platform.
-  const macHit = await searchMacosContacts(raw, opts.logger);
+  // 5. macOS Contacts. PRIMARY: read the AddressBook SQLite directly
+  // in-process — the bridge already has Full Disk Access (for chat.db),
+  // which covers the TCC-protected AddressBook DB. This works even when
+  // AppleScript *Automation* permission for Contacts.app is NOT granted to
+  // the bridge's node binary (a separate TCC grant it usually lacks under
+  // launchd) — the exact reason name→phone resolution failed in prod.
+  // FALLBACK: AppleScript, for environments where Automation IS granted
+  // but Full Disk Access isn't.
+  const dbHit = await searchAddressBookDb(raw, opts.logger);
+  const macHit = dbHit || (await searchMacosContacts(raw, opts.logger));
   if (macHit) {
     return {
       resolved: {
@@ -205,6 +211,79 @@ function handleToPhone(handle: string): string | null {
   if (/^\d{10}$/.test(handle)) return "+1" + handle;
   if (/^\d{11}$/.test(handle)) return "+" + handle;
   return null;
+}
+
+// Read the macOS AddressBook SQLite directly (in-process via better-sqlite3).
+// Covered by Full Disk Access — the grant the bridge already holds for
+// chat.db — so it works under launchd where AppleScript Automation for
+// Contacts.app is blocked. Dynamic import + best-effort: returns null
+// (degrading to the AppleScript path) if the driver or DBs are unavailable.
+async function searchAddressBookDb(
+  query: string,
+  logger?: Logger,
+): Promise<{ name: string; phone: string } | null> {
+  if (process.platform !== "darwin") return null;
+  try {
+    // Indirection defeats TS literal module resolution — better-sqlite3 is
+    // an optional native dep resolved at RUNTIME from the consuming bridge's
+    // node_modules (both bridges have it), not from bridge-core's.
+    const sqliteSpecifier = "better-sqlite3";
+    const [sqliteMod, os, fs, path] = await Promise.all([
+      import(sqliteSpecifier) as Promise<any>,
+      import("node:os"),
+      import("node:fs"),
+      import("node:path"),
+    ]);
+    const Database = sqliteMod.default as any;
+    const base = path.join(os.homedir(), "Library/Application Support/AddressBook/Sources");
+    if (!fs.existsSync(base)) return null;
+    const like = `%${query.toLowerCase().trim()}%`;
+    for (const src of fs.readdirSync(base)) {
+      const dbPath = path.join(base, src, "AddressBook-v22.abcddb");
+      if (!fs.existsSync(dbPath)) continue;
+      let conn: any;
+      try {
+        conn = new Database(dbPath, { readonly: true, fileMustExist: true });
+        // Exact-ish first (first name or full name equals the query), then
+        // substring — so "manu" prefers the contact named "Manu" over
+        // "Anil Kakumanu". A contact can have multiple phones; take the first.
+        const row = conn
+          .prepare(
+            `SELECT r.ZFIRSTNAME AS first, r.ZLASTNAME AS last, p.ZFULLNUMBER AS phone,
+                    CASE
+                      WHEN lower(coalesce(r.ZFIRSTNAME,'')) = ?1 THEN 0
+                      WHEN lower(trim(coalesce(r.ZFIRSTNAME,'')||' '||coalesce(r.ZLASTNAME,''))) = ?1 THEN 1
+                      WHEN lower(coalesce(r.ZNICKNAME,'')) = ?1 THEN 2
+                      ELSE 3
+                    END AS rank
+             FROM ZABCDRECORD r
+             JOIN ZABCDPHONENUMBER p ON p.ZOWNER = r.Z_PK
+             WHERE p.ZFULLNUMBER IS NOT NULL AND (
+                   lower(coalesce(r.ZFIRSTNAME,'')||' '||coalesce(r.ZLASTNAME,'')) LIKE ?2
+                   OR lower(coalesce(r.ZNICKNAME,'')) LIKE ?2
+                   OR lower(coalesce(r.ZORGANIZATION,'')) LIKE ?2)
+             ORDER BY rank ASC
+             LIMIT 1`,
+          )
+          .get(query.toLowerCase().trim(), like) as
+          | { first?: string; last?: string; phone?: string }
+          | undefined;
+        if (row?.phone) {
+          const phone = tryParsePhone(row.phone);
+          const name = [row.first, row.last].filter(Boolean).join(" ").trim() || query;
+          if (phone) return { name, phone };
+        }
+      } catch (err) {
+        logger?.debug({ err, dbPath }, "AddressBook DB read failed for source");
+      } finally {
+        try { conn?.close(); } catch { /* ignore */ }
+      }
+    }
+    return null;
+  } catch (err) {
+    logger?.debug({ err }, "AddressBook DB lookup unavailable — falling back to AppleScript");
+    return null;
+  }
 }
 
 async function searchMacosContacts(
