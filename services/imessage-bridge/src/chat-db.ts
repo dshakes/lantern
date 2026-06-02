@@ -274,6 +274,7 @@ export class ChatDB {
       .prepare(
         `SELECT m.is_from_me AS is_from_me,
                 COALESCE(m.text, '') AS text,
+                m.attributedBody AS attributed_body,
                 COALESCE(m.associated_message_type, 0) AS amt,
                 m.cache_has_attachments AS has_att
          FROM message m
@@ -286,6 +287,7 @@ export class ChatDB {
       .all(chatRowid, limit) as Array<{
       is_from_me: number;
       text: string;
+      attributed_body: Buffer | null;
       amt: number;
       has_att: number;
     }>;
@@ -294,7 +296,12 @@ export class ChatDB {
       .reverse()
       .map((r) => ({
         fromMe: !!r.is_from_me,
-        text: r.text.trim() || (r.has_att ? "[attachment]" : ""),
+        // Decode attributedBody so RCS/newer messages stay in the reply
+        // context instead of dropping out of the transcript.
+        text:
+          r.text.trim() ||
+          decodeAttributedBody(r.attributed_body) ||
+          (r.has_att ? "[attachment]" : ""),
       }))
       .filter((m) => m.text.length > 0);
   }
@@ -367,7 +374,7 @@ export class ChatDB {
     const toAppleNs = (unixMs: number) => (unixMs - APPLE_EPOCH_MS) * 1_000_000;
     const where: string[] = [
       "COALESCE(m.associated_message_type, 0) = 0",
-      "COALESCE(m.text, '') <> ''",
+      "(COALESCE(m.text, '') <> '' OR m.attributedBody IS NOT NULL)",
     ];
     const params: Array<string | number> = [];
     if (opts.keyword && opts.keyword.trim()) {
@@ -393,6 +400,7 @@ export class ChatDB {
       SELECT
         m.ROWID                              AS rowid,
         COALESCE(m.text, '')                 AS text,
+        m.attributedBody                     AS attributed_body,
         m.date                               AS date,
         m.is_from_me                         AS is_from_me,
         COALESCE(h.id, '')                   AS handle,
@@ -408,6 +416,7 @@ export class ChatDB {
     const rows = this.db.prepare(sql).all(...params, limit) as Array<{
       rowid: number;
       text: string;
+      attributed_body: Buffer | null;
       date: number;
       is_from_me: number;
       handle: string;
@@ -416,7 +425,7 @@ export class ChatDB {
     }>;
     return rows.map((r) => ({
       rowid: r.rowid,
-      text: r.text,
+      text: r.text || decodeAttributedBody(r.attributed_body) || "",
       unixMs: appleNsToUnixMs(r.date),
       fromMe: !!r.is_from_me,
       handle: r.handle,

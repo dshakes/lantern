@@ -6,7 +6,7 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { decodeAttributedBody } from "./attributed-body.ts";
+import { decodeAttributedBody } from "./attributed-body.js";
 
 // Build a minimal typedstream-ish blob: "...NSString...+<len><utf8>".
 // 1-byte length form (len < 0x80).
