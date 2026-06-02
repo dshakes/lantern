@@ -27,7 +27,11 @@ var bareNoReplyDrafts = map[string]bool{
 
 var reasoningLeakPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bempty\s+string\b`),
-	regexp.MustCompile(`(?i)\bthe\s+(contact|sender|recipient)\b`),
+	// Verb-gated: the model narrating ABOUT the contact in the third person
+	// ("the contact is just saying hi", "the sender doesn't need a reply") is
+	// a leak; a normal reply that merely contains the noun ("send the contact
+	// info", "the recipient address is on file") is fine and must pass.
+	regexp.MustCompile(`(?i)\bthe\s+(contact|sender|recipient)\s+(is|was|seems|appears|wants|needs|just|only|probably|likely|doesn'?t|didn'?t|hasn'?t|simply|merely)\b`),
 	regexp.MustCompile(`(?i)\bno(thing)?\b[^.!?\n]{0,30}\b(needs?|need|requires?|warrants?|merits?)\b[^.!?\n]{0,15}\b(a\s+)?(reply|response|answer)\b`),
 	regexp.MustCompile(`(?i)\bno\s+(reply|response|answer)\s+(is\s+)?(needed|required|necessary|warranted)\b`),
 	regexp.MustCompile(`(?i)\b(a\s+(real|normal)\s+(person|human)|real\s+people|most\s+people|a\s+human)\b[^.!?\n]{0,40}\b(wouldn'?t|would\s+not|won'?t|will\s+not|doesn'?t|don'?t|do\s+not)\b[^.!?\n]{0,25}\b(respond|reply|answer|say|text)\b`),

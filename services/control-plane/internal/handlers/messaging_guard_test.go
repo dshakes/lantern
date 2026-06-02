@@ -8,6 +8,9 @@ func TestShouldSendOutbound_AllowsRealReply(t *testing.T) {
 		"he's out till friday — want me to pass along a message?",
 		"yeah that works for me",
 		"Sure, I'll let him know.",
+		// Must NOT be caught by the narrowed contact/sender/recipient pattern.
+		"I'll send you the contact info in a sec.",
+		"the recipient address is on file, all good",
 	}
 	for _, draft := range good {
 		if ok, reason := shouldSendOutbound(draft); !ok {
