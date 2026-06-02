@@ -632,6 +632,8 @@ into both bridges' session handlers.
 | `LANTERN_PERSONAL_DOCS_ROOTS`         | Colon-separated allowed roots (default `~/Documents:~/Desktop:~/Library/Mobile Documents/com~apple~CloudDocs`)                                                                                   |
 | `LANTERN_PERSONAL_DOCS_OCR_MAX_PAGES` | Max PDF pages to render+OCR per file (default 3)                                                                                                                                                 |
 | `LANTERN_DEFAULT_CALENDAR`            | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`)                                                                                          |
+| `LANTERN_VOICE_CALLER_ID`             | (Optional) E.164 caller-ID shown to the RECIPIENT of outbound calls — set to the owner's own number so contacts recognize + answer. MUST be a Twilio number or a **Verified Caller ID** on the account. Unset → falls back to the Twilio DID. SMS heads-up + conference owner-leg always use the Twilio DID. |
+| `LANTERN_VOICE_SMS_HEADSUP`           | `on` (default) / `off`. When on, a one-line heads-up SMS ("…'s assistant — …'s calling you in a few seconds about X") is texted to the recipient from the Twilio DID right before a conference dial, so an unknown caller-ID isn't ignored. Best-effort; never blocks the call. |
 
 ### Always-on
 

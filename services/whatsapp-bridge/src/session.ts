@@ -3425,6 +3425,10 @@ export class WhatsAppSession {
         logger: this.logger as any,
         twilioFromNumber: twilioFrom,
         ownerPhone: process.env.LANTERN_OWNER_PHONE,
+        // Show the owner's own (verified) number to contacts so they answer.
+        callerId: process.env.LANTERN_VOICE_CALLER_ID || undefined,
+        ownerName: process.env.LANTERN_OWNER_NAME || undefined,
+        smsHeadsUp: (process.env.LANTERN_VOICE_SMS_HEADSUP || "on").toLowerCase() !== "off",
         resolveContact: async (nameOrNumber: string) => this.resolveCallTarget(nameOrNumber),
         authedFetch: authedFetch as any,
         notifyOwner: async (text: string) => {
