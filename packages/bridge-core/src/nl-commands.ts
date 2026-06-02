@@ -524,7 +524,7 @@ const PRESENCE_CLEAR_RE =
 // "I'm at the temple", "I'm in a meeting", "I'm driving", "set status: at the gym",
 // "away: lunch", "status: at the dentist" — optionally "for 2h" / "until 5pm".
 const PRESENCE_SET_RE =
-  /^(?:lantern,?\s+)?(?:(?:set\s+)?status\s*[:=]\s*|away\s*[:=]\s*|presence\s*[:=]\s*|i'?m\s+(?:at\s+|in\s+|on\s+)?)(.+?)(?:\s+(?:for\s+(\d+)\s*(h|hr|hrs|hours?|m|min|mins|minutes?)|until\s+(.+?)))?\s*[!.]?$/i;
+  /^(?:lantern,?\s+)?(?:(?:set\s+)?status\s*[:=]\s*|away\s*[:=]\s*|presence\s*[:=]\s*|(?:i'?m|i\s+am|i'?ll\s+be|i\s+will\s+be)\s+(?:at\s+|in\s+|on\s+)?)(.+?)(?:\s+(?:for\s+(\d+)\s*(h|hr|hrs|hours?|m|min|mins|minutes?)|(?:until|till|til)\s+(.+?)))?\s*[!.]?$/i;
 
 function parseDurationMs(num?: string, unit?: string, untilText?: string): number | undefined {
   if (num && unit) {
@@ -533,8 +533,13 @@ function parseDurationMs(num?: string, unit?: string, untilText?: string): numbe
     return /^m/i.test(unit) ? n * 60_000 : n * 3_600_000;
   }
   if (untilText) {
-    // "5pm", "5:30 pm", "17:00"
-    const m = untilText.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+    // "5pm", "5:30 pm", "17:00" — strip a trailing timezone token ("est"/
+    // "pt"/"gmt"…) the user may tack on, so "7:30 pm est" still parses.
+    const cleaned = untilText
+      .trim()
+      .replace(/\s+(?:e[sd]t|p[sd]t|c[sd]t|m[sd]t|gmt|utc|ist|[ecmp]t)\.?$/i, "")
+      .trim();
+    const m = cleaned.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
     if (m) {
       let hr = parseInt(m[1], 10);
       const min = m[2] ? parseInt(m[2], 10) : 0;

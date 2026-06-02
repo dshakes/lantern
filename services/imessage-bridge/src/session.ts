@@ -3492,6 +3492,8 @@ export class IMessageSession {
       "  • Mail draft:     [MAIL:to@x.com|Subject|Body]",
       "  • Phone call:     [CALL:Manasa|conference|why you're calling]   (mode = conference | voicemail | task)",
       "CALLS: when the owner asks you to call / phone / dial / ring / conference / reach someone (ANY phrasing, any language, typos and all — e.g. 'call manu', 'conference me withe manu', 'can you ring her') you MUST emit a [CALL:...] marker. The bridge places the real call via Twilio and asks the owner to confirm before dialing. NEVER say 'I'll call' / 'calling her' / 'will do' WITHOUT the [CALL:...] marker — a reply that claims a call without the marker is a lie, because no call happens. 'conference me with X' → mode conference. 'leave X a voicemail saying Y' → mode voicemail, message Y. 'call the pharmacy to refill' → mode task. Use the contact's real name as target; the bridge resolves it to a number.",
+      "  • Away status:    [STATUS:at the swimming pool|2026-06-02T19:30:00|swimming pool]   (label | until-ISO-or-empty | place)  ·  or  [STATUS:CLEAR]",
+      "STATUS: when the owner tells you where they are or that they're away/busy/back (ANY phrasing or language — 'I am at the pool till 7:30pm est', 'in a meeting for 2h', 'driving', 'I'm back', Telugu, etc.), emit a [STATUS:...] marker. Compute the until-ISO from the time they gave (their local timezone; resolve 'till 7:30pm' to today's datetime). When they say they're back/free/available, emit [STATUS:CLEAR]. The bridge then tells anyone who messages — on EVERY channel — that the owner is at <place> and will get back, and offers to take a message. Confirm to the owner in your reply.",
       "OFFER-then-CONFIRM applies ONLY to state-modifying actions (calendar, note, mail, attach). For READ operations (search, list, look up, find), NEVER ask permission — just execute and report results. The user already asked; asking 'shall I search?' is wasted turns.",
       "# No-permission-to-read rule (HARD)",
       "When the user asks a question that needs data ('do you know my X', 'what is my X', 'find my X', 'when is my X', 'who is X', 'show me X'):",
@@ -3537,7 +3539,20 @@ export class IMessageSession {
     // reads cleanly. Actions then execute one-by-one with concise
     // confirmations back to the chat.
     const { cleanedText: textNoAttach, paths } = extractAttachMarkers(draft);
-    const { cleanedText: finalText, calendarEvents, notes, mailDrafts, calls } = extractActionMarkers(textNoAttach);
+    const { cleanedText: finalText, calendarEvents, notes, mailDrafts, calls, status } = extractActionMarkers(textNoAttach);
+    // Presence/away status the LLM parsed (any phrasing/language). Shared file
+    // → applies on all channels (incl. WhatsApp). Fast regex path handles
+    // common cases before the LLM ever runs.
+    if (status) {
+      if (status.clear) {
+        this.presence.clearOverride();
+        this.logger.info({}, "presence cleared via [STATUS:CLEAR]");
+      } else if (status.label) {
+        const durationMs = status.untilIso ? Math.max(60_000, Date.parse(status.untilIso) - Date.now()) : undefined;
+        this.presence.setStatus({ label: status.label, place: status.place, durationMs });
+        this.logger.info({ label: status.label, untilIso: status.untilIso }, "presence set via [STATUS:]");
+      }
+    }
 
     // Humanize: friendly dates + guaranteed follow-up offer. The
     // returned `offer` lets us deterministically execute the action

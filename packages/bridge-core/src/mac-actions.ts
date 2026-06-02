@@ -530,11 +530,23 @@ const RE_MAIL = /\[MAIL:([^\]]+)\]/g;
 //   [CALL:target|mode|message-or-reason]
 //   mode ∈ conference | voicemail | task
 const RE_CALL = /\[CALL:([^\]]+)\]/g;
+// Presence/away status the LLM sets when the owner says they're at a place /
+// away / busy / back — the intelligent path that handles any phrasing or
+// language a regex would miss ("I am at the pool till 7:30pm est", Telugu, …).
+//   [STATUS:label|until-ISO-or-empty|place?]   or   [STATUS:CLEAR]
+const RE_STATUS = /\[STATUS:([^\]]+)\]/g;
 
 export interface CallSpec {
   target: string;
   mode: "conference" | "voicemail" | "task";
   message?: string;
+}
+
+export interface StatusSpec {
+  clear: boolean;
+  label?: string;     // "at the swimming pool"
+  untilIso?: string;  // ISO datetime the status expires, if the owner gave one
+  place?: string;     // "swimming pool"
 }
 
 export interface ExtractedActions {
@@ -543,6 +555,7 @@ export interface ExtractedActions {
   notes: NoteSpec[];
   mailDrafts: MailDraftSpec[];
   calls: CallSpec[];
+  status?: StatusSpec;
 }
 
 export function extractActionMarkers(text: string): ExtractedActions {
@@ -593,5 +606,21 @@ export function extractActionMarkers(text: string): ExtractedActions {
     }
     cleaned = cleaned.replace(m[0], "");
   }
-  return { cleanedText: cleaned.replace(/\n{3,}/g, "\n\n").trim(), calendarEvents, notes, mailDrafts, calls };
+  let status: StatusSpec | undefined;
+  for (const m of text.matchAll(RE_STATUS)) {
+    const body = m[1].trim();
+    if (/^clear$/i.test(body)) {
+      status = { clear: true };
+    } else {
+      const parts = body.split("|").map((p) => p.trim());
+      const label = parts[0];
+      if (label) {
+        const untilIso = parts[1] && !Number.isNaN(Date.parse(parts[1])) ? parts[1] : undefined;
+        const place = parts[2] || label.replace(/^(?:at|in|on)\s+the\s+|^(?:at|in|on)\s+/i, "") || undefined;
+        status = { clear: false, label, untilIso, place };
+      }
+    }
+    cleaned = cleaned.replace(m[0], "");
+  }
+  return { cleanedText: cleaned.replace(/\n{3,}/g, "\n\n").trim(), calendarEvents, notes, mailDrafts, calls, status };
 }

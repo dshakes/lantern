@@ -22,9 +22,18 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Logger } from "pino";
 
 const execFileP = promisify(execFile);
+
+// Shared, cross-channel presence file. The owner sets status on ONE channel
+// (WhatsApp self-chat) and it must apply on EVERY channel (an iMessage contact
+// should hear "he's at the pool"). Both bridges read/write this file, so the
+// manual status is shared across bridges AND survives restarts.
+const PRESENCE_FILE = join(homedir(), ".lantern", "presence.json");
 
 export interface PresenceSnapshot {
   // Human-readable one-liner suitable for the system prompt. Empty
@@ -84,6 +93,33 @@ export class PresenceTracker {
     this.logger = opts.logger?.child({ component: "presence" });
   }
 
+  // Persist the manual override to the shared file (cross-bridge + restart).
+  private persist(ov: ManualOverride | null): void {
+    try {
+      if (!ov) {
+        try { unlinkSync(PRESENCE_FILE); } catch { /* already gone */ }
+        return;
+      }
+      mkdirSync(join(homedir(), ".lantern"), { recursive: true });
+      writeFileSync(PRESENCE_FILE, JSON.stringify(ov), { mode: 0o600 });
+    } catch (err) {
+      this.logger?.warn({ err }, "presence persist failed");
+    }
+  }
+
+  // Read the shared override file (the cross-bridge source of truth). Returns
+  // null when absent/expired/unparseable.
+  private loadFromFile(): ManualOverride | null {
+    try {
+      const raw = readFileSync(PRESENCE_FILE, "utf8");
+      const ov = JSON.parse(raw) as ManualOverride;
+      if (!ov || typeof ov.expiresAt !== "number" || Date.now() >= ov.expiresAt) return null;
+      return ov;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Set a manual override. Wins over auto-detection until expiry.
    * Wire to a self-chat command "presence: driving for 2h".
@@ -104,6 +140,7 @@ export class PresenceTracker {
       label: normalized,
       expiresAt: Date.now() + durationMs,
     };
+    this.persist(this.manualOverride);
     this.cache = null; // force recompute on next read
   }
 
@@ -128,17 +165,20 @@ export class PresenceTracker {
       takeMessage: opts.takeMessage ?? true,
       expiresAt: Date.now() + (opts.durationMs ?? 4 * 60 * 60_000),
     };
+    this.persist(this.manualOverride);
     this.cache = null;
   }
 
   /** True if there's an active manual status. */
   hasActiveStatus(): boolean {
-    return !!(this.manualOverride && Date.now() < this.manualOverride.expiresAt);
+    if (this.manualOverride && Date.now() < this.manualOverride.expiresAt) return true;
+    return !!this.loadFromFile();
   }
 
   /** Clear any active manual override. */
   clearOverride(): void {
     this.manualOverride = null;
+    this.persist(null);
     this.cache = null;
   }
 
@@ -147,14 +187,19 @@ export class PresenceTracker {
    */
   async current(opts: PresenceLookupOpts = {}): Promise<PresenceSnapshot> {
     const now = Date.now();
-    if (this.cache && now - this.cache.capturedAt < PresenceTracker.TTL_MS) {
-      return this.cache;
-    }
-
-    // Drop expired override.
-    const override = this.manualOverride && now < this.manualOverride.expiresAt ? this.manualOverride : null;
+    // Manual status comes from the SHARED file (so a status set on another
+    // bridge applies here). Read it fresh every call — tiny JSON — and let it
+    // win immediately, bypassing the 60s cache used for focus/calendar.
+    const override = this.loadFromFile() || (this.manualOverride && now < this.manualOverride.expiresAt ? this.manualOverride : null);
     if (!override && this.manualOverride) {
       this.manualOverride = null;
+    }
+    // Serve the cache only for the expensive focus/calendar/default sources.
+    // A cached "override" snapshot must NOT survive once the shared file is
+    // gone (another bridge cleared the status) — else "I'm back" wouldn't
+    // propagate for up to 60s.
+    if (!override && this.cache && this.cache.source !== "override" && now - this.cache.capturedAt < PresenceTracker.TTL_MS) {
+      return this.cache;
     }
 
     // 1. Manual override wins.
