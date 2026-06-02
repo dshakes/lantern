@@ -2253,6 +2253,25 @@ export class WhatsAppSession {
   }
 
   /**
+   * Public read of the owner's device calendar (iCloud + Google + subscribed),
+   * straight from the macOS Calendar store. Backs the `read_calendar` agentic
+   * tool (control-plane calls this via the bridge callback) AND the diagnostic
+   * endpoint. Returns a plain, model-friendly shape.
+   */
+  async getUpcomingCalendar(opts: { days?: number; max?: number } = {}): Promise<
+    Array<{ title: string; start: string; end: string | null; calendar: string }>
+  > {
+    if (!this.macActions) return [];
+    const events = await this.macActions.readUpcomingEvents({ days: opts.days ?? 60, max: opts.max ?? 30 });
+    return events.map((e) => ({
+      title: e.title,
+      start: e.start.toISOString(),
+      end: e.end ? e.end.toISOString() : null,
+      calendar: e.calendar,
+    }));
+  }
+
+  /**
    * True if the agent is currently paused for this JID. Expired pauses are
    * cleaned up lazily here; the background ticker is only responsible for
    * delivering the grace-period heads-up DM, not for expiring state.

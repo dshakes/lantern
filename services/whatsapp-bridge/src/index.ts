@@ -465,6 +465,22 @@ app.post("/session/:tenantId/send-self", async (req, res) => {
   }
 });
 
+// GET/POST /session/:tenantId/calendar/upcoming -- read the owner's device
+// calendar (iCloud + Google + subscribed) from the macOS Calendar store.
+// Backs the `read_calendar` agentic tool (control-plane bridge callback) and
+// serves as a diagnostic for the launchd Full-Disk-Access calendar read.
+app.post("/session/:tenantId/calendar/upcoming", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) { res.status(400).json({ error: "session not started" }); return; }
+  const { days, max } = (req.body || {}) as { days?: number; max?: number };
+  try {
+    const events = await session.getUpcomingCalendar({ days, max });
+    res.json({ events, count: events.length });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Personal-docs HTTP surface
 // ---------------------------------------------------------------------------
