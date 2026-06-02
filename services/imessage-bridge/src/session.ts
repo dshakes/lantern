@@ -706,6 +706,13 @@ export class IMessageSession {
     }));
   }
 
+  // Public contact search over the macOS AddressBook (name → phones + emails).
+  // Backs the `search_contacts` agentic tool.
+  async searchContacts(query: string, limit?: number) {
+    const { searchAddressBookContacts } = await import("@lantern/bridge-core/contact-resolver");
+    return searchAddressBookContacts(query, { limit, logger: this.logger });
+  }
+
   async send(to: string, text: string): Promise<{ ok: boolean; reason?: string }> {
     if (this.state !== "ready") {
       return { ok: false, reason: `bridge not ready (state=${this.state})` };

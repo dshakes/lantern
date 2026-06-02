@@ -2272,6 +2272,15 @@ export class WhatsAppSession {
   }
 
   /**
+   * Public contact search over the macOS AddressBook (name → phones + emails).
+   * Backs the `search_contacts` agentic tool.
+   */
+  async searchContacts(query: string, limit?: number) {
+    const { searchAddressBookContacts } = await import("@lantern/bridge-core/contact-resolver");
+    return searchAddressBookContacts(query, { limit, logger: this.logger });
+  }
+
+  /**
    * True if the agent is currently paused for this JID. Expired pauses are
    * cleaned up lazily here; the background ticker is only responsible for
    * delivering the grace-period heads-up DM, not for expiring state.

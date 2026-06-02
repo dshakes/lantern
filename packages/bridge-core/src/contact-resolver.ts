@@ -224,6 +224,78 @@ function handleToPhone(handle: string): string | null {
   return null;
 }
 
+export interface ContactSearchHit {
+  name: string;
+  phones: string[];
+  emails: string[];
+}
+
+// Search the macOS AddressBook for contacts matching a name/nickname/org,
+// returning each match's full set of phones + emails. Reads the SQLite store
+// in-process (FDA, launchd-safe — same path as searchAddressBookDb). Backs the
+// `search_contacts` agentic tool. Best-effort: returns [] if unavailable.
+export async function searchAddressBookContacts(
+  query: string,
+  opts: { limit?: number; logger?: Logger } = {},
+): Promise<ContactSearchHit[]> {
+  if (process.platform !== "darwin") return [];
+  const q = (query || "").toLowerCase().trim();
+  if (!q) return [];
+  try {
+    const sqliteSpecifier = "better-sqlite3";
+    const [sqliteMod, os, fs, path] = await Promise.all([
+      import(sqliteSpecifier) as Promise<any>,
+      import("node:os"),
+      import("node:fs"),
+      import("node:path"),
+    ]);
+    const Database = sqliteMod.default as any;
+    const base = path.join(os.homedir(), "Library/Application Support/AddressBook/Sources");
+    if (!fs.existsSync(base)) return [];
+    const like = `%${q}%`;
+    const limit = Math.max(1, Math.min(opts.limit ?? 8, 25));
+    const byRecord = new Map<string, { name: string; phones: Set<string>; emails: Set<string> }>();
+    for (const src of fs.readdirSync(base)) {
+      const dbPath = path.join(base, src, "AddressBook-v22.abcddb");
+      if (!fs.existsSync(dbPath)) continue;
+      let conn: any;
+      try {
+        conn = new Database(dbPath, { readonly: true, fileMustExist: true });
+        const rows = conn
+          .prepare(
+            `SELECT r.Z_PK AS pk, r.ZFIRSTNAME AS f, r.ZLASTNAME AS l, r.ZORGANIZATION AS o,
+                    p.ZFULLNUMBER AS phone, e.ZADDRESS AS email
+             FROM ZABCDRECORD r
+             LEFT JOIN ZABCDPHONENUMBER p ON p.ZOWNER = r.Z_PK
+             LEFT JOIN ZABCDEMAILADDRESS e ON e.ZOWNER = r.Z_PK
+             WHERE lower(coalesce(r.ZFIRSTNAME,'')||' '||coalesce(r.ZLASTNAME,'')) LIKE @q
+                OR lower(coalesce(r.ZNICKNAME,'')) LIKE @q
+                OR lower(coalesce(r.ZORGANIZATION,'')) LIKE @q`,
+          )
+          .all({ q: like }) as Array<{ pk: number; f?: string; l?: string; o?: string; phone?: string; email?: string }>;
+        for (const r of rows) {
+          const name = [r.f, r.l].filter(Boolean).join(" ").trim() || r.o || "(no name)";
+          const key = `${src}:${r.pk}`;
+          let entry = byRecord.get(key);
+          if (!entry) { entry = { name, phones: new Set(), emails: new Set() }; byRecord.set(key, entry); }
+          if (r.phone) entry.phones.add(String(r.phone).trim());
+          if (r.email) entry.emails.add(String(r.email).trim());
+        }
+      } catch (err) {
+        opts.logger?.debug({ err: (err as Error)?.message, dbPath }, "contacts search: db read failed");
+      } finally {
+        try { conn?.close(); } catch { /* ignore */ }
+      }
+    }
+    return [...byRecord.values()]
+      .slice(0, limit)
+      .map((e) => ({ name: e.name, phones: [...e.phones], emails: [...e.emails] }));
+  } catch (err) {
+    opts.logger?.debug({ err: (err as Error)?.message || String(err) }, "contacts search unavailable");
+    return [];
+  }
+}
+
 // Read the macOS AddressBook SQLite directly (in-process via better-sqlite3).
 // Covered by Full Disk Access — the grant the bridge already holds for
 // chat.db — so it works under launchd where AppleScript Automation for

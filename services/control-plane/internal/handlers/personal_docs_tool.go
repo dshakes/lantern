@@ -39,6 +39,7 @@ const (
 	whatsappGroupMembersTool    = "get_whatsapp_group"
 	whatsappHistoryBackfillTool = "backfill_whatsapp_history"
 	readCalendarTool            = "read_calendar"
+	searchContactsTool          = "search_contacts"
 
 	// Default bridge URLs (loopback). Override via env.
 	personalDocsBridgeDefaultURL = "http://127.0.0.1:3200" // iMessage bridge
@@ -56,6 +57,30 @@ const (
 // tool-call format. Called from toolsForTenant().
 func personalDocsTools() []map[string]any {
 	return []map[string]any{
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name": searchContactsTool,
+				"description": "Look up a person in the user's macOS Contacts (address book) by name, nickname, or organization. " +
+					"Returns each match's full name plus ALL their phone numbers and email addresses. " +
+					"Use this whenever you need someone's phone number or email — to call them, text them, draft an email, or answer 'what's X's number/email'. " +
+					"Don't guess a contact's details; call this.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"query": map[string]any{
+							"type":        "string",
+							"description": "Name / nickname / company to search, e.g. 'Manu', 'Manasa', 'Hammer and Nails'.",
+						},
+						"limit": map[string]any{
+							"type":        "integer",
+							"description": "Max contacts to return (default 8, max 25).",
+						},
+					},
+					"required": []string{"query"},
+				},
+			},
+		},
 		{
 			"type": "function",
 			"function": map[string]any{
@@ -243,7 +268,7 @@ func isPersonalDocsTool(name string) bool {
 		imessageHistorySearchTool, whatsappHistorySearchTool,
 		imessageGroupsListTool, imessageGroupMembersTool,
 		whatsappGroupsListTool, whatsappGroupMembersTool,
-		whatsappHistoryBackfillTool, readCalendarTool:
+		whatsappHistoryBackfillTool, readCalendarTool, searchContactsTool:
 		return true
 	}
 	return false
@@ -386,6 +411,16 @@ func executePersonalDocsTool(ctx context.Context, tenantID, name string, params 
 			body["days"] = int(v)
 		}
 		endpoint = fmt.Sprintf("%s/session/%s/calendar/upcoming", base, tenantID)
+	case searchContactsTool:
+		q, _ := params["query"].(string)
+		if q == "" {
+			return nil, errors.New("search_contacts: 'query' is required")
+		}
+		body["query"] = q
+		if v, ok := params["limit"].(float64); ok && v > 0 {
+			body["limit"] = int(v)
+		}
+		endpoint = fmt.Sprintf("%s/session/%s/contacts/search", base, tenantID)
 	default:
 		return nil, fmt.Errorf("personal-docs tool: unknown name %q", name)
 	}
