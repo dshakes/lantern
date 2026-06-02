@@ -128,6 +128,7 @@ func main() {
 	connectorExecutor := handlers.NewConnectorExecutor(srv, authHandler)
 	llmProxyHandler := handlers.NewLlmProxyHandler(srv, authHandler)
 	smsHandler := handlers.NewSMSHandler(logger, srv.Pool, llmProxyHandler)
+	messagingHandler := handlers.NewMessagingHandler(logger, srv.Pool, llmProxyHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
 	waPersonalHandler := handlers.NewWhatsAppPersonalHandler(srv, authHandler)
 	identityHandler := handlers.NewIdentityHandler(srv, authHandler, llmProxyHandler)
@@ -219,6 +220,7 @@ func main() {
 	// Twilio webhooks — owner's private agent channel. NO auth
 	// middleware (Twilio HMAC verification is done inside the handler).
 	httpMux.HandleFunc("POST /v1/sms/twilio/webhook", smsHandler.SMSWebhook)
+	httpMux.HandleFunc("POST /v1/messaging/twilio/inbound", messagingHandler.InboundWebhook)
 	httpMux.HandleFunc("POST /v1/voice/twilio/webhook", smsHandler.VoiceWebhook)
 	httpMux.HandleFunc("POST /v1/voice/twilio/turn", smsHandler.VoiceTurn)
 	httpMux.HandleFunc("GET /v1/connectors/{id}", connectorHandler.GetConnector)
