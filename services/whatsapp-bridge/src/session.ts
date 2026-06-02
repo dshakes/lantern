@@ -5418,11 +5418,23 @@ export class WhatsAppSession {
       if (memBlock) systemHint += memBlock;
     }
 
-    // Calendar-aware availability: cheap keyword probe gates the
-    // calendar call so we don't fetch on every reply.
-    if (!opts.isGroup && needsCalendar(text)) {
-      const calBlock = await this.calendar.upcomingBlock(8);
-      if (calBlock) systemHint += calBlock;
+    // Calendar awareness for contact replies. Read the owner's DEVICE calendar
+    // (iCloud + Google + subscribed — source of truth) UNGATED so a contact
+    // asking "when are you coming to the Bay Area?" is answerable. The prior
+    // version gated on "are you free?" phrasing AND read only Google, so an
+    // iCloud trip was invisible.
+    if (!opts.isGroup && this.macActions) {
+      try {
+        const ev = await this.macActions.readUpcomingEvents({ days: 45, max: 15 });
+        const calBlock = formatAppleCalendarBlock(ev, { max: 15 });
+        if (calBlock) {
+          systemHint +=
+            `\n\n(${ownerName}'s upcoming schedule — use it to answer travel / availability / "when are you coming" / plans questions accurately. Share only what's relevant to this conversation; don't recite the whole calendar.)` +
+            calBlock;
+        }
+      } catch (err) {
+        this.logger.debug({ err }, "contact-reply device calendar read failed");
+      }
     }
 
     // In groups, annotate the user message so the agent knows it's in a group
