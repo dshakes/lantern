@@ -307,7 +307,10 @@ export function planCall(
   const twoPartyConsent = inferTwoPartyConsent(req.to);
 
   const ownerName = opts.ownerName || "Shekhar";
-  const who = req.contactName || req.to;
+  // Always surface the resolved NUMBER alongside the name so the owner can
+  // catch a wrong-contact resolution (e.g. multiple "Manasa" entries) before
+  // confirming. Never dial a name without showing what it resolved to.
+  const who = req.contactName ? `${req.contactName} (${req.to})` : req.to;
   let summary: string;
   switch (req.mode) {
     case "VOICEMAIL_DELIVERY":

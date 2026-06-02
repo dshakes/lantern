@@ -3905,9 +3905,28 @@ export class WhatsAppSession {
     }
   }
 
-  // Execute a cached offer (calendar reminder / save note).
+  // Execute a cached offer (calendar reminder / save note / outbound call).
   // Deterministic, bypasses the LLM. Sends a natural confirmation.
   private async executeCachedOffer(jid: string, offer: PendingOffer): Promise<void> {
+    // Outbound calls go through Twilio, NOT macActions — handle them before
+    // the macActions guard so a "yes" can never be silently swallowed if
+    // macActions is ever unavailable (e.g. a headless deployment).
+    if (offer.kind === "outbound-call" && (offer as any).callRequest && (offer as any).callPlan) {
+      try {
+        const { placeCallNow } = await import("@lantern/bridge-core/call-orchestrator");
+        const deps = this.lastCallDeps;
+        if (!deps) {
+          await this.confirmToSelf("(can't place the call — orchestrator deps missing, ask me again)");
+          return;
+        }
+        const res = await placeCallNow((offer as any).callRequest, (offer as any).callPlan, deps);
+        if (!res.ok) await this.confirmToSelf(`(couldn't place call: ${res.reason || "unknown"})`);
+      } catch (err) {
+        this.logger.error({ err }, "outbound-call offer execution failed");
+        await this.confirmToSelf(`(call failed — ${(err as Error).message})`);
+      }
+      return;
+    }
     if (!this.macActions) return;
     if (offer.kind === "calendar-reminder" && offer.targetIsoDate && offer.leadDays) {
       const target = new Date(`${offer.targetIsoDate}T09:00:00`);
@@ -3950,27 +3969,8 @@ export class WhatsAppSession {
       }
       return;
     }
-    // Outbound call — owner approved the pre-flight plan. Fire the
-    // dialer directly via the cached orchestrator deps; no LLM
-    // round-trip needed.
-    if (offer.kind === "outbound-call" && (offer as any).callRequest && (offer as any).callPlan) {
-      try {
-        const { placeCallNow } = await import("@lantern/bridge-core/call-orchestrator");
-        const deps = this.lastCallDeps;
-        if (!deps) {
-          await this.confirmToSelf("(can't place the call — orchestrator deps missing, ask me again)");
-          return;
-        }
-        const res = await placeCallNow((offer as any).callRequest, (offer as any).callPlan, deps);
-        if (!res.ok) {
-          await this.confirmToSelf(`(couldn't place call: ${res.reason || "unknown"})`);
-        }
-      } catch (err) {
-        this.logger.error({ err }, "outbound-call offer execution failed");
-        await this.confirmToSelf(`(call failed — ${(err as Error).message})`);
-      }
-      return;
-    }
+    // (outbound-call is handled at the TOP of this method, before the
+    // macActions guard — see above.)
 
     // Freeform follow-up — bot offered something arbitrary ("attach
     // the receipt", "forward the link") and owner confirmed. Re-prompt
