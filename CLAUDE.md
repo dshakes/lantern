@@ -634,6 +634,15 @@ into both bridges' session handlers.
 | `LANTERN_DEFAULT_CALENDAR`            | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`)                                                                                          |
 | `LANTERN_VOICE_CALLER_ID`             | (Optional) E.164 caller-ID shown to the RECIPIENT of outbound calls — set to the owner's own number so contacts recognize + answer. MUST be a Twilio number or a **Verified Caller ID** on the account. Unset → falls back to the Twilio DID. SMS heads-up + conference owner-leg always use the Twilio DID. |
 | `LANTERN_VOICE_SMS_HEADSUP`           | `on` (default) / `off`. When on, a one-line heads-up SMS ("…'s assistant — …'s calling you in a few seconds about X") is texted to the recipient from the Twilio DID right before a conference dial, so an unknown caller-ID isn't ignored. Best-effort; never blocks the call. |
+| `LANTERN_TWILIO_NUMBER` / `LANTERN_TWILIO_SMS_FROM` | (Optional) E.164 Twilio number used as the SMS **from** when an iMessage send fails to a non-iMessage (SMS/RCS-only) number — the bridge re-delivers the reply as SMS so the contact still hears back. Unset → no SMS fallback. |
+
+### RCS messaging (to & fro)
+
+The iMessage bridge handles RCS in both directions:
+
+- **Inbound (fro).** Newer macOS + RCS/SMS leave `chat.db.message.text` NULL and store the body in `attributedBody` (an `NSAttributedString` typedstream blob). `services/imessage-bridge/src/attributed-body.ts` decodes it (dependency-free, best-effort, never throws) so RCS/newer messages aren't seen as empty — wired into `chat-db.ts` polling **and** the context/history-search reads. Automatic; no config.
+- **Outbound (to).** Replies prefer iMessage. When the iMessage send fails (the contact is SMS/RCS-only), the bridge re-delivers via the control-plane Twilio connector's `send_sms` action. That action sends through a **Twilio Messaging Service** when one is configured (`messagingServiceSid` on the Twilio connector config, or the `messagingServiceSid` param) — a Messaging Service with an **RCS sender** attached delivers **RCS (rich) and auto-falls back to SMS** for handsets that can't do RCS. With no Messaging Service it sends plain SMS from `LANTERN_TWILIO_NUMBER`. So the one path covers RCS + SMS.
+  - To enable RCS: in Twilio, create a Messaging Service, attach your RCS sender, and set its SID as `messagingServiceSid` on the Twilio connector (dashboard → Integrations → Twilio), **and** set `LANTERN_TWILIO_NUMBER` for the plain-SMS fallback.
 
 ### Always-on
 
