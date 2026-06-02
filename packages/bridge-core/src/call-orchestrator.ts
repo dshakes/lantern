@@ -131,7 +131,7 @@ export async function executeOutboundCall(
       issuedAt: Date.now(),
     });
     await deps.notifyOwner(
-      `${plan.summary}\n\n*Say "yes" within 60s to dial. "no" to cancel.*`,
+      `${plan.summary}\n\n*Reply "yes" to dial (offer expires in 10 min) · "no" to cancel.*`,
     );
     deps.logger.info(
       { tier: plan.tier.tier, target: intent.target, mode },
@@ -222,6 +222,7 @@ async function dialViaTwilio(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ to, from, twiml }),
+      signal: AbortSignal.timeout(20_000),
     },
   );
   if (!res.ok) {
@@ -244,6 +245,7 @@ async function addParticipant(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conferenceName, to, from }),
+      signal: AbortSignal.timeout(20_000),
     },
   );
   if (!res.ok) {
@@ -278,6 +280,7 @@ export async function renderTextWithElevenLabs(
         "Content-Type": "application/json",
         Accept: "audio/mpeg",
       },
+      signal: AbortSignal.timeout(20_000),
       body: JSON.stringify({
         text,
         model_id: model,

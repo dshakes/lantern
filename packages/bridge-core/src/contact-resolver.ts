@@ -145,9 +145,16 @@ export async function resolveContact(
 function tryParsePhone(s: string): string | null {
   const digits = s.replace(/[^\d+]/g, "");
   if (!digits) return null;
-  if (digits.startsWith("+") && digits.length >= 11) return digits;
+  // Already E.164.
+  if (digits.startsWith("+") && digits.length >= 11 && digits.length <= 16) return digits;
+  // US 11-digit (1NXXNXXXXXX) / 10-digit.
   if (/^\d{11}$/.test(digits) && digits.startsWith("1")) return "+" + digits;
   if (/^\d{10}$/.test(digits)) return "+1" + digits;
+  // International number stored WITHOUT a leading '+' (e.g. AddressBook
+  // entries like "91 94936 78486" → "919493678486"). 11-15 digits that
+  // don't fit the US shapes above are almost certainly already
+  // country-coded — prefix '+' so Twilio can dial them.
+  if (/^\d{11,15}$/.test(digits)) return "+" + digits;
   return null;
 }
 
@@ -266,7 +273,7 @@ async function searchAddressBookDb(
                    lower(coalesce(r.ZFIRSTNAME,'')||' '||coalesce(r.ZLASTNAME,'')) LIKE ?2
                    OR lower(coalesce(r.ZNICKNAME,'')) LIKE ?2
                    OR lower(coalesce(r.ZORGANIZATION,'')) LIKE ?2)
-             ORDER BY rank ASC
+             ORDER BY rank ASC, r.Z_PK ASC
              LIMIT 1`,
           )
           .get(query.toLowerCase().trim(), like) as
