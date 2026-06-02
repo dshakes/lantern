@@ -85,15 +85,30 @@ func personalDocsTools() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name": readCalendarTool,
-				"description": "Read the user's DEVICE calendar (macOS Calendar.app — aggregates iCloud + Google + subscribed calendars). This is the SOURCE OF TRUTH for the user's appointments and the only place that sees iCloud-only events. " +
-					"ALWAYS call this when the user asks about ANY appointment, event, booking, meeting, or what's on their schedule (haircut, salon, doctor, dentist, dinner, flight, 'what do I have', 'when is my next ...') — even if the phrasing doesn't contain the word 'appointment'. " +
-					"Returns upcoming events with title, start, end, and calendar name. Never tell the user they have no appointment without calling this first.",
+				"description": "Query the user's DEVICE calendar (macOS Calendar.app — aggregates iCloud + Google + subscribed). SOURCE OF TRUTH for appointments and the only place that sees iCloud-only events. " +
+					"ALWAYS call this for ANY appointment/event/schedule question (haircut, salon, doctor, dentist, dinner, flight, 'what do I have', 'when is my next/last ...') — even without the word 'appointment'. " +
+					"Supports PAST and future: pass `query` to filter by title keyword and `from`/`to` (ISO dates) for a window. " +
+					"For 'HOW MANY TIMES did I go to X' or 'when did I LAST go to X', pass query=X (it auto-searches ~2 years back) and COUNT the returned events. " +
+					"Returns events with title, start, end, calendar. Never say the user has no such event without calling this first. " +
+					"For appointment CONFIRMATIONS that may have arrived by text (e.g. a salon SMS) rather than the calendar, ALSO call search_imessage_history / search_whatsapp_history with the same keyword and combine.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
+						"query": map[string]any{
+							"type":        "string",
+							"description": "Optional title keyword to filter by, e.g. 'Hammer and Nails', 'dentist'. With no from/to, a query auto-searches ~2 years back through 1 year ahead.",
+						},
+						"from": map[string]any{
+							"type":        "string",
+							"description": "Optional window start, ISO date e.g. '2025-01-01'. Use for explicit historical ranges.",
+						},
+						"to": map[string]any{
+							"type":        "string",
+							"description": "Optional window end, ISO date.",
+						},
 						"days": map[string]any{
 							"type":        "integer",
-							"description": "How many days ahead to look (default 60, max 180).",
+							"description": "Forward-only window in days (default 60, max 180). Ignored if query or from/to is set.",
 						},
 					},
 				},
@@ -409,6 +424,15 @@ func executePersonalDocsTool(ctx context.Context, tenantID, name string, params 
 	case readCalendarTool:
 		if v, ok := params["days"].(float64); ok && v > 0 {
 			body["days"] = int(v)
+		}
+		if q, ok := params["query"].(string); ok && q != "" {
+			body["query"] = q
+		}
+		if f, ok := params["from"].(string); ok && f != "" {
+			body["fromIso"] = f
+		}
+		if t, ok := params["to"].(string); ok && t != "" {
+			body["toIso"] = t
 		}
 		endpoint = fmt.Sprintf("%s/session/%s/calendar/upcoming", base, tenantID)
 	case searchContactsTool:

@@ -275,16 +275,42 @@ end tell`;
   // Previously appointment queries only hit the Google Calendar connector, so
   // an iCloud/Apple-only appointment was invisible ("no upcoming haircut
   // appointment" even though it was on the calendar).
-  async readUpcomingEvents(opts: { days?: number; max?: number } = {}): Promise<CalendarEventRead[]> {
-    const days = Math.max(1, Math.min(opts.days ?? 60, 180));
-    const max = opts.max ?? 30;
+  async readUpcomingEvents(
+    opts: { days?: number; max?: number; fromIso?: string; toIso?: string; query?: string } = {},
+  ): Promise<CalendarEventRead[]> {
+    const max = Math.max(1, Math.min(opts.max ?? 50, 200));
+    const query = (opts.query || "").trim();
+    const now = Date.now();
+    const DAY = 86_400_000;
+    // Resolve the search window:
+    //  - explicit from/to (ISO) → use them (lets the model query the PAST,
+    //    e.g. "how many times did I go to X").
+    //  - keyword search with no window → look WIDE (2y back → 1y forward) so
+    //    counting / "when did I last…" works without the model guessing dates.
+    //  - otherwise → forward `days` window (default upcoming-appointments view).
+    let startMs: number;
+    let endMs: number;
+    if (opts.fromIso || opts.toIso) {
+      startMs = opts.fromIso ? Date.parse(opts.fromIso) : now - 730 * DAY;
+      endMs = opts.toIso ? Date.parse(opts.toIso) : now + 365 * DAY;
+      if (Number.isNaN(startMs)) startMs = now - 730 * DAY;
+      if (Number.isNaN(endMs)) endMs = now + 365 * DAY;
+    } else if (query) {
+      startMs = now - 730 * DAY;
+      endMs = now + 365 * DAY;
+    } else {
+      const days = Math.max(1, Math.min(opts.days ?? 60, 180));
+      startMs = now - DAY;
+      endMs = now + days * DAY;
+    }
+    const days = opts.days ?? 60; // retained for the AppleScript fallback below
     // PRIMARY: read the Calendar store SQLite directly. Covered by Full Disk
     // Access (the grant the bridge already has for chat.db), so it works
     // under launchd where AppleScript Automation for Calendar.app is NOT
     // granted — the exact reason calendar lookups returned nothing in prod.
-    const fromStore = await this.readUpcomingEventsFromStore(days, max);
+    const fromStore = await this.readCalendarFromStore(startMs, endMs, query, max);
     if (fromStore) {
-      this.logger.info({ count: fromStore.length, source: "calendar-store" }, "read upcoming calendar events");
+      this.logger.info({ count: fromStore.length, source: "calendar-store", query: query || undefined }, "read calendar events");
       return fromStore.slice(0, max);
     }
     // FALLBACK: AppleScript (for setups where Automation is granted but FDA isn't).
@@ -321,7 +347,12 @@ return out`;
   // lives at ~/Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb.
   // Returns null (→ caller falls back to AppleScript) if the driver or DB is
   // unavailable. Dates are Apple epoch seconds (since 2001-01-01 UTC).
-  private async readUpcomingEventsFromStore(days: number, max: number): Promise<CalendarEventRead[] | null> {
+  private async readCalendarFromStore(
+    startMs: number,
+    endMs: number,
+    query: string,
+    max: number,
+  ): Promise<CalendarEventRead[] | null> {
     if (process.platform !== "darwin") return null;
     try {
       // Indirection defeats TS literal module resolution — better-sqlite3 is
@@ -340,24 +371,26 @@ return out`;
       );
       if (!fs.existsSync(dbPath)) return null;
       const APPLE_EPOCH = 978307200; // seconds between 1970-01-01 and 2001-01-01
-      // Small look-back so an in-progress event still shows; the caller's
-      // formatter filters by "now" anyway.
-      const startSec = Math.floor(Date.now() / 1000) - APPLE_EPOCH - 86400;
-      const endSec = startSec + (days + 1) * 86400;
+      const startSec = Math.floor(startMs / 1000) - APPLE_EPOCH;
+      const endSec = Math.floor(endMs / 1000) - APPLE_EPOCH;
+      const like = query ? `%${query.toLowerCase()}%` : null;
       let conn: any;
       try {
         conn = new Database(dbPath, { readonly: true, fileMustExist: true });
+        // Optional case-insensitive keyword filter on the event title, so the
+        // model can ask "how many times did I go to <X>" / "when did I last…".
         const rows = conn
           .prepare(
             `SELECT ci.summary AS summary, ci.start_date AS start_date, ci.end_date AS end_date,
                     c.title AS cal
              FROM CalendarItem ci
              LEFT JOIN Calendar c ON c.ROWID = ci.calendar_id
-             WHERE ci.start_date IS NOT NULL AND ci.start_date >= ? AND ci.start_date <= ?
+             WHERE ci.start_date IS NOT NULL AND ci.start_date >= @start AND ci.start_date <= @end
+                   AND (@like IS NULL OR lower(coalesce(ci.summary,'')) LIKE @like)
              ORDER BY ci.start_date ASC
-             LIMIT ?`,
+             LIMIT @max`,
           )
-          .all(startSec, endSec, Math.max(max, 1)) as Array<{
+          .all({ start: startSec, end: endSec, like, max: Math.max(max, 1) }) as Array<{
           summary?: string;
           start_date?: number;
           end_date?: number;

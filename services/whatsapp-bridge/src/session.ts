@@ -2258,11 +2258,11 @@ export class WhatsAppSession {
    * tool (control-plane calls this via the bridge callback) AND the diagnostic
    * endpoint. Returns a plain, model-friendly shape.
    */
-  async getUpcomingCalendar(opts: { days?: number; max?: number } = {}): Promise<
-    Array<{ title: string; start: string; end: string | null; calendar: string }>
-  > {
+  async getUpcomingCalendar(
+    opts: { days?: number; max?: number; query?: string; fromIso?: string; toIso?: string } = {},
+  ): Promise<Array<{ title: string; start: string; end: string | null; calendar: string }>> {
     if (!this.macActions) return [];
-    const events = await this.macActions.readUpcomingEvents({ days: opts.days ?? 60, max: opts.max ?? 30 });
+    const events = await this.macActions.readUpcomingEvents(opts);
     return events.map((e) => ({
       title: e.title,
       start: e.start.toISOString(),
