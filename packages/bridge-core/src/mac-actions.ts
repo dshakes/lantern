@@ -277,6 +277,17 @@ end tell`;
   // appointment" even though it was on the calendar).
   async readUpcomingEvents(opts: { days?: number; max?: number } = {}): Promise<CalendarEventRead[]> {
     const days = Math.max(1, Math.min(opts.days ?? 60, 180));
+    const max = opts.max ?? 30;
+    // PRIMARY: read the Calendar store SQLite directly. Covered by Full Disk
+    // Access (the grant the bridge already has for chat.db), so it works
+    // under launchd where AppleScript Automation for Calendar.app is NOT
+    // granted — the exact reason calendar lookups returned nothing in prod.
+    const fromStore = await this.readUpcomingEventsFromStore(days, max);
+    if (fromStore) {
+      this.logger.info({ count: fromStore.length, source: "calendar-store" }, "read upcoming calendar events");
+      return fromStore.slice(0, max);
+    }
+    // FALLBACK: AppleScript (for setups where Automation is granted but FDA isn't).
     // Fields joined by " ||| " (unlikely in a summary); events by linefeed.
     // Dates emitted numerically (Y-M-D-H-Min) so parsing is locale-independent.
     const script = `
@@ -301,7 +312,72 @@ return out`;
       this.logger.warn({ reason: res.reason }, "calendar read failed");
       return [];
     }
-    return parseAppleCalendarOutput(res.detail || "").slice(0, opts.max ?? 30);
+    return parseAppleCalendarOutput(res.detail || "").slice(0, max);
+  }
+
+  // Read upcoming events straight from the macOS Calendar store SQLite,
+  // in-process via better-sqlite3. The store aggregates iCloud + Google +
+  // subscribed calendars (the source of truth for what the user sees) and
+  // lives at ~/Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb.
+  // Returns null (→ caller falls back to AppleScript) if the driver or DB is
+  // unavailable. Dates are Apple epoch seconds (since 2001-01-01 UTC).
+  private async readUpcomingEventsFromStore(days: number, max: number): Promise<CalendarEventRead[] | null> {
+    if (process.platform !== "darwin") return null;
+    try {
+      // Indirection defeats TS literal module resolution — better-sqlite3 is
+      // an optional native dep resolved at runtime from the bridge's node_modules.
+      const sqliteSpecifier = "better-sqlite3";
+      const [sqliteMod, os, fs, path] = await Promise.all([
+        import(sqliteSpecifier) as Promise<any>,
+        import("node:os"),
+        import("node:fs"),
+        import("node:path"),
+      ]);
+      const Database = sqliteMod.default as any;
+      const dbPath = path.join(
+        os.homedir(),
+        "Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb",
+      );
+      if (!fs.existsSync(dbPath)) return null;
+      const APPLE_EPOCH = 978307200; // seconds between 1970-01-01 and 2001-01-01
+      // Small look-back so an in-progress event still shows; the caller's
+      // formatter filters by "now" anyway.
+      const startSec = Math.floor(Date.now() / 1000) - APPLE_EPOCH - 86400;
+      const endSec = startSec + (days + 1) * 86400;
+      let conn: any;
+      try {
+        conn = new Database(dbPath, { readonly: true, fileMustExist: true });
+        const rows = conn
+          .prepare(
+            `SELECT ci.summary AS summary, ci.start_date AS start_date, ci.end_date AS end_date,
+                    c.title AS cal
+             FROM CalendarItem ci
+             LEFT JOIN Calendar c ON c.ROWID = ci.calendar_id
+             WHERE ci.start_date IS NOT NULL AND ci.start_date >= ? AND ci.start_date <= ?
+             ORDER BY ci.start_date ASC
+             LIMIT ?`,
+          )
+          .all(startSec, endSec, Math.max(max, 1)) as Array<{
+          summary?: string;
+          start_date?: number;
+          end_date?: number;
+          cal?: string;
+        }>;
+        return rows
+          .filter((r) => typeof r.start_date === "number")
+          .map((r) => ({
+            calendar: r.cal || "",
+            title: r.summary || "",
+            start: new Date((r.start_date! + APPLE_EPOCH) * 1000),
+            end: typeof r.end_date === "number" ? new Date((r.end_date + APPLE_EPOCH) * 1000) : null,
+          }));
+      } finally {
+        try { conn?.close(); } catch { /* ignore */ }
+      }
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message || String(err) }, "calendar store read unavailable — falling back to AppleScript");
+      return null;
+    }
   }
 }
 

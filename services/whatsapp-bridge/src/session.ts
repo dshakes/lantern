@@ -45,7 +45,7 @@ import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
 import { detectLanguageHints, languageModalityHint } from "@lantern/bridge-core/language";
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
-import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
+import { MacActions, extractActionMarkers, formatAppleCalendarBlock } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
@@ -3686,7 +3686,20 @@ export class WhatsAppSession {
 
     const [apptBlock, rosterResults, subTaskResults] = await Promise.all([
       looksLikeAppointmentQuery(query)
-        ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
+        ? // Read the Google Calendar connector + Gmail AND the local Apple
+          // Calendar.app in parallel. The device calendar (iCloud/Apple/
+          // subscribed) is where appointments the owner actually sees live —
+          // a query that only hit the Google connector missed iCloud-only
+          // events (e.g. the salon appointment). Mirrors the iMessage bridge.
+          Promise.all([
+            prefetchAppointmentContext(client, query, this.logger).catch(() => null),
+            process.platform === "darwin" && this.macActions
+              ? this.macActions.readUpcomingEvents({ days: 60 }).catch((err) => {
+                  this.logger.warn({ err }, "apple calendar read failed (continuing)");
+                  return [];
+                })
+              : Promise.resolve([]),
+          ]).then(([block, appleEvents]) => ((block || "") + formatAppleCalendarBlock(appleEvents)) || null)
         : Promise.resolve(null),
       rosterSignal.isRoster
         ? prefetchRoster(rosterSignal, rosterAdapters, { maxGroupsPerSurface: 3 }).catch(() => [])
