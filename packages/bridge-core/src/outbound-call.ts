@@ -16,7 +16,7 @@
 //
 //   AGENT_TASK (basic IVR mode)
 //     Dial a business line, speak a structured task ("Hi, this is
-//     calling on behalf of Shekhar — refill prescription 12345 for
+//     calling on behalf of <owner> — refill prescription 12345 for
 //     pickup tomorrow"), hang up. Doesn't currently handle multi-turn
 //     IVR; that requires Twilio Media Streams + Realtime API (Phase 2).
 //     Used for one-shot transactional pings.
@@ -75,12 +75,15 @@ export interface CallPlan {
     | "Polly.Brian"
     | "Polly.Amy";
   // Two-party state hint — when true, bot must announce "this call
-  // may be saved for Shekhar's records".
+  // may be saved for <owner>'s records".
   twoPartyConsent: boolean;
   // Pre-flight cost forecast (USD). Shown in the approval gate so the
   // owner sees the spend before the call is placed — the same
   // "forecast before every run" posture Lantern applies to LLM runs.
   estimatedCostUsd: number;
+  // Owner's name, woven into the spoken TwiML ("calling on behalf of …",
+  // recording-consent line). Sourced from LANTERN_OWNER_NAME by the caller.
+  ownerName: string;
   request: OutboundCallRequest;
 }
 
@@ -306,7 +309,9 @@ export function planCall(
   const voice = pickVoice(opts.relationship);
   const twoPartyConsent = inferTwoPartyConsent(req.to);
 
-  const ownerName = opts.ownerName || "Shekhar";
+  // Owner identity is config, never a literal in this shared library:
+  // explicit opt → LANTERN_OWNER_NAME → neutral fallback.
+  const ownerName = opts.ownerName || process.env.LANTERN_OWNER_NAME || "the owner";
   // Always surface the resolved NUMBER alongside the name so the owner can
   // catch a wrong-contact resolution (e.g. multiple "Manasa" entries) before
   // confirming. Never dial a name without showing what it resolved to.
@@ -329,7 +334,6 @@ export function planCall(
   }
   const estimatedCostUsd = estimateCallCostUsd(req.mode);
   summary += `\n💸 est. ~$${estimatedCostUsd.toFixed(2)}`;
-  void ownerName;
   return {
     mode: req.mode,
     tier,
@@ -337,6 +341,7 @@ export function planCall(
     voice,
     twoPartyConsent,
     estimatedCostUsd,
+    ownerName,
     request: req,
   };
 }
@@ -362,8 +367,9 @@ export function buildTwiml(plan: CallPlan): string {
       .replace(/'/g, "&apos;")
       .slice(0, 1200);
 
+  const owner = escape(plan.ownerName);
   const consent = plan.twoPartyConsent
-    ? `<Say voice="${plan.voice}">This call may be saved for Shekhar's records.</Say><Pause length="1"/>`
+    ? `<Say voice="${plan.voice}">This call may be saved for ${owner}'s records.</Say><Pause length="1"/>`
     : "";
 
   switch (plan.mode) {
@@ -377,9 +383,9 @@ export function buildTwiml(plan: CallPlan): string {
       const msg = escape(
         plan.request.message ||
           plan.request.reason ||
-          "Calling on behalf of Shekhar.",
+          `Calling on behalf of ${plan.ownerName}.`,
       );
-      const intro = `Hi, this is calling on behalf of Shekhar Mudarapu.`;
+      const intro = `Hi, this is calling on behalf of ${owner}.`;
       return `<Response>${consent}<Say voice="${plan.voice}">${intro}</Say><Pause length="1"/><Say voice="${plan.voice}">${msg}</Say><Pause length="1"/><Say voice="${plan.voice}">Please call back when you have a moment. Thank you.</Say></Response>`;
     }
     case "CONFERENCE_BRIDGE": {
@@ -387,7 +393,7 @@ export function buildTwiml(plan: CallPlan): string {
       // conference. Owner gets added as the second participant via
       // Twilio's Participants API.
       const confName = `lantern-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const intro = `Hi, this is Shekhar's helper. He wants to talk — bringing him on the line now.`;
+      const intro = `Hi, this is ${plan.ownerName}'s helper. He wants to talk — bringing him on the line now.`;
       return `<Response>${consent}<Say voice="${plan.voice}">${escape(intro)}</Say><Dial><Conference startConferenceOnEnter="false" endConferenceOnExit="true" beep="false" waitUrl="">${escape(confName)}</Conference></Dial></Response>`;
     }
   }
@@ -422,10 +428,11 @@ export function buildConferenceTwiml(
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&apos;");
+  const owner = escape(plan.ownerName);
   const consent = plan.twoPartyConsent
-    ? `<Say voice="${plan.voice}">This call may be saved for Shekhar's records.</Say><Pause length="1"/>`
+    ? `<Say voice="${plan.voice}">This call may be saved for ${owner}'s records.</Say><Pause length="1"/>`
     : "";
-  const intro = `Hi, this is Shekhar's helper. He wants to talk — bringing him on the line now.`;
+  const intro = `Hi, this is ${plan.ownerName}'s helper. He wants to talk — bringing him on the line now.`;
   return `<Response>${consent}<Say voice="${plan.voice}">${escape(intro)}</Say><Dial><Conference startConferenceOnEnter="false" endConferenceOnExit="true" beep="false">${escape(conferenceName)}</Conference></Dial></Response>`;
 }
 
