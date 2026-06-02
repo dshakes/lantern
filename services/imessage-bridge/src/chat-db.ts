@@ -21,15 +21,15 @@ import { homedir } from "os";
 import { join } from "path";
 import { existsSync } from "fs";
 import type { Logger } from "pino";
+import { decodeAttributedBody } from "./attributed-body.js";
 
 export interface IMessageRow {
   // Stable per-message identity. We track lastSeenRowid in memory and
   // bump it as we read.
   rowid: number;
-  // The text body. Newer macOS versions also store attributed text in
-  // `attributedBody` (a serialized Cocoa archive); for now we just
-  // read `text` which covers the vast majority of human-typed
-  // messages. Attributed-body decoding is in the future-work list.
+  // The text body. Newer macOS (and RCS/SMS) often leave `text` NULL and put
+  // the body in `attributedBody` (a typedstream archive); pollNewMessages
+  // falls back to decodeAttributedBody() so those messages aren't seen as empty.
   text: string;
   // Apple-epoch nanoseconds. Apple epoch is 2001-01-01 UTC, not Unix.
   // Helper toUnixMs() converts.
@@ -75,9 +75,9 @@ export interface IMessageRow {
 
 export interface Attachment {
   rowid: number;
-  filename: string;  // absolute or ~-prefixed path to the file on disk
+  filename: string; // absolute or ~-prefixed path to the file on disk
   mimeType: string;
-  transferName: string;  // original filename as transmitted (good for video labels)
+  transferName: string; // original filename as transmitted (good for video labels)
   totalBytes: number;
 }
 
@@ -114,7 +114,10 @@ export class ChatDB {
       };
     }
     try {
-      this.db = new Database(this.path, { readonly: true, fileMustExist: true });
+      this.db = new Database(this.path, {
+        readonly: true,
+        fileMustExist: true,
+      });
       // Tune for our read pattern — frequent polling, no writes.
       this.db.pragma("journal_mode = WAL"); // safe for read-only opens
       this.db.pragma("query_only = 1");
@@ -130,7 +133,11 @@ export class ChatDB {
     } catch (err) {
       const msg = (err as Error).message;
       // sqlite3's "authorization denied" or EACCES → no Full Disk Access
-      if (msg.includes("authorization") || msg.includes("EACCES") || msg.includes("permission denied")) {
+      if (
+        msg.includes("authorization") ||
+        msg.includes("EACCES") ||
+        msg.includes("permission denied")
+      ) {
         return {
           ok: false,
           reason: `Permission denied reading chat.db. Grant Full Disk Access to the process running lantern-imessage-bridge: System Settings → Privacy & Security → Full Disk Access → add your terminal/launchd binary.`,
@@ -154,6 +161,7 @@ export class ChatDB {
         `SELECT
            m.ROWID                              AS rowid,
            COALESCE(m.text, '')                 AS text,
+           m.attributedBody                     AS attributed_body,
            m.date                               AS date,
            m.is_from_me                         AS is_from_me,
            m.guid                               AS guid,
@@ -176,6 +184,7 @@ export class ChatDB {
       .all(this.lastSeenRowid) as Array<{
       rowid: number;
       text: string;
+      attributed_body: Buffer | null;
       date: number;
       is_from_me: number;
       guid: string;
@@ -194,7 +203,10 @@ export class ChatDB {
 
     return rows.map((r) => ({
       rowid: r.rowid,
-      text: r.text,
+      // Newer iMessages — and RCS/SMS — frequently leave m.text NULL and
+      // store the body in attributedBody (a typedstream archive). Decode it
+      // so the bot sees those messages instead of an empty inbound.
+      text: r.text || decodeAttributedBody(r.attributed_body) || "",
       date: r.date,
       isFromMe: !!r.is_from_me,
       handle: r.handle,
@@ -208,7 +220,10 @@ export class ChatDB {
       // The associated_message_guid column has prefixes in newer
       // macOS (e.g. "p:0/<guid>" for the part-index variant) —
       // strip them so a downstream GUID compare matches.
-      associatedMessageGuid: (r.associated_message_guid || "").replace(/^p:\d+\//, ""),
+      associatedMessageGuid: (r.associated_message_guid || "").replace(
+        /^p:\d+\//,
+        "",
+      ),
     }));
   }
 
@@ -250,12 +265,16 @@ export class ChatDB {
   // Reaction/tapback rows (associated_message_type != 0) are excluded —
   // they're not real messages. Empty-text rows (attachments/stickers)
   // are kept as a placeholder so the timeline reads correctly.
-  recentMessages(chatRowid: number, limit = 10): Array<{ fromMe: boolean; text: string }> {
+  recentMessages(
+    chatRowid: number,
+    limit = 10,
+  ): Array<{ fromMe: boolean; text: string }> {
     if (!this.db) return [];
     const rows = this.db
       .prepare(
         `SELECT m.is_from_me AS is_from_me,
                 COALESCE(m.text, '') AS text,
+                m.attributedBody AS attributed_body,
                 COALESCE(m.associated_message_type, 0) AS amt,
                 m.cache_has_attachments AS has_att
          FROM message m
@@ -268,6 +287,7 @@ export class ChatDB {
       .all(chatRowid, limit) as Array<{
       is_from_me: number;
       text: string;
+      attributed_body: Buffer | null;
       amt: number;
       has_att: number;
     }>;
@@ -276,14 +296,24 @@ export class ChatDB {
       .reverse()
       .map((r) => ({
         fromMe: !!r.is_from_me,
-        text: r.text.trim() || (r.has_att ? "[attachment]" : ""),
+        // Decode attributedBody so RCS/newer messages stay in the reply
+        // context instead of dropping out of the transcript.
+        text:
+          r.text.trim() ||
+          decodeAttributedBody(r.attributed_body) ||
+          (r.has_att ? "[attachment]" : ""),
       }))
       .filter((m) => m.text.length > 0);
   }
 
   // List all known chats so the dashboard can show a contact picker.
   // Used by GET /session/:tid/chats.
-  listChats(): Array<{ rowid: number; displayName: string; chatIdentifier: string; participantCount: number }> {
+  listChats(): Array<{
+    rowid: number;
+    displayName: string;
+    chatIdentifier: string;
+    participantCount: number;
+  }> {
     if (!this.db) return [];
     const rows = this.db
       .prepare(
@@ -323,7 +353,7 @@ export class ChatDB {
     keyword?: string;
     sinceMs?: number; // Unix ms (inclusive)
     untilMs?: number; // Unix ms (inclusive)
-    handle?: string;  // exact match on contact phone/email
+    handle?: string; // exact match on contact phone/email
     groupOnly?: boolean;
     limit?: number;
   }): Array<{
@@ -342,7 +372,10 @@ export class ChatDB {
     // chat.db stores date as nanoseconds-since-Apple-epoch on modern
     // macOS. Convert our Unix-ms bounds to that scale.
     const toAppleNs = (unixMs: number) => (unixMs - APPLE_EPOCH_MS) * 1_000_000;
-    const where: string[] = ["COALESCE(m.associated_message_type, 0) = 0", "COALESCE(m.text, '') <> ''"];
+    const where: string[] = [
+      "COALESCE(m.associated_message_type, 0) = 0",
+      "(COALESCE(m.text, '') <> '' OR m.attributedBody IS NOT NULL)",
+    ];
     const params: Array<string | number> = [];
     if (opts.keyword && opts.keyword.trim()) {
       where.push("m.text LIKE ?");
@@ -367,6 +400,7 @@ export class ChatDB {
       SELECT
         m.ROWID                              AS rowid,
         COALESCE(m.text, '')                 AS text,
+        m.attributedBody                     AS attributed_body,
         m.date                               AS date,
         m.is_from_me                         AS is_from_me,
         COALESCE(h.id, '')                   AS handle,
@@ -382,6 +416,7 @@ export class ChatDB {
     const rows = this.db.prepare(sql).all(...params, limit) as Array<{
       rowid: number;
       text: string;
+      attributed_body: Buffer | null;
       date: number;
       is_from_me: number;
       handle: string;
@@ -390,7 +425,7 @@ export class ChatDB {
     }>;
     return rows.map((r) => ({
       rowid: r.rowid,
-      text: r.text,
+      text: r.text || decodeAttributedBody(r.attributed_body) || "",
       unixMs: appleNsToUnixMs(r.date),
       fromMe: !!r.is_from_me,
       handle: r.handle,
@@ -463,7 +498,9 @@ export class ChatDB {
                 COALESCE(chat_identifier, '') AS chat_identifier
          FROM chat WHERE ROWID = ?`,
       )
-      .get(target) as { display_name: string; chat_identifier: string } | undefined;
+      .get(target) as
+      | { display_name: string; chat_identifier: string }
+      | undefined;
     if (!meta) return null;
     const handleRows = this.db
       .prepare(
