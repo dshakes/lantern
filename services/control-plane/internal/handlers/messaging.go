@@ -124,10 +124,15 @@ func (h *MessagingHandler) InboundWebhook(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Load the Twilio connector config once — used for both signature
+	// verification and confirming the message was addressed to OUR sender.
+	cfg := loadDecryptedConfig(r.Context(), h.pool, h.defaultTenant, "twilio")
+
 	// Verify the request really came from Twilio BEFORE the enable gate, so a
 	// forged request can never even probe whether the lane is on.
 	if !h.twilioAuthOff {
-		if ok, why := h.verifyTwilioSignature(r, bodyBytes); !ok {
+		token, _ := cfg["authToken"].(string)
+		if ok, why := h.verifyTwilioSignature(r, bodyBytes, token); !ok {
 			h.logger.Warn("Twilio inbound signature invalid",
 				zap.String("reason", why),
 				zap.String("from", maskPhone(r.Form.Get("From"))))
@@ -150,6 +155,19 @@ func (h *MessagingHandler) InboundWebhook(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// A valid Twilio signature only proves the request came from our Twilio
+	// ACCOUNT — a webhook for any other number/service on that same account
+	// would also verify. Confirm the message was addressed to THIS lane's
+	// configured branded sender (To = phoneNumber, or MessagingServiceSid),
+	// so the agent never replies to a contact on an unrelated sender. Skipped
+	// only in the dev escape hatch where signature checking itself is off.
+	if !h.twilioAuthOff && !addressedToConfiguredSender(r.Form, cfg) {
+		h.logger.Warn("inbound not addressed to configured sender — dropping",
+			zap.String("from", maskPhone(from)))
+		writeTwiML(w, "")
+		return
+	}
+
 	// The owner's own line is handled by sms.go (full-tool command channel).
 	// If the owner happens to text this branded number, don't double-handle.
 	if ownerPhone := strings.TrimSpace(os.Getenv("LANTERN_OWNER_PHONE")); ownerPhone != "" &&
@@ -164,9 +182,11 @@ func (h *MessagingHandler) InboundWebhook(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// This is a third-party-facing lane: a contact's message body may carry
+	// arbitrary PII, so log only masked identity + length, never content.
 	h.logger.Info("contact RCS/SMS inbound via Twilio",
 		zap.String("from", maskPhone(from)),
-		zap.String("body", smsTruncate(body, 80)))
+		zap.Int("body_len", len(body)))
 
 	// Ack immediately (Twilio times out ~10s); draft + send async.
 	writeTwiML(w, "")
@@ -211,7 +231,7 @@ func (h *MessagingHandler) processInboundAsync(brandedNumber, contactPhone, body
 	}
 	h.logger.Info("contact reply sent",
 		zap.String("to", maskPhone(contactPhone)),
-		zap.String("preview", smsTruncate(draft, 80)))
+		zap.Int("len", len(draft)))
 }
 
 // askContactAgent drafts a reply to a CONTACT on the owner's behalf. This is
@@ -238,15 +258,12 @@ func (h *MessagingHandler) askContactAgent(ctx context.Context, contactText stri
 }
 
 // verifyTwilioSignature does the standard X-Twilio-Signature HMAC check for
-// the contact lane, loading the auth token from the installed Twilio
-// connector (decrypted envelope).
-func (h *MessagingHandler) verifyTwilioSignature(r *http.Request, bodyBytes []byte) (bool, string) {
+// the contact lane against the supplied account auth token.
+func (h *MessagingHandler) verifyTwilioSignature(r *http.Request, bodyBytes []byte, token string) (bool, string) {
 	sig := r.Header.Get("X-Twilio-Signature")
 	if sig == "" {
 		return false, "missing X-Twilio-Signature"
 	}
-	cfg := loadDecryptedConfig(r.Context(), h.pool, h.defaultTenant, "twilio")
-	token, _ := cfg["authToken"].(string)
 	if token == "" {
 		return false, "Twilio auth token unavailable"
 	}
@@ -259,4 +276,21 @@ func (h *MessagingHandler) verifyTwilioSignature(r *http.Request, bodyBytes []by
 		return true, ""
 	}
 	return false, "signature mismatch"
+}
+
+// addressedToConfiguredSender confirms an inbound webhook was sent to THIS
+// lane's branded sender — the Twilio signature alone only proves it came from
+// our account. Matches the inbound MessagingServiceSid or To against the
+// connector's configured messagingServiceSid / phoneNumber. Returns false when
+// nothing is configured to match against (can't confirm it's us → drop).
+func addressedToConfiguredSender(form url.Values, cfg map[string]any) bool {
+	cfgMsgSvc, _ := cfg["messagingServiceSid"].(string)
+	cfgNumber, _ := cfg["phoneNumber"].(string)
+	if cfgMsgSvc != "" && form.Get("MessagingServiceSid") == cfgMsgSvc {
+		return true
+	}
+	if cfgNumber != "" && normalizePhone(form.Get("To")) == normalizePhone(cfgNumber) {
+		return true
+	}
+	return false
 }
