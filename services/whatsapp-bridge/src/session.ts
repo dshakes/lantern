@@ -27,7 +27,7 @@ import {
   naturalize,
   shouldRespond,
 } from "@lantern/bridge-core/natural";
-import { parseNLCommand, type ParsedCommand } from "@lantern/bridge-core/nl-commands";
+import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { reactionToAction, dispatchReaction } from "@lantern/bridge-core/reaction-commands";
@@ -2314,6 +2314,30 @@ export class WhatsAppSession {
     return "handled";
   }
 
+  // Apply an owner presence/status command from self-chat (set place + timer,
+  // or clear). Acks with a reaction + a confirmation line.
+  private async applyPresenceCommand(
+    pres: PresenceCommand,
+    jid: string,
+    key: { id?: string | null; remoteJid?: string | null; fromMe?: boolean | null; participant?: string | null },
+  ): Promise<void> {
+    if (pres.action === "clear") {
+      this.presence.clearOverride();
+      this.logActivity("bot_on", "presence cleared — available", { scope: "self" });
+      await this.sendReaction(jid, key, "✅").catch(() => {});
+      await this.confirmToSelf("✅ status cleared — you're marked available again.");
+      return;
+    }
+    this.presence.setStatus({ label: pres.label, place: pres.place, durationMs: pres.durationMs });
+    const mins = pres.durationMs ? Math.round(pres.durationMs / 60_000) : null;
+    const forText = mins ? (mins >= 60 && mins % 60 === 0 ? ` for ${mins / 60}h` : ` for ${mins}m`) : "";
+    this.logActivity("attention_dm", `presence set: ${pres.label}${forText}`, { scope: "self" });
+    await this.sendReaction(jid, key, "📍").catch(() => {});
+    await this.confirmToSelf(
+      `📍 got it — you're ${pres.label}${forText}. I'll tell anyone who messages that you'll get back, and offer to take a message. Say "I'm back" to clear.`,
+    );
+  }
+
   /**
    * Public contact search over the macOS AddressBook (name → phones + emails).
    * Backs the `search_contacts` agentic tool.
@@ -2981,6 +3005,17 @@ export class WhatsAppSession {
     //     ("/bot off" in a friend's thread pauses just that friend).
     //
     //   - Group: no NL parsing (group-scoped commands handled below).
+    // Presence / "I'm away" status — owner sets a timed, free-text status
+    // from self-chat ("I'm at the temple for 2h", "I'm back") so the bot can
+    // tell contacts where they are + offer to take a message.
+    if (self && !group && trimmed) {
+      const pres = parsePresenceCommand(text);
+      if (pres) {
+        await this.applyPresenceCommand(pres, jid, key);
+        return;
+      }
+    }
+
     if ((self || !group) && trimmed) {
       const parsed = parseNLCommand(text);
       if (parsed) {
@@ -5335,7 +5370,20 @@ export class WhatsAppSession {
         try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
       },
     });
-    const presenceLine = presenceSnap.line || "";
+    let presenceLine = presenceSnap.line || "";
+    // AWAY directive: when the owner set a status, tell the contact where he
+    // is + that he'll get back, and offer to take a message. This is the
+    // "Shekhar's at the temple right now, can I pass a message?" behavior.
+    if (presenceSnap.away && !opts.isGroup) {
+      const where = presenceSnap.place ? `at ${presenceSnap.place}` : presenceSnap.line;
+      presenceLine =
+        `${ownerName} is ${where} right now and away from messages. ` +
+        `If this needs ${ownerName}, tell them warmly that he's ${where} and will get back to them` +
+        (presenceSnap.takeMessage
+          ? `, then OFFER to take a message ("want me to pass anything along?"). If they leave one, acknowledge you'll make sure ${ownerName} gets it.`
+          : `.`) +
+        ` Keep it short and natural — don't pretend to be ${ownerName} mid-activity.`;
+    }
 
     let systemHint = agentPersonaPrompt(
       ownerName,

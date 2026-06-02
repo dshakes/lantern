@@ -40,7 +40,7 @@ import {
   naturalize,
   shouldRespond,
 } from "@lantern/bridge-core/natural";
-import { parseNLCommand, type ParsedCommand } from "@lantern/bridge-core/nl-commands";
+import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
@@ -745,6 +745,24 @@ export class IMessageSession {
     return "handled"; // don't auto-reply to the unknown sender
   }
 
+  // Apply an owner presence/status command from self-chat (set place + timer,
+  // or clear), then confirm back to the owner.
+  private async applyPresenceCommand(pres: PresenceCommand, replyHandle: string): Promise<void> {
+    const owner = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim() || replyHandle;
+    if (pres.action === "clear") {
+      this.presence.clearOverride();
+      await this.send(owner, "✅ status cleared — you're marked available again.").catch(() => {});
+      return;
+    }
+    this.presence.setStatus({ label: pres.label, place: pres.place, durationMs: pres.durationMs });
+    const mins = pres.durationMs ? Math.round(pres.durationMs / 60_000) : null;
+    const forText = mins ? (mins >= 60 && mins % 60 === 0 ? ` for ${mins / 60}h` : ` for ${mins}m`) : "";
+    await this.send(
+      owner,
+      `📍 got it — you're ${pres.label}${forText}. I'll tell anyone who messages that you'll get back, and offer to take a message. Say "I'm back" to clear.`,
+    ).catch(() => {});
+  }
+
   // Public contact search over the macOS AddressBook (name → phones + emails).
   // Backs the `search_contacts` agentic tool.
   async searchContacts(query: string, limit?: number) {
@@ -1437,6 +1455,12 @@ export class IMessageSession {
     // Catch them here so the same command vocabulary works from both
     // topologies.
     if (text && !isGroup && this.isOwnerChatRow(row)) {
+      // Presence / "I'm away" status (set place + timer, or clear).
+      const pres = parsePresenceCommand(text);
+      if (pres) {
+        void this.applyPresenceCommand(pres, row.handle);
+        return;
+      }
       const parsed = parseNLCommand(text);
       if (parsed) {
         void this.handleOwnerCommand(row.handle, parsed);
@@ -1777,7 +1801,19 @@ export class IMessageSession {
         try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
       },
     });
-    const presenceLine = presenceSnap.line || "";
+    let presenceLine = presenceSnap.line || "";
+    // AWAY directive: tell the contact where the owner is + offer to take a
+    // message ("Shekhar's at the temple, he'll get back — can I pass a note?").
+    if (presenceSnap.away && !isGroup) {
+      const where = presenceSnap.place ? `at ${presenceSnap.place}` : presenceSnap.line;
+      presenceLine =
+        `${ownerName} is ${where} right now and away from messages. ` +
+        `If this needs ${ownerName}, tell them warmly that he's ${where} and will get back to them` +
+        (presenceSnap.takeMessage
+          ? `, then OFFER to take a message ("want me to pass anything along?"). If they leave one, acknowledge you'll make sure ${ownerName} gets it.`
+          : `.`) +
+        ` Keep it short and natural — don't pretend to be ${ownerName} mid-activity.`;
+    }
 
     let systemHint = agentPersonaPrompt(ownerName, style, isGroup, {
       ownerSamples,
