@@ -120,6 +120,10 @@ export async function resolveContact(
   // but Full Disk Access isn't.
   const dbHit = await searchAddressBookDb(raw, opts.logger);
   const macHit = dbHit || (await searchMacosContacts(raw, opts.logger));
+  opts.logger?.info(
+    { query: raw, dbHit: dbHit ? dbHit.phone : null, viaAppleScript: !dbHit && !!macHit },
+    "contact resolve: macOS lookup result",
+  );
   if (macHit) {
     return {
       resolved: {
@@ -281,7 +285,7 @@ async function searchAddressBookDb(
     }
     return null;
   } catch (err) {
-    logger?.debug({ err }, "AddressBook DB lookup unavailable — falling back to AppleScript");
+    logger?.warn({ err: (err as Error)?.message || String(err) }, "AddressBook DB lookup unavailable — falling back to AppleScript");
     return null;
   }
 }
