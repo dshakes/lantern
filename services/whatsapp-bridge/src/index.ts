@@ -481,6 +481,21 @@ app.post("/session/:tenantId/calendar/upcoming", async (req, res) => {
   }
 });
 
+// POST /session/:tenantId/contacts/search -- AddressBook contact search
+// (name → phones + emails). Backs the `search_contacts` agentic tool.
+app.post("/session/:tenantId/contacts/search", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) { res.status(400).json({ error: "session not started" }); return; }
+  const { query, limit } = (req.body || {}) as { query?: string; limit?: number };
+  if (typeof query !== "string" || !query.trim()) { res.status(400).json({ error: "'query' required" }); return; }
+  try {
+    const contacts = await session.searchContacts(query.trim(), limit);
+    res.json({ contacts, count: contacts.length });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Personal-docs HTTP surface
 // ---------------------------------------------------------------------------
