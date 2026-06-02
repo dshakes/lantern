@@ -691,6 +691,21 @@ export class IMessageSession {
     this.broadcast({ type: "activity", data: { kind: "monitor_off", summary: `unmonitoring chat ${rowid}`, timestamp: Date.now() } });
   }
 
+  // Public read of the owner's device calendar (iCloud + Google + subscribed)
+  // from the macOS Calendar store. Backs the `read_calendar` agentic tool
+  // (control-plane bridge callback) + the diagnostic endpoint.
+  async getUpcomingCalendar(opts: { days?: number; max?: number } = {}): Promise<
+    Array<{ title: string; start: string; end: string | null; calendar: string }>
+  > {
+    const events = await this.macActions.readUpcomingEvents({ days: opts.days ?? 60, max: opts.max ?? 30 });
+    return events.map((e) => ({
+      title: e.title,
+      start: e.start.toISOString(),
+      end: e.end ? e.end.toISOString() : null,
+      calendar: e.calendar,
+    }));
+  }
+
   async send(to: string, text: string): Promise<{ ok: boolean; reason?: string }> {
     if (this.state !== "ready") {
       return { ok: false, reason: `bridge not ready (state=${this.state})` };

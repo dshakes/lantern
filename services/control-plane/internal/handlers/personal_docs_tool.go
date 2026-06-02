@@ -38,6 +38,7 @@ const (
 	whatsappGroupsListTool      = "list_whatsapp_groups"
 	whatsappGroupMembersTool    = "get_whatsapp_group"
 	whatsappHistoryBackfillTool = "backfill_whatsapp_history"
+	readCalendarTool            = "read_calendar"
 
 	// Default bridge URLs (loopback). Override via env.
 	personalDocsBridgeDefaultURL = "http://127.0.0.1:3200" // iMessage bridge
@@ -55,6 +56,24 @@ const (
 // tool-call format. Called from toolsForTenant().
 func personalDocsTools() []map[string]any {
 	return []map[string]any{
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name": readCalendarTool,
+				"description": "Read the user's DEVICE calendar (macOS Calendar.app — aggregates iCloud + Google + subscribed calendars). This is the SOURCE OF TRUTH for the user's appointments and the only place that sees iCloud-only events. " +
+					"ALWAYS call this when the user asks about ANY appointment, event, booking, meeting, or what's on their schedule (haircut, salon, doctor, dentist, dinner, flight, 'what do I have', 'when is my next ...') — even if the phrasing doesn't contain the word 'appointment'. " +
+					"Returns upcoming events with title, start, end, and calendar name. Never tell the user they have no appointment without calling this first.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"days": map[string]any{
+							"type":        "integer",
+							"description": "How many days ahead to look (default 60, max 180).",
+						},
+					},
+				},
+			},
+		},
 		{
 			"type": "function",
 			"function": map[string]any{
@@ -224,7 +243,7 @@ func isPersonalDocsTool(name string) bool {
 		imessageHistorySearchTool, whatsappHistorySearchTool,
 		imessageGroupsListTool, imessageGroupMembersTool,
 		whatsappGroupsListTool, whatsappGroupMembersTool,
-		whatsappHistoryBackfillTool:
+		whatsappHistoryBackfillTool, readCalendarTool:
 		return true
 	}
 	return false
@@ -362,6 +381,11 @@ func executePersonalDocsTool(ctx context.Context, tenantID, name string, params 
 			body["count"] = int(v)
 		}
 		endpoint = fmt.Sprintf("%s/session/%s/whatsapp/history/backfill", waBase, tenantID)
+	case readCalendarTool:
+		if v, ok := params["days"].(float64); ok && v > 0 {
+			body["days"] = int(v)
+		}
+		endpoint = fmt.Sprintf("%s/session/%s/calendar/upcoming", base, tenantID)
 	default:
 		return nil, fmt.Errorf("personal-docs tool: unknown name %q", name)
 	}

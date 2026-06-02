@@ -250,6 +250,21 @@ app.post("/session/:tenantId/send-self", async (req, res) => {
   res.json({ status: "sent", handle: ownerHandle });
 });
 
+// POST /session/:tenantId/calendar/upcoming -- device calendar (iCloud +
+// Google + subscribed) from the macOS Calendar store. Backs the read_calendar
+// agentic tool (control-plane bridge callback).
+app.post("/session/:tenantId/calendar/upcoming", async (req, res) => {
+  const s = sessions.get(req.params.tenantId);
+  if (!s) { res.status(400).json({ error: "session not started" }); return; }
+  const { days, max } = (req.body || {}) as { days?: number; max?: number };
+  try {
+    const events = await s.getUpcomingCalendar({ days, max });
+    res.json({ events, count: events.length });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // ---- Personal-docs HTTP surface ----------------------------------------
 //
 // Exposes the per-session PersonalDocs instance so the control-plane's
