@@ -58,6 +58,18 @@ export interface OrchestratorDeps {
   // inline Polly <Say>. Returns a URL Twilio can <Play> — must be
   // publicly reachable from Twilio's servers.
   renderVoice?: (text: string) => Promise<string | null>;
+  // Caller-ID shown to the RECIPIENT: the owner's own verified number,
+  // so contacts recognize the call instead of an unknown Twilio DID and
+  // actually answer. Must be a Twilio number OR a Verified Caller ID on
+  // the account (else Twilio rejects the dial). Falls back to
+  // twilioFromNumber when unset. The SMS heads-up + owner leg still use
+  // the Twilio number (only Twilio DIDs can send SMS / be conference hosts).
+  callerId?: string;
+  // Owner display name for the heads-up SMS copy (from LANTERN_OWNER_NAME).
+  ownerName?: string;
+  // When true, text the recipient a one-line heads-up right before dialing
+  // a CONFERENCE (a known human), so they recognize the incoming call.
+  smsHeadsUp?: boolean;
 }
 
 export interface OutboundCallIntent {
@@ -155,17 +167,30 @@ export async function placeCallNow(
   deps: OrchestratorDeps,
 ): Promise<OrchestratorResult> {
   try {
+    // Caller-ID shown to the recipient: the owner's own number when
+    // configured, so contacts recognize + answer. SMS + owner leg still
+    // use the Twilio DID (req.from).
+    const recipientFrom = deps.callerId || req.from!;
     if (req.mode === "CONFERENCE_BRIDGE") {
+      // Heads-up SMS so the recipient recognizes the call about to come in
+      // (live-person conference only). Best-effort — never blocks the dial.
+      if (deps.smsHeadsUp) {
+        await sendHeadsUpSms(req, deps).catch((err) =>
+          deps.logger.warn({ err: (err as Error)?.message || String(err) }, "heads-up SMS failed (continuing to dial)"),
+        );
+      }
       // Conference: dial recipient with conference TwiML, then add
       // owner as second participant once recipient picks up. We
       // generate the conference name once + use it for both legs.
       const confName = newConferenceName();
       const recipientTwiml = buildConferenceTwiml(plan, confName);
-      const recipientCall = await dialViaTwilio(req.to, req.from!, recipientTwiml, deps);
+      const recipientCall = await dialViaTwilio(req.to, recipientFrom, recipientTwiml, deps);
       if (!recipientCall.ok) return recipientCall;
 
       // Owner leg — fired as add_conference_participant so we re-use
-      // the connector executor's conference-aware action.
+      // the connector executor's conference-aware action. Uses the Twilio
+      // DID (req.from), not the caller-ID override (the override may be the
+      // owner's own number — dialing them "from themselves" is confusing).
       if (!req.ownerPhone) {
         deps.logger.warn("conference: owner phone unset; recipient is in conf alone");
       } else {
@@ -197,7 +222,7 @@ export async function placeCallNow(
       }
     }
 
-    const call = await dialViaTwilio(req.to, req.from!, twiml, deps);
+    const call = await dialViaTwilio(req.to, recipientFrom, twiml, deps);
     if (call.ok) {
       await deps.notifyOwner(
         `📞 ${req.mode === "VOICEMAIL_DELIVERY" ? "voicemail" : "task call"} placed to ${req.contactName || req.to}. SID: ${call.callSid}`,
@@ -207,6 +232,30 @@ export async function placeCallNow(
   } catch (err) {
     deps.logger.error({ err }, "outbound call placement failed");
     return { ok: false, reason: (err as Error).message };
+  }
+}
+
+// One-line SMS sent to the recipient right before a conference dial so an
+// unknown caller-ID isn't ignored. Sent FROM the Twilio DID (only Twilio
+// numbers can send SMS, and it's the A2P-registered sender). Best-effort:
+// the caller wraps this in a catch so SMS failure never blocks the call.
+async function sendHeadsUpSms(req: OutboundCallRequest, deps: OrchestratorDeps): Promise<void> {
+  const owner = deps.ownerName || "your contact";
+  const firstName = req.contactName ? ` ${req.contactName.split(/\s+/)[0]}` : "";
+  const why = req.reason ? ` about ${req.reason.replace(/\s+/g, " ").trim().slice(0, 80)}` : "";
+  const body = `Hi${firstName}, this is ${owner}'s assistant — ${owner} is calling you in a few seconds${why}.`;
+  const res = await deps.authedFetch(
+    `/v1/connectors/twilio/execute?action=send_sms`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: req.to, from: req.from, body }),
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`send_sms ${res.status} ${t.slice(0, 120)}`);
   }
 }
 
