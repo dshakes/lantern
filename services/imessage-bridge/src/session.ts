@@ -694,10 +694,10 @@ export class IMessageSession {
   // Public read of the owner's device calendar (iCloud + Google + subscribed)
   // from the macOS Calendar store. Backs the `read_calendar` agentic tool
   // (control-plane bridge callback) + the diagnostic endpoint.
-  async getUpcomingCalendar(opts: { days?: number; max?: number } = {}): Promise<
-    Array<{ title: string; start: string; end: string | null; calendar: string }>
-  > {
-    const events = await this.macActions.readUpcomingEvents({ days: opts.days ?? 60, max: opts.max ?? 30 });
+  async getUpcomingCalendar(
+    opts: { days?: number; max?: number; query?: string; fromIso?: string; toIso?: string } = {},
+  ): Promise<Array<{ title: string; start: string; end: string | null; calendar: string }>> {
+    const events = await this.macActions.readUpcomingEvents(opts);
     return events.map((e) => ({
       title: e.title,
       start: e.start.toISOString(),

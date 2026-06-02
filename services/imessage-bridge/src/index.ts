@@ -256,9 +256,9 @@ app.post("/session/:tenantId/send-self", async (req, res) => {
 app.post("/session/:tenantId/calendar/upcoming", async (req, res) => {
   const s = sessions.get(req.params.tenantId);
   if (!s) { res.status(400).json({ error: "session not started" }); return; }
-  const { days, max } = (req.body || {}) as { days?: number; max?: number };
+  const { days, max, query, fromIso, toIso } = (req.body || {}) as { days?: number; max?: number; query?: string; fromIso?: string; toIso?: string };
   try {
-    const events = await s.getUpcomingCalendar({ days, max });
+    const events = await s.getUpcomingCalendar({ days, max, query, fromIso, toIso });
     res.json({ events, count: events.length });
   } catch (err) {
     res.status(500).json({ error: String(err) });
