@@ -2482,6 +2482,44 @@ func isRetryableLLMError(errStr string) bool {
 	return false
 }
 
+// rateLimitBackoff returns how long to wait before retrying the SAME provider
+// on a rate-limit (429), parsed from the provider's "try again in Xs" hint
+// when present (e.g. OpenAI TPM limits clear in a few seconds), else a small
+// default. Returns 0 when the error isn't a rate limit. Capped so a transient
+// limit can't stall the bridge's reply loop. This is the difference between
+// "Sorry, rate limit" reaching the user vs. a 3-second wait then success.
+func rateLimitBackoff(errStr string) time.Duration {
+	s := strings.ToLower(errStr)
+	if !strings.Contains(s, "429") &&
+		!strings.Contains(s, "rate limit") &&
+		!strings.Contains(s, "rate_limit") &&
+		!strings.Contains(s, "too many requests") {
+		return 0
+	}
+	wait := 2 * time.Second
+	for _, kw := range []string{"try again in ", "retry after ", "again in ", "after "} {
+		idx := strings.Index(s, kw)
+		if idx == -1 {
+			continue
+		}
+		rest := s[idx+len(kw):]
+		j := 0
+		for j < len(rest) && ((rest[j] >= '0' && rest[j] <= '9') || rest[j] == '.') {
+			j++
+		}
+		if j > 0 {
+			if f, err := strconv.ParseFloat(rest[:j], 64); err == nil && f > 0 {
+				wait = time.Duration((f + 0.3) * float64(time.Second)) // small cushion
+			}
+		}
+		break
+	}
+	if wait > 8*time.Second {
+		wait = 8 * time.Second
+	}
+	return wait
+}
+
 // candidateAttempt is used by the inline executor + sessions to know which
 // provider+model actually answered, so the run-detail waterfall can render
 // 'Failed over: anthropic → openai (anthropic returned 429)'.
@@ -2560,6 +2598,26 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 		text, invs, tin, tout, callErr := h.callLLMWithTools(
 			ctx, cand.Provider, cand.Model, apiKey, messages, tools, dispatch, onToolCall, maxTurns,
 		)
+		// Transient rate-limit: wait the provider-suggested time and retry the
+		// SAME provider ONCE before failing over. TPM limits (OpenAI) clear in
+		// seconds; this turns "Sorry, rate limit" into a brief pause + success.
+		if callErr != nil {
+			if backoff := rateLimitBackoff(callErr.Error()); backoff > 0 {
+				h.logger().Info("LLM rate limited — backing off then retrying same provider",
+					zap.String("provider", cand.Provider),
+					zap.String("model", cand.Model),
+					zap.Duration("backoff", backoff))
+				select {
+				case <-time.After(backoff):
+				case <-ctx.Done():
+				}
+				if ctx.Err() == nil {
+					text, invs, tin, tout, callErr = h.callLLMWithTools(
+						ctx, cand.Provider, cand.Model, apiKey, messages, tools, dispatch, onToolCall, maxTurns,
+					)
+				}
+			}
+		}
 		if callErr == nil {
 			if onAttempt != nil {
 				onAttempt(candidateAttempt{Provider: cand.Provider, Model: cand.Model})
