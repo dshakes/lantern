@@ -995,17 +995,34 @@ func executeTwilio(config map[string]any, action string, params map[string]any) 
 	}
 
 	switch action {
-	case "send_sms":
+	case "send_sms", "send_message":
 		to := stringParam(params, "to")
-		from := stringParam(params, "from")
 		body := stringParam(params, "body")
-		if to == "" || from == "" || body == "" {
-			return nil, fmt.Errorf("'to', 'from', and 'body' parameters are required")
+		if to == "" || body == "" {
+			return nil, fmt.Errorf("'to' and 'body' parameters are required")
 		}
 		data := url.Values{
 			"To":   {to},
-			"From": {from},
 			"Body": {body},
+		}
+		// Sender resolution. A Messaging Service with an RCS sender attached
+		// delivers RCS (rich) and AUTO-falls back to SMS when the recipient
+		// or handset can't do RCS — so this same action covers RCS + SMS.
+		// Precedence: explicit param → connector config → plain from-number.
+		msgSvc := stringParam(params, "messagingServiceSid")
+		if msgSvc == "" {
+			msgSvc, _ = config["messagingServiceSid"].(string)
+		}
+		from := stringParam(params, "from")
+		if from == "" {
+			from, _ = config["phoneNumber"].(string)
+		}
+		if msgSvc != "" {
+			data.Set("MessagingServiceSid", msgSvc)
+		} else if from != "" {
+			data.Set("From", from)
+		} else {
+			return nil, fmt.Errorf("'from' or 'messagingServiceSid' is required (set a Messaging Service with an RCS sender for RCS + SMS fallback)")
 		}
 		headers["Content-Type"] = "application/x-www-form-urlencoded"
 		result, err := doJSONRequest("POST", baseURL+"/Messages.json", headers, strings.NewReader(data.Encode()))
