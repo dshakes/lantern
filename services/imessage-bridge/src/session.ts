@@ -770,6 +770,51 @@ export class IMessageSession {
     return searchAddressBookContacts(query, { limit, logger: this.logger });
   }
 
+  // Twilio SMS fallback for non-iMessage recipients. When the iMessage send
+  // fails (the contact isn't an iMessage buddy — i.e. an SMS/RCS-only number),
+  // deliver the reply as SMS via the control-plane's Twilio connector so the
+  // bot can still respond. Only fires when LANTERN_TWILIO_NUMBER is set and the
+  // target looks like a phone number (never for iMessage-email handles). The
+  // contact receives the text from the Twilio number, not the owner's cell.
+  private async trySmsFallback(to: string, text: string): Promise<boolean> {
+    const from = (
+      process.env.LANTERN_TWILIO_NUMBER ||
+      process.env.LANTERN_TWILIO_SMS_FROM ||
+      ""
+    ).trim();
+    if (!from) return false;
+    // phone-ish only: digits with an optional leading '+', at least 8 chars.
+    // iMessage email handles ("foo@bar.com") are skipped — SMS needs a number.
+    const digits = to.replace(/[^\d]/g, "");
+    if (to.includes("@") || digits.length < 8) return false;
+    try {
+      const { authedFetch } = await import("@lantern/bridge-core/auth");
+      const res = await authedFetch(
+        "/v1/connectors/twilio/execute?action=send_sms",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to, from, body: text }),
+        },
+      );
+      if (!res.ok) {
+        this.logger.warn(
+          { to, status: res.status },
+          "twilio SMS fallback failed",
+        );
+        return false;
+      }
+      this.logger.info(
+        { to },
+        "delivered via Twilio SMS fallback (iMessage send failed)",
+      );
+      return true;
+    } catch (err) {
+      this.logger.warn({ err }, "twilio SMS fallback exception");
+      return false;
+    }
+  }
+
   async send(to: string, text: string): Promise<{ ok: boolean; reason?: string }> {
     if (this.state !== "ready") {
       return { ok: false, reason: `bridge not ready (state=${this.state})` };
@@ -790,7 +835,12 @@ export class IMessageSession {
       }
     }
     const res = await this.sender.send(to, text);
-    if (!res.ok) return res;
+    if (!res.ok) {
+      // iMessage couldn't deliver (e.g. SMS/RCS-only number) — try SMS.
+      const smsOk = await this.trySmsFallback(to, text);
+      if (!smsOk) return res;
+      // fell back to SMS successfully — continue the normal post-send path.
+    }
     // Record so the polling loop skips this row when chat.db echoes
     // it back as is_from_me=1.
     this.recordBridgeSend(text);
