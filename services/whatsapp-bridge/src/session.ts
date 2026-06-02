@@ -45,7 +45,7 @@ import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
 import { detectLanguageHints, languageModalityHint } from "@lantern/bridge-core/language";
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
-import { MacActions, extractActionMarkers, formatAppleCalendarBlock } from "@lantern/bridge-core/mac-actions";
+import { MacActions, extractActionMarkers, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
@@ -3684,23 +3684,25 @@ export class WhatsAppSession {
     const plan = planSubTasks(query);
     const planAdapters = this.buildSubTaskAdapters(query);
 
-    const [apptBlock, rosterResults, subTaskResults] = await Promise.all([
+    // SMART CONTEXT: the device calendar is the source of truth for the
+    // owner's appointments (iCloud + Google + subscribed) and is a cheap,
+    // local SQLite read — so read it for EVERY substantive owner query, NOT
+    // gated behind a brittle keyword regex (which missed "when's my next
+    // haircut" because it had no "appointment" token). The model ignores it
+    // when irrelevant; when relevant it can never give a false "not found".
+    // The heavier Gmail/Google appointment prefetch stays keyword-gated.
+    const deviceCalP: Promise<CalendarEventRead[]> =
+      process.platform === "darwin" && this.macActions
+        ? this.macActions.readUpcomingEvents({ days: 60 }).catch((err) => {
+            this.logger.warn({ err }, "device calendar read failed (continuing)");
+            return [] as CalendarEventRead[];
+          })
+        : Promise.resolve([] as CalendarEventRead[]);
+    const [gatedApptBlock, deviceEvents, rosterResults, subTaskResults] = await Promise.all([
       looksLikeAppointmentQuery(query)
-        ? // Read the Google Calendar connector + Gmail AND the local Apple
-          // Calendar.app in parallel. The device calendar (iCloud/Apple/
-          // subscribed) is where appointments the owner actually sees live —
-          // a query that only hit the Google connector missed iCloud-only
-          // events (e.g. the salon appointment). Mirrors the iMessage bridge.
-          Promise.all([
-            prefetchAppointmentContext(client, query, this.logger).catch(() => null),
-            process.platform === "darwin" && this.macActions
-              ? this.macActions.readUpcomingEvents({ days: 60 }).catch((err) => {
-                  this.logger.warn({ err }, "apple calendar read failed (continuing)");
-                  return [];
-                })
-              : Promise.resolve([]),
-          ]).then(([block, appleEvents]) => ((block || "") + formatAppleCalendarBlock(appleEvents)) || null)
+        ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
         : Promise.resolve(null),
+      deviceCalP,
       rosterSignal.isRoster
         ? prefetchRoster(rosterSignal, rosterAdapters, { maxGroupsPerSurface: 3 }).catch(() => [])
         : Promise.resolve([]),
@@ -3708,6 +3710,7 @@ export class WhatsAppSession {
         ? executeSubTasks(plan.subTasks, planAdapters, { perTaskTimeoutMs: 8000 }).catch(() => [])
         : Promise.resolve([]),
     ]);
+    const apptBlock = (((gatedApptBlock as string) || "") + formatAppleCalendarBlock(deviceEvents)) || null;
     const rosterBlock = formatRosterBlock(rosterSignal, rosterResults);
     const planBlock = formatSubTaskBriefs(query, subTaskResults);
     this.logger.info(

@@ -65,7 +65,7 @@ import { ScreenContext, defaultScreenContextConfig } from "@lantern/bridge-core/
 function normalizeForDedup(s: string): string {
   return (s || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
-import { MacActions, extractActionMarkers, formatAppleCalendarBlock } from "@lantern/bridge-core/mac-actions";
+import { MacActions, extractActionMarkers, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
@@ -3198,21 +3198,23 @@ export class IMessageSession {
     const plan = planSubTasks(query);
     const planAdapters = this.buildSubTaskAdapters(query);
 
-    const [apptBlock, rosterResults, subTaskResults] = await Promise.all([
+    // SMART CONTEXT: read the device calendar (source of truth — iCloud +
+    // Google + subscribed) for EVERY substantive owner query, ungated. It's a
+    // cheap local SQLite read; gating it behind a keyword regex missed
+    // "when's my next haircut" (no "appointment" token). Heavier Gmail/Google
+    // appointment prefetch stays keyword-gated.
+    const deviceCalP: Promise<CalendarEventRead[]> =
+      process.platform === "darwin" && this.macActions
+        ? this.macActions.readUpcomingEvents({ days: 60 }).catch((err) => {
+            this.logger.warn({ err }, "device calendar read failed (continuing)");
+            return [] as CalendarEventRead[];
+          })
+        : Promise.resolve([] as CalendarEventRead[]);
+    const [gatedApptBlock, deviceEvents, rosterResults, subTaskResults] = await Promise.all([
       looksLikeAppointmentQuery(query)
-        ? // Google Calendar + Gmail AND the local Apple Calendar store in
-          // parallel — iCloud/Apple appointments (e.g. the salon booking) only
-          // live in the device calendar, invisible to the Google connector.
-          Promise.all([
-            prefetchAppointmentContext(client, query, this.logger).catch(() => null),
-            process.platform === "darwin" && this.macActions
-              ? this.macActions.readUpcomingEvents({ days: 60 }).catch((err) => {
-                  this.logger.warn({ err }, "apple calendar read failed (continuing)");
-                  return [];
-                })
-              : Promise.resolve([]),
-          ]).then(([block, appleEvents]) => ((block || "") + formatAppleCalendarBlock(appleEvents)) || null)
+        ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
         : Promise.resolve(null),
+      deviceCalP,
       rosterSignal.isRoster
         ? prefetchRoster(rosterSignal, rosterAdapters, { maxGroupsPerSurface: 3 }).catch(() => [])
         : Promise.resolve([]),
@@ -3220,6 +3222,7 @@ export class IMessageSession {
         ? executeSubTasks(plan.subTasks, planAdapters, { perTaskTimeoutMs: 8000 }).catch(() => [])
         : Promise.resolve([]),
     ]);
+    const apptBlock = (((gatedApptBlock as string) || "") + formatAppleCalendarBlock(deviceEvents)) || null;
     const rosterBlock = formatRosterBlock(rosterSignal, rosterResults);
     const planBlock = formatSubTaskBriefs(query, subTaskResults);
     this.logger.info(
