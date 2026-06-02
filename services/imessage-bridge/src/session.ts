@@ -65,7 +65,7 @@ import { ScreenContext, defaultScreenContextConfig } from "@lantern/bridge-core/
 function normalizeForDedup(s: string): string {
   return (s || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
-import { MacActions, extractActionMarkers } from "@lantern/bridge-core/mac-actions";
+import { MacActions, extractActionMarkers, formatAppleCalendarBlock } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
@@ -2446,8 +2446,23 @@ export class IMessageSession {
     if (looksLikeAppointmentQuery(text)) {
       try {
         const client = defaultConnectorClient(this.logger);
-        const block = await prefetchAppointmentContext(client, text, this.logger);
-        if (block) prefetchBlock = block;
+        // Read the Google Calendar connector + Gmail AND the local Apple
+        // Calendar.app in parallel. The device calendar (iCloud/Apple/
+        // subscribed) is where appointments the owner actually sees live — and
+        // where the bridge writes events — so a query that only hit the Google
+        // connector missed iCloud-only appointments entirely.
+        const [block, appleEvents] = await Promise.all([
+          prefetchAppointmentContext(client, text, this.logger),
+          process.platform === "darwin"
+            ? this.macActions
+                .readUpcomingEvents({ days: 60 })
+                .catch((err) => {
+                  this.logger.warn({ err }, "apple calendar read failed (continuing)");
+                  return [];
+                })
+            : Promise.resolve([]),
+        ]);
+        prefetchBlock = (block || "") + formatAppleCalendarBlock(appleEvents);
       } catch (err) {
         this.logger.warn({ err }, "prefetch failed (continuing without)");
       }
