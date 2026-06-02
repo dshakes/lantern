@@ -3200,7 +3200,18 @@ export class IMessageSession {
 
     const [apptBlock, rosterResults, subTaskResults] = await Promise.all([
       looksLikeAppointmentQuery(query)
-        ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
+        ? // Google Calendar + Gmail AND the local Apple Calendar store in
+          // parallel — iCloud/Apple appointments (e.g. the salon booking) only
+          // live in the device calendar, invisible to the Google connector.
+          Promise.all([
+            prefetchAppointmentContext(client, query, this.logger).catch(() => null),
+            process.platform === "darwin" && this.macActions
+              ? this.macActions.readUpcomingEvents({ days: 60 }).catch((err) => {
+                  this.logger.warn({ err }, "apple calendar read failed (continuing)");
+                  return [];
+                })
+              : Promise.resolve([]),
+          ]).then(([block, appleEvents]) => ((block || "") + formatAppleCalendarBlock(appleEvents)) || null)
         : Promise.resolve(null),
       rosterSignal.isRoster
         ? prefetchRoster(rosterSignal, rosterAdapters, { maxGroupsPerSurface: 3 }).catch(() => [])
