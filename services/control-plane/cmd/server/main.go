@@ -249,6 +249,11 @@ func main() {
 
 	// Identity graph + unified cross-channel timeline (Jarvis memory).
 	httpMux.HandleFunc("POST /v1/people/resolve", identityHandler.ResolvePerson)
+	// /merge and /duplicates are registered before the bare GET /v1/people so
+	// the more-specific paths are not shadowed by a wildcard.
+	httpMux.HandleFunc("POST /v1/people/merge", identityHandler.MergePeople)
+	httpMux.HandleFunc("GET /v1/people/duplicates", identityHandler.ListDuplicates)
+	httpMux.HandleFunc("POST /v1/people/relationship", identityHandler.StampRelationship)
 	httpMux.HandleFunc("GET /v1/people", identityHandler.ListPeople)
 	httpMux.HandleFunc("POST /v1/memory/events", identityHandler.IngestEvent)
 	httpMux.HandleFunc("GET /v1/memory/context", identityHandler.GetContext)

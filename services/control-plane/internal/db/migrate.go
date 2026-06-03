@@ -1028,4 +1028,10 @@ var migrations = []string{
 
 	`CREATE INDEX IF NOT EXISTS memory_events_embedding_idx
 		ON memory_events USING hnsw (embedding vector_cosine_ops)`,
+
+	// Index to support duplicate-candidate detection: group people by
+	// lower(trim(display_name)) within a tenant cheaply.
+	`CREATE INDEX IF NOT EXISTS people_tenant_name_lower_idx
+		ON people (tenant_id, lower(trim(display_name)))
+		WHERE display_name IS NOT NULL`,
 }

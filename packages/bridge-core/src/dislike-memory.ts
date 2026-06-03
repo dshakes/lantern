@@ -18,12 +18,17 @@
 // JSONL because it's append-only, survives crashes mid-write, easy to
 // inspect with `cat`, and the read path streams the tail.
 
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile, chmod, readFile } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
+import { canonicalHandle } from "./canonical-handle.js";
+
+// 0600 — entries hold inbound message text + bot replies (PII). Match the
+// OCR-cache standard so this isn't world-readable.
+const FILE_MODE = 0o600;
 
 export interface DislikeEntry {
   jid: string;          // contact JID / handle the bad reply was sent to
@@ -63,7 +68,9 @@ export class DislikeMemory {
   async record(entry: Omit<DislikeEntry, "ts">): Promise<DislikeEntry | null> {
     const row: DislikeEntry = { ...entry, ts: Date.now() };
     try {
-      await appendFile(this.path, JSON.stringify(row) + "\n", "utf8");
+      const fresh = !existsSync(this.path);
+      await appendFile(this.path, JSON.stringify(row) + "\n", { encoding: "utf8", mode: FILE_MODE });
+      if (fresh) { try { await chmod(this.path, FILE_MODE); } catch { /* best-effort */ } }
       // Invalidate cache so the next read picks up this entry.
       this.cache = null;
       this.cachedAt = 0;
@@ -97,7 +104,7 @@ export class DislikeMemory {
       // (degenerate retry) or already set.
       if (last.goodReply || last.badReply.trim() === goodReply.trim()) return;
       const patch: DislikeEntry = { ...last, goodReply, ts: last.ts };
-      await appendFile(this.path, JSON.stringify(patch) + "\n", "utf8");
+      await appendFile(this.path, JSON.stringify(patch) + "\n", { encoding: "utf8", mode: FILE_MODE });
       this.cache = null;
       this.cachedAt = 0;
     } catch (err) {
@@ -111,7 +118,7 @@ export class DislikeMemory {
    */
   async forJid(jid: string, limit = 5): Promise<DislikeEntry[]> {
     await this.refreshIfStale();
-    const bucket = this.cache?.get(jid) ?? [];
+    const bucket = this.cache?.get(canonicalHandle(jid)) ?? [];
     return bucket.slice(0, limit);
   }
 
@@ -165,12 +172,14 @@ export class DislikeMemory {
       }
     }
 
-    // Bucket by jid, newest first.
+    // Bucket by the CANONICAL key (newest first) so old raw-jid rows and
+    // new rows for the same person across channels share one bucket.
     for (const entry of byKey.values()) {
-      let bucket = this.cache.get(entry.jid);
+      const bucketKey = canonicalHandle(entry.jid);
+      let bucket = this.cache.get(bucketKey);
       if (!bucket) {
         bucket = [];
-        this.cache.set(entry.jid, bucket);
+        this.cache.set(bucketKey, bucket);
       }
       bucket.push(entry);
     }

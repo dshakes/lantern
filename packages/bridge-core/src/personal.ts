@@ -24,6 +24,11 @@ interface UnifiedContext {
   handles?: { channel: string; handle: string }[];
   facts?: string[];
   events?: UnifiedTimelineEvent[];
+  // Optional recency-ordered slice scoped to the requested windowDays. When
+  // the control-plane exposes it we use it directly; otherwise unifiedBlock
+  // derives the recent slice from `events` by filtering on occurredAt.
+  recent?: UnifiedTimelineEvent[];
+  windowDays?: number;
 }
 
 // Detect an owner "teach the bot a fact about this contact" instruction
@@ -178,11 +183,23 @@ export class PersonalClient {
   // person behind a (channel, handle). When `query` is given the timeline
   // is ranked by semantic similarity (vector recall) instead of recency —
   // so a reply pulls the MOST RELEVANT memories, not just the newest.
+  // `windowDays` (optional) asks the control-plane to additionally return a
+  // recency-ordered slice limited to the last N days, so a reply can inject
+  // "what we discussed recently" by default. When the control-plane doesn't
+  // yet honor windowDays it simply ignores the param — safe either way.
   // Cached briefly only for the no-query case (per-message queries are
   // unique, so caching them is pointless). Never throws.
-  async unifiedContext(channel: string, handle: string, query?: string): Promise<UnifiedContext | null> {
+  async unifiedContext(
+    channel: string,
+    handle: string,
+    query?: string,
+    opts: { windowDays?: number } = {},
+  ): Promise<UnifiedContext | null> {
     const q = (query || "").trim();
-    const key = `${channel}:${handle}`;
+    const win = opts.windowDays && opts.windowDays > 0 ? Math.floor(opts.windowDays) : 0;
+    // Cache key folds in windowDays so a windowed and an unwindowed read of
+    // the same person don't clobber each other.
+    const key = `${channel}:${handle}:w${win}`;
     if (!q) {
       const hit = this.contextCache.get(key);
       if (hit && Date.now() - hit.fetchedAt < PersonalClient.CONTEXT_TTL_MS) return hit.ctx;
@@ -190,6 +207,7 @@ export class PersonalClient {
     try {
       let qs = `channel=${encodeURIComponent(channel)}&handle=${encodeURIComponent(handle)}&limit=12`;
       if (q) qs += `&q=${encodeURIComponent(q.slice(0, 400))}`;
+      if (win) qs += `&windowDays=${win}`;
       const res = await authedFetch(`/v1/memory/context?${qs}`);
       if (!res.ok) {
         if (!q) this.contextCache.set(key, { ctx: null, fetchedAt: Date.now() });
@@ -229,12 +247,25 @@ export class PersonalClient {
     }
   }
 
+  // Default lookback for the "what we discussed recently" timeline slice.
+  private static readonly DEFAULT_WINDOW_DAYS = 14;
+
   // Persona-prompt block built from the UNIFIED person view: facts learned
-  // on ANY channel + a short recent cross-channel timeline. Falls back to
-  // the per-jid factsBlock when the identity graph is unreachable, so this
-  // is always safe to call in place of factsBlock.
-  async unifiedBlock(channel: string, handle: string, query?: string): Promise<string> {
-    const ctx = await this.unifiedContext(channel, handle, query);
+  // on ANY channel + a recent time-windowed timeline + a cross-channel
+  // slice. Falls back to the per-jid factsBlock when the identity graph is
+  // unreachable, so this is always safe to call in place of factsBlock.
+  //
+  // `inboundText` doubles as the semantic-recall query (most-relevant
+  // memories) AND triggers the recent-window request so the reply can ground
+  // in "what we discussed recently" by default.
+  async unifiedBlock(
+    channel: string,
+    handle: string,
+    inboundText?: string,
+    opts: { windowDays?: number } = {},
+  ): Promise<string> {
+    const windowDays = opts.windowDays ?? PersonalClient.DEFAULT_WINDOW_DAYS;
+    const ctx = await this.unifiedContext(channel, handle, inboundText, { windowDays });
     if (!ctx) return this.factsBlock(handle);
 
     let block = "";
@@ -243,6 +274,26 @@ export class PersonalClient {
       block += `\n\nThings you know about this contact across all channels (use when relevant — don't recite verbatim):\n` +
         facts.map((f) => `- ${f}`).join("\n");
     }
+
+    // Recent time-windowed slice — "what we discussed recently" across ALL
+    // channels. Prefer the control-plane's `recent` field; if it isn't
+    // exposed yet, derive it from `events` by filtering on occurredAt so the
+    // behavior is identical regardless of which side computes the window.
+    const cutoff = Date.now() - windowDays * 86_400_000;
+    const recentSrc = (ctx.recent ?? ctx.events ?? []).filter((e) => {
+      const t = Date.parse(e.occurredAt || "");
+      return Number.isNaN(t) ? true : t >= cutoff;
+    });
+    const recent = recentSrc.slice(0, 6);
+    if (recent.length > 0) {
+      block += `\n\nWhat you discussed recently (last ${windowDays} days, across all channels):\n` +
+        recent.map((e) => {
+          const who = e.direction === "out" ? "you" : "them";
+          const ch = e.channel && e.channel !== channel ? ` on ${e.channel}` : "";
+          return `- [${fmtDate(e.occurredAt)}] ${who}${ch}: ${(e.content || "").slice(0, 140)}`;
+        }).join("\n");
+    }
+
     // Recent timeline from OTHER channels — the current thread is already
     // in the live transcript, so the value-add is what happened elsewhere.
     const other = (ctx.events ?? [])
@@ -408,6 +459,14 @@ export class PersonalClient {
       this.logger.debug({ err, otherChannel }, "cross-channel VIP ping skipped");
     }
   }
+}
+
+// ISO timestamp → "YYYY-MM-DD" for compact prompt lines. Falls back to the
+// raw string when unparseable so a malformed timestamp never breaks the block.
+function fmtDate(iso: string): string {
+  const t = Date.parse(iso || "");
+  if (Number.isNaN(t)) return (iso || "").slice(0, 10);
+  return new Date(t).toISOString().slice(0, 10);
 }
 
 function prettyContact(jid: string): string {

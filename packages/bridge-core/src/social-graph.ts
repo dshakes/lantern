@@ -28,11 +28,16 @@
 // boundaries. The block injected into the prompt explicitly tells
 // the LLM "don't volunteer details from other threads unless asked".
 
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile, chmod, readFile } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { Logger } from "pino";
+import { canonicalHandle } from "./canonical-handle.js";
+
+// 0600 — tagged messages store verbatim message text (PII). Match the
+// OCR-cache standard.
+const FILE_MODE = 0o600;
 
 export interface TaggedMessage {
   jid: string;
@@ -70,7 +75,9 @@ export class SocialGraph {
     if (msg.topics.length === 0) return;
     const row: TaggedMessage = { ...msg, ts: msg.ts ?? Date.now() };
     try {
-      await appendFile(this.path, JSON.stringify(row) + "\n", "utf8");
+      const fresh = !existsSync(this.path);
+      await appendFile(this.path, JSON.stringify(row) + "\n", { encoding: "utf8", mode: FILE_MODE });
+      if (fresh) { try { await chmod(this.path, FILE_MODE); } catch { /* best-effort */ } }
       this.cache = null;
       this.cachedAt = 0;
     } catch (err) {
@@ -90,11 +97,15 @@ export class SocialGraph {
     const cutoff = Date.now() - RETRIEVAL_WINDOW_MS;
     const wanted = new Set(opts.topics.map((t) => t.toLowerCase()));
     const limit = opts.limit ?? 5;
+    // Canonicalize the exclude key so the current contact's OWN thread is
+    // excluded regardless of which channel they reached us on (their
+    // WhatsApp + iMessage messages are the same person, not "other threads").
+    const excludeKey = canonicalHandle(opts.excludeJid);
     const matched: TaggedMessage[] = [];
     // all is newest-first after refreshIfStale().
     for (const m of all) {
       if (m.ts < cutoff) break;
-      if (m.jid === opts.excludeJid) continue;
+      if (canonicalHandle(m.jid) === excludeKey) continue;
       if (m.topics.some((t) => wanted.has(t))) {
         matched.push(m);
         if (matched.length >= limit) break;

@@ -1194,6 +1194,14 @@ export class WhatsAppSession {
   // fine — repetition only matters within an active conversation).
   private recentBotReplies = new Map<string, string[]>();
   private static readonly RECENT_BOT_REPLIES_PER_CONTACT = 5;
+  // Per-jid timestamp of the contact's last inbound message. Lets the
+  // persona prompt label whether this turn continues an active thread or
+  // starts fresh, so the bot picks up mid-conversation instead of greeting
+  // cold. In-memory only (a fresh thread after restart is fine). Parity
+  // with the iMessage bridge — keep the wording + threshold identical.
+  private lastInboundTs = new Map<string, number>();
+  // A turn within this window of the previous inbound is a continuation.
+  private static readonly THREAD_CONTINUATION_MS = 6 * 60 * 60 * 1000;
   // Dedup guard for the bad-feedback retry. Both 👎 (record + retry) and
   // 🔁 (retry) on the SAME bot reply trigger handleBadFeedbackRetry; this
   // set ensures a given target msg-id only regenerates once even if the
@@ -5666,7 +5674,21 @@ export class WhatsAppSession {
       // recall). Degrades to the per-jid facts block if unreachable.
       const memBlock = await this.personal.unifiedBlock("whatsapp", from, text);
       if (memBlock) systemHint += memBlock;
+
+      // Lightweight thread continuity (parity with the iMessage bridge —
+      // keep the wording + 6h threshold identical). If the previous inbound
+      // from this contact was recent, tell the model to pick up the active
+      // thread; otherwise treat it as a fresh conversation. Read before the
+      // timestamp is updated below.
+      const prevInbound = this.lastInboundTs.get(from);
+      const continuing =
+        prevInbound !== undefined &&
+        Date.now() - prevInbound < WhatsAppSession.THREAD_CONTINUATION_MS;
+      systemHint += continuing
+        ? `\n\n(This is a continuation of an active thread — pick up where you left off; don't re-greet or reintroduce yourself.)`
+        : `\n\n(This is a fresh conversation — there's been a gap since you last spoke.)`;
     }
+    if (!opts.isGroup) this.lastInboundTs.set(from, Date.now());
 
     // Calendar awareness for contact replies. Read the owner's DEVICE calendar
     // (iCloud + Google + subscribed — source of truth) so a contact asking
