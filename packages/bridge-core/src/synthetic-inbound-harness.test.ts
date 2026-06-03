@@ -25,8 +25,9 @@ import {
   detectNonEnglishInjectionRisk,
   refusalReply,
 } from "./escalation-detector.ts";
-import { detectBotTells, naturalize, shouldRespond } from "./natural.ts";
+import { detectBotTells, naturalize, shouldRespond, agentPersonaPrompt } from "./natural.ts";
 import { classifyConfidence } from "./confidence-tier.ts";
+import { parseProfile } from "./owner-profile.ts";
 
 type Action = "SEND" | "DRAFT" | "SUPPRESS" | "REFUSE" | "REACT";
 
@@ -184,4 +185,67 @@ test("HARNESS: a genuinely foreign language drafts ONLY when the guard is explic
   assert.notEqual(decideReplyAction({ ...base }).action, "DRAFT");
   // Guard explicitly ON → drafts for owner review.
   assert.equal(decideReplyAction({ ...base, nonEnglishDraftEnabled: true }).action, "DRAFT");
+});
+
+// ── Owner self-chat path ───────────────────────────────────────────────────
+// The owner's own messages must NEVER be refused/drafted/suppressed by the
+// CONTACT gates — the owner can ask anything (incl. their own sensitive info)
+// and always gets answered. (The real owner path runs a separate agentic
+// pipeline; here we prove the contact-gates are skipped when isOwner=true.)
+
+test("HARNESS owner: a sensitive self-question is ANSWERED, not refused", () => {
+  const r = decideReplyAction({
+    inbound: "what's my mother's last name again?",
+    llmReply: "Akula 🙂",
+    isOwner: true,
+  });
+  assert.equal(r.action, "SEND", `owner must be answered, got ${r.action}`);
+});
+
+test("HARNESS owner: Telugu self-chat is answered (owner never gated)", () => {
+  const r = decideReplyAction({
+    inbound: "repu em chestunnav",
+    llmReply: "office pani undi, malli cheptha",
+    isOwner: true, languagePrimary: "telugu", languageConfidence: 0.95,
+    nonEnglishDraftEnabled: true, // even if the guard is on, owner is exempt
+  });
+  assert.equal(r.action, "SEND");
+});
+
+// ── Vault non-leak (sealed owner-only knowledge) ───────────────────────────
+// Security-grade answers live in a "## Private" section: present for the OWNER,
+// PROVABLY ABSENT from anything injected into a CONTACT-facing reply.
+
+const PROFILE_WITH_VAULT = [
+  "# Owner profile",
+  "## About me",
+  "I'm Test, a founder.",
+  "## Facts",
+  "- married: yes",
+  "## Private",
+  "- mother's last name: TestSurname",
+  "- born: TestCity",
+  "- first school: TestSchool",
+].join("\n");
+
+test("HARNESS vault: secrets present for OWNER, ABSENT from contact prose", () => {
+  const parsed = parseProfile(PROFILE_WITH_VAULT);
+  // Owner-only vault block (what the owner self-chat path injects) HAS them.
+  assert.ok(parsed.privateVault.includes("TestSurname"), "owner vault must hold the secret");
+  assert.ok(parsed.privateVault.includes("TestCity"));
+  // The prose (what the CONTACT path injects as ownerProfile) must NOT.
+  for (const secret of ["TestSurname", "TestCity", "TestSchool"]) {
+    assert.ok(!parsed.prose.includes(secret), `prose leaks ${secret}`);
+  }
+});
+
+test("HARNESS vault: contact-facing persona prompt contains NO vault secret", () => {
+  const parsed = parseProfile(PROFILE_WITH_VAULT);
+  const persona = agentPersonaPrompt(OWNER, STYLE, false, {
+    ownerProfile: parsed.prose, // exactly what the bridge passes on the contact path
+    ownerFacts: "married: yes",
+  } as never);
+  for (const secret of ["TestSurname", "TestCity", "TestSchool"]) {
+    assert.ok(!persona.includes(secret), `contact persona LEAKS vault secret: ${secret}`);
+  }
 });
