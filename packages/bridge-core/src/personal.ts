@@ -137,7 +137,8 @@ export class PersonalClient {
         const { factsAreSimilar } = await import("./fact-extractor.js");
         for (const f of existing) {
           if (factsAreSimilar(f.content, c)) {
-            this.logger.debug({ jid, existing: f.content, candidate: c }, "auto-fact deduped against existing");
+            // Don't log fact content (PII) — counts/lengths only.
+            this.logger.debug({ jid, existingLen: f.content.length, candidateLen: c.length }, "auto-fact deduped against existing");
             return false;
           }
         }

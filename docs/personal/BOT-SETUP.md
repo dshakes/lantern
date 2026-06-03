@@ -127,3 +127,74 @@ Look for inbound rows showing the sender's handle/JID — set your env to that e
 ## 4. Switching back to self-chat
 
 Just `unset LANTERN_IMESSAGE_OWNER_HANDLE` / `unset LANTERN_WA_OWNER_JID` and restart the bridge. Self-chat mode resumes immediately. No data loss; OCR cache and bot-state files survive the switch.
+
+---
+
+## 5. Owner profile
+
+Create `~/.lantern/owner-profile.md` to give the bot your voice, world, and ground-truth facts. The bridge hot-reloads it on every mtime change (no restart needed).
+
+```markdown
+# Owner profile
+
+## About me
+I'm Shekhar — founder building Lantern. Currently heads-down on launch.
+
+## How I text
+- lowercase, short, dry
+- no periods at the end of lines
+- "yeah"/"lol"/"for sure" — never "certainly" or "sounds good"
+
+## My world
+- Austin, TX / IST overlap
+- two young kids, always context-switching
+
+## Facts
+- married: yes
+- spouse: Manasa
+- kids: Aarav, Anaya
+- wedding anniversary: 2017-06-03
+
+## Relationships
+- Shiva: brother
+- Sujith: college friend | address as: Sujith | never: bava
+- +15125551234: my manager
+```
+
+**`## Facts`** — ground truth the bot will NEVER deny (marriage, spouse, kids, key dates). Dates must be `YYYY-MM-DD`.
+
+**`## Relationships`** — per-contact labels + optional pipe-delimited addressing rules:
+- `address as: X` — what to call this contact
+- `never: a, b` — kinship/nickname terms the owner doesn't use with them
+
+**Auto-teaching.** Self-chat a fact ("Raju moved to MD", "remember: anniversary is June 3 2017", "don't call Sujith bava") and the bridge learns it automatically — bot acks with "📝 noted — …".
+
+**`## Style lessons (managed)`** — written by the 👎 flywheel; do not hand-edit the `<!-- id:... -->` tags. Delete a bullet to retire a rule.
+
+**Profile path override:** `export LANTERN_OWNER_PROFILE=/path/to/profile.md`
+
+---
+
+## 6. New env vars (personal-assistant features)
+
+Add these to your `~/.lantern/env` or LaunchAgent plist alongside the existing vars:
+
+| Var | Purpose | Default |
+|---|---|---|
+| `LANTERN_OWNER_TIMEZONE` | IANA TZ for quiet hours + digest scheduling | process TZ |
+| `LANTERN_QUIET_START` | Quiet-hours start, 24h int — no auto-reply, messages queued | `1` (1 AM) |
+| `LANTERN_QUIET_END` | Quiet-hours end, 24h int | `6` (6 AM) |
+| `LANTERN_QUIET_QUEUE_MAX` | Max overnight queued messages per bridge | `200` |
+| `LANTERN_PROACTIVE_NUDGES` | Set `0` to disable anticipation nudges (overdue replies, upcoming dates, open commitments) | on |
+| `LANTERN_DRAFT_CONFIRM` | Set `0`/`off` to revert LOW-confidence replies from draft-to-owner back to 5s-hold-then-send | on |
+| `LANTERN_DISLIKE_LLM_CLUSTER` | Set `1` to enable LLM fuzzy clustering in the 👎 flywheel (costs tokens) | off |
+
+### Verifying quiet-hours + nudges
+
+```bash
+# Check that the quiet-hours window is what you expect (should print nothing in a quiet hour):
+curl -s http://localhost:3100/health | jq .quietHours
+
+# Tail the bridge log for nudge fires:
+tail -f ~/Library/Logs/Lantern/whatsapp-bridge.out.log | grep "nudge\|anticipation"
+```

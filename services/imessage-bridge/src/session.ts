@@ -80,6 +80,7 @@ import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-t
 import {
   detectLifeThreat,
   detectPromptInjection,
+  detectNonEnglishInjectionRisk,
   detectRelayPromise,
   refusalReply as escalationRefusalReply,
 } from "@lantern/bridge-core/escalation-detector";
@@ -876,6 +877,7 @@ export class IMessageSession {
       writeFileSync(
         this.firedNudgesPath,
         JSON.stringify({ fired: Object.fromEntries(this.firedNudges) }),
+        { mode: 0o600 },
       );
       try { chmodSync(this.firedNudgesPath, 0o600); } catch { /* best-effort */ }
     } catch (err) {
@@ -1416,7 +1418,9 @@ export class IMessageSession {
       this.bridgeSendsPersistTimer = null;
       if (!this.bridgeSendsDirty) return;
       try {
-        writeFileSync(this.bridgeSendsPersistPath, JSON.stringify({ sends: this.recentBridgeSends }));
+        // sent.json holds reply text = PII at rest. Owner-only (0600).
+        writeFileSync(this.bridgeSendsPersistPath, JSON.stringify({ sends: this.recentBridgeSends }), { mode: 0o600 });
+        try { chmodSync(this.bridgeSendsPersistPath, 0o600); } catch {}
         this.bridgeSendsDirty = false;
       } catch (err) {
         this.logger.warn({ err }, "failed to persist bridge-send dedup");
@@ -1458,7 +1462,10 @@ export class IMessageSession {
     if (!this.replyMetaPersistPath || !guid) return;
     try {
       const line = JSON.stringify({ guid, meta }) + "\n";
-      appendFileSync(this.replyMetaPersistPath, line);
+      // Sidecar holds inbound + reply text = PII at rest. Owner-only (0600).
+      const fresh = !existsSync(this.replyMetaPersistPath);
+      appendFileSync(this.replyMetaPersistPath, line, { mode: 0o600 });
+      if (fresh) { try { chmodSync(this.replyMetaPersistPath, 0o600); } catch {} }
       // Trim: rewrite keeping only the last N lines so the file can't
       // grow unbounded. Cheap — the file is capped to ~200 short lines.
       const raw = readFileSync(this.replyMetaPersistPath, "utf-8");
@@ -1467,7 +1474,9 @@ export class IMessageSession {
         writeFileSync(
           this.replyMetaPersistPath,
           lines.slice(-IMessageSession.REPLY_META_SIDECAR_MAX).join("\n") + "\n",
+          { mode: 0o600 },
         );
+        try { chmodSync(this.replyMetaPersistPath, 0o600); } catch {}
       }
     } catch (err) {
       this.logger.warn({ err }, "failed to persist reply-meta sidecar");
@@ -2249,6 +2258,12 @@ export class IMessageSession {
     // SAFETY GUARDS — run BEFORE the LLM. Hard-fail on
     // life-threat + prompt-injection. See escalation-detector.ts.
     // ─────────────────────────────────────────────────────
+    // Soft caution: a non-English inbound from a NON-owner contact that
+    // the deterministic injection patterns can't read. We don't refuse
+    // (the message may be perfectly benign in another language) — we
+    // force the reply through draft-for-owner-approval (LOW tier) so the
+    // owner is the judge. Deterministic, no LLM on the hot path.
+    let forceDraftCaution = false;
     if (!isGroup) {
       const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
       const lifeThreat = detectLifeThreat(text);
@@ -2293,6 +2308,26 @@ export class IMessageSession {
           this.logger.error({ err }, "prompt-injection refusal send failed (imessage)");
         }
         return;
+      }
+      // Non-English fallback: no English/Telugu pattern fired, but the
+      // message isn't English and the sender isn't the owner. Route to
+      // draft (don't refuse, don't auto-send).
+      if (!this.isOwnerChatRow(row)) {
+        const langHintForCaution = detectLanguageHints(text);
+        const caution = detectNonEnglishInjectionRisk({
+          text,
+          isOwner: false,
+          alreadyMatched: false,
+          languagePrimary: langHintForCaution.primary,
+          languageConfidence: langHintForCaution.confidence,
+        });
+        if (caution) {
+          forceDraftCaution = true;
+          this.logger.info(
+            { from: row.handle, reason: caution.reason },
+            "🛡 non-English injection fallback (iMessage) — forcing draft-for-approval",
+          );
+        }
       }
     }
 
@@ -2703,12 +2738,20 @@ export class IMessageSession {
       hasPriorSamples: ownerSamples.length > 0,
       hasPriorDislikes: dislikeEntries.length > 0,
     });
+    // Non-English injection fallback forces the riskiest tier so the
+    // reply is drafted for owner approval, never auto-sent. Mutate the
+    // verdict in place so every downstream tier check (draft, hold,
+    // medium-ping) sees LOW consistently.
+    if (forceDraftCaution && tier.tier !== "LOW") {
+      tier.tier = "LOW";
+      tier.reasons.push("-non-english-injection-fallback");
+    }
     this.logger.info({ jid: row.handle, tier: tierBadge(tier) }, "reply confidence");
     // DRAFT-AND-CONFIRM for Tier-C (LOW-confidence / sensitive) replies —
     // the default. Hold the draft and DM it to the owner for one-tap
     // approval instead of auto-sending after a blind 5s window. Disable
     // with LANTERN_DRAFT_CONFIRM=0 to restore the hold-then-send behavior.
-    if (tier.tier === "LOW" && IMessageSession.DRAFT_CONFIRM_DEFAULT && !isGroup) {
+    if (tier.tier === "LOW" && (IMessageSession.DRAFT_CONFIRM_DEFAULT || forceDraftCaution) && !isGroup) {
       const held = await this.draftToOwnerForApproval(
         row.handle,
         this.contactLabel(row.handle),
@@ -2719,7 +2762,16 @@ export class IMessageSession {
         this.logger.info({ jid: row.handle }, "LOW-tier reply drafted to owner for approval");
         return;
       }
-      // Fall through to the legacy hold-then-send if we couldn't hold.
+      // For a security caution we must NOT fall through to hold-then-send
+      // — suppress the auto-reply entirely if we couldn't hold the draft.
+      if (forceDraftCaution) {
+        this.logger.warn(
+          { jid: row.handle },
+          "non-English injection fallback — draft hold failed, suppressing auto-reply",
+        );
+        return;
+      }
+      // Otherwise fall through to the legacy hold-then-send.
     }
     if (tier.tier === "LOW") {
       // Hold the draft and notify the owner. After the hold, send unless
@@ -4994,7 +5046,10 @@ export class IMessageSession {
         pushoverEnabled: this.pushoverEnabled,
         ownerSentHistory: Object.fromEntries(this.ownerSentHistory),
       };
-      writeFileSync(this.stateFile, JSON.stringify(data, null, 2));
+      // Holds ownerSentHistory (message text) + handles = PII at rest.
+      // Owner-only (0600).
+      writeFileSync(this.stateFile, JSON.stringify(data, null, 2), { mode: 0o600 });
+      try { chmodSync(this.stateFile, 0o600); } catch {}
     } catch (err) {
       this.logger.warn({ err }, "could not persist bot state");
     }
