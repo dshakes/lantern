@@ -249,3 +249,9 @@ test("HARNESS vault: contact-facing persona prompt contains NO vault secret", ()
     assert.ok(!persona.includes(secret), `contact persona LEAKS vault secret: ${secret}`);
   }
 });
+
+test("HARNESS state: persona forbids fabricating live physical state (did-you-eat)", () => {
+  const persona = agentPersonaPrompt(OWNER, STYLE, false, {} as never);
+  assert.ok(persona.includes("LIVE-STATE"), "live-state rule must be in the persona");
+  assert.match(persona, /thinnava|did you eat/i);
+});
