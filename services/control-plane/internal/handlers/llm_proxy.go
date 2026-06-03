@@ -172,6 +172,27 @@ func (h *LlmProxyHandler) resolveModelForTenant(ctx context.Context, tenantID, c
 	return resolveModel(capability)
 }
 
+// resolveModelForTenantAuto is the complexity-aware variant used by the tool
+// loop. When LANTERN_COMPLEXITY_ROUTING=1 it classifies the turn and routes to
+// the cheapest model that can handle it; otherwise it falls back to the normal
+// balanced scorer. The hint string is the value of X-Lantern-Turn-Hint (empty
+// when not provided).
+func (h *LlmProxyHandler) resolveModelForTenantAuto(
+	ctx context.Context,
+	tenantID string,
+	messages []map[string]any,
+	hasTools bool,
+	hint string,
+) (string, string) {
+	hasAnthropic := h.providerAvailable(ctx, tenantID, "anthropic")
+	hasOpenAI := h.providerAvailable(ctx, tenantID, "openai")
+	if complexityRoutingEnabled() {
+		tier := classifyTurnComplexity(messages, hasTools, hint)
+		return resolveModelForComplexity(tier, hasAnthropic, hasOpenAI)
+	}
+	return resolveAutoModel(hasAnthropic, hasOpenAI)
+}
+
 // claudeCodeBinary returns the resolved `claude` binary path when local
 // Claude Code routing is enabled, otherwise empty. Gated by an explicit
 // env var so prod can't accidentally route through a dev tool.
@@ -2008,6 +2029,9 @@ func (h *LlmProxyHandler) callLLMWithTools(
 		maxTurns = maxToolTurnsEnv()
 	}
 
+	// G4: inject planning hint when turn looks multi-step (no-op when flag off).
+	messages = injectPlannerIfNeeded(messages)
+
 	// Local working copy of messages; we append assistant + tool messages
 	// as we loop.
 	msgs := append([]map[string]any{}, messages...)
@@ -2241,6 +2265,9 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 		// worst case without inviting runaway loops.
 		maxTurns = 12
 	}
+
+	// G4: inject planning hint when turn looks multi-step (no-op when flag off).
+	messages = injectPlannerIfNeeded(messages)
 
 	// Pull the system message out — Anthropic wants it as a top-level field.
 	var systemPrompt string
@@ -2660,6 +2687,8 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 			if onAttempt != nil {
 				onAttempt(candidateAttempt{Provider: cand.Provider, Model: cand.Model})
 			}
+			// G3: soften any unbacked completion claims before returning.
+			text = rewriteUnbackedClaims(text, invs, h.logger())
 			return text, invs, cand.Provider, cand.Model, tin, tout, nil
 		}
 		lastErr = callErr

@@ -122,6 +122,19 @@ export class DislikeMemory {
     return bucket.slice(0, limit);
   }
 
+  /**
+   * Return ALL dislike entries across every contact, newest first. Used
+   * by the consolidator to mine GENERAL style lessons (patterns that
+   * recur across contacts, not just one thread). Capped to `limit`.
+   */
+  async all(limit = 500): Promise<DislikeEntry[]> {
+    await this.refreshIfStale();
+    const out: DislikeEntry[] = [];
+    for (const bucket of this.cache?.values() ?? []) out.push(...bucket);
+    out.sort((a, b) => b.ts - a.ts);
+    return out.slice(0, limit);
+  }
+
   private async refreshIfStale(): Promise<void> {
     const now = Date.now();
     if (this.cache && now - this.cachedAt < DislikeMemory.CACHE_TTL_MS) return;

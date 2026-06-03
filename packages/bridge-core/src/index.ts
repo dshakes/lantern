@@ -15,3 +15,7 @@ export * from "./voice-commands.js";
 export * from "./daily-digest.js";
 export * from "./offline-monitor.js";
 export * from "./personal-docs.js";
+export * from "./dislike-memory.js";
+export * from "./dislike-consolidator.js";
+export * from "./owner-profile-auto-update.js";
+export * from "./contact-priority.js";
