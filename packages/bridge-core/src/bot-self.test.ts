@@ -49,6 +49,23 @@ const BOT_TEXTS = [
   "i'm having authentication issues with your google services.",
   "I can search your files, but I need to use a tool that's not currently attached",
   "I can't access your emails or calendar from here",
+  // From the 2026-06-02 self-chat doubling bug: call orchestration output
+  // echoed back as fresh queries → doubled "Conference call…" texts.
+  "📞 Conference call: dial you (+15126088977), ask if free, bridge you in\n🟡 TIER B — known contact: you\n💸 est. ~$0.08\n\n*Reply \"yes\" to dial (offer expires in 10 min) · \"no\" to cancel.*",
+  "📞 Conference call: dial +16303475128, ask if free, bridge you in\n🔴 TIER C — unknown destination, no contact record",
+  "📞 Voicemail to Manu: I'll have him call you back",
+  "📞 Agent task call to the clinic: confirm the appointment",
+  "📞 dialing Manu now — your phone will ring",
+  "📞 calling Raju: ask about the invoice",
+  "📞 couldn't place call: couldn't resolve \"manu\" to a phone. try the full name, or paste a phone number directly",
+  "(couldn't place call: unknown)",
+  "(can't place the call — orchestrator deps missing, ask me again)",
+  "(call failed — Twilio 400)",
+  "🧠 thinking…",
+  "🧪 iMessage diagnostic — if you see this in chat, polling works",
+  // Call-flow model output that echoed back as a fake query.
+  "Sorry, I can't actually make calls directly from here.",
+  "got it, i'll call her via the twilio number",
 ];
 
 const USER_TEXTS = [
@@ -66,6 +83,15 @@ const USER_TEXTS = [
   "No thanks",
   "ok",
   "Status",
+  // Real call requests from the owner — MUST still route to the pipeline,
+  // not be swallowed as bot-self output.
+  "call manu",
+  "call raju about the invoice",
+  "can you call the dentist and confirm my appointment",
+  "ring mom for me",
+  // A contact's own message that mentions calling — must stay routable.
+  "call me back when you're free",
+  "give me a call via the office line later",
 ];
 
 test("bot-self: every known bot output matches", () => {
