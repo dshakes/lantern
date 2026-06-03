@@ -13,6 +13,10 @@ import { readFileSync, existsSync } from "fs";
 import type { Logger } from "pino";
 
 import { authedFetch } from "@lantern/bridge-core/auth";
+import {
+  voiceTranscriptionLangHint,
+  looksGarbledTranscript,
+} from "@lantern/bridge-core/language";
 import type { Attachment } from "./chat-db.js";
 
 export interface MediaAnnotation {
@@ -20,12 +24,21 @@ export interface MediaAnnotation {
   ok: boolean;
   kind: "voice" | "image" | "video" | "other";
   mime?: string;
+  // True when media arrived but could not be understood (transcription
+  // mis-decoded / low-confidence). Caller should degrade to a human ack
+  // instead of feeding syntheticText (kept empty) to the LLM. Parity with
+  // the WhatsApp bridge's MediaAnnotation.
+  degraded?: boolean;
 }
 
 export class MediaHandler {
   private logger: Logger;
-  constructor(logger: Logger) {
+  // Optional getter for the owner's nativity (owner profile) — biases the
+  // Whisper language hint without extra config. Parity with WA bridge.
+  private nativity: () => string;
+  constructor(logger: Logger, nativity?: () => string) {
     this.logger = logger.child({ component: "media" });
+    this.nativity = nativity ?? (() => "");
   }
 
   // Classify by MIME type. iMessage stores voice notes as audio/x-caf
@@ -82,16 +95,25 @@ export class MediaHandler {
       : mime?.includes("mp4") || mime?.includes("m4a")
         ? "voice.m4a"
         : "voice.m4a";
+    // LANGUAGE BIAS: see whatsapp-bridge/src/media.ts — Whisper mis-decodes
+    // low-resource South-Asian speech (Telangana Telugu → Kannada script).
+    // Pass an explicit ISO `language` + script-priming `prompt`.
+    const langHint = voiceTranscriptionLangHint({ nativity: this.nativity() });
     try {
       const res = await authedFetch("/v1/audio/transcriptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ audioBase64: buf.toString("base64"), filename }),
+        body: JSON.stringify({
+          audioBase64: buf.toString("base64"),
+          filename,
+          ...(langHint.iso ? { language: langHint.iso } : {}),
+          ...(langHint.prompt ? { prompt: langHint.prompt } : {}),
+        }),
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         this.logger.warn({ status: res.status, body: body.slice(0, 200) }, "transcription proxy failed");
-        const fallback = await this.transcribeVoiceDirect(buf, mime, filename);
+        const fallback = await this.transcribeVoiceDirect(buf, mime, filename, langHint);
         if (fallback) return fallback;
         return {
           ok: false,
@@ -105,27 +127,52 @@ export class MediaHandler {
       if (!transcript) {
         return { ok: false, kind: "voice", mime, syntheticText: "[voice note — empty transcription]" };
       }
-      // Annotate so the LLM knows this came from a voice note and can
-      // mirror the casual register a voice message implies.
-      return { ok: true, kind: "voice", mime, syntheticText: `[voice note transcribed] ${transcript}` };
+      return this.finalizeTranscript(transcript, langHint.lang, mime);
     } catch (err) {
       this.logger.warn({ err }, "transcription proxy exception");
-      const fallback = await this.transcribeVoiceDirect(buf, mime, filename);
+      const fallback = await this.transcribeVoiceDirect(buf, mime, filename, langHint);
       if (fallback) return fallback;
       return { ok: false, kind: "voice", mime, syntheticText: "[voice note — transcription errored]" };
     }
   }
 
+  // Quality gate shared by the proxy + direct paths. A mis-decoded transcript
+  // (wrong script, e.g. Telugu→Kannada) is marked `degraded` with EMPTY
+  // syntheticText so the caller degrades to a human ack instead of feeding
+  // garbage to the LLM (which would emit a "garbled transcription" meta reply
+  // that then gets suppressed → dead silence). No transcript text is logged
+  // (PII). Parity with the WhatsApp bridge.
+  private finalizeTranscript(
+    transcript: string,
+    expectedLang: Parameters<typeof looksGarbledTranscript>[1],
+    mime?: string,
+  ): MediaAnnotation {
+    if (looksGarbledTranscript(transcript, expectedLang)) {
+      this.logger.warn({ expectedLang, len: transcript.length }, "voice transcript looks garbled — degrading to ack");
+      return { ok: false, kind: "voice", mime, degraded: true, syntheticText: "" };
+    }
+    // Annotate so the LLM knows this came from a voice note and can
+    // mirror the casual register a voice message implies.
+    return { ok: true, kind: "voice", mime, syntheticText: `[voice note transcribed] ${transcript}` };
+  }
+
   // Offline/dev fallback: call OpenAI Whisper directly when a raw key is in
   // the env. Returns null when no key is set so the caller can surface a
   // clear "add a key" message. Not the prod path — see transcribeVoice.
-  private async transcribeVoiceDirect(buf: Buffer, mime: string | undefined, filename: string): Promise<MediaAnnotation | null> {
+  private async transcribeVoiceDirect(
+    buf: Buffer,
+    mime: string | undefined,
+    filename: string,
+    langHint: ReturnType<typeof voiceTranscriptionLangHint>,
+  ): Promise<MediaAnnotation | null> {
     const apiKey = process.env.OPENAI_API_KEY || process.env.LANTERN_OPENAI_API_KEY;
     if (!apiKey) return null;
     try {
       const form = new FormData();
       form.append("file", new Blob([new Uint8Array(buf)], { type: mime || "audio/m4a" }), filename);
       form.append("model", "whisper-1");
+      if (langHint.iso) form.append("language", langHint.iso);
+      if (langHint.prompt) form.append("prompt", langHint.prompt);
       const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}` },
@@ -135,32 +182,28 @@ export class MediaHandler {
       const data = (await res.json()) as { text?: string };
       const transcript = (data.text || "").trim();
       if (!transcript) return null;
-      return { ok: true, kind: "voice", mime, syntheticText: `[voice note transcribed] ${transcript}` };
+      return this.finalizeTranscript(transcript, langHint.lang, mime);
     } catch {
       return null;
     }
   }
 
   private async describeImage(buf: Buffer, mime?: string): Promise<MediaAnnotation> {
+    // Describe via the control-plane vision endpoint (POST /v1/vision/ocr),
+    // which takes a `{ imageDataUrl, prompt }` JSON body. We previously POSTed
+    // a multimodal `messages` array to /v1/completions, but that handler types
+    // message content as a plain string, so the array body failed to decode →
+    // HTTP 400 "invalid request body". /v1/vision/ocr is the right contract.
+    // Parity with the WhatsApp bridge.
     const b64 = buf.toString("base64");
     const useType = mime || "image/jpeg";
     try {
-      const res = await authedFetch("/v1/completions", {
+      const res = await authedFetch("/v1/vision/ocr", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "auto",
-          messages: [
-            { role: "system", content: "You describe images sent in a personal chat in 1-2 short plain sentences. Lowercase, no preamble, no guesses about intent." },
-            {
-              role: "user",
-              content: [
-                { type: "image_url", image_url: { url: `data:${useType};base64,${b64}` } },
-                { type: "text", text: "describe this:" },
-              ],
-            },
-          ],
-          max_tokens: 120,
+          imageDataUrl: `data:${useType};base64,${b64}`,
+          prompt: "Describe this image sent in a personal chat in 1-2 short plain lowercase sentences. No preamble, no guesses about intent. If it contains text, include it.",
         }),
       });
       if (!res.ok) {
@@ -168,11 +211,8 @@ export class MediaHandler {
         this.logger.warn({ status: res.status, body: body.slice(0, 200) }, "vision failed");
         return { ok: false, kind: "image", mime, syntheticText: "[image — couldn't describe]" };
       }
-      const data = (await res.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
-        content?: string;
-      };
-      const desc = data.choices?.[0]?.message?.content?.trim() || data.content?.trim() || "";
+      const data = (await res.json()) as { text?: string };
+      const desc = (data.text || "").trim();
       if (!desc) return { ok: false, kind: "image", mime, syntheticText: "[image]" };
       return { ok: true, kind: "image", mime, syntheticText: `[image — looks like: ${desc}]` };
     } catch (err) {

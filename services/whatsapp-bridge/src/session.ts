@@ -1329,7 +1329,7 @@ export class WhatsAppSession {
       sessionsFile: join(this.authDir, "agent_sessions.json"),
     });
     this.attention = new AttentionClassifier(this.logger);
-    this.media = new MediaHandler(this.logger);
+    this.media = new MediaHandler(this.logger, () => this.ownerProfileStore.nativity());
     this.personal = new PersonalClient(this.logger);
     this.calendar = new CalendarLookup(this.logger);
     this.ownerProfileStore = new OwnerProfileStore(this.logger);
@@ -1906,6 +1906,22 @@ export class WhatsAppSession {
           const from = msg.key.remoteJid || "";
           if (!from) continue;
 
+          // BROADCAST HARD-SKIP (earliest possible point). WhatsApp Status
+          // updates (status@broadcast) and newsletters are one-way posts,
+          // not messages addressed to the owner. Skipping here — before any
+          // media handling — ensures Status photos/voice never hit the
+          // vision/transcription endpoints (cost + noise) and never spam the
+          // self-chat. (A later attention-side guard also exists, but media
+          // annotation ran before it.)
+          if (
+            from === "status@broadcast" ||
+            from.endsWith("@broadcast") ||
+            from.endsWith("@newsletter")
+          ) {
+            this.logger.debug({ from }, "skipping broadcast JID (status/newsletter)");
+            continue;
+          }
+
           // KILL SWITCH gate. When engaged the bridge IGNORES
           // everything except a "kill switch off" command from the
           // owner's self-chat. We parse early — before bodyguard
@@ -2203,6 +2219,27 @@ export class WhatsAppSession {
           // pipeline so the LLM sees the synthetic text.
           if (!msg.key.fromMe && !text && this.media.hasMedia(msg)) {
             const annotation = await this.media.annotate(msg);
+            // GARBLED VOICE NOTE: transcription mis-decoded (e.g. Telugu came
+            // back as Kannada script). Do NOT feed garbage to the LLM — it
+            // would reply "your transcription is garbled", which then gets
+            // suppressed → dead silence to the contact. Instead degrade to a
+            // brief, warm human ack (+ a 🙏 reaction) so they still hear back.
+            // No transcript text is read/logged here (PII).
+            if (annotation.degraded && annotation.kind === "voice") {
+              this.logger.info({ jid: from }, "voice note un-transcribable — sending human ack");
+              await this.sendReaction(from, msg.key, "🙏").catch(() => {});
+              const ack = this.isOwnerChat(from)
+                ? "🎙️ got your voice note — couldn't quite make it out, mind typing it?"
+                : "got your voice note 🙏 will listen properly and get back to you";
+              await this.sendMessage(from, ack).catch((err) =>
+                this.logger.warn({ err, jid: from }, "voice-note ack send failed"),
+              );
+              this.broadcast({
+                type: "activity",
+                data: { kind: "system", summary: "🎙️ voice note un-transcribable — acked", jid: from, pushName: msg.pushName, timestamp: Date.now() },
+              });
+              continue;
+            }
             if (annotation.syntheticText) {
               text = annotation.syntheticText;
               // Broadcast a separate activity event so the dashboard
