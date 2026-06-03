@@ -1182,7 +1182,11 @@ export class WhatsAppSession {
   // the agent learns "my voice" from real history. Capped per-contact;
   // persisted with state so the buffer survives restarts.
   private ownerSentHistory: Map<string, string[]> = new Map();
-  private static readonly OWNER_SENT_PER_CONTACT = 10;
+  // Raised from 10 → 30: frequent contacts need enough verbatim voice
+  // samples for the persona few-shot to read as the owner, not a bot.
+  // Still bounded per-contact so total memory stays small (≤30 short
+  // strings × #contacts).
+  private static readonly OWNER_SENT_PER_CONTACT = 30;
   // Ring buffer of the bot's own recent OUTBOUND replies per contact jid.
   // Fed to the persona prompt as an anti-repetition signal so the bot
   // never sends the same canned line three times in a thread. In-memory;
@@ -1242,6 +1246,12 @@ export class WhatsAppSession {
       }
     }
     this.loadState();
+    // Cold-start voice mining: loadState only restores owner samples
+    // captured AFTER a prior boot, so on a fresh install (or a thin
+    // buffer) the persona has no "my voice" exemplars. Back-fill each
+    // contact's ring from the ~14-day wa-history.jsonl the bridge
+    // already keeps. Best-effort, synchronous-but-cheap, never throws.
+    this.seedOwnerSentFromHistory();
     // Reply-meta sidecar: load prior tracked replies so a 👎 / 🔁 that
     // lands after a restart can still regenerate. Bounded; best-effort.
     this.replyMetaFile = join(homedir(), ".lantern", "whatsapp-reply-meta.jsonl");
@@ -6087,6 +6097,92 @@ export class WhatsAppSession {
     bucket.push(text);
     if (bucket.length > WhatsAppSession.INBOUND_HISTORY_PER_CONTACT) {
       bucket.splice(0, bucket.length - WhatsAppSession.INBOUND_HISTORY_PER_CONTACT);
+    }
+  }
+
+  // Cold-start voice corpus: pre-seed ownerSentHistory per JID from the
+  // owner's real sent messages in wa-history.jsonl (the ~14-day Baileys
+  // backfill). Without this, every contact bucket is empty on boot until
+  // the owner happens to type to them again, so the bot has no verbatim
+  // voice samples and reads as a generic assistant. fromMe 1:1 entries
+  // only — groups and bot-self echoes are excluded. Best-effort and
+  // non-blocking: any failure is logged and swallowed so boot continues.
+  // PRIVACY: logs counts only, never message text.
+  private seedOwnerSentFromHistory(): void {
+    try {
+      if (!this.historyFile || !existsSync(this.historyFile)) return;
+      const cap = WhatsAppSession.OWNER_SENT_PER_CONTACT;
+      // Group fromMe samples per jid, preserving file order (oldest →
+      // newest, since history is appended chronologically).
+      const byJid = new Map<string, string[]>();
+      const raw = readFileSync(this.historyFile, "utf-8");
+      for (const line of raw.split("\n")) {
+        if (!line) continue;
+        let e: {
+          jid?: string;
+          isGroup?: boolean;
+          fromMe?: boolean;
+          text?: string;
+        };
+        try {
+          e = JSON.parse(line);
+        } catch {
+          continue; // malformed line — skip
+        }
+        if (!e.fromMe || e.isGroup) continue;
+        const jid = e.jid || "";
+        if (!jid || this.isGroupJid(jid)) continue;
+        const t = (e.text || "").trim();
+        // Mirror rememberOwnerSent's bounds + bot-self guard so seeded
+        // samples are indistinguishable from live-captured ones.
+        if (!t || t.length > 280) continue;
+        if (isBotSelfMessage(t)) continue;
+        let arr = byJid.get(jid);
+        if (!arr) {
+          arr = [];
+          byJid.set(jid, arr);
+        }
+        arr.push(t);
+      }
+
+      let seededContacts = 0;
+      let seededSamples = 0;
+      for (const [jid, samples] of byJid) {
+        let bucket = this.ownerSentHistory.get(jid);
+        if (!bucket) {
+          bucket = [];
+          this.ownerSentHistory.set(jid, bucket);
+        }
+        if (bucket.length >= cap) continue;
+        // Fill remaining room with the most RECENT history samples
+        // (tail of the chronological list), skipping any the live
+        // buffer already holds. Newest-last so verbatim order matches
+        // how rememberOwnerSent appends.
+        const existing = new Set(bucket);
+        const room = cap - bucket.length;
+        const fresh: string[] = [];
+        for (let i = samples.length - 1; i >= 0 && fresh.length < room; i--) {
+          const s = samples[i];
+          if (existing.has(s)) continue;
+          existing.add(s);
+          fresh.push(s);
+        }
+        if (fresh.length === 0) continue;
+        fresh.reverse(); // restore chronological (oldest → newest)
+        bucket.unshift(...fresh);
+        seededContacts++;
+        seededSamples += fresh.length;
+      }
+
+      if (seededSamples > 0) {
+        this.saveState();
+        this.logger.info(
+          { seededContacts, seededSamples, cap },
+          "owner voice corpus seeded from wa-history",
+        );
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "owner voice seed from wa-history failed (continuing)");
     }
   }
 

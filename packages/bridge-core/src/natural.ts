@@ -346,6 +346,47 @@ export interface PersonaOptions {
   recentBotReplies?: string[];
 }
 
+// Telugu kinship terms → English register cues. The relationship string
+// sometimes carries a raw kinship label ("bava", "anna") that the model
+// can't read for tone. Map it to a register description so the reply lands
+// at the right warmth/familiarity. Matched case-insensitively as a
+// whole-word in the relationship string; first match wins.
+const KINSHIP_REGISTER_CUES: { term: string; cue: string }[] = [
+  {
+    term: "bava",
+    cue: "close male in-law (brother-in-law / cousin-in-law) — warm, terse, joking is fine.",
+  },
+  {
+    term: "anna",
+    cue: "elder brother / older male — warm and respectful, but still casual and short.",
+  },
+  {
+    term: "akka",
+    cue: "elder sister / older female — warm and affectionate, casual, short.",
+  },
+  {
+    term: "vadina",
+    cue: "elder brother's wife (sister-in-law) — warm, friendly, light teasing is fine.",
+  },
+  {
+    term: "vodina",
+    cue: "elder brother's wife (sister-in-law) — warm, friendly, light teasing is fine.",
+  },
+];
+
+/** Map a known Telugu kinship term in the relationship string to an
+ *  English register cue. Returns null when no kinship term is present.
+ *  Exported for tests. */
+export function kinshipRegisterCue(relationship: string): string | null {
+  const rel = (relationship || "").toLowerCase();
+  for (const { term, cue } of KINSHIP_REGISTER_CUES) {
+    if (new RegExp(`\\b${term}\\b`, "i").test(rel)) {
+      return `Relationship register: "${term}" means ${cue}`;
+    }
+  }
+  return null;
+}
+
 export function agentPersonaPrompt(
   ownerName: string,
   style: StyleProfile,
@@ -467,6 +508,13 @@ export function agentPersonaPrompt(
     lines.push(
       `Your relationship with this contact: ${rel}. Match the tone you'd use with ${rel} — warmth, length, and vocabulary should fit that relationship, not a generic register.`,
     );
+    // Telugu kinship labels ("bava", "anna") are opaque tokens to the model
+    // and don't convey register on their own. Map any known kinship term in
+    // the relationship string to an English register cue so the model
+    // writes the right tone. This does NOT change address rules (never-call
+    // etc. live in addressRule below) — it's purely a tone hint.
+    const registerCue = kinshipRegisterCue(rel);
+    if (registerCue) lines.push(registerCue);
   }
 
   // Per-contact addressing rule — what to call this contact, and the
@@ -489,7 +537,9 @@ export function agentPersonaPrompt(
   const samples = (opts.ownerSamples ?? [])
     .map((s) => s.trim())
     .filter((s) => s.length > 0 && s.length <= 280)
-    .slice(-8);
+    // Last 12 (was 8) for more voice signal. Each sample is ≤280 chars and
+    // these are short texts, so the token budget stays modest.
+    .slice(-12);
   if (samples.length > 0) {
     lines.push(``);
     lines.push(
@@ -683,7 +733,117 @@ const CHATBOT_PATTERNS: { re: RegExp; reason: string }[] = [
     re: /\b(?:i\s+apologize|my\s+apologies|sorry\s+for\s+the\s+(?:confusion|inconvenience|delay))\b/i,
     reason: "corporate apology",
   },
+  // LLM-cadence tells. No human texts with an em-dash, and these
+  // bright-cheery assistant-isms ("sounds good!", "absolutely!") are the
+  // owner's stated never-words (owner-profile.md: 'never "certainly" or
+  // "sounds good!"'). Each is a single-token enthusiasm burst the model
+  // emits when it slips back into chatbot register.
+  {
+    re: /—/,
+    reason: "em-dash (no human texts with em-dashes)",
+  },
+  {
+    re: /\b(?:sounds\s+good|absolutely|wonderful|that\s+works|perfect|awesome|sure\s+thing)!/i,
+    reason: "assistant enthusiasm burst",
+  },
+  {
+    re: /\b(?:happy\s+to\s+help|let\s+me\s+know\s+if\s+you\s+need\s+anything)\b/i,
+    reason: "assistant offer-of-help",
+  },
 ];
+
+// Romanized-Telugu bot-tells. The owner is a Telangana-dialect speaker who
+// (a) shortens verbs aggressively and (b) NEVER uses the "ra"/"ro"/"ay"/
+// "ayya"/"vora" end-particles. The persona prompt states these rules, but
+// the profile itself notes the model "keeps failing this" — so this is the
+// runtime net. We only flag the CLEARLY-bad long compound forms the
+// profile's BAD→GOOD list calls out; the GOOD short forms ("vasta",
+// "cheptha", "matladtham", "vacchaka") are deliberately NOT matched.
+//
+// Gated: these only suppress when the draft actually contains Romanized
+// Telugu tokens, so an English reply that happens to contain "ra" inside a
+// word (already \b-guarded) or an unrelated phrase never trips them.
+const TELUGU_LONG_FORM_PATTERNS: { re: RegExp; reason: string }[] = [
+  {
+    // "vacchina tarvata" / "vachi tarvata" — textbook "after coming".
+    // GOOD: "vasta", "vacchaka", "vacchaka matladtham".
+    re: /\bva(?:cchina|chi)\s+tar?vata\b/i,
+    reason: "textbook Telugu long form (vacchina tarvata)",
+  },
+  {
+    // First-person verb endings in "-tanu"/"-edanu"/"-thanu" that the
+    // owner shortens to "-ta"/"-tha". Covers cheptanu/cheppedanu,
+    // matladutanu, chustanu, vasthanu/vachedanu.
+    re: /\b(?:cheptanu|cheppedanu|matladutanu|chustanu|vasthanu|vachedanu)\b/i,
+    reason: "textbook Telugu -tanu/-edanu verb (use short -ta form)",
+  },
+  {
+    // "-dham"/"-kundam" hortatives ("let's …") the owner avoids:
+    // matladudham, matladkundam, chuddam.
+    re: /\b(?:matladudham|matladkundam|chuddam)\b/i,
+    reason: "textbook Telugu hortative (use short form)",
+  },
+  {
+    // "don't know" long forms — telidanduku / teliyadhu. GOOD: telidu,
+    // thelvadu.
+    re: /\b(?:telidanduku|teliyadhu)\b/i,
+    reason: "textbook Telugu 'don't know' (use telidu/thelvadu)",
+  },
+  {
+    // "should give" long form — ivvalsindi. GOOD: iyyali/ivali.
+    re: /\bivvalsindi\b/i,
+    reason: "textbook Telugu 'should give' (use iyyali/ivali)",
+  },
+];
+
+// End-particles the owner never uses on Romanized Telugu: trailing
+// "ra"/"ro"/"ay"/"ayya"/"vora" at the end of a clause (before terminal
+// punctuation or a clause break). \b-guarded so "library" / "metro" /
+// "okay" / "stay" never match — those end in the letters but aren't the
+// standalone particle (preceded by another letter, no word boundary).
+const TELUGU_END_PARTICLE_RE =
+  /\b(?:ra|ro|ay|ayya|vora)\s*(?:[.!?,…]|$)/i;
+
+// Romanized-Telugu presence check — gate the particle detector so it only
+// fires inside an actually-Telugu reply. Reuses the vocabulary the
+// verb-length rules reference plus the dialect markers from the profile.
+const TELUGU_PRESENCE_TOKENS = new Set([
+  "vasta","vacchaka","vacchina","cheptha","cheptanu","cheppedanu",
+  "matladta","matladtham","matladutanu","matladudham","matladkundam",
+  "chustha","chustanu","chuddam","ostha","vasthanu","vachedanu",
+  "ela","undi","unnav","unnaru","unnara","ostunnav","ostunnaru",
+  "thelvadu","telidu","telidanduku","teliyadhu","ledu","ledhu","leda",
+  "iyyali","ivali","ivvalsindi","kavali","emi","enti","emaindi",
+  "cheppu","cheppara","sare","tappakunda","koncham","ekkada","epudu",
+  "baagunnav","repu","ravali","chesthunnav","em","chestunnav","vacchinaru",
+  "anna","akka","vadina","bava","amma","abbayi","ammayi",
+]);
+
+function hasTeluguTokens(text: string): boolean {
+  if (/[ఀ-౿]/.test(text)) return true; // native Telugu script
+  const tokens = text.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+  for (const t of tokens) if (TELUGU_PRESENCE_TOKENS.has(t)) return true;
+  return false;
+}
+
+/** Scan a draft for Telangana-dialect bot-tells. Returns a reason string
+ *  when the draft should be suppressed, or null when clean. Exported for
+ *  focused tests. */
+export function detectTeluguBotTell(draft: string): string | null {
+  const text = (draft || "").trim();
+  if (!text) return null;
+  // Long compound forms are unambiguous regardless of surrounding language
+  // — they're textbook Telugu words a human Telangana texter wouldn't type.
+  for (const { re, reason } of TELUGU_LONG_FORM_PATTERNS) {
+    if (re.test(text)) return reason;
+  }
+  // End-particles only count inside an actually-Telugu reply (otherwise an
+  // English "i'll stay" / "no way" could brush the \b-guarded particle).
+  if (hasTeluguTokens(text) && TELUGU_END_PARTICLE_RE.test(text)) {
+    return "Telugu end-particle (ra/ro/ay/ayya/vora — owner never uses these)";
+  }
+  return null;
+}
 
 // REASONING LEAK — the model emitted its internal deliberation about
 // WHETHER to reply (or how to behave) instead of an actual message, and
@@ -827,6 +987,11 @@ export function detectBotTells(draft: string): BotTellVerdict {
     if (lowered.includes(w))
       return { ok: false, reason: `AI tell-word "${w}"` };
   }
+
+  // Telangana-dialect tells: textbook long verb forms + the end-particles
+  // the owner never uses. Suppress so the draft regenerates.
+  const teluguTell = detectTeluguBotTell(text);
+  if (teluguTell) return { ok: false, reason: teluguTell };
 
   // Length sanity: a text message is a text message. >400 chars or
   // >3 line breaks reads as bot regardless of content.
@@ -972,6 +1137,10 @@ const ASSISTANT_OPENERS = [
   /^sure thing[!,]?\s+/i,
   /^as an ai[^.]*\.\s*/i,
   /^as a language model[^.]*\.\s*/i,
+  // Post-tool synthesis openers — after a tool call the model reverts to
+  // report-speak ("Based on the file…", "Here's what I found…"). A human
+  // just states the answer. Strip the opener so the reply lands clean.
+  /^(?:based on|according to|here'?s what|here'?s the|i found that|from the|looking at)\b\s*/i,
 ];
 
 const ASSISTANT_CLOSERS = [
