@@ -1326,12 +1326,14 @@ export class WhatsAppSession {
   private static readonly NUDGES_ENABLED =
     (process.env.LANTERN_PROACTIVE_NUDGES ?? "on").toLowerCase() !== "0" &&
     (process.env.LANTERN_PROACTIVE_NUDGES ?? "on").toLowerCase() !== "off";
-  // 3) Draft-and-confirm default for high-stakes replies. When on (default),
-  //    a LOW-confidence-tier contact reply is DRAFTED to the owner's self-chat
-  //    for approval instead of auto-sent after a silent hold. Disable with
-  //    LANTERN_DRAFT_HIGH_STAKES=off.
+  // 3) Draft-and-confirm for LOW-confidence replies. OPT-IN
+  //    (LANTERN_DRAFT_HIGH_STAKES=on) — default OFF. On-by-default silently
+  //    drafted normal short/cold-contact family messages instead of replying
+  //    ("bot isn't responding"). Off → LOW falls back to held-then-send so
+  //    benign messages get a reply; the targeted foreign-language
+  //    `forceDraftCaution` + PII/injection refusals still hold independently.
   private static readonly DRAFT_HIGH_STAKES =
-    (process.env.LANTERN_DRAFT_HIGH_STAKES ?? "on").toLowerCase() !== "off";
+    ["on", "1"].includes((process.env.LANTERN_DRAFT_HIGH_STAKES ?? "").toLowerCase());
 
   constructor(tenantId: string, logger: Logger) {
     this.tenantId = tenantId;

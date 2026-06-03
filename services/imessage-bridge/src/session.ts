@@ -494,12 +494,16 @@ export class IMessageSession {
     issuedAt: number;
   }> = new Map();
   private static readonly DRAFT_EDIT_TTL_MS = 10 * 60_000; // 10 min (WA parity)
-  // Draft-and-confirm default for high-stakes (LOW-confidence / sensitive)
-  // contact replies. ON by default; LANTERN_DRAFT_CONFIRM=0 disables (then
-  // LOW-confidence falls back to the prior held-then-send behavior).
+  // Draft-and-confirm for LOW-confidence contact replies. OPT-IN
+  // (LANTERN_DRAFT_CONFIRM=on) — default OFF. On-by-default silently drafted
+  // normal short/cold-contact family messages instead of replying, which read
+  // as "the bot isn't responding". With it off, LOW-confidence falls back to
+  // the held-then-send behavior so benign messages still get a reply; the
+  // targeted foreign-language `forceDraftCaution` and the PII/injection
+  // refusals still hold their replies independently.
   private static readonly DRAFT_CONFIRM_DEFAULT =
-    (process.env.LANTERN_DRAFT_CONFIRM || "").toLowerCase() !== "0" &&
-    (process.env.LANTERN_DRAFT_CONFIRM || "").toLowerCase() !== "off";
+    (process.env.LANTERN_DRAFT_CONFIRM || "").toLowerCase() === "on" ||
+    (process.env.LANTERN_DRAFT_CONFIRM || "").toLowerCase() === "1";
 
   // Futuristic helpers
   private agent: AgentClient;
