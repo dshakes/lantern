@@ -64,6 +64,26 @@ import {
   detectRelayPromise,
   refusalReply as escalationRefusalReply,
 } from "@lantern/bridge-core/escalation-detector";
+// Proactive-intelligence layer (parity with the iMessage bridge):
+//   - anticipation: pure ranker that turns gathered signals (key dates,
+//     overdue replies, upcoming events) into owner-facing nudges.
+//   - dislike-consolidator: the learning flywheel — distils 👎 feedback
+//     into durable style lessons written into the owner profile.
+//   - contact-priority: shared scoring so a high-priority person's overdue
+//     reply / birthday outranks a cold contact's.
+import {
+  computeProactiveNudges,
+  formatNudgeForOwner,
+  type ProactiveNudge,
+  type AwaitingReplySignal,
+  type KeyDateSignal,
+  type UpcomingEventSignal,
+} from "@lantern/bridge-core/anticipation";
+import {
+  runDislikeConsolidation,
+  formatStyleLessonsBlock,
+} from "@lantern/bridge-core/dislike-consolidator";
+import { contactPriority, type ContactSignals } from "@lantern/bridge-core/contact-priority";
 import { extname } from "path";
 
 // MIME map for sendDocument — WhatsApp's UI shows a file-type icon
@@ -1247,6 +1267,41 @@ export class WhatsAppSession {
   // replaying the same queued messages.
   private overnightDraining = false;
 
+  // ── Proactive-intelligence layer (parity with the iMessage bridge) ──
+  //
+  // 1) Learning flywheel. Periodically distils the owner's 👎 feedback into
+  //    durable style lessons (written into the owner profile) and caches the
+  //    formatted block so EVERY persona prompt teaches the model what the
+  //    owner dislikes. Best-effort; runDislikeConsolidation never throws.
+  private flywheelTimer: ReturnType<typeof setInterval> | null = null;
+  // Cached, persona-ready style-lessons block. "" until the first flywheel
+  // tick lands. Read on every reply build; refreshed in place each tick.
+  private styleLessonsBlock = "";
+  private static readonly FLYWHEEL_INTERVAL_MS = 8 * 60 * 60_000; // 8h
+  // 2) Anticipation nudges. Periodically gathers signals (key dates, overdue
+  //    replies, upcoming events), ranks them via computeProactiveNudges, and
+  //    DMs the owner each NEW nudge — deduped, quiet-hours-aware, killswitch-
+  //    aware, capped. Gated by LANTERN_PROACTIVE_NUDGES (default on; =0 off).
+  private nudgesTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly NUDGE_INTERVAL_MS = 45 * 60_000; // 45 min
+  private static readonly NUDGE_QUIET_START_HOUR = 1; // 01:00 — defer nudges
+  private static readonly NUDGE_QUIET_END_HOUR = 6; // …until 06:00
+  private static readonly NUDGE_MAX_PER_TICK = 3; // never flood the owner
+  // dedupeKeys of already-fired nudges, persisted 0600 (the keys can embed a
+  // contact handle / event title — treat as PII). Bounded on save.
+  private firedNudgeKeys = new Set<string>();
+  private firedNudgeKeysFile = "";
+  private static readonly FIRED_NUDGE_KEYS_MAX = 500;
+  private static readonly NUDGES_ENABLED =
+    (process.env.LANTERN_PROACTIVE_NUDGES ?? "on").toLowerCase() !== "0" &&
+    (process.env.LANTERN_PROACTIVE_NUDGES ?? "on").toLowerCase() !== "off";
+  // 3) Draft-and-confirm default for high-stakes replies. When on (default),
+  //    a LOW-confidence-tier contact reply is DRAFTED to the owner's self-chat
+  //    for approval instead of auto-sent after a silent hold. Disable with
+  //    LANTERN_DRAFT_HIGH_STAKES=off.
+  private static readonly DRAFT_HIGH_STAKES =
+    (process.env.LANTERN_DRAFT_HIGH_STAKES ?? "on").toLowerCase() !== "off";
+
   constructor(tenantId: string, logger: Logger) {
     this.tenantId = tenantId;
     this.logger = logger.child({ tenant: tenantId });
@@ -1323,6 +1378,29 @@ export class WhatsAppSession {
       WhatsAppSession.OVERNIGHT_TICK_MS,
     );
     this.overnightTimer.unref?.();
+
+    // ── Proactive-intelligence schedulers ──────────────────────────────
+    // Persisted-fired-nudge dedupe set lives in ~/.lantern (survives a
+    // re-pair reset, like the reply-meta + overnight sidecars).
+    this.firedNudgeKeysFile = join(homedir(), ".lantern", "whatsapp-fired-nudges.json");
+    this.loadFiredNudgeKeys();
+    // Learning flywheel: distil 👎 feedback → style lessons every 8h.
+    this.flywheelTimer = setInterval(() => void this.runFlywheelTick(), WhatsAppSession.FLYWHEEL_INTERVAL_MS);
+    this.flywheelTimer.unref?.();
+    // Post-boot kick (~30s) so lessons are live shortly after start without
+    // waiting a full interval. Detached + caught; unref'd so it never holds
+    // the process open.
+    const flywheelKick = setTimeout(() => void this.runFlywheelTick(), 30_000);
+    flywheelKick.unref?.();
+    // Anticipation nudges: gather signals + DM new nudges every 45 min.
+    if (WhatsAppSession.NUDGES_ENABLED) {
+      this.nudgesTimer = setInterval(() => void this.runNudgeTick(), WhatsAppSession.NUDGE_INTERVAL_MS);
+      this.nudgesTimer.unref?.();
+      // Post-boot kick (~60s) — after the socket has had a moment to connect
+      // so sendSelf can land. Detached + caught + unref'd.
+      const nudgeKick = setTimeout(() => void this.runNudgeTick(), 60_000);
+      nudgeKick.unref?.();
+    }
   }
 
   private gcBridgeSentIds() {
@@ -5933,6 +6011,15 @@ export class WhatsAppSession {
         episodesBlock,
         relatedBlock,
         lowContext,
+        // Learning flywheel: teach the persona the owner's distilled style
+        // dislikes on every reply (refreshed by the flywheel scheduler).
+        styleLessonsBlock: this.styleLessonsBlock || undefined,
+        // Scheduling negotiation: let the persona propose/hold/confirm
+        // concrete times from the owner's free slots (reuses the [CALENDAR:]
+        // path on agreement). Work-hours guardrail still applies inside the
+        // persona. 1:1 only — never negotiate on the owner's behalf in groups.
+        schedulingEnabled: !opts.isGroup,
+        freeSlotsBlock: !opts.isGroup ? this.ownerFreeSlotsBlock() || undefined : undefined,
       }
     );
 
@@ -6161,6 +6248,43 @@ export class WhatsAppSession {
     });
     this.logger.info({ from, tier: tierBadge(tier) }, "wa reply confidence");
     if (tier.tier === "LOW" && !opts.isGroup) {
+      // DRAFT-AND-CONFIRM (high-stakes default, parity with iMessage). A
+      // LOW-confidence-tier reply to a contact is the riskiest auto-send: the
+      // model is least sure it sounds like the owner. By default we DRAFT it
+      // to the owner's self-chat for explicit approval (reusing the same draft
+      // queue as VIPs) rather than firing after a silent hold. The owner
+      // approves from the dashboard / self-chat and the reply goes out then.
+      // Disable with LANTERN_DRAFT_HIGH_STAKES=off to restore the old
+      // hold-then-send behavior.
+      if (WhatsAppSession.DRAFT_HIGH_STAKES) {
+        const queued = await this.personal.queueDraft(
+          from,
+          opts.senderName ?? this.contactNames.get(from) ?? undefined,
+          text,
+          draft,
+          { channel: "whatsapp" },
+        );
+        try {
+          await this.sendSelf(
+            `🟡 LOW-confidence draft to ${opts.senderName ?? from.split("@")[0]} — ${queued ? "queued for your approval" : "queue failed; not sent"}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}`,
+          );
+        } catch {}
+        this.broadcast({
+          type: "activity",
+          data: {
+            kind: "agent_skipped",
+            summary: queued
+              ? "draft queued for approval — LOW-confidence (high-stakes)"
+              : "LOW-confidence — auto-reply suppressed (queue failed)",
+            detail: draft.slice(0, 200),
+            jid: from,
+            pushName: opts.senderName,
+            timestamp: Date.now(),
+          },
+        });
+        this.logger.info({ from, queued: !!queued }, "LOW-confidence draft queued for approval");
+        return;
+      }
       // CONCURRENCY: this hold runs AFTER `respondTo` resolved, so the
       // AgentClient per-jid inflight lock (the only per-chat serialization
       // on the contact-reply path — `handleAgentReply` itself is launched
@@ -6541,6 +6665,217 @@ export class WhatsAppSession {
     this.saveState();
   }
 
+  // ── Proactive-intelligence helpers ──────────────────────────────────
+
+  // Learning flywheel tick. Distils the owner's 👎 feedback into durable
+  // style lessons (written into the owner profile) and refreshes the cached
+  // persona-ready block. Best-effort: runDislikeConsolidation NEVER throws,
+  // and this wrapper swallows anything else so the scheduler can call it
+  // blind. The fuzzy clustering pass routes its LLM call under a DISTINCT
+  // session key so it never queues behind a live foreground reply.
+  private async runFlywheelTick(): Promise<void> {
+    try {
+      const result = await runDislikeConsolidation({
+        memory: this.dislikeMemory,
+        profilePath: this.ownerProfileStore.getPath(),
+        invalidate: () => this.ownerProfileStore.invalidate(),
+        llmCall: async (prompt: string) => {
+          try {
+            const out = await this.agent.respondTo(
+              "dislike-flywheel",
+              prompt,
+              "",
+              { withTools: false },
+            );
+            return out || "";
+          } catch {
+            return "";
+          }
+        },
+        logger: this.logger,
+      });
+      if (result.ok) {
+        this.styleLessonsBlock = formatStyleLessonsBlock(result.lessons);
+        this.logger.info(
+          { lessons: result.count, added: result.added.length, updated: result.updated.length },
+          "wa dislike flywheel tick",
+        );
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "wa dislike flywheel tick failed (continuing)");
+    }
+  }
+
+  // Anticipation nudges tick. Gathers signals, ranks them, and DMs the owner
+  // each NEW nudge — deduped, quiet-hours-aware, killswitch-aware, capped.
+  // Fully best-effort and try/caught; the scheduler calls it blind.
+  private async runNudgeTick(): Promise<void> {
+    try {
+      // Killswitch: when engaged the bridge is fully silent — no proactive DMs.
+      if (this.killSwitch) return;
+      // Only fire when paired + connected so sendSelf can land.
+      if (!this.socket || !this.connected || !this.ownJid()) return;
+      // Quiet hours (01:00–06:00 owner-local): defer — don't ping overnight.
+      const hour = this.ownerLocalHour();
+      if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) {
+        return;
+      }
+
+      const now = Date.now();
+
+      // Signal 1: key dates (anniversaries / birthdays) from the owner profile.
+      const keyDates: KeyDateSignal[] = [];
+      try {
+        const kds = this.ownerProfileStore.get()?.facts?.keyDates ?? [];
+        for (const kd of kds) {
+          if (kd && typeof kd.label === "string" && typeof kd.date === "string") {
+            keyDates.push({ label: kd.label, date: kd.date });
+          }
+        }
+      } catch { /* best-effort */ }
+
+      // Signal 2: upcoming calendar events (device calendar, next 2 days).
+      const upcomingEvents: UpcomingEventSignal[] = [];
+      try {
+        if (this.macActions) {
+          const ev = await this.macActions.readUpcomingEvents({ days: 2, max: 20 });
+          for (const e of ev) {
+            const startMs = e.start?.getTime?.();
+            if (typeof startMs === "number" && Number.isFinite(startMs) && startMs >= now) {
+              upcomingEvents.push({ title: e.title, startAt: startMs });
+            }
+          }
+        }
+      } catch { /* best-effort — calendar may be unavailable */ }
+
+      // Signal 3: contacts awaiting a reply (last inbound > 2 days, no reply since).
+      const awaitingReply = this.gatherAwaitingReply(now);
+
+      const nudges = computeProactiveNudges({
+        now,
+        keyDates,
+        upcomingEvents,
+        awaitingReply,
+        // commitments: best-effort — not yet mined on the WA surface.
+      });
+      if (nudges.length === 0) return;
+
+      // Fire only NEW nudges, capped per tick.
+      let firedThisTick = 0;
+      let mutated = false;
+      for (const n of nudges) {
+        if (firedThisTick >= WhatsAppSession.NUDGE_MAX_PER_TICK) break;
+        if (this.firedNudgeKeys.has(n.dedupeKey)) continue;
+        const ok = await this.fireNudge(n);
+        // Mark fired even on send failure: a partial WA outage shouldn't make
+        // us re-nag the same thing every 45 min once it recovers.
+        this.firedNudgeKeys.add(n.dedupeKey);
+        mutated = true;
+        if (ok) firedThisTick += 1;
+      }
+      if (mutated) this.saveFiredNudgeKeys();
+      if (firedThisTick > 0) {
+        this.logger.info({ fired: firedThisTick, candidates: nudges.length }, "wa proactive nudges fired");
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "wa nudge tick failed (continuing)");
+    }
+  }
+
+  // DM a single nudge to the owner's self-chat. Returns true on a confirmed
+  // send. Never throws.
+  private async fireNudge(n: ProactiveNudge): Promise<boolean> {
+    try {
+      await this.sendSelf(formatNudgeForOwner(n));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Gather "awaiting reply" signals: 1:1 contacts whose last inbound is older
+  // than the overdue threshold AND who the owner/bot has not replied to since.
+  // Attaches contact-priority signals so a high-priority person's overdue
+  // reply ranks above a cold contact's. Best-effort; never throws.
+  private gatherAwaitingReply(now: number): AwaitingReplySignal[] {
+    const out: AwaitingReplySignal[] = [];
+    try {
+      const OVERDUE_MS = 2 * 24 * 60 * 60_000; // matches engine default (2 days)
+      for (const [jid, lastInboundAt] of this.lastInboundTs) {
+        if (this.isOwnerChat(jid)) continue;
+        if (jid.endsWith("@g.us")) continue; // groups never count
+        if (now - lastInboundAt < OVERDUE_MS) continue;
+        // Replied since the last inbound? Then it's not awaiting.
+        if (this.repliedSince(jid, lastInboundAt)) continue;
+        const displayName = this.contactNames.get(jid);
+        const relationship = this.ownerProfileStore.relationshipFor(jid, displayName);
+        const signals: ContactSignals = {
+          now,
+          lastInboundAt,
+          relationship: relationship ?? undefined,
+        };
+        out.push({ handle: jid, displayName, lastInboundAt, contactSignals: signals });
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "gatherAwaitingReply failed (continuing)");
+    }
+    return out;
+  }
+
+  // Owner's free-slots block for scheduling negotiation. Pulled best-effort
+  // from a "Schedule" / "Availability" / "Free" section in the owner profile
+  // prose. Empty string when none — the persona then falls back to the
+  // safe reframe-only behavior. Never throws.
+  private ownerFreeSlotsBlock(): string {
+    try {
+      const prose = this.ownerProfileStore.prose();
+      if (!prose) return "";
+      // Match a markdown-ish section header (## Schedule / # Availability /
+      // "Free slots:") and capture until the next header or blank-line gap.
+      const m = prose.match(
+        /(?:^|\n)\s*#{0,3}\s*(?:schedule|availability|free\s+slots?|open\s+slots?)\b[^\n]*\n([\s\S]*?)(?=\n\s*#{1,3}\s|\n\s*\n|$)/i,
+      );
+      const body = (m?.[1] ?? "").trim();
+      if (!body) return "";
+      // Flatten to a compact single-line phrase the persona block expects.
+      return body.replace(/\s*\n\s*/g, "; ").replace(/^[-*]\s*/gm, "").slice(0, 400);
+    } catch {
+      return "";
+    }
+  }
+
+  // Load the persisted fired-nudge dedupe set (0600 JSON array). Best-effort.
+  private loadFiredNudgeKeys(): void {
+    if (!this.firedNudgeKeysFile) return;
+    try {
+      if (!existsSync(this.firedNudgeKeysFile)) return;
+      const raw = readFileSync(this.firedNudgeKeysFile, "utf-8");
+      const arr = JSON.parse(raw) as unknown;
+      if (Array.isArray(arr)) {
+        for (const k of arr) if (typeof k === "string") this.firedNudgeKeys.add(k);
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "fired-nudge keys load failed (continuing)");
+    }
+  }
+
+  // Persist the fired-nudge dedupe set (0600 — keys can embed contact / event
+  // text, which is PII). Bounded to the most recent N. Never throws.
+  private saveFiredNudgeKeys(): void {
+    if (!this.firedNudgeKeysFile) return;
+    try {
+      mkdirSync(dirname(this.firedNudgeKeysFile), { recursive: true });
+      const keys = [...this.firedNudgeKeys].slice(-WhatsAppSession.FIRED_NUDGE_KEYS_MAX);
+      // Trim the in-memory set too so it doesn't grow unbounded across ticks.
+      if (keys.length < this.firedNudgeKeys.size) {
+        this.firedNudgeKeys = new Set(keys);
+      }
+      writeFileSync(this.firedNudgeKeysFile, JSON.stringify(keys), { mode: 0o600 });
+    } catch (err) {
+      this.logger.warn({ err }, "fired-nudge keys save failed (non-fatal)");
+    }
+  }
+
   async disconnect() {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -6557,6 +6892,14 @@ export class WhatsAppSession {
     if (this.overnightTimer) {
       clearInterval(this.overnightTimer);
       this.overnightTimer = null;
+    }
+    if (this.flywheelTimer) {
+      clearInterval(this.flywheelTimer);
+      this.flywheelTimer = null;
+    }
+    if (this.nudgesTimer) {
+      clearInterval(this.nudgesTimer);
+      this.nudgesTimer = null;
     }
     if (this.warningFlushTimer) {
       clearTimeout(this.warningFlushTimer);

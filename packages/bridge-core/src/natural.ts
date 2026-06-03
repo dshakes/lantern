@@ -351,6 +351,23 @@ export interface PersonaOptions {
   // Used to forbid sending a byte-identical / same-shaped reply twice in
   // a row (the "best to wait for him directly" loop). Empty when none.
   recentBotReplies?: string[];
+  // Scheduling-negotiation capability. When true (the bridge has the
+  // owner's free slots + calendar on hand), the persona may PROPOSE,
+  // hold, and confirm concrete times — and, on the contact's agreement,
+  // emit a [CALENDAR:...] marker so the bridge books it. When false (the
+  // default) the persona keeps the conservative "avoid work hours,
+  // reframe to evening/weekend, never invent slots" behavior only.
+  //
+  // This is ADDITIVE to the existing SCHEDULING guardrail, never a
+  // replacement: work-hours protection still holds, and a marker inside
+  // work hours still requires the owner's explicit ack downstream.
+  schedulingEnabled?: boolean;
+  // Owner's concrete free slots, owner-facing phrasing already applied
+  // ("after 6pm weekdays", "Saturday morning"). Injected only when
+  // schedulingEnabled. The persona offers ONLY these — never invents a
+  // generic "early afternoon". Empty string disables concrete offers
+  // even when schedulingEnabled (falls back to reframe-only).
+  freeSlotsBlock?: string;
 }
 
 // Telugu kinship terms → English register cues. The relationship string
@@ -648,6 +665,16 @@ export function agentPersonaPrompt(
     lines.push(transcript.length > 2000 ? transcript.slice(-2000) : transcript);
   }
 
+  // Scheduling-negotiation block — flag-gated. When the bridge has the
+  // owner's free slots, the persona graduates from "reframe away from
+  // work hours" to "propose / hold / confirm concrete times and emit a
+  // [CALENDAR:...] marker on agreement". The work-hours guardrail above
+  // still holds; this only adds the ability to act on the safe slots.
+  if (opts.schedulingEnabled) {
+    lines.push(``);
+    lines.push(schedulingBlock(ownerName, opts.freeSlotsBlock?.trim() || ""));
+  }
+
   // Language modality goes LAST (closest to the reply instruction) so
   // the model treats it as the dominant constraint when picking output
   // language. Only present when the inbound was detected as non-English
@@ -664,6 +691,40 @@ export function agentPersonaPrompt(
     opts.disclosed
       ? `Reply in plain text, in ${ownerName}'s voice, no preface, no signature.`
       : `Reply as ${ownerName}, in plain text, no quoting, no preface.`,
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Build the scheduling-negotiation persona block (flag-gated, injected
+ * by agentPersonaPrompt when opts.schedulingEnabled). Exported so tests
+ * and the bridge can reason about it directly.
+ *
+ * The block teaches the persona to OFFER concrete free slots, HOLD a
+ * tentative time, and CONFIRM it with a [CALENDAR:...] marker once the
+ * contact agrees — while never overriding the work-hours guardrail and
+ * never inventing slots that weren't passed in `freeSlots`.
+ */
+export function schedulingBlock(ownerName: string, freeSlots: string): string {
+  const lines: string[] = [
+    `SCHEDULING — you can negotiate times (active for this thread):`,
+    `- When the contact wants to meet/call/sync, you may PROPOSE concrete times, HOLD one tentatively, and CONFIRM it.`,
+  ];
+  if (freeSlots) {
+    lines.push(
+      `- ${ownerName}'s actual free slots: ${freeSlots}. Offer ONLY from these — never invent a generic "early afternoon" or "before 5".`,
+      `- Offer naturally, e.g. "he's free after 6 or saturday morning — want me to pencil one in?". Keep it to one or two options.`,
+    );
+  } else {
+    lines.push(
+      `- You don't have ${ownerName}'s open slots right now, so don't name a specific time. Ask what works for them and say you'll confirm with ${ownerName}.`,
+    );
+  }
+  lines.push(
+    `- STILL NEVER offer or agree to a slot inside ${ownerName}'s stated work hours. If they push a work-hours time, reframe to evening/weekend.`,
+    `- ONLY when the contact has clearly AGREED to a specific time, emit a marker on its OWN line at the very end: [CALENDAR:title|start-iso|end-iso?|notes?]. Use ISO-8601 with timezone offset. The bridge strips it before sending; it never appears to the contact.`,
+    `- Do NOT emit the marker for a tentative or proposed time — only after explicit agreement. No agreement, no marker.`,
+    `- After emitting the marker, write a short natural confirmation in the message body too ("done, you're on his calendar for sat 10am").`,
   );
   return lines.join("\n");
 }

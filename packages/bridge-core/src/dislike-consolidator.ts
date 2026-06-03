@@ -26,6 +26,7 @@
 
 import type { Logger } from "pino";
 import type { DislikeEntry, DislikeMemory } from "./dislike-memory.js";
+import { writeStyleLessons } from "./owner-profile-auto-update.js";
 
 /** A distilled, non-PII style rule mined from dislike history. */
 export interface StyleLesson {
@@ -220,4 +221,86 @@ export function formatStyleLessonsBlock(lessons: StyleLesson[], max = 6): string
   ];
   for (const l of top) lines.push(`- ${l.text}`);
   return lines.join("\n");
+}
+
+// ── Flywheel runner ───────────────────────────────────────────────────
+// One-call convenience the bridges invoke on a schedule (daily / on a
+// dislike-count threshold): consolidate the 👎 log into general lessons,
+// then persist them into the owner profile's managed "## Style lessons"
+// section so EVERY future reply gets the improvement. Idempotent (the
+// profile writer dedups by lesson id) and best-effort (never throws —
+// a flywheel that crashes the bridge is worse than one that skips a run).
+
+export interface RunConsolidationOptions extends ConsolidateOptions {
+  /** The dislike log to mine. */
+  memory: Pick<DislikeMemory, "all">;
+  /** Path to owner-profile.md — where distilled lessons are written. */
+  profilePath: string;
+  /** OwnerProfileStore.invalidate so the freshly-written lessons go live
+   *  without waiting for the reload TTL. Called after a successful write. */
+  invalidate?: () => void;
+}
+
+export interface RunConsolidationResult {
+  /** The lessons that cleared the support/fraction thresholds. */
+  lessons: StyleLesson[];
+  /** lesson ids newly added to the profile this run. */
+  added: string[];
+  /** lesson ids whose text was updated in place this run. */
+  updated: string[];
+  /** Total lessons currently in effect (== lessons.length). */
+  count: number;
+  /** False when the run short-circuited or errored — caller can log it
+   *  but should not treat it as fatal. */
+  ok: boolean;
+}
+
+/**
+ * Run the full dislike → style-lesson flywheel: consolidate, then write
+ * the lessons into the owner profile. Best-effort and idempotent.
+ *
+ * Returns the lessons + a count + what changed. NEVER throws — on any
+ * failure it returns `{ ok: false, lessons: [], count: 0, ... }` so a
+ * scheduler can call it blind.
+ */
+export async function runDislikeConsolidation(
+  opts: RunConsolidationOptions,
+): Promise<RunConsolidationResult> {
+  const log = opts.logger?.child({ component: "dislike-flywheel" });
+  const empty: RunConsolidationResult = {
+    lessons: [],
+    added: [],
+    updated: [],
+    count: 0,
+    ok: false,
+  };
+  try {
+    const lessons = await consolidateDislikes(opts.memory, {
+      minSupport: opts.minSupport,
+      minFraction: opts.minFraction,
+      llmCall: opts.llmCall,
+      logger: opts.logger,
+    });
+    if (lessons.length === 0) {
+      return { lessons: [], added: [], updated: [], count: 0, ok: true };
+    }
+    const write = await writeStyleLessons(
+      lessons.map((l) => ({ id: l.id, text: l.text })),
+      { profilePath: opts.profilePath, invalidate: opts.invalidate, logger: opts.logger },
+    );
+    log?.info(
+      { lessons: lessons.length, added: write.added.length, updated: write.updated.length },
+      "dislike flywheel run",
+    );
+    return {
+      lessons,
+      added: write.added,
+      updated: write.updated,
+      count: lessons.length,
+      ok: true,
+    };
+  } catch (err) {
+    log?.warn({ err }, "dislike flywheel run failed; skipping");
+    return empty;
+  }
 }
