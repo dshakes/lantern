@@ -2575,10 +2575,14 @@ export class IMessageSession {
         }
         return;
       }
-      // Non-English fallback: no English/Telugu pattern fired, but the
-      // message isn't English and the sender isn't the owner. Route to
-      // draft (don't refuse, don't auto-send).
-      if (!this.isOwnerChatRow(row)) {
+      // Non-English fallback: OPT-IN ONLY (LANTERN_NONENGLISH_DRAFT=on),
+      // default OFF — it mis-flagged the owner's own Telugu/Hindi as foreign
+      // probes and silenced normal chat. Deterministic injection + PII refusal
+      // above still apply. Parity with the WhatsApp bridge.
+      if (
+        ["on", "1"].includes((process.env.LANTERN_NONENGLISH_DRAFT ?? "").toLowerCase()) &&
+        !this.isOwnerChatRow(row)
+      ) {
         const langHintForCaution = detectLanguageHints(text);
         const caution = detectNonEnglishInjectionRisk({
           text,
