@@ -66,6 +66,17 @@ const BOT_TEXTS = [
   // Call-flow model output that echoed back as a fake query.
   "Sorry, I can't actually make calls directly from here.",
   "got it, i'll call her via the twilio number",
+  // Error / retry surfaces (agentic pipeline + 👎 feedback loop).
+  "Sorry, I encountered an error — try again in a bit.",
+  "give me a sec…",
+  "👎 noted — I'll try a different take",
+  "noted — what was off about that reply?",
+  "(retry didn't produce a usable reply)",
+  "(same answer — need a different angle)",
+  "(still too terse after retry)",
+  "(retry hit an error)",
+  "(couldn't generate a better reply)",
+  "(call failed — Twilio 500)",
 ];
 
 const USER_TEXTS = [

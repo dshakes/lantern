@@ -283,3 +283,190 @@ func TestResolveAutoModel_IgnoresEnv(t *testing.T) {
 		t.Errorf("resolveAutoModel must honour args, not env: got %s", prov)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// truncateToolResult
+// ---------------------------------------------------------------------------
+
+func TestTruncateToolResult_ShortPassthrough(t *testing.T) {
+	s := `{"ok":true}`
+	if got := truncateToolResult(s); got != s {
+		t.Errorf("short string should pass through unchanged, got %q", got)
+	}
+}
+
+func TestTruncateToolResult_ExactBoundary(t *testing.T) {
+	// Exactly at the cap — should not be truncated.
+	s := make([]byte, toolResultMaxChars)
+	for i := range s {
+		s[i] = 'a'
+	}
+	if got := truncateToolResult(string(s)); got != string(s) {
+		t.Errorf("string at exact cap should pass through unchanged")
+	}
+}
+
+func TestTruncateToolResult_Over(t *testing.T) {
+	s := make([]byte, toolResultMaxChars+100)
+	for i := range s {
+		s[i] = 'b'
+	}
+	got := truncateToolResult(string(s))
+	if len(got) >= len(string(s)) {
+		t.Errorf("over-cap string should be shorter; got len=%d, original len=%d", len(got), len(s))
+	}
+	if len(got) <= toolResultMaxChars {
+		// The suffix is appended so total > cap, but the body is capped.
+		t.Errorf("truncated string body should end at cap before suffix")
+	}
+	// Must contain the truncation hint.
+	if !containsStr(got, "truncated") {
+		t.Errorf("truncated string must contain 'truncated' suffix, got: %q", got[:min(80, len(got))])
+	}
+	// Total length must be significantly shorter than the original.
+	if len(got) >= len(string(s)) {
+		t.Errorf("truncated result len=%d must be less than original len=%d", len(got), len(s))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isRetryableLLMError — retryable marker classification
+// ---------------------------------------------------------------------------
+
+func TestIsRetryableLLMError_KilledSignal(t *testing.T) {
+	cases := []struct {
+		errStr    string
+		retryable bool
+	}{
+		{"exit status 1: signal: killed", true},
+		{"process killed", true},
+		{"context deadline exceeded", true},
+		{"429 too many requests", true},
+		{"rate limit exceeded", true},
+		{"500 internal server error", true},
+		// Non-retryable
+		{"400 bad request", false},
+		{"401 unauthorized", false},
+		{"403 forbidden", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.errStr, func(t *testing.T) {
+			got := isRetryableLLMError(tc.errStr)
+			if got != tc.retryable {
+				t.Errorf("isRetryableLLMError(%q) = %v, want %v", tc.errStr, got, tc.retryable)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// rateLimitBackoff — cap raised to 25s
+// ---------------------------------------------------------------------------
+
+func TestRateLimitBackoff_Cap(t *testing.T) {
+	// A hint of 30s must be capped at 25s.
+	errStr := "429 rate limit — please try again in 30s"
+	d := rateLimitBackoff(errStr)
+	if d > 25*1e9 { // 25 * time.Second in nanoseconds
+		t.Errorf("backoff should be capped at 25s, got %v", d)
+	}
+	if d == 0 {
+		t.Errorf("backoff should be non-zero for a rate-limit error")
+	}
+}
+
+func TestRateLimitBackoff_HintHonoured(t *testing.T) {
+	// A hint of 18.9s should be honoured (< 25s cap).
+	errStr := "429 please try again in 18.9s"
+	d := rateLimitBackoff(errStr)
+	// 18.9 + 0.3 cushion = 19.2s
+	if d < 18*1e9 || d > 25*1e9 {
+		t.Errorf("backoff for 18.9s hint should be ~19s, got %v", d)
+	}
+}
+
+func TestRateLimitBackoff_NonRateLimit(t *testing.T) {
+	if d := rateLimitBackoff("500 internal server error"); d != 0 {
+		t.Errorf("non-rate-limit error should return 0, got %v", d)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// resolveCandidateChain — cheaper-model fallback
+// ---------------------------------------------------------------------------
+
+func TestResolveCandidateChain_CheaperFallback_OpenAI(t *testing.T) {
+	// With only OpenAI available, chain should include gpt-4o-mini as fallback.
+	chain := resolveCandidateChain(false, true)
+	var models []string
+	for _, c := range chain {
+		models = append(models, c.Provider+"/"+c.Model)
+	}
+	hasMini := false
+	for _, m := range models {
+		if m == "openai/gpt-4o-mini" {
+			hasMini = true
+		}
+	}
+	if !hasMini {
+		t.Errorf("chain with OpenAI should include gpt-4o-mini fallback; got %v", models)
+	}
+}
+
+func TestResolveCandidateChain_CheaperFallback_Anthropic(t *testing.T) {
+	// With only Anthropic, chain should include haiku as fallback.
+	chain := resolveCandidateChain(true, false)
+	var models []string
+	for _, c := range chain {
+		models = append(models, c.Provider+"/"+c.Model)
+	}
+	hasHaiku := false
+	for _, m := range models {
+		if containsStr(m, "haiku") {
+			hasHaiku = true
+		}
+	}
+	if !hasHaiku {
+		t.Errorf("chain with Anthropic should include haiku fallback; got %v", models)
+	}
+}
+
+func TestResolveCandidateChain_NoDuplicateMiniWhenAlreadyTop(t *testing.T) {
+	// If gpt-4o-mini is already the top OpenAI model (cheap strategy), we
+	// should not add it a second time.
+	t.Setenv("LANTERN_ROUTE_STRATEGY", "cheap")
+	chain := resolveCandidateChain(false, true)
+	miniCount := 0
+	for _, c := range chain {
+		if c.Provider == "openai" && c.Model == "gpt-4o-mini" {
+			miniCount++
+		}
+	}
+	if miniCount > 1 {
+		t.Errorf("gpt-4o-mini should appear at most once in the chain, got %d", miniCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+func containsStr(s, sub string) bool {
+	return len(sub) > 0 && len(s) >= len(sub) &&
+		func() bool {
+			for i := 0; i <= len(s)-len(sub); i++ {
+				if s[i:i+len(sub)] == sub {
+					return true
+				}
+			}
+			return false
+		}()
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

@@ -473,6 +473,16 @@ server.listen(PORT, BIND, async () => {
   }
 });
 
+// Crash-safety: a stray rejected promise (e.g. a fire-and-forget handler
+// that escaped its own try/catch) must NOT take the bridge down — log it
+// and keep serving. Same for an uncaught exception that slips through.
+process.on("unhandledRejection", (reason) => {
+  logger.error({ err: reason }, "unhandledRejection — keeping bridge alive");
+});
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "uncaughtException — keeping bridge alive");
+});
+
 process.on("SIGINT", () => {
   logger.info("SIGINT — shutting down");
   sessions.forEach((s) => s.stop());

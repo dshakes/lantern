@@ -18,7 +18,7 @@
 //   - Mirror to email when configured
 //   - Persisted state in bridge_state/<tenant>/
 
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync } from "fs";
 import { basename, join } from "path";
 import type { Logger } from "pino";
 import type { WebSocket } from "ws";
@@ -277,6 +277,14 @@ export class IMessageSession {
     ts: number;
   }> = new Map();
   private static readonly REPLY_META_MAX = 200;
+  // RESTART-SURVIVING SIDECAR for reply-meta. The in-memory map above is
+  // lost on a launchd bounce, which silently killed the 👎 self-eval
+  // retry (the owner taps 👎 minutes after the bot replied, by which
+  // time the bridge may have respawned). We append each GUID-keyed meta
+  // to a bounded JSONL file and load it on startup; the tapback handler
+  // consults it when the in-memory map misses. Path set in loadReplyMeta.
+  private replyMetaPersistPath = "";
+  private static readonly REPLY_META_SIDECAR_MAX = 200;
 
   // PENDING-REPLY-META QUEUE — iMessage's AppleScript send doesn't
   // return the new GUID, so we can't directly key bridgeReplyMeta by
@@ -321,6 +329,13 @@ export class IMessageSession {
   // ONE nudge per chat per 30s.
   private lastBusyNudgeAt: Map<string, number> = new Map();
   private static readonly BUSY_NUDGE_THROTTLE_MS = 30_000;
+
+  // ANTI-REPETITION — per-contact ring buffer of the last few replies
+  // the bot sent them, fed into agentPersonaPrompt so the model doesn't
+  // repeat the same canned line (the "best to wait for him directly" x3
+  // bug). Keyed by contact handle; capped at the last 5 entries.
+  private recentBotReplies: Map<string, string[]> = new Map();
+  private static readonly RECENT_BOT_REPLIES_MAX = 5;
 
   // Futuristic helpers
   private agent: AgentClient;
@@ -415,6 +430,7 @@ export class IMessageSession {
     mkdirSync(this.stateDir, { recursive: true });
     this.loadState();
     this.loadBridgeSends();
+    this.loadReplyMeta();
   }
 
   private screenContext: ScreenContext;
@@ -960,6 +976,84 @@ export class IMessageSession {
     }, IMessageSession.BRIDGE_SENDS_PERSIST_DEBOUNCE_MS);
   }
 
+  // Load the reply-meta sidecar into bridgeReplyMeta on startup so a 👎
+  // tapback still finds its anchor after a launchd respawn. JSONL: one
+  // {guid, meta} record per line; FIFO-capped on load (last N win).
+  private loadReplyMeta(): void {
+    this.replyMetaPersistPath = join(this.stateDir, "reply-meta.jsonl");
+    try {
+      if (!existsSync(this.replyMetaPersistPath)) return;
+      const raw = readFileSync(this.replyMetaPersistPath, "utf-8");
+      const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+      const recent = lines.slice(-IMessageSession.REPLY_META_SIDECAR_MAX);
+      for (const line of recent) {
+        try {
+          const rec = JSON.parse(line) as {
+            guid?: string;
+            meta?: { handle: string; chatRowid: number; inboundText: string; replyText: string; systemHint: string; ts: number };
+          };
+          if (rec.guid && rec.meta) this.bridgeReplyMeta.set(rec.guid, rec.meta);
+        } catch { /* skip a corrupt line */ }
+      }
+      this.logger.info({ loaded: this.bridgeReplyMeta.size }, "loaded reply-meta sidecar");
+    } catch (err) {
+      this.logger.warn({ err }, "failed to load reply-meta sidecar — starting fresh");
+    }
+  }
+
+  // Append a GUID-keyed meta record to the sidecar and trim it back to
+  // the FIFO cap. Best-effort; never throws into the send path.
+  private persistReplyMeta(
+    guid: string,
+    meta: { handle: string; chatRowid: number; inboundText: string; replyText: string; systemHint: string; ts: number },
+  ): void {
+    if (!this.replyMetaPersistPath || !guid) return;
+    try {
+      const line = JSON.stringify({ guid, meta }) + "\n";
+      appendFileSync(this.replyMetaPersistPath, line);
+      // Trim: rewrite keeping only the last N lines so the file can't
+      // grow unbounded. Cheap — the file is capped to ~200 short lines.
+      const raw = readFileSync(this.replyMetaPersistPath, "utf-8");
+      const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+      if (lines.length > IMessageSession.REPLY_META_SIDECAR_MAX) {
+        writeFileSync(
+          this.replyMetaPersistPath,
+          lines.slice(-IMessageSession.REPLY_META_SIDECAR_MAX).join("\n") + "\n",
+        );
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "failed to persist reply-meta sidecar");
+    }
+  }
+
+  // Look up a reply-meta record by GUID from the on-disk sidecar. Used
+  // by the tapback handler when the in-memory map misses (FIFO eviction
+  // or a restart between send and the 👎). Returns the most recent
+  // matching record. Best-effort; null on any read/parse failure.
+  private lookupReplyMetaFromSidecar(
+    guid: string,
+  ): { handle: string; chatRowid: number; inboundText: string; replyText: string; systemHint: string; ts: number } | undefined {
+    if (!this.replyMetaPersistPath || !guid) return undefined;
+    try {
+      if (!existsSync(this.replyMetaPersistPath)) return undefined;
+      const raw = readFileSync(this.replyMetaPersistPath, "utf-8");
+      const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+      // Walk newest → oldest so the freshest record for this GUID wins.
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const rec = JSON.parse(lines[i]) as {
+            guid?: string;
+            meta?: { handle: string; chatRowid: number; inboundText: string; replyText: string; systemHint: string; ts: number };
+          };
+          if (rec.guid === guid && rec.meta) return rec.meta;
+        } catch { /* skip a corrupt line */ }
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "reply-meta sidecar lookup failed");
+    }
+    return undefined;
+  }
+
   // --- WS ----------------------------------------------------------------
 
   attachSocket(ws: WebSocket): void {
@@ -1294,7 +1388,9 @@ export class IMessageSession {
           this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "fromMe owner-query skipped — chat busy");
           return;
         }
-        void this.handleOwnerDocQuery(row.handle, text, row.chatRowid);
+        void this.handleOwnerDocQuery(row.handle, text, row.chatRowid).catch((err) =>
+          this.logger.error({ err }, "handleOwnerDocQuery threw"),
+        );
         return;
       }
 
@@ -1351,7 +1447,9 @@ export class IMessageSession {
     // Resolve attachments (media) before deciding what to do — voice
     // notes and images become synthetic text the reply pipeline can
     // act on.
-    void this.handleInbound(row, unixMs, isGroup);
+    void this.handleInbound(row, unixMs, isGroup).catch((err) =>
+      this.logger.error({ err }, "handleInbound threw"),
+    );
   }
 
   // Cache of self-chat ROWIDs discovered by querying chat.db on
@@ -1582,7 +1680,9 @@ export class IMessageSession {
         const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
         if (nlEnabled && !this.muted) {
           this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "owner trivial chatter → natural chat");
-          void this.handleOwnerNaturalChat(row.handle, text);
+          void this.handleOwnerNaturalChat(row.handle, text).catch((err) =>
+            this.logger.error({ err }, "handleOwnerNaturalChat threw"),
+          );
         }
         return;
       }
@@ -1595,8 +1695,12 @@ export class IMessageSession {
       // facts about the owner's world and auto-append them to the
       // profile. If anything was learned, send a short ack so the
       // owner can SEE what landed in memory.
-      void this.maybeAutoUpdateOwnerProfileFromSelfChat(row.handle, text);
-      void this.handleOwnerDocQuery(row.handle, text, row.chatRowid);
+      void this.maybeAutoUpdateOwnerProfileFromSelfChat(row.handle, text).catch((err) =>
+        this.logger.error({ err }, "maybeAutoUpdateOwnerProfileFromSelfChat threw"),
+      );
+      void this.handleOwnerDocQuery(row.handle, text, row.chatRowid).catch((err) =>
+        this.logger.error({ err }, "handleOwnerDocQuery threw"),
+      );
       return;
     }
 
@@ -1879,6 +1983,16 @@ export class IMessageSession {
       episodesBlock,
       relatedBlock,
       lowContext,
+      // Structured owner facts (ground truth) so the bot never denies a
+      // known fact ("happy anniversary" gets a truthful reply).
+      ownerFacts: this.ownerProfileStore.factsBlock(),
+      // Per-contact addressing rule — what to call them, what never to.
+      addressRule: isGroup
+        ? undefined
+        : this.ownerProfileStore.addressRuleFor(row.handle, this.contactNames.get(row.handle)) ?? undefined,
+      // Anti-repetition — recent replies sent to THIS contact so the
+      // model varies its phrasing instead of repeating a canned line.
+      recentBotReplies: isGroup ? [] : this.recentBotReplies.get(row.handle) ?? [],
     });
     // Per-contact memory: facts the user has captured about this
     // contact (their daughter is Maya, works at Stripe, etc).
@@ -2112,6 +2226,16 @@ export class IMessageSession {
       await this.send(sendTarget, piece.text);
       // Count once per burst for the morning digest.
       if (i === 0) this.repliesSentToday += 1;
+    }
+    // Anti-repetition ring buffer — remember what we just told this
+    // contact so the next reply to them avoids the same phrasing.
+    if (!isGroup) {
+      const ring = this.recentBotReplies.get(row.handle) ?? [];
+      ring.push(draft);
+      if (ring.length > IMessageSession.RECENT_BOT_REPLIES_MAX) {
+        ring.splice(0, ring.length - IMessageSession.RECENT_BOT_REPLIES_MAX);
+      }
+      this.recentBotReplies.set(row.handle, ring);
     }
 
     // MEDIUM-confidence audit ping — let owner know what just went
@@ -2421,7 +2545,9 @@ export class IMessageSession {
       return { ok: res.ok, reason: res.reason };
     } catch (err) {
       this.logger.error({ err }, "outbound call orchestrator failed");
-      return { ok: false, reason: (err as Error).message };
+      // Fixed friendly reason — never surface the raw error to chat
+      // (the caller interpolates this into a user-facing line).
+      return { ok: false, reason: "couldn't place the call — try again" };
     }
   }
 
@@ -2512,7 +2638,7 @@ export class IMessageSession {
         }
       } catch (err) {
         this.logger.error({ err }, "outbound-call offer execution failed");
-        await this.send(jid, `(call failed — ${(err as Error).message})`);
+        await this.send(jid, "(couldn't place the call — try again)");
       }
       return;
     }
@@ -2583,7 +2709,9 @@ export class IMessageSession {
         "",
         `The owner just said YES to your offer. Now FULFILL it: call the right tool (gmail_search, calendar lookup, attach file, etc.) and deliver the result. Don't re-offer; don't ask for permission. Execute and reply with what you found / did. Output a normal-style reply, NOT a marker.`,
       ].filter(Boolean).join("\n");
-      void this.handleOwnerDocQuery(jid, fulfillmentText, chatRowid);
+      void this.handleOwnerDocQuery(jid, fulfillmentText, chatRowid).catch((err) =>
+        this.logger.error({ err }, "handleOwnerDocQuery threw"),
+      );
       return;
     }
   }
@@ -2640,11 +2768,13 @@ export class IMessageSession {
     const nativity = this.ownerProfileStore.nativity();
     const languageModality = languageModalityHint(langHint, { nativity });
     const ownerProfileProse = this.ownerProfileStore.prose();
+    const ownerFactsBlock = this.ownerProfileStore.factsBlock();
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his iMessage self-chat.`,
       `Today is ${today}. Local time of day: ${timeOfDay}.`,
       ``,
       ownerProfileProse ? `# Who you are\n${ownerProfileProse}\n` : ``,
+      ownerFactsBlock ? `${ownerFactsBlock}\n` : ``,
       `You ARE his Jarvis. Warm, concise, authentic. Like a sharp peer who knows him well.`,
       `  • 1-3 short lines. No corporate filler ("I'd be happy to" / "feel free" / "let me know if").`,
       `  • Lowercase, conversational.`,
@@ -2767,7 +2897,11 @@ export class IMessageSession {
     meta: { handle: string; chatRowid: number; inboundText: string; replyText: string; systemHint: string },
   ): void {
     if (!sentGuid) return;
-    this.bridgeReplyMeta.set(sentGuid, { ...meta, ts: Date.now() });
+    const stored = { ...meta, ts: Date.now() };
+    this.bridgeReplyMeta.set(sentGuid, stored);
+    // Mirror to the restart-surviving sidecar so a 👎 after a launchd
+    // bounce can still find the anchor. Best-effort.
+    this.persistReplyMeta(sentGuid, stored);
     if (this.bridgeReplyMeta.size > IMessageSession.REPLY_META_MAX) {
       const it = this.bridgeReplyMeta.keys();
       const drop = this.bridgeReplyMeta.size - IMessageSession.REPLY_META_MAX;
@@ -2933,7 +3067,10 @@ export class IMessageSession {
   // support editing arbitrary outbound, so we append rather than
   // replace.
   private async handleTapbackRetry(targetMsgGuid: string, recipientHandle: string): Promise<void> {
-    const meta = this.bridgeReplyMeta.get(targetMsgGuid);
+    // In-memory first; on a miss, consult the restart-surviving sidecar
+    // (the entry may have fallen off the in-memory FIFO, or the bridge
+    // bounced between send and the 👎). Only then give up.
+    const meta = this.bridgeReplyMeta.get(targetMsgGuid) ?? this.lookupReplyMetaFromSidecar(targetMsgGuid);
     if (!meta) {
       this.logger.info({ targetMsgGuid }, "tapback-retry: no meta (probably aged out or non-tracked send)");
       // No meta — best-effort ack so the owner knows the signal landed.
@@ -3071,7 +3208,8 @@ export class IMessageSession {
             return `[${when}] ${who}: ${h.text.slice(0, 200)}`;
           }).join("\n");
         } catch (err) {
-          return `(imessage-history error: ${(err as Error).message})`;
+          this.logger.warn({ err }, "subtask imessage-history failed");
+          return "(imessage-history unavailable)";
         }
       },
       imessageGroups: async () => {
@@ -3080,7 +3218,8 @@ export class IMessageSession {
           if (groups.length === 0) return "(no iMessage groups)";
           return groups.slice(0, 12).map((g) => `${g.name} — ${g.participantCount} members`).join("\n");
         } catch (err) {
-          return `(imessage-groups error: ${(err as Error).message})`;
+          this.logger.warn({ err }, "subtask imessage-groups failed");
+          return "(imessage-groups unavailable)";
         }
       },
       // WhatsApp adapters — proxy to the WhatsApp bridge over loopback.
@@ -3108,7 +3247,8 @@ export class IMessageSession {
             return `[${when}] ${who}: ${h.text.slice(0, 200)}`;
           }).join("\n");
         } catch (err) {
-          return `(WhatsApp bridge unreachable: ${(err as Error).message})`;
+          this.logger.warn({ err }, "subtask whatsapp-history failed");
+          return "(whatsapp-history unavailable)";
         }
       },
       whatsappGroups: async () => {
@@ -3123,7 +3263,8 @@ export class IMessageSession {
           if (groups.length === 0) return "(no WhatsApp groups)";
           return groups.slice(0, 12).map((g) => `${g.name} — ${g.participants} members${g.monitored ? " (monitored)" : ""}`).join("\n");
         } catch (err) {
-          return `(WhatsApp groups error: ${(err as Error).message})`;
+          this.logger.warn({ err }, "subtask whatsapp-groups failed");
+          return "(whatsapp-groups unavailable)";
         }
       },
       personalDocs: async (_instruction, hints) => {
@@ -3132,7 +3273,8 @@ export class IMessageSession {
           if (hits.length === 0) return `(no files matched "${hints?.keyword || originalQuery}")`;
           return hits.slice(0, 6).map((h) => `${h.displayPath} (${h.ext.replace(".", "")}, ${Math.round(h.bytes / 1024)}KB)`).join("\n");
         } catch (err) {
-          return `(personal-docs error: ${(err as Error).message})`;
+          this.logger.warn({ err }, "subtask personal-docs failed");
+          return "(personal-docs unavailable)";
         }
       },
       ownerProfile: async () => {
@@ -3147,16 +3289,19 @@ export class IMessageSession {
           const client = defaultConnectorClient(this.logger);
           const kw = hints?.keyword || originalQuery;
           const result = await client.execute("gmail", "search", { query: kw, limit: 8 })
-            .catch((err) => ({ ok: false, error: err.message }));
+            .catch((err) => {
+              this.logger.warn({ err }, "subtask gmail search failed");
+              return { ok: false, error: "unavailable" };
+            });
           if (!result || (result as { ok?: boolean }).ok === false) {
-            const errMsg = (result as { error?: string })?.error || "unknown";
-            return `(gmail search failed: ${errMsg})`;
+            return "(gmail unavailable)";
           }
           const msgs = ((result as { messages?: Array<{ from?: string; subject?: string; snippet?: string }> }).messages || []).slice(0, 6);
           if (msgs.length === 0) return `(no gmail matched "${kw}")`;
           return msgs.map((m) => `from ${m.from || "?"} — ${m.subject || ""}${m.snippet ? ` — ${m.snippet.slice(0, 150)}` : ""}`).join("\n");
         } catch (err) {
-          return `(gmail adapter error: ${(err as Error).message})`;
+          this.logger.warn({ err }, "subtask gmail adapter failed");
+          return "(gmail unavailable)";
         }
       },
       googleCalendar: async (_instruction, hints) => {
@@ -3167,16 +3312,19 @@ export class IMessageSession {
           if (typeof hints?.sinceMs === "number") params.timeMin = new Date(hints.sinceMs).toISOString();
           if (typeof hints?.untilMs === "number") params.timeMax = new Date(hints.untilMs).toISOString();
           const result = await client.execute("google-calendar", "list_events", params)
-            .catch((err) => ({ ok: false, error: err.message }));
+            .catch((err) => {
+              this.logger.warn({ err }, "subtask calendar query failed");
+              return { ok: false, error: "unavailable" };
+            });
           if (!result || (result as { ok?: boolean }).ok === false) {
-            const errMsg = (result as { error?: string })?.error || "unknown";
-            return `(calendar query failed: ${errMsg})`;
+            return "(calendar unavailable)";
           }
           const events = ((result as { events?: Array<{ summary?: string; start?: { dateTime?: string; date?: string } }> }).events || []).slice(0, 8);
           if (events.length === 0) return `(no calendar events in range)`;
           return events.map((e) => `${e.start?.dateTime || e.start?.date || "?"}: ${e.summary || "(no title)"}`).join("\n");
         } catch (err) {
-          return `(calendar adapter error: ${(err as Error).message})`;
+          this.logger.warn({ err }, "subtask calendar adapter failed");
+          return "(calendar unavailable)";
         }
       },
     };
@@ -3208,6 +3356,10 @@ export class IMessageSession {
           return out || "";
         },
         logger: this.logger as any,
+        // Drop the cached profile the moment a fact/contact-rule is
+        // written so taught facts + naming rules go live immediately
+        // (next reply's factsBlock/addressRuleFor reflects them).
+        invalidate: () => this.ownerProfileStore.invalidate(),
       });
       // Always try the mention-tagged episode capture, even when the
       // profile-update extractor said "nothing durable here". A
@@ -3216,7 +3368,9 @@ export class IMessageSession {
       // from that person.
       await this.maybeRecordMentionEpisode(jid, text);
       if (result.appended.length === 0) return;
-      this.ownerProfileStore.invalidate();
+      // Cache invalidation is handled inside maybeAutoUpdateOwnerProfile
+      // via the `invalidate` callback above, so taught facts go live the
+      // instant they're written — no explicit invalidate needed here.
       const ack = formatAck(result.appended);
       if (ack) {
         await this.send(jid, ack);
@@ -3257,6 +3411,9 @@ export class IMessageSession {
     chatRowid: number = 0,
   ): Promise<void> {
     this.busyChat.add(jid);
+    // Declared before the try so the finally can always clear it — a
+    // throw must never leave a stray "🧠 thinking…" timer firing.
+    let thinkingTimer: ReturnType<typeof setTimeout> | undefined;
     try {
     this.logger.info({ query: query.slice(0, 80) }, "owner agentic query");
     this.broadcast({
@@ -3278,7 +3435,7 @@ export class IMessageSession {
     //     timeout (see below).
     const startedAt = Date.now();
     let thinkingSent = false;
-    const thinkingTimer = setTimeout(() => {
+    thinkingTimer = setTimeout(() => {
       thinkingSent = true;
       void this.send(jid, "🧠 thinking…");
     }, 3000);
@@ -3365,19 +3522,22 @@ export class IMessageSession {
     const planAdapters = this.buildSubTaskAdapters(query);
 
     // SMART CONTEXT: read the device calendar (source of truth — iCloud +
-    // Google + subscribed) for EVERY substantive owner query, ungated. It's a
-    // cheap local SQLite read; gating it behind a keyword regex missed
-    // "when's my next haircut" (no "appointment" token). Heavier Gmail/Google
-    // appointment prefetch stays keyword-gated.
+    // Google + subscribed) when the query looks time-bound / availability /
+    // appointment-y. Gated on the same intent detector as the heavier
+    // Gmail/Google prefetch so a non-schedule query (e.g. "when is my green
+    // card expiring") doesn't dump the whole calendar into the prompt and
+    // bloat LLM context. The detector is broad ("when's my next haircut"
+    // matches), so genuine schedule questions still get it.
+    const wantsCalendar = looksLikeAppointmentQuery(query);
     const deviceCalP: Promise<CalendarEventRead[]> =
-      process.platform === "darwin" && this.macActions
+      wantsCalendar && process.platform === "darwin" && this.macActions
         ? this.macActions.readUpcomingEvents({ days: 60 }).catch((err) => {
             this.logger.warn({ err }, "device calendar read failed (continuing)");
             return [] as CalendarEventRead[];
           })
         : Promise.resolve([] as CalendarEventRead[]);
     const [gatedApptBlock, deviceEvents, rosterResults, subTaskResults] = await Promise.all([
-      looksLikeAppointmentQuery(query)
+      wantsCalendar
         ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
         : Promise.resolve(null),
       deviceCalP,
@@ -3414,6 +3574,7 @@ export class IMessageSession {
     // questions resolve in one round-trip with NO tool calls.
     const ownerProfile = this.ownerProfileStore.prose();
     const relationshipsBlock = this.ownerProfileStore.relationshipsBlock();
+    const ownerFactsBlock = this.ownerProfileStore.factsBlock();
     // Recent thread transcript so the LLM understands what came just
     // before. "yeah do it" / "send me the second one" / "what about
     // the other one" all need the recent history to make sense.
@@ -3436,6 +3597,7 @@ export class IMessageSession {
       `Today is ${today}.`,
       "",
       ownerProfile ? `# Who you are\n${ownerProfile}` : "",
+      ownerFactsBlock ? `\n${ownerFactsBlock}` : "",
       relationshipsBlock ? `\n# Your people\n${relationshipsBlock}` : "",
       recentTranscript ? `\n# Just-now conversation (oldest first)\n${recentTranscript}` : "",
       languageModality ? `\n${languageModality}` : "",
@@ -3525,7 +3687,6 @@ export class IMessageSession {
       draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
     }
 
-    clearTimeout(thinkingTimer);
     this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft, thinkingSent }, "doc query done");
     if (!draft) {
       // Graceful fallback — never "couldn't reach the agent — try
@@ -3661,10 +3822,19 @@ export class IMessageSession {
         }
       } catch (err) {
         this.logger.warn({ err, target: c.target }, "outbound [CALL] marker exception");
-        await this.send(jid, `(call failed — ${(err as Error).message})`);
+        await this.send(jid, "(couldn't place the call — try again)");
       }
     }
+    } catch (err) {
+      // Crash-safety + no-leak: a throw anywhere above must never crash
+      // the process or surface a raw error to chat. Log it and send a
+      // graceful fallback (best-effort).
+      this.logger.error({ err }, "owner doc query failed");
+      try { await this.send(jid, "hmm, that one didn't go through — give me another minute and ask again"); } catch {}
     } finally {
+      // Clear the thinking-timer here so a throw can't leave a stray
+      // "🧠 thinking…" firing after the query already failed.
+      clearTimeout(thinkingTimer);
       this.busyChat.delete(jid);
       // Drain queued next-query (latest-wins). Only one at most; if
       // older than TTL we drop it (user has moved on). Fire-and-forget
@@ -3675,7 +3845,9 @@ export class IMessageSession {
         const age = Date.now() - (queued.queuedAt as number);
         if (age < IMessageSession.QUEUED_QUERY_TTL_MS) {
           this.logger.info({ chat: jid, ageMs: age, textPreview: queued.text.slice(0, 60) }, "draining queued query");
-          void this.handleOwnerDocQuery(jid, queued.text, this.lastChatRowidForHandle.get(jid) || 0);
+          void this.handleOwnerDocQuery(jid, queued.text, this.lastChatRowidForHandle.get(jid) || 0).catch((err) =>
+            this.logger.error({ err }, "handleOwnerDocQuery threw"),
+          );
         } else {
           this.logger.info({ chat: jid, ageMs: age }, "dropping queued query — too old");
         }

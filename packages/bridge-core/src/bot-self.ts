@@ -88,6 +88,17 @@ const BOT_SELF_PREFIXES: string[] = [
   "📝 saved",
   "couldn't save that note",
 
+  // ── Error / retry surfaces (agentic pipeline + feedback loop) ──
+  "sorry, i encountered an error",
+  "give me a sec",
+  "👎 noted",
+  "noted — what was off",
+  "(retry didn't produce",
+  "(same answer — need",
+  "(still too terse",
+  "(retry hit an error",
+  "(couldn't generate a better",
+
   // ── Permission / setup messages ──
   "personal-docs ",          // "personal-docs ENABLED", "personal-docs DISABLED"
   "bot ",                    // "bot off", "bot on" — bot status echoes
