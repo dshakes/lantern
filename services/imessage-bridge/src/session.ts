@@ -119,7 +119,13 @@ interface PersistedState {
   ownerSentHistory?: Record<string, string[]>;
 }
 
-const POLL_INTERVAL_MS = 1500;
+// chat.db reads are sub-ms (WAL + query_only, watermark-based ROWID scan),
+// so a tighter poll cuts perceived latency without measurable cost. The
+// poll body is synchronous (pollNewMessages) and dispatches handlers
+// fire-and-forget, so a shorter interval can't overlap-tick. No downstream
+// logic assumes the old 1500ms cadence (thinking-timer/pace-holds/TTLs are
+// all absolute durations).
+const POLL_INTERVAL_MS = 500;
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1906,9 +1912,6 @@ export class IMessageSession {
     // context. Each best-effort; empty block when data unavailable
     // (persona falls back to prior behavior).
     const contactStyleBlock = !isGroup ? styleBlockFor(ownerSamples) : "";
-    const dislikeEntries = !isGroup ? await this.dislikeMemory.forJid(row.handle, 3) : [];
-    const dislikeBlock = formatDislikeBlock(dislikeEntries);
-    const episodes = !isGroup ? await this.episodicMemory.forJid(row.handle, 5) : [];
     // Cross-contact recall — episodes from other chats (self-chat
     // especially) that mention this contact by first name. Surfaces
     // "Sujith was here this weekend" when Sujith messages later.
@@ -1918,9 +1921,32 @@ export class IMessageSession {
       const f = senderDisplay.split(/\s+/)[0]?.toLowerCase();
       if (f && f.length >= 2) senderFirstNames.push(f);
     }
-    const mentionEpisodes = !isGroup && senderFirstNames.length > 0
-      ? await this.episodicMemory.forMentions(senderFirstNames, { excludeJid: row.handle, limit: 3, maxAgeDays: 30 })
-      : [];
+    // Cross-thread context: extract topics from the current inbound,
+    // pull related messages from OTHER contacts in the last 7 days.
+    const inboundTopics = !isGroup ? extractTopics(text) : [];
+    // PERF: these five reads (dislike memory, episodic per-jid, episodic
+    // cross-contact mentions, social-graph related, presence) are mutually
+    // INDEPENDENT — each hits its own SQLite table / cache and none consumes
+    // another's result. Their only inputs (senderFirstNames, inboundTopics)
+    // are computed synchronously above, so we fan them out in parallel
+    // instead of awaiting serially. allEpisodes/lowContext still merge them
+    // afterward exactly as before.
+    const [dislikeEntries, episodes, mentionEpisodes, related, presenceSnap] = await Promise.all([
+      !isGroup ? this.dislikeMemory.forJid(row.handle, 3) : Promise.resolve([]),
+      !isGroup ? this.episodicMemory.forJid(row.handle, 5) : Promise.resolve([]),
+      !isGroup && senderFirstNames.length > 0
+        ? this.episodicMemory.forMentions(senderFirstNames, { excludeJid: row.handle, limit: 3, maxAgeDays: 30 })
+        : Promise.resolve([]),
+      !isGroup && inboundTopics.length > 0
+        ? this.socialGraph.related({ topics: inboundTopics, excludeJid: row.handle, limit: 4 })
+        : Promise.resolve([]),
+      this.presence.current({
+        nextEvent: async () => {
+          try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
+        },
+      }),
+    ]);
+    const dislikeBlock = formatDislikeBlock(dislikeEntries);
     const allEpisodes = [...episodes, ...mentionEpisodes]
       .sort((a, b) => b.ts - a.ts)
       .slice(0, 6);
@@ -1932,12 +1958,6 @@ export class IMessageSession {
       allEpisodes.length === 0 &&
       dislikeEntries.length === 0 &&
       (!recentTranscript || recentTranscript.trim().length < 20);
-    // Cross-thread context: extract topics from the current inbound,
-    // pull related messages from OTHER contacts in the last 7 days.
-    const inboundTopics = !isGroup ? extractTopics(text) : [];
-    const related = !isGroup && inboundTopics.length > 0
-      ? await this.socialGraph.related({ topics: inboundTopics, excludeJid: row.handle, limit: 4 })
-      : [];
     const relatedBlock = formatRelatedBlock(related);
     // Index THIS inbound into the social graph so future replies to
     // other contacts can find it. Fire-and-forget.
@@ -1950,11 +1970,6 @@ export class IMessageSession {
         topics: inboundTopics,
       });
     }
-    const presenceSnap = await this.presence.current({
-      nextEvent: async () => {
-        try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
-      },
-    });
     let presenceLine = presenceSnap.line || "";
     // AWAY directive: tell the contact where the owner is + offer to take a
     // message ("Shekhar's at the temple, he'll get back — can I pass a note?").
@@ -1996,17 +2011,20 @@ export class IMessageSession {
     });
     // Per-contact memory: facts the user has captured about this
     // contact (their daughter is Maya, works at Stripe, etc).
-    if (!isGroup) {
-      const factsBlock = await this.personal.factsBlock(row.handle);
-      if (factsBlock) systemHint += factsBlock;
-    }
+    // PERF: fetch ONCE and reuse — this same block is also consulted by
+    // the low-confidence gate below. It's an HTTP round-trip to the
+    // control-plane, so calling it twice per reply doubled that latency.
+    const contactFactsBlock = !isGroup ? await this.personal.factsBlock(row.handle) : "";
+    if (contactFactsBlock) systemHint += contactFactsBlock;
     // Calendar awareness for contact replies. The owner's DEVICE calendar
     // (iCloud + Google + subscribed) is the source of truth — a contact asking
-    // "when are you coming to the Bay Area?" must be answerable. Read it
-    // UNGATED (cheap local SQLite); the prior version gated on "are you free?"
-    // phrasing AND read only the Google connector, so an iCloud SFO flight was
-    // invisible and the bot looked clueless about the owner's own trip.
-    if (!isGroup) {
+    // "when are you coming to the Bay Area?" must be answerable.
+    // PERF/GATE: readUpcomingEvents can fall back to AppleScript (1-3s), so we
+    // only run it when the inbound actually looks schedule/availability-bound
+    // (needsCalendar || looksLikeAppointmentQuery). Casual messages skip it
+    // entirely. The prior version read it for EVERY 1:1 inbound regardless of
+    // content, which dominated reply latency for plain chatter.
+    if (!isGroup && (needsCalendar(text) || looksLikeAppointmentQuery(text))) {
       try {
         const ev = await this.macActions.readUpcomingEvents({ days: 45, max: 15 });
         const calBlock = formatAppleCalendarBlock(ev, { max: 15 });
@@ -2084,7 +2102,7 @@ export class IMessageSession {
       ownerSamples.length === 0 &&
       !relationship &&
       !displayName &&
-      !(await this.personal.factsBlock(row.handle));
+      !contactFactsBlock; // reuse the per-contact facts fetched above
     const isVIP = !isGroup && (await this.personal.isVIP(row.handle));
 
     if (isVIP) {
@@ -2147,22 +2165,33 @@ export class IMessageSession {
     // normally; MEDIUM additionally cross-channel-pings the owner
     // after send; LOW holds the draft for 30s with an owner override
     // window. Logs the verdict for offline calibration.
-    const dislikesForContact = !isGroup ? await this.dislikeMemory.forJid(row.handle, 1) : [];
+    // Reuse the dislike entries already fetched in the parallel block
+    // above (limit 3) — re-querying just to check for existence was a
+    // redundant round-trip.
     const tier = classifyConfidence({
       replyText: draft,
       inboundText: text,
       relationship,
       hasPriorSamples: ownerSamples.length > 0,
-      hasPriorDislikes: dislikesForContact.length > 0,
+      hasPriorDislikes: dislikeEntries.length > 0,
     });
     this.logger.info({ jid: row.handle, tier: tierBadge(tier) }, "reply confidence");
     if (tier.tier === "LOW") {
-      // Hold the draft and notify the owner. After OWNER_GRACE_MS,
-      // send unless owner explicitly cancels via reaction. For now,
-      // we log + send after the hold; full cancel-flow can layer
-      // on top later.
-      void this.mirrorToEmail(`🟡 LOW-confidence draft to ${this.contactNames.get(row.handle) || row.handle}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(holding 30s before send — reply STOP via dashboard to cancel)`);
-      await new Promise((r) => setTimeout(r, 30_000));
+      // Hold the draft and notify the owner. After the hold, send unless
+      // the owner explicitly cancels via the dashboard.
+      //
+      // CONCURRENCY NOTE: this contact-reply path does NOT hold the
+      // per-chat `busyChat` lock (that lock guards only the owner
+      // doc-query / natural-chat paths), and handleInbound is dispatched
+      // fire-and-forget from the poll loop — so this hold never blocks
+      // polling or another chat. It DOES delay this contact's reply and
+      // keeps the handler promise alive for the duration. 30s was an
+      // eternity for the owner's perceived responsiveness; 5s still gives
+      // a real cancel window (the owner sees the mirror email/dashboard
+      // entry the instant the draft is held) without leaving the contact
+      // hanging. There is exactly ONE send below, so no double-send risk.
+      void this.mirrorToEmail(`🟡 LOW-confidence draft to ${this.contactNames.get(row.handle) || row.handle}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(holding 5s before send — reply STOP via dashboard to cancel)`);
+      await new Promise((r) => setTimeout(r, 5_000));
     }
 
     // Pace mirror — pause before the first send so the reply feels
@@ -3352,7 +3381,16 @@ export class IMessageSession {
           // Cheapest model — the extractor is structured + tight.
           // Reuse the agent's completion path so we benefit from
           // the same failover + retry logic.
-          const out = await this.agent.respondTo(jid, prompt, "", { withTools: false });
+          //
+          // CONCURRENCY: use a DISTINCT session key (suffix
+          // "::profile-update") so this fire-and-forget background
+          // extraction does NOT enter the same per-jid inflight chain
+          // as the owner's foreground doc query. AgentClient.respondTo
+          // serializes by key; sharing `jid` would make the user's
+          // query wait behind this 1-3s extraction. A separate key
+          // also keeps the extractor's structured prompt out of the
+          // owner's conversational session history.
+          const out = await this.agent.respondTo(`${jid}::profile-update`, prompt, "", { withTools: false });
           return out || "";
         },
         logger: this.logger as any,
@@ -3414,6 +3452,38 @@ export class IMessageSession {
     // Declared before the try so the finally can always clear it — a
     // throw must never leave a stray "🧠 thinking…" timer firing.
     let thinkingTimer: ReturnType<typeof setTimeout> | undefined;
+    // CONCURRENCY (#7): release the per-chat busy lock + drain the queued
+    // follow-up ONCE, as early as the reply is committed, so the next owner
+    // query to this chat doesn't wait behind the slow side-effect tail
+    // (attachment delivery, calendar/note/mail writes, outbound calls).
+    // Idempotent via `busyReleased` — we call it both at the early point
+    // (after the reply text + pendingOffers are committed, preserving
+    // latest-wins offer ordering) AND in `finally` (covers the null-draft
+    // early return and any throw before the early call). Draining only after
+    // pendingOffers.set means a drained follow-up can't overwrite this
+    // turn's offer with a staler one — the ordering hazard is closed.
+    let busyReleased = false;
+    const releaseBusyAndDrain = () => {
+      if (busyReleased) return;
+      busyReleased = true;
+      this.busyChat.delete(jid);
+      // Drain queued next-query (latest-wins). Only one at most; if older
+      // than TTL we drop it (user has moved on). Fire-and-forget so we
+      // don't bottleneck this run's tail.
+      const queued = this.queuedQuery.get(jid);
+      if (queued) {
+        this.queuedQuery.delete(jid);
+        const age = Date.now() - (queued.queuedAt as number);
+        if (age < IMessageSession.QUEUED_QUERY_TTL_MS) {
+          this.logger.info({ chat: jid, ageMs: age, textPreview: queued.text.slice(0, 60) }, "draining queued query");
+          void this.handleOwnerDocQuery(jid, queued.text, this.lastChatRowidForHandle.get(jid) || 0).catch((err) =>
+            this.logger.error({ err }, "handleOwnerDocQuery threw"),
+          );
+        } else {
+          this.logger.info({ chat: jid, ageMs: age }, "dropping queued query — too old");
+        }
+      }
+    };
     try {
     this.logger.info({ query: query.slice(0, 80) }, "owner agentic query");
     this.broadcast({
@@ -3749,6 +3819,12 @@ export class IMessageSession {
       this.pendingOffers.set(jid, offer);
     }
 
+    // The user-facing reply + offer are now committed. Release the busy
+    // lock + kick the queued-query drain HERE so the next owner query
+    // proceeds in parallel with the (potentially slow) side-effect tail
+    // below instead of serializing behind it. See releaseBusyAndDrain.
+    releaseBusyAndDrain();
+
     // Deliver attachments. Path is rescued via basename search if
     // the LLM hallucinated a parent directory.
     for (const claimedPath of paths) {
@@ -3835,23 +3911,10 @@ export class IMessageSession {
       // Clear the thinking-timer here so a throw can't leave a stray
       // "🧠 thinking…" firing after the query already failed.
       clearTimeout(thinkingTimer);
-      this.busyChat.delete(jid);
-      // Drain queued next-query (latest-wins). Only one at most; if
-      // older than TTL we drop it (user has moved on). Fire-and-forget
-      // so we don't bottleneck the previous run's cleanup.
-      const queued = this.queuedQuery.get(jid);
-      if (queued) {
-        this.queuedQuery.delete(jid);
-        const age = Date.now() - (queued.queuedAt as number);
-        if (age < IMessageSession.QUEUED_QUERY_TTL_MS) {
-          this.logger.info({ chat: jid, ageMs: age, textPreview: queued.text.slice(0, 60) }, "draining queued query");
-          void this.handleOwnerDocQuery(jid, queued.text, this.lastChatRowidForHandle.get(jid) || 0).catch((err) =>
-            this.logger.error({ err }, "handleOwnerDocQuery threw"),
-          );
-        } else {
-          this.logger.info({ chat: jid, ageMs: age }, "dropping queued query — too old");
-        }
-      }
+      // Idempotent — no-op if the early release (after the reply was
+      // committed) already ran; runs the release + drain for the
+      // null-draft early return and any throw before that point.
+      releaseBusyAndDrain();
     }
   }
 

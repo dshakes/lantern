@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
-import { WhatsAppSession } from "../src/session.js";
+import { WhatsAppSession, contactReplyWantsCalendar } from "../src/session.js";
 
 const logger = pino({ level: "silent" });
 
@@ -423,5 +423,26 @@ describe("WhatsAppSession.isOwnerTargeted", () => {
       },
     };
     expect(call(s, msg)).toBe(false);
+  });
+});
+
+describe("contactReplyWantsCalendar: schedule-intent gate", () => {
+  it("fires on availability / appointment phrasing", () => {
+    expect(contactReplyWantsCalendar("are you free friday?")).toBe(true);
+    expect(contactReplyWantsCalendar("can we meet next week to sync?")).toBe(true);
+    expect(contactReplyWantsCalendar("what's your schedule like tomorrow")).toBe(true);
+  });
+
+  it("fires on travel / 'when are you coming' phrasing", () => {
+    expect(contactReplyWantsCalendar("when are you coming to the Bay Area?")).toBe(true);
+    expect(contactReplyWantsCalendar("are you visiting town this month?")).toBe(true);
+    expect(contactReplyWantsCalendar("any plans for the long weekend?")).toBe(true);
+  });
+
+  it("does NOT fire on ordinary 1:1 chatter", () => {
+    expect(contactReplyWantsCalendar("haha ok")).toBe(false);
+    expect(contactReplyWantsCalendar("thanks so much!")).toBe(false);
+    expect(contactReplyWantsCalendar("that movie was great")).toBe(false);
+    expect(contactReplyWantsCalendar("did you eat yet")).toBe(false);
   });
 });

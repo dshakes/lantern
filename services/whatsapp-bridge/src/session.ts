@@ -163,6 +163,21 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+// Should a 1:1 contact reply pull in the owner's device calendar? Gates the
+// (otherwise per-inbound) device-calendar read on schedule intent so plain
+// chatter ("haha ok", "thanks") doesn't trigger a read, while keeping the
+// travel / availability use cases ("when are you coming to the Bay Area?",
+// "are you free Friday?") answerable. Deliberately broad: appointment /
+// availability detectors PLUS a travel / "when are you …" pattern. Exported
+// for unit testing. Parity with the iMessage bridge + the owner doc-query gate.
+export function contactReplyWantsCalendar(text: string): boolean {
+  return (
+    looksLikeAppointmentQuery(text) ||
+    needsCalendar(text) ||
+    /\b(when\s+(?:are|will|r)\s+you|coming|come\s+(?:to|over|down|up|by)|visit(?:ing)?|in\s+town|free|available|plans?|schedule|trip|travel(?:ing|ling)?)\b/i.test(text)
+  );
+}
+
 // Render a small list of names with an overflow tail so the DM never becomes
 // a wall of text. 3 names stay inline; everything beyond becomes "(+N more)".
 function formatNameList(names: string[]): string {
@@ -3701,7 +3716,14 @@ export class WhatsAppSession {
         // it without waiting for the cache TTL.
         invalidate: () => this.ownerProfileStore.invalidate(),
         llmCall: async (prompt: string) => {
-          const out = await this.agent.respondTo(jid, prompt, "", { withTools: false });
+          // CONCURRENCY: route this background fact-extraction call under a
+          // DISTINCT session key, NOT the chat's own `jid`. AgentClient
+          // serializes turns per session key (one inflight promise per key),
+          // so reusing `jid` here would make the owner's NEXT foreground
+          // query wait behind this fire-and-forget extraction. The distinct
+          // key also gives it its own control-plane session, keeping the
+          // extraction prompt out of the conversational history.
+          const out = await this.agent.respondTo(`${jid}::profile-update`, prompt, "", { withTools: false });
           return out || "";
         },
         logger: this.logger as any,
@@ -5515,22 +5537,44 @@ export class WhatsAppSession {
     // World-class authenticity blocks. Each best-effort with empty
     // fallback so cold contacts and groups keep prior behavior.
     const contactStyleBlock = !opts.isGroup ? styleBlockFor(ownerSamples) : "";
-    const dislikeEntries = !opts.isGroup ? await this.dislikeMemory.forJid(from, 3) : [];
-    const dislikeBlock = formatDislikeBlock(dislikeEntries);
-    const episodes = !opts.isGroup ? await this.episodicMemory.forJid(from, 5) : [];
+    // Compute the sync prerequisites for the reads up front so the reads
+    // themselves can be issued concurrently below.
+    const senderName = opts.senderName || this.contactNames.get(from);
     // Cross-contact recall: pull episodes from OTHER chats (most
     // importantly self-chat) that mention this contact by first name.
     // This is how "Sujith was here this weekend" — said in self-chat —
     // surfaces when Sujith messages two days later.
     const contactFirstNames: string[] = [];
-    const senderName = opts.senderName || this.contactNames.get(from);
     if (senderName && !opts.isGroup) {
       const first = senderName.split(/\s+/)[0]?.toLowerCase();
       if (first && first.length >= 2) contactFirstNames.push(first);
     }
-    const mentionEpisodes = !opts.isGroup && contactFirstNames.length > 0
-      ? await this.episodicMemory.forMentions(contactFirstNames, { excludeJid: from, limit: 3, maxAgeDays: 30 })
-      : [];
+    const inboundTopics = !opts.isGroup ? extractTopics(text) : [];
+
+    // PERF: these reads are mutually independent — dislike memory, this
+    // contact's episodes, cross-contact mention episodes, the social
+    // graph, and the presence snapshot don't depend on each other. Issue
+    // them concurrently rather than serially so the pre-LLM context build
+    // is gated by the slowest read, not their sum. (Parity with the
+    // iMessage bridge.)
+    const [dislikeEntries, episodes, mentionEpisodes, related, presenceSnap] =
+      await Promise.all([
+        !opts.isGroup ? this.dislikeMemory.forJid(from, 3) : Promise.resolve([]),
+        !opts.isGroup ? this.episodicMemory.forJid(from, 5) : Promise.resolve([]),
+        !opts.isGroup && contactFirstNames.length > 0
+          ? this.episodicMemory.forMentions(contactFirstNames, { excludeJid: from, limit: 3, maxAgeDays: 30 })
+          : Promise.resolve([]),
+        !opts.isGroup && inboundTopics.length > 0
+          ? this.socialGraph.related({ topics: inboundTopics, excludeJid: from, limit: 4 })
+          : Promise.resolve([]),
+        this.presence.current({
+          nextEvent: async () => {
+            try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
+          },
+        }),
+      ]);
+
+    const dislikeBlock = formatDislikeBlock(dislikeEntries);
     const allEpisodes = [...episodes, ...mentionEpisodes]
       .sort((a, b) => b.ts - a.ts)
       .slice(0, 6);
@@ -5547,25 +5591,16 @@ export class WhatsAppSession {
       allEpisodes.length === 0 &&
       dislikeEntries.length === 0 &&
       (!recentTranscript || recentTranscript.trim().length < 20);
-    const inboundTopics = !opts.isGroup ? extractTopics(text) : [];
-    const related = !opts.isGroup && inboundTopics.length > 0
-      ? await this.socialGraph.related({ topics: inboundTopics, excludeJid: from, limit: 4 })
-      : [];
     const relatedBlock = formatRelatedBlock(related);
     if (!opts.isGroup && inboundTopics.length > 0) {
       void this.socialGraph.record({
         jid: from,
-        contactName: opts.senderName ?? this.contactNames.get(from),
+        contactName: senderName,
         text: text.slice(0, 200),
         fromMe: false,
         topics: inboundTopics,
       });
     }
-    const presenceSnap = await this.presence.current({
-      nextEvent: async () => {
-        try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
-      },
-    });
     let presenceLine = presenceSnap.line || "";
     // AWAY directive: when the owner set a status, tell the contact where he
     // is + that he'll get back, and offer to take a message. This is the
@@ -5624,11 +5659,15 @@ export class WhatsAppSession {
     }
 
     // Calendar awareness for contact replies. Read the owner's DEVICE calendar
-    // (iCloud + Google + subscribed — source of truth) UNGATED so a contact
-    // asking "when are you coming to the Bay Area?" is answerable. The prior
-    // version gated on "are you free?" phrasing AND read only Google, so an
-    // iCloud trip was invisible.
-    if (!opts.isGroup && this.macActions) {
+    // (iCloud + Google + subscribed — source of truth) so a contact asking
+    // "when are you coming to the Bay Area?" / "are you free Friday?" is
+    // answerable. GATED on schedule intent (parity with the iMessage bridge +
+    // the owner doc-query path) so an ordinary 1:1 line ("haha ok", "thanks")
+    // doesn't trigger a device-calendar read on every inbound. The gate is
+    // deliberately broad — appointment/availability detectors PLUS a
+    // travel / "when are you …" pattern — to keep the original travel use
+    // case alive while skipping the read for plain chatter.
+    if (!opts.isGroup && contactReplyWantsCalendar(text) && this.macActions) {
       try {
         const ev = await this.macActions.readUpcomingEvents({ days: 45, max: 15 });
         const calBlock = formatAppleCalendarBlock(ev, { max: 15 });
@@ -5790,22 +5829,35 @@ export class WhatsAppSession {
     }
 
     // Confidence-tier classification — HIGH sends normally, MEDIUM
-    // sends + mirrors to owner for audit, LOW delays 30s with
-    // owner override window.
-    const dislikesForContact = !opts.isGroup ? await this.dislikeMemory.forJid(from, 1) : [];
+    // sends + mirrors to owner for audit, LOW delays with owner
+    // override window.
+    // Reuse `dislikeEntries` (read once above) instead of issuing a
+    // second forJid call — the limit-1 view we need here is just its
+    // prefix, so a redundant control-plane round-trip is avoided.
     const tier = classifyConfidence({
       replyText: draft,
       inboundText: text,
       relationship,
       hasPriorSamples: ownerSamples.length > 0,
-      hasPriorDislikes: dislikesForContact.length > 0,
+      hasPriorDislikes: dislikeEntries.length > 0,
     });
     this.logger.info({ from, tier: tierBadge(tier) }, "wa reply confidence");
     if (tier.tier === "LOW" && !opts.isGroup) {
+      // CONCURRENCY: this hold runs AFTER `respondTo` resolved, so the
+      // AgentClient per-jid inflight lock (the only per-chat serialization
+      // on the contact-reply path — `handleAgentReply` itself is launched
+      // fire-and-forget and holds no busy lock) is ALREADY released here.
+      // The hold therefore blocks only this one detached task, not the
+      // next inbound. We still keep it SHORT (5s, was 30s): the longer the
+      // wait, the wider the window in which a newer inbound from the same
+      // contact produces a fresher reply that could land out of order
+      // ahead of this stale one. 5s preserves the owner's heads-up glance
+      // without meaningfully delaying the reply. (Parity with the iMessage
+      // bridge's LOW-confidence hold refactor.)
       try {
-        await this.sendSelf(`🟡 LOW-confidence draft to ${opts.senderName ?? from.split("@")[0]}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(holding 30s — say "cancel" in self-chat to abort)`);
+        await this.sendSelf(`🟡 LOW-confidence draft to ${opts.senderName ?? from.split("@")[0]}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(holding 5s before send)`);
       } catch {}
-      await sleep(30_000);
+      await sleep(5_000);
     }
 
     // Pace-mirror hold — based on the owner's prior reply latency to
