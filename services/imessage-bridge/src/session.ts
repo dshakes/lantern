@@ -65,6 +65,37 @@ import { ScreenContext, defaultScreenContextConfig } from "@lantern/bridge-core/
 function normalizeForDedup(s: string): string {
   return (s || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
+
+// Reliable iMessage group detection.
+//
+// The old heuristic — `chatDisplayName !== "" || handle === ""` — broke
+// in production: an unnamed group (chat.db ROWID 1829: style=43,
+// participants=3, display_name="", a single handle on the message row)
+// computed FALSE, so a group message was treated as a 1:1 and the reply
+// was DM'd to the sender in a separate thread.
+//
+// chat.db carries authoritative signals we now trust FIRST:
+//   - chat.style == 43  → group (45 == direct/1:1)
+//   - chat.room_name non-empty → group (internal "chat…" room id)
+//   - chat.chat_identifier matching /^chat\d+/ → group
+// The legacy signals (named group, or empty handle on a multi-party row)
+// are kept as a final fallback so nothing that used to be a group
+// regresses. Any one positive signal ⇒ group.
+export function isGroupRow(row: {
+  chatStyle?: number;
+  chatRoomName?: string;
+  chatIdentifier?: string;
+  chatDisplayName?: string;
+  handle?: string;
+}): boolean {
+  if (row.chatStyle === 43) return true;
+  if ((row.chatRoomName ?? "") !== "") return true;
+  if (/^chat\d+/.test(row.chatIdentifier ?? "")) return true;
+  // Legacy fallbacks (named group; multi-party row with no resolved handle).
+  if ((row.chatDisplayName ?? "") !== "") return true;
+  if ((row.handle ?? "") === "") return true;
+  return false;
+}
 import { MacActions, extractActionMarkers, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
@@ -498,7 +529,7 @@ export class IMessageSession {
       agentName: process.env.LANTERN_IMESSAGE_AGENT_NAME || process.env.LANTERN_AGENT_NAME || "imessage-assistant",
       sessionsFile: join(this.stateDir, "agent_sessions.json"),
     });
-    this.media = new MediaHandler(this.logger);
+    this.media = new MediaHandler(this.logger, () => this.ownerProfileStore.nativity());
     this.personal = new PersonalClient(this.logger);
     this.calendar = new CalendarLookup(this.logger);
     this.docs = new PersonalDocs(defaultPersonalDocsConfig(this.stateDir), this.logger);
@@ -575,6 +606,9 @@ export class IMessageSession {
     // Best-effort, non-blocking; scheduled off the boot path so a large
     // chat.db scan never delays `ready`.
     setImmediate(() => this.seedOwnerVoiceFromHistory());
+    // Warm the AddressBook name index so the first reply to anyone already
+    // resolves their real name (fixes the empty-contactNames root cause).
+    setImmediate(() => void this.warmContactIndex());
     // Start screen-context capture (no-op when LANTERN_SCREEN_OCR=off).
     this.screenContext.start();
     this.everConnected = true;
@@ -1249,6 +1283,35 @@ export class IMessageSession {
     return searchAddressBookContacts(query, { limit, logger: this.logger });
   }
 
+  // Resolve a single inbound handle to its saved AddressBook name and cache it
+  // in `contactNames`. THE fix for the bot not knowing who it's talking to:
+  // the cache was never populated, so replies had no name and the model
+  // hallucinated one ("Shiva" for Bhramari). Reads the AddressBook in-process
+  // (Full Disk Access; AppleScript Contacts is TCC-blocked under launchd).
+  // Best-effort, cached, never throws/blocks the reply on failure.
+  private async hydrateContactName(handle: string): Promise<void> {
+    if (!handle || this.contactNames.has(handle)) return;
+    try {
+      const { nameForHandle } = await import("@lantern/bridge-core/contact-resolver");
+      const name = await nameForHandle(handle, { logger: this.logger });
+      if (name) this.contactNames.set(handle, name);
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "hydrateContactName failed");
+    }
+  }
+
+  // Bulk-warm the AddressBook index at startup so the first reply to anyone
+  // already has their name (the per-inbound hydrate then just reads the cache).
+  private async warmContactIndex(): Promise<void> {
+    try {
+      const { loadAddressBookIndex } = await import("@lantern/bridge-core/contact-resolver");
+      const idx = await loadAddressBookIndex({ logger: this.logger });
+      this.logger.info({ contacts: idx?.byPhone.size ?? 0 }, "contact index warmed");
+    } catch {
+      /* best-effort */
+    }
+  }
+
   // Twilio SMS fallback for non-iMessage recipients. When the iMessage send
   // fails (the contact isn't an iMessage buddy — i.e. an SMS/RCS-only number),
   // deliver the reply as SMS via the control-plane's Twilio connector so the
@@ -1620,7 +1683,7 @@ export class IMessageSession {
       if (
         row.associatedMessageType === 2002 &&
         row.associatedMessageGuid &&
-        !(row.chatDisplayName !== "" || row.handle === "") &&
+        !isGroupRow(row) &&
         this.isOwnerChatRow(row) &&
         this.bridgeReplyMeta.has(row.associatedMessageGuid)
       ) {
@@ -1665,7 +1728,7 @@ export class IMessageSession {
     }
 
     const unixMs = appleNsToUnixMs(row.date);
-    const isGroup = row.chatDisplayName !== "" || row.handle === "";
+    const isGroup = isGroupRow(row);
 
     // CROSS-DEVICE / MULTI-APPLE-ID DEDUP. The same owner message lands
     // in chat.db twice (with different rowids) when:
@@ -1811,6 +1874,11 @@ export class IMessageSession {
                 });
                 await this.handleOwnerCommand(row.handle || this.ownHandleGuess(), voiceCmd);
               }
+            } else if (annotation?.degraded && annotation.kind === "voice" && row.handle) {
+              // Owner's own voice note didn't transcribe cleanly — ack
+              // instead of going silent (never feed garbled text to the LLM).
+              this.logger.info({ handle: row.handle }, "owner voice note un-transcribable — acking");
+              await this.send(row.handle, "🎙️ couldn't quite make out that voice note — mind typing it or re-recording?").catch(() => {});
             }
           } catch (err) {
             this.logger.warn({ err }, "voice command path errored");
@@ -1998,8 +2066,7 @@ export class IMessageSession {
   // "+1 (512) 555-1234" and "+15125551234" both match.
   private isOwnerChatRow(row: IMessageRow): boolean {
     if (!row.handle) return false;
-    const isGroup = row.chatDisplayName !== "" || row.handle === "";
-    if (isGroup) return false;
+    if (isGroupRow(row)) return false;
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9@.]/g, "");
     const ownerEnv = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
     if (ownerEnv && norm(row.handle) === norm(ownerEnv)) return true;
@@ -2037,6 +2104,25 @@ export class IMessageSession {
     // bypassed the self-chat agent entirely.
     if (!text && row.hasAttachments) {
       const annotation = await this.annotateAttachments(row.rowid);
+      // GARBLED VOICE NOTE: transcription mis-decoded (e.g. Telugu came back
+      // as Kannada script). Do NOT feed garbage to the LLM — it would reply
+      // "your transcription is garbled", which then gets suppressed → dead
+      // silence. Degrade to a brief warm human ack so they still hear back.
+      // No transcript text is read/logged here (PII). Parity with WA bridge.
+      if (annotation?.degraded && annotation.kind === "voice" && row.handle) {
+        this.logger.info({ handle: row.handle }, "voice note un-transcribable — sending human ack");
+        const ack = this.isOwnerChatRow(row)
+          ? "🎙️ got your voice note — couldn't quite make it out, mind typing it?"
+          : "got your voice note 🙏 will listen properly and get back to you";
+        await this.send(row.handle, ack).catch((err) =>
+          this.logger.warn({ err, handle: row.handle }, "voice-note ack send failed"),
+        );
+        this.broadcast({
+          type: "activity",
+          data: { kind: "system", summary: "🎙️ voice note un-transcribable — acked", jid: row.handle, timestamp: Date.now() },
+        });
+        return;
+      }
       if (annotation) {
         text = annotation.syntheticText;
         this.broadcast({
@@ -2425,6 +2511,11 @@ export class IMessageSession {
         "language-modality engaged",
       );
     }
+    // Resolve the sender's real name from the macOS AddressBook BEFORE building
+    // the reply, so the model addresses them correctly (e.g. "Bhramari") instead
+    // of hallucinating a name. `contactNames` was previously never populated —
+    // this is the fix. Best-effort + cached; never blocks on failure.
+    await this.hydrateContactName(row.handle);
     // World-class authenticity blocks: per-contact style fingerprint,
     // dislike memory, live presence, episodic memory, cross-contact
     // context. Each best-effort; empty block when data unavailable
@@ -2602,7 +2693,12 @@ export class IMessageSession {
     // a draft trips this, we STAY SILENT rather than send fiction.
     // (Real motivation: a friend got "I can't see any text in your
     // message - try typing it out?" and asked "Is this really you?".)
-    const tellCheck = detectBotTells(draft, text);
+    const tellCheck = detectBotTells(draft, text, {
+      contactName: isGroup ? undefined : this.contactNames.get(row.handle),
+      relationship: isGroup
+        ? undefined
+        : this.ownerProfileStore.relationshipFor(row.handle, this.contactNames.get(row.handle)),
+    });
     if (!tellCheck.ok) {
       this.logger.info({ from: row.handle, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft suppressed by bot-tell filter");
       this.broadcast({
@@ -3168,13 +3264,20 @@ export class IMessageSession {
         m.startsWith("audio/") ? 3 : m.startsWith("image/") ? 2 : m.startsWith("video/") ? 1 : 0;
       return score(b.mimeType) - score(a.mimeType);
     });
+    let firstAttempt: MediaAnnotation | null = null;
     for (const att of ordered) {
       const annotation = await this.media.annotate(att);
+      if (firstAttempt === null) firstAttempt = annotation;
       if (annotation.ok) return annotation;
+      // A `degraded` voice annotation is an intentional "understood it
+      // arrived but couldn't transcribe" signal — return it as-is so the
+      // caller can ack gracefully (don't re-annotate / fall through).
+      if (annotation.degraded) return annotation;
     }
-    // None decoded — return the last (failed) annotation so the user
-    // still sees something on the dashboard.
-    return await this.media.annotate(ordered[0]);
+    // None decoded — return the first (failed) annotation so the user
+    // still sees something on the dashboard. Reuse the result we already
+    // have rather than making another Whisper/vision call.
+    return firstAttempt;
   }
 
   // --- in-band commands ---------------------------------------------------

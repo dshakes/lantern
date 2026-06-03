@@ -296,6 +296,135 @@ export async function searchAddressBookContacts(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Reverse lookup: handle (phone / email) -> contact display name.
+//
+// THE fix for "the bot doesn't know who it's talking to": the bridges keep a
+// `contactNames` cache that was never populated, so every reply had no name and
+// the model hallucinated one. This builds a process-cached index of the whole
+// AddressBook (phone-digits -> name, email -> name) via better-sqlite3 (works
+// under launchd via Full Disk Access; AppleScript Contacts is TCC-blocked), so
+// the bridges can resolve an inbound handle to the real saved name.
+// ---------------------------------------------------------------------------
+
+interface AddressBookIndex {
+  byPhone: Map<string, string>; // last-10 digits -> name
+  byPhoneFull: Map<string, string>; // full digits -> name
+  byEmail: Map<string, string>; // lowercased email -> name
+  builtAt: number;
+}
+
+let _abIndex: AddressBookIndex | null = null;
+const AB_INDEX_TTL_MS = 60 * 60_000; // refresh hourly so new contacts appear
+
+function phoneDigits(s: string): string {
+  return (s || "").replace(/[^\d]/g, "");
+}
+
+/** Build (and cache) a reverse index of the macOS AddressBook. Best-effort. */
+export async function loadAddressBookIndex(
+  opts: { logger?: Logger; force?: boolean } = {},
+): Promise<AddressBookIndex | null> {
+  if (process.platform !== "darwin") return null;
+  const now = Date.now();
+  if (!opts.force && _abIndex && now - _abIndex.builtAt < AB_INDEX_TTL_MS) {
+    return _abIndex;
+  }
+  try {
+    const sqliteSpecifier = "better-sqlite3";
+    const [sqliteMod, os, fs, path] = await Promise.all([
+      import(sqliteSpecifier) as Promise<any>,
+      import("node:os"),
+      import("node:fs"),
+      import("node:path"),
+    ]);
+    const Database = sqliteMod.default as any;
+    const base = path.join(os.homedir(), "Library/Application Support/AddressBook/Sources");
+    if (!fs.existsSync(base)) return null;
+    const byPhone = new Map<string, string>();
+    const byPhoneFull = new Map<string, string>();
+    const byEmail = new Map<string, string>();
+    for (const src of fs.readdirSync(base)) {
+      const dbPath = path.join(base, src, "AddressBook-v22.abcddb");
+      if (!fs.existsSync(dbPath)) continue;
+      let conn: any;
+      try {
+        conn = new Database(dbPath, { readonly: true, fileMustExist: true });
+        const rows = conn
+          .prepare(
+            `SELECT r.ZFIRSTNAME AS f, r.ZLASTNAME AS l, r.ZORGANIZATION AS o, r.ZNICKNAME AS n,
+                    p.ZFULLNUMBER AS phone, e.ZADDRESS AS email
+             FROM ZABCDRECORD r
+             LEFT JOIN ZABCDPHONENUMBER p ON p.ZOWNER = r.Z_PK
+             LEFT JOIN ZABCDEMAILADDRESS e ON e.ZOWNER = r.Z_PK`,
+          )
+          .all() as Array<{ f?: string; l?: string; o?: string; n?: string; phone?: string; email?: string }>;
+        for (const r of rows) {
+          // Prefer the first name (how people are addressed); fall back to
+          // full name, nickname, then org.
+          const name =
+            (r.f && r.f.trim()) ||
+            [r.f, r.l].filter(Boolean).join(" ").trim() ||
+            (r.n && r.n.trim()) ||
+            (r.o && r.o.trim()) ||
+            "";
+          if (!name) continue;
+          if (r.phone) {
+            const digits = phoneDigits(r.phone);
+            if (digits.length >= 7) {
+              const last10 = digits.slice(-10);
+              if (!byPhone.has(last10)) byPhone.set(last10, name);
+              if (!byPhoneFull.has(digits)) byPhoneFull.set(digits, name);
+            }
+          }
+          if (r.email) {
+            const em = String(r.email).toLowerCase().trim();
+            if (em && !byEmail.has(em)) byEmail.set(em, name);
+          }
+        }
+      } catch (err) {
+        opts.logger?.debug({ err: (err as Error)?.message, dbPath }, "AddressBook index: db read failed");
+      } finally {
+        try { conn?.close(); } catch { /* ignore */ }
+      }
+    }
+    _abIndex = { byPhone, byPhoneFull, byEmail, builtAt: now };
+    opts.logger?.info({ phones: byPhone.size, emails: byEmail.size }, "AddressBook index built");
+    return _abIndex;
+  } catch (err) {
+    opts.logger?.debug({ err: (err as Error)?.message || String(err) }, "AddressBook index unavailable");
+    return null;
+  }
+}
+
+/**
+ * Resolve a single inbound handle (phone like "+16148051205" or
+ * "15125551234@s.whatsapp.net", or an email) to the saved contact name.
+ * Returns null when not found / unavailable. `@lid` / group ids return null
+ * (no phone to match). Best-effort, never throws.
+ */
+export async function nameForHandle(
+  handle: string,
+  opts: { logger?: Logger } = {},
+): Promise<string | null> {
+  if (!handle) return null;
+  const h = handle.trim();
+  // Group / privacy ids carry no resolvable phone.
+  if (h.endsWith("@g.us") || h.endsWith("@lid") || h.endsWith("@broadcast")) return null;
+  const idx = await loadAddressBookIndex(opts);
+  if (!idx) return null;
+  // Email handle (incl. iMessage email; exclude phone jids which contain '@' too).
+  const local = h.split("@")[0];
+  if (h.includes("@") && !h.includes("whatsapp") && !h.includes("c.us") && !/^\+?\d[\d\s().-]*$/.test(local)) {
+    return idx.byEmail.get(h.toLowerCase()) ?? null;
+  }
+  const digits = phoneDigits(h);
+  if (digits.length >= 7) {
+    return idx.byPhoneFull.get(digits) ?? idx.byPhone.get(digits.slice(-10)) ?? null;
+  }
+  return null;
+}
+
 // Read the macOS AddressBook SQLite directly (in-process via better-sqlite3).
 // Covered by Full Disk Access — the grant the bridge already holds for
 // chat.db — so it works under launchd where AppleScript Automation for

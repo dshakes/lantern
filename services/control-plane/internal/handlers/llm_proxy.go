@@ -2850,6 +2850,10 @@ type transcribeRequest struct {
 	AudioBase64 string `json:"audioBase64"`
 	Filename    string `json:"filename,omitempty"`
 	Language    string `json:"language,omitempty"`
+	// Prompt biases Whisper's decoder toward the right script/vocabulary.
+	// Used to stop low-resource languages mis-decoding into an adjacent
+	// script (e.g. Telangana Telugu → Kannada). Optional.
+	Prompt string `json:"prompt,omitempty"`
 }
 
 type transcribeResponse struct {
@@ -2910,6 +2914,9 @@ func (h *LlmProxyHandler) Transcribe(w http.ResponseWriter, r *http.Request) {
 	_ = mw.WriteField("model", "whisper-1")
 	if req.Language != "" {
 		_ = mw.WriteField("language", req.Language)
+	}
+	if req.Prompt != "" {
+		_ = mw.WriteField("prompt", req.Prompt)
 	}
 	if err := mw.Close(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to finalize multipart form"})

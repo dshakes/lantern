@@ -297,3 +297,168 @@ export function languageModalityHint(hint: LanguageHint, opts: { nativity?: stri
   lines.push(`Honor any vocabulary preferences from the owner profile above — specific words/particles they prefer or avoid take precedence over generic dialect norms. If the profile says "never use X", DO NOT use X.`);
   return lines.join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// Voice-note transcription language biasing.
+//
+// Whisper auto-detects the spoken language. For low-resource South-Asian
+// languages it frequently misdetects — Telangana Telugu speech routinely
+// comes back transcribed in KANNADA script (adjacent Dravidian language,
+// overlapping phonemes). The fix is to pass an explicit `language` ISO
+// code + a script-priming `prompt` so Whisper decodes into the right
+// language instead of guessing.
+// ---------------------------------------------------------------------------
+
+// ISO-639-1 code per detected language. Whisper accepts these as its
+// `language` parameter. "english" maps to "en" but we never bias toward
+// English (auto-detect is reliable for English) — callers treat "" /
+// "auto" as "let Whisper decide".
+const ISO_639_1: Partial<Record<DetectedLanguage, string>> = {
+  english: "en",
+  telugu: "te",
+  hindi: "hi",
+  tamil: "ta",
+  kannada: "kn",
+  malayalam: "ml",
+  marathi: "mr",
+  bengali: "bn",
+  gujarati: "gu",
+  punjabi: "pa",
+  spanish: "es",
+  french: "fr",
+  german: "de",
+};
+
+// A short native-script + Romanized priming sentence per language. Whisper
+// uses `prompt` as a decoding hint: priming with the target script strongly
+// biases the output toward that script and away from a phonetically-adjacent
+// one (the Telugu→Kannada failure mode). Kept short — Whisper only reads the
+// last ~224 tokens of the prompt.
+const WHISPER_PRIME: Partial<Record<DetectedLanguage, string>> = {
+  telugu: "ఇది తెలుగు సంభాషణ. Telugu conversation, Telangana dialect.",
+  hindi: "यह हिंदी बातचीत है. Hindi conversation.",
+  tamil: "இது தமிழ் உரையாடல். Tamil conversation.",
+  kannada: "ಇದು ಕನ್ನಡ ಸಂಭಾಷಣೆ. Kannada conversation.",
+  malayalam: "ഇത് മലയാളം സംഭാഷണമാണ്. Malayalam conversation.",
+  marathi: "ही मराठी संभाषण आहे. Marathi conversation.",
+  bengali: "এটি একটি বাংলা কথোপকথন। Bengali conversation.",
+  gujarati: "આ ગુજરાતી વાતચીત છે. Gujarati conversation.",
+  punjabi: "ਇਹ ਪੰਜਾਬੀ ਗੱਲਬਾਤ ਹੈ। Punjabi conversation.",
+};
+
+export interface VoiceLangHint {
+  /** ISO-639-1 language to pass to Whisper, or "" to let it auto-detect. */
+  iso: string;
+  /** Optional script-priming prompt to bias the decoder, or "". */
+  prompt: string;
+  /** The resolved DetectedLanguage (for the garbled-output script check). */
+  lang: DetectedLanguage;
+}
+
+// Normalize an env / profile value to a DetectedLanguage. Accepts ISO
+// codes ("te"), English names ("telugu", "Telugu"), or "auto".
+//   - ""/whitespace → "unset" (caller falls through to nativity/default)
+//   - "auto"        → explicit auto-detect (caller disables biasing)
+//   - known lang    → that DetectedLanguage
+//   - unrecognized  → null (caller falls through)
+function normalizeLangToken(raw: string): DetectedLanguage | "auto" | "unset" | null {
+  const v = (raw || "").trim().toLowerCase();
+  if (!v) return "unset";
+  if (v === "auto") return "auto";
+  for (const [lang, iso] of Object.entries(ISO_639_1) as Array<[DetectedLanguage, string]>) {
+    if (v === iso || v === lang) return lang;
+  }
+  return null;
+}
+
+/** Resolve the Whisper language bias for a voice note.
+ *
+ *  Precedence: explicit `LANTERN_VOICE_LANG` env (an ISO code, a language
+ *  name, or "auto") → owner-profile nativity text → default "te" (this
+ *  deployment's owner speaks Telangana Telugu). Passing "auto" anywhere
+ *  disables biasing and lets Whisper guess.
+ *
+ *  `nativity` is the owner-profile nativity line (e.g. "Hyderabad,
+ *  Telangana — Telugu"); we scan it for a known language name so the
+ *  hint follows the profile without extra config. */
+export function voiceTranscriptionLangHint(opts: { nativity?: string } = {}): VoiceLangHint {
+  const none: VoiceLangHint = { iso: "", prompt: "", lang: "english" };
+
+  // 1. Explicit env override. "auto" disables biasing; a known language
+  //    wins; unset/empty/unrecognized falls through to nativity/default.
+  const envRaw = (typeof process !== "undefined" && process.env?.LANTERN_VOICE_LANG) || "";
+  const envTok = normalizeLangToken(envRaw);
+  if (envTok === "auto") return none;
+  if (envTok && envTok !== "unset" && envTok !== "english") {
+    return { iso: ISO_639_1[envTok] ?? "", prompt: WHISPER_PRIME[envTok] ?? "", lang: envTok };
+  }
+
+  // 2. Owner-profile nativity — find the first language name mentioned.
+  const nat = (opts.nativity || "").toLowerCase();
+  if (nat) {
+    for (const lang of Object.keys(ISO_639_1) as DetectedLanguage[]) {
+      if (lang === "english") continue;
+      if (nat.includes(lang)) {
+        return { iso: ISO_639_1[lang] ?? "", prompt: WHISPER_PRIME[lang] ?? "", lang };
+      }
+    }
+  }
+
+  // 3. Default for this deployment: Telugu.
+  return { iso: "te", prompt: WHISPER_PRIME.telugu ?? "", lang: "telugu" };
+}
+
+/** Heuristic: does a transcript look garbled / mis-decoded?
+ *
+ *  Two failure modes we catch (both observed in prod):
+ *   1. WRONG SCRIPT — Whisper decoded into a script that isn't the
+ *      expected language and isn't Latin. The canonical bug is Telangana
+ *      Telugu coming back as Kannada script. We flag when the dominant
+ *      non-Latin script differs from the expected language's script.
+ *   2. LOW ALPHA RATIO — mostly punctuation/digits/noise, no real words.
+ *
+ *  Conservative by design: a clean Telugu-script OR Romanized transcript
+ *  must NOT be flagged. Returns false for empty input (caller handles
+ *  the empty case separately). */
+export function looksGarbledTranscript(
+  transcript: string,
+  expected: DetectedLanguage,
+): boolean {
+  const t = (transcript || "").trim();
+  if (t.length < 2) return false;
+
+  // Alpha ratio: letters (any script) vs. total non-space chars. A real
+  // utterance is mostly letters; noise/garble is mostly symbols.
+  let letters = 0;
+  let nonSpace = 0;
+  for (const ch of t) {
+    if (/\s/.test(ch)) continue;
+    nonSpace++;
+    if (/\p{L}/u.test(ch)) letters++;
+  }
+  if (nonSpace >= 4 && letters / nonSpace < 0.45) return true;
+
+  // Script check. Find the dominant native (non-Latin) script.
+  let dominant: DetectedLanguage | null = null;
+  let dominantChars = 0;
+  for (const { lang, ranges } of SCRIPTS) {
+    const n = countScriptChars(t, ranges);
+    if (n > dominantChars) { dominant = lang; dominantChars = n; }
+  }
+  // No native script at all → it's Latin/Romanized; that's fine.
+  if (!dominant || dominantChars === 0) return false;
+
+  // The expected language's own script (or Latin) is always acceptable.
+  // Devanagari is shared by Hindi + Marathi, so treat them as compatible.
+  const compatible =
+    dominant === expected ||
+    (expected === "english") ||
+    ((expected === "hindi" || expected === "marathi") &&
+      (dominant === "hindi" || dominant === "marathi"));
+  if (compatible) return false;
+
+  // Dominant script is a DIFFERENT native script than expected (e.g.
+  // Kannada output for a Telugu speaker) and it carries real weight
+  // (≥ 3 chars) → garbled mis-decode.
+  return dominantChars >= 3;
+}

@@ -50,6 +50,16 @@ export interface IMessageRow {
   // group reply, send to this, NOT to the individual sender's handle —
   // otherwise the bot DMs the sender instead of posting in the group.
   chatIdentifier: string;
+  // chat.style — Messages' authoritative chat-kind flag. 43 = group,
+  // 45 = direct (1:1). This is the RELIABLE group signal: a group with
+  // no display_name and a single handle on the row still has style=43,
+  // whereas the old display_name/handle heuristic mis-read it as a DM
+  // (and replied in a 1:1 with the sender). 0 when no chat row joined.
+  chatStyle: number;
+  // chat.room_name — the internal group room id (e.g. "chat1234..."),
+  // empty for a 1:1. A non-empty room_name is a definitive group signal,
+  // independent of whether the group was ever given a display name.
+  chatRoomName: string;
   // Service: "iMessage" or "SMS". We may want to surface SMS
   // differently in the UI.
   service: string;
@@ -172,7 +182,9 @@ export class ChatDB {
            COALESCE(m.associated_message_guid, '') AS associated_message_guid,
            c.ROWID                              AS chat_rowid,
            COALESCE(c.display_name, '')         AS chat_display_name,
-           COALESCE(c.chat_identifier, '')      AS chat_identifier
+           COALESCE(c.chat_identifier, '')      AS chat_identifier,
+           COALESCE(c.style, 0)                 AS chat_style,
+           COALESCE(c.room_name, '')            AS chat_room_name
          FROM message m
          LEFT JOIN handle h            ON m.handle_id = h.ROWID
          LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
@@ -196,6 +208,8 @@ export class ChatDB {
       chat_rowid: number;
       chat_display_name: string;
       chat_identifier: string;
+      chat_style: number;
+      chat_room_name: string;
     }>;
 
     if (rows.length === 0) return [];
@@ -215,6 +229,8 @@ export class ChatDB {
       chatRowid: r.chat_rowid,
       chatDisplayName: r.chat_display_name,
       chatIdentifier: r.chat_identifier,
+      chatStyle: r.chat_style ?? 0,
+      chatRoomName: r.chat_room_name ?? "",
       hasAttachments: !!r.has_attachments,
       associatedMessageType: r.associated_message_type ?? 0,
       // The associated_message_guid column has prefixes in newer
