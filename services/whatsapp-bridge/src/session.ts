@@ -3303,10 +3303,27 @@ export class WhatsAppSession {
     }
     this.decryptErrorCount++;
 
-    // Targeted bootstrap: force a fresh session with the failing peer
-    // device. This is what unsticks the "phone keeps sending with a
+    // Targeted bootstrap: force a fresh PAIRWISE Signal session with the
+    // failing peer device. This unsticks the 1:1 "phone keeps sending with a
     // session the bridge has no record of" deadlock.
-    if (remoteJid && !this.bootstrappedJids.has(remoteJid) && this.socket) {
+    //
+    // GROUPS decrypt via SENDER KEYS, not pairwise sessions — assertSessions
+    // is meaningless for an @g.us / @broadcast jid (it has no pairwise
+    // session). Recovery for a group is the sender re-sending their
+    // SenderKeyDistributionMessage, which WhatsApp triggers when we send a
+    // retry receipt (Baileys does this automatically). So we skip the futile
+    // assertSessions for group jids and just record that we're awaiting the
+    // retry-receipt → SKDM round-trip. (Persistent group-decrypt failure after
+    // multiple re-pairs means the bridge's Signal identity churned and the
+    // definitive reset is a clean re-pair.)
+    const isGroupOrBroadcast =
+      !!remoteJid && (remoteJid.endsWith("@g.us") || remoteJid.endsWith("@broadcast"));
+    if (remoteJid && isGroupOrBroadcast) {
+      this.logger.info(
+        { remoteJid },
+        "group decrypt failure — awaiting sender-key resend via retry receipt (assertSessions N/A for groups)",
+      );
+    } else if (remoteJid && !this.bootstrappedJids.has(remoteJid) && this.socket) {
       this.bootstrappedJids.add(remoteJid);
       const sock = this.socket;
       void (async () => {
