@@ -1175,6 +1175,14 @@ export class WhatsAppSession {
   private lastLocationAckAt: Map<string, number> = new Map();
   private static readonly LOCATION_ACK_TTL_MS = 60 * 60_000;
 
+  // A8: send blue ticks before "typing…". Gated so it can be disabled
+  // (LANTERN_WA_READ_RECEIPTS=off) — some owners prefer read receipts
+  // off entirely. On by default to match real human behavior.
+  private readonly readReceiptsEnabled: boolean =
+    (process.env.LANTERN_WA_READ_RECEIPTS || "on").toLowerCase() !== "off";
+  private static readonly READ_JITTER_MIN_MS = 1_000;
+  private static readonly READ_JITTER_MAX_MS = 4_000;
+
   // SELF-EVAL — per-msgId record of WHAT we sent + WHY. Lets the
   // critique-retry handler reconstruct the prompt when the owner
   // reacts with 🔁 / 🤦 on a bot reply. Capped at 200 entries (FIFO);
@@ -2018,6 +2026,36 @@ export class WhatsAppSession {
               );
             }
             continue; // reactions don't fall through to text processing
+          }
+
+          // CONTACT reaction on one of OUR replies (A6). When the other
+          // side double-taps ❤️/👍/😂/🔥 on a bot message, that's a
+          // landed-well signal: skip a reply (reacting back to a reaction
+          // is itself robotic). When they react 😤/👎/😮‍💨 it's quiet
+          // dissatisfaction — feed the same dislike flywheel a 👎 command
+          // would, so future replies to this contact steer clear. Pure
+          // bookkeeping; we never send anything here.
+          if (reactionMsg && !msg.key.fromMe && (reactionMsg.text || "")) {
+            const emoji = reactionMsg.text || "";
+            const targetKeyId = reactionMsg.key?.id || undefined;
+            const onBotReply = !!(
+              targetKeyId &&
+              (this.bridgeSentIds.has(targetKeyId) || this.bridgeReplyMeta.has(targetKeyId))
+            );
+            if (onBotReply) {
+              const POSITIVE = new Set(["❤️", "👍", "😂", "🔥", "🥰", "😍", "👏", "💯", "🙏"]);
+              const NEGATIVE = new Set(["😤", "😮‍💨", "👎", "🙄", "😒", "💀"]);
+              if (POSITIVE.has(emoji)) {
+                this.logger.info({ threadJid: from, onBotReply }, "contact reacted positively — reply landed");
+                this.logActivity("attention_dm", "contact reacted positively to a reply", {
+                  jid: from, pushName: msg.pushName || undefined, scope: "contact",
+                });
+              } else if (NEGATIVE.has(emoji)) {
+                this.logger.info({ threadJid: from, onBotReply }, "contact reacted negatively — feeding dislike flywheel");
+                void this.recordDislikeFromContactReaction(from, targetKeyId);
+              }
+            }
+            continue; // contact reactions never fall through to text processing
           }
 
           // LIVE / STATIC LOCATION SHARE — WhatsApp Web/Desktop can't
@@ -5150,6 +5188,21 @@ export class WhatsAppSession {
     this.logger.info({ jid, queued: this.overnightQueue.length }, "overnight: inbound queued for morning replay");
   }
 
+  // A7: randomized inter-reply gap for the morning replay drain, so a
+  // backlog of overnight messages goes out spaced like a person catching
+  // up rather than a 7am burst. Defaults to a 2–9 min uniform gap;
+  // override the band with LANTERN_WA_REPLAY_STAGGER_MIN_MS /
+  // LANTERN_WA_REPLAY_STAGGER_MAX_MS, or disable entirely with
+  // LANTERN_WA_REPLAY_STAGGER=off (returns 0 → back-to-back, old behavior).
+  private overnightReplayGapMs(): number {
+    if ((process.env.LANTERN_WA_REPLAY_STAGGER || "on").toLowerCase() === "off") return 0;
+    const min = Number(process.env.LANTERN_WA_REPLAY_STAGGER_MIN_MS) || 2 * 60_000;
+    const max = Number(process.env.LANTERN_WA_REPLAY_STAGGER_MAX_MS) || 9 * 60_000;
+    const lo = Math.max(0, Math.min(min, max));
+    const hi = Math.max(min, max);
+    return lo + Math.floor(Math.random() * (hi - lo + 1));
+  }
+
   // Periodic tick (1/min). Drains the queue on the falling edge of quiet
   // hours (quiet → not-quiet). Cheap no-op the rest of the time.
   private tickOvernightReplay(): void {
@@ -5189,6 +5242,7 @@ export class WhatsAppSession {
     this.saveOvernightQueue();
     this.logger.info({ trigger, count: batch.length }, "overnight: replaying queued messages with morning pacing");
     const seen = new Set<string>();
+    let replayed = 0;
     try {
       for (const item of batch) {
         try {
@@ -5196,6 +5250,43 @@ export class WhatsAppSession {
           const key = `${item.jid} ${item.text}`;
           if (seen.has(key)) continue;
           seen.add(key);
+          // A7: STAGGER replays. Firing every queued reply the instant the
+          // window reopens (even with each one's own pace hold) reads as a
+          // 7am batch job when several contacts are waiting. Space the actual
+          // sends with a randomized multi-minute gap so the morning catch-up
+          // looks like a person working through their backlog one thread at a
+          // time. First reply goes promptly (after its own pace hold); each
+          // subsequent one waits a fresh gap. Gated via LANTERN_WA_REPLAY_STAGGER.
+          if (replayed > 0) {
+            const gap = this.overnightReplayGapMs();
+            if (gap > 0) {
+              this.logger.debug({ jid: item.jid, gapMs: gap }, "overnight: staggering before next replay");
+              await sleep(gap);
+              // The window may have closed again during a long stagger
+              // (drain straddling the next quiet-hours start). Stop rather
+              // than reply at 3am; re-queue the untouched remainder.
+              let backInQuiet = false;
+              try { backInQuiet = isQuietHours(new Date(), defaultQuietHours()); } catch { backInQuiet = false; }
+              if (backInQuiet) {
+                // Defer the current item (added to `seen` but not yet sent)
+                // plus every later item not already replayed/skipped in this
+                // drain, back onto the queue for the next morning.
+                const idx = batch.indexOf(item);
+                const later = batch.slice(idx + 1).filter((r) => !seen.has(`${r.jid} ${r.text}`));
+                const remaining = [item, ...later];
+                this.logger.info({ remaining: remaining.length }, "overnight: re-entered quiet hours mid-drain — deferring remainder");
+                for (const r of remaining) this.overnightQueue.push(r);
+                this.saveOvernightQueue();
+                break;
+              }
+              // The contact may have been answered during the gap (owner
+              // woke up, replied manually) — re-check before sending.
+              if (this.repliedSince(item.jid, item.enqueuedTs)) {
+                this.logger.info({ jid: item.jid }, "overnight: skip — answered during stagger gap");
+                continue;
+              }
+            }
+          }
           // Skip if the contact has been answered since this was queued —
           // either the owner replied manually or an earlier replay landed.
           if (this.repliedSince(item.jid, item.enqueuedTs)) {
@@ -5211,6 +5302,7 @@ export class WhatsAppSession {
             msgKey: item.msgId ? { id: item.msgId, remoteJid: item.jid, fromMe: false } : undefined,
             overnightReplay: true,
           });
+          replayed += 1;
         } catch (err) {
           this.logger.warn({ err, jid: item.jid }, "overnight: replay of one message failed (continuing)");
         }
@@ -5308,6 +5400,23 @@ export class WhatsAppSession {
       channel: "whatsapp",
     });
     try { await this.confirmToSelf("👎 noted — I'll steer clear of that next time."); } catch {}
+  }
+
+  // A6: a CONTACT (not the owner) reacted negatively to one of our
+  // replies. Quiet dissatisfaction — record it into the dislike flywheel
+  // so future replies to this contact avoid the same shape. No reply, no
+  // owner ping (the contact didn't ask for one); purely a learning
+  // signal. Best-effort.
+  private async recordDislikeFromContactReaction(jid: string, msgId: string | undefined): Promise<void> {
+    this.logActivity("attention_dm", "contact reacted negatively to a reply", { jid, scope: "contact" });
+    const meta = msgId ? this.bridgeReplyMeta.get(msgId) : undefined;
+    if (!meta) return; // reply-meta aged out — nothing concrete to learn from
+    void this.dislikeMemory.record({
+      jid: meta.jid,
+      inbound: meta.inboundText,
+      badReply: meta.replyText,
+      channel: "whatsapp",
+    });
   }
 
   // SELF-EVAL retry: full critique-and-rewrite pipeline.
@@ -6351,6 +6460,21 @@ export class WhatsAppSession {
       await sleep(5_000);
     }
 
+    // Blue ticks BEFORE "typing…" (A8). A real person reads a message
+    // (blue ticks) a beat before they start typing — never the reverse,
+    // and never both at the same instant. We mark the inbound read with a
+    // short human jitter (1–4s) so the read receipt lands first, then the
+    // pace hold + composing indicator follow. Best-effort + gated via
+    // LANTERN_WA_READ_RECEIPTS=off. Skip on overnight replay (the inbound
+    // was already auto-read overnight) and when we have no message key.
+    if (
+      this.readReceiptsEnabled &&
+      !opts.overnightReplay &&
+      opts.msgKey?.id
+    ) {
+      void this.markReadWithJitter(from, opts.msgKey);
+    }
+
     // Pace-mirror hold — based on the owner's REAL prior reply latency to
     // this contact. We feed genuine (inboundTs, replyTs) samples mined from
     // wa-history.jsonl into computeHoldFromSamples, which falls back to a
@@ -6570,6 +6694,38 @@ export class WhatsAppSession {
       });
     } catch (err) {
       this.logger.warn({ err, jid, emoji }, "reaction send failed");
+    }
+  }
+
+  // A8: mark an inbound message read (blue ticks) after a short human
+  // jitter, so the read receipt precedes the "typing…" indicator like a
+  // real person who reads first and then starts typing. Fire-and-forget:
+  // the caller does not await it, and any failure is swallowed (read
+  // receipts are best-effort polish, never block a reply). No PII logged.
+  private async markReadWithJitter(
+    jid: string,
+    key: {
+      id?: string | null;
+      remoteJid?: string | null;
+      fromMe?: boolean | null;
+      participant?: string | null;
+    },
+  ): Promise<void> {
+    if (!this.socket || !key.id) return;
+    const span = WhatsAppSession.READ_JITTER_MAX_MS - WhatsAppSession.READ_JITTER_MIN_MS;
+    const jitter = WhatsAppSession.READ_JITTER_MIN_MS + Math.floor(Math.random() * (span + 1));
+    await sleep(jitter);
+    if (!this.socket) return;
+    const readKey = {
+      remoteJid: key.remoteJid || jid,
+      fromMe: !!key.fromMe,
+      id: key.id,
+      ...(key.participant ? { participant: key.participant } : {}),
+    };
+    try {
+      await this.socket.readMessages([readKey as never]);
+    } catch (err) {
+      this.logger.warn({ err, jid }, "read-receipt send failed");
     }
   }
 

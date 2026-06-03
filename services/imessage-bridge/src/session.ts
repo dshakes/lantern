@@ -282,6 +282,19 @@ export class IMessageSession {
   // Per-handle daily-dedup of "what did we already replay" — defends a
   // restart mid-drain from re-replaying an entry the file still holds.
   private quietReplayed: Set<string> = new Set();
+  // Morning-replay STAGGER bounds (ms). A person works through their
+  // overnight backlog over a few minutes, not in one 6am burst. We
+  // reuse the pacing module to shape each inter-message gap, then clamp
+  // to [floor, ceil] so the gap is believable without dragging the whole
+  // drain past quiet hours. Overridable per-deployment.
+  private static readonly QUIET_REPLAY_GAP_FLOOR_MS =
+    Number(process.env.LANTERN_QUIET_REPLAY_GAP_FLOOR_MS) > 0
+      ? Number(process.env.LANTERN_QUIET_REPLAY_GAP_FLOOR_MS)
+      : 25_000; // ~25s minimum between backlog replies
+  private static readonly QUIET_REPLAY_GAP_CEIL_MS =
+    Number(process.env.LANTERN_QUIET_REPLAY_GAP_CEIL_MS) > 0
+      ? Number(process.env.LANTERN_QUIET_REPLAY_GAP_CEIL_MS)
+      : 4 * 60_000; // ~4min maximum between backlog replies
 
   // Per-chat concurrency lock. A single doc-query / natural-chat
   // round-trip can take 90+ seconds. Without this lock, rapid-fire
@@ -2589,7 +2602,7 @@ export class IMessageSession {
     // a draft trips this, we STAY SILENT rather than send fiction.
     // (Real motivation: a friend got "I can't see any text in your
     // message - try typing it out?" and asked "Is this really you?".)
-    const tellCheck = detectBotTells(draft);
+    const tellCheck = detectBotTells(draft, text);
     if (!tellCheck.ok) {
       this.logger.info({ from: row.handle, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft suppressed by bot-tell filter");
       this.broadcast({
@@ -3060,14 +3073,23 @@ export class IMessageSession {
         const row: IMessageRow = { ...e.row, isFromMe: false, associatedMessageType: 0 };
         const unixMs = appleNsToUnixMs(row.date) || e.queuedAt;
         try {
+          // STAGGER: a person works through their overnight backlog over
+          // time, not all in one instant. Before each entry (except the
+          // first) wait a realistic, jittered gap so the morning replies
+          // trickle out rather than firing as a 6am burst. The gap is
+          // bounded (see morningReplayGapMs) so a backlog can't push a
+          // reply back into quiet hours. handleInbound itself still
+          // applies its own per-contact read-delay hold on top of this.
+          if (replayed > 0) {
+            const gapMs = this.morningReplayGapMs(row.chatRowid);
+            this.logger.info({ handle: e.row.handle, gapMs }, "overnight replay — staggering next backlog reply");
+            await new Promise((r) => setTimeout(r, gapMs));
+          }
           // Replay through the normal pipeline. computeHoldFromSamples is
           // localHour-aware, so the morning hour gives a realistic
           // read-delay rather than an instant 6am burst.
           await this.handleInbound(row, unixMs, false);
           replayed += 1;
-          // Small spacer between contacts so we don't fire a burst of
-          // sends in the same second across several threads.
-          await new Promise((r) => setTimeout(r, 1_500 + Math.round(Math.random() * 2_500)));
         } catch (err) {
           this.logger.warn({ err, handle: e.row.handle }, "overnight replay of one entry failed");
         }
@@ -3078,6 +3100,47 @@ export class IMessageSession {
       }
     } finally {
       this.quietReplayInFlight = false;
+    }
+  }
+
+  // Inter-message gap for the staggered morning replay. Models a person
+  // triaging their overnight backlog: a realistic, jittered pause between
+  // answering one message and the next — NOT an instant burst. Reuses the
+  // pacing module (computeHoldFromSamples) so the gap reflects how this
+  // owner actually paces replies (time-of-day aware, jittered), then
+  // clamps to [floor, ceil] so the cadence reads as "working through it"
+  // rather than the sub-second per-reply hold the pacing module returns
+  // for live conversations. Best-effort: any failure falls back to a
+  // jittered default within the same bounds.
+  private morningReplayGapMs(chatRowid: number): number {
+    const floor = IMessageSession.QUIET_REPLAY_GAP_FLOOR_MS;
+    const ceil = Math.max(floor, IMessageSession.QUIET_REPLAY_GAP_CEIL_MS);
+    try {
+      const tsRows = this.db.recentTimestamped(chatRowid, 40);
+      const samples: Array<{ inboundTs: number; replyTs: number }> = [];
+      for (let i = 1; i < tsRows.length; i++) {
+        const cur = tsRows[i];
+        const prev = tsRows[i - 1];
+        if (cur.fromMe && !prev.fromMe) {
+          samples.push({ inboundTs: prev.ts, replyTs: cur.ts });
+        }
+      }
+      // Treat the backlog as a cold restart (the owner is starting fresh
+      // in the morning, not mid-burst) so the pacing leans slower.
+      const verdict = computeHoldFromSamples({
+        samples,
+        msSinceLastInbound: Number.MAX_SAFE_INTEGER,
+        isActiveBurst: false,
+        localHour: new Date().getHours(),
+      });
+      // The pacing hold is the read-delay scale (seconds); scale it up to
+      // a backlog-triage cadence and clamp into the staggered band.
+      const scaled = verdict.holdMs * 6;
+      return Math.max(floor, Math.min(ceil, Math.round(scaled)));
+    } catch {
+      // Jittered default within the band so we still don't fire a burst.
+      const span = ceil - floor;
+      return Math.round(floor + Math.random() * span);
     }
   }
 

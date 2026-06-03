@@ -411,6 +411,39 @@ export function kinshipRegisterCue(relationship: string): string | null {
   return null;
 }
 
+// Transcript budget for the persona prompt. The old cap (2000 chars) was
+// too tight for long threads — the model lost earlier context and produced
+// contextually-wrong replies (the worst bot-tell). We raise the verbatim
+// tail to ~6000 chars (~30 short messages) AND, when the thread is longer
+// than that, keep the most-recent tail verbatim plus a compact one-line
+// head note so an earlier topic shift isn't silently dropped. Splitting on
+// newline boundaries means we never cut a message mid-line.
+const TRANSCRIPT_TAIL_CHARS = 6000;
+// How much of the truncated head to summarize as a count of dropped lines.
+// We don't paraphrase (no LLM on this path) — just signal "earlier context
+// exists" so the model doesn't treat the tail as the whole conversation.
+function clampTranscript(transcript: string): string {
+  if (transcript.length <= TRANSCRIPT_TAIL_CHARS) return transcript;
+
+  // Take the most-recent TRANSCRIPT_TAIL_CHARS, then snap forward to the
+  // next line boundary so the tail starts at a whole message, not mid-line.
+  let tail = transcript.slice(-TRANSCRIPT_TAIL_CHARS);
+  const nl = tail.indexOf("\n");
+  if (nl >= 0 && nl < tail.length - 1) tail = tail.slice(nl + 1);
+  tail = tail.trim();
+
+  // Count how many leading lines we dropped so the head note is honest.
+  const totalLines = transcript.split("\n").filter((l) => l.trim()).length;
+  const tailLines = tail.split("\n").filter((l) => l.trim()).length;
+  const dropped = Math.max(0, totalLines - tailLines);
+  const headNote =
+    dropped > 0
+      ? `[earlier in this thread: ${dropped} older message${dropped === 1 ? "" : "s"} omitted — the conversation may have shifted topics; ask rather than assume if the latest message references something not shown below]`
+      : "";
+
+  return headNote ? `${headNote}\n\n${tail}` : tail;
+}
+
 export function agentPersonaPrompt(
   ownerName: string,
   style: StyleProfile,
@@ -662,7 +695,7 @@ export function agentPersonaPrompt(
     lines.push(
       `Recent conversation on this thread (oldest first — reply to the LAST message, in context):`,
     );
-    lines.push(transcript.length > 2000 ? transcript.slice(-2000) : transcript);
+    lines.push(clampTranscript(transcript));
   }
 
   // Scheduling-negotiation block — flag-gated. When the bridge has the
@@ -1032,11 +1065,45 @@ const AI_TELL_WORDS = [
   "i hope this finds",
 ];
 
+// Coherence guard (A4): an inbound that reports ARRIVAL / COMPLETION
+// ("reached", "landed", "got home", "done", "safe") is closing a loop, not
+// opening a plan. If the draft answers it with a FUTURE COMMITMENT ("see
+// you", "let's meet", "i'll bring", "at 6") the model has fabricated a plan
+// that doesn't follow from the message — a glaring bot-tell. Deterministic,
+// no LLM, runs in <1ms. Word-boundary matched so "reached" doesn't fire on
+// "overreached" etc.
+const ARRIVAL_COMPLETION_RE =
+  /\b(reached|reaching|landed|arrived|got\s+(?:home|back)|back\s+home|made\s+it|got\s+here|i'?m\s+home|i'?m\s+back|done|finished|completed|wrapped\s+up|home\s+safe|safe(?:ly)?)\b/i;
+const FUTURE_COMMITMENT_RE =
+  /\b(see\s+you|see\s+u|catch\s+you|meet\s+(?:you|up|at)|let'?s\s+(?:meet|catch|grab|do|go|hang)|i'?ll\s+(?:bring|come|see|meet|pick|get|be\s+there|swing\s+by)|i\s+will\s+(?:bring|come|meet|be\s+there)|talk\s+(?:later|tomorrow)|tomorrow|tonight|later\s+today)\b/i;
+// Explicit clock times ("at 6", "at 6pm", "at 6:30") — a future-plan marker
+// even when no commitment verb is present.
+const CLOCK_TIME_RE = /\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i;
+
 /** Scan a draft for bot-tells. Returns `ok=false` with a reason when
- *  the draft should be suppressed entirely (bridge should NOT send). */
-export function detectBotTells(draft: string): BotTellVerdict {
+ *  the draft should be suppressed entirely (bridge should NOT send).
+ *
+ *  `inbound` is the contact's message the draft is replying to. When
+ *  supplied it enables the coherence guard (A4) — catching a reply that
+ *  proposes a future plan in response to an arrival/completion message.
+ *  Optional and backward-compatible: callers that omit it keep the prior
+ *  draft-only behaviour. */
+export function detectBotTells(draft: string, inbound?: string): BotTellVerdict {
   const text = (draft || "").trim();
   if (!text) return { ok: false, reason: "empty draft (stay silent)" };
+
+  // Coherence guard (A4) — only when we have the inbound to compare against.
+  const inb = (inbound || "").trim();
+  if (
+    inb &&
+    ARRIVAL_COMPLETION_RE.test(inb) &&
+    (FUTURE_COMMITMENT_RE.test(text) || CLOCK_TIME_RE.test(text))
+  ) {
+    return {
+      ok: false,
+      reason: "incoherent: future plan in reply to an arrival/completion message",
+    };
+  }
 
   // Whole-draft bare meta-token: the model typed a placeholder ("empty",
   // "none", "no reply", "nothing to add"…) instead of returning an actual
@@ -1070,12 +1137,18 @@ export function detectBotTells(draft: string): BotTellVerdict {
   const teluguTell = detectTeluguBotTell(text);
   if (teluguTell) return { ok: false, reason: teluguTell };
 
-  // Length sanity: a text message is a text message. >400 chars or
-  // >3 line breaks reads as bot regardless of content.
-  if (text.length > 400)
-    return { ok: false, reason: "too long for a text reply" };
-  if ((text.match(/\n/g)?.length ?? 0) > 3)
-    return { ok: false, reason: "too many line breaks" };
+  // Length sanity (A9): a text message is a text message, but a legitimately
+  // longer answer shouldn't be a silent non-reply. We only HARD-suppress
+  // truly excessive output (> 800 chars) — that's an essay, not a text, and
+  // almost always an LLM monologue. Replies in the 400–800 range are allowed
+  // through: naturalize() splits them into a natural multi-message burst (see
+  // splitIntoMessages). Likewise, multi-line drafts are no longer suppressed
+  // on line-break count — naturalize() reformats them into bubbles. Suppress
+  // only when BOTH excessively long AND many line breaks (a dumped document).
+  if (text.length > 800)
+    return { ok: false, reason: "far too long for a text reply" };
+  if (text.length > 400 && (text.match(/\n/g)?.length ?? 0) > 8)
+    return { ok: false, reason: "looks like a pasted document, not a text" };
 
   return { ok: true };
 }
@@ -1256,28 +1329,37 @@ function applyStyle(text: string, style: StyleProfile): string {
   return out;
 }
 
-// Split a long reply into up to 3 messages on sentence boundaries.
-// Heuristic: aim for ~80-120 char chunks; never split mid-clause.
+// Split a long reply into a natural multi-message burst on sentence (and
+// line) boundaries. Heuristic: aim for ~120-180 char chunks; never split
+// mid-clause. Newlines are treated as split boundaries too, so a multi-line
+// draft is REFORMATTED into separate bubbles rather than sent as one block
+// with raw line breaks (A9) — and 400–800 char replies get a slightly higher
+// bubble cap so they're split, not crammed into one over-long message.
 function splitIntoMessages(text: string, style: StyleProfile): string[] {
   const cleaned = text.trim();
   if (!cleaned) return [];
 
-  // Don't split short replies.
-  if (cleaned.length < 120) return [cleaned];
+  // Don't split short single-line replies.
+  if (cleaned.length < 120 && !cleaned.includes("\n")) return [cleaned];
 
-  // Split on sentence endings, keeping the punctuation with the previous half.
+  // Split on sentence endings AND newlines, keeping terminal punctuation with
+  // the previous half. Collapse any remaining intra-part newlines to spaces so
+  // no bubble carries a raw line break.
   const parts = cleaned
-    .split(/(?<=[.!?])\s+/)
-    .map((p) => p.trim())
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((p) => p.replace(/\s*\n\s*/g, " ").trim())
     .filter(Boolean);
-  if (parts.length <= 1) return [cleaned];
+  if (parts.length <= 1) return [parts[0] ?? cleaned];
 
-  // Greedy pack into ~120 char chunks; cap at 3 messages.
+  // Greedy pack into ~target char chunks. Longer drafts (a legit 400–800
+  // char answer) get one extra bubble so they split naturally instead of
+  // dumping the tail into a single over-long message.
   const target = style.avgWordsPerMessage > 12 ? 180 : 120;
-  const maxMessages = 3;
+  const maxMessages = cleaned.length > 400 ? 4 : 3;
   const out: string[] = [];
   let cur = "";
-  for (const p of parts) {
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
     if (!cur) {
       cur = p;
       continue;
@@ -1290,7 +1372,7 @@ function splitIntoMessages(text: string, style: StyleProfile): string[] {
     }
     if (out.length >= maxMessages - 1) {
       // Stuff everything remaining into the last bucket so we don't drop content.
-      const remaining = parts.slice(parts.indexOf(p) + 1).join(" ");
+      const remaining = parts.slice(i + 1).join(" ");
       if (remaining) cur += " " + remaining;
       break;
     }
