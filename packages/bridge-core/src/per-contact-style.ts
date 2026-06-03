@@ -123,24 +123,75 @@ function dedupeKey(msg: string): string {
     .trim();
 }
 
-export function computeContactStyle(messages: string[]): ContactStyle {
+/**
+ * Optional inputs for computeContactStyle. All backward-compatible —
+ * callers that pass nothing get the legacy behaviour.
+ */
+export interface ContactStyleOptions {
+  // Epoch-ms timestamp PARALLEL to the `messages` array (timestamps[i]
+  // is when messages[i] was sent). When supplied, VERBATIM few-shot
+  // samples are restricted to the recency window (A5) so a stale
+  // old-register message doesn't skew the voice the LLM mimics.
+  // Statistical features (avgWords, lang mix, openers/closers) still use
+  // the FULL set for stability. Omit, or pass undefined per-message, to
+  // gate gracefully — entries without a timestamp are treated as recent
+  // (kept), so we never break on partial data.
+  timestamps?: (number | undefined)[];
+
+  // Recency window in days for verbatim samples. Default 180. A message
+  // older than `now - windowDays` is excluded from the verbatim pool
+  // only — never from the statistics.
+  verbatimWindowDays?: number;
+
+  // Reference "now" in epoch-ms (default Date.now()). Injectable for tests.
+  now?: number;
+}
+
+const DEFAULT_VERBATIM_WINDOW_DAYS = 180;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function computeContactStyle(
+  messages: string[],
+  options: ContactStyleOptions = {},
+): ContactStyle {
   // Drop bot-self output (acks, progress nudges, status/digest lines the
   // bridge emitted) — those are NOT the owner's voice and pollute the
   // fingerprint, and then collapse near-identical messages so a ring of
   // "ok"/"k"/"yeah" acks doesn't falsely signal a one-liner register.
-  const base = messages.filter(
-    (m) => typeof m === "string" && m.trim().length > 0 && !isBotSelfMessage(m),
-  );
+  //
+  // We carry each surviving message's ORIGINAL index forward so the
+  // optional parallel `timestamps` array stays aligned through the filter
+  // + dedup passes (used for the A5 verbatim recency window only).
   const dedupSeen = new Set<string>();
   const samples: string[] = [];
-  for (const m of base) {
+  const sampleIdx: number[] = []; // original index into `messages`
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (typeof m !== "string" || m.trim().length === 0 || isBotSelfMessage(m))
+      continue;
     const key = dedupeKey(m);
     // Keep empty-key messages (pure-emoji / punctuation) — they're rare
     // and de-duping them all to one bucket would over-collapse.
     if (key && dedupSeen.has(key)) continue;
     if (key) dedupSeen.add(key);
     samples.push(m);
+    sampleIdx.push(i);
   }
+
+  // A5: recency cutoff for VERBATIM samples. A surviving sample qualifies
+  // when it has no timestamp (gate gracefully) or its timestamp is within
+  // the window. Statistics ignore this entirely.
+  const timestamps = options.timestamps;
+  const windowDays = options.verbatimWindowDays ?? DEFAULT_VERBATIM_WINDOW_DAYS;
+  const now = options.now ?? Date.now();
+  const cutoff = now - windowDays * DAY_MS;
+  const isRecentEnough = (sampleArrIdx: number): boolean => {
+    if (!timestamps) return true;
+    const ts = timestamps[sampleIdx[sampleArrIdx]];
+    if (typeof ts !== "number" || !Number.isFinite(ts)) return true;
+    return ts >= cutoff;
+  };
+
   const n = samples.length;
   if (n === 0) {
     return {
@@ -207,10 +258,13 @@ export function computeContactStyle(messages: string[]): ContactStyle {
   }
 
   // Verbatim samples: prefer messages of 3-15 words (real
-  // conversational unit), most-recent first, dedup near-duplicates.
+  // conversational unit), most-recent first, dedup near-duplicates, and
+  // (A5) skip anything older than the recency window so stale phrasings
+  // don't get few-shot-mimicked. Statistics above already used the full set.
   const seen = new Set<string>();
   const verbatim: string[] = [];
   for (let i = samples.length - 1; i >= 0 && verbatim.length < 10; i--) {
+    if (!isRecentEnough(i)) continue;
     const m = samples[i].trim();
     const wc = tokenize(m).length;
     if (wc < 3 || wc > 15) continue;
@@ -304,6 +358,9 @@ export function formatStyleBlock(style: ContactStyle): string {
  * Convenience: compute + format in one call. Returns "" when there's
  * not enough data.
  */
-export function styleBlockFor(messages: string[]): string {
-  return formatStyleBlock(computeContactStyle(messages));
+export function styleBlockFor(
+  messages: string[],
+  options?: ContactStyleOptions,
+): string {
+  return formatStyleBlock(computeContactStyle(messages, options));
 }
