@@ -92,9 +92,19 @@ interface CalEvent {
   description?: string;
 }
 
+// Personal-IDENTITY-document lookups ("when is my green card expiring") are
+// answered from personal-docs, NOT the calendar. Without this guard the broad
+// "when is my ..." pattern below pulls a full calendar dump into the prompt for
+// a doc question — the exact context-bloat that blew the LLM token budget.
+const DOC_QUERY_RE = /\b(green\s?card|greencard|passport|visa|ead|work\s+permit|driver'?s?\s+licen[sc]e|licen[sc]e|citizenship|naturali[sz]ation|ssn|social\s+security|insurance|policy|warranty|lease|i-?\d{3}\b|expir(?:e|es|ing|ation|y))\b/i;
+
 // Detect appointment-style intent.
 export function looksLikeAppointmentQuery(text: string): boolean {
   if (!text || text.length < 3) return false;
+  // Identity-doc/expiry lookups are personal-docs queries — never calendar,
+  // UNLESS they also name an explicit appointment noun (e.g. "when is my
+  // visa interview appointment").
+  if (DOC_QUERY_RE.test(text) && !APPOINTMENT_INTENT_RE.test(text)) return false;
   // Also catch "when is / when was / when's" + "my" pattern — broad
   // event time-bound questions even without the specific noun.
   if (/\bwhen\s+(?:is|was|will|s|'s)?\s*(?:my|the)\b/i.test(text)) return true;

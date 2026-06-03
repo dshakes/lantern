@@ -86,7 +86,16 @@ const PROMPT_INJECTION_PATTERNS: Array<{ re: RegExp; reason: string }> = [
   { re: /\b(?:what\s+are\s+you\s+really|who\s+are\s+you\s+really|what'?s\s+your\s+real\s+identity)\b/i, reason: "identity-probe" },
   { re: /\b(?:how\s+much|what'?s)\s+(?:money|income|salary|net\s+worth|savings|earnings)\s+(?:does\s+)?\w+\s+(?:make|making|have|earning|earn)/i, reason: "money-probe" },
   { re: /\b(?:what\s+kind\s+of\s+)?access\s+(?:do\s+)?you\s+(?:have|got)\b/i, reason: "access-probe" },
-  { re: /\b(?:what'?s|give\s+me)\s+(?:his|her|their|shekhar'?s)\s+(?:address|home\s+address|location|password|ssn|social|account)\b/i, reason: "pii-probe" },
+  // PII probe — first/second/third person, multiple ask verbs. Catches
+  // "what is your ssn", "what's his address", "give me their location",
+  // "tell me the password", "share his account". The optional possessive
+  // keeps "what is the password" matching too.
+  { re: /\b(?:what'?s|what\s+is|give\s+me|tell\s+me|share|send\s+me)\s+(?:my|your|his|her|their|the|\w+'?s)?\s*(?:home\s+)?(?:address|location|password|passcode|pin|ssn|social\s+security(?:\s+number)?|account(?:\s+number)?)\b/i, reason: "pii-probe" },
+  // Date-of-birth / SSN — these read benign but are classic identity-theft
+  // probes. Cover "what about date of birth", "his dob", "when's your birthday"
+  // ONLY when framed as a data ask (not "happy birthday").
+  { re: /\b(?:what'?s|what\s+is|what\s+about|give\s+me|tell\s+me|share|send\s+me)\s+(?:my|your|his|her|their|the|\w+'?s)?\s*(?:date\s+of\s+birth|d\.?o\.?b\.?|birth\s*date)\b/i, reason: "dob-probe" },
+  { re: /\b(?:what'?s|what\s+is|give\s+me|tell\s+me)\s+(?:my|your|his|her|their|the|\w+'?s)\s+(?:ssn|social\s+security(?:\s+number)?)\b/i, reason: "ssn-probe" },
   { re: /\b(?:roleplay|pretend|act\s+as|simulate)\s+(?:as|like)\s+(?:a|an)\s+\w+/i, reason: "roleplay-jailbreak" },
 ];
 
@@ -163,14 +172,36 @@ export function detectEscalationConditions(opts: {
 // REFUSAL MESSAGES — what the bot says when life-threat or
 // prompt-injection fires. Tight, honest, no engagement.
 // ─────────────────────────────────────────────────────────────
+// Rotating prompt-injection refusals. Repeated probes used to get a
+// byte-identical "best to wait for X directly" three times in a row,
+// which reads robotic and confirms something's off. Each refusal is
+// safe (no confirm/deny, no leak, doesn't explain it's a helper).
+const PROMPT_INJECTION_REFUSALS: ((name: string) => string)[] = [
+  (n) => `best to wait for ${n} directly on this one.`,
+  (n) => `ha, that's one for ${n} himself.`,
+  (n) => `gonna let ${n} field that one.`,
+  (n) => `you'll have to catch ${n} on that.`,
+  (n) => `that's above my pay grade — ask ${n} direct.`,
+];
+
+let _refusalCursor = 0;
+
+/** Return a prompt-injection refusal, rotating through the variants so
+ *  repeated probes don't get identical replies. */
+export function pickRefusal(ownerName: string): string {
+  const variant = PROMPT_INJECTION_REFUSALS[_refusalCursor % PROMPT_INJECTION_REFUSALS.length];
+  _refusalCursor++;
+  return variant(ownerName);
+}
+
 export function refusalReply(kind: EscalationKind, ownerName: string): string {
   switch (kind) {
     case "life-threat":
       return `i just paged ${ownerName} on every channel. if it's truly an emergency call 911. he'll see this asap.`;
     case "prompt-injection":
-      // Deliberately mundane. We don't confirm or deny the probe;
-      // we just stop being useful and route to the human.
-      return `best to wait for ${ownerName} directly on this one.`;
+      // Deliberately mundane + VARIED. We don't confirm or deny the
+      // probe; we just stop being useful and route to the human.
+      return pickRefusal(ownerName);
     default:
       return "";
   }

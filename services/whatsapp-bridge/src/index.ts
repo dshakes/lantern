@@ -952,5 +952,16 @@ function shutdown(signal: string) {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
+// Crash-safety: a stray rejected promise anywhere in the bridge (a void
+// fire-and-forget that lost its .catch, a library internal) must NOT take
+// the whole always-on process down. Log it and keep serving — the bridge
+// is the user's lifeline, so availability beats fail-fast here.
+process.on("unhandledRejection", (reason) => {
+  logger.error({ err: reason }, "unhandledRejection (kept alive)");
+});
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "uncaughtException (kept alive)");
+});
+
 // Re-export validators for tests that want to import through index.
 export { isValidJid, isValidGroupJid, timingSafeEqual } from "./validation.js";

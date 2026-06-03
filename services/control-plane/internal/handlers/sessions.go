@@ -281,12 +281,21 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 
 	// Build the message list in the OpenAI tool-aware shape (any-valued
 	// content so we can interleave tool_call / tool messages later).
+	//
+	// Cap history to the most recent 6 turns (user+assistant pairs) to
+	// prevent unbounded prompt growth. The system message is kept.
+	const historyTurnCap = 6
+	historyMsgs := messages
+	// messages already has the new user message appended; non-system slice.
+	if len(historyMsgs) > historyTurnCap {
+		historyMsgs = historyMsgs[len(historyMsgs)-historyTurnCap:]
+	}
 	var promptMessages []map[string]any
 	promptMessages = append(promptMessages, map[string]any{
 		"role":    "system",
 		"content": systemPrompt,
 	})
-	for _, m := range messages {
+	for _, m := range historyMsgs {
 		promptMessages = append(promptMessages, map[string]any{
 			"role":    m.Role,
 			"content": m.Content,
@@ -432,10 +441,11 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	)
 	if llmErr != nil {
 		h.logger().Error("session: LLM call failed", zap.Error(llmErr))
-		errContent := fmt.Sprintf("Sorry, I encountered an error: %s", llmErr.Error())
+		const errContent = "give me a sec — my brain's a bit busy right now, try me again in a moment"
 		h.appendAssistantMessageWithTools(ctx, sessionID, errContent, persisted)
 		h.publishEvent(sessionID, "agent.message", map[string]string{
-			"content": errContent,
+			"content":   errContent,
+			"sessionId": sessionID,
 		})
 		h.publishEvent(sessionID, "session.status_idle", map[string]string{})
 		return
@@ -446,6 +456,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	h.publishEvent(sessionID, "agent.message", map[string]string{
 		"content":   result,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"sessionId": sessionID,
 	})
 	h.publishEvent(sessionID, "session.status_idle", map[string]string{})
 }

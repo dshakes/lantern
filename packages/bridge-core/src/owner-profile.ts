@@ -25,6 +25,26 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
 
+/** Structured biographical facts about the owner. These are GROUND
+ *  TRUTH — the bot must never deny or contradict them when a contact
+ *  references one (marriage, family, key dates). Parsed from a
+ *  "## Facts" section. All fields optional; absent when not declared. */
+export interface OwnerFacts {
+  maritalStatus?: "married" | "single" | "engaged" | "divorced" | "widowed";
+  spouse?: string;
+  kids?: string[];
+  keyDates?: { label: string; date: string }[];
+}
+
+/** Per-contact addressing rules parsed from the extended Relationships
+ *  grammar ("- Name: rel | address as: X | never: a, b"). Lets the bot
+ *  use the right name for a contact and avoid kinship terms the owner
+ *  doesn't actually use with them. */
+export interface AddressRule {
+  addressAs?: string;
+  neverCall?: string[];
+}
+
 export interface OwnerProfile {
   /** The free-form first-person prose (everything except the parsed
    *  relationships block). Injected into the persona prompt. */
@@ -32,6 +52,13 @@ export interface OwnerProfile {
   /** handle/name (lowercased) -> relationship label. Parsed from a
    *  "## Relationships" section if present. */
   relationships: Map<string, string>;
+  /** handle/name (lowercased) -> per-contact address rule. Same keying
+   *  as `relationships`. Only populated for contacts whose Relationships
+   *  line carries "address as:" / "never:" suffixes. */
+  addressRules: Map<string, AddressRule>;
+  /** Structured biographical facts (marital status, spouse, kids, key
+   *  dates). Parsed from a "## Facts" section. Undefined when absent. */
+  facts?: OwnerFacts;
   /** One-line nativity/origin string from a "## Nativity" or
    *  "## Languages" section, used by the language-modality hint so the
    *  bot replies in the right regional dialect. Empty when not set. */
@@ -121,7 +148,7 @@ export class OwnerProfileStore {
       const hit = prof.relationships.get(k);
       if (hit) return hit;
     }
-    return undefined;
+    return uniqueTokenMatch(prof.relationships, keys) ?? undefined;
   }
 
   /** The prose block for injection into the persona prompt. */
@@ -163,6 +190,56 @@ export class OwnerProfileStore {
     }
     if (lines.length === 0) return "";
     return ["The owner's people (use these names directly when asked about family/friends — do not call tools):", ...lines].join("\n");
+  }
+
+  /** Deterministic single-line summary of the owner's structured facts,
+   *  framed as ground truth the bot must never deny. Returns "" when no
+   *  facts are set. Example:
+   *    "Owner facts (TRUE — never deny or contradict these): married to
+   *     Manasa; kids: Aarav, Anaya; wedding anniversary June 3, 2017." */
+  factsBlock(): string {
+    const facts = this.get()?.facts;
+    if (!facts) return "";
+    const parts: string[] = [];
+    if (facts.maritalStatus) {
+      if (facts.maritalStatus === "married" && facts.spouse) {
+        parts.push(`married to ${facts.spouse}`);
+      } else if (facts.maritalStatus === "married") {
+        parts.push("married");
+      } else {
+        parts.push(facts.maritalStatus);
+      }
+    } else if (facts.spouse) {
+      // Spouse named without an explicit marital status — still implies married.
+      parts.push(`married to ${facts.spouse}`);
+    }
+    if (facts.kids?.length) {
+      parts.push(`kids: ${facts.kids.join(", ")}`);
+    }
+    if (facts.keyDates?.length) {
+      for (const kd of facts.keyDates) {
+        parts.push(`${kd.label} ${humanizeDate(kd.date)}`);
+      }
+    }
+    if (parts.length === 0) return "";
+    return `Owner facts (TRUE — never deny or contradict these): ${parts.join("; ")}.`;
+  }
+
+  /** Resolve the per-contact address rule (addressAs / neverCall) for a
+   *  contact, matching by handle or display name the same way
+   *  relationshipFor does. Returns null when the contact has no rule. */
+  addressRuleFor(handleOrName: string, displayName?: string): AddressRule | null {
+    const prof = this.get();
+    if (!prof) return null;
+    const keys: string[] = [];
+    if (handleOrName) keys.push(handleOrName.toLowerCase());
+    if (displayName) keys.push(displayName.toLowerCase());
+    if (handleOrName) keys.push(handleOrName.replace(/[^\d]/g, ""));
+    for (const k of keys) {
+      const hit = prof.addressRules.get(k);
+      if (hit) return hit;
+    }
+    return uniqueTokenMatch(prof.addressRules, keys);
   }
 
   /** Lowercase FIRST names parsed from the Relationships section.
@@ -220,8 +297,49 @@ export class OwnerProfileStore {
  *    - +15125551234: college roommate
  *    - alex@work.com: my manager
  */
+/** Format an ISO-ish date ("2017-06-03") as a human-friendly string
+ *  ("June 3, 2017"). Returns the input unchanged when it's not a
+ *  recognizable YYYY-MM-DD date. */
+export function humanizeDate(date: string): string {
+  const m = date.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return date.trim();
+  const [, y, mo, d] = m;
+  const months = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  const monthName = months[parseInt(mo, 10) - 1];
+  if (!monthName) return date.trim();
+  return `${monthName} ${parseInt(d, 10)}, ${y}`;
+}
+
+// Fallback matcher: when no exact key matches, try matching a single-token
+// input (e.g. a first name "sujith") against profile keys that contain that
+// token ("sujith penchala"). Returns the value ONLY when exactly one distinct
+// key matches — never guesses on ambiguity (e.g. two "madhu ..." entries).
+function uniqueTokenMatch<T>(map: Map<string, T>, inputs: string[]): T | null {
+  const tokens = inputs
+    .filter((s) => s && /^[a-z][a-z'.-]{2,}$/.test(s)) // single alpha token, len>=3
+    .map((s) => s.trim());
+  if (tokens.length === 0) return null;
+  for (const tok of tokens) {
+    const hits: T[] = [];
+    const seenKeys = new Set<string>();
+    for (const [k, v] of map) {
+      if (k.split(/\s+/).includes(tok) && !seenKeys.has(k)) {
+        seenKeys.add(k);
+        hits.push(v);
+      }
+    }
+    if (hits.length === 1) return hits[0];
+  }
+  return null;
+}
+
 export function parseProfile(raw: string): OwnerProfile {
   const relationships = new Map<string, string>();
+  const addressRules = new Map<string, AddressRule>();
+  const facts: OwnerFacts = {};
   const proseLines: string[] = [];
   const nativityLines: string[] = [];
 
@@ -238,6 +356,7 @@ export function parseProfile(raw: string): OwnerProfile {
   const lines = raw.split(/\r?\n/);
   let inRelationships = false;
   let inNativity = false;
+  let inFacts = false;
   // Everything before the first "## " section (the "# Owner profile"
   // title + the "Do NOT put secrets here" instructional preamble) is
   // guidance for the human, NOT content about the owner. Skip it so it
@@ -252,7 +371,11 @@ export function parseProfile(raw: string): OwnerProfile {
       // map to the nativity slot. The line itself stays in prose so the
       // model still sees the header text.
       inNativity = /\b(nativity|language|languages|origin|mother\s*tongue|background\s+&\s+language)\b/i.test(section);
-      if (!inRelationships) proseLines.push(line);
+      // "## Facts" — structured biographical ground truth. Kept OUT of
+      // prose (it's typed data injected via factsBlock(), not free-form
+      // voice) the same way the Relationships section is.
+      inFacts = /^facts\b/i.test(section) || /\bowner\s+facts\b/i.test(section);
+      if (!inRelationships && !inFacts) proseLines.push(line);
       continue;
     }
     if (!seenFirstSection) continue; // pre-section preamble — drop
@@ -266,16 +389,55 @@ export function parseProfile(raw: string): OwnerProfile {
       proseLines.push(line);
       continue;
     }
+    if (inFacts) {
+      const trimmed = line.trim();
+      // Skip blank lines + comment lines (guidance, not data).
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      // "- key: value" / "* key: value" / "key: value". Split on the
+      // FIRST colon so date values ("2017-06-03") survive.
+      const m = trimmed.match(/^[-*]?\s*([^:]+?)\s*:\s*(.+?)\s*$/);
+      if (!m) continue;
+      const key = m[1].trim().toLowerCase();
+      const val = m[2].trim().replace(/^<\s*|\s*>$/g, "").trim();
+      if (!key || !val) continue;
+      const valLc = val.toLowerCase();
+      if (key === "married") {
+        // "- married: yes" → maritalStatus "married". "no" leaves it unset.
+        if (/^(yes|true|y)$/i.test(val)) facts.maritalStatus = "married";
+      } else if (key === "marital status" || key === "marital-status") {
+        if (/^(married|single|engaged|divorced|widowed)$/i.test(valLc)) {
+          facts.maritalStatus = valLc as OwnerFacts["maritalStatus"];
+        }
+      } else if (key === "spouse" || key === "wife" || key === "husband" || key === "partner") {
+        facts.spouse = val;
+      } else if (key === "kids" || key === "children") {
+        const kids = val.split(",").map((k) => k.trim()).filter(Boolean);
+        if (kids.length) facts.kids = kids;
+      } else if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(val)) {
+        // "- wedding anniversary: 2017-06-03" → a key date keyed by label.
+        (facts.keyDates ??= []).push({ label: m[1].trim(), date: val });
+      }
+      continue;
+    }
     if (inRelationships) {
       const trimmed = line.trim();
       // Skip blank lines, the top "# Owner profile" title, and the
       // template's "# ..." comment lines — they're guidance, not data.
       if (!trimmed || trimmed.startsWith("#")) continue;
 
+      // Extended grammar: the relationship value may carry pipe-delimited
+      // address directives:
+      //   "- Name: relationship | address as: X | never: a, b"
+      // Split the line into the "Name: relationship" head and any
+      // "address as:" / "never:" clauses. Plain "Name: relationship"
+      // (no pipes) is fully backward-compatible.
+      const segments = trimmed.split("|").map((s) => s.trim());
+      const head = segments[0];
+
       // "- Name: relationship" / "* Name: relationship" / "Name: relationship".
       // Split on the FIRST colon so values like "brother-in-law, Raju's
       // spouse" survive intact.
-      const m = trimmed.match(/^[-*]?\s*([^:]+?)\s*:\s*(.+?)\s*$/);
+      const m = head.match(/^[-*]?\s*([^:]+?)\s*:\s*(.+?)\s*$/);
       if (!m) continue;
       const rawKey = m[1].trim();
       // Strip template angle brackets the user may have kept ("<friend>"
@@ -284,11 +446,38 @@ export function parseProfile(raw: string): OwnerProfile {
       const val = m[2].trim().replace(/^<\s*|\s*>$/g, "").trim();
       if (!rawKey || !val) continue;
 
+      // Parse the extra address directives from the remaining segments.
+      let addressAs: string | undefined;
+      let neverCall: string[] | undefined;
+      for (const seg of segments.slice(1)) {
+        const am = seg.match(/^address\s+as\s*:\s*(.+)$/i);
+        if (am) {
+          addressAs = am[1].trim().replace(/^["']|["']$/g, "").trim() || undefined;
+          continue;
+        }
+        const nm = seg.match(/^never\s*:\s*(.+)$/i);
+        if (nm) {
+          const terms = nm[1]
+            .split(",")
+            .map((t) => t.trim().replace(/^["']|["']$/g, "").trim())
+            .filter(Boolean);
+          if (terms.length) neverCall = terms;
+        }
+      }
+      const rule: AddressRule | null =
+        addressAs || neverCall ? { ...(addressAs ? { addressAs } : {}), ...(neverCall ? { neverCall } : {}) } : null;
+
       const indexKey = (k: string) => {
         const lc = k.trim().toLowerCase();
-        if (lc) relationships.set(lc, val);
+        if (lc) {
+          relationships.set(lc, val);
+          if (rule) addressRules.set(lc, rule);
+        }
         const digits = lc.replace(/[^\d]/g, "");
-        if (digits.length >= 7) relationships.set(digits, val);
+        if (digits.length >= 7) {
+          relationships.set(digits, val);
+          if (rule) addressRules.set(digits, rule);
+        }
       };
 
       // Index the full key plus any parenthetical alias, so both
@@ -305,9 +494,17 @@ export function parseProfile(raw: string): OwnerProfile {
     proseLines.push(line);
   }
 
+  const hasFacts =
+    facts.maritalStatus !== undefined ||
+    facts.spouse !== undefined ||
+    (facts.kids?.length ?? 0) > 0 ||
+    (facts.keyDates?.length ?? 0) > 0;
+
   return {
     prose: proseLines.join("\n").trim(),
     relationships,
+    addressRules,
+    facts: hasFacts ? facts : undefined,
     nativity: nativityLines.join(" ").trim(),
   };
 }
@@ -335,7 +532,14 @@ I'm <name> — <role / what you do>. <one or two lines on current focus>.
 - <city / timezone>
 - <anything a close friend would just know>
 
+## Facts
+- married: yes
+- spouse: <name>
+- kids: <child a>, <child b>
+- wedding anniversary: <YYYY-MM-DD>
+
 ## Relationships
 - Shiva: brother
+- <Name>: <relationship> | address as: <what to call them> | never: <terms to avoid>
 - <Name or phone or email>: <relationship>
 `;

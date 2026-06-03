@@ -31,14 +31,148 @@ const MANAGED_NOTE =
   "Safe to edit manually; the bot won't overwrite existing lines, just " +
   "appends new ones. To remove an entry, delete its bullet. -->";
 
+// Managed "## Facts" section header. Owner facts the bot learns
+// ("I'm married", "my anniversary is …") are typed into this section so
+// the parser reads them as structured ground truth, not free-form prose.
+const FACTS_HEADER = "## Facts";
+
+// ── Section-mutation helpers ─────────────────────────────────────────
+// These do in-place, append-only edits to a single markdown section so
+// the bot can write typed facts (## Facts) and per-contact naming rules
+// (## Relationships) without clobbering owner-authored content. All are
+// pure string transforms; the caller owns the disk write.
+
+/** Find the [start, end) line range of a "## Header" section's BODY
+ *  (the lines after the header, up to the next "## " heading or EOF).
+ *  Returns null when the header isn't present. */
+function sectionBody(lines: string[], header: string): { headerIdx: number; end: number } | null {
+  const hLc = header.trim().toLowerCase();
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().toLowerCase() === hLc) {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx === -1) return null;
+  let end = lines.length;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (/^#{2,6}\s+/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return { headerIdx, end };
+}
+
+/** Upsert a "- key: value" line into the ## Facts section, creating the
+ *  section if absent. Replaces an existing line with the same key
+ *  (case-insensitive) so re-teaching a fact updates rather than dupes.
+ *  Returns the new file text, or null if nothing changed. */
+function upsertFact(existing: string, key: string, value: string): string | null {
+  const lines = existing.split(/\r?\n/);
+  const newLine = `- ${key}: ${value}`;
+  const keyLc = key.trim().toLowerCase();
+  const body = sectionBody(lines, FACTS_HEADER);
+  if (!body) {
+    // Create the section at the end of the file.
+    const trimmed = existing.replace(/\s*$/, "");
+    return `${trimmed}\n\n${FACTS_HEADER}\n${newLine}\n`;
+  }
+  // Look for an existing "- key: ..." line in the section body.
+  for (let i = body.headerIdx + 1; i < body.end; i++) {
+    const m = lines[i].trim().match(/^[-*]?\s*([^:]+?)\s*:\s*(.+?)\s*$/);
+    if (m && m[1].trim().toLowerCase() === keyLc) {
+      if (lines[i].trim() === newLine.trim()) return null; // no change
+      lines[i] = newLine;
+      return lines.join("\n");
+    }
+  }
+  // Insert at the end of the section body (after the last non-blank line).
+  let insertAt = body.end;
+  while (insertAt > body.headerIdx + 1 && lines[insertAt - 1].trim() === "") insertAt--;
+  lines.splice(insertAt, 0, newLine);
+  return lines.join("\n");
+}
+
+/** Merge a per-contact naming rule into that contact's ## Relationships
+ *  line using the extended "| address as: X | never: a, b" grammar.
+ *  Matches the contact by the head name (case-insensitive). Returns the
+ *  new file text, or null when the contact line isn't found / no change. */
+function mergeContactRule(
+  existing: string,
+  contact: string,
+  rule: { addressAs?: string; never?: string[] },
+): string | null {
+  const lines = existing.split(/\r?\n/);
+  const contactLc = contact.trim().toLowerCase();
+  const body = sectionBody(lines, "## Relationships");
+  if (!body) return null;
+  for (let i = body.headerIdx + 1; i < body.end; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const segments = trimmed.split("|").map((s) => s.trim());
+    const head = segments[0];
+    const m = head.match(/^[-*]?\s*([^:]+?)\s*:\s*(.+?)\s*$/);
+    if (!m) continue;
+    // Match on the name OR a parenthetical alias.
+    const nameRaw = m[1].trim();
+    const names = [nameRaw.toLowerCase()];
+    const paren = nameRaw.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+    if (paren) {
+      names.push(paren[1].trim().toLowerCase(), paren[2].trim().toLowerCase());
+    }
+    if (!names.includes(contactLc)) continue;
+
+    // Parse existing directives, then merge the new ones in.
+    let addressAs: string | undefined;
+    const never = new Set<string>();
+    for (const seg of segments.slice(1)) {
+      const am = seg.match(/^address\s+as\s*:\s*(.+)$/i);
+      if (am) addressAs = am[1].trim().replace(/^["']|["']$/g, "").trim() || undefined;
+      const nm = seg.match(/^never\s*:\s*(.+)$/i);
+      if (nm) for (const t of nm[1].split(",")) {
+        const v = t.trim().replace(/^["']|["']$/g, "").trim();
+        if (v) never.add(v.toLowerCase());
+      }
+    }
+    if (rule.addressAs) addressAs = rule.addressAs.trim();
+    if (rule.never) for (const t of rule.never) {
+      const v = t.trim();
+      if (v) never.add(v.toLowerCase());
+    }
+
+    // Rebuild the line: head + directives.
+    const rebuilt = [`- ${nameRaw}: ${m[2].trim()}`];
+    if (addressAs) rebuilt.push(`address as: ${addressAs}`);
+    if (never.size) rebuilt.push(`never: ${Array.from(never).join(", ")}`);
+    const newLine = rebuilt.join(" | ");
+    if (newLine === lines[i].trim()) return null; // no change
+    lines[i] = newLine;
+    return lines.join("\n");
+  }
+  return null;
+}
+
 export interface AutoFact {
   // One terse line, sentence-cased. Examples:
   //   "Raju lives in Poolville, MD"
   //   "Manasa preferred address: Manu with old friends"
   //   "Work hours updated: Mon-Fri 10am-7pm"
   line: string;
-  // Loose category — debug only, not persisted.
-  category: "location" | "address-form" | "schedule" | "role" | "relationship" | "preference" | "other";
+  // Loose category — debug only, not persisted EXCEPT for the typed
+  // routes below ("owner-fact" → ## Facts, "address-form"/"relationship"
+  // with a target contact → ## Relationships line).
+  category: "location" | "address-form" | "schedule" | "role" | "relationship" | "preference" | "owner-fact" | "other";
+  // For owner-fact: the typed Facts directive to write (e.g.
+  //   { key: "married", value: "yes" }
+  //   { key: "spouse", value: "Manasa" }
+  //   { key: "wedding anniversary", value: "2017-06-03" }).
+  // Absent for non-fact categories.
+  fact?: { key: string; value: string };
+  // For per-contact address rules: the contact to attach the rule to and
+  // the directive(s). Routed into that contact's ## Relationships line.
+  contactRule?: { contact: string; addressAs?: string; never?: string[] };
 }
 
 export interface AutoUpdateResult {
@@ -49,7 +183,7 @@ export interface AutoUpdateResult {
 // Cheap regex pre-filter: if the owner's message has none of these
 // signal words, skip the LLM call entirely. Catches the obvious
 // teaching patterns without leaving room for false negatives.
-const TEACHING_SIGNALS = /\b(lives?|moved|relocate|address|stays?|currently|now|works?\s+at|joined|left|prefers?|calls?\s+(her|him|them)|address(?:es)?\s+(her|him|them)|don'?t\s+call|never\s+call|nickname|goes?\s+by|hours?|schedule|free|busy|remember|note|by\s+the\s+way|fyi|btw)\b/i;
+const TEACHING_SIGNALS = /\b(lives?|moved|relocate|address|stays?|currently|now|works?\s+at|joined|left|prefers?|calls?\s+(her|him|them)|address(?:es)?\s+(her|him|them)|don'?t\s+call|never\s+call|nickname|goes?\s+by|hours?|schedule|free|busy|remember|note|by\s+the\s+way|fyi|btw|married|spouse|wife|husband|anniversary|kids?|children|birthday)\b/i;
 
 // EXPLICIT teach-prefix patterns. When the owner starts their message
 // with one of these, we ALWAYS run the extractor — bypass the
@@ -68,7 +202,26 @@ const EXTRACT_PROMPT_PREAMBLE = [
   "",
   "Return a JSON object: {\"facts\": [{\"category\": \"...\", \"line\": \"...\"}]}",
   "",
-  "Categories: location, address-form, schedule, role, relationship, preference, other.",
+  "Categories: location, address-form, schedule, role, relationship,",
+  "preference, owner-fact, other.",
+  "",
+  "TWO categories carry EXTRA typed fields:",
+  "",
+  "A) owner-fact — a SELF/biographical fact about the owner themselves",
+  "   (their marriage, spouse, kids, a personal key date like an",
+  "   anniversary/birthday). Add a `fact` object: {\"key\":..., \"value\":...}.",
+  "   - \"I'm married\" → {\"category\":\"owner-fact\",\"line\":\"married\",\"fact\":{\"key\":\"married\",\"value\":\"yes\"}}",
+  "   - \"my wife is Manasa\" → {\"category\":\"owner-fact\",\"line\":\"spouse: Manasa\",\"fact\":{\"key\":\"spouse\",\"value\":\"Manasa\"}}",
+  "   - \"my anniversary is June 3 2017\" → {\"category\":\"owner-fact\",\"line\":\"wedding anniversary 2017-06-03\",\"fact\":{\"key\":\"wedding anniversary\",\"value\":\"2017-06-03\"}}",
+  "   Dates in `fact.value` MUST be YYYY-MM-DD. key for marital state is",
+  "   exactly \"married\" with value \"yes\"; spouse key is \"spouse\";",
+  "   kids key is \"kids\" with comma-separated value.",
+  "",
+  "B) address-form / relationship that is a PER-CONTACT NAMING RULE",
+  "   (\"don't call Sujith bava\", \"address Sujith by his name\"). Add a",
+  "   `contactRule` object: {\"contact\":..., \"addressAs\":?, \"never\":[...]}.",
+  "   - \"don't call Sujith bava\" → {\"category\":\"address-form\",\"line\":\"never call Sujith bava\",\"contactRule\":{\"contact\":\"Sujith\",\"never\":[\"bava\"]}}",
+  "   - \"address Sujith by his name\" → {\"category\":\"address-form\",\"line\":\"address Sujith by name\",\"contactRule\":{\"contact\":\"Sujith\",\"addressAs\":\"Sujith\"}}",
   "",
   "RULES:",
   "1. Each `line` is ONE terse fact, max 80 chars, factual sentence form.",
@@ -93,6 +246,10 @@ export interface AutoUpdateOptions {
   // LLM caller — returns the raw JSON string. The bridge wires this
   // to its existing completions client.
   llmCall: (prompt: string) => Promise<string>;
+  // Optional: the OwnerProfileStore's invalidate() so the freshly-written
+  // facts / contact rules go live without waiting for the reload TTL.
+  // Called once after a successful write.
+  invalidate?: () => void;
   logger?: Logger;
 }
 
@@ -163,10 +320,34 @@ export async function maybeAutoUpdateOwnerProfile(
     const key = line.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    normalized.push({
+    const entry: AutoFact = {
       line,
       category: (f.category as AutoFact["category"]) || "other",
-    });
+    };
+    // Preserve the typed routing fields when the LLM supplied them.
+    if (f.fact && typeof f.fact.key === "string" && typeof f.fact.value === "string") {
+      const key = f.fact.key.trim().toLowerCase();
+      const value = f.fact.value.trim();
+      if (key && value) entry.fact = { key, value };
+    }
+    if (f.contactRule && typeof f.contactRule.contact === "string") {
+      const contact = f.contactRule.contact.trim();
+      if (contact) {
+        const addressAs =
+          typeof f.contactRule.addressAs === "string" ? f.contactRule.addressAs.trim() : undefined;
+        const never = Array.isArray(f.contactRule.never)
+          ? f.contactRule.never.map((t) => String(t).trim()).filter(Boolean)
+          : undefined;
+        if (addressAs || (never && never.length)) {
+          entry.contactRule = {
+            contact,
+            ...(addressAs ? { addressAs } : {}),
+            ...(never && never.length ? { never } : {}),
+          };
+        }
+      }
+    }
+    normalized.push(entry);
   }
   if (normalized.length === 0) {
     return { appended: [], skipped: [] };
@@ -183,44 +364,77 @@ export async function maybeAutoUpdateOwnerProfile(
     }
   }
 
-  // Dedup against existing content. The check is case-insensitive
-  // substring match: if a meaningful chunk of the new fact already
-  // appears in the profile, skip it. This catches both exact-line
-  // dupes ("Raju lives in Poolville, MD") and near-dupes where the
-  // existing entry phrases it differently ("Raju Penchala …
-  // Poolville MD").
-  const existingLower = existing.toLowerCase();
+  // Split the candidates into TYPED routes (owner-facts → ## Facts,
+  // per-contact rules → ## Relationships) and GENERIC auto-learn. Typed
+  // entries are written into their structured home so the parser reads
+  // them as ground truth, not as a flat blob — and so the bot stops
+  // denying the owner's marriage / mis-addressing a contact.
+  const typed: AutoFact[] = [];
+  const generic: AutoFact[] = [];
+  for (const fact of normalized) {
+    if (fact.fact || fact.contactRule) typed.push(fact);
+    else generic.push(fact);
+  }
+
+  // `updated` threads through every mutation so multiple facts/rules in
+  // one message all land. Start from disk content.
+  let updated = existing;
   const appended: AutoFact[] = [];
   const skipped: AutoFact[] = [];
-  for (const fact of normalized) {
-    const lower = fact.line.toLowerCase();
-    // Skip if the WHOLE fact already appears verbatim OR if a
-    // high-signal substring (e.g. "raju" + "poolville") both appear.
-    const tokens = lower.split(/\s+/).filter((t) => t.length >= 4);
-    const allTokensPresent =
-      tokens.length >= 2 && tokens.every((t) => existingLower.includes(t));
-    if (existingLower.includes(lower) || allTokensPresent) {
+
+  // ── Typed routes ──
+  for (const fact of typed) {
+    let next: string | null = null;
+    if (fact.fact) {
+      next = upsertFact(updated, fact.fact.key, fact.fact.value);
+    } else if (fact.contactRule) {
+      next = mergeContactRule(updated, fact.contactRule.contact, {
+        addressAs: fact.contactRule.addressAs,
+        never: fact.contactRule.never,
+      });
+    }
+    if (next === null) {
+      // No change (already present, or contact line not found).
       skipped.push(fact);
       continue;
     }
+    updated = next;
     appended.push(fact);
   }
 
-  if (appended.length === 0) {
-    return { appended: [], skipped };
+  // ── Generic auto-learn (unchanged dedup + managed-section append) ──
+  // Dedup against current content. The check is case-insensitive
+  // substring match: if a meaningful chunk of the new fact already
+  // appears in the profile, skip it.
+  const genericToAppend: AutoFact[] = [];
+  {
+    const lower0 = updated.toLowerCase();
+    for (const fact of generic) {
+      const lower = fact.line.toLowerCase();
+      const tokens = lower.split(/\s+/).filter((t) => t.length >= 4);
+      const allTokensPresent =
+        tokens.length >= 2 && tokens.every((t) => lower0.includes(t));
+      if (lower0.includes(lower) || allTokensPresent) {
+        skipped.push(fact);
+        continue;
+      }
+      genericToAppend.push(fact);
+    }
+  }
+  if (genericToAppend.length > 0) {
+    const newLines = genericToAppend.map((f) => `- ${f.line}`).join("\n");
+    const hasManagedSection = updated.includes(MANAGED_HEADER);
+    if (hasManagedSection) {
+      updated = updated.replace(/\s*$/, "") + "\n" + newLines + "\n";
+    } else {
+      const trailer = updated.endsWith("\n") ? "" : "\n";
+      updated = `${updated}${trailer}\n${MANAGED_HEADER}\n\n${MANAGED_NOTE}\n\n${newLines}\n`;
+    }
+    appended.push(...genericToAppend);
   }
 
-  // Append to managed section. Create the section header if absent.
-  const newLines = appended.map((f) => `- ${f.line}`).join("\n");
-  let updated: string;
-  const hasManagedSection = existing.includes(MANAGED_HEADER);
-  if (hasManagedSection) {
-    // Append to the end of the file (the managed section is always at
-    // the bottom, so this works).
-    updated = existing.replace(/\s*$/, "") + "\n" + newLines + "\n";
-  } else {
-    const trailer = existing.endsWith("\n") ? "" : "\n";
-    updated = `${existing}${trailer}\n${MANAGED_HEADER}\n\n${MANAGED_NOTE}\n\n${newLines}\n`;
+  if (appended.length === 0 || updated === existing) {
+    return { appended: [], skipped };
   }
 
   try {
@@ -229,6 +443,8 @@ export async function maybeAutoUpdateOwnerProfile(
       { added: appended.length, skipped: skipped.length, lines: appended.map((f) => f.line) },
       "owner profile auto-updated",
     );
+    // Push the freshly-written content live so the next reply sees it.
+    opts.invalidate?.();
   } catch (err) {
     log?.warn({ err, path: opts.profilePath }, "couldn't write profile");
     return { appended: [], skipped };

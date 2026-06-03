@@ -526,8 +526,13 @@ func resolveCandidateChain(hasAnthropic, hasOpenAI bool) []struct{ Provider, Mod
 	// Dedupe by provider — within each provider, the top-scoring model
 	// is enough. Failover is across providers, not across models of the
 	// same provider (a 429 from Anthropic affects all Anthropic models).
+	//
+	// Exception: also append a cheaper same-provider fallback so a
+	// rate-limited large model (e.g. gpt-4o, sonnet) can fall to the
+	// smaller/cheaper model (gpt-4o-mini, haiku) — they use a separate
+	// quota tier and are far less likely to be TPM-limited.
 	seen := map[string]bool{}
-	out := make([]struct{ Provider, Model string }, 0, 3)
+	out := make([]struct{ Provider, Model string }, 0, 5)
 	// Local Claude Code goes FIRST when enabled. The failover loop will
 	// slide down to API providers if the CLI errors. Model name is
 	// 'local' purely for log readability.
@@ -540,6 +545,17 @@ func resolveCandidateChain(hasAnthropic, hasOpenAI bool) []struct{ Provider, Mod
 		}
 		seen[c.provider] = true
 		out = append(out, struct{ Provider, Model string }{c.provider, c.model})
+		// Add a cheaper same-provider fallback (separate quota tier).
+		switch c.provider {
+		case "openai":
+			if c.model != "gpt-4o-mini" && hasOpenAI {
+				out = append(out, struct{ Provider, Model string }{"openai", "gpt-4o-mini"})
+			}
+		case "anthropic":
+			if c.model != haikuModel() && hasAnthropic {
+				out = append(out, struct{ Provider, Model string }{"anthropic", haikuModel()})
+			}
+		}
 	}
 	return out
 }
@@ -2109,7 +2125,7 @@ func (h *LlmProxyHandler) callLLMWithTools(
 			msgs = append(msgs, map[string]any{
 				"role":         "tool",
 				"tool_call_id": tc.ID,
-				"content":      string(resultJSON),
+				"content":      truncateToolResult(string(resultJSON)),
 			})
 		}
 	}
@@ -2369,7 +2385,7 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 			} else {
 				inv.Result = result
 				resultJSON, _ := json.Marshal(result)
-				tr["content"] = string(resultJSON)
+				tr["content"] = truncateToolResult(string(resultJSON))
 			}
 			if onToolCall != nil {
 				onToolCall(inv) // completed/failed
@@ -2452,6 +2468,23 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 // isRetryableLLMError classifies an error string as "try a different
 // provider" (true) vs "this is a real problem, give up" (false).
 //
+// truncateToolResult caps a marshalled tool-result string to 4000 chars before
+// it is appended to the model's message array for the next turn. Without this
+// cap a single tool result (e.g. a large document fetch) can push the prompt
+// past the provider's TPM limit, causing a 429 on an otherwise trivial query.
+//
+// The suffix nudges the model to call the tool again with a narrower query if
+// it truly needs more data — better UX than a silent truncation.
+const toolResultMaxChars = 4000
+const toolResultTruncSuffix = "\n...(truncated — call the tool again with a narrower query if you need more)"
+
+func truncateToolResult(s string) string {
+	if len(s) <= toolResultMaxChars {
+		return s
+	}
+	return s[:toolResultMaxChars] + toolResultTruncSuffix
+}
+
 // Retryable:
 //   - 429 rate limited
 //   - 402 / 'credit' / 'quota' (out of credits)
@@ -2473,6 +2506,11 @@ func isRetryableLLMError(errStr string) bool {
 		"500", "502", "503", "504", "internal server error", "overloaded",
 		"upstream", "timeout", "timed out", "connection reset",
 		"no_active_subscription", "billing",
+		// Process-kill signals (e.g. claude-code OOM/timeout) — fall over to
+		// API providers rather than aborting the whole failover chain.
+		"signal: killed", "killed",
+		// Context cancellation from the subprocess layer is transient.
+		"context deadline exceeded",
 	}
 	for _, m := range retryableMarkers {
 		if strings.Contains(s, m) {
@@ -2514,8 +2552,8 @@ func rateLimitBackoff(errStr string) time.Duration {
 		}
 		break
 	}
-	if wait > 8*time.Second {
-		wait = 8 * time.Second
+	if wait > 25*time.Second {
+		wait = 25 * time.Second
 	}
 	return wait
 }

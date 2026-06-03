@@ -7,8 +7,9 @@ import makeWASocket, {
 import { Boom } from "@hapi/boom";
 import { WebSocket } from "ws";
 import * as QRCode from "qrcode";
-import { join } from "path";
+import { join, dirname } from "path";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, appendFileSync, statSync } from "fs";
+import { homedir } from "os";
 import type { Logger } from "pino";
 import { AgentClient } from "@lantern/bridge-core/agent";
 import { AttentionClassifier } from "./attention.js";
@@ -92,6 +93,18 @@ const MIME_FOR_EXT: Record<string, string> = {
   ".zip": "application/zip",
 };
 import type { BotState } from "./types.js";
+
+// Metadata for a tracked bot reply — lets a later 👎 / 🔁 reconstruct the
+// prompt and regenerate. Persisted to a JSONL sidecar so it survives a
+// restart between the send and the reaction.
+interface ReplyMetaEntry {
+  jid: string;
+  inboundText: string;
+  replyText: string;
+  systemHint: string;
+  surface: "contact-reply" | "owner-self-chat";
+  ts: number;
+}
 
 // Display name for the bot-owner used in attention prompts and log lines.
 // Configurable so the classifier doesn't hardcode a single user's name.
@@ -256,7 +269,8 @@ export class WhatsAppSession {
             return `[${when}] ${h.handle || "?"}: ${h.text.slice(0, 200)}`;
           }).join("\n");
         } catch (err) {
-          return `(iMessage bridge unreachable: ${(err as Error).message})`;
+          this.logger.warn({ err }, "subtask iMessage adapter failed");
+          return "(imessage bridge unavailable)";
         }
       },
       personalDocs: async (instruction, hints) => {
@@ -267,7 +281,8 @@ export class WhatsAppSession {
           if (hits.length === 0) return `(no files matched "${hints?.keyword || originalQuery}")`;
           return hits.slice(0, 6).map((h) => `${h.displayPath} (${h.ext.replace(".", "")}, ${Math.round(h.bytes / 1024)}KB)`).join("\n");
         } catch (err) {
-          return `(personal-docs error: ${(err as Error).message})`;
+          this.logger.warn({ err }, "subtask personal-docs adapter failed");
+          return "(personal-docs unavailable)";
         }
       },
       ownerProfile: async () => {
@@ -284,16 +299,16 @@ export class WhatsAppSession {
           const client = defaultConnectorClient(this.logger);
           const kw = hints?.keyword || originalQuery;
           const result = await client.execute("gmail", "search", { query: kw, limit: 8 })
-            .catch((err) => ({ ok: false, error: err.message }));
+            .catch((err) => { this.logger.warn({ err }, "subtask gmail execute failed"); return { ok: false }; });
           if (!result || (result as { ok?: boolean }).ok === false) {
-            const errMsg = (result as { error?: string })?.error || "unknown";
-            return `(gmail search failed: ${errMsg})`;
+            return "(gmail unavailable)";
           }
           const msgs = ((result as { messages?: Array<{ from?: string; subject?: string; snippet?: string }> }).messages || []).slice(0, 6);
           if (msgs.length === 0) return `(no gmail matched "${kw}")`;
           return msgs.map((m) => `from ${m.from || "?"} — ${m.subject || ""}${m.snippet ? ` — ${m.snippet.slice(0, 150)}` : ""}`).join("\n");
         } catch (err) {
-          return `(gmail adapter error: ${(err as Error).message})`;
+          this.logger.warn({ err }, "subtask gmail adapter failed");
+          return "(gmail unavailable)";
         }
       },
       googleCalendar: async (instruction, hints) => {
@@ -304,16 +319,16 @@ export class WhatsAppSession {
           if (typeof hints?.sinceMs === "number") params.timeMin = new Date(hints.sinceMs).toISOString();
           if (typeof hints?.untilMs === "number") params.timeMax = new Date(hints.untilMs).toISOString();
           const result = await client.execute("google-calendar", "list_events", params as Record<string, string | number>)
-            .catch((err) => ({ ok: false, error: err.message }));
+            .catch((err) => { this.logger.warn({ err }, "subtask calendar execute failed"); return { ok: false }; });
           if (!result || (result as { ok?: boolean }).ok === false) {
-            const errMsg = (result as { error?: string })?.error || "unknown";
-            return `(calendar query failed: ${errMsg})`;
+            return "(calendar unavailable)";
           }
           const events = ((result as { events?: Array<{ summary?: string; start?: { dateTime?: string; date?: string } }> }).events || []).slice(0, 8);
           if (events.length === 0) return `(no calendar events in range)`;
           return events.map((e) => `${e.start?.dateTime || e.start?.date || "?"}: ${e.summary || "(no title)"}`).join("\n");
         } catch (err) {
-          return `(calendar adapter error: ${(err as Error).message})`;
+          this.logger.warn({ err }, "subtask calendar adapter failed");
+          return "(calendar unavailable)";
         }
       },
     };
@@ -1108,17 +1123,14 @@ export class WhatsAppSession {
   // critique-retry handler reconstruct the prompt when the owner
   // reacts with 🔁 / 🤦 on a bot reply. Capped at 200 entries (FIFO);
   // older entries fall off as new replies are recorded. In-memory
-  // only — retries lose their anchor if the bridge restarts between
-  // send and react, which is fine (the owner can re-send their query).
-  private bridgeReplyMeta: Map<string, {
-    jid: string;
-    inboundText: string;
-    replyText: string;
-    systemHint: string;
-    surface: "contact-reply" | "owner-self-chat";
-    ts: number;
-  }> = new Map();
+  // Backed by an on-disk sidecar (replyMetaFile) so a 👎 / 🔁 that lands
+  // AFTER a restart can still reconstruct the prompt and regenerate.
+  private bridgeReplyMeta: Map<string, ReplyMetaEntry> = new Map();
   private static readonly REPLY_META_MAX = 200;
+  // Bounded JSONL sidecar (~/.lantern/whatsapp-reply-meta.jsonl) — FIFO
+  // at REPLY_META_MAX. Survives restarts so the bad-feedback retry has
+  // an anchor even when the reaction lands in a fresh process.
+  private replyMetaFile: string = "";
   // Tracks the msg.id of the most recent message confirmToSelf() sent.
   // Owner-self-chat reply paths read this immediately after their
   // confirmToSelf() call to pair the sent id with the inbound text +
@@ -1156,6 +1168,19 @@ export class WhatsAppSession {
   // persisted with state so the buffer survives restarts.
   private ownerSentHistory: Map<string, string[]> = new Map();
   private static readonly OWNER_SENT_PER_CONTACT = 10;
+  // Ring buffer of the bot's own recent OUTBOUND replies per contact jid.
+  // Fed to the persona prompt as an anti-repetition signal so the bot
+  // never sends the same canned line three times in a thread. In-memory;
+  // last 5 per contact. Not persisted (a fresh thread after restart is
+  // fine — repetition only matters within an active conversation).
+  private recentBotReplies = new Map<string, string[]>();
+  private static readonly RECENT_BOT_REPLIES_PER_CONTACT = 5;
+  // Dedup guard for the bad-feedback retry. Both 👎 (record + retry) and
+  // 🔁 (retry) on the SAME bot reply trigger handleBadFeedbackRetry; this
+  // set ensures a given target msg-id only regenerates once even if the
+  // owner taps both. Bounded; entries are cheap msg-id strings.
+  private retriedReplyIds = new Set<string>();
+  private static readonly RETRIED_REPLY_IDS_MAX = 200;
 
   constructor(tenantId: string, logger: Logger) {
     this.tenantId = tenantId;
@@ -1202,6 +1227,10 @@ export class WhatsAppSession {
       }
     }
     this.loadState();
+    // Reply-meta sidecar: load prior tracked replies so a 👎 / 🔁 that
+    // lands after a restart can still regenerate. Bounded; best-effort.
+    this.replyMetaFile = join(homedir(), ".lantern", "whatsapp-reply-meta.jsonl");
+    this.loadReplyMetaSidecar();
     // GC stale bridgeSentIds every minute so a missed echo doesn't leak mem.
     this.gcTimer = setInterval(() => this.gcBridgeSentIds(), 60_000);
     // unref so the timer doesn't keep the process alive on shutdown.
@@ -1744,13 +1773,25 @@ export class WhatsAppSession {
               const onBotReply = !!(targetKeyId && (this.bridgeSentIds.has(targetKeyId) || this.bridgeReplyMeta.has(targetKeyId)));
               this.logger.info({ emoji, action, threadJid: from, onBotReply }, "reaction command");
               // 👎 / ❌ on a BOT REPLY is the intuitive "that was bad" gesture.
-              // The default mapping (discard VIP draft) is a no-op on WhatsApp,
-              // so thumbs-down silently did NOTHING. Route it to real negative
-              // feedback: record the dislike (future replies calibrate away from
-              // it) + ack the owner. No auto-retry — that's 🔁's explicit job,
-              // and we must never auto-send a fresh message into a contact thread.
+              // PARITY with iMessage: 👎 now IMMEDIATELY regenerates a
+              // corrected reply (the same critique-retry path as 🔁) in
+              // addition to recording the dislike — handleBadFeedbackRetry
+              // records the dislike itself, so we don't also call
+              // recordDislikeFromReaction (would double-record). Deduped via
+              // retriedReplyIds so a 👎 followed by 🔁 on the same target
+              // fires the retry only once. Works for both self-chat replies
+              // (surface owner-self-chat) and contact-facing replies
+              // (surface contact-reply, now retry-tracked at send time).
               if (action === "discard-draft" && onBotReply) {
-                void this.recordDislikeFromReaction(from, targetKeyId);
+                if (targetKeyId && !this.retriedReplyIds.has(targetKeyId)) {
+                  this.markRetried(targetKeyId);
+                  void this.handleBadFeedbackRetry(from, targetKeyId).catch((err) =>
+                    this.logger.error({ err }, "handleBadFeedbackRetry (👎) threw"));
+                } else {
+                  // Already retried (e.g. 🔁 fired first) — just record the
+                  // dislike signal without a second regeneration.
+                  void this.recordDislikeFromReaction(from, targetKeyId);
+                }
                 continue;
               }
               void dispatchReaction(
@@ -1794,6 +1835,13 @@ export class WhatsAppSession {
                       this.logger.warn({ jid }, "feedback-bad-retry: no msgId");
                       return;
                     }
+                    // Deduped against 👎 — if 👎 already regenerated this
+                    // target, don't fire a second retry.
+                    if (this.retriedReplyIds.has(msgId)) {
+                      this.logger.info({ jid, msgId }, "feedback-bad-retry: already retried (deduped)");
+                      return;
+                    }
+                    this.markRetried(msgId);
                     await this.handleBadFeedbackRetry(jid, msgId);
                   },
                 },
@@ -2012,6 +2060,14 @@ export class WhatsAppSession {
               if (fact) {
                 const contactJid = from;
                 const label = this.contactNames.get(contactJid) || contactJid.split("@")[0];
+                // Per-contact NAMING rule ("don't call her bava", "address
+                // her by name") → route to the STRUCTURED contact
+                // relationship (address as / never) so the persona's
+                // addressRuleFor() picks it up, not just a freeform fact.
+                if (this.looksLikeNamingRule(fact)) {
+                  void this.teachContactNamingRule(label, fact);
+                  continue;
+                }
                 void this.personal.addFact(contactJid, fact).then((ok) => {
                   void this.confirmToSelf(
                     ok ? `📝 got it — noted about ${label}: ${fact}` : `couldn't save that note about ${label}, try again`,
@@ -2187,7 +2243,7 @@ export class WhatsAppSession {
       // undefined to send a normal message.
       quoted?: import("baileys").proto.IWebMessageInfo;
     } = {},
-  ) {
+  ): Promise<string | undefined> {
     if (!this.socket || !this.connected) {
       throw new Error("Not connected");
     }
@@ -2210,6 +2266,9 @@ export class WhatsAppSession {
     const sendOpts = opts.quoted ? { quoted: opts.quoted } : undefined;
     const sent = await this.socket.sendMessage(jid, { text }, sendOpts);
     if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
+    // Return the sent message id so callers can retry-track the reply
+    // (👎 / 🔁 on a contact-facing reply needs the GUID → reply-meta).
+    return sent?.key?.id ?? undefined;
   }
 
   // Send a message to the bridge owner's own WhatsApp self-chat. Used
@@ -3096,7 +3155,8 @@ export class WhatsAppSession {
       if (isTrivialChatter(text) || isGreetingSmallTalk(text)) {
         if (nlEnabled && !this.muted) {
           this.logger.info({ jid, textPreview: text.slice(0, 60) }, "owner greeting/chatter → natural chat (fast-path)");
-          void this.handleOwnerNaturalChat(jid, text);
+          void this.handleOwnerNaturalChat(jid, text).catch((err) =>
+            this.logger.error({ err }, "handleOwnerNaturalChat threw"));
         }
         return;
       }
@@ -3105,14 +3165,17 @@ export class WhatsAppSession {
         // Fire-and-forget: scan for durable facts and auto-append to
         // the owner profile. Sends a one-line ack if anything was
         // learned. Never blocks the doc-query path.
-        void this.maybeAutoUpdateOwnerProfileFromSelfChat(jid, text);
-        void this.handleOwnerDocQuery(jid, text, key);
+        void this.maybeAutoUpdateOwnerProfileFromSelfChat(jid, text).catch((err) =>
+          this.logger.error({ err }, "maybeAutoUpdateOwnerProfileFromSelfChat threw"));
+        void this.handleOwnerDocQuery(jid, text, key).catch((err) =>
+          this.logger.error({ err }, "handleOwnerDocQuery threw"));
         return;
       }
       // personal-docs disabled — fall through to natural chat so the
       // bridge still replies.
       if (nlEnabled && !this.muted) {
-        void this.handleOwnerNaturalChat(jid, text);
+        void this.handleOwnerNaturalChat(jid, text).catch((err) =>
+          this.logger.error({ err }, "handleOwnerNaturalChat threw"));
         return;
       }
     }
@@ -3633,6 +3696,10 @@ export class WhatsAppSession {
       );
       const result = await maybeAutoUpdateOwnerProfile(text, {
         profilePath: this.ownerProfileStore.getPath(),
+        // Invalidate the in-memory profile cache the instant a fact (or a
+        // per-contact naming rule) is written, so the very next reply sees
+        // it without waiting for the cache TTL.
+        invalidate: () => this.ownerProfileStore.invalidate(),
         llmCall: async (prompt: string) => {
           const out = await this.agent.respondTo(jid, prompt, "", { withTools: false });
           return out || "";
@@ -3659,6 +3726,42 @@ export class WhatsAppSession {
       }
     } catch (err) {
       this.logger.warn({ err }, "owner-profile auto-update failed");
+    }
+  }
+
+  // Heuristic: does this remembered fact express a per-contact NAMING
+  // rule (what to call them / what never to call them) rather than a
+  // generic fact? Cheap pre-filter before the LLM-backed structured route.
+  private looksLikeNamingRule(fact: string): boolean {
+    return /\b(don'?t|never)\s+call\b|\baddress(?:es)?\s+(?:her|him|them|by)\b|\bcall\s+(?:her|him|them)\s+by\b|\bby\s+(?:his|her|their)\s+name\b/i.test(fact);
+  }
+
+  // Route a per-contact naming rule into the structured owner-profile
+  // contact relationship (address as / never) via the auto-update path,
+  // attributing it to this contact by name, then invalidate the cache.
+  private async teachContactNamingRule(contactLabel: string, fact: string): Promise<void> {
+    try {
+      const { maybeAutoUpdateOwnerProfile, formatAck } = await import(
+        "@lantern/bridge-core/owner-profile-auto-update"
+      );
+      // Prepend the contact name so the extractor attributes the rule to
+      // the right person (the contact-thread text often says only "her").
+      const attributed = `About ${contactLabel}: ${fact}`;
+      const result = await maybeAutoUpdateOwnerProfile(attributed, {
+        profilePath: this.ownerProfileStore.getPath(),
+        invalidate: () => this.ownerProfileStore.invalidate(),
+        llmCall: async (prompt: string) => {
+          const out = await this.agent.respondTo("naming-rule", prompt, "", { withTools: false });
+          return out || "";
+        },
+        logger: this.logger as any,
+      });
+      this.ownerProfileStore.invalidate();
+      const ack = formatAck(result.appended);
+      await this.confirmToSelf(ack || `📝 got it — updated how I address ${contactLabel}.`);
+    } catch (err) {
+      this.logger.warn({ err }, "teachContactNamingRule failed");
+      try { await this.confirmToSelf(`couldn't update how I address ${contactLabel}, try again`); } catch {}
     }
   }
 
@@ -3698,6 +3801,10 @@ export class WhatsAppSession {
   ): Promise<void> {
     if (!this.docs) return;
     this.busyChat.add(jid);
+    // Hoisted so the `finally` can guarantee clearTimeout even on an
+    // early throw — a leaked timer would fire "🧠 thinking…" into the
+    // owner's chat long after the query already failed.
+    let thinkingTimer: NodeJS.Timeout | undefined;
     try {
     this.logger.info({ query: query.slice(0, 80) }, "owner doc query (whatsapp)");
     this.logActivity("attention_dm", `🧠 owner query: ${query.slice(0, 60)}`, { scope: "self" });
@@ -3710,7 +3817,7 @@ export class WhatsAppSession {
     try { await this.sendReaction(jid, key, "🧠"); } catch {}
     const startedAt = Date.now();
     let thinkingSent = false;
-    const thinkingTimer = setTimeout(() => {
+    thinkingTimer = setTimeout(() => {
       thinkingSent = true;
       void this.confirmToSelf("🧠 thinking…");
     }, 3000);
@@ -3791,21 +3898,21 @@ export class WhatsAppSession {
     const planAdapters = this.buildSubTaskAdapters(query);
 
     // SMART CONTEXT: the device calendar is the source of truth for the
-    // owner's appointments (iCloud + Google + subscribed) and is a cheap,
-    // local SQLite read — so read it for EVERY substantive owner query, NOT
-    // gated behind a brittle keyword regex (which missed "when's my next
-    // haircut" because it had no "appointment" token). The model ignores it
-    // when irrelevant; when relevant it can never give a false "not found".
-    // The heavier Gmail/Google appointment prefetch stays keyword-gated.
+    // owner's appointments (iCloud + Google + subscribed). Gate it on the
+    // appointment-intent detector so non-time queries ("when is my green
+    // card expiring") don't pull the whole calendar into context — that
+    // both bloats the prompt and risks the model answering a doc question
+    // with calendar noise. When intent matches, behavior is unchanged.
+    const isApptQuery = looksLikeAppointmentQuery(query);
     const deviceCalP: Promise<CalendarEventRead[]> =
-      process.platform === "darwin" && this.macActions
+      isApptQuery && process.platform === "darwin" && this.macActions
         ? this.macActions.readUpcomingEvents({ days: 60 }).catch((err) => {
             this.logger.warn({ err }, "device calendar read failed (continuing)");
             return [] as CalendarEventRead[];
           })
         : Promise.resolve([] as CalendarEventRead[]);
     const [gatedApptBlock, deviceEvents, rosterResults, subTaskResults] = await Promise.all([
-      looksLikeAppointmentQuery(query)
+      isApptQuery
         ? prefetchAppointmentContext(client, query, this.logger).catch(() => null)
         : Promise.resolve(null),
       deviceCalP,
@@ -3840,6 +3947,7 @@ export class WhatsAppSession {
     // on") resolve in one round-trip without a tool-loop timeout.
     const ownerProfile = this.ownerProfileStore.prose();
     const relationshipsBlock = this.ownerProfileStore.relationshipsBlock();
+    const ownerFacts = this.ownerProfileStore.factsBlock();
     const today = new Date().toISOString().slice(0, 10);
     const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
     // Language modality applies to owner self-chat too.
@@ -3852,6 +3960,7 @@ export class WhatsAppSession {
       ``,
       ownerProfile ? `# Who you are\n${ownerProfile}` : "",
       relationshipsBlock ? `\n# Your people\n${relationshipsBlock}` : "",
+      ownerFacts ? `\n# Known facts (TRUE — never deny or contradict)\n${ownerFacts}` : "",
       languageModality ? `\n${languageModality}` : "",
       ``,
       `# Decide BEFORE calling tools`,
@@ -3922,7 +4031,6 @@ export class WhatsAppSession {
       draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
     }
 
-    clearTimeout(thinkingTimer);
     this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft, thinkingSent }, "doc query done (whatsapp)");
     if (!draft) {
       await this.confirmToSelf("hmm, that one took longer than I'd like. give me another minute and ask again");
@@ -4027,10 +4135,16 @@ export class WhatsAppSession {
         }
       } catch (err) {
         this.logger.warn({ err, target: c.target }, "outbound [CALL] marker exception");
-        await this.confirmToSelf(`(call failed — ${(err as Error).message})`);
+        await this.confirmToSelf("(couldn't place the call — try again)");
       }
     }
+    } catch (err) {
+      // Never let a doc-query failure leak a raw error into the owner's
+      // chat or crash the bridge — log it, send a friendly line.
+      this.logger.error({ err, jid }, "handleOwnerDocQuery failed");
+      try { await this.confirmToSelf("hmm, that one hit a snag. give it another go in a sec"); } catch {}
     } finally {
+      if (thinkingTimer) clearTimeout(thinkingTimer);
       this.busyChat.delete(jid);
       // Drain queued next-query (latest-wins).
       const queued = this.queuedQuery.get(jid);
@@ -4044,7 +4158,8 @@ export class WhatsAppSession {
           // doc-query path uses `key` only for sendReaction; safely
           // skip the reaction if id is missing (sendReaction is best-
           // effort already).
-          void this.handleOwnerDocQuery(jid, queued.text, { id: null, remoteJid: jid, fromMe: true, participant: null });
+          void this.handleOwnerDocQuery(jid, queued.text, { id: null, remoteJid: jid, fromMe: true, participant: null }).catch((err) =>
+            this.logger.error({ err }, "handleOwnerDocQuery (drain) threw"));
         } else {
           this.logger.info({ jid, ageMs: age }, "dropping queued query — too old");
         }
@@ -4070,7 +4185,7 @@ export class WhatsAppSession {
         if (!res.ok) await this.confirmToSelf(`(couldn't place call: ${res.reason || "unknown"})`);
       } catch (err) {
         this.logger.error({ err }, "outbound-call offer execution failed");
-        await this.confirmToSelf(`(call failed — ${(err as Error).message})`);
+        await this.confirmToSelf("(couldn't place the call — try again)");
       }
       return;
     }
@@ -4136,7 +4251,8 @@ export class WhatsAppSession {
         "",
         `The owner just said YES to your offer. Now FULFILL it: call the right tool (gmail_search, calendar lookup, attach file, etc.) and deliver the result. Don't re-offer; don't ask for permission. Execute and reply with what you found / did.`,
       ].filter(Boolean).join("\n");
-      void this.handleOwnerDocQuery(jid, fulfillmentText, "" as any);
+      void this.handleOwnerDocQuery(jid, fulfillmentText, "" as any).catch((err) =>
+        this.logger.error({ err }, "handleOwnerDocQuery (offer-fulfill) threw"));
       return;
     }
   }
@@ -4172,11 +4288,13 @@ export class WhatsAppSession {
     const nativity = this.ownerProfileStore.nativity();
     const languageModality = languageModalityHint(langHint, { nativity });
     const ownerProfileProse = this.ownerProfileStore.prose();
+    const ownerFacts = this.ownerProfileStore.factsBlock();
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his WhatsApp self-chat.`,
       `Today is ${today}. Local time of day: ${timeOfDay}.`,
       ``,
       ownerProfileProse ? `# Who you are\n${ownerProfileProse}\n` : ``,
+      ownerFacts ? `# Known facts (TRUE — never deny or contradict)\n${ownerFacts}\n` : ``,
       `You ARE his Jarvis. Warm, concise, authentic. Like a sharp peer who knows him well.`,
       `  • 1-3 short lines. No corporate filler ("I'd be happy to" / "feel free" / "let me know if").`,
       `  • Lowercase, conversational.`,
@@ -4707,7 +4825,8 @@ export class WhatsAppSession {
     },
   ): void {
     if (!sentMsgId) return;
-    this.bridgeReplyMeta.set(sentMsgId, { ...meta, ts: Date.now() });
+    const entry: ReplyMetaEntry = { ...meta, ts: Date.now() };
+    this.bridgeReplyMeta.set(sentMsgId, entry);
     if (this.bridgeReplyMeta.size > WhatsAppSession.REPLY_META_MAX) {
       const it = this.bridgeReplyMeta.keys();
       const drop = this.bridgeReplyMeta.size - WhatsAppSession.REPLY_META_MAX;
@@ -4716,12 +4835,74 @@ export class WhatsAppSession {
         if (k) this.bridgeReplyMeta.delete(k);
       }
     }
+    // Persist to the sidecar so a 👎 / 🔁 after a restart can still
+    // reconstruct the prompt. Best-effort — never blocks the reply.
+    this.appendReplyMetaSidecar(sentMsgId, entry);
+  }
+
+  // Load the bounded reply-meta sidecar at boot (FIFO-capped). Tolerant
+  // of partial/corrupt lines — one bad line never aborts the load.
+  private loadReplyMetaSidecar(): void {
+    try {
+      if (!this.replyMetaFile || !existsSync(this.replyMetaFile)) return;
+      const raw = readFileSync(this.replyMetaFile, "utf8");
+      const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+      // Keep only the last REPLY_META_MAX entries (FIFO).
+      for (const line of lines.slice(-WhatsAppSession.REPLY_META_MAX)) {
+        try {
+          const rec = JSON.parse(line) as { id?: string } & ReplyMetaEntry;
+          if (rec && rec.id && rec.jid && typeof rec.inboundText === "string") {
+            const { id, ...meta } = rec;
+            this.bridgeReplyMeta.set(id, meta);
+          }
+        } catch { /* skip a single corrupt line */ }
+      }
+      this.logger.info({ loaded: this.bridgeReplyMeta.size }, "reply-meta sidecar loaded");
+    } catch (err) {
+      this.logger.warn({ err }, "reply-meta sidecar load failed (continuing)");
+    }
+  }
+
+  // Append one entry to the sidecar, rewriting (compacting) to the FIFO
+  // cap when the file would grow beyond it. Best-effort; never throws.
+  private appendReplyMetaSidecar(id: string, entry: ReplyMetaEntry): void {
+    if (!this.replyMetaFile) return;
+    try {
+      mkdirSync(dirname(this.replyMetaFile), { recursive: true });
+      // Compact when the in-memory map is at the cap — rewrite the file
+      // from the live (already-bounded) map so the sidecar stays bounded
+      // too, rather than growing unbounded via pure appends.
+      if (this.bridgeReplyMeta.size >= WhatsAppSession.REPLY_META_MAX) {
+        const out = [...this.bridgeReplyMeta.entries()]
+          .map(([k, v]) => JSON.stringify({ id: k, ...v }))
+          .join("\n") + "\n";
+        writeFileSync(this.replyMetaFile, out, { mode: 0o600 });
+      } else {
+        appendFileSync(this.replyMetaFile, JSON.stringify({ id, ...entry }) + "\n", { mode: 0o600 });
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "reply-meta sidecar append failed (non-fatal)");
+    }
+  }
+
+  // Mark a bot-reply msg-id as already-retried so 👎 and 🔁 on the same
+  // target regenerate exactly once. Bounded FIFO.
+  private markRetried(msgId: string): void {
+    this.retriedReplyIds.add(msgId);
+    if (this.retriedReplyIds.size > WhatsAppSession.RETRIED_REPLY_IDS_MAX) {
+      const it = this.retriedReplyIds.values();
+      const drop = this.retriedReplyIds.size - WhatsAppSession.RETRIED_REPLY_IDS_MAX;
+      for (let i = 0; i < drop; i++) {
+        const k = it.next().value;
+        if (k) this.retriedReplyIds.delete(k);
+      }
+    }
   }
 
   // 👎 / ❌ on a bot reply: record the dislike for permanent calibration
   // and acknowledge to the owner — WITHOUT retrying/sending anything into
-  // the contact thread. This is the lightweight counterpart to the 🔁
-  // retry path: "noted, learn from it" vs "noted, try again now".
+  // the contact thread. Used as the fallback path when the retry already
+  // fired (dedup): "noted, learn from it".
   private async recordDislikeFromReaction(jid: string, msgId: string | undefined): Promise<void> {
     this.logger.info({ jid, msgId }, "self-eval: 👎 negative feedback");
     this.logActivity("attention_dm", "👎 owner flagged a bad reply", { jid, scope: "self" });
@@ -5400,6 +5581,12 @@ export class WhatsAppSession {
         ` Keep it short and natural — don't pretend to be ${ownerName} mid-activity.`;
     }
 
+    // Per-contact addressing rule (what to call them / kinship terms the
+    // owner never uses with them) + structured owner facts. Both ground
+    // the reply so the bot honors naming and never denies a known fact.
+    const addressRule = !opts.isGroup
+      ? this.ownerProfileStore.addressRuleFor(from, opts.senderName ?? this.contactNames.get(from)) ?? undefined
+      : undefined;
     let systemHint = agentPersonaPrompt(
       ownerName,
       style,
@@ -5409,8 +5596,11 @@ export class WhatsAppSession {
         disclosed: this.disclosedJids.has(from),
         stylePrompt,
         ownerProfile,
+        ownerFacts: this.ownerProfileStore.factsBlock(),
+        addressRule,
         relationship,
         recentTranscript,
+        recentBotReplies: this.recentBotReplies.get(from) ?? [],
         languageModality,
         contactStyleBlock,
         dislikeBlock,
@@ -5693,7 +5883,20 @@ export class WhatsAppSession {
       // the reply. Only the FIRST burst message quotes — subsequent
       // ones are part of the same thought.
       const quoteThis = i === 0 && opts.isGroup ? opts.quotedMsg : undefined;
-      await this.sendMessage(from, msg.text, { quoted: quoteThis });
+      const sentId = await this.sendMessage(from, msg.text, { quoted: quoteThis });
+      // Retry-track the FIRST burst message (1:1 only) so a 👎 / 🔁 on a
+      // contact-facing reply can reconstruct the prompt and regenerate.
+      // surface: "contact-reply" routes the corrected reply back to the
+      // contact thread, not self-chat.
+      if (i === 0 && sentId && !opts.isGroup) {
+        this.recordReplyMeta(sentId, {
+          jid: from,
+          inboundText: text,
+          replyText: draft,
+          systemHint,
+          surface: "contact-reply",
+        });
+      }
       // Counted ONCE per burst (only on the first piece) so a 3-message
       // burst still counts as one "reply" in the morning digest.
       if (i === 0) this.repliesSentToday += 1;
@@ -5712,6 +5915,18 @@ export class WhatsAppSession {
     try {
       await this.socket.sendPresenceUpdate("paused", from);
     } catch {}
+
+    // Anti-repetition ring buffer: remember what we just told this
+    // contact so the next turn's persona prompt forbids repeating it.
+    // 1:1 only — group register is mixed and not a repetition risk.
+    if (!opts.isGroup) {
+      const ring = this.recentBotReplies.get(from) ?? [];
+      ring.push(draft);
+      if (ring.length > WhatsAppSession.RECENT_BOT_REPLIES_PER_CONTACT) {
+        ring.splice(0, ring.length - WhatsAppSession.RECENT_BOT_REPLIES_PER_CONTACT);
+      }
+      this.recentBotReplies.set(from, ring);
+    }
 
     // MEDIUM-confidence audit ping for non-group sends.
     if (tier.tier === "MEDIUM" && !opts.isGroup) {
