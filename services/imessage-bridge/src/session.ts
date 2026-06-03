@@ -18,7 +18,7 @@
 //   - Mirror to email when configured
 //   - Persisted state in bridge_state/<tenant>/
 
-import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, chmodSync } from "fs";
 import { basename, join } from "path";
 import type { Logger } from "pino";
 import type { WebSocket } from "ws";
@@ -73,7 +73,7 @@ import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
 import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
-import { computeHold, latenciesFromTranscript } from "@lantern/bridge-core/pacing";
+import { computeHoldFromSamples } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
@@ -252,6 +252,25 @@ export class IMessageSession {
   // without ever emitting a [CALENDAR:...] marker.
   private pendingOffers: Map<string, PendingOffer> = new Map();
   private static readonly OFFER_TTL_MS = 10 * 60_000; // 10 min
+
+  // OVERNIGHT REPLAY QUEUE. When a 1:1 contact (non-owner) messages
+  // during quiet hours (01:00-06:00) the auto-reply is suppressed.
+  // Previously the message was DROPPED FOREVER — a late-night "happy
+  // anniversary" got total silence. Now we persist the inbound to a
+  // per-bridge JSONL queue on disk (mode 0600 — it holds message text)
+  // and replay it through the normal reply pipeline when quiet hours
+  // end, with morning pacing. Survives restarts.
+  private quietQueuePath: string = "";
+  private quietReplayTimer: ReturnType<typeof setInterval> | null = null;
+  private quietReplayInFlight = false;
+  // Cap so a flood of overnight messages can't unbounded-grow the file.
+  private static readonly QUIET_QUEUE_MAX =
+    Number(process.env.LANTERN_QUIET_QUEUE_MAX) > 0
+      ? Number(process.env.LANTERN_QUIET_QUEUE_MAX)
+      : 200;
+  // Per-handle daily-dedup of "what did we already replay" — defends a
+  // restart mid-drain from re-replaying an entry the file still holds.
+  private quietReplayed: Set<string> = new Set();
 
   // Per-chat concurrency lock. A single doc-query / natural-chat
   // round-trip can take 90+ seconds. Without this lock, rapid-fire
@@ -449,6 +468,7 @@ export class IMessageSession {
     );
 
     mkdirSync(this.stateDir, { recursive: true });
+    this.quietQueuePath = join(this.stateDir, "quiet-queue.jsonl");
     this.loadState();
     this.loadBridgeSends();
     this.loadReplyMeta();
@@ -489,6 +509,7 @@ export class IMessageSession {
     this.startPolling();
     this.startDailyDigest();
     this.startOfflineMonitor();
+    this.startQuietReplay();
     this.logger.info("iMessage session ready");
   }
 
@@ -564,6 +585,10 @@ export class IMessageSession {
     this.digestStopFn = null;
     this.offlineMonitor?.stop();
     this.offlineMonitor = null;
+    if (this.quietReplayTimer) {
+      clearInterval(this.quietReplayTimer);
+      this.quietReplayTimer = null;
+    }
     this.screenContext?.stop();
     this.db.close();
     this.sockets.forEach((s) => {
@@ -1893,11 +1918,19 @@ export class IMessageSession {
       }
     }
 
-    // Quiet hours: skip auto-reply during sleeping hours.
+    // Quiet hours: skip auto-reply during sleeping hours — but DON'T
+    // drop the message. Persist non-owner 1:1 inbounds to the overnight
+    // replay queue so they get a warm reply with morning pacing when the
+    // window reopens (a late-night "happy anniversary" no longer gets
+    // total silence). Owner self-chat is exempt (the owner's own queries
+    // are handled live and shouldn't be deferred).
     if (!isGroup) {
       const qh = defaultQuietHours();
       if (isQuietHours(new Date(), qh)) {
-        this.broadcast({ type: "activity", data: { kind: "agent_skipped", summary: "quiet hours — auto-reply paused", jid: row.handle, timestamp: Date.now() } });
+        if (!this.isOwnerChatRow(row)) {
+          this.enqueueQuietReplay(row, unixMs);
+        }
+        this.broadcast({ type: "activity", data: { kind: "agent_skipped", summary: "quiet hours — queued for morning reply", jid: row.handle, timestamp: Date.now() } });
         return;
       }
     }
@@ -2242,26 +2275,38 @@ export class IMessageSession {
     }
 
     // Pace mirror — pause before the first send so the reply feels
-    // natural for THIS contact's cadence. Skip on cold conversations
-    // (no prior samples → no signal). Reads transcript latencies +
-    // applies a jittered hold.
+    // natural for THIS contact's cadence. Reads REAL inbound→owner-reply
+    // latency samples from chat.db (each row carries its true timestamp)
+    // and applies a jittered, time-of-day-aware hold. `computeHoldFromSamples`
+    // falls back to the safe moderate default when <3 usable samples
+    // exist, so cold conversations stay sane without fabricated timings.
     let paceHoldMs = 0;
-    if (!isGroup && ownerSamples.length > 0) {
-      const histRows = this.db.recentMessages(row.chatRowid, 30);
-      // Convert {fromMe, text} → {fromMe, ts}. ts is unavailable here
-      // (the helper doesn't return date), so we approximate by using
-      // the current row's date and walking backwards in equal slices
-      // — good enough as a baseline. Refinement: extend recentMessages
-      // to return dates. For now the median across the bucket is
-      // representative of recent cadence.
-      const latencies = latenciesFromTranscript(
-        histRows.map((m, i) => ({ fromMe: m.fromMe, ts: Date.now() - (histRows.length - i) * 60_000 })),
-        15,
-      );
-      const verdict = computeHold({
-        ownerLatencies: latencies,
-        msSinceLastInbound: 0, // freshest inbound — we just received it
-        isActiveBurst: histRows.filter((m) => m.fromMe).length >= 2,
+    let paceIsActiveBurst = false;
+    let paceMsSinceLastInbound = 0;
+    if (!isGroup) {
+      const tsRows = this.db.recentTimestamped(row.chatRowid, 40);
+      // Real (inboundTs, replyTs) pairs: each contact inbound paired with
+      // the owner's next sent message in the thread.
+      const samples: Array<{ inboundTs: number; replyTs: number }> = [];
+      for (let i = 1; i < tsRows.length; i++) {
+        const cur = tsRows[i];
+        const prev = tsRows[i - 1];
+        if (cur.fromMe && !prev.fromMe) {
+          samples.push({ inboundTs: prev.ts, replyTs: cur.ts });
+        }
+      }
+      // Liveness: how long since the most recent INBOUND, and whether we're
+      // mid back-and-forth (2+ owner replies in the recent window).
+      const lastInbound = [...tsRows].reverse().find((m) => !m.fromMe);
+      paceMsSinceLastInbound = lastInbound
+        ? Math.max(0, unixMs - lastInbound.ts)
+        : 0;
+      paceIsActiveBurst = tsRows.filter((m) => m.fromMe).length >= 2;
+      const verdict = computeHoldFromSamples({
+        samples,
+        msSinceLastInbound: paceMsSinceLastInbound,
+        isActiveBurst: paceIsActiveBurst,
+        localHour: new Date().getHours(),
       });
       paceHoldMs = verdict.holdMs;
     }
@@ -2293,7 +2338,13 @@ export class IMessageSession {
     // would DM them instead of posting in the group. (This is what
     // produced the "replied to a group with a DM" bug.)
     const sendTarget = isGroup && row.chatIdentifier ? row.chatIdentifier : row.handle;
-    const burst = naturalize(draft, { inbound: text, style });
+    const burst = naturalize(draft, {
+      inbound: text,
+      style,
+      // Pace hint: suppress the "I was away" lag mid-active-burst and let
+      // short replies type faster when the contact is plainly live.
+      pace: { isActiveBurst: paceIsActiveBurst, msSinceLastInbound: paceMsSinceLastInbound },
+    });
     if (paceHoldMs > 0) await new Promise((r) => setTimeout(r, paceHoldMs));
     for (let i = 0; i < burst.length; i++) {
       const piece = burst[i];
@@ -2364,6 +2415,164 @@ export class IMessageSession {
           topics: outboundTopics,
         });
       }
+    }
+  }
+
+  // ---- Overnight replay queue -------------------------------------------
+  //
+  // Quiet-hours inbounds from 1:1 contacts are persisted here and replayed
+  // through handleInbound when the window reopens, so a late-night message
+  // gets a warm morning reply instead of being silently dropped. All ops
+  // are best-effort (never throw into the poll loop) and the file is 0600
+  // because it holds raw message text (PII).
+
+  // Stable per-entry identity for dedup. GUID is the cleanest key; fall
+  // back to (handle, rowid) when a row lacks one.
+  private quietEntryKey(row: Pick<IMessageRow, "guid" | "handle" | "rowid">): string {
+    return row.guid && row.guid.trim() ? `g:${row.guid}` : `r:${row.handle}:${row.rowid}`;
+  }
+
+  // Persist a single quiet-hours inbound (append-only JSONL). Stores the
+  // minimal IMessageRow fields handleInbound needs plus arrival time.
+  private enqueueQuietReplay(row: IMessageRow, unixMs: number): void {
+    try {
+      const key = this.quietEntryKey(row);
+      // Already queued/replayed in this process — skip the disk write.
+      if (this.quietReplayed.has(key)) return;
+      // Bound the file: count lines cheaply; drop if at cap.
+      if (existsSync(this.quietQueuePath)) {
+        const lines = readFileSync(this.quietQueuePath, "utf8").split("\n").filter(Boolean);
+        if (lines.length >= IMessageSession.QUIET_QUEUE_MAX) {
+          this.logger.warn({ count: lines.length }, "quiet-queue at cap — dropping new overnight inbound");
+          return;
+        }
+        // Dedup against what's already persisted (defends a restart that
+        // re-sees the same chat.db row before the morning drain).
+        for (const ln of lines) {
+          try {
+            const e = JSON.parse(ln) as { key?: string };
+            if (e.key === key) return;
+          } catch { /* skip malformed */ }
+        }
+      }
+      const entry = {
+        key,
+        queuedAt: unixMs,
+        // Minimal row snapshot — only the fields handleInbound reads.
+        row: {
+          rowid: row.rowid,
+          text: row.text || "",
+          date: row.date,
+          isFromMe: false,
+          handle: row.handle,
+          guid: row.guid || "",
+          chatDisplayName: row.chatDisplayName || "",
+          chatIdentifier: row.chatIdentifier || "",
+          service: row.service || "",
+          chatRowid: row.chatRowid,
+          hasAttachments: !!row.hasAttachments,
+          associatedMessageType: 0,
+          associatedMessageGuid: "",
+        },
+      };
+      appendFileSync(this.quietQueuePath, JSON.stringify(entry) + "\n", { mode: 0o600 });
+      // appendFileSync's mode only applies on create; enforce 0600 anyway.
+      try { chmodSync(this.quietQueuePath, 0o600); } catch { /* best-effort */ }
+      this.quietReplayed.add(key);
+      this.logger.info({ handle: row.handle }, "queued overnight inbound for morning replay");
+    } catch (err) {
+      this.logger.warn({ err }, "enqueueQuietReplay failed (best-effort)");
+    }
+  }
+
+  // Periodic check: when quiet hours have ENDED and the queue is
+  // non-empty, drain it. Runs every minute; also safe to call ad-hoc.
+  private startQuietReplay(): void {
+    if (this.quietReplayTimer) return;
+    this.quietReplayTimer = setInterval(() => {
+      void this.drainQuietQueue().catch((err) =>
+        this.logger.warn({ err }, "quiet-queue drain failed (best-effort)"),
+      );
+    }, 60_000);
+    if (typeof this.quietReplayTimer.unref === "function") this.quietReplayTimer.unref();
+    // Kick once shortly after boot in case we restarted post-window with a
+    // queue already on disk (the late-night message survived the restart).
+    setTimeout(() => {
+      void this.drainQuietQueue().catch(() => {});
+    }, 5_000);
+  }
+
+  // Drain the overnight queue: replay each entry through the normal reply
+  // pipeline with morning pacing. No-op during quiet hours. Reentrancy-
+  // guarded so the minute timer can't overlap a slow drain.
+  private async drainQuietQueue(): Promise<void> {
+    if (this.quietReplayInFlight) return;
+    if (!this.quietQueuePath || !existsSync(this.quietQueuePath)) return;
+    // Only replay OUTSIDE quiet hours — otherwise we'd reply at 3am.
+    if (isQuietHours(new Date(), defaultQuietHours())) return;
+
+    this.quietReplayInFlight = true;
+    try {
+      const raw = readFileSync(this.quietQueuePath, "utf8").split("\n").filter(Boolean);
+      if (raw.length === 0) return;
+      type Entry = { key: string; queuedAt: number; row: IMessageRow };
+      const entries: Entry[] = [];
+      const seen = new Set<string>();
+      for (const ln of raw) {
+        try {
+          const e = JSON.parse(ln) as Entry;
+          if (!e?.row?.handle || !e.key) continue;
+          if (seen.has(e.key)) continue; // in-file dedup
+          seen.add(e.key);
+          entries.push(e);
+        } catch { /* skip malformed line */ }
+      }
+      // Clear the file FIRST so a crash mid-drain doesn't double-reply.
+      // Entries we skip (already-replied) are simply dropped — desired.
+      try { writeFileSync(this.quietQueuePath, "", { mode: 0o600 }); } catch { /* best-effort */ }
+
+      let replayed = 0;
+      for (const e of entries) {
+        // GUARD: contact already heard back since the message landed
+        // (they re-texted and got a live reply, or owner replied
+        // manually). Skip — no double-reply.
+        if (this.contactRepliedSince(e.row.chatRowid, e.queuedAt)) {
+          this.logger.info({ handle: e.row.handle }, "skip overnight replay — contact already answered");
+          continue;
+        }
+        const row: IMessageRow = { ...e.row, isFromMe: false, associatedMessageType: 0 };
+        const unixMs = appleNsToUnixMs(row.date) || e.queuedAt;
+        try {
+          // Replay through the normal pipeline. computeHoldFromSamples is
+          // localHour-aware, so the morning hour gives a realistic
+          // read-delay rather than an instant 6am burst.
+          await this.handleInbound(row, unixMs, false);
+          replayed += 1;
+          // Small spacer between contacts so we don't fire a burst of
+          // sends in the same second across several threads.
+          await new Promise((r) => setTimeout(r, 1_500 + Math.round(Math.random() * 2_500)));
+        } catch (err) {
+          this.logger.warn({ err, handle: e.row.handle }, "overnight replay of one entry failed");
+        }
+      }
+      if (replayed > 0) {
+        this.logger.info({ count: replayed }, "overnight replay complete");
+        this.broadcast({ type: "activity", data: { kind: "system", summary: `morning replay: answered ${replayed} overnight message(s)`, timestamp: Date.now() } });
+      }
+    } finally {
+      this.quietReplayInFlight = false;
+    }
+  }
+
+  // Did the owner send anything to this chat AFTER the given time? Used
+  // to skip overnight replay when the conversation already moved on
+  // (contact re-texted + got a live reply, or owner answered manually).
+  private contactRepliedSince(chatRowid: number, sinceUnixMs: number): boolean {
+    try {
+      const ts = this.db.recentTimestamped(chatRowid, 20);
+      return ts.some((m) => m.fromMe && m.ts > sinceUnixMs);
+    } catch {
+      return false;
     }
   }
 
@@ -3554,6 +3763,8 @@ export class IMessageSession {
     // Declared before the try so the finally can always clear it — a
     // throw must never leave a stray "🧠 thinking…" timer firing.
     let thinkingTimer: ReturnType<typeof setTimeout> | undefined;
+    // The 3s non-chat dashboard heads-up timer — also cleared in finally.
+    let thinkingBroadcastTimer: ReturnType<typeof setTimeout> | undefined;
     // CONCURRENCY (#7): release the per-chat busy lock + drain the queued
     // follow-up ONCE, as early as the reply is committed, so the next owner
     // query to this chat doesn't wait behind the slow side-effect tail
@@ -3597,20 +3808,40 @@ export class IMessageSession {
       },
     });
 
-    // LATENCY-FIRST UX:
+    // LATENCY-FIRST UX (owner self-chat only — see handleOwnerDocQuery
+    // gating):
     //   • No upfront ack — fast queries (<3s) land their answer with
     //     ZERO noise. The chat reads like a real person replying.
-    //   • If the work runs >3s, send ONE subtle "🧠 thinking…" so the
-    //     user knows the bot's alive. Never a second nudge — repeated
-    //     "still working" messages make the chat unreadable.
-    //   • Anything longer than that hits the auto-retry path on
-    //     timeout (see below).
+    //   • At >3s we emit a NON-CHAT "thinking" signal: a dashboard
+    //     broadcast + log, NOT an iMessage bubble. A literal "🧠 thinking…"
+    //     text on a 4-second wait clutters the owner's own thread and
+    //     reads like a bot. (Sending a real tapback/reaction on the
+    //     owner's message would be ideal but Messages.app has no reliable
+    //     AppleScript path for it across macOS versions — so we stay quiet
+    //     in-thread and surface the heads-up on the dashboard instead.)
+    //   • Only when the work runs LONG (>15s) do we send ONE actual
+    //     bubble so the owner knows it's alive. Never a second nudge.
     const startedAt = Date.now();
-    let thinkingSent = false;
+    let thinkingSent = false; // true once an actual bubble was sent (>15s)
+    // 3s: quiet, non-chat heads-up on the dashboard.
+    thinkingBroadcastTimer = setTimeout(() => {
+      this.broadcast({
+        type: "activity",
+        data: {
+          kind: "system",
+          summary: "🧠 thinking… (working on owner query)",
+          timestamp: Date.now(),
+        },
+      });
+      this.logger.info({ elapsedMs: Date.now() - startedAt }, "owner query still working (3s) — dashboard heads-up, no chat bubble");
+    }, 3000);
+    if (typeof thinkingBroadcastTimer.unref === "function") thinkingBroadcastTimer.unref();
+    // 15s: only NOW does a real iMessage bubble go out, for genuinely
+    // long waits. thinkingTimer is the one cleared by the finally/catch.
     thinkingTimer = setTimeout(() => {
       thinkingSent = true;
       void this.send(jid, "🧠 thinking…");
-    }, 3000);
+    }, 15_000);
 
     // Appointment-y queries get an additional deterministic Gmail +
     // Calendar prefetch in parallel — strictly an optimization (the
@@ -4010,9 +4241,11 @@ export class IMessageSession {
       this.logger.error({ err }, "owner doc query failed");
       try { await this.send(jid, "hmm, that one didn't go through — give me another minute and ask again"); } catch {}
     } finally {
-      // Clear the thinking-timer here so a throw can't leave a stray
-      // "🧠 thinking…" firing after the query already failed.
+      // Clear the thinking-timers here so a throw can't leave a stray
+      // "🧠 thinking…" bubble or dashboard heads-up firing after the
+      // query already finished/failed.
       clearTimeout(thinkingTimer);
+      clearTimeout(thinkingBroadcastTimer);
       // Idempotent — no-op if the early release (after the reply was
       // committed) already ran; runs the release + drain for the
       // null-draft early return and any throw before that point.

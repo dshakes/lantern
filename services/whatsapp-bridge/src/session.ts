@@ -54,7 +54,7 @@ import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
 import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
-import { computeHold, latenciesFromTranscript } from "@lantern/bridge-core/pacing";
+import { computeHoldFromSamples, type LatencySample } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
@@ -104,6 +104,19 @@ interface ReplyMetaEntry {
   systemHint: string;
   surface: "contact-reply" | "owner-self-chat";
   ts: number;
+}
+
+// One contact inbound suppressed during quiet hours, awaiting morning
+// replay. `enqueuedTs` is when it was received (used to dedup + skip if
+// the contact has since been answered). `senderName`/`quoted` mirror the
+// fields the live handler passes so the replay reads identically.
+interface OvernightQueued {
+  jid: string;
+  text: string;
+  senderName?: string;
+  // Baileys msg key id — for dedup so the same inbound is never queued twice.
+  msgId?: string;
+  enqueuedTs: number;
 }
 
 // Display name for the bot-owner used in attention prompts and log lines.
@@ -1209,6 +1222,31 @@ export class WhatsAppSession {
   private retriedReplyIds = new Set<string>();
   private static readonly RETRIED_REPLY_IDS_MAX = 200;
 
+  // ── Overnight replay queue ───────────────────────────────────────────
+  // Contact (non-owner, 1:1) messages that land during quiet hours
+  // (01:00-06:00) are not auto-replied to in the moment — a 3am reply is
+  // the loudest bot-tell there is. But they must NOT be dropped: when the
+  // window reopens we replay each one through the normal reply pipeline
+  // with natural MORNING pacing (a realistic read-delay, not an instant
+  // 6am burst). Persisted to disk (mode 0600 — holds message text) so a
+  // restart during the night doesn't lose the queue. Parity with the
+  // iMessage bridge — keep the design + wording identical.
+  private overnightQueue: OvernightQueued[] = [];
+  private overnightQueueFile = "";
+  private overnightTimer: ReturnType<typeof setInterval> | null = null;
+  // Cap the queue so a flood overnight can't grow it unbounded. FIFO —
+  // oldest dropped first. Each entry is one short inbound text.
+  private static readonly OVERNIGHT_QUEUE_MAX = 200;
+  // How often we poll for "did quiet hours just end". One minute is plenty
+  // precise for a morning replay and cheap.
+  private static readonly OVERNIGHT_TICK_MS = 60_000;
+  // Tracks whether the last tick saw quiet hours, so we only drain on the
+  // falling edge (quiet → not-quiet) and on inbound after the window.
+  private wasQuietLastTick = false;
+  // Guards against two concurrent drains (timer tick + next-inbound) both
+  // replaying the same queued messages.
+  private overnightDraining = false;
+
   constructor(tenantId: string, logger: Logger) {
     this.tenantId = tenantId;
     this.logger = logger.child({ tenant: tenantId });
@@ -1273,6 +1311,18 @@ export class WhatsAppSession {
       PAUSE_TICK_MS
     );
     this.pauseTickerTimer.unref?.();
+    // Overnight replay queue: persisted alongside the reply-meta sidecar in
+    // ~/.lantern (NOT auth_sessions/, so a re-pair reset doesn't wipe it).
+    this.overnightQueueFile = join(homedir(), ".lantern", "whatsapp-overnight-queue.jsonl");
+    this.loadOvernightQueue();
+    // Seed the edge detector with the CURRENT window so a boot that lands
+    // inside quiet hours doesn't immediately count as a falling edge.
+    this.wasQuietLastTick = isQuietHours(new Date(), defaultQuietHours());
+    this.overnightTimer = setInterval(
+      () => this.tickOvernightReplay(),
+      WhatsAppSession.OVERNIGHT_TICK_MS,
+    );
+    this.overnightTimer.unref?.();
   }
 
   private gcBridgeSentIds() {
@@ -4939,6 +4989,211 @@ export class WhatsAppSession {
     }
   }
 
+  // ── Overnight replay queue ───────────────────────────────────────────
+
+  // Load the persisted queue on boot. Best-effort; a malformed/missing file
+  // leaves an empty queue. Bounded to the FIFO cap on load too.
+  private loadOvernightQueue(): void {
+    if (!this.overnightQueueFile) return;
+    try {
+      if (!existsSync(this.overnightQueueFile)) return;
+      const raw = readFileSync(this.overnightQueueFile, "utf-8");
+      const out: OvernightQueued[] = [];
+      for (const line of raw.split("\n")) {
+        if (!line) continue;
+        try {
+          const e = JSON.parse(line) as OvernightQueued;
+          if (e && typeof e.jid === "string" && typeof e.text === "string") {
+            out.push({
+              jid: e.jid,
+              text: e.text,
+              senderName: e.senderName,
+              msgId: e.msgId,
+              enqueuedTs: typeof e.enqueuedTs === "number" ? e.enqueuedTs : Date.now(),
+            });
+          }
+        } catch { /* skip malformed line */ }
+      }
+      this.overnightQueue = out.slice(-WhatsAppSession.OVERNIGHT_QUEUE_MAX);
+      this.logger.info({ loaded: this.overnightQueue.length }, "overnight replay queue loaded");
+    } catch (err) {
+      this.logger.warn({ err }, "overnight queue load failed (continuing)");
+    }
+  }
+
+  // Rewrite the queue file from the in-memory (already-bounded) array.
+  // mode 0600 — the queue holds raw contact message text (PII). Never throws.
+  private saveOvernightQueue(): void {
+    if (!this.overnightQueueFile) return;
+    try {
+      mkdirSync(dirname(this.overnightQueueFile), { recursive: true });
+      const out = this.overnightQueue.map((e) => JSON.stringify(e)).join("\n");
+      writeFileSync(this.overnightQueueFile, out ? out + "\n" : "", { mode: 0o600 });
+    } catch (err) {
+      this.logger.warn({ err }, "overnight queue save failed (non-fatal)");
+    }
+  }
+
+  // Enqueue a quiet-hours-suppressed contact inbound for morning replay.
+  // Owner self-chat is NEVER queued (the owner's own messages are handled
+  // by the command/docs path, not the contact-reply pipeline). Dedupes by
+  // msgId; FIFO-capped. Best-effort persistence — never blocks the handler.
+  private enqueueOvernight(jid: string, text: string, opts: { senderName?: string; msgId?: string }): void {
+    if (this.isOwnerChat(jid)) return;
+    if (!text.trim()) return;
+    if (opts.msgId && this.overnightQueue.some((e) => e.msgId === opts.msgId)) return;
+    this.overnightQueue.push({
+      jid,
+      text,
+      senderName: opts.senderName,
+      msgId: opts.msgId,
+      enqueuedTs: Date.now(),
+    });
+    if (this.overnightQueue.length > WhatsAppSession.OVERNIGHT_QUEUE_MAX) {
+      this.overnightQueue.splice(0, this.overnightQueue.length - WhatsAppSession.OVERNIGHT_QUEUE_MAX);
+    }
+    this.saveOvernightQueue();
+    // No PII in logs — count + jid only, not the text.
+    this.logger.info({ jid, queued: this.overnightQueue.length }, "overnight: inbound queued for morning replay");
+  }
+
+  // Periodic tick (1/min). Drains the queue on the falling edge of quiet
+  // hours (quiet → not-quiet). Cheap no-op the rest of the time.
+  private tickOvernightReplay(): void {
+    let quietNow = false;
+    try {
+      quietNow = isQuietHours(new Date(), defaultQuietHours());
+    } catch { quietNow = this.wasQuietLastTick; }
+    const fell = this.wasQuietLastTick && !quietNow;
+    this.wasQuietLastTick = quietNow;
+    if (fell && this.overnightQueue.length > 0) {
+      void this.drainOvernightQueue("quiet-hours-ended");
+    }
+  }
+
+  // Replay each queued message through the normal reply pipeline with
+  // natural MORNING pacing. Guards:
+  //   - never replay during quiet hours (only after the window reopens)
+  //   - skip a contact already answered (by the owner OR the bot) since
+  //     the message was queued — avoids a double-reply
+  //   - dedupe identical (jid,text) so a re-queued line replays once
+  //   - serialize via `overnightDraining` so the timer + next-inbound
+  //     drain can't both fire
+  //   - best-effort: a single failed replay never aborts the drain
+  private async drainOvernightQueue(trigger: string): Promise<void> {
+    if (this.overnightDraining) return;
+    if (this.overnightQueue.length === 0) return;
+    // Don't replay while still inside quiet hours (e.g. an inbound mid-window
+    // shouldn't trigger a 3am reply).
+    try {
+      if (isQuietHours(new Date(), defaultQuietHours())) return;
+    } catch { /* if the check throws, fall through and drain */ }
+    this.overnightDraining = true;
+    // Snapshot + clear up front so new quiet-hours inbound (post-window edge
+    // races) aren't lost and aren't double-drained.
+    const batch = this.overnightQueue;
+    this.overnightQueue = [];
+    this.saveOvernightQueue();
+    this.logger.info({ trigger, count: batch.length }, "overnight: replaying queued messages with morning pacing");
+    const seen = new Set<string>();
+    try {
+      for (const item of batch) {
+        try {
+          // Dedupe identical (jid,text) within the batch.
+          const key = `${item.jid} ${item.text}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          // Skip if the contact has been answered since this was queued —
+          // either the owner replied manually or an earlier replay landed.
+          if (this.repliedSince(item.jid, item.enqueuedTs)) {
+            this.logger.info({ jid: item.jid }, "overnight: skip — contact already answered since queued");
+            continue;
+          }
+          // Replay through the normal contact-reply pipeline. `overnightReplay`
+          // tells the handler to (a) bypass the quiet-hours skip and (b) pace
+          // with a realistic morning read-delay instead of an instant burst.
+          await this.handleAgentReply(item.jid, item.text, {
+            isGroup: false,
+            senderName: item.senderName,
+            msgKey: item.msgId ? { id: item.msgId, remoteJid: item.jid, fromMe: false } : undefined,
+            overnightReplay: true,
+          });
+        } catch (err) {
+          this.logger.warn({ err, jid: item.jid }, "overnight: replay of one message failed (continuing)");
+        }
+      }
+    } finally {
+      this.overnightDraining = false;
+    }
+  }
+
+  // Owner's current LOCAL hour (0-23), timezone-aware via the same
+  // LANTERN_OWNER_TIMEZONE env quiet-hours uses. Feeds the pacing
+  // time-of-day multiplier (and the morning-edge floor on replays).
+  private ownerLocalHour(): number {
+    const tz = process.env.LANTERN_OWNER_TIMEZONE || undefined;
+    if (tz) {
+      try {
+        const fmt = new Intl.DateTimeFormat("en-US", {
+          timeZone: tz,
+          hour: "numeric",
+          hour12: false,
+        });
+        const h = parseInt(fmt.format(new Date()), 10);
+        if (Number.isFinite(h)) return h % 24;
+      } catch { /* fall through to local */ }
+    }
+    return new Date().getHours();
+  }
+
+  // Build REAL (inboundTs, replyTs) reply-latency samples for `jid` from the
+  // wa-history.jsonl — pairing each CONTACT inbound with the owner's NEXT
+  // send to that contact. Replaces the old fabricated uniform-60s
+  // timestamps: these gaps actually reflect how fast the owner answers THIS
+  // person, so computeHoldFromSamples paces off real signal. Newest-first
+  // read, capped, never throws (empty → caller falls back to the safe
+  // default). pacing.latenciesFromSamples sanitizes (drops non-positive +
+  // overnight gaps), so we just emit raw pairs.
+  private ownerLatencySamples(jid: string): LatencySample[] {
+    try {
+      // Pull a generous recent window newest-first, then walk oldest→newest
+      // to pair inbound→next-reply.
+      const rows = this.searchHistory({ jid, limit: 50 });
+      if (rows.length < 2) return [];
+      const chrono = rows.slice().sort((a, b) => a.ts - b.ts);
+      const samples: LatencySample[] = [];
+      let pendingInboundTs: number | null = null;
+      for (const r of chrono) {
+        if (!r.fromMe) {
+          // Contact inbound — remember the FIRST unanswered one (so a burst
+          // of inbounds pairs the owner's reply with the burst's start).
+          if (pendingInboundTs === null) pendingInboundTs = r.ts;
+        } else if (pendingInboundTs !== null) {
+          // Owner's reply closes the open inbound → one sample.
+          samples.push({ inboundTs: pendingInboundTs, replyTs: r.ts });
+          pendingInboundTs = null;
+        }
+      }
+      return samples;
+    } catch (err) {
+      this.logger.warn({ err, jid }, "owner latency sampling failed (continuing)");
+      return [];
+    }
+  }
+
+  // True if the owner OR the bot has sent a message to `jid` at or after
+  // `sinceTs`. Reads the wa-history.jsonl (which records both the owner's
+  // own sends and bridge sends), newest-first, early-exiting. Best-effort —
+  // a read failure returns false (we'd rather replay than silently drop).
+  private repliedSince(jid: string, sinceTs: number): boolean {
+    try {
+      const rows = this.searchHistory({ jid, sinceMs: sinceTs, limit: 50 });
+      return rows.some((r) => r.fromMe && r.ts >= sinceTs);
+    } catch {
+      return false;
+    }
+  }
+
   // 👎 / ❌ on a bot reply: record the dislike for permanent calibration
   // and acknowledge to the owner — WITHOUT retrying/sending anything into
   // the contact thread. Used as the fallback path when the retry already
@@ -5344,6 +5599,11 @@ export class WhatsAppSession {
       // visually quotes the inbound in WhatsApp. Helpful in busy
       // group threads.
       quotedMsg?: import("baileys").proto.IWebMessageInfo;
+      // Set when this call is the morning replay of a quiet-hours-suppressed
+      // message. Bypasses the quiet-hours skip (we're past the window) and
+      // forces morning pacing (a realistic read-delay rather than reusing
+      // the contact's median, which could fire near-instantly).
+      overnightReplay?: boolean;
     } = {}
   ) {
     if (!this.socket) return;
@@ -5472,20 +5732,32 @@ export class WhatsAppSession {
     // on their phone like normal; the assistant just stays silent until
     // morning. Group threads are exempt (groups already require the
     // owner be @mentioned to trigger a reply).
-    if (!opts.isGroup) {
+    // (Skipped during an overnightReplay — by definition we're past the
+    // window and replaying a queued message.)
+    if (!opts.isGroup && !opts.overnightReplay) {
       const qh = defaultQuietHours();
       if (isQuietHours(new Date(), qh)) {
-        this.logger.info({ from, hour: new Date().getHours() }, "agent skipped — quiet hours");
+        this.logger.info({ from }, "agent skipped — quiet hours (queued for morning replay)");
+        // DON'T drop it: persist to the overnight replay queue so it gets a
+        // natural morning reply when the window reopens. Owner self-chat is
+        // never queued (enqueueOvernight guards that).
+        this.enqueueOvernight(from, text, { senderName: opts.senderName, msgId: opts.msgKey?.id ?? undefined });
         this.broadcast({
           type: "activity",
           data: {
             kind: "agent_skipped",
-            summary: "quiet hours — auto-reply paused",
+            summary: "quiet hours — queued for morning reply",
             jid: from,
             timestamp: Date.now(),
           },
         });
         return;
+      }
+      // First non-quiet inbound after the window: opportunistically drain any
+      // overnight backlog (the per-minute timer also covers this). Fire-and-
+      // forget so it never blocks this live message.
+      if (this.overnightQueue.length > 0) {
+        void this.drainOvernightQueue("next-inbound");
       }
     }
 
@@ -5688,6 +5960,20 @@ export class WhatsAppSession {
         ? `\n\n(This is a continuation of an active thread — pick up where you left off; don't re-greet or reintroduce yourself.)`
         : `\n\n(This is a fresh conversation — there's been a gap since you last spoke.)`;
     }
+    // Pace context (captured BEFORE lastInboundTs is overwritten below).
+    // msSinceLastInbound = gap since this contact's PREVIOUS inbound; a
+    // small gap (< 5 min) means we're in an active back-and-forth. Used
+    // both for the pace-mirror hold and the naturalize pace hint so a live
+    // thread gets tight pacing and an idle one gets a believable read-delay.
+    // For an overnight replay we force the "cold" shape — the morning reply
+    // should read-delay, not fire instantly off an old active-burst median.
+    const prevInboundTs = opts.isGroup ? undefined : this.lastInboundTs.get(from);
+    const paceMsSinceLastInbound =
+      opts.overnightReplay || prevInboundTs === undefined
+        ? Number.POSITIVE_INFINITY
+        : Date.now() - prevInboundTs;
+    const paceIsActiveBurst =
+      !opts.overnightReplay && paceMsSinceLastInbound < 5 * 60_000;
     if (!opts.isGroup) this.lastInboundTs.set(from, Date.now());
 
     // Calendar awareness for contact replies. Read the owner's DEVICE calendar
@@ -5892,24 +6178,29 @@ export class WhatsAppSession {
       await sleep(5_000);
     }
 
-    // Pace-mirror hold — based on the owner's prior reply latency to
-    // this contact. Computed from recent history + jittered.
+    // Pace-mirror hold — based on the owner's REAL prior reply latency to
+    // this contact. We feed genuine (inboundTs, replyTs) samples mined from
+    // wa-history.jsonl into computeHoldFromSamples, which falls back to a
+    // safe time-of-day-aware default when there are < 3 usable samples (so
+    // a thin history never paces off median noise). On an overnight replay
+    // the localHour lands in the morning-edge band, giving a realistic
+    // read-delay rather than an instant 6am burst.
     let paceHoldMs = 0;
-    if (!opts.isGroup && ownerSamples.length > 0) {
-      // Approximate history timestamps from index since the
-      // ownerSentHistory map doesn't store ts. The median across
-      // samples is robust enough.
-      const histPseudo = ownerSamples.slice(-30).map((_, i) => ({
-        fromMe: true,
-        ts: Date.now() - (ownerSamples.length - i) * 60_000,
-      }));
-      const latencies = latenciesFromTranscript(histPseudo, 15);
-      const verdict = computeHold({
-        ownerLatencies: latencies,
-        msSinceLastInbound: 0,
-        isActiveBurst: ownerSamples.length >= 4,
+    if (!opts.isGroup) {
+      const samples = this.ownerLatencySamples(from);
+      const verdict = computeHoldFromSamples({
+        samples,
+        msSinceLastInbound: Number.isFinite(paceMsSinceLastInbound)
+          ? paceMsSinceLastInbound
+          : 24 * 60 * 60_000, // cold restart
+        isActiveBurst: paceIsActiveBurst,
+        localHour: this.ownerLocalHour(),
       });
       paceHoldMs = verdict.holdMs;
+      this.logger.debug(
+        { from, samples: samples.length, holdMs: paceHoldMs, overnight: !!opts.overnightReplay },
+        "wa pace-mirror hold",
+      );
     }
     if (paceHoldMs > 0) await sleep(paceHoldMs);
 
@@ -5939,19 +6230,42 @@ export class WhatsAppSession {
     }
 
     // Naturalize: clean assistantisms, apply style, split into a burst,
-    // pace it. The result is the actual sequence of WhatsApp messages.
-    const burst = naturalize(draft, { inbound: text, style });
+    // pace it. The result is the actual sequence of WhatsApp messages. The
+    // pace hint lets naturalize suppress the "I was away" lag on a live
+    // thread (and keep it on a cold/overnight one).
+    const burst = naturalize(draft, {
+      inbound: text,
+      style,
+      pace: {
+        isActiveBurst: paceIsActiveBurst,
+        msSinceLastInbound: Number.isFinite(paceMsSinceLastInbound)
+          ? paceMsSinceLastInbound
+          : undefined,
+      },
+    });
     if (burst.length === 0) {
       return;
     }
 
     for (let i = 0; i < burst.length; i++) {
       const msg = burst[i];
+      // Inter-bubble realism: between burst pieces a real person STOPS
+      // typing, the bubble lands, a beat passes, then they start typing
+      // the next thought. Mark "paused" BEFORE the inter-message gap so the
+      // contact sees type→send→(pause)→type→send rather than one unbroken
+      // "typing…" stretched across the whole burst. (i === 0 has no
+      // preceding bubble, so its delay is the read/away lag, not a gap.)
+      if (i > 0) {
+        try {
+          await this.socket.sendPresenceUpdate("paused", from);
+        } catch {}
+      }
       // Delay BEFORE showing the composing indicator. For the first
       // message this is "I just saw your message + maybe I was busy"
       // lag (read + optional away). For subsequent burst messages it's
-      // the inter-message gap. The composing indicator only fires AFTER
-      // the delay so contacts don't see "typing…" appear instantly.
+      // the inter-message gap (spent "paused", per above). The composing
+      // indicator only fires AFTER the delay so contacts don't see
+      // "typing…" appear instantly.
       if (msg.delayBeforeMs > 0) {
         await sleep(msg.delayBeforeMs);
       }
@@ -6239,6 +6553,10 @@ export class WhatsAppSession {
     if (this.pauseTickerTimer) {
       clearInterval(this.pauseTickerTimer);
       this.pauseTickerTimer = null;
+    }
+    if (this.overnightTimer) {
+      clearInterval(this.overnightTimer);
+      this.overnightTimer = null;
     }
     if (this.warningFlushTimer) {
       clearTimeout(this.warningFlushTimer);

@@ -306,6 +306,37 @@ export class ChatDB {
       .filter((m) => m.text.length > 0);
   }
 
+  // Real reply-latency mining: recent messages for a chat with their
+  // REAL timestamps (unix ms), oldest→newest. Unlike `recentMessages`
+  // (which drops `date`), this is fed to the pacing engine to pair each
+  // inbound with the owner's next sent reply — so the hold reflects how
+  // fast the owner ACTUALLY answers this contact, not a fabricated
+  // uniform cadence. Reaction rows excluded; empty rows kept (the pairing
+  // only cares about direction + timestamp, not body).
+  recentTimestamped(
+    chatRowid: number,
+    limit = 40,
+  ): Array<{ fromMe: boolean; ts: number }> {
+    if (!this.db) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT m.is_from_me AS is_from_me,
+                m.date       AS date
+         FROM message m
+         JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         WHERE cmj.chat_id = ?
+           AND COALESCE(m.associated_message_type, 0) = 0
+         ORDER BY m.ROWID DESC
+         LIMIT ?`,
+      )
+      .all(chatRowid, limit) as Array<{ is_from_me: number; date: number }>;
+    // Newest-first → oldest-first so inbound→reply pairing walks forward.
+    return rows
+      .reverse()
+      .map((r) => ({ fromMe: !!r.is_from_me, ts: appleNsToUnixMs(r.date) }))
+      .filter((m) => Number.isFinite(m.ts) && m.ts > 0);
+  }
+
   // Cold-start voice mining: pull the owner's OWN recent sent messages
   // (is_from_me=1) from 1:1 chats, grouped by contact handle, newest
   // first within each handle. Used at session start to pre-seed the
