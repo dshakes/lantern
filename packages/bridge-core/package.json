@@ -45,7 +45,8 @@
     "./call-commitments": "./src/call-commitments.ts",
     "./outbound-call": "./src/outbound-call.ts",
     "./call-orchestrator": "./src/call-orchestrator.ts",
-    "./contact-resolver": "./src/contact-resolver.ts"
+    "./contact-resolver": "./src/contact-resolver.ts",
+    "./canonical-handle": "./src/canonical-handle.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
