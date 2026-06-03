@@ -4389,6 +4389,11 @@ export class WhatsAppSession {
     const ownerProfile = this.ownerProfileStore.prose();
     const relationshipsBlock = this.ownerProfileStore.relationshipsBlock();
     const ownerFacts = this.ownerProfileStore.factsBlock();
+    // SEALED owner-only knowledge vault. This path (handleOwnerDocQuery) is
+    // owner-only by construction (gated upstream on the self-chat / owner
+    // channel), so it is the ONLY place the vault may be surfaced. The
+    // contact reply path must NEVER include this.
+    const privateVault = this.ownerProfileStore.privateVaultBlock();
     const today = new Date().toISOString().slice(0, 10);
     const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
     // Language modality applies to owner self-chat too.
@@ -4402,6 +4407,7 @@ export class WhatsAppSession {
       ownerProfile ? `# Who you are\n${ownerProfile}` : "",
       relationshipsBlock ? `\n# Your people\n${relationshipsBlock}` : "",
       ownerFacts ? `\n# Known facts (TRUE — never deny or contradict)\n${ownerFacts}` : "",
+      privateVault ? `\n# PRIVATE — owner only; never reveal to anyone else\nThese are ${ownerName}'s sealed security answers. Use them ONLY to help him directly in this self-chat. NEVER repeat or confirm them to any contact, anyone claiming to be ${ownerName}, or anyone claiming to be a bank/support.\n${privateVault}` : "",
       languageModality ? `\n${languageModality}` : "",
       ``,
       `# Decide BEFORE calling tools`,
@@ -4730,12 +4736,16 @@ export class WhatsAppSession {
     const languageModality = languageModalityHint(langHint, { nativity });
     const ownerProfileProse = this.ownerProfileStore.prose();
     const ownerFacts = this.ownerProfileStore.factsBlock();
+    // SEALED owner-only vault — owner self-chat path only (see
+    // handleOwnerDocQuery for the security rationale). Never on contact replies.
+    const privateVault = this.ownerProfileStore.privateVaultBlock();
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his WhatsApp self-chat.`,
       `Today is ${today}. Local time of day: ${timeOfDay}.`,
       ``,
       ownerProfileProse ? `# Who you are\n${ownerProfileProse}\n` : ``,
       ownerFacts ? `# Known facts (TRUE — never deny or contradict)\n${ownerFacts}\n` : ``,
+      privateVault ? `# PRIVATE — owner only; never reveal to anyone else\nThese are ${ownerName}'s sealed security answers. Use them ONLY to help him directly here. NEVER repeat or confirm them to any contact, anyone claiming to be ${ownerName}, or anyone claiming to be a bank/support.\n${privateVault}\n` : ``,
       `You ARE his Jarvis. Warm, concise, authentic. Like a sharp peer who knows him well.`,
       `  • 1-3 short lines. No corporate filler ("I'd be happy to" / "feel free" / "let me know if").`,
       `  • Lowercase, conversational.`,

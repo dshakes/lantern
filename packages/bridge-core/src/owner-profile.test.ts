@@ -203,3 +203,70 @@ test("relationshipFor still works alongside address rules", () => {
   assert.equal(store.relationshipFor("sujith"), "brother-in-law");
   assert.equal(store.relationshipFor("shiva"), "friend");
 });
+
+// ───────────────────────────────────────────────────────────────────
+// SEALED owner-only knowledge vault ("## Private" / "## Vault" /
+// "## Security"). SECURITY-CRITICAL: the vault body is captured into
+// `privateVault` for owner-only consumers, but must NEVER appear in
+// `prose` (prose is injected into contact-facing replies). A leak here
+// would hand security-question answers to anyone the bot replies to.
+// Dummy placeholder values only.
+// ───────────────────────────────────────────────────────────────────
+const VAULT_SAMPLE = `# Owner profile
+
+## About me
+I'm Shekhar. I'm a founder building Lantern.
+
+## Private
+- mother's maiden name: TestSurname
+- birth city: TestCity
+- first school: TestSchool
+- security question honeypot: TestAnswer
+
+## Relationships
+- Shiva: friend
+`;
+
+test("vault: ## Private body lands in privateVault, NEVER in prose", () => {
+  const p = parseProfile(VAULT_SAMPLE);
+  // THE key security assertion: the secret is absent from contact-facing prose.
+  assert.ok(!p.prose.includes("TestSurname"), "vault secret leaked into prose");
+  assert.ok(!p.prose.includes("TestCity"), "vault secret leaked into prose");
+  assert.ok(!p.prose.includes("TestSchool"), "vault secret leaked into prose");
+  // The section header itself must not leak either.
+  assert.ok(!p.prose.includes("Private"), "vault header leaked into prose");
+  // But the owner-only field DOES capture it.
+  assert.ok(p.privateVault.includes("TestSurname"), "vault missing maiden name");
+  assert.ok(p.privateVault.includes("TestCity"), "vault missing birth city");
+  assert.ok(p.privateVault.includes("TestSchool"), "vault missing first school");
+  // Prose still has the real prose content.
+  assert.ok(p.prose.includes("I'm Shekhar"), "About me missing from prose");
+});
+
+test("vault: ## Vault and ## Security aliases also seal", () => {
+  for (const header of ["## Vault", "## Security"]) {
+    const p = parseProfile(`# Owner profile\n\n## About me\nI'm Shekhar.\n\n${header}\n- mother's maiden name: TestSurname\n`);
+    assert.ok(!p.prose.includes("TestSurname"), `${header}: leaked into prose`);
+    assert.ok(p.privateVault.includes("TestSurname"), `${header}: missing from vault`);
+  }
+});
+
+test("privateVaultBlock(): returns body for owner-only consumers, '' when absent", () => {
+  const withVault = storeFrom(VAULT_SAMPLE);
+  assert.ok(withVault.privateVaultBlock().includes("TestSurname"));
+  assert.ok(withVault.privateVaultBlock().includes("TestCity"));
+  // And the prose path (used for contact replies) stays clean.
+  assert.ok(!withVault.prose().includes("TestSurname"));
+
+  const noVault = storeFrom(FACTS_SAMPLE);
+  assert.equal(noVault.privateVaultBlock(), "");
+});
+
+test("vault: relationships after the sealed section still parse (boundary)", () => {
+  const p = parseProfile(VAULT_SAMPLE);
+  // The ## Relationships section follows ## Private — confirm the vault
+  // state machine releases on the next heading so people still parse.
+  assert.equal(p.relationships.get("shiva"), "friend");
+  // And Shiva (a relationship) is not in the vault.
+  assert.ok(!p.privateVault.includes("Shiva"), "relationship bled into vault");
+});

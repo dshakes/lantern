@@ -97,6 +97,23 @@ const PROMPT_INJECTION_PATTERNS: Array<{ re: RegExp; reason: string }> = [
   { re: /\b(?:what'?s|what\s+is|what\s+about|give\s+me|tell\s+me|share|send\s+me)\s+(?:my|your|his|her|their|the|\w+'?s)?\s*(?:date\s+of\s+birth|d\.?o\.?b\.?|birth\s*date)\b/i, reason: "dob-probe" },
   { re: /\b(?:what'?s|what\s+is|give\s+me|tell\s+me)\s+(?:my|your|his|her|their|the|\w+'?s)\s+(?:ssn|social\s+security(?:\s+number)?)\b/i, reason: "ssn-probe" },
   { re: /\b(?:roleplay|pretend|act\s+as|simulate)\s+(?:as|like)\s+(?:a|an)\s+\w+/i, reason: "roleplay-jailbreak" },
+  // SECURITY-QUESTION / KNOWLEDGE-VAULT PROBES — classic account-recovery
+  // and social-engineering questions. These read benign ("what's your
+  // mom's maiden name?", "which school did you go to?") but are exactly
+  // the answers banks use to verify identity, so a leak is catastrophic.
+  // Detected pre-LLM and routed to refusal/draft. Worded narrowly so
+  // ordinary chat ("my mom is visiting", "I went to school in Austin")
+  // doesn't over-match — the verb must be a data ASK.
+  { re: /\b(?:mother'?s|mom'?s|mum'?s|mommy'?s|maternal)\s+(?:maiden|last|family)\s+name\b/i, reason: "maiden-name-probe" },
+  { re: /\bmaiden\s+name\b/i, reason: "maiden-name-probe" },
+  { re: /\b(?:what'?s|what\s+is|what\s+was|give\s+me|tell\s+me|share|remind\s+me\s+(?:of|what))\s+(?:my|your|his|her|their|the|\w+'?s)?\s*(?:mother'?s|mom'?s|mum'?s|father'?s|dad'?s|parents'?)\s+(?:maiden\s+)?(?:name|last\s+name|surname)\b/i, reason: "parent-name-probe" },
+  // Birth city / hometown asked as a recovery question.
+  { re: /\b(?:what|which)\s+(?:city|town|place|hospital)\s+(?:was\s+)?(?:were\s+you|was\s+\w+|you|he|she|they)\s+born\s+in\b/i, reason: "birthplace-probe" },
+  { re: /\b(?:where\s+(?:were\s+you|was\s+\w+|you|he|she|they)\s+born|city\s+of\s+birth|place\s+of\s+birth|birth\s*city|birthplace|hometown\b.{0,20}\bborn)\b/i, reason: "birthplace-probe" },
+  // First school / college — the other ubiquitous recovery question.
+  { re: /\b(?:what|which|name\s+(?:of\s+)?the)\s+(?:was\s+)?(?:your|his|her|their|my)?\s*(?:first\s+|elementary\s+|primary\s+|high\s+)?(?:school|college|university)\b.{0,30}\b(?:go\s+to|went\s+to|attend(?:ed)?|name)\b/i, reason: "school-probe" },
+  { re: /\b(?:what|which)\s+(?:school|college|university)\s+did\s+(?:you|he|she|they|\w+)\s+(?:go\s+to|attend)\b/i, reason: "school-probe" },
+  { re: /\b(?:your|his|her|their|my|the)\s+first\s+(?:school|college|pet'?s\s+name|pet)\b/i, reason: "first-school-pet-probe" },
 ];
 
 export function detectPromptInjection(text: string): EscalationVerdict | null {
