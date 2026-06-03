@@ -153,6 +153,47 @@ export function isGreetingSmallTalk(text: string): boolean {
   return GREETING_SMALLTALK_RE.test(t);
 }
 
+// Celebratory-wish detector — birthdays, anniversaries, congrats, festival
+// greetings, in English + Telugu (native + Romanized) + the common wish
+// emoji. Used by the group gate: a wish that NAMES the owner gets one casual
+// thanks IN the group even when the chat isn't on the monitor list — silence
+// on a wedding-anniversary wish addressed to the owner reads as rude. General
+// group chatter still requires an explicitly-monitored chat (this predicate
+// is intentionally narrow so it doesn't widen the group-reply surface).
+//
+// Matches on substring (a wish often rides along with a name + extra words:
+// "Happy Wedding Anniversary Shekhar & Manasa 🎉"), unlike isGreetingSmallTalk
+// which anchors the whole utterance.
+const CELEBRATORY_RE =
+  /\b(?:(?:belated\s+|happy\s+|wedding\s+)*(?:anniversary|annivarsary|anniv|birthday|bday|b'day))\b|\b(?:many\s+(?:more\s+)?happy\s+returns|happy\s+returns\s+of\s+the\s+day)\b/i;
+const CONGRATS_RE = /\b(?:congrat(?:s|ulations)?|congra+ts|kudos|well\s+done|best\s+wishes|all\s+the\s+best)\b/i;
+// Festival / occasion wishes (English).
+const FESTIVAL_RE =
+  /\bhappy\s+(?:new\s+year|diwali|deepavali|sankranti|pongal|ugadi|holi|dussehra|dasara|christmas|easter|eid|onam|rakhi|raksha\s+bandhan|valentine'?s?)\b/i;
+// Telugu Romanized wish vocabulary — "subhakankshalu" (best wishes/congrats),
+// "puttinaroju" (birthday), "pelliroju" (wedding anniversary), "shubhodayam",
+// plus common spelling variants.
+const TELUGU_ROMANIZED_WISH_RE =
+  /\b(?:subha?kanksha?lu?|shubha?kanksha?lu?|subha?kankshalu|puttina\s*roju|puttinaroju|puttinarోju|pelli\s*roju|pelliroju|janmadina\s*subha?kanksha?lu?|sankranti\s*subha?kanksha?lu?)\b/i;
+// Telugu native-script wish vocabulary: శుభాకాంక్షలు (best wishes / congrats),
+// పుట్టినరోజు (birthday), పెళ్లిరోజు (wedding day).
+const TELUGU_NATIVE_WISH_RE = /శుభాకాంక్షలు|పుట్టినరోజు|పెళ్లిరోజు|పెళ్ళిరోజు|జన్మదిన/;
+// Wish emoji — party, cake, bouquet, balloon, confetti, sparkles+gift combos.
+const WISH_EMOJI_RE = /[🎉🎂🎈💐🥳🎊🎁]/u;
+
+export function isCelebratoryWish(text: string): boolean {
+  const t = (text || "").trim();
+  if (!t) return false;
+  return (
+    CELEBRATORY_RE.test(t) ||
+    CONGRATS_RE.test(t) ||
+    FESTIVAL_RE.test(t) ||
+    TELUGU_ROMANIZED_WISH_RE.test(t) ||
+    TELUGU_NATIVE_WISH_RE.test(t) ||
+    WISH_EMOJI_RE.test(t)
+  );
+}
+
 // ---- the class ------------------------------------------------------------
 
 export class PersonalDocs {

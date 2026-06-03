@@ -2900,57 +2900,74 @@ func (h *LlmProxyHandler) Transcribe(w http.ResponseWriter, r *http.Request) {
 		filename = "audio.ogg"
 	}
 
-	var form bytes.Buffer
-	mw := multipart.NewWriter(&form)
-	part, err := mw.CreateFormFile("file", filename)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to build multipart form"})
-		return
-	}
-	if _, err := part.Write(audio); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to write audio to form"})
-		return
-	}
-	_ = mw.WriteField("model", "whisper-1")
-	if req.Language != "" {
-		_ = mw.WriteField("language", req.Language)
-	}
-	if req.Prompt != "" {
-		_ = mw.WriteField("prompt", req.Prompt)
-	}
-	if err := mw.Close(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to finalize multipart form"})
-		return
+	// Send the Whisper request for a given language ("" = auto-detect).
+	// Returns (status, body). Whisper-1 supports a broad language set but the
+	// API rejects some ISO codes for the `language` param (e.g. "te") with a
+	// 400 unsupported_language — see the retry below.
+	doTranscribe := func(language string) (int, []byte, error) {
+		var form bytes.Buffer
+		mw := multipart.NewWriter(&form)
+		part, ferr := mw.CreateFormFile("file", filename)
+		if ferr != nil {
+			return 0, nil, ferr
+		}
+		if _, werr := part.Write(audio); werr != nil {
+			return 0, nil, werr
+		}
+		_ = mw.WriteField("model", "whisper-1")
+		if language != "" {
+			_ = mw.WriteField("language", language)
+		}
+		if req.Prompt != "" {
+			_ = mw.WriteField("prompt", req.Prompt)
+		}
+		if cerr := mw.Close(); cerr != nil {
+			return 0, nil, cerr
+		}
+		httpReq, herr := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/audio/transcriptions", &form)
+		if herr != nil {
+			return 0, nil, herr
+		}
+		httpReq.Header.Set("Content-Type", mw.FormDataContentType())
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		client := &http.Client{Timeout: 90 * time.Second}
+		resp, derr := client.Do(httpReq)
+		if derr != nil {
+			return 0, nil, derr
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, body, nil
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/audio/transcriptions", &form)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to build request"})
-		return
-	}
-	httpReq.Header.Set("Content-Type", mw.FormDataContentType())
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-
-	client := &http.Client{Timeout: 90 * time.Second}
-	resp, err := client.Do(httpReq)
+	status, body, err := doTranscribe(req.Language)
 	if err != nil {
 		h.logger().Error("transcription request failed", zap.Error(err))
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to reach OpenAI: " + err.Error()})
 		return
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(resp.Body)
-		h.logger().Warn("transcription returned non-200", zap.Int("status", resp.StatusCode), zap.String("body", string(errBody)))
-		writeJSON(w, resp.StatusCode, map[string]string{"error": "OpenAI transcription error", "details": string(errBody)})
+	// A forced language the model rejects must NOT kill transcription —
+	// retry once with auto-detect (the `prompt` still biases the script).
+	if status != http.StatusOK && req.Language != "" &&
+		bytes.Contains(bytes.ToLower(body), []byte("unsupported_language")) {
+		h.logger().Warn("transcription language rejected — retrying with auto-detect",
+			zap.String("language", req.Language))
+		status, body, err = doTranscribe("")
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to reach OpenAI: " + err.Error()})
+			return
+		}
+	}
+	if status != http.StatusOK {
+		h.logger().Warn("transcription returned non-200", zap.Int("status", status), zap.String("body", string(body)))
+		writeJSON(w, status, map[string]string{"error": "OpenAI transcription error", "details": string(body)})
 		return
 	}
 
 	var result struct {
 		Text string `json:"text"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to parse OpenAI response"})
 		return
 	}
