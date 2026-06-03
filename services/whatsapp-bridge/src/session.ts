@@ -2394,6 +2394,19 @@ export class WhatsAppSession {
             await this.hydrateContactName(from);
           }
 
+          // A GROUP message that arrived (has a msgId) but decrypted to EMPTY
+          // text is a silent sender-key failure: we're missing the group
+          // sender-key because we never decrypted that member's
+          // SenderKeyDistributionMessage (pairwise session gone after re-pair).
+          // Baileys doesn't always log "failed to decrypt" for these, so the
+          // log-based self-heal never fires. Detect it here and proactively
+          // bootstrap pairwise sessions with the group's participants so the
+          // NEXT message from them decrypts and the group recovers. (This first
+          // message is unrecoverable — the ciphertext is already lost.)
+          if (m.type === "notify" && !text && this.isGroupJid(from) && msg.key?.id) {
+            this.logger.info({ from }, "group message decrypted EMPTY (missing sender-key) — bootstrapping participant sessions");
+            this.recoverGroupSenderKeys(from);
+          }
           if (m.type !== "notify" || !text) continue;
 
           // A celebratory WISH that names the owner ("Happy Wedding
@@ -3290,6 +3303,39 @@ export class WhatsAppSession {
   // per connection lifetime.
   private bootstrappedJids: Set<string> = new Set();
 
+  // GROUP sender-key recovery. A group decrypts via a sender-key seeded by each
+  // member's SenderKeyDistributionMessage, which is encrypted to us over a
+  // PAIRWISE session. After a re-pair those sessions are gone → the SKDM can't
+  // decrypt → the group has no sender-key → every message decrypts to empty.
+  // We can't decrypt the group jid itself (no pairwise session), but we CAN
+  // force-establish pairwise sessions with all PARTICIPANTS, so their next
+  // SKDM/message decrypts and the group recovers. Called both on a logged
+  // decrypt error AND on a silently-empty group message (Baileys doesn't always
+  // log the failure). Once per group per connection; the triggering message is
+  // unrecoverable (ciphertext already lost) but subsequent ones decrypt.
+  private recoverGroupSenderKeys(groupJid: string): void {
+    if (!groupJid.endsWith("@g.us") || this.bootstrappedJids.has(groupJid) || !this.socket) return;
+    this.bootstrappedJids.add(groupJid);
+    const sock = this.socket;
+    void (async () => {
+      try {
+        const meta = await sock.groupMetadata(groupJid);
+        const participants = (meta?.participants || [])
+          .map((p) => p.id)
+          .filter((id): id is string => !!id);
+        if (participants.length) {
+          await sock.assertSessions(participants, true);
+          this.logger.info(
+            { groupJid, participants: participants.length },
+            "recoverGroupSenderKeys: bootstrapped pairwise sessions with participants — next group message should decrypt",
+          );
+        }
+      } catch (err) {
+        this.logger.warn({ err, groupJid }, "recoverGroupSenderKeys failed");
+      }
+    })();
+  }
+
   // Increment decrypt-error counter; trigger targeted assertSessions
   // for the offending remoteJid, AND self-heal when the storm crosses
   // threshold inside the rolling window.
@@ -3324,35 +3370,7 @@ export class WhatsAppSession {
     const isGroupOrBroadcast =
       !!remoteJid && (remoteJid.endsWith("@g.us") || remoteJid.endsWith("@broadcast"));
     if (remoteJid && remoteJid.endsWith("@g.us")) {
-      // GROUP decrypt failure. The group itself has no pairwise session, but
-      // the FIX is pairwise sessions with its PARTICIPANTS: a sender's
-      // SenderKeyDistributionMessage (which seeds the group sender-key we're
-      // missing) is encrypted to us over the pairwise session. After a re-pair
-      // those sessions are gone, so the SKDM can't decrypt → the group never
-      // gets a sender-key → every message fails. Force-establish sessions with
-      // all participants so their next SKDM/message decrypts and the group
-      // bootstraps. Once per group per connection.
-      if (!this.bootstrappedJids.has(remoteJid) && this.socket) {
-        this.bootstrappedJids.add(remoteJid);
-        const sock = this.socket;
-        void (async () => {
-          try {
-            const meta = await sock.groupMetadata(remoteJid);
-            const participants = (meta?.participants || [])
-              .map((p) => p.id)
-              .filter((id): id is string => !!id);
-            if (participants.length) {
-              await sock.assertSessions(participants, true);
-              this.logger.info(
-                { remoteJid, participants: participants.length },
-                "group decrypt failure — bootstrapped pairwise sessions with participants so sender-keys can decrypt",
-              );
-            }
-          } catch (err) {
-            this.logger.warn({ err, remoteJid }, "group participant session bootstrap failed");
-          }
-        })();
-      }
+      this.recoverGroupSenderKeys(remoteJid);
     } else if (remoteJid && !isGroupOrBroadcast && !this.bootstrappedJids.has(remoteJid) && this.socket) {
       this.bootstrappedJids.add(remoteJid);
       const sock = this.socket;
