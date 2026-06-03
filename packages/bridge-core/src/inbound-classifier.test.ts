@@ -28,6 +28,21 @@ const OTHER = [
   "happy birthday!!",
 ];
 
+// Transactional notices (payments, bills, OTPs, order/shipping receipts). These
+// often carry "confirmation" + a date but are NOT calendar appointments — they
+// must NEVER be surfaced as "add to your calendar". Regression: an AT&T payment
+// confirmation was offered as a calendar event.
+const PAYMENTS_NOT_APPOINTMENTS = [
+  // The exact production false-positive:
+  'AT&T Free Msg: Payment Confirmation #8WY7EPAYN0CK2Z0 for $256.67 paid 6/3/2026 Noted to account #********6011 on 6/3/2026. Visit us at att.com/myattapp Payment Terms & Conditions: tnc.att.com/48f06f39',
+  "Your payment of $89.99 was received on 6/3. Thank you!",
+  "Chase: A payment of $1,250.00 posted to your account ending 6011 on 06/03/2026.",
+  "Your verification code is 472913. It expires in 10 minutes.",
+  "Amazon: Your order #112-3344 has shipped, arriving 6/5. Track it here.",
+  "Your electricity bill of $142.30 is due 6/15. Autopay scheduled.",
+  "Zelle: You sent $50.00 to Raju on 6/3/2026. Confirmation #ABC123.",
+];
+
 for (const m of APPOINTMENTS) {
   test(`appointment: ${m.slice(0, 40)}`, () => {
     assert.equal(classifyUnknownInbound(m).kind, "appointment", m);
@@ -57,6 +72,24 @@ test("a salon PROMO with a date is spam, not an appointment", () => {
 test("a real booking with a link is still an appointment", () => {
   assert.equal(
     classifyUnknownInbound("Your appointment is confirmed for June 3 6:45pm. Manage it: myvagaro.com/x").kind,
+    "appointment",
+  );
+});
+
+for (const m of PAYMENTS_NOT_APPOINTMENTS) {
+  test(`payment/OTP/bill is NOT an appointment: ${m.slice(0, 45)}`, () => {
+    assert.notEqual(
+      classifyUnknownInbound(m).kind,
+      "appointment",
+      `must not offer to calendar a transactional notice: ${m}`,
+    );
+  });
+}
+
+test("a booking that mentions a deposit amount is STILL an appointment", () => {
+  // a strong booking word (reservation) + future time wins over the $ amount
+  assert.equal(
+    classifyUnknownInbound("Your reservation for 2 is confirmed for Fri 7:30pm. A $25 deposit was charged.").kind,
     "appointment",
   );
 });
