@@ -514,9 +514,35 @@ export function renderHelp(): string {
 // Owner sets a timed, free-text status from self-chat so the bot can tell
 // contacts where they are + offer to take a message. Returns null when the
 // text isn't a presence command (caller falls through to normal handling).
+type PresenceState = "busy" | "meeting" | "driving" | "dnd" | "sleep" | "free";
+
 export type PresenceCommand =
-  | { action: "set"; label: string; place?: string; durationMs?: number }
+  | { action: "set"; label: string; place?: string; durationMs?: number; state?: PresenceState; takeMessage?: boolean }
   | { action: "clear" };
+
+// QUICK STATUS — natural one-liners the owner fires in self-chat so the bot can
+// answer "did you eat?" / "are you home?" FACTUALLY instead of guessing. Each
+// carries a smart default TTL (a meal is "just ate" for a few hours; sleep till
+// morning) which an explicit "for 2h" / "until 5pm" overrides. Ordered most →
+// least specific. takeMessage defaults true (offer to pass a message) except
+// for transient states like "just ate" where the owner isn't really away.
+const QUICK_STATUS: Array<{
+  re: RegExp;
+  label: string;
+  state: PresenceState;
+  ms: number;
+  place?: string;
+  takeMessage?: boolean;
+}> = [
+  { re: /\b(?:just ate|already ate|ate already|had (?:lunch|dinner|breakfast|food|my meal)|finished (?:lunch|dinner|eating|my meal|food)|done (?:eating|with lunch|with dinner))\b/i, label: "just ate", state: "free", ms: 3 * 3_600_000, takeMessage: false },
+  { re: /\b(?:i'?m eating|having (?:lunch|dinner|breakfast|food|my meal)|at lunch|on (?:a )?lunch(?: break)?|eating (?:now|lunch|dinner))\b/i, label: "having food", state: "busy", ms: 60 * 60_000 },
+  { re: /\b(?:heading home|on my way home|omw home|coming home|headed home|leaving (?:now|work|the office))\b/i, label: "heading home", state: "busy", ms: 60 * 60_000 },
+  { re: /\b(?:reached home|back home|i'?m home(?:\s+now)?|at home now|home now|got home)\b/i, label: "home", state: "free", ms: 4 * 3_600_000, place: "home", takeMessage: false },
+  { re: /\b(?:at the gym|hitting the gym|going to (?:the )?gym|gym now|working out|at (?:a )?workout)\b/i, label: "at the gym", state: "busy", ms: 2 * 3_600_000, place: "the gym" },
+  { re: /\b(?:going to (?:bed|sleep)|i'?m sleeping|sleeping now|gonna crash|crashing (?:now|for the night)|off to bed|good\s?night|gn\b)\b/i, label: "asleep", state: "sleep", ms: 8 * 3_600_000 },
+  { re: /\b(?:i'?m driving|on the road|in the car|commuting)\b/i, label: "driving", state: "driving", ms: 60 * 60_000 },
+  { re: /\b(?:heads.?down|deep work|focusing|in the zone|can'?t talk(?:\s+now)?|busy right now)\b/i, label: "heads-down", state: "busy", ms: 2 * 3_600_000 },
+];
 
 const PRESENCE_CLEAR_RE =
   /^(?:lantern,?\s+)?(?:i'?m\s+back|back\s+now|status\s+off|clear\s+(?:my\s+)?status|i'?m\s+(?:free|available|around)|presence\s+off|status\s+clear)\s*[!.]?$/i;
@@ -559,7 +585,25 @@ function parseDurationMs(num?: string, unit?: string, untilText?: string): numbe
 export function parsePresenceCommand(input: string): PresenceCommand | null {
   const raw = (input || "").trim();
   if (!raw || raw.length > 160) return null;
+  // A question is never a status the owner is SETTING ("are you home?").
+  if (/\?/.test(raw)) return null;
   if (PRESENCE_CLEAR_RE.test(raw)) return { action: "clear" };
+
+  // Quick status: natural phrases → label + state + smart TTL. An explicit
+  // "for Xh" / "until Y" in the same message overrides the default duration.
+  for (const q of QUICK_STATUS) {
+    if (q.re.test(raw)) {
+      const dm = raw.match(/\bfor\s+(\d+)\s*(h|hr|hrs|hours?|m|min|mins|minutes?)\b/i);
+      const um = raw.match(/\b(?:until|till|til)\s+(.+?)\s*[!.]?$/i);
+      const durationMs = dm
+        ? parseDurationMs(dm[1], dm[2])
+        : um
+          ? parseDurationMs(undefined, undefined, um[1])
+          : q.ms;
+      return { action: "set", label: q.label, place: q.place, durationMs, state: q.state, takeMessage: q.takeMessage };
+    }
+  }
+
   const m = raw.match(PRESENCE_SET_RE);
   if (!m) return null;
   let label = (m[1] || "").trim().replace(/[?.!,]+$/, "");

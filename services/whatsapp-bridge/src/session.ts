@@ -2684,13 +2684,16 @@ export class WhatsAppSession {
       await this.confirmToSelf("✅ status cleared — you're marked available again.");
       return;
     }
-    this.presence.setStatus({ label: pres.label, place: pres.place, durationMs: pres.durationMs });
+    this.presence.setStatus({ label: pres.label, place: pres.place, durationMs: pres.durationMs, state: pres.state, takeMessage: pres.takeMessage });
     const mins = pres.durationMs ? Math.round(pres.durationMs / 60_000) : null;
     const forText = mins ? (mins >= 60 && mins % 60 === 0 ? ` for ${mins / 60}h` : ` for ${mins}m`) : "";
     this.logActivity("attention_dm", `presence set: ${pres.label}${forText}`, { scope: "self" });
     await this.sendReaction(jid, key, "📍").catch(() => {});
+    const msgTail = pres.takeMessage === false
+      ? `I'll answer "what's he up to" with this.`
+      : `I'll tell anyone who messages that you'll get back, and offer to take a message.`;
     await this.confirmToSelf(
-      `📍 got it — you're ${pres.label}${forText}. I'll tell anyone who messages that you'll get back, and offer to take a message. Say "I'm back" to clear.`,
+      `📍 got it — you're ${pres.label}${forText}. ${msgTail} Say "I'm back" to clear.`,
     );
   }
 
