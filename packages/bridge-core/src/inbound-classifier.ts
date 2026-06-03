@@ -28,6 +28,21 @@ const DATE_TIME_RE =
 const APPOINTMENT_WORDS_RE =
   /\b(appointment|appt|booking|booked|reservation|reserved|confirmed?|confirmation|scheduled?|rescheduled?|your\s+visit|see\s+you|upcoming\s+visit|check[-\s]?in|reminder[:,]?\s|you'?re\s+(?:booked|confirmed|scheduled)|arriving|delivery\s+(?:window|scheduled)|pick\s*up\s+(?:is\s+)?ready)\b/i;
 
+// Unambiguous in-person / event booking language. These do NOT appear in
+// payment / bill / OTP / shipping notices, so a match means a real appointment
+// even if a deposit amount is mentioned. (Generic "confirmation"/"scheduled"
+// are NOT here — they show up in payment receipts too.)
+const PHYSICAL_APPT_RE =
+  /\b(appointment|appt|reservation|reserved|booking|your\s+visit|upcoming\s+visit|check[-\s]?in|see\s+you\s+(?:then|soon|on|at|tomorrow|there)|delivery\s+window|table\s+for\s+\d|you'?re\s+booked|booked\s+with)\b/i;
+
+// Transactional / financial / OTP / shipping notices. These frequently carry
+// "confirmation" + a date but are NOT calendar appointments — offering to
+// calendar them is the bug this guards against (e.g. an AT&T payment
+// confirmation). When present WITHOUT a physical-appointment word, the message
+// is never classified as an appointment.
+const TRANSACTION_RE =
+  /\b(payment|paid|pymt|transaction|txn|invoice|receipt|bill|billing|balance|amount\s+due|past\s+due|auto-?pay|statement|refund|charged|posted\s+to|noted\s+to\s+account|account\s+(?:#|no\.?|number|ending)|otp|one[-\s]?time\s+(?:code|password|pin)|verification\s+code|security\s+code|your\s+code\s+is|order\s+(?:#|number|no\.?)|has\s+shipped|tracking|you\s+sent\s+\$)\b/i;
+
 const SPAM_WORDS_RE =
   /\b(reply\s+stop|text\s+stop|unsubscribe|opt\s*out|\d{1,3}%\s*off|sale\b|deal\b|deals\b|promo|coupon|discount|limited\s+time|act\s+now|exclusive\s+offer|click\s+(?:here|the\s+link)|shop\s+now|buy\s+now|free\s+(?:gift|trial|shipping)|winner|congratulations\s+you|claim\s+your|lowest\s+price|don'?t\s+miss)\b/i;
 
@@ -46,20 +61,27 @@ export function classifyUnknownInbound(text: string): InboundClassification {
 
   const hasDateTime = DATE_TIME_RE.test(t);
   const hasApptWords = APPOINTMENT_WORDS_RE.test(t);
+  const hasPhysicalAppt = PHYSICAL_APPT_RE.test(t);
+  const hasTransaction = TRANSACTION_RE.test(t);
   const hasSpamWords = SPAM_WORDS_RE.test(t);
   const hasShortlink = SHORTLINK_RE.test(t);
 
   if (hasDateTime) signals.push("date/time");
   if (hasApptWords) signals.push("appointment-words");
+  if (hasPhysicalAppt) signals.push("physical-appointment");
+  if (hasTransaction) signals.push("transaction");
   if (hasSpamWords) signals.push("marketing-words");
   if (hasShortlink) signals.push("shortlink");
 
-  // APPOINTMENT wins when there's a concrete date/time AND booking language,
-  // and it doesn't read as a promo. (A salon promo "20% off this weekend!"
-  // has marketing words → not an appointment.) This precedence means a real
-  // confirmation is never dropped as spam.
-  if (hasApptWords && hasDateTime && !hasSpamWords) {
-    return { kind: "appointment", signals };
+  // APPOINTMENT requires a concrete date/time + booking language, not a promo.
+  // CRITICAL: a payment/bill/OTP/shipping notice ("Payment Confirmation … paid
+  // 6/3") carries "confirmation" + a date but is NOT a calendar event. So a
+  // transactional message only counts as an appointment when it ALSO has an
+  // unambiguous in-person booking word (reservation, your visit, …) — a mere
+  // "confirmation" does not turn a receipt into an appointment.
+  if (hasDateTime && !hasSpamWords) {
+    if (hasPhysicalAppt) return { kind: "appointment", signals };
+    if (hasApptWords && !hasTransaction) return { kind: "appointment", signals };
   }
 
   // SPAM: explicit marketing language, or a shortlink with no appointment
