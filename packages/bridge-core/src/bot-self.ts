@@ -24,6 +24,8 @@
 const BOT_SELF_PREFIXES: string[] = [
   // ── Agentic pipeline acks + progress nudges ──
   "🧠 on it",
+  "🧠 thinking",             // the "🧠 thinking…" progress nudge
+  "🧪 ",                     // bot diagnostics ("🧪 iMessage diagnostic — …")
   "📁 one sec",
   "📁 looking through your files",
   "📁 doc",                  // "📁 doc query: ..." / "📁 doc followup: ..."
@@ -48,6 +50,22 @@ const BOT_SELF_PREFIXES: string[] = [
   "(note failed",
   "(mail draft failed",
   "couldn't reach the agent",
+
+  // ── Outbound call orchestration (pre-flight / dialing / errors) ──
+  // Every string the call orchestrator + command executor emit. Without
+  // these, a call confirmation that echoes back in self-chat AFTER the
+  // recentBridgeSends window expires (iCloud sync lag + the "chat busy"
+  // queue delay) is reprocessed as a fresh query → the bot replies to
+  // itself → the user sees doubled "Conference call…" texts.
+  "📞 conference call",      // "📞 Conference call: dial …, bridge you in"
+  "📞 voicemail",            // "📞 Voicemail to …:"
+  "📞 agent task call",      // "📞 Agent task call to …:"
+  "📞 dialing",              // "📞 dialing … now — your phone will ring"
+  "📞 calling",              // "📞 calling …:"
+  "📞 couldn't place call",  // command-executor failure surface
+  "(couldn't place call",    // session-level failure surface
+  "(can't place the call",
+  "(call failed",
 
   // ── Status / digest / dashboard output ──
   "🟢 *lantern",             // "🟢 *Lantern iMessage*", "🟢 *Lantern WhatsApp*"
@@ -87,6 +105,9 @@ const BOT_LLM_PATTERNS: RegExp[] = [
   /^i'?m having authentication issues/i,
   /^i can search your files, but i need to use a tool/i,
   /^i can'?t access your (?:files|emails|calendar|inbox)/i,
+  // Call-flow model output that echoed back as a fake query.
+  /^sorry,? i can'?t actually make calls/i,
+  /\bi'?ll (?:call|ring|reach) .{0,40}\bvia the twilio number\b/i,
 ];
 
 /**
