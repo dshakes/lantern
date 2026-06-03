@@ -348,6 +348,16 @@ export class IMessageSession {
   private recentBotReplies: Map<string, string[]> = new Map();
   private static readonly RECENT_BOT_REPLIES_MAX = 5;
 
+  // Per-handle timestamp of the contact's last inbound message. Lets the
+  // persona prompt label whether this turn continues an active thread or
+  // starts fresh, so the bot picks up mid-conversation instead of greeting
+  // cold (and doesn't treat a days-later message as continuous). In-memory
+  // only (a fresh thread after restart is fine). Parity with the WhatsApp
+  // bridge — keep the wording + threshold identical.
+  private lastInboundTs: Map<string, number> = new Map();
+  // A turn within this window of the previous inbound is a continuation.
+  private static readonly THREAD_CONTINUATION_MS = 6 * 60 * 60 * 1000;
+
   // Futuristic helpers
   private agent: AgentClient;
   private media: MediaHandler;
@@ -2025,13 +2035,34 @@ export class IMessageSession {
       // model varies its phrasing instead of repeating a canned line.
       recentBotReplies: isGroup ? [] : this.recentBotReplies.get(row.handle) ?? [],
     });
-    // Per-contact memory: facts the user has captured about this
-    // contact (their daughter is Maya, works at Stripe, etc).
+    // Per-contact memory: UNIFIED cross-channel view — facts learned on
+    // ANY channel (WhatsApp, iMessage, SMS, voice, email) + a 14-day
+    // recent-timeline slice + vector-ranked recall keyed on the inbound
+    // text. So a person who texts here AND on WhatsApp is one person, and
+    // iMessage gets long-term/semantic recall instead of cold-starting.
+    // Falls back safely to the per-handle factsBlock when the control-plane
+    // is unreachable, so it's always safe in place of factsBlock.
     // PERF: fetch ONCE and reuse — this same block is also consulted by
     // the low-confidence gate below. It's an HTTP round-trip to the
     // control-plane, so calling it twice per reply doubled that latency.
-    const contactFactsBlock = !isGroup ? await this.personal.factsBlock(row.handle) : "";
+    const contactFactsBlock = !isGroup ? await this.personal.unifiedBlock("imessage", row.handle, text) : "";
     if (contactFactsBlock) systemHint += contactFactsBlock;
+
+    // Lightweight thread continuity (parity with the WhatsApp bridge —
+    // keep the wording + 6h threshold identical). If the previous inbound
+    // from this contact was recent, tell the model to pick up the active
+    // thread; otherwise treat it as a fresh conversation. Read BEFORE the
+    // timestamp is updated below so this turn compares against the prior one.
+    if (!isGroup) {
+      const prevInbound = this.lastInboundTs.get(row.handle);
+      const continuing =
+        prevInbound !== undefined &&
+        Date.now() - prevInbound < IMessageSession.THREAD_CONTINUATION_MS;
+      systemHint += continuing
+        ? `\n\n(This is a continuation of an active thread — pick up where you left off; don't re-greet or reintroduce yourself.)`
+        : `\n\n(This is a fresh conversation — there's been a gap since you last spoke.)`;
+      this.lastInboundTs.set(row.handle, Date.now());
+    }
     // Calendar awareness for contact replies. The owner's DEVICE calendar
     // (iCloud + Google + subscribed) is the source of truth — a contact asking
     // "when are you coming to the Bay Area?" must be answerable.
@@ -2306,6 +2337,18 @@ export class IMessageSession {
           } catch { return ""; }
         },
       });
+    }
+
+    // Unified cross-channel timeline — record this exchange against the
+    // canonical person so it surfaces on every OTHER channel (WhatsApp,
+    // SMS, voice, email) and so iMessage has long-term recall here. Owner
+    // self-chat + groups never reach this point (owner returns earlier;
+    // groups don't ingest), so this is 1:1 contact traffic only.
+    // Best-effort + fire-and-forget; ingestEvent never throws and degrades
+    // silently when the control-plane is unreachable.
+    if (!isGroup) {
+      void this.personal.ingestEvent("imessage", row.handle, "message_in", "in", text);
+      void this.personal.ingestEvent("imessage", row.handle, "message_out", "out", draft);
     }
 
     // Social-graph index — tag THIS outbound so cross-contact

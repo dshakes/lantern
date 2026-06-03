@@ -26,11 +26,17 @@
 // fallback for richer extractions — called only when the rule
 // misses and the exchange is substantive (> 20 words combined).
 
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile, chmod, readFile } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { Logger } from "pino";
+import { canonicalHandle } from "./canonical-handle.js";
+
+// 0600 — episodes embed inbound/outbound message text (PII). Match the
+// OCR-cache standard so a JSONL store of private messages isn't
+// world-readable.
+const FILE_MODE = 0o600;
 
 export interface Episode {
   jid: string;
@@ -74,7 +80,9 @@ export class EpisodicMemory {
   async record(ep: Omit<Episode, "ts">): Promise<Episode | null> {
     const row: Episode = { ...ep, ts: Date.now() };
     try {
-      await appendFile(this.path, JSON.stringify(row) + "\n", "utf8");
+      const fresh = !existsSync(this.path);
+      await appendFile(this.path, JSON.stringify(row) + "\n", { encoding: "utf8", mode: FILE_MODE });
+      if (fresh) { try { await chmod(this.path, FILE_MODE); } catch { /* best-effort */ } }
       this.cache = null;
       this.cachedAt = 0;
       this.logger?.info(
@@ -91,7 +99,7 @@ export class EpisodicMemory {
   /** Newest-first episodes for a jid (default cap 5). */
   async forJid(jid: string, limit = 5): Promise<Episode[]> {
     await this.refreshIfStale();
-    const bucket = this.cache?.get(jid) ?? [];
+    const bucket = this.cache?.get(canonicalHandle(jid)) ?? [];
     return bucket.slice(0, limit);
   }
 
@@ -112,11 +120,12 @@ export class EpisodicMemory {
     await this.refreshIfStale();
     const maxAgeMs = (opts.maxAgeDays ?? 30) * 86_400_000;
     const cutoff = Date.now() - maxAgeMs;
+    const excludeKey = opts.excludeJid ? canonicalHandle(opts.excludeJid) : "";
     const out: Episode[] = [];
     for (const bucket of this.cache?.values() ?? []) {
       for (const ep of bucket) {
         if (ep.ts < cutoff) continue;
-        if (opts.excludeJid && ep.jid === opts.excludeJid) continue;
+        if (excludeKey && canonicalHandle(ep.jid) === excludeKey) continue;
         if (!ep.mentions || ep.mentions.length === 0) continue;
         if (ep.mentions.some((m) => lower.includes(m))) out.push(ep);
       }
@@ -148,8 +157,11 @@ export class EpisodicMemory {
       try {
         const ep = JSON.parse(t) as Episode;
         if (!ep.jid || !ep.date || !ep.outcome) continue;
-        let bucket = this.cache.get(ep.jid);
-        if (!bucket) { bucket = []; this.cache.set(ep.jid, bucket); }
+        // Bucket by the CANONICAL key so old raw-jid rows and new rows for
+        // the same person across channels merge into one bucket on read.
+        const key = canonicalHandle(ep.jid);
+        let bucket = this.cache.get(key);
+        if (!bucket) { bucket = []; this.cache.set(key, bucket); }
         bucket.push(ep);
       } catch { /* skip malformed line */ }
     }

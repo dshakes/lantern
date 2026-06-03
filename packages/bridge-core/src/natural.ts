@@ -1084,15 +1084,17 @@ export interface QuietHoursConfig {
   // process timezone when unset.
   tz?: string;
   // 24h hours: skip auto-reply when local hour is in [startHour, endHour).
-  // Default: 22 → 7 (10pm to 7am).
+  // Default: 1 → 6 (1am to 6am) — a narrow overnight window. Messages that
+  // land in this window aren't dropped; Phase 4's overnight replay answers
+  // them with natural morning pacing when the window reopens.
   startHour: number;
   endHour: number;
 }
 
 export function defaultQuietHours(): QuietHoursConfig {
   const tz = process.env.LANTERN_OWNER_TIMEZONE || undefined;
-  const startHour = parseIntSafe(process.env.LANTERN_QUIET_START, 22);
-  const endHour = parseIntSafe(process.env.LANTERN_QUIET_END, 7);
+  const startHour = parseIntSafe(process.env.LANTERN_QUIET_START, 1);
+  const endHour = parseIntSafe(process.env.LANTERN_QUIET_END, 6);
   return { tz, startHour, endHour };
 }
 

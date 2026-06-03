@@ -14,10 +14,14 @@ package handlers
 // call these with their service token the same way they call
 // /v1/whatsapp/facts):
 //
-//   POST /v1/people/resolve     {channel, handle, displayName?} → person + handles + facts
-//   GET  /v1/people             list people (most-recently-updated first)
-//   POST /v1/memory/events      ingest a timeline event (resolves person from handle)
-//   GET  /v1/memory/context     unified context for a person across ALL channels
+//   POST /v1/people/resolve       {channel, handle, displayName?} → person + handles + facts
+//   GET  /v1/people               list people (most-recently-updated first)
+//   POST /v1/people/merge         merge duplicate person rows (transactional, idempotent)
+//   GET  /v1/people/duplicates    list candidate duplicate pairs by name similarity
+//   POST /v1/people/relationship  stamp relationship label for a resolved person
+//   POST /v1/memory/events        ingest a timeline event (resolves person from handle)
+//   GET  /v1/memory/context       unified context for a person across ALL channels
+//                                 supports ?windowDays=N for recent-first timeline slice
 
 import (
 	"context"
@@ -525,6 +529,17 @@ func (h *IdentityHandler) GetContext(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+
+	// windowDays restricts the timeline to events within the last N days.
+	// Default 0 means no window (all history). Bridge injects "what we
+	// discussed recently" by passing ?windowDays=14.
+	windowDays := 0
+	if v := strings.TrimSpace(q.Get("windowDays")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 3650 {
+			windowDays = n
+		}
+	}
+
 	keyword := strings.TrimSpace(q.Get("q"))
 
 	handles, _ := h.loadHandles(r.Context(), claims.TenantID, personID)
@@ -533,17 +548,28 @@ func (h *IdentityHandler) GetContext(w http.ResponseWriter, r *http.Request) {
 	// Unified timeline across all channels. With a query we prefer
 	// semantic recall (vector similarity over embedded rows); we fall
 	// back to keyword (ILIKE) when embeddings are unavailable, and to
-	// pure recency when there's no query at all.
+	// pure recency when there's no query at all. windowDays filters both
+	// vector and recency paths equally.
 	var rows pgx.Rows
 	usedVector := false
 	if keyword != "" && h.llm != nil {
 		if vec, embErr := h.llm.EmbedText(r.Context(), claims.TenantID, keyword); embErr == nil {
-			rows, err = h.srv.Pool.Query(r.Context(), `
-				SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
-				FROM memory_events
-				WHERE tenant_id = $1 AND person_id = $2 AND embedding IS NOT NULL
-				ORDER BY embedding <=> $3::vector LIMIT $4
-			`, claims.TenantID, personID, vectorLiteral(vec), limit)
+			if windowDays > 0 {
+				rows, err = h.srv.Pool.Query(r.Context(), `
+					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
+					FROM memory_events
+					WHERE tenant_id = $1 AND person_id = $2 AND embedding IS NOT NULL
+					  AND occurred_at >= now() - ($5 || ' days')::interval
+					ORDER BY embedding <=> $3::vector LIMIT $4
+				`, claims.TenantID, personID, vectorLiteral(vec), limit, strconv.Itoa(windowDays))
+			} else {
+				rows, err = h.srv.Pool.Query(r.Context(), `
+					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
+					FROM memory_events
+					WHERE tenant_id = $1 AND person_id = $2 AND embedding IS NOT NULL
+					ORDER BY embedding <=> $3::vector LIMIT $4
+				`, claims.TenantID, personID, vectorLiteral(vec), limit)
+			}
 			usedVector = err == nil
 		} else {
 			h.logger().Debug("context: embed query failed, using keyword", zap.Error(embErr))
@@ -551,19 +577,39 @@ func (h *IdentityHandler) GetContext(w http.ResponseWriter, r *http.Request) {
 	}
 	if !usedVector {
 		if keyword != "" {
-			rows, err = h.srv.Pool.Query(r.Context(), `
-				SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
-				FROM memory_events
-				WHERE tenant_id = $1 AND person_id = $2 AND content ILIKE '%' || $3 || '%'
-				ORDER BY occurred_at DESC LIMIT $4
-			`, claims.TenantID, personID, keyword, limit)
+			if windowDays > 0 {
+				rows, err = h.srv.Pool.Query(r.Context(), `
+					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
+					FROM memory_events
+					WHERE tenant_id = $1 AND person_id = $2 AND content ILIKE '%' || $3 || '%'
+					  AND occurred_at >= now() - ($5 || ' days')::interval
+					ORDER BY occurred_at DESC LIMIT $4
+				`, claims.TenantID, personID, keyword, limit, strconv.Itoa(windowDays))
+			} else {
+				rows, err = h.srv.Pool.Query(r.Context(), `
+					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
+					FROM memory_events
+					WHERE tenant_id = $1 AND person_id = $2 AND content ILIKE '%' || $3 || '%'
+					ORDER BY occurred_at DESC LIMIT $4
+				`, claims.TenantID, personID, keyword, limit)
+			}
 		} else {
-			rows, err = h.srv.Pool.Query(r.Context(), `
-				SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
-				FROM memory_events
-				WHERE tenant_id = $1 AND person_id = $2
-				ORDER BY occurred_at DESC LIMIT $3
-			`, claims.TenantID, personID, limit)
+			if windowDays > 0 {
+				rows, err = h.srv.Pool.Query(r.Context(), `
+					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
+					FROM memory_events
+					WHERE tenant_id = $1 AND person_id = $2
+					  AND occurred_at >= now() - ($4 || ' days')::interval
+					ORDER BY occurred_at DESC LIMIT $3
+				`, claims.TenantID, personID, limit, strconv.Itoa(windowDays))
+			} else {
+				rows, err = h.srv.Pool.Query(r.Context(), `
+					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
+					FROM memory_events
+					WHERE tenant_id = $1 AND person_id = $2
+					ORDER BY occurred_at DESC LIMIT $3
+				`, claims.TenantID, personID, limit)
+			}
 		}
 	}
 	events := []map[string]any{}
@@ -595,5 +641,312 @@ func (h *IdentityHandler) GetContext(w http.ResponseWriter, r *http.Request) {
 		"handles":      handles,
 		"facts":        facts,
 		"events":       events,
+		"windowDays":   windowDays,
+	})
+}
+
+// ---- HTTP: merge people ----------------------------------------------------
+
+// mergeBody describes the two persons to merge. primaryId survives; duplicateId
+// is deleted after its events, facts, and handles are re-pointed to primary.
+// Both IDs must belong to the caller's tenant.
+type mergeBody struct {
+	PrimaryID   string `json:"primaryId"`
+	DuplicateID string `json:"duplicateId"`
+}
+
+// MergePeople merges duplicateId into primaryId within a single transaction.
+// All memory_events, whatsapp_contact_facts, and person_handles rows that
+// reference duplicateId are re-pointed to primaryId, then the duplicate row
+// is deleted. The operation is idempotent: if duplicateId is already gone
+// (prior merge) the endpoint returns 200 with merged=true and a note.
+func (h *IdentityHandler) MergePeople(w http.ResponseWriter, r *http.Request) {
+	claims, err := h.auth.validateRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body mergeBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	body.PrimaryID = strings.TrimSpace(body.PrimaryID)
+	body.DuplicateID = strings.TrimSpace(body.DuplicateID)
+	if body.PrimaryID == "" || body.DuplicateID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "primaryId and duplicateId required"})
+		return
+	}
+	if body.PrimaryID == body.DuplicateID {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "primaryId and duplicateId must differ"})
+		return
+	}
+
+	merged, note, err := h.mergePeople(r.Context(), claims.TenantID, body.PrimaryID, body.DuplicateID)
+	if err != nil {
+		h.logger().Error("merge people failed",
+			zap.String("primary", body.PrimaryID),
+			zap.String("duplicate", body.DuplicateID),
+			zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "merge failed: " + err.Error()})
+		return
+	}
+	resp := map[string]any{
+		"merged":    merged,
+		"primaryId": body.PrimaryID,
+	}
+	if note != "" {
+		resp["note"] = note
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// mergePeople is the transactional core of MergePeople. It returns (true, "",
+// nil) on a successful merge, (true, "already merged", nil) when duplicateId
+// no longer exists (idempotent), and (false, "", err) on any error.
+// Tenant isolation is enforced by checking both person IDs belong to tenantID
+// before touching any data.
+func (h *IdentityHandler) mergePeople(ctx context.Context, tenantID, primaryID, duplicateID string) (bool, string, error) {
+	tx, err := h.srv.Pool.Begin(ctx)
+	if err != nil {
+		return false, "", err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Idempotency: duplicate already gone from a prior merge is a no-op.
+	var dupExists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM people WHERE id = $1 AND tenant_id = $2
+		)
+	`, duplicateID, tenantID).Scan(&dupExists); err != nil {
+		return false, "", err
+	}
+	if !dupExists {
+		// Commit the read-only transaction and signal idempotent success.
+		_ = tx.Commit(ctx)
+		return true, "duplicate already merged or does not exist", nil
+	}
+
+	// Verify primary belongs to the same tenant (hard guard: never merge
+	// across tenants even if the caller somehow passes a cross-tenant ID).
+	var primaryExists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM people WHERE id = $1 AND tenant_id = $2
+		)
+	`, primaryID, tenantID).Scan(&primaryExists); err != nil {
+		return false, "", err
+	}
+	if !primaryExists {
+		return false, "", errors.New("primary person not found in tenant")
+	}
+
+	// Re-point memory_events. Rows that would create a duplicate external_id
+	// (same (tenant_id, kind, external_id) as an existing primary row) are
+	// dropped so the unique index is never violated.
+	if _, err := tx.Exec(ctx, `
+		UPDATE memory_events SET person_id = $1
+		WHERE person_id = $2 AND tenant_id = $3
+		  AND NOT EXISTS (
+			  SELECT 1 FROM memory_events e2
+			  WHERE e2.person_id = $1
+			    AND e2.tenant_id = $3
+			    AND e2.external_id IS NOT NULL
+			    AND e2.external_id = memory_events.external_id
+			    AND e2.kind = memory_events.kind
+		  )
+	`, primaryID, duplicateID, tenantID); err != nil {
+		return false, "", err
+	}
+	// Delete any remaining duplicate-person events that collided on external_id.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM memory_events
+		WHERE person_id = $1 AND tenant_id = $2
+	`, duplicateID, tenantID); err != nil {
+		return false, "", err
+	}
+
+	// Re-point whatsapp_contact_facts. Handles can't duplicate because the
+	// facts table uses (tenant_id, jid) as its natural key — we just
+	// update person_id for all remaining rows.
+	if _, err := tx.Exec(ctx, `
+		UPDATE whatsapp_contact_facts SET person_id = $1
+		WHERE person_id = $2 AND tenant_id = $3
+	`, primaryID, duplicateID, tenantID); err != nil {
+		return false, "", err
+	}
+
+	// Re-point person_handles. The UNIQUE constraint on (tenant_id, channel,
+	// handle) means a duplicate handle can't be re-inserted; skip it so it
+	// is dropped with the person row via CASCADE.
+	if _, err := tx.Exec(ctx, `
+		UPDATE person_handles SET person_id = $1
+		WHERE person_id = $2 AND tenant_id = $3
+		  AND NOT EXISTS (
+			  SELECT 1 FROM person_handles ph2
+			  WHERE ph2.person_id = $1
+			    AND ph2.tenant_id = $3
+			    AND ph2.channel = person_handles.channel
+			    AND ph2.handle = person_handles.handle
+		  )
+	`, primaryID, duplicateID, tenantID); err != nil {
+		return false, "", err
+	}
+
+	// Delete the duplicate person row. Remaining handles + events that
+	// couldn't be migrated (exact duplicates) are cleaned up by CASCADE.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM people WHERE id = $1 AND tenant_id = $2
+	`, duplicateID, tenantID); err != nil {
+		return false, "", err
+	}
+
+	// Touch primary's updated_at so callers can detect the merge.
+	if _, err := tx.Exec(ctx, `
+		UPDATE people SET updated_at = now() WHERE id = $1 AND tenant_id = $2
+	`, primaryID, tenantID); err != nil {
+		return false, "", err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, "", err
+	}
+	h.logger().Info("people merged",
+		zap.String("tenant", tenantID),
+		zap.String("primary", primaryID),
+		zap.String("duplicate", duplicateID))
+	return true, "", nil
+}
+
+// ---- HTTP: duplicate candidates --------------------------------------------
+
+// duplicateCandidate is a pair of person IDs that share the same display_name
+// (case-insensitive, trimmed). The bridge or dashboard surface these to the
+// owner for confirmation before calling merge.
+type duplicateCandidate struct {
+	PersonIDA   string `json:"personIdA"`
+	PersonIDB   string `json:"personIDB"`
+	DisplayName string `json:"displayName"`
+}
+
+// ListDuplicates returns candidate duplicate pairs for the caller's tenant.
+// Two people are candidates when they share the same non-empty, non-blank
+// display_name (case-insensitive). The query is intentionally conservative:
+// only exact-name matches so the list stays short and actionable.
+func (h *IdentityHandler) ListDuplicates(w http.ResponseWriter, r *http.Request) {
+	claims, err := h.auth.validateRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	rows, err := h.srv.Pool.Query(r.Context(), `
+		SELECT a.id::text, b.id::text, a.display_name
+		FROM people a
+		JOIN people b
+		  ON  b.tenant_id = a.tenant_id
+		  AND b.id > a.id
+		  AND lower(trim(b.display_name)) = lower(trim(a.display_name))
+		WHERE a.tenant_id = $1
+		  AND a.display_name IS NOT NULL
+		  AND trim(a.display_name) <> ''
+		ORDER BY a.display_name, a.id
+		LIMIT 200
+	`, claims.TenantID)
+	if err != nil {
+		h.logger().Error("list duplicates failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
+		return
+	}
+	defer rows.Close()
+
+	candidates := []duplicateCandidate{}
+	for rows.Next() {
+		var c duplicateCandidate
+		if err := rows.Scan(&c.PersonIDA, &c.PersonIDB, &c.DisplayName); err != nil {
+			continue
+		}
+		candidates = append(candidates, c)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"duplicates": candidates})
+}
+
+// ---- HTTP: stamp relationship ----------------------------------------------
+
+// relationshipBody carries a (name → relationship) mapping so the bridge can
+// annotate a person from the owner's profile (e.g. "Srinivas Merugu" →
+// "brother-in-law"). Lookup is by personId OR by resolving (channel, handle).
+type relationshipBody struct {
+	// Exactly one of PersonID or (Channel + Handle) must be supplied.
+	PersonID    string `json:"personId,omitempty"`
+	Channel     string `json:"channel,omitempty"`
+	Handle      string `json:"handle,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+
+	Relationship string `json:"relationship"`
+}
+
+// StampRelationship sets people.relationship for a resolved person. Tenant-
+// scoped; idempotent (repeated calls overwrite the previous value). An empty
+// relationship string is rejected so callers can't accidentally clear a label.
+func (h *IdentityHandler) StampRelationship(w http.ResponseWriter, r *http.Request) {
+	claims, err := h.auth.validateRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	var body relationshipBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	body.Relationship = strings.TrimSpace(body.Relationship)
+	if body.Relationship == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "relationship required"})
+		return
+	}
+
+	// Resolve the person.
+	personID := strings.TrimSpace(body.PersonID)
+	if personID == "" {
+		if strings.TrimSpace(body.Channel) == "" || strings.TrimSpace(body.Handle) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "personId or channel+handle required"})
+			return
+		}
+		pid, _, err := h.resolvePerson(r.Context(), claims.TenantID, body.Channel, body.Handle, body.DisplayName)
+		if err != nil {
+			h.logger().Error("stamp relationship: resolve failed", zap.Error(err))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "resolve failed"})
+			return
+		}
+		personID = pid
+	}
+
+	// Verify the person belongs to this tenant before writing.
+	var exists bool
+	if err := h.srv.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS(SELECT 1 FROM people WHERE id = $1 AND tenant_id = $2)
+	`, personID, claims.TenantID).Scan(&exists); err != nil || !exists {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "person not found"})
+		return
+	}
+
+	if _, err := h.srv.Pool.Exec(r.Context(), `
+		UPDATE people SET relationship = $1, updated_at = now()
+		WHERE id = $2 AND tenant_id = $3
+	`, body.Relationship, personID, claims.TenantID); err != nil {
+		h.logger().Error("stamp relationship failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
+		return
+	}
+
+	h.logger().Info("relationship stamped",
+		zap.String("tenant", claims.TenantID),
+		zap.String("person", personID),
+		zap.String("relationship", body.Relationship))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"personId":     personID,
+		"relationship": body.Relationship,
 	})
 }
