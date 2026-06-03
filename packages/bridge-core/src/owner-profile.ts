@@ -73,6 +73,17 @@ export interface OwnerProfile {
    *  "## Languages" section, used by the language-modality hint so the
    *  bot replies in the right regional dialect. Empty when not set. */
   nativity: string;
+  /** SEALED owner-only knowledge vault. Body of a "## Private" (also
+   *  "## Vault" / "## Security") section: security-grade answers the
+   *  owner stores for THEIR OWN use in self-chat — birth city, first
+   *  school, mother's maiden/last name, security-question honeypots.
+   *
+   *  SECURITY-CRITICAL: this content is DELIBERATELY EXCLUDED from
+   *  `prose` (which is injected into contact-facing replies). It must
+   *  ONLY ever be surfaced on the owner self-chat path. Never inject it
+   *  into a contact persona, relationship block, or facts block. Empty
+   *  string when no such section exists. */
+  privateVault: string;
 }
 
 const RELOAD_TTL_MS = 30_000;
@@ -184,6 +195,21 @@ export class OwnerProfileStore {
    *  language. Returns "" when the profile has no Nativity section. */
   nativity(): string {
     return this.get()?.nativity ?? "";
+  }
+
+  /** SEALED owner-only knowledge vault body (from the "## Private" /
+   *  "## Vault" / "## Security" section). Security-grade answers the
+   *  owner stores for THEIR OWN use in self-chat (birth city, first
+   *  school, mother's maiden name, security-question honeypots).
+   *
+   *  SECURITY-CRITICAL — OWNER SELF-CHAT ONLY. This is NEVER part of
+   *  `prose()`, `relationshipsBlock()`, or `factsBlock()`, so it can
+   *  never reach a contact-facing persona. Callers MUST only inject the
+   *  return value on a path that is owner-only by construction
+   *  (handleOwnerDocQuery / handleOwnerNaturalChat). Returns "" when no
+   *  such section exists. */
+  privateVaultBlock(): string {
+    return this.get()?.privateVault ?? "";
   }
 
   /** Formatted "Name → relationship" lines for prompt injection. Used
@@ -386,6 +412,7 @@ export function parseProfile(raw: string): OwnerProfile {
   const facts: OwnerFacts = {};
   const proseLines: string[] = [];
   const nativityLines: string[] = [];
+  const privateVaultLines: string[] = [];
 
   // Markdown section heading: "## Title". We only treat level-2+ ("##",
   // "###", ...) as section boundaries. A single "#" is reserved for the
@@ -401,6 +428,7 @@ export function parseProfile(raw: string): OwnerProfile {
   let inRelationships = false;
   let inNativity = false;
   let inFacts = false;
+  let inPrivateVault = false;
   // Everything before the first "## " section (the "# Owner profile"
   // title + the "Do NOT put secrets here" instructional preamble) is
   // guidance for the human, NOT content about the owner. Skip it so it
@@ -419,10 +447,23 @@ export function parseProfile(raw: string): OwnerProfile {
       // prose (it's typed data injected via factsBlock(), not free-form
       // voice) the same way the Relationships section is.
       inFacts = /^facts\b/i.test(section) || /\bowner\s+facts\b/i.test(section);
-      if (!inRelationships && !inFacts) proseLines.push(line);
+      // "## Private" / "## Vault" / "## Security" — the SEALED owner-only
+      // knowledge vault. SECURITY-CRITICAL: this section's body is
+      // captured separately AND kept OUT of prose, because prose is
+      // injected into CONTACT-facing replies. The header text itself is
+      // also withheld from prose so a contact-facing prompt never even
+      // hints a vault exists.
+      inPrivateVault = /^(private|vault|security)\b/i.test(section);
+      if (!inRelationships && !inFacts && !inPrivateVault) proseLines.push(line);
       continue;
     }
     if (!seenFirstSection) continue; // pre-section preamble — drop
+    if (inPrivateVault) {
+      // Capture the raw body for the owner-only consumer. NEVER append
+      // to proseLines — that is the one inviolable rule of this section.
+      privateVaultLines.push(line);
+      continue;
+    }
     if (inNativity) {
       const trimmed = line.trim();
       if (trimmed && !trimmed.startsWith("#")) {
@@ -586,6 +627,7 @@ export function parseProfile(raw: string): OwnerProfile {
     aliases,
     facts: hasFacts ? facts : undefined,
     nativity: nativityLines.join(" ").trim(),
+    privateVault: privateVaultLines.join("\n").trim(),
   };
 }
 

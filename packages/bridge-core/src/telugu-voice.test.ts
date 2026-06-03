@@ -129,11 +129,13 @@ for (const safe of ENGLISH_PARTICLE_SAFE) {
 }
 
 // ---------------------------------------------------------------------------
-// English LLM-cadence tells — em-dash + assistant enthusiasm
+// English LLM-cadence tells — assistant enthusiasm bursts.
+// (Em-dash is NO LONGER suppressed — it's a punctuation tell that's rewritten
+// to a comma in applyStyle so the reply still sends; see
+// em-dash-no-suppress.test.ts. Suppressing on em-dash silenced real replies.)
 // ---------------------------------------------------------------------------
 
 const ENGLISH_BAD = [
-  "yeah i can do that — let me check the calendar",
   "sounds good!",
   "absolutely!",
   "wonderful!",

@@ -192,6 +192,22 @@ app.get("/session/:tenantId/status", (req, res) => {
   });
 });
 
+// GET /session/:tenantId/qr -- current pairing QR (PNG data URL) if one is
+// live. Lets the CLI/operator fetch + render the QR without a WebSocket
+// client. Returns null when paired/no QR pending.
+app.get("/session/:tenantId/qr", (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) {
+    res.status(404).json({ error: "no session" });
+    return;
+  }
+  res.json({
+    qr: session.getCurrentQR(),
+    issuedAt: session.getQRIssuedAt(),
+    paired: session.isPaired(),
+  });
+});
+
 // GET /session/:tenantId/has-creds -- does the on-disk auth dir hold
 // usable WhatsApp credentials? Dashboard uses this to choose between
 // "Reconnect" (creds exist → silent reconnect) and "Pair with QR"
