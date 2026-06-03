@@ -446,6 +446,56 @@ export function buildOwnerConferenceTwiml(conferenceName: string): string {
   return `<Response><Dial><Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">${escape(conferenceName)}</Conference></Dial></Response>`;
 }
 
+// ─────────────────────────────────────────────────────
+// ElevenLabs voice-clone gate (B8).
+//
+// Speaking to a recipient in the owner's OWN cloned voice is a
+// deepfake-class capability, so it is OFF by default and triple-gated:
+//
+//   1. LANTERN_VOICE_CLONE=1            — explicit master opt-in
+//   2. LANTERN_ELEVENLABS_API_KEY       — the synthesis credential
+//      (legacy alias LANTERN_ELEVENLABS_KEY also accepted)
+//   3. LANTERN_ELEVENLABS_VOICE_ID      — which cloned voice to speak in
+//
+// When ANY of the three is missing, the gate is CLOSED and callers fall
+// back cleanly to the existing Polly `<Say>` path — no behavior change
+// to existing calls. The two-party-consent announcement is unaffected;
+// it is built independently in buildTwiml regardless of voice path.
+// ─────────────────────────────────────────────────────
+
+export interface VoiceCloneConfig {
+  apiKey: string;
+  voiceId: string;
+}
+
+/**
+ * Resolve the voice-clone configuration from the environment, applying
+ * the master gate. Returns null when voice-clone is disabled OR not
+ * fully configured — callers MUST treat null as "use Polly". Reading an
+ * env source can be overridden for tests via `env`.
+ *
+ * Never logs the API key.
+ */
+export function resolveVoiceCloneConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): VoiceCloneConfig | null {
+  // Master opt-in. Off by default; only "1"/"true"/"on" enable.
+  const flag = (env.LANTERN_VOICE_CLONE || "").trim().toLowerCase();
+  const enabled = flag === "1" || flag === "true" || flag === "on";
+  if (!enabled) return null;
+
+  const apiKey = (env.LANTERN_ELEVENLABS_API_KEY || env.LANTERN_ELEVENLABS_KEY || "").trim();
+  const voiceId = (env.LANTERN_ELEVENLABS_VOICE_ID || "").trim();
+  if (!apiKey || !voiceId) return null;
+
+  return { apiKey, voiceId };
+}
+
+/** True when the voice-clone master gate is open AND fully configured. */
+export function isVoiceCloneEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return resolveVoiceCloneConfig(env) !== null;
+}
+
 // Re-export risk-tier helpers so callers have a single import.
 export { classifyOutboundCall, tierBadge } from "./call-risk-tier.js";
 export type { CallContext, TierVerdict, CallTier } from "./call-risk-tier.js";
