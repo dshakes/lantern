@@ -19,3 +19,4 @@ export * from "./dislike-memory.js";
 export * from "./dislike-consolidator.js";
 export * from "./owner-profile-auto-update.js";
 export * from "./contact-priority.js";
+export * from "./anticipation.js";

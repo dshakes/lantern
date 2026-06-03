@@ -90,6 +90,16 @@ import {
 } from "@lantern/bridge-core/call-orchestrator";
 import { CallCommitments } from "@lantern/bridge-core/call-commitments";
 import { resolveContact as universalResolveContact, formatSuggestions } from "@lantern/bridge-core/contact-resolver";
+import {
+  computeProactiveNudges,
+  formatNudgeForOwner,
+  type ProactiveNudge,
+  type KeyDateSignal,
+  type AwaitingReplySignal,
+  type UpcomingEventSignal,
+} from "@lantern/bridge-core/anticipation";
+import { runDislikeConsolidation, formatStyleLessonsBlock, type StyleLesson } from "@lantern/bridge-core/dislike-consolidator";
+import type { ContactSignals } from "@lantern/bridge-core/contact-priority";
 
 export type IMessageConnectionState =
   | "starting"
@@ -377,6 +387,54 @@ export class IMessageSession {
   // A turn within this window of the previous inbound is a continuation.
   private static readonly THREAD_CONTINUATION_MS = 6 * 60 * 60 * 1000;
 
+  // ── PROACTIVE-INTELLIGENCE LAYER ────────────────────────────────────
+  //
+  // Three schedulers (all unref'd + best-effort + try/caught):
+  //   1. LEARNING FLYWHEEL — every 6-12h, consolidate the 👎 dislike log
+  //      into general style lessons, write them into the owner profile,
+  //      and cache `styleLessonsBlock` so EVERY persona prompt improves.
+  //   2. ANTICIPATION NUDGES — every 30-60 min, gather signals (key dates,
+  //      upcoming events, contacts awaiting a reply) and DM the owner each
+  //      NEW nudge (deduped on disk, quiet-hours-respecting, killswitch-aware).
+  //
+  // Cached global style-lessons block. Refreshed by the flywheel; injected
+  // into every agentPersonaPrompt call. Empty until the first run.
+  private styleLessonsBlock = "";
+  private flywheelTimer: ReturnType<typeof setInterval> | null = null;
+  private nudgeTimer: ReturnType<typeof setInterval> | null = null;
+  // Fired-nudge dedupe keys persisted to disk (0600) so a launchd respawn
+  // doesn't re-nag the owner with a nudge already surfaced today. Map of
+  // dedupeKey -> epoch ms fired; GC'd on load past NUDGE_DEDUP_TTL_MS.
+  private firedNudges: Map<string, number> = new Map();
+  private firedNudgesPath = "";
+  private static readonly NUDGE_DEDUP_TTL_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+  // Cap how many nudges fire in one tick so a backlog can't flood self-chat.
+  private static readonly NUDGE_MAX_PER_TICK = 3;
+  // Learning-flywheel cadence: once every 8h (jittered at boot via kick).
+  private static readonly FLYWHEEL_INTERVAL_MS = 8 * 60 * 60 * 1000;
+  // Nudge cadence: every 45 min.
+  private static readonly NUDGE_INTERVAL_MS = 45 * 60 * 1000;
+
+  // DRAFT-AND-CONFIRM (high-stakes) — held contact drafts awaiting a
+  // one-tap "send" from the owner's self-chat. Keyed by the owner
+  // self-chat target handle. The owner confirmation path consumes this
+  // alongside pendingOffers. In-memory + short-lived (a draft the owner
+  // never approves simply expires — never auto-sent).
+  private pendingSelfChatDrafts: Map<string, {
+    target: string;        // contact handle to send to on approval
+    targetLabel: string;   // display label for the owner-facing prompt
+    draft: string;         // the held reply text
+    inbound: string;       // the contact's message (for context)
+    issuedAt: number;
+  }> = new Map();
+  private static readonly SELF_DRAFT_TTL_MS = 30 * 60_000; // 30 min
+  // Draft-and-confirm default for high-stakes (LOW-confidence / sensitive)
+  // contact replies. ON by default; LANTERN_DRAFT_CONFIRM=0 disables (then
+  // LOW-confidence falls back to the prior held-then-send behavior).
+  private static readonly DRAFT_CONFIRM_DEFAULT =
+    (process.env.LANTERN_DRAFT_CONFIRM || "").toLowerCase() !== "0" &&
+    (process.env.LANTERN_DRAFT_CONFIRM || "").toLowerCase() !== "off";
+
   // Futuristic helpers
   private agent: AgentClient;
   private media: MediaHandler;
@@ -510,6 +568,8 @@ export class IMessageSession {
     this.startDailyDigest();
     this.startOfflineMonitor();
     this.startQuietReplay();
+    this.startLearningFlywheel();
+    this.startAnticipationNudges();
     this.logger.info("iMessage session ready");
   }
 
@@ -576,6 +636,334 @@ export class IMessageSession {
     this.digestStopFn = handle.stop;
   }
 
+  // ── PROACTIVE INTELLIGENCE ──────────────────────────────────────────
+
+  // The owner's self-chat send target (env handle in dedicated-bot mode,
+  // last-seen self-chat handle otherwise). "" when we have neither —
+  // callers must no-op so we never DM a non-owner.
+  private ownerSelfChatTarget(): string {
+    return (this.ownHandleGuess() || this.lastSelfHandle || "").trim();
+  }
+
+  // 1) LEARNING FLYWHEEL. Consolidate the 👎 dislike log into general
+  // style lessons, write them into the owner profile, and cache the
+  // formatted block so EVERY future persona prompt benefits. Best-effort:
+  // runDislikeConsolidation never throws; we still try/catch the wrapper.
+  private startLearningFlywheel(): void {
+    if (this.flywheelTimer) return;
+    const t = setInterval(() => {
+      void this.runLearningFlywheel();
+    }, IMessageSession.FLYWHEEL_INTERVAL_MS);
+    t.unref?.();
+    this.flywheelTimer = t;
+    // Kick ~30s after boot so the bot starts improving without waiting a
+    // full cycle. Unref'd timeout — won't hold the process open.
+    const kick = setTimeout(() => void this.runLearningFlywheel(), 30_000);
+    kick.unref?.();
+  }
+
+  private async runLearningFlywheel(): Promise<void> {
+    try {
+      const res = await runDislikeConsolidation({
+        memory: this.dislikeMemory,
+        profilePath: this.ownerProfileStore.getPath(),
+        invalidate: () => this.ownerProfileStore.invalidate(),
+        logger: this.logger,
+      });
+      if (!res.ok) return;
+      this.styleLessonsBlock = formatStyleLessonsBlock(res.lessons);
+      this.logger.info(
+        { lessons: res.count, added: res.added.length, updated: res.updated.length },
+        "learning flywheel: style lessons refreshed",
+      );
+    } catch (err) {
+      this.logger.warn({ err }, "learning flywheel run failed (non-fatal)");
+    }
+  }
+
+  // 2) ANTICIPATION NUDGES. Gather signals, compute nudges, DM the owner
+  // each NEW one (deduped on disk, quiet-hours-respecting, capped).
+  private startAnticipationNudges(): void {
+    if (this.nudgeTimer) return;
+    if ((process.env.LANTERN_PROACTIVE_NUDGES || "1") === "0") {
+      this.logger.info("anticipation nudges disabled (LANTERN_PROACTIVE_NUDGES=0)");
+      return;
+    }
+    this.firedNudgesPath = join(this.stateDir, "fired-nudges.json");
+    this.loadFiredNudges();
+    const t = setInterval(() => {
+      void this.runAnticipationTick();
+    }, IMessageSession.NUDGE_INTERVAL_MS);
+    t.unref?.();
+    this.nudgeTimer = t;
+    // First tick a couple minutes after boot (after voice-seeding settles).
+    const kick = setTimeout(() => void this.runAnticipationTick(), 120_000);
+    kick.unref?.();
+  }
+
+  private async runAnticipationTick(): Promise<void> {
+    try {
+      // Killswitch — never nudge when the owner has muted everything.
+      if (this.killSwitch) return;
+      const target = this.ownerSelfChatTarget();
+      if (!target) return; // no owner channel → nothing to DM
+
+      // Quiet hours: defer nudges (don't wake the owner). The next tick
+      // picks them up once the window reopens; dedupe keys keep them fresh.
+      if (isQuietHours(new Date(), defaultQuietHours())) return;
+
+      const now = Date.now();
+      const input = await this.gatherProactiveSignals(now);
+      const nudges = computeProactiveNudges({ now, ...input });
+      if (nudges.length === 0) return;
+
+      let fired = 0;
+      for (const n of nudges) {
+        if (fired >= IMessageSession.NUDGE_MAX_PER_TICK) break;
+        if (this.firedNudges.has(n.dedupeKey)) continue;
+        const ok = await this.send(target, formatNudgeForOwner(n)).then(
+          (r) => r.ok,
+          () => false,
+        );
+        if (!ok) continue;
+        this.firedNudges.set(n.dedupeKey, now);
+        fired += 1;
+        this.broadcast({
+          type: "activity",
+          data: { kind: "proactive_nudge", summary: `nudge: ${n.kind}`, timestamp: now },
+        });
+      }
+      if (fired > 0) {
+        this.persistFiredNudges();
+        this.logger.info({ fired, considered: nudges.length }, "anticipation nudges sent");
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "anticipation tick failed (non-fatal)");
+    }
+  }
+
+  // Gather the signals available to this bridge for the nudge engine. All
+  // best-effort — any sub-failure degrades to an empty slice, never throws.
+  private async gatherProactiveSignals(now: number): Promise<{
+    keyDates: KeyDateSignal[];
+    awaitingReply: AwaitingReplySignal[];
+    upcomingEvents: UpcomingEventSignal[];
+  }> {
+    // Key dates from the owner profile facts.
+    let keyDates: KeyDateSignal[] = [];
+    try {
+      const kds = this.ownerProfileStore.get()?.facts?.keyDates ?? [];
+      keyDates = kds
+        .filter((k) => k?.label && k?.date)
+        .map((k) => ({ label: k.label, date: k.date }));
+    } catch { /* empty */ }
+
+    // Upcoming calendar events (device calendar — iCloud + Google).
+    let upcomingEvents: UpcomingEventSignal[] = [];
+    try {
+      const evs = await this.macActions.readUpcomingEvents({ days: 1, max: 20 });
+      upcomingEvents = evs.map((e) => ({
+        title: e.title,
+        startAt: e.start.getTime(),
+        eventId: `${e.calendar}:${e.title}:${e.start.getTime()}`,
+      }));
+    } catch { /* empty */ }
+
+    // Contacts awaiting a reply: last inbound > 2 days old with no owner
+    // reply since. Derived from chat.db per-handle, with priority signals.
+    const awaitingReply = this.gatherAwaitingReply(now);
+
+    return { keyDates, awaitingReply, upcomingEvents };
+  }
+
+  // Best-effort scan of recently-seen 1:1 handles for ones whose last
+  // message was inbound (the contact spoke last) > 2 days ago — i.e. the
+  // owner hasn't replied. Uses chat.db's per-chat recent timestamps; only
+  // considers handles the bridge has a chatRowid for (seen this session).
+  private gatherAwaitingReply(now: number): AwaitingReplySignal[] {
+    const out: AwaitingReplySignal[] = [];
+    const TWO_DAYS = 2 * 24 * 60 * 60 * 1000;
+    try {
+      for (const [handle, chatRowid] of this.lastChatRowidForHandle) {
+        if (!handle || handle.includes("group:")) continue;
+        // Owner self-chat is never "awaiting a reply".
+        if (this.ownHandleGuess() && this.normalizeHandle(handle) === this.normalizeHandle(this.ownHandleGuess())) continue;
+        let rows: Array<{ ts: number; fromMe: boolean }>;
+        try {
+          rows = this.db.recentTimestamped(chatRowid, 6);
+        } catch { continue; }
+        if (rows.length === 0) continue;
+        const last = rows[rows.length - 1];
+        // The contact spoke last (no owner reply since) and it's stale.
+        if (last.fromMe) continue;
+        if (now - last.ts < TWO_DAYS) continue;
+        out.push({
+          handle,
+          displayName: this.contactNames.get(handle),
+          lastInboundAt: last.ts,
+          contactSignals: this.contactSignalsFor(handle, now),
+        });
+      }
+    } catch { /* empty */ }
+    return out;
+  }
+
+  // Build priority signals for a contact from the data the bridge holds —
+  // relationship label (owner profile), recency, and VIP-ish heuristics.
+  private contactSignalsFor(handle: string, now: number): ContactSignals {
+    const sig: ContactSignals = { now };
+    try {
+      const rel = this.ownerProfileStore.relationshipFor(handle, this.contactNames.get(handle));
+      if (rel) sig.relationship = rel;
+      const lastIn = this.lastInboundTs.get(handle);
+      if (lastIn) sig.lastInboundAt = lastIn;
+      const msgs = this.inboundHistory.get(handle)?.length;
+      if (msgs) sig.messageCount = msgs;
+    } catch { /* defaults */ }
+    return sig;
+  }
+
+  // Free-slots text for scheduling negotiation. Extracted best-effort from
+  // a "## Schedule" / "## Availability" / "## Free slots" section in the
+  // owner profile prose. Returns "" when no such section exists (the
+  // persona then falls back to reframe-only scheduling).
+  private freeSlotsBlock(): string {
+    try {
+      const prose = this.ownerProfileStore.prose();
+      if (!prose) return "";
+      const lines = prose.split("\n");
+      const headRe = /^#{1,6}\s*(schedule|availability|free\s+slots?|office\s+hours)\b/i;
+      let i = lines.findIndex((l) => headRe.test(l.trim()));
+      if (i < 0) return "";
+      const out: string[] = [];
+      for (i = i + 1; i < lines.length; i++) {
+        // Stop at the next markdown heading.
+        if (/^#{1,6}\s+\S/.test(lines[i])) break;
+        out.push(lines[i]);
+      }
+      return out.join("\n").trim();
+    } catch {
+      return "";
+    }
+  }
+
+  // ── Fired-nudge dedupe persistence (0600 — no PII; just dedupe keys) ──
+  private loadFiredNudges(): void {
+    try {
+      if (!this.firedNudgesPath || !existsSync(this.firedNudgesPath)) return;
+      const raw = readFileSync(this.firedNudgesPath, "utf-8");
+      const data = JSON.parse(raw) as { fired?: Record<string, number> };
+      const now = Date.now();
+      for (const [key, ts] of Object.entries(data.fired ?? {})) {
+        if (typeof ts === "number" && now - ts < IMessageSession.NUDGE_DEDUP_TTL_MS) {
+          this.firedNudges.set(key, ts);
+        }
+      }
+      this.logger.info({ loaded: this.firedNudges.size }, "loaded fired-nudge dedupe");
+    } catch (err) {
+      this.logger.warn({ err }, "failed to load fired-nudge dedupe — starting fresh");
+    }
+  }
+
+  private persistFiredNudges(): void {
+    if (!this.firedNudgesPath) return;
+    try {
+      // GC expired keys before writing so the file stays bounded.
+      const now = Date.now();
+      for (const [key, ts] of this.firedNudges) {
+        if (now - ts >= IMessageSession.NUDGE_DEDUP_TTL_MS) this.firedNudges.delete(key);
+      }
+      writeFileSync(
+        this.firedNudgesPath,
+        JSON.stringify({ fired: Object.fromEntries(this.firedNudges) }),
+      );
+      try { chmodSync(this.firedNudgesPath, 0o600); } catch { /* best-effort */ }
+    } catch (err) {
+      this.logger.warn({ err }, "failed to persist fired-nudge dedupe");
+    }
+  }
+
+  // 3) DRAFT-AND-CONFIRM (high-stakes). Hold a contact reply and DM the
+  // owner a one-tap-approve prompt in self-chat instead of silently
+  // dropping it. Returns true when the draft was held (caller must NOT
+  // send to the contact). Best-effort — on any failure returns false so
+  // the caller can fall back to its prior behavior.
+  private async draftToOwnerForApproval(
+    target: string,
+    targetLabel: string,
+    inbound: string,
+    draft: string,
+  ): Promise<boolean> {
+    const owner = this.ownerSelfChatTarget();
+    if (!owner || !target || !draft) return false;
+    try {
+      this.pendingSelfChatDrafts.set(owner, {
+        target,
+        targetLabel,
+        draft,
+        inbound,
+        issuedAt: Date.now(),
+      });
+      const preview = draft.replace(/\s+/g, " ").trim().slice(0, 300);
+      const body =
+        `✍️ draft to ${targetLabel}:\n"${preview}"\n\nreply "send" to approve, "no" to drop.`;
+      const res = await this.send(owner, body);
+      if (!res.ok) {
+        this.pendingSelfChatDrafts.delete(owner);
+        return false;
+      }
+      this.broadcast({
+        type: "activity",
+        data: {
+          kind: "agent_skipped",
+          summary: `held high-stakes draft for ${targetLabel} — awaiting owner approval`,
+          detail: preview.slice(0, 200),
+          jid: target,
+          timestamp: Date.now(),
+        },
+      });
+      return true;
+    } catch (err) {
+      this.logger.warn({ err }, "draft-to-owner-for-approval failed (non-fatal)");
+      this.pendingSelfChatDrafts.delete(owner);
+      return false;
+    }
+  }
+
+  // Consume a pending self-chat draft when the owner confirms with "send".
+  // Returns true when a draft was found + dispatched (or rejected). Called
+  // from the owner-confirmation path alongside pendingOffers.
+  private async maybeResolveSelfChatDraft(ownerHandle: string, text: string): Promise<boolean> {
+    const pending = this.pendingSelfChatDrafts.get(ownerHandle);
+    if (!pending) return false;
+    // Expire stale drafts silently — never auto-send an unapproved draft.
+    if (Date.now() - pending.issuedAt > IMessageSession.SELF_DRAFT_TTL_MS) {
+      this.pendingSelfChatDrafts.delete(ownerHandle);
+      return false;
+    }
+    if (looksLikeConfirmation(text)) {
+      this.pendingSelfChatDrafts.delete(ownerHandle); // one-shot
+      try {
+        const res = await this.send(pending.target, pending.draft);
+        await this.send(
+          ownerHandle,
+          res.ok ? `✅ sent to ${pending.targetLabel}.` : `⚠️ couldn't send to ${pending.targetLabel}.`,
+        );
+        if (res.ok) this.repliesSentToday += 1;
+      } catch (err) {
+        this.logger.warn({ err }, "self-chat draft dispatch failed");
+        await this.send(ownerHandle, `⚠️ couldn't send to ${pending.targetLabel}.`).catch(() => {});
+      }
+      return true;
+    }
+    if (looksLikeRejection(text)) {
+      this.pendingSelfChatDrafts.delete(ownerHandle);
+      await this.send(ownerHandle, "👍 dropped it.").catch(() => {});
+      return true;
+    }
+    return false;
+  }
+
   stop(): void {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
@@ -588,6 +976,14 @@ export class IMessageSession {
     if (this.quietReplayTimer) {
       clearInterval(this.quietReplayTimer);
       this.quietReplayTimer = null;
+    }
+    if (this.flywheelTimer) {
+      clearInterval(this.flywheelTimer);
+      this.flywheelTimer = null;
+    }
+    if (this.nudgeTimer) {
+      clearInterval(this.nudgeTimer);
+      this.nudgeTimer = null;
     }
     this.screenContext?.stop();
     this.db.close();
@@ -1275,6 +1671,16 @@ export class IMessageSession {
     // → no call. Safe against the duplicate arrival: executeCachedOffer is
     // one-shot (deletes the offer first), so the second "yes" finds nothing.
     if (this.personalDocsEnabled && !isGroup && text && this.isOwnerChatRow(row)) {
+      // High-stakes held draft — "send"/"no" resolves it. Checked before
+      // the offer intercept (same affirmation vocabulary). Fire-and-forget
+      // to keep this sync path non-blocking (mirrors executeCachedOffer).
+      const draftKey = this.pendingSelfChatDrafts.has(row.handle)
+        ? row.handle
+        : this.ownerSelfChatTarget();
+      if (this.pendingSelfChatDrafts.has(draftKey) && (looksLikeConfirmation(text) || looksLikeRejection(text))) {
+        void this.maybeResolveSelfChatDraft(draftKey, text);
+        return;
+      }
       this.gcPendingOffers();
       const pending = this.pendingOffers.get(row.handle);
       if (pending && looksLikeConfirmation(text)) {
@@ -1677,6 +2083,16 @@ export class IMessageSession {
     // SECURITY: triple-gated by personalDocsEnabled toggle, group-check,
     // and the owner-chat guard. No DM from a contact can reach here.
     if (this.personalDocsEnabled && !isGroup && this.isOwnerChatRow(row) && text) {
+      // DRAFT-AND-CONFIRM INTERCEPT: a high-stakes contact reply was held
+      // and DM'd here for one-tap approval. "send" dispatches it to the
+      // contact; "no" drops it. Checked BEFORE pendingOffers so the same
+      // affirmation vocabulary approves a held draft. Keyed under the
+      // owner self-chat target the draft was stored against.
+      const draftKey = this.pendingSelfChatDrafts.has(row.handle)
+        ? row.handle
+        : this.ownerSelfChatTarget();
+      if (await this.maybeResolveSelfChatDraft(draftKey, text)) return;
+
       // CONFIRMATION INTERCEPT: when there's a pending offer for
       // this chat and the user replied with a clean affirmation
       // ("yes" / "sure" / "do it"), execute the action directly.
@@ -2053,6 +2469,15 @@ export class IMessageSession {
       languageModality,
       contactStyleBlock,
       dislikeBlock,
+      // Global style lessons mined from the owner's 👎 history (learning
+      // flywheel). Cached + refreshed on a schedule; applies to EVERY
+      // reply so the bot improves globally, not just per-contact. Empty
+      // until the first flywheel run.
+      styleLessonsBlock: this.styleLessonsBlock || undefined,
+      // Scheduling negotiation — let the bot propose/hold/confirm times
+      // from the owner's free slots, reusing the [CALENDAR:] path.
+      schedulingEnabled: true,
+      freeSlotsBlock: this.freeSlotsBlock() || undefined,
       presence: presenceLine,
       episodesBlock,
       relatedBlock,
@@ -2241,6 +2666,29 @@ export class IMessageSession {
       return;
     }
 
+    // DRAFT-AND-CONFIRM DEFAULT (high-stakes). A LOW-confidence reply to an
+    // unfamiliar contact used to silently auto-send (or, with the dashboard
+    // queue off, fall through). Now — by default — we DRAFT it to the
+    // owner's self-chat for one-tap approval instead of guessing on the
+    // owner's behalf with someone the bot doesn't know. The owner sees
+    // "draft to <contact>: …, reply 'send' to approve". Disable with
+    // LANTERN_DRAFT_CONFIRM=0. The explicit dashboard-queue path above
+    // (LANTERN_DRAFT_APPROVALS=on) takes precedence when enabled.
+    if (lowConfidence && IMessageSession.DRAFT_CONFIRM_DEFAULT) {
+      const held = await this.draftToOwnerForApproval(
+        row.handle,
+        this.contactLabel(row.handle),
+        text,
+        draft,
+      );
+      if (held) {
+        this.logger.info({ from: row.handle }, "high-stakes reply drafted to owner for approval (low-confidence)");
+        return;
+      }
+      // Couldn't hold (no owner channel / send failed) — fall through to the
+      // tier path below rather than dropping the reply.
+    }
+
     // Confidence-tier classification (HIGH/MEDIUM/LOW). HIGH sends
     // normally; MEDIUM additionally cross-channel-pings the owner
     // after send; LOW holds the draft for 30s with an owner override
@@ -2256,6 +2704,23 @@ export class IMessageSession {
       hasPriorDislikes: dislikeEntries.length > 0,
     });
     this.logger.info({ jid: row.handle, tier: tierBadge(tier) }, "reply confidence");
+    // DRAFT-AND-CONFIRM for Tier-C (LOW-confidence / sensitive) replies —
+    // the default. Hold the draft and DM it to the owner for one-tap
+    // approval instead of auto-sending after a blind 5s window. Disable
+    // with LANTERN_DRAFT_CONFIRM=0 to restore the hold-then-send behavior.
+    if (tier.tier === "LOW" && IMessageSession.DRAFT_CONFIRM_DEFAULT && !isGroup) {
+      const held = await this.draftToOwnerForApproval(
+        row.handle,
+        this.contactLabel(row.handle),
+        text,
+        draft,
+      );
+      if (held) {
+        this.logger.info({ jid: row.handle }, "LOW-tier reply drafted to owner for approval");
+        return;
+      }
+      // Fall through to the legacy hold-then-send if we couldn't hold.
+    }
     if (tier.tier === "LOW") {
       // Hold the draft and notify the owner. After the hold, send unless
       // the owner explicitly cancels via the dashboard.
