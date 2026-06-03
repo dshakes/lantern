@@ -133,7 +133,12 @@ function escapeRe(s: string): string {
 // WhatsApp bridge's env var so the owner sets it once in shared config).
 const PAUSE_DURATION_MS =
   Math.max(1, Number(process.env.LANTERN_AGENT_PAUSE_MIN) || 60) * 60_000;
-const HISTORY_DEPTH = 20; // per-contact inbound/outbound message ring buffer
+const HISTORY_DEPTH = 20; // per-contact inbound message ring buffer
+// Per-contact depth of the owner's OWN sent messages kept as verbatim
+// few-shot voice samples + style-fingerprint signal. Deeper than inbound
+// history so frequent contacts carry enough authentic voice to mimic;
+// still bounded so memory stays flat across many contacts.
+const OWNER_SENT_DEPTH = 30;
 const OWNER_NAME = process.env.LANTERN_OWNER_NAME || "the owner";
 
 export class IMessageSession {
@@ -462,6 +467,12 @@ export class IMessageSession {
     }
 
     this.setState("ready");
+    // Pre-seed per-contact owner-voice samples from chat.db so the bot
+    // can mimic the owner's real style from the first inbound — instead
+    // of waiting for the owner to text during this process's lifetime.
+    // Best-effort, non-blocking; scheduled off the boot path so a large
+    // chat.db scan never delays `ready`.
+    setImmediate(() => this.seedOwnerVoiceFromHistory());
     // Start screen-context capture (no-op when LANTERN_SCREEN_OCR=off).
     this.screenContext.start();
     this.everConnected = true;
@@ -1984,10 +1995,15 @@ export class IMessageSession {
         ` Keep it short and natural — don't pretend to be ${ownerName} mid-activity.`;
     }
 
+    // Owner's dashboard/agent style override (the configured persona
+    // tweaks). Best-effort — falls back to undefined on any error so a
+    // reply never blocks on the control-plane. Mirrors the WhatsApp bridge.
+    const stylePrompt = await this.agent.getStylePrompt().catch(() => undefined);
+
     let systemHint = agentPersonaPrompt(ownerName, style, isGroup, {
       ownerSamples,
       disclosed: false,
-      stylePrompt: undefined,
+      stylePrompt,
       ownerProfile,
       relationship,
       recentTranscript,
@@ -2883,7 +2899,50 @@ export class IMessageSession {
     let arr = this.ownerSentHistory.get(handle);
     if (!arr) { arr = []; this.ownerSentHistory.set(handle, arr); }
     arr.push(text);
-    if (arr.length > HISTORY_DEPTH) arr.splice(0, arr.length - HISTORY_DEPTH);
+    if (arr.length > OWNER_SENT_DEPTH) arr.splice(0, arr.length - OWNER_SENT_DEPTH);
+  }
+
+  // COLD-START VOICE MINING. On boot, ownerSentHistory is only populated
+  // from messages the owner types AFTER this process starts — so every
+  // contact bucket is empty/thin until they happen to text, leaving the
+  // bot with no voice samples to mimic. This pre-seeds each contact's
+  // ring from the owner's OWN past sent messages (is_from_me=1, 1:1 only)
+  // straight from chat.db.
+  //
+  // Best-effort by contract: runs once at startup, never blocks boot, and
+  // never throws into the caller. Existing buckets (restored from disk)
+  // take precedence — we only fill contacts we have no live signal for.
+  // No message text is logged (PII); counts only.
+  private seedOwnerVoiceFromHistory(): void {
+    try {
+      const mined = this.db.ownerSentByHandle({ perHandle: OWNER_SENT_DEPTH });
+      let contactsSeeded = 0;
+      let samplesSeeded = 0;
+      for (const [handle, msgs] of mined) {
+        // Don't clobber a bucket we already have (disk-restored or live).
+        if ((this.ownerSentHistory.get(handle)?.length ?? 0) > 0) continue;
+        const clean: string[] = [];
+        for (const raw of msgs) {
+          const text = raw.trim();
+          // Skip the bridge's own past auto-replies — they're not the
+          // owner's authentic voice and would poison the few-shot.
+          if (!text || isBotSelfMessage(text)) continue;
+          clean.push(text);
+          if (clean.length >= OWNER_SENT_DEPTH) break;
+        }
+        if (clean.length === 0) continue;
+        this.ownerSentHistory.set(handle, clean);
+        contactsSeeded += 1;
+        samplesSeeded += clean.length;
+      }
+      this.logger.info(
+        { contactsSeeded, samplesSeeded },
+        "seeded owner-voice samples from chat.db history",
+      );
+    } catch (err) {
+      // Never let cold-start mining break the bridge.
+      this.logger.warn({ err }, "owner-voice cold-start seeding failed (non-fatal)");
+    }
   }
 
   private contactLabel(handle: string): string {

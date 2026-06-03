@@ -19,6 +19,8 @@
 // rather than caching. Caching adds complexity without measurable
 // savings at our message rate.
 
+import { isBotSelfMessage } from "./bot-self.js";
+
 export interface ContactStyle {
   // Sample count behind the fingerprint. Below 3, the fingerprint is
   // too thin — callers should fall back to global style. Above 50,
@@ -109,8 +111,36 @@ function topN(counts: Map<string, number>, n: number): string[] {
     .map(([k]) => k);
 }
 
+// Collapse a message to a comparison key for near-duplicate detection:
+// lowercased, punctuation/whitespace/emoji stripped. "ok!", "Ok", "ok 👍"
+// and "ok" all collapse to "ok" — so a ring full of acks counts once for
+// the statistics instead of dragging avgWords toward 1.
+function dedupeKey(msg: string): string {
+  return msg
+    .toLowerCase()
+    .replace(/\p{Extended_Pictographic}|️|‍/gu, "")
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+    .trim();
+}
+
 export function computeContactStyle(messages: string[]): ContactStyle {
-  const samples = messages.filter((m) => typeof m === "string" && m.trim().length > 0);
+  // Drop bot-self output (acks, progress nudges, status/digest lines the
+  // bridge emitted) — those are NOT the owner's voice and pollute the
+  // fingerprint, and then collapse near-identical messages so a ring of
+  // "ok"/"k"/"yeah" acks doesn't falsely signal a one-liner register.
+  const base = messages.filter(
+    (m) => typeof m === "string" && m.trim().length > 0 && !isBotSelfMessage(m),
+  );
+  const dedupSeen = new Set<string>();
+  const samples: string[] = [];
+  for (const m of base) {
+    const key = dedupeKey(m);
+    // Keep empty-key messages (pure-emoji / punctuation) — they're rare
+    // and de-duping them all to one bucket would over-collapse.
+    if (key && dedupSeen.has(key)) continue;
+    if (key) dedupSeen.add(key);
+    samples.push(m);
+  }
   const n = samples.length;
   if (n === 0) {
     return {
@@ -138,11 +168,25 @@ export function computeContactStyle(messages: string[]): ContactStyle {
     const tokens = tokenize(m);
     totalWords += tokens.length;
 
-    // Uppercase: any A-Z that ISN'T the first letter of a properly-cased
-    // word. Cheap heuristic — full uppercase letters present is enough
-    // signal to flag.
-    if (/[A-Z]{2,}|^[A-Z][a-z]+\s+[A-Z][a-z]+/.test(m)) upperHits++;
-    else if (/[A-Z]/.test(m) && !/^[A-Z][a-z]/.test(m)) upperHits++;
+    // Uppercase-rate = how often the owner writes in proper sentence case
+    // vs. lowercase. The trap: proper nouns are capitalized in otherwise-
+    // lowercase texts ("meeting srinivas at New Jersey", "ved's school"),
+    // and code-switched / Telugu messages are correctly lowercase but were
+    // mis-flagged by the old `^[A-Z][a-z]+\s+[A-Z][a-z]+` proper-name rule
+    // (it fired on ANY two-word capitalized phrase) and the
+    // `[A-Z] && !^[A-Z][a-z]` rule (it fired on a mid-string proper noun).
+    // Fix: a message counts as "uppercase" only when it's genuinely
+    // sentence-cased — its FIRST alphabetic character is a capital — or it
+    // contains a SHOUT run of 2+ consecutive caps. A lowercase line with a
+    // capitalized proper noun in the middle ("at New Jersey") no longer
+    // trips it, since sentence case is decided by the opening letter, not by
+    // proper nouns anywhere in the line.
+    const firstAlpha = m.match(/[A-Za-z]/);
+    if (/[A-Z]{2,}/.test(m)) {
+      upperHits++; // SHOUT / acronym run
+    } else if (firstAlpha && firstAlpha[0] >= "A" && firstAlpha[0] <= "Z") {
+      upperHits++; // sentence-case start
+    }
 
     if (EMOJI_RE.test(m)) emojiHits++;
     if (/[.!?]$/.test(m.trim())) punctHits++;

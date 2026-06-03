@@ -306,6 +306,72 @@ export class ChatDB {
       .filter((m) => m.text.length > 0);
   }
 
+  // Cold-start voice mining: pull the owner's OWN recent sent messages
+  // (is_from_me=1) from 1:1 chats, grouped by contact handle, newest
+  // first within each handle. Used at session start to pre-seed the
+  // per-contact owner-voice ring buffer so the bot can mimic the owner's
+  // real style before the owner happens to text during this process's
+  // lifetime. Group chats are excluded (display_name <> '') because the
+  // owner's voice there is diluted by audience; we want true 1:1 voice.
+  //
+  // `perHandle` caps rows kept per contact; `maxHandles` bounds total
+  // work so a chat.db with thousands of threads can't blow up boot.
+  // Newest-first ordering means callers can fill the ring with the most
+  // recent (most representative) messages and trim the rest.
+  ownerSentByHandle(opts: {
+    perHandle: number;
+    maxHandles?: number;
+  }): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    if (!this.db) return out;
+    const perHandle = Math.max(1, opts.perHandle);
+    const maxHandles = Math.max(1, opts.maxHandles ?? 500);
+    // Scan a bounded window of recent owner-sent rows, newest first, and
+    // bucket by handle until each bucket is full / the handle cap is hit.
+    // A flat LIMIT keeps the query cheap (date-indexed) without a window
+    // function — we do the per-handle capping in JS.
+    const scanLimit = perHandle * maxHandles;
+    const rows = this.db
+      .prepare(
+        `SELECT COALESCE(h.id, '')          AS handle,
+                COALESCE(m.text, '')         AS text,
+                m.attributedBody             AS attributed_body
+         FROM message m
+         JOIN handle h               ON m.handle_id = h.ROWID
+         LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         LEFT JOIN chat c            ON c.ROWID = cmj.chat_id
+         WHERE m.is_from_me = 1
+           AND COALESCE(m.associated_message_type, 0) = 0
+           AND COALESCE(c.display_name, '') = ''
+           AND (COALESCE(m.text, '') <> '' OR m.attributedBody IS NOT NULL)
+         ORDER BY m.ROWID DESC
+         LIMIT ?`,
+      )
+      .all(scanLimit) as Array<{
+      handle: string;
+      text: string;
+      attributed_body: Buffer | null;
+    }>;
+    for (const r of rows) {
+      const handle = r.handle.trim();
+      if (!handle) continue;
+      const text = (r.text.trim() || decodeAttributedBody(r.attributed_body) || "").trim();
+      if (!text) continue;
+      let bucket = out.get(handle);
+      if (!bucket) {
+        if (out.size >= maxHandles) continue;
+        bucket = [];
+        out.set(handle, bucket);
+      }
+      if (bucket.length >= perHandle) continue;
+      bucket.push(text);
+    }
+    // Buckets are newest-first; reverse to oldest-first so callers append
+    // into a ring that ends on the most recent message.
+    for (const bucket of out.values()) bucket.reverse();
+    return out;
+  }
+
   // List all known chats so the dashboard can show a contact picker.
   // Used by GET /session/:tid/chats.
   listChats(): Array<{
