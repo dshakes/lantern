@@ -299,6 +299,13 @@ export interface PersonaOptions {
   // the owner has explicitly rejected for THIS contact so they don't
   // repeat. Empty string when no dislikes are on file.
   dislikeBlock?: string;
+  // Global style-lessons block (from dislike-consolidator.ts →
+  // formatStyleLessonsBlock). DISTILLED, non-PII rules mined from the
+  // owner's full 👎 history across ALL contacts ("avoid exclamation
+  // marks", "keep replies short"). Applies to every reply so the bot
+  // improves globally, not just for the one contact that 👎'd. Empty
+  // string when no lessons have graduated yet.
+  styleLessonsBlock?: string;
   // Live presence string (from presence.ts → currentPresence). One
   // line like "in a meeting until 4:30 PM ET" / "free / available" /
   // "driving — Focus mode". Bot tone adapts: in-meeting → terse
@@ -573,6 +580,15 @@ export function agentPersonaPrompt(
   if (dislikes) {
     lines.push(``);
     lines.push(dislikes);
+  }
+
+  // Global style lessons — distilled, non-PII rules mined from the
+  // owner's full 👎 history. Applies to EVERY contact (unlike the
+  // per-contact dislike block above), so the bot improves globally.
+  const styleLessons = opts.styleLessonsBlock?.trim();
+  if (styleLessons) {
+    lines.push(``);
+    lines.push(styleLessons);
   }
 
   // Anti-repetition — the bot sent the SAME canned line ("best to wait

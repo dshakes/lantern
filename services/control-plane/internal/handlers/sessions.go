@@ -166,6 +166,11 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		// "you're texting as the owner, sound natural" persona with fresh
 		// per-thread style cues. Not persisted — strictly transient.
 		SystemHint string `json:"systemHint,omitempty"`
+		// TurnHint is an optional complexity hint that overrides the server-side
+		// classifier (G1). Valid values: "trivial", "hard". Passed as the
+		// X-Lantern-Turn-Hint header or inline in the JSON body. Ignored when
+		// LANTERN_COMPLEXITY_ROUTING is off.
+		TurnHint string `json:"turnHint,omitempty"`
 		// NoTools, when true, disables tool-catalog attachment for this
 		// turn. The personal-assistant bridges (WhatsApp + iMessage) set
 		// this to true because (a) auto-reply doesn't need GitHub/Linear/
@@ -182,6 +187,11 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	if body.Content == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "content is required"})
 		return
+	}
+	// X-Lantern-Turn-Hint header overrides the JSON field (so bridges that
+	// don't control the JSON body can still pass a hint).
+	if hdr := r.Header.Get("X-Lantern-Turn-Hint"); hdr != "" && body.TurnHint == "" {
+		body.TurnHint = hdr
 	}
 
 	// Verify session belongs to tenant and is active.
@@ -248,7 +258,7 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	// Kick off LLM response in background. The systemHint (if any) is passed
 	// through so it can override the agent's stored system prompt for this
 	// turn only — see processMessage.
-	go h.processMessage(sessionID, tenantID, agentName, messages, body.SystemHint, body.NoTools)
+	go h.processMessage(sessionID, tenantID, agentName, messages, body.SystemHint, body.TurnHint, body.NoTools)
 }
 
 // processMessage calls the LLM with the full message history and appends the
@@ -257,7 +267,10 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 // systemHint, when non-empty, takes precedence over the agent's stored
 // system_prompt for this turn only. The bridge uses it to ship a fresh
 // "natural texting" persona per inbound — see whatsapp-bridge/src/natural.ts.
-func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage, systemHint string, noTools bool) {
+//
+// turnHint is the optional G1 complexity hint ("trivial"|"hard"|""). When
+// LANTERN_COMPLEXITY_ROUTING=1 this overrides the server-side classifier.
+func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage, systemHint, turnHint string, noTools bool) {
 	ctx := context.Background()
 	ctx = middleware.InjectTenantID(ctx, tenantID)
 
@@ -305,7 +318,12 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// Resolve model and API key. Consult the tenant's configured providers
 	// (dashboard Settings) so auto-routing reflects what the user actually
 	// set up. Fall back to the alternate provider if the first key is missing.
-	provider, model := h.llmProxy.resolveModelForTenant(ctx, tenantID, "auto")
+	//
+	// G1: when LANTERN_COMPLEXITY_ROUTING=1, complexity-tier routing picks
+	// the cheapest model that can handle this turn rather than always using
+	// the balanced default. noTools is forwarded so the classifier knows
+	// whether tool-use is in play (multi-step signal).
+	provider, model := h.llmProxy.resolveModelForTenantAuto(ctx, tenantID, promptMessages, !noTools, turnHint)
 	apiKey, err := h.llmProxy.resolveProviderKey(ctx, tenantID, provider)
 	if err != nil {
 		altProvider := "anthropic"

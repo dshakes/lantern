@@ -154,6 +154,119 @@ function mergeContactRule(
   return null;
 }
 
+// Managed "## Style lessons" section. The dislike consolidator writes
+// DISTILLED, non-PII style rules here (e.g. "Avoid exclamation marks").
+// Owner-only; the raw 👎 history stays in the 0600 JSONL and never lands
+// in the profile. Each lesson is tagged with a stable <!--id:...--> so
+// re-running consolidation updates rather than duplicates a rule.
+const STYLE_LESSONS_HEADER = "## Style lessons (managed)";
+const STYLE_LESSONS_NOTE =
+  "<!-- Bot writes distilled style rules here, learned from the owner's 👎 " +
+  "history. Non-PII only. Safe to edit/delete a bullet; the bot dedups by id. -->";
+
+export interface WriteStyleLessonsResult {
+  added: string[];
+  updated: string[];
+  unchanged: number;
+}
+
+/**
+ * Idempotently write distilled style lessons into the managed
+ * "## Style lessons" section of the owner profile. Each lesson is keyed
+ * by a stable id (rendered as a trailing HTML comment) so re-running the
+ * consolidator updates the rule text in place rather than appending dupes.
+ *
+ * Owner-only by construction: the only caller is the owner-self-chat
+ * consolidation path. Returns what changed; invalidates the profile cache
+ * on a successful write.
+ */
+export async function writeStyleLessons(
+  lessons: Array<{ id: string; text: string }>,
+  opts: { profilePath: string; invalidate?: () => void; logger?: Logger },
+): Promise<WriteStyleLessonsResult> {
+  const log = opts.logger?.child({ component: "owner-profile-style-lessons" });
+  const empty: WriteStyleLessonsResult = { added: [], updated: [], unchanged: 0 };
+  const clean = lessons
+    .map((l) => ({ id: String(l.id || "").trim(), text: String(l.text || "").trim() }))
+    .filter((l) => l.id && l.text && l.text.length <= 200);
+  if (clean.length === 0) return empty;
+
+  let existing = "";
+  if (existsSync(opts.profilePath)) {
+    try {
+      existing = await readFile(opts.profilePath, "utf8");
+    } catch (err) {
+      log?.warn({ err, path: opts.profilePath }, "couldn't read profile");
+      return empty;
+    }
+  }
+
+  const lines = existing.split(/\r?\n/);
+  const result: WriteStyleLessonsResult = { added: [], updated: [], unchanged: 0 };
+  const body = sectionBody(lines, STYLE_LESSONS_HEADER);
+
+  // Index existing managed lesson lines by their embedded id.
+  const idRe = /<!--\s*id:([a-z0-9-]+)\s*-->/i;
+  const lineFor = (l: { id: string; text: string }) => `- ${l.text} <!-- id:${l.id} -->`;
+
+  if (!body) {
+    // Create the section fresh with all lessons.
+    for (const l of clean) result.added.push(l.id);
+    const newBlock = clean.map(lineFor).join("\n");
+    const trailer = existing.endsWith("\n") || existing === "" ? "" : "\n";
+    const updated =
+      `${existing.replace(/\s*$/, "")}${existing.trim() ? "\n" : ""}\n${STYLE_LESSONS_HEADER}\n\n${STYLE_LESSONS_NOTE}\n\n${newBlock}\n`;
+    return finalizeStyleWrite(opts, updated, existing, result, log, trailer);
+  }
+
+  // Section exists: upsert each lesson by id.
+  const existingIdx = new Map<string, number>();
+  for (let i = body.headerIdx + 1; i < body.end; i++) {
+    const m = lines[i].match(idRe);
+    if (m) existingIdx.set(m[1].toLowerCase(), i);
+  }
+  for (const l of clean) {
+    const at = existingIdx.get(l.id.toLowerCase());
+    const newLine = lineFor(l);
+    if (at === undefined) {
+      // Append before the section end (after last non-blank line).
+      let insertAt = body.end;
+      while (insertAt > body.headerIdx + 1 && lines[insertAt - 1].trim() === "") insertAt--;
+      lines.splice(insertAt, 0, newLine);
+      // Shift any cached indices past the insert point.
+      for (const [k, v] of existingIdx) if (v >= insertAt) existingIdx.set(k, v + 1);
+      result.added.push(l.id);
+    } else if (lines[at].trim() !== newLine.trim()) {
+      lines[at] = newLine;
+      result.updated.push(l.id);
+    } else {
+      result.unchanged++;
+    }
+  }
+  if (result.added.length === 0 && result.updated.length === 0) return result;
+  return finalizeStyleWrite(opts, lines.join("\n"), existing, result, log, "");
+}
+
+async function finalizeStyleWrite(
+  opts: { profilePath: string; invalidate?: () => void },
+  updated: string,
+  existing: string,
+  result: WriteStyleLessonsResult,
+  log: Logger | undefined,
+  _trailer: string,
+): Promise<WriteStyleLessonsResult> {
+  if (updated === existing) return result;
+  try {
+    await writeFile(opts.profilePath, updated, "utf8");
+    log?.info({ added: result.added, updated: result.updated }, "style lessons written");
+    opts.invalidate?.();
+  } catch (err) {
+    log?.warn({ err, path: opts.profilePath }, "couldn't write style lessons");
+    return { added: [], updated: [], unchanged: result.unchanged };
+  }
+  return result;
+}
+
 export interface AutoFact {
   // One terse line, sentence-cased. Examples:
   //   "Raju lives in Poolville, MD"
