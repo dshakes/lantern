@@ -31,6 +31,14 @@ export interface PaceContext {
   // Are we in an active back-and-forth? Heuristic: 2+ exchanges in
   // the last 5 minutes. Active conversations get tighter pacing.
   isActiveBurst: boolean;
+  // OPTIONAL. Local hour-of-day (0-23) at the OWNER's location. When
+  // provided, a gentle time-of-day multiplier nudges the hold: people
+  // reply a touch quicker in peak-active midday hours and slower
+  // (distracted) in the wind-down evening. Omit → no time adjustment.
+  // Note: quiet hours (01:00-06:00) are handled upstream by the
+  // overnight-replay queue; this multiplier only shapes non-quiet hours
+  // (and applies a higher floor to the 00:00-01:00 / 06:00-10:00 edges).
+  localHour?: number;
 }
 
 export interface PaceVerdict {
@@ -53,6 +61,47 @@ const CEILING_MS = 25_000;
 const BURST_FAST_MS = 1_500;
 const BURST_FAST_CEIL_MS = 5_000;
 
+// Time-of-day multipliers. Gentle + bounded — the goal is a believable
+// nudge, not a dramatic swing. Quiet hours (01:00-06:00) never reach
+// here (overnight-replay queue owns them); the curve covers the rest of
+// the day and gives the post-wake / pre-quiet edge hours a higher floor.
+const TOD_PEAK_MULT = 0.7; // ~10:00-16:00 — phone in hand, quicker replies
+const TOD_EVENING_MULT = 1.5; // ~21:00-00:00 — winding down, distracted
+const TOD_EDGE_FLOOR_MS = 1_200; // overnight-edge floor (00:00-01:00 / 06:00-10:00)
+
+/**
+ * Gentle time-of-day multiplier for the reply hold, keyed on the owner's
+ * LOCAL hour (0-23). Bounded to [0.7, 1.5]. Returns 1.0 when the hour is
+ * unknown/out of range so callers that don't pass an hour are unaffected.
+ *
+ * Curve:
+ *   10:00-16:00  → 0.7  (peak-active: a bit quicker)
+ *   16:00-21:00  → ramps 0.7 → 1.5 across the afternoon→evening
+ *   21:00-24:00  → 1.5  (wind-down: slower, distracted)
+ *   00:00-01:00  → 1.5  (late night tail; quiet starts at 01:00)
+ *   06:00-10:00  → ramps 1.5 → 0.7 (waking up)
+ */
+export function timeOfDayMultiplier(localHour?: number): number {
+  if (localHour == null || !Number.isFinite(localHour)) return 1.0;
+  const h = ((Math.floor(localHour) % 24) + 24) % 24;
+  // Peak-active midday.
+  if (h >= 10 && h < 16) return TOD_PEAK_MULT;
+  // Wind-down evening through the late-night tail before quiet hours.
+  if (h >= 21 || h < 1) return TOD_EVENING_MULT;
+  // Afternoon ramp 16→21: 0.7 climbing to 1.5.
+  if (h >= 16 && h < 21) {
+    const t = (h - 16) / (21 - 16);
+    return TOD_PEAK_MULT + t * (TOD_EVENING_MULT - TOD_PEAK_MULT);
+  }
+  // Morning ramp 6→10: 1.5 easing down to 0.7 as the day starts.
+  if (h >= 6 && h < 10) {
+    const t = (h - 6) / (10 - 6);
+    return TOD_EVENING_MULT - t * (TOD_EVENING_MULT - TOD_PEAK_MULT);
+  }
+  // 01:00-06:00 — quiet hours; shouldn't reach here, neutral if it does.
+  return 1.0;
+}
+
 /**
  * Compute the recommended hold duration for the next outbound reply.
  *
@@ -67,12 +116,19 @@ const BURST_FAST_CEIL_MS = 5_000;
  *   4. Clamp to [FLOOR, CEILING].
  */
 export function computeHold(ctx: PaceContext): PaceVerdict {
+  const todMult = timeOfDayMultiplier(ctx.localHour);
+  // Higher floor at the overnight edges (waking up / late-night tail) so a
+  // pre-quiet or just-woken reply doesn't land implausibly fast.
+  const h = ctx.localHour == null ? null : ((Math.floor(ctx.localHour) % 24) + 24) % 24;
+  const edgeFloor =
+    h != null && ((h >= 0 && h < 1) || (h >= 6 && h < 10)) ? TOD_EDGE_FLOOR_MS : FLOOR_MS;
+
   const samples = ctx.ownerLatencies.filter((n) => Number.isFinite(n) && n > 0);
   if (samples.length === 0) {
     // No data — moderate default with jitter so we don't all fire
     // at exactly the same delay.
-    const base = 1_800;
-    return jitter(base, "no-prior-latency-samples");
+    const base = 1_800 * todMult;
+    return jitter(base, "no-prior-latency-samples", edgeFloor);
   }
 
   const sorted = [...samples].sort((a, b) => a - b);
@@ -92,13 +148,16 @@ export function computeHold(ctx: PaceContext): PaceVerdict {
     reason = `normal (median ${median}ms × 0.8)`;
   }
 
-  return jitter(base, reason);
+  base *= todMult;
+  if (todMult !== 1.0) reason += `, tod ×${todMult.toFixed(2)}`;
+
+  return jitter(base, reason, edgeFloor);
 }
 
-function jitter(baseMs: number, reason: string): PaceVerdict {
+function jitter(baseMs: number, reason: string, floorMs = FLOOR_MS): PaceVerdict {
   const jitterPct = 0.4 * Math.random() - 0.2; // -20% to +20%
   const held = Math.round(baseMs * (1 + jitterPct));
-  const clamped = Math.max(FLOOR_MS, Math.min(CEILING_MS, held));
+  const clamped = Math.max(floorMs, Math.min(CEILING_MS, held));
   return { holdMs: clamped, reason: `${reason}, jitter ${Math.round(jitterPct * 100)}%` };
 }
 
@@ -122,4 +181,62 @@ export function latenciesFromTranscript(
     }
   }
   return out;
+}
+
+// Minimum number of REAL observed samples required before we trust the
+// median over the moderate default. With 1-2 samples the median is noise.
+export const MIN_REAL_SAMPLES = 3;
+
+/**
+ * A REAL observed reply-latency sample: the contact's inbound landed at
+ * `inboundTs`, the owner's reply went out at `replyTs` (epoch ms). Unlike
+ * the fabricated uniform-60s timestamps the bridges used to synthesize,
+ * these come straight from the chat store, so the derived median actually
+ * reflects how fast the owner answers THIS contact.
+ */
+export interface LatencySample {
+  inboundTs: number;
+  replyTs: number;
+}
+
+/**
+ * Derive owner reply latencies (ms) from REAL timestamped (inbound,reply)
+ * samples. Mirrors `latenciesFromTranscript`'s sanitation: drop
+ * non-positive gaps and overnight pauses (> 4h) that would skew the
+ * median, keep the most recent `maxSamples`.
+ */
+export function latenciesFromSamples(
+  samples: LatencySample[],
+  maxSamples = 15,
+): number[] {
+  const out: number[] = [];
+  for (let i = samples.length - 1; i >= 0 && out.length < maxSamples; i--) {
+    const { inboundTs, replyTs } = samples[i];
+    if (!Number.isFinite(inboundTs) || !Number.isFinite(replyTs)) continue;
+    const gap = replyTs - inboundTs;
+    if (gap > 0 && gap < 4 * 60 * 60_000) out.push(gap);
+  }
+  return out;
+}
+
+/**
+ * Compute the reply hold directly from REAL observed latency samples.
+ * Preferred entry point for the bridges now that they can supply genuine
+ * (inboundTs, replyTs) pairs from the chat store.
+ *
+ * When fewer than `MIN_REAL_SAMPLES` usable real samples exist, the
+ * median is noise — so we fall back to the moderate no-data default
+ * (still time-of-day aware and jittered) rather than pacing off garbage.
+ */
+export function computeHoldFromSamples(
+  ctx: Omit<PaceContext, "ownerLatencies"> & { samples: LatencySample[] },
+): PaceVerdict {
+  const { samples, ...rest } = ctx;
+  const latencies = latenciesFromSamples(samples);
+  if (latencies.length < MIN_REAL_SAMPLES) {
+    // Not enough real signal — defer to the safe default path (which
+    // ignores empty latencies and uses the moderate base).
+    return computeHold({ ...rest, ownerLatencies: [] });
+  }
+  return computeHold({ ...rest, ownerLatencies: latencies });
 }

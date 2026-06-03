@@ -1227,6 +1227,14 @@ function splitIntoMessages(text: string, style: StyleProfile): string[] {
 // per word for short ones, longer for technical words. We jitter ±25%
 // so a sequence of replies doesn't feel mechanical, and stretch a bit
 // when the message has emoji (people slow down to pick them).
+// Typing floors. The default (~1.2s) reads natural for a sentence, but
+// over-types one-word replies — a 1.2s "typing…" for "ok" looks robotic.
+// Replies under SHORT_REPLY_WORDS get a lower floor so a one-word answer
+// flashes by the way a real one does.
+const TYPING_FLOOR_MS = 1_200;
+const SHORT_TYPING_FLOOR_MS = 600;
+const SHORT_REPLY_WORDS = 5;
+
 function typingDurationMs(text: string): number {
   const words = Math.max(1, text.trim().split(/\s+/).length);
   // ~35wpm baseline = ~410ms/word, with a per-character floor for
@@ -1235,8 +1243,9 @@ function typingDurationMs(text: string): number {
   const jitter = (Math.random() - 0.5) * (base * 0.4);
   // Emoji slow people down (picking from picker, typing the codepoint).
   const emojiBoost = /\p{Extended_Pictographic}/u.test(text) ? 600 : 0;
+  const floor = words < SHORT_REPLY_WORDS ? SHORT_TYPING_FLOOR_MS : TYPING_FLOOR_MS;
   return Math.max(
-    1200,
+    floor,
     Math.min(10_000, Math.round(base + jitter + emojiBoost)),
   );
 }
@@ -1252,11 +1261,35 @@ function readDelayMs(inbound: string): number {
   return Math.max(900, Math.min(8000, Math.round(base + jitter)));
 }
 
+// How recent an inbound counts as "live" — inside this window the owner
+// is plainly at the keyboard, so an "I was away" lag would be incoherent.
+const ACTIVE_INBOUND_WINDOW_MS = 60_000;
+
+// Context that lets awayLagMs know whether the conversation is live.
+export interface PaceHint {
+  // True when we're in a fast back-and-forth (2+ recent exchanges).
+  isActiveBurst?: boolean;
+  // Milliseconds since the contact's most recent inbound. < 60s = live.
+  msSinceLastInbound?: number;
+}
+
 // Occasional "looking at phone later" lag — fires ~30% of the time
 // before the read+type kick-in. Simulates the realistic case where
 // you saw the notification, did something else, then came back. Cap
 // kept low (3-8s) so live conversations don't lose their thread.
-function awayLagMs(): number {
+//
+// Suppressed entirely mid-active-burst: when the contact just messaged
+// (< 60s ago) or we're in an active back-and-forth, the owner is
+// obviously present, so a 3-8s "away" delay would read as machine
+// stalling rather than human.
+function awayLagMs(hint?: PaceHint): number {
+  if (hint) {
+    const live =
+      hint.isActiveBurst === true ||
+      (hint.msSinceLastInbound != null &&
+        hint.msSinceLastInbound < ACTIVE_INBOUND_WINDOW_MS);
+    if (live) return 0;
+  }
   if (Math.random() > 0.3) return 0;
   return 3000 + Math.round(Math.random() * 5000);
 }
@@ -1275,7 +1308,15 @@ function gapMs(): number {
  */
 export function naturalize(
   draft: string,
-  opts: { inbound: string; style: StyleProfile },
+  opts: {
+    inbound: string;
+    style: StyleProfile;
+    // OPTIONAL conversation-liveness hint. When the inbound is fresh
+    // (< 60s) or we're mid-burst, the "I was away" lag is suppressed so
+    // the reply doesn't stall an obviously-live thread. Omit → legacy
+    // behaviour (30% chance of away lag).
+    pace?: PaceHint;
+  },
 ): NaturalMessage[] {
   const stripped = stripAssistantisms(draft);
   if (!stripped) return [];
@@ -1285,7 +1326,8 @@ export function naturalize(
   // Roll once per reply: 30% chance of an "I was busy" lag before the
   // first message. Compounds with readDelayMs so the actual first
   // delay is realistic-bursty: usually 1.5-6s, occasionally 6-15s.
-  const away = awayLagMs();
+  // Suppressed entirely when the thread is live (see awayLagMs).
+  const away = awayLagMs(opts.pace);
   return pieces.map((text, idx) => ({
     text,
     delayBeforeMs: idx === 0 ? readDelayMs(opts.inbound) + away : gapMs(),
