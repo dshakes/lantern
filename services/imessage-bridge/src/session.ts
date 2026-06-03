@@ -129,8 +129,10 @@ import {
   type KeyDateSignal,
   type AwaitingReplySignal,
   type UpcomingEventSignal,
+  type DormantContactSignal,
 } from "@lantern/bridge-core/anticipation";
 import { runDislikeConsolidation, formatStyleLessonsBlock, type StyleLesson } from "@lantern/bridge-core/dislike-consolidator";
+import { detectEmotionalRegister } from "@lantern/bridge-core/emotional-register";
 import type { ContactSignals } from "@lantern/bridge-core/contact-priority";
 
 export type IMessageConnectionState =
@@ -796,6 +798,7 @@ export class IMessageSession {
     keyDates: KeyDateSignal[];
     awaitingReply: AwaitingReplySignal[];
     upcomingEvents: UpcomingEventSignal[];
+    dormantContacts: DormantContactSignal[];
   }> {
     // Key dates from the owner profile facts.
     let keyDates: KeyDateSignal[] = [];
@@ -821,7 +824,54 @@ export class IMessageSession {
     // reply since. Derived from chat.db per-handle, with priority signals.
     const awaitingReply = this.gatherAwaitingReply(now);
 
-    return { keyDates, awaitingReply, upcomingEvents };
+    // High-priority contacts whose THREAD has gone cold (~60+ days, either
+    // direction). Owner-confirm-only thread-warming nudge; the engine gates
+    // on the contact's priority tier so a quiet acquaintance never surfaces.
+    const dormantContacts = this.gatherDormantContacts(now);
+
+    return { keyDates, awaitingReply, upcomingEvents, dormantContacts };
+  }
+
+  // Best-effort scan for high-priority contacts the owner hasn't exchanged
+  // ANY message with in a long while (~60+ days). Distinct from awaiting-reply:
+  // there's no pending inbound — the thread has simply gone cold and the nudge
+  // suggests the owner reach out first. Last-exchange ts is the most recent
+  // message in EITHER direction from chat.db. The engine ranks + gates on the
+  // attached contactSignals (relationship / VIP), so only genuinely important
+  // dormant threads ever surface; this method is intentionally permissive.
+  private gatherDormantContacts(now: number): DormantContactSignal[] {
+    const out: DormantContactSignal[] = [];
+    const DORMANT_MS = 60 * 24 * 60 * 60 * 1000;
+    try {
+      for (const [handle, chatRowid] of this.lastChatRowidForHandle) {
+        if (!handle || handle.includes("group:")) continue;
+        // Owner self-chat is never "dormant".
+        if (this.ownHandleGuess() && this.normalizeHandle(handle) === this.normalizeHandle(this.ownHandleGuess())) continue;
+        // Only surface contacts the owner has a relationship with — a cold
+        // acquaintance going quiet is not noteworthy. The engine re-checks
+        // the priority tier; this is a cheap pre-filter.
+        const rel = this.ownerProfileStore.relationshipFor(handle, this.contactNames.get(handle));
+        if (!rel) continue;
+        let rows: Array<{ ts: number; fromMe: boolean }>;
+        try {
+          rows = this.db.recentTimestamped(chatRowid, 1);
+        } catch { continue; }
+        if (rows.length === 0) continue;
+        const lastExchangeAt = rows[rows.length - 1].ts;
+        // Prefer the live lastInboundTs when it's more recent than chat.db's
+        // last row (this session may have seen newer traffic than the snapshot).
+        const liveInbound = this.lastInboundTs.get(handle) ?? 0;
+        const lastAt = Math.max(lastExchangeAt, liveInbound);
+        if (now - lastAt < DORMANT_MS) continue;
+        out.push({
+          handle,
+          displayName: this.contactNames.get(handle),
+          lastExchangeAt: lastAt,
+          contactSignals: this.contactSignalsFor(handle, now),
+        });
+      }
+    } catch { /* empty */ }
+    return out;
   }
 
   // Best-effort scan of recently-seen 1:1 handles for ones whose last
@@ -1294,7 +1344,16 @@ export class IMessageSession {
     try {
       const { nameForHandle } = await import("@lantern/bridge-core/contact-resolver");
       const name = await nameForHandle(handle, { logger: this.logger });
-      if (name) this.contactNames.set(handle, name);
+      if (name) {
+        this.contactNames.set(handle, name);
+        return;
+      }
+      // Alias re-identification: the AddressBook didn't resolve this number,
+      // but the owner profile may declare it as an alias / second number of a
+      // known person ("also: 512…" in the Relationships section). Map it to the
+      // PRIMARY contact's name so their history + relationship aren't cold.
+      const canonical = this.ownerProfileStore.canonicalNameFor(handle);
+      if (canonical) this.contactNames.set(handle, canonical);
     } catch (err) {
       this.logger.debug({ err: (err as Error)?.message }, "hydrateContactName failed");
     }
@@ -2491,6 +2550,12 @@ export class IMessageSession {
     const style = inferStyle(history);
     const ownerSamples = isGroup ? [] : this.ownerSentHistory.get(row.handle) ?? [];
     const ownerName = process.env.LANTERN_OWNER_NAME || OWNER_NAME;
+    // Resolve the sender's real name from the macOS AddressBook (and, for an
+    // unknown alias / second number, the owner profile's canonical name) BEFORE
+    // the relationship + address-rule lookups below, so an alias number still
+    // resolves to the primary contact's relationship instead of cold-starting.
+    // Best-effort + cached; never blocks on failure.
+    await this.hydrateContactName(row.handle);
     // Owner profile + relationship — the "sounds like me" context.
     const ownerProfile = this.ownerProfileStore.prose();
     const relationship = isGroup
@@ -2503,6 +2568,17 @@ export class IMessageSession {
     // dialect. Owner nativity biases regional flavor (e.g. "Karimnagar,
     // Telangana" → Telangana Telugu rather than coastal Andhra Telugu).
     const langHint = detectLanguageHints(text);
+    // Emotional register — read the contact's affect (distress / frustration /
+    // excitement) so the persona modulates tone. Pure + deterministic (lexicon
+    // + punctuation), no LLM on the hot path. Contact-facing 1:1 only; groups
+    // stay neutral. Logged for offline tuning.
+    const emotionalRegister = !isGroup ? detectEmotionalRegister(text) : undefined;
+    if (emotionalRegister && emotionalRegister.register !== "neutral") {
+      this.logger.info(
+        { handle: row.handle, register: emotionalRegister.register, confidence: emotionalRegister.confidence, signals: emotionalRegister.signals },
+        "emotional-register engaged",
+      );
+    }
     const nativity = this.ownerProfileStore.nativity();
     const languageModality = languageModalityHint(langHint, { nativity });
     if (languageModality) {
@@ -2511,11 +2587,7 @@ export class IMessageSession {
         "language-modality engaged",
       );
     }
-    // Resolve the sender's real name from the macOS AddressBook BEFORE building
-    // the reply, so the model addresses them correctly (e.g. "Bhramari") instead
-    // of hallucinating a name. `contactNames` was previously never populated —
-    // this is the fix. Best-effort + cached; never blocks on failure.
-    await this.hydrateContactName(row.handle);
+    // (sender name already hydrated above, before the relationship lookup.)
     // World-class authenticity blocks: per-contact style fingerprint,
     // dislike memory, live presence, episodic memory, cross-contact
     // context. Each best-effort; empty block when data unavailable
@@ -2606,6 +2678,9 @@ export class IMessageSession {
       relationship,
       recentTranscript,
       languageModality,
+      // Tone modulation — a distressed/frustrated/excited inbound shifts the
+      // persona's register (warmer + shorter, acknowledge-first, match-energy).
+      emotionalRegister: emotionalRegister?.register,
       contactStyleBlock,
       dislikeBlock,
       // Global style lessons mined from the owner's 👎 history (learning

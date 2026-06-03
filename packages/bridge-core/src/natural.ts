@@ -25,6 +25,11 @@
 // text and the draft the LLM produced. The LLM still does the heavy
 // lifting via the system prompt in `agentPersonaPrompt`.
 
+import {
+  emotionalRegisterAddendum,
+  type EmotionalRegister,
+} from "./emotional-register.js";
+
 // Stop-words that, when they're the *entire* inbound message, suggest
 // a reply is unnecessary. We respond either with silence or with a
 // matching reaction. Bot-replies to these are the cringe-iest pattern.
@@ -375,6 +380,15 @@ export interface PersonaOptions {
   // generic "early afternoon". Empty string disables concrete offers
   // even when schedulingEnabled (falls back to reframe-only).
   freeSlotsBlock?: string;
+  // Detected emotional register of the INBOUND message (from
+  // emotional-register.ts → detectEmotionalRegister). When non-neutral,
+  // the persona appends a compact tone addendum: distress → warmer,
+  // shorter, no scheduling/tasks; frustration → acknowledge first;
+  // excitement → match energy. It is a HINT layered on top — it never
+  // overrides the safety / identity / voice rules above. Leave undefined
+  // (or "neutral") for no modulation. The bridge sets this after running
+  // the deterministic detector on the inbound.
+  emotionalRegister?: EmotionalRegister;
 }
 
 // Telugu kinship terms → English register cues. The relationship string
@@ -733,6 +747,20 @@ export function agentPersonaPrompt(
   if (opts.schedulingEnabled) {
     lines.push(``);
     lines.push(schedulingBlock(ownerName, opts.freeSlotsBlock?.trim() || ""));
+  }
+
+  // Emotional-register modulation — a compact tone addendum keyed off the
+  // detected affect of the inbound (distress / frustration / excitement).
+  // Placed AFTER scheduling so that a distress read can override the
+  // scheduling invitation for this turn ("NO scheduling/tasks"), and near
+  // the end so it's fresh in context. It's a HINT only — it never restates
+  // or relaxes the hard safety/identity rules above.
+  const registerAddendum = emotionalRegisterAddendum(
+    opts.emotionalRegister ?? "neutral",
+  );
+  if (registerAddendum) {
+    lines.push(``);
+    lines.push(registerAddendum);
   }
 
   // Language modality goes LAST (closest to the reply instruction) so
