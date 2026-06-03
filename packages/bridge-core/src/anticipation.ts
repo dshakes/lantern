@@ -29,7 +29,11 @@
 // contact's, and a closer relationship's birthday outranks an
 // acquaintance's.
 
-import { contactPriority, type ContactSignals } from "./contact-priority.js";
+import {
+  contactPriority,
+  type ContactSignals,
+  type PriorityTier,
+} from "./contact-priority.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -40,7 +44,8 @@ export type NudgeKind =
   | "relationship-date" // upcoming birthday / anniversary
   | "overdue-reply" // contact awaiting a reply for > N days
   | "pre-meeting" // a calendar event starting soon
-  | "commitment"; // owner said they'd do something, not yet done
+  | "commitment" // owner said they'd do something, not yet done
+  | "dormant-vip"; // a high-priority contact gone quiet for a long time
 
 /** A single ranked, dismissable proactive nudge. */
 export interface ProactiveNudge {
@@ -123,6 +128,25 @@ export interface OpenCommitmentSignal {
   contactSignals?: ContactSignals;
 }
 
+/** A high-priority ("VIP") contact the owner has had NO exchange with in
+ *  a long while. Distinct from `awaitingReply`: there's no pending inbound
+ *  to answer — the THREAD has simply gone cold. The nudge suggests the
+ *  owner reach out first. OWNER-CONFIRM-ONLY: the bridge must never
+ *  auto-send anything to the contact off this signal. */
+export interface DormantContactSignal {
+  /** Stable contact handle (phone / jid / email) — used in dedupeKey. */
+  handle: string;
+  /** Display name for phrasing; falls back to handle. */
+  displayName?: string;
+  /** Epoch ms of the LAST exchange (in either direction) with this
+   *  contact. Older = more dormant. */
+  lastExchangeAt: number;
+  /** Priority signals — REQUIRED in spirit: only HIGH-priority contacts
+   *  should surface a dormant nudge (a cold acquaintance going quiet is
+   *  not noteworthy). The engine gates on the computed priority tier. */
+  contactSignals?: ContactSignals;
+}
+
 /** Everything the engine needs. The bridge gathers these (I/O lives
  *  there); the engine just ranks. All fields optional so a caller can
  *  pass only the signals it has. */
@@ -137,6 +161,8 @@ export interface ProactiveInput {
   upcomingEvents?: UpcomingEventSignal[];
   /** Open, unfulfilled commitments. */
   commitments?: OpenCommitmentSignal[];
+  /** High-priority contacts with no recent exchange — thread-warming. */
+  dormantContacts?: DormantContactSignal[];
   /** Tuning knobs (all have sane defaults). */
   config?: ProactiveConfig;
 }
@@ -153,6 +179,13 @@ export interface ProactiveConfig {
   /** A commitment nudges after it's been open this many hours (default 4).
    *  Commitments without `madeAt` always qualify. */
   commitmentAgeHours?: number;
+  /** A high-priority contact is "dormant" after this many days with no
+   *  exchange (default 60 — ~2 months). */
+  dormantVipDays?: number;
+  /** Minimum contact-priority tier for a dormant nudge to fire. Only
+   *  "high"-tier contacts surface by default — a cold acquaintance going
+   *  quiet isn't worth a nudge. */
+  dormantVipMinTier?: PriorityTier;
   /** Cap on returned nudges (default 8) — keeps the self-chat digest
    *  short. Lowest-priority overflow is dropped. */
   maxNudges?: number;
@@ -163,6 +196,8 @@ const DEFAULTS: Required<ProactiveConfig> = {
   overdueReplyDays: 2,
   preMeetingWindowMin: 15,
   commitmentAgeHours: 4,
+  dormantVipDays: 60,
+  dormantVipMinTier: "high",
   maxNudges: 8,
 };
 
@@ -175,7 +210,13 @@ const BASE = {
   "relationship-date": 70,
   "overdue-reply": 45,
   commitment: 40,
+  // Below an overdue reply: a dormant thread is gentle background
+  // maintenance, never urgent. Contact priority + how-long-dormant lift it.
+  "dormant-vip": 30,
 } as const satisfies Record<NudgeKind, number>;
+
+// Tier ordering for the dormant-vip minimum-tier gate.
+const TIER_RANK: Record<PriorityTier, number> = { low: 0, normal: 1, high: 2 };
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
@@ -223,6 +264,13 @@ function nextAnnualMidnight(now: number, mo: number, d: number): number {
  *  per day, not once per call. */
 function dayBucket(now: number): string {
   return new Date(now).toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+/** Month bucket (UTC YYYY-MM) for dedupe keys that should fire at most
+ *  once a month, not daily — used for dormant-thread warming so a cold
+ *  thread doesn't nag every morning. */
+function monthBucket(now: number): string {
+  return new Date(now).toISOString().slice(0, 7); // YYYY-MM
 }
 
 /** Priority contribution of a contact (0..1 fraction of contactPriority). */
@@ -335,6 +383,37 @@ export function computeProactiveNudges(input: ProactiveInput): ProactiveNudge[] 
     out.push(nudge);
   }
 
+  // 5) Dormant VIPs — a high-priority contact gone quiet for a long time.
+  //    OWNER-CONFIRM-ONLY: this only SUGGESTS reaching out; the bridge
+  //    never auto-sends to the contact off this nudge.
+  const dormantMs = cfg.dormantVipDays * DAY_MS;
+  const minTierRank = TIER_RANK[cfg.dormantVipMinTier];
+  for (const dc of input.dormantContacts ?? []) {
+    const ageMs = now - dc.lastExchangeAt;
+    if (ageMs < dormantMs) continue;
+    // Gate on priority tier — only noteworthy people warrant a re-ping.
+    const cp = contactPriority(dc.handle, { ...dc.contactSignals, now });
+    if (TIER_RANK[cp.tier] < minTierRank) continue;
+    const days = Math.floor(ageMs / DAY_MS);
+    const cw = cp.score / 100;
+    // The longer dormant, the more it nags — but contact priority still
+    // dominates so a closer person surfaces before a distant one at the
+    // same dormancy. Capped so a years-dormant thread can't outrank an
+    // overdue reply.
+    const dormancyBoost = clamp((days - cfg.dormantVipDays) / 30, 0, 6);
+    const priority = clamp(BASE["dormant-vip"] + cw * 25 + dormancyBoost, 0, 100);
+    const nudge: ProactiveNudge = {
+      kind: "dormant-vip",
+      text: "",
+      // Re-surfaces at most once per (rounded) month so the owner isn't
+      // nagged daily about the same cold thread.
+      priority,
+      dedupeKey: `dormant:${dc.handle}:${monthBucket(now)}`,
+    };
+    nudge.text = phraseDormantVip(dc, days);
+    out.push(nudge);
+  }
+
   // Rank: priority desc, then soonest dueAt, then dedupeKey for total
   // determinism on ties.
   out.sort((a, b) => {
@@ -380,6 +459,23 @@ function phrasePreMeeting(ev: UpcomingEventSignal, mins: number): string {
   const title = ev.title.trim();
   const withWho = ev.withContact ? ` with ${ev.withContact.trim()}` : "";
   return `${title}${withWho} starts ${when} — pulling up the thread`;
+}
+
+function phraseDormantVip(dc: DormantContactSignal, days: number): string {
+  const who = (dc.displayName || dc.handle).trim();
+  // Humanize the dormancy span: months read more naturally than "73 days".
+  let span: string;
+  if (days >= 365) {
+    const yrs = Math.floor(days / 365);
+    span = yrs === 1 ? "over a year" : `over ${yrs} years`;
+  } else if (days >= 60) {
+    const months = Math.round(days / 30);
+    span = `${months} months`;
+  } else {
+    span = `${days} days`;
+  }
+  // "it's been 2 months since you talked to Madhu — want me to send a hello?"
+  return `it's been ${span} since you talked to ${who} — want me to send a hello?`;
 }
 
 function phraseCommitment(c: OpenCommitmentSignal): string {

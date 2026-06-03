@@ -58,6 +58,7 @@ import { computeHoldFromSamples, type LatencySample } from "@lantern/bridge-core
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
+import { detectEmotionalRegister } from "@lantern/bridge-core/emotional-register";
 import {
   detectLifeThreat,
   detectPromptInjection,
@@ -79,6 +80,7 @@ import {
   type AwaitingReplySignal,
   type KeyDateSignal,
   type UpcomingEventSignal,
+  type DormantContactSignal,
 } from "@lantern/bridge-core/anticipation";
 import {
   runDislikeConsolidation,
@@ -983,6 +985,18 @@ export class WhatsAppSession {
   // emitting a marker.
   private pendingOffers: Map<string, PendingOffer> = new Map();
   private static readonly OFFER_TTL_MS = 10 * 60_000;
+  // B5 — inline draft editing. When a high-stakes / LOW-confidence reply is
+  // drafted to the owner's self-chat for approval, we arm a pending-draft
+  // entry keyed by the owner-control thread (ownJid). If the owner then types
+  // FREE TEXT (not a command, not yes/no) within DRAFT_EDIT_TTL_MS, the bridge
+  // sends the OWNER'S text to the original contact instead of the bot's draft.
+  // One entry per owner thread — the latest draft wins, matching how the owner
+  // reads the most recent heads-up. Cleared on send/reject/expiry.
+  private pendingDraftEdits: Map<
+    string,
+    { targetJid: string; displayName?: string; draftId?: string; draftText: string; inboundText: string; issuedAt: number }
+  > = new Map();
+  private static readonly DRAFT_EDIT_TTL_MS = 10 * 60_000;
   // Per-chat concurrency lock. A single doc / natural-chat
   // round-trip can take 60+ seconds. Without this lock, rapid-fire
   // messages spawn parallel pipelines that all reply minutes later.
@@ -1900,6 +1914,11 @@ export class WhatsAppSession {
       // messages don't carry senderName.
       this.hookContactsSync();
 
+      // Warm the macOS AddressBook index so the first reply to anyone already
+      // has the OWNER's saved name (the per-inbound hydrate then just reads
+      // the warmed cache). Parity with the iMessage bridge. Best-effort.
+      setImmediate(() => void this.warmContactIndex());
+
       // Incoming messages
       this.socket.ev.on("messages.upsert", async (m) => {
         for (const msg of m.messages) {
@@ -2352,8 +2371,22 @@ export class WhatsAppSession {
           // the grace-period warning DM, where we only have the JID and no
           // fresh message context. Non-DM JIDs (groups) are skipped; we
           // never pause groups so we'd never read from that slot.
+          //
+          // pushName is the contact's SELF-set name; seed it as the fallback,
+          // then PREFER the owner's saved AddressBook name (how the owner
+          // actually knows them) for phone-based JIDs. hydrateContactName
+          // overwrites the pushName with the saved name when one exists, and
+          // is a cheap cached lookup after the startup warm — fire-and-forget
+          // so it never blocks the reply pipeline.
           if (!isGroup && msg.pushName) {
             this.rememberContactName(from, msg.pushName);
+          }
+          if (!isGroup) {
+            // Overwrites the pushName with the owner's saved AddressBook name
+            // when one exists. Awaited (not fire-and-forget) so the name the
+            // reply path reads below is the preferred one — it's a cached
+            // in-memory lookup after the startup warm, so it doesn't stall.
+            await this.hydrateContactName(from);
           }
 
           if (m.type !== "notify" || !text) continue;
@@ -2412,7 +2445,11 @@ export class WhatsAppSession {
           // broadcasts, not messages addressed to the owner. Treating
           // them as escalations spams the self-chat every time a contact
           // posts a Story.
-          const senderName = msg.pushName || undefined;
+          // PREFER the owner's saved AddressBook name (populated by
+          // hydrateContactName above for phone-based DM JIDs) over the
+          // contact's self-set pushName — it's how the owner knows them.
+          // Groups / @lid have no saved entry, so they fall back to pushName.
+          const senderName = (!isGroup ? this.contactNames.get(from) : undefined) || msg.pushName || undefined;
           const isBroadcast = from === "status@broadcast"
             || from.endsWith("@broadcast")
             || from.endsWith("@newsletter");
@@ -2713,6 +2750,47 @@ export class WhatsAppSession {
       const oldest = this.contactNames.keys().next().value;
       if (oldest === undefined) break;
       this.contactNames.delete(oldest);
+    }
+  }
+
+  // Bulk-warm the macOS AddressBook index at startup so the first reply to
+  // anyone already has their saved name. Reads in-process via better-sqlite3
+  // (Full Disk Access; AppleScript Contacts is TCC-blocked under launchd).
+  // Best-effort, cached, never throws. Parity with the iMessage bridge.
+  private async warmContactIndex(): Promise<void> {
+    try {
+      const { loadAddressBookIndex } = await import("@lantern/bridge-core/contact-resolver");
+      const idx = await loadAddressBookIndex({ logger: this.logger });
+      this.logger.info({ contacts: idx?.byPhone.size ?? 0 }, "contact index warmed");
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // Resolve a phone-based inbound JID to the OWNER's SAVED AddressBook name and
+  // cache it in `contactNames`, PREFERRING it over the contact's self-set
+  // pushName/notify. The owner's address book is the authoritative name — it's
+  // how the owner knows the person — so a saved entry overwrites the pushName.
+  // `@lid` / `@g.us` carry no phone (nameForHandle returns null for them), so
+  // those keep their pushName. Best-effort, cached, never throws/blocks the
+  // reply. Parity with the iMessage bridge's hydrateContactName.
+  private async hydrateContactName(jid: string): Promise<void> {
+    if (!jid || jid.endsWith("@lid") || this.isGroupJid(jid)) return;
+    try {
+      const { nameForHandle } = await import("@lantern/bridge-core/contact-resolver");
+      const saved = await nameForHandle(jid, { logger: this.logger });
+      if (saved) {
+        this.rememberContactName(jid, saved);
+        return;
+      }
+      // B6 — alias re-identification. The Contacts DB returned no name for
+      // this handle (e.g. a phone the owner only saved under an alias / in
+      // the owner profile's relationships). Fall back to the owner-profile
+      // canonical name so the reply still addresses them correctly.
+      const canonical = this.ownerProfileStore.canonicalNameFor(jid);
+      if (canonical) this.rememberContactName(jid, canonical);
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "hydrateContactName failed");
     }
   }
 
@@ -3345,6 +3423,61 @@ export class WhatsAppSession {
           await this.deleteCommand(jid, key, self);
           return;
         }
+      }
+    }
+
+    // B5 — INLINE DRAFT EDITING. When a high-stakes / LOW-confidence reply was
+    // just drafted to this owner thread for approval, the owner can react in
+    // self-chat. Reached only AFTER command + presence parsing (a real command
+    // already `return`ed above), so we know `text` is NOT a command.
+    //
+    // DISAMBIGUATION + TTL:
+    //   - Only fires when a pending draft exists for THIS owner thread AND it's
+    //     within DRAFT_EDIT_TTL_MS (10 min). Outside that window the entry is
+    //     GC'd and the message flows to the normal docs / chat path.
+    //   - "yes" / "👍" / similar → approve: send the bot's ORIGINAL draft to the
+    //     contact (closes the WA approval loop, which is otherwise dashboard-only).
+    //   - "no" / "skip" → drop the draft, ack, no send.
+    //   - ANY OTHER free text → treat it as the owner's REPLACEMENT message:
+    //     send the OWNER'S text to the original contact (not the bot's draft).
+    //   - NO DOUBLE-SEND: the draft was only ever queued (never auto-sent), and
+    //     the pending entry is deleted BEFORE the send fires, so a stray retry
+    //     can't re-trigger it.
+    if (self && !group && trimmed) {
+      this.gcPendingDraftEdits();
+      const pending = this.pendingDraftEdits.get(jid);
+      if (pending && Date.now() - pending.issuedAt <= WhatsAppSession.DRAFT_EDIT_TTL_MS) {
+        const label = pending.displayName ?? pending.targetJid.split("@")[0];
+        // Approve-as-is.
+        if (looksLikeConfirmation(text)) {
+          this.pendingDraftEdits.delete(jid);
+          try {
+            await this.sendMessage(pending.targetJid, pending.draftText);
+            this.recordOutboundReply(pending.targetJid, pending.draftText);
+            await this.confirmToSelf(`✅ sent to ${label}.`);
+          } catch (err) {
+            this.logger.warn({ err, to: pending.targetJid }, "B5 approve-as-is send failed");
+            await this.confirmToSelf("⚠️ couldn't send that — try again from the dashboard.");
+          }
+          return;
+        }
+        // Reject.
+        if (looksLikeRejection(text)) {
+          this.pendingDraftEdits.delete(jid);
+          await this.confirmToSelf(`👍 dropped — nothing sent to ${label}.`);
+          return;
+        }
+        // Free-text replacement — send the OWNER'S words to the contact.
+        this.pendingDraftEdits.delete(jid);
+        try {
+          await this.sendMessage(pending.targetJid, text);
+          this.recordOutboundReply(pending.targetJid, text);
+          await this.confirmToSelf(`✅ sent your version to ${label}.`);
+        } catch (err) {
+          this.logger.warn({ err, to: pending.targetJid }, "B5 inline-edit send failed");
+          await this.confirmToSelf("⚠️ couldn't send that — try again.");
+        }
+        return;
       }
     }
 
@@ -4694,6 +4827,29 @@ export class WhatsAppSession {
     }
   }
 
+  // B5 — GC pending draft-edits — sweep entries older than DRAFT_EDIT_TTL_MS so
+  // a stale heads-up can't capture an unrelated owner message minutes later.
+  private gcPendingDraftEdits(): void {
+    if (this.pendingDraftEdits.size === 0) return;
+    const cutoff = Date.now() - WhatsAppSession.DRAFT_EDIT_TTL_MS;
+    for (const [key, d] of this.pendingDraftEdits) {
+      if (d.issuedAt < cutoff) this.pendingDraftEdits.delete(key);
+    }
+  }
+
+  // B5 — record an outbound contact reply into the anti-repetition ring so the
+  // next turn's persona prompt won't repeat it. Mirrors the bookkeeping the
+  // normal contact-reply send path does after a successful send.
+  private recordOutboundReply(jid: string, text: string): void {
+    if (!jid || this.isGroupJid(jid)) return;
+    const ring = this.recentBotReplies.get(jid) ?? [];
+    ring.push(text);
+    if (ring.length > WhatsAppSession.RECENT_BOT_REPLIES_PER_CONTACT) {
+      ring.splice(0, ring.length - WhatsAppSession.RECENT_BOT_REPLIES_PER_CONTACT);
+    }
+    this.recentBotReplies.set(jid, ring);
+  }
+
   // Send a local file as a WhatsApp document attachment. Uses
   // Baileys's document message type. Attaches a sensible mimetype
   // based on extension.
@@ -5284,7 +5440,7 @@ export class WhatsAppSession {
       for (const item of batch) {
         try {
           // Dedupe identical (jid,text) within the batch.
-          const key = `${item.jid} ${item.text}`;
+          const key = `${item.jid}\x00${item.text}`;
           if (seen.has(key)) continue;
           seen.add(key);
           // A7: STAGGER replays. Firing every queued reply the instant the
@@ -6177,6 +6333,18 @@ export class WhatsAppSession {
     const addressRule = !opts.isGroup
       ? this.ownerProfileStore.addressRuleFor(from, opts.senderName ?? this.contactNames.get(from)) ?? undefined
       : undefined;
+    // B1 — emotional register. Read the contact's affect off the inbound
+    // (deterministic, no LLM) and pass it into the persona so a distressed /
+    // frustrated / excited contact gets a register-matched reply. 1:1 only —
+    // group register is mixed and not a reliable signal. Gate on a confidence
+    // floor so weak/mixed signals stay neutral (the detector is conservative).
+    const emotionalRegister =
+      !opts.isGroup
+        ? (() => {
+            const v = detectEmotionalRegister(text);
+            return v.register !== "neutral" && v.confidence >= 0.4 ? v.register : undefined;
+          })()
+        : undefined;
     let systemHint = agentPersonaPrompt(
       ownerName,
       style,
@@ -6207,6 +6375,8 @@ export class WhatsAppSession {
         // persona. 1:1 only — never negotiate on the owner's behalf in groups.
         schedulingEnabled: !opts.isGroup,
         freeSlotsBlock: !opts.isGroup ? this.ownerFreeSlotsBlock() || undefined : undefined,
+        // B1 — affect-matched persona modulation (additive hint).
+        emotionalRegister,
       }
     );
 
@@ -6461,9 +6631,26 @@ export class WhatsAppSession {
         );
         try {
           await this.sendSelf(
-            `🟡 LOW-confidence draft to ${opts.senderName ?? from.split("@")[0]} — ${queued ? "queued for your approval" : "queue failed; not sent"}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}`,
+            `🟡 LOW-confidence draft to ${opts.senderName ?? from.split("@")[0]} — ${queued ? "queued for your approval" : "queue failed; not sent"}\n\nThey: ${text.slice(0, 200)}\n\nDraft: ${draft.slice(0, 300)}\n\n(reply 👍/yes to send as-is, or just type your own version and I'll send THAT)`,
           );
         } catch {}
+        // B5 — arm an inline draft-edit window for the owner thread. If the
+        // owner now types free text (not a command / yes / no) within the TTL,
+        // we send the OWNER'S text to this contact instead of the bot's draft.
+        // Keyed by the owner-control thread (where the heads-up landed). Armed
+        // even when the dashboard queue failed — the inline edit path sends
+        // directly and doesn't depend on the queue.
+        const ownerThread = this.ownJid();
+        if (ownerThread) {
+          this.pendingDraftEdits.set(ownerThread, {
+            targetJid: from,
+            displayName: opts.senderName ?? this.contactNames.get(from) ?? undefined,
+            draftId: queued?.id,
+            draftText: draft,
+            inboundText: text,
+            issuedAt: Date.now(),
+          });
+        }
         this.broadcast({
           type: "activity",
           data: {
@@ -6993,11 +7180,18 @@ export class WhatsAppSession {
       // Signal 3: contacts awaiting a reply (last inbound > 2 days, no reply since).
       const awaitingReply = this.gatherAwaitingReply(now);
 
+      // Signal 4 (B7): dormant VIPs — high-priority contacts gone quiet for a
+      // long time (thread-warming). Owner-confirm-only: the engine produces a
+      // "dormant-vip" nudge that only SUGGESTS reaching out; the bridge never
+      // auto-sends to the contact off it.
+      const dormantContacts = this.gatherDormantContacts(now);
+
       const nudges = computeProactiveNudges({
         now,
         keyDates,
         upcomingEvents,
         awaitingReply,
+        dormantContacts,
         // commitments: best-effort — not yet mined on the WA surface.
       });
       if (nudges.length === 0) return;
@@ -7060,6 +7254,64 @@ export class WhatsAppSession {
       }
     } catch (err) {
       this.logger.warn({ err }, "gatherAwaitingReply failed (continuing)");
+    }
+    return out;
+  }
+
+  // B7 — gather "dormant VIP" signals: 1:1 contacts whose LAST exchange (in
+  // either direction) is older than the engine's dormancy threshold (~60d).
+  // The engine gates on contact-priority tier so only genuinely high-priority
+  // people surface a re-ping suggestion — a cold acquaintance going quiet is
+  // not noteworthy. Owner-confirm-only: the resulting nudge only SUGGESTS
+  // reaching out; nothing is sent to the contact. Best-effort; never throws.
+  private gatherDormantContacts(now: number): DormantContactSignal[] {
+    const out: DormantContactSignal[] = [];
+    try {
+      // Last exchange per 1:1 contact, in either direction. Start from the
+      // in-process inbound timestamps, then fold in the wa-history JSONL
+      // (inbound + outbound) so an old thread we last spoke on still counts.
+      const lastExchange = new Map<string, number>();
+      const note = (jid: string, ts: number) => {
+        if (!jid || jid.endsWith("@g.us") || jid.endsWith("@lid")) return;
+        if (this.isOwnerChat(jid)) return;
+        const prev = lastExchange.get(jid);
+        if (prev === undefined || ts > prev) lastExchange.set(jid, ts);
+      };
+      for (const [jid, ts] of this.lastInboundTs) note(jid, ts);
+      if (this.historyFile && existsSync(this.historyFile)) {
+        const raw = readFileSync(this.historyFile, "utf-8");
+        for (const line of raw.split("\n")) {
+          if (!line) continue;
+          try {
+            const e = JSON.parse(line) as {
+              jid?: string;
+              isGroup?: boolean;
+              ts?: number;
+            };
+            if (e.isGroup) continue; // DMs only — group activity isn't dormancy
+            if (typeof e.ts !== "number" || !Number.isFinite(e.ts)) continue;
+            note(e.jid || "", e.ts);
+          } catch { /* malformed line */ }
+        }
+      }
+      // The engine enforces the ~60d age + min-tier gate; we hand it every 1:1
+      // contact with priority signals attached. Pre-filter on a generous floor
+      // (45d) to keep the candidate set small without second-guessing the
+      // engine's exact threshold.
+      const FLOOR_MS = 45 * 24 * 60 * 60_000;
+      for (const [jid, lastExchangeAt] of lastExchange) {
+        if (now - lastExchangeAt < FLOOR_MS) continue;
+        const displayName = this.contactNames.get(jid);
+        const relationship = this.ownerProfileStore.relationshipFor(jid, displayName);
+        const signals: ContactSignals = {
+          now,
+          lastInboundAt: lastExchangeAt,
+          relationship: relationship ?? undefined,
+        };
+        out.push({ handle: jid, displayName, lastExchangeAt, contactSignals: signals });
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "gatherDormantContacts failed (continuing)");
     }
     return out;
   }

@@ -49,7 +49,8 @@
     "./canonical-handle": "./src/canonical-handle.ts",
     "./dislike-consolidator": "./src/dislike-consolidator.ts",
     "./contact-priority": "./src/contact-priority.ts",
-    "./anticipation": "./src/anticipation.ts"
+    "./anticipation": "./src/anticipation.ts",
+    "./emotional-register": "./src/emotional-register.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

@@ -24,6 +24,7 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
+import { canonicalHandle } from "./canonical-handle.js";
 
 /** Structured biographical facts about the owner. These are GROUND
  *  TRUTH — the bot must never deny or contradict them when a contact
@@ -56,6 +57,15 @@ export interface OwnerProfile {
    *  as `relationships`. Only populated for contacts whose Relationships
    *  line carries "address as:" / "never:" suffixes. */
   addressRules: Map<string, AddressRule>;
+  /** alias handle (canonicalized phone digits / lowercased email, keyed
+   *  the same way as `relationships`) -> the PRIMARY contact's display
+   *  name (as written in the profile). Populated from the "also: +N, +M"
+   *  segment of a Relationships line. Lets a contact reaching the owner
+   *  from a second/new number resolve to the same person + relationship,
+   *  so history isn't cold. The alias numbers are ALSO mirrored into
+   *  `relationships` + `addressRules` so relationshipFor / addressRuleFor
+   *  match them transparently. */
+  aliases: Map<string, string>;
   /** Structured biographical facts (marital status, spouse, kids, key
    *  dates). Parsed from a "## Facts" section. Undefined when absent. */
   facts?: OwnerFacts;
@@ -139,16 +149,29 @@ export class OwnerProfileStore {
   relationshipFor(handle: string, displayName?: string): string | undefined {
     const prof = this.get();
     if (!prof) return undefined;
-    const keys: string[] = [];
-    if (handle) keys.push(handle.toLowerCase());
-    if (displayName) keys.push(displayName.toLowerCase());
-    // Also try the bare phone (strip +, spaces) for phone-handle matches.
-    if (handle) keys.push(handle.replace(/[^\d]/g, ""));
+    const keys = lookupKeys(handle, displayName);
     for (const k of keys) {
       const hit = prof.relationships.get(k);
       if (hit) return hit;
     }
     return uniqueTokenMatch(prof.relationships, keys) ?? undefined;
+  }
+
+  /** Re-identification: given any handle (including an alias / second
+   *  number declared via "also: …" in the Relationships section), return
+   *  the PRIMARY contact's display name as written in the profile, or
+   *  undefined when the handle isn't a known alias. Lets the bridge map a
+   *  new number to a known person so their history + name aren't cold.
+   *  Matches by canonicalized handle and bare digits. */
+  canonicalNameFor(handle: string, displayName?: string): string | undefined {
+    const prof = this.get();
+    if (!prof || prof.aliases.size === 0) return undefined;
+    const keys = lookupKeys(handle, displayName);
+    for (const k of keys) {
+      const hit = prof.aliases.get(k);
+      if (hit) return hit;
+    }
+    return undefined;
   }
 
   /** The prose block for injection into the persona prompt. */
@@ -231,10 +254,7 @@ export class OwnerProfileStore {
   addressRuleFor(handleOrName: string, displayName?: string): AddressRule | null {
     const prof = this.get();
     if (!prof) return null;
-    const keys: string[] = [];
-    if (handleOrName) keys.push(handleOrName.toLowerCase());
-    if (displayName) keys.push(displayName.toLowerCase());
-    if (handleOrName) keys.push(handleOrName.replace(/[^\d]/g, ""));
+    const keys = lookupKeys(handleOrName, displayName);
     for (const k of keys) {
       const hit = prof.addressRules.get(k);
       if (hit) return hit;
@@ -313,6 +333,29 @@ export function humanizeDate(date: string): string {
   return `${monthName} ${parseInt(d, 10)}, ${y}`;
 }
 
+// Build the ordered list of candidate lookup keys for a handle + optional
+// display name, matching how relationships/addressRules/aliases are indexed:
+//   - lowercased handle verbatim
+//   - canonicalized handle (jid suffix stripped, US numbers +1-promoted,
+//     emails lowercased) — so an alias declared as "+15551234567" matches
+//     an inbound jid "15551234567@s.whatsapp.net"
+//   - lowercased display name
+//   - bare digits of the handle (phone fallback)
+// De-duped, falsy dropped.
+function lookupKeys(handle: string, displayName?: string): string[] {
+  const out: string[] = [];
+  const push = (k: string | undefined) => {
+    if (k && !out.includes(k)) out.push(k);
+  };
+  if (handle) {
+    push(handle.toLowerCase());
+    push(canonicalHandle(handle).toLowerCase());
+  }
+  if (displayName) push(displayName.toLowerCase());
+  if (handle) push(handle.replace(/[^\d]/g, ""));
+  return out.filter(Boolean);
+}
+
 // Fallback matcher: when no exact key matches, try matching a single-token
 // input (e.g. a first name "sujith") against profile keys that contain that
 // token ("sujith penchala"). Returns the value ONLY when exactly one distinct
@@ -339,6 +382,7 @@ function uniqueTokenMatch<T>(map: Map<string, T>, inputs: string[]): T | null {
 export function parseProfile(raw: string): OwnerProfile {
   const relationships = new Map<string, string>();
   const addressRules = new Map<string, AddressRule>();
+  const aliases = new Map<string, string>();
   const facts: OwnerFacts = {};
   const proseLines: string[] = [];
   const nativityLines: string[] = [];
@@ -449,6 +493,7 @@ export function parseProfile(raw: string): OwnerProfile {
       // Parse the extra address directives from the remaining segments.
       let addressAs: string | undefined;
       let neverCall: string[] | undefined;
+      let aliasHandles: string[] = [];
       for (const seg of segments.slice(1)) {
         const am = seg.match(/^address\s+as\s*:\s*(.+)$/i);
         if (am) {
@@ -462,6 +507,18 @@ export function parseProfile(raw: string): OwnerProfile {
             .map((t) => t.trim().replace(/^["']|["']$/g, "").trim())
             .filter(Boolean);
           if (terms.length) neverCall = terms;
+          continue;
+        }
+        // "also: +15551234567, +15559876543" — additional handles (a
+        // second number, a work email) that belong to THIS same person.
+        // Used for re-identification so a contact reaching the owner from
+        // a new number still resolves to their name + relationship.
+        const alm = seg.match(/^(?:also|alias|aliases|aka)\s*:\s*(.+)$/i);
+        if (alm) {
+          aliasHandles = alm[1]
+            .split(",")
+            .map((t) => t.trim().replace(/^["']|["']$/g, "").trim())
+            .filter(Boolean);
         }
       }
       const rule: AddressRule | null =
@@ -489,6 +546,28 @@ export function parseProfile(raw: string): OwnerProfile {
         indexKey(paren[1]); // "Manasa"
         indexKey(paren[2]); // "Manu"
       }
+
+      // Alias handles ("also: +1555..., work@x.com") — index each so the
+      // SAME relationship + address rule resolves from a second number,
+      // and record the alias→primary-name mapping for re-identification.
+      // Phone/email aliases are canonicalized (digits-only / lowercased)
+      // to match how the bridge keys inbound handles.
+      const primaryName = (paren ? paren[1] : rawKey).trim();
+      for (const alias of aliasHandles) {
+        const canon = canonicalHandle(alias);
+        if (!canon) continue;
+        relationships.set(canon, val);
+        if (rule) addressRules.set(canon, rule);
+        aliases.set(canon, primaryName);
+        // Also index a bare digits form for phone aliases the bridge may
+        // look up without canonicalization (defense in depth — cheap).
+        const digits = alias.replace(/[^\d]/g, "");
+        if (digits.length >= 7 && digits !== canon) {
+          relationships.set(digits, val);
+          if (rule) addressRules.set(digits, rule);
+          aliases.set(digits, primaryName);
+        }
+      }
       continue;
     }
     proseLines.push(line);
@@ -504,6 +583,7 @@ export function parseProfile(raw: string): OwnerProfile {
     prose: proseLines.join("\n").trim(),
     relationships,
     addressRules,
+    aliases,
     facts: hasFacts ? facts : undefined,
     nativity: nativityLines.join(" ").trim(),
   };
@@ -541,5 +621,6 @@ I'm <name> — <role / what you do>. <one or two lines on current focus>.
 ## Relationships
 - Shiva: brother
 - <Name>: <relationship> | address as: <what to call them> | never: <terms to avoid>
+- <Name>: <relationship> | also: <+1555..., second@email> (extra numbers/emails for the SAME person)
 - <Name or phone or email>: <relationship>
 `;
