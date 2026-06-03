@@ -168,6 +168,13 @@ export interface InjectionCautionInput {
    *  even if its ASCII ratio is high (e.g. romanized Spanish). */
   languagePrimary?: string;
   languageConfidence?: number;
+  /** Languages the OWNER actually speaks (lowercased, e.g. ["english",
+   *  "telugu","hindi"]). A message in one of these is NEVER treated as a
+   *  suspicious foreign-language probe — it's normal family/social chatter.
+   *  Without this, a Telangana-Telugu household's everyday Telugu messages
+   *  were all force-drafted and the bot went silent. Defaults to
+   *  English/Telugu/Hindi when omitted. */
+  expectedLanguages?: string[];
 }
 
 export interface InjectionCautionVerdict {
@@ -218,6 +225,17 @@ export function detectNonEnglishInjectionRisk(
   if (input.isOwner) return null;
   if (input.alreadyMatched) return null;
   if (text.length < 4) return null;
+
+  // The owner's OWN languages are never suspicious. A Telangana-Telugu family
+  // texts in Telugu/Hindi all day — force-drafting that silenced the bot. Only
+  // a genuinely UNEXPECTED language (one the owner doesn't speak) is a probe
+  // surface worth holding for approval.
+  const expected = new Set(
+    (input.expectedLanguages ?? ["english", "telugu", "hindi"]).map((s) => s.toLowerCase()),
+  );
+  if (input.languagePrimary && expected.has(input.languagePrimary.toLowerCase())) {
+    return null;
+  }
 
   const ratio = asciiRatio(text);
   const lowAscii = ratio < NON_ENGLISH_ASCII_RATIO;
