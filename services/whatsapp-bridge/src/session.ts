@@ -3320,12 +3320,37 @@ export class WhatsAppSession {
     // definitive reset is a clean re-pair.)
     const isGroupOrBroadcast =
       !!remoteJid && (remoteJid.endsWith("@g.us") || remoteJid.endsWith("@broadcast"));
-    if (remoteJid && isGroupOrBroadcast) {
-      this.logger.info(
-        { remoteJid },
-        "group decrypt failure — awaiting sender-key resend via retry receipt (assertSessions N/A for groups)",
-      );
-    } else if (remoteJid && !this.bootstrappedJids.has(remoteJid) && this.socket) {
+    if (remoteJid && remoteJid.endsWith("@g.us")) {
+      // GROUP decrypt failure. The group itself has no pairwise session, but
+      // the FIX is pairwise sessions with its PARTICIPANTS: a sender's
+      // SenderKeyDistributionMessage (which seeds the group sender-key we're
+      // missing) is encrypted to us over the pairwise session. After a re-pair
+      // those sessions are gone, so the SKDM can't decrypt → the group never
+      // gets a sender-key → every message fails. Force-establish sessions with
+      // all participants so their next SKDM/message decrypts and the group
+      // bootstraps. Once per group per connection.
+      if (!this.bootstrappedJids.has(remoteJid) && this.socket) {
+        this.bootstrappedJids.add(remoteJid);
+        const sock = this.socket;
+        void (async () => {
+          try {
+            const meta = await sock.groupMetadata(remoteJid);
+            const participants = (meta?.participants || [])
+              .map((p) => p.id)
+              .filter((id): id is string => !!id);
+            if (participants.length) {
+              await sock.assertSessions(participants, true);
+              this.logger.info(
+                { remoteJid, participants: participants.length },
+                "group decrypt failure — bootstrapped pairwise sessions with participants so sender-keys can decrypt",
+              );
+            }
+          } catch (err) {
+            this.logger.warn({ err, remoteJid }, "group participant session bootstrap failed");
+          }
+        })();
+      }
+    } else if (remoteJid && !isGroupOrBroadcast && !this.bootstrappedJids.has(remoteJid) && this.socket) {
       this.bootstrappedJids.add(remoteJid);
       const sock = this.socket;
       void (async () => {
