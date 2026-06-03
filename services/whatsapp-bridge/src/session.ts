@@ -3964,8 +3964,11 @@ export class WhatsAppSession {
       if (!twilio || !twilioFrom) {
         return { ok: false, reason: "Twilio connector not installed — set up via dashboard /connectors → Twilio" };
       }
-      const { executeOutboundCall: exec, renderTextWithElevenLabs: render } =
+      const { executeOutboundCall: exec, synthesizeSpeech } =
         await import("@lantern/bridge-core/call-orchestrator");
+      const { resolveVoiceCloneConfig } = await import(
+        "@lantern/bridge-core/outbound-call"
+      );
       // chatJid is the jid of the chat where the call command was
       // issued — pendingOffer + notify go here so the "yes" arriving
       // in the SAME chat fires the intercept. Falls back to ownJid()
@@ -3995,7 +3998,7 @@ export class WhatsAppSession {
             issuedAt: offer.issuedAt,
           } as any);
         },
-        renderVoice: this.makeVoiceRenderer(render),
+        renderVoice: this.makeVoiceRenderer(synthesizeSpeech, resolveVoiceCloneConfig),
       };
       this.lastCallDeps = deps;
       const res = await exec(intent, deps, { ownerInitiated: true });
@@ -4035,31 +4038,32 @@ export class WhatsAppSession {
     return formatSuggestions(this.lastResolveSuggestions);
   }
 
+  // Optional ElevenLabs voice-clone renderer (B8). Returns undefined
+  // when voice-clone is OFF/unconfigured so the orchestrator falls back
+  // to inline Polly <Say>. Triple-gated (LANTERN_VOICE_CLONE=1 +
+  // LANTERN_ELEVENLABS_API_KEY + LANTERN_ELEVENLABS_VOICE_ID, resolved by
+  // bridge-core) plus the bridge-owned LANTERN_VOICE_CACHE_PUBLIC_URL
+  // host. Best-effort; never throws into the call path. `synth` +
+  // `resolveCfg` are injected (the bridge lazy-imports bridge-core).
   private makeVoiceRenderer(
-    render: (text: string, o: { apiKey: string; voiceId: string }) => Promise<Buffer | null>,
+    synth: typeof import("@lantern/bridge-core/call-orchestrator").synthesizeSpeech,
+    resolveCfg: typeof import("@lantern/bridge-core/outbound-call").resolveVoiceCloneConfig,
   ): ((text: string) => Promise<string | null>) | undefined {
-    const apiKey = process.env.LANTERN_ELEVENLABS_KEY;
-    const voiceId = process.env.LANTERN_ELEVENLABS_VOICE_ID;
     const publicUrlBase = process.env.LANTERN_VOICE_CACHE_PUBLIC_URL;
-    if (!apiKey || !voiceId || !publicUrlBase) return undefined;
-    return async (text: string) => {
-      try {
-        const buf = await render(text, { apiKey, voiceId });
-        if (!buf) return null;
-        const { createHash } = await import("node:crypto");
-        const { writeFile, mkdir } = await import("node:fs/promises");
-        const { join } = await import("node:path");
-        const { homedir } = await import("node:os");
-        const cacheDir = join(homedir(), ".lantern", "voice-cache");
-        await mkdir(cacheDir, { recursive: true });
-        const sha = createHash("sha1").update(text + voiceId).digest("hex");
-        await writeFile(join(cacheDir, `${sha}.mp3`), buf);
-        return `${publicUrlBase.replace(/\/$/, "")}/voice-cache/${sha}.mp3`;
-      } catch (err) {
-        this.logger.warn({ err }, "ElevenLabs render failed");
-        return null;
-      }
-    };
+    if (!resolveCfg() || !publicUrlBase) return undefined;
+    return async (text: string) =>
+      synth(text, {
+        logger: this.logger as any,
+        hostAudio: async (cacheKey, mp3) => {
+          const { writeFile, mkdir } = await import("node:fs/promises");
+          const { join } = await import("node:path");
+          const { homedir } = await import("node:os");
+          const cacheDir = join(homedir(), ".lantern", "voice-cache");
+          await mkdir(cacheDir, { recursive: true });
+          await writeFile(join(cacheDir, `${cacheKey}.mp3`), mp3);
+          return `${publicUrlBase.replace(/\/$/, "")}/voice-cache/${cacheKey}.mp3`;
+        },
+      });
   }
 
   // Owner self-chat auto-profile-update hook. Inspects each owner

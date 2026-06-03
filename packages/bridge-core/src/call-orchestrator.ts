@@ -16,12 +16,13 @@
 //
 // Voice rendering:
 //   - Default: inline TwiML <Say> with Polly voices (free, included).
-//   - Optional: ElevenLabs voice clone — when LANTERN_ELEVENLABS_KEY +
-//     LANTERN_ELEVENLABS_VOICE_ID are set, the orchestrator renders
-//     the spoken text via ElevenLabs API, uploads the MP3 to a
-//     bridge-served HTTP URL (or hosted bucket), and TwiML uses
-//     <Play>url</Play> instead of <Say>. This is the path to "real
-//     you" voice on every outbound call.
+//   - Optional: ElevenLabs voice clone (B8) — OFF by default, gated
+//     behind LANTERN_VOICE_CLONE=1 AND LANTERN_ELEVENLABS_API_KEY AND
+//     LANTERN_ELEVENLABS_VOICE_ID (see resolveVoiceCloneConfig). When
+//     the gate is open the orchestrator renders the spoken text via the
+//     ElevenLabs API, the bridge hosts the MP3 at a public URL, and
+//     TwiML uses <Play>url</Play> instead of <Say>. On ANY error it
+//     falls back to Polly — voice-clone never fails the call.
 
 import type { Logger } from "pino";
 import {
@@ -29,8 +30,10 @@ import {
   buildTwiml,
   buildConferenceTwiml,
   newConferenceName,
+  resolveVoiceCloneConfig,
   type OutboundCallRequest,
   type CallPlan,
+  type VoiceCloneConfig,
 } from "./outbound-call.js";
 
 export interface OrchestratorDeps {
@@ -308,8 +311,9 @@ async function addParticipant(
 // ─────────────────────────────────────────────────────
 // ElevenLabs voice rendering helper.
 //
-// When the bridge has LANTERN_ELEVENLABS_KEY + LANTERN_ELEVENLABS_VOICE_ID
-// set, calls renderTextWithElevenLabs(text) → returns an MP3 buffer.
+// When the bridge has LANTERN_ELEVENLABS_API_KEY (legacy:
+// LANTERN_ELEVENLABS_KEY) + LANTERN_ELEVENLABS_VOICE_ID set,
+// renderTextWithElevenLabs(text) → returns an MP3 buffer.
 // The bridge is responsible for hosting that buffer at a public URL
 // Twilio can fetch from (via Cloudflare Tunnel, ngrok, or Twilio Assets).
 // The orchestrator just renders + returns bytes; the bridge wires the
@@ -340,4 +344,60 @@ export async function renderTextWithElevenLabs(
   if (!res.ok) return null;
   const arrayBuf = await res.arrayBuffer();
   return Buffer.from(arrayBuf);
+}
+
+// ─────────────────────────────────────────────────────
+// synthesizeSpeech — the single gated TTS abstraction (B8).
+//
+// Returns a public audio URL Twilio can <Play> when voice-clone is
+// enabled+configured AND synthesis+hosting succeed; returns null in
+// EVERY other case so the caller falls back to Polly <Say>. It never
+// throws — the call path stays alive regardless of ElevenLabs/host
+// failures. The API key is never logged.
+// ─────────────────────────────────────────────────────
+export interface SynthesizeSpeechDeps {
+  // Persist the MP3 bytes (keyed by `cacheKey`) and return the public
+  // URL Twilio will fetch. The bridge owns hosting (e.g. writes to
+  // ~/.lantern/voice-cache/<key>.mp3 and returns
+  // <LANTERN_VOICE_CACHE_PUBLIC_URL>/voice-cache/<key>.mp3). May return
+  // null/throw — treated as "fall back to Polly".
+  hostAudio: (cacheKey: string, mp3: Buffer) => Promise<string | null>;
+  logger?: Pick<Logger, "info" | "warn">;
+  // Test/override seam. Defaults to env-resolved config; pass an
+  // explicit config to bypass process.env.
+  config?: VoiceCloneConfig | null;
+  // Test seam for the network render. Defaults to renderTextWithElevenLabs.
+  render?: (
+    text: string,
+    opts: { apiKey: string; voiceId: string },
+  ) => Promise<Buffer | null>;
+}
+
+export async function synthesizeSpeech(
+  text: string,
+  deps: SynthesizeSpeechDeps,
+): Promise<string | null> {
+  if (!text || !text.trim()) return null;
+  // Gate: config explicitly passed wins; otherwise read the env gate.
+  const cfg = deps.config !== undefined ? deps.config : resolveVoiceCloneConfig();
+  if (!cfg) return null; // disabled or unconfigured → Polly
+
+  try {
+    const render = deps.render || renderTextWithElevenLabs;
+    const mp3 = await render(text, { apiKey: cfg.apiKey, voiceId: cfg.voiceId });
+    if (!mp3 || mp3.length === 0) return null;
+    // Stable cache key by (text + voice) so repeated phrases reuse audio.
+    const { createHash } = await import("node:crypto");
+    const cacheKey = createHash("sha1").update(text + " " + cfg.voiceId).digest("hex");
+    const url = await deps.hostAudio(cacheKey, mp3);
+    if (!url) return null;
+    deps.logger?.info({ audioUrl: url.slice(0, 60), bytes: mp3.length }, "voice-clone synthesized");
+    return url;
+  } catch (err) {
+    deps.logger?.warn(
+      { err: (err as Error)?.message || String(err) },
+      "voice-clone synth failed; falling back to Polly",
+    );
+    return null;
+  }
 }

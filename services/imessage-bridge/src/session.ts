@@ -117,9 +117,10 @@ import {
 } from "@lantern/bridge-core/escalation-detector";
 import {
   executeOutboundCall,
-  renderTextWithElevenLabs,
+  synthesizeSpeech,
   type OrchestratorDeps,
 } from "@lantern/bridge-core/call-orchestrator";
+import { resolveVoiceCloneConfig } from "@lantern/bridge-core/outbound-call";
 import { CallCommitments } from "@lantern/bridge-core/call-commitments";
 import { resolveContact as universalResolveContact, formatSuggestions } from "@lantern/bridge-core/contact-resolver";
 import {
@@ -475,6 +476,23 @@ export class IMessageSession {
     issuedAt: number;
   }> = new Map();
   private static readonly SELF_DRAFT_TTL_MS = 30 * 60_000; // 30 min
+  // B5 — inline draft editing (parity with the WhatsApp bridge). When a
+  // high-stakes / LOW-confidence reply is drafted to the owner's self-chat for
+  // approval, we ALSO arm a pending-draft-edit entry keyed by the owner
+  // self-chat target. If the owner then types FREE TEXT (not a command, not
+  // yes/no) within DRAFT_EDIT_TTL_MS, the bridge sends the OWNER'S text to the
+  // original contact instead of the bot's draft. One entry per owner thread —
+  // the latest draft wins. Cleared on send/reject/expiry. Distinct from
+  // pendingSelfChatDrafts (which only handles approve/reject of the bot's
+  // draft) because the inline-edit window adds the free-text-replacement route.
+  private pendingDraftEdits: Map<string, {
+    target: string;        // contact handle to send to
+    targetLabel: string;   // display label for the owner-facing confirmation
+    draft: string;         // the bot's held draft (sent on approve-as-is)
+    inbound: string;       // the contact's message (for context)
+    issuedAt: number;
+  }> = new Map();
+  private static readonly DRAFT_EDIT_TTL_MS = 10 * 60_000; // 10 min (WA parity)
   // Draft-and-confirm default for high-stakes (LOW-confidence / sensitive)
   // contact replies. ON by default; LANTERN_DRAFT_CONFIRM=0 disables (then
   // LOW-confidence falls back to the prior held-then-send behavior).
@@ -1005,12 +1023,22 @@ export class IMessageSession {
       });
       const preview = draft.replace(/\s+/g, " ").trim().slice(0, 300);
       const body =
-        `✍️ draft to ${targetLabel}:\n"${preview}"\n\nreply "send" to approve, "no" to drop.`;
+        `✍️ draft to ${targetLabel}:\n"${preview}"\n\nreply "send"/👍 to approve, "no" to drop, or just type your own version and I'll send THAT.`;
       const res = await this.send(owner, body);
       if (!res.ok) {
         this.pendingSelfChatDrafts.delete(owner);
         return false;
       }
+      // B5 — arm an inline draft-edit window on the same owner thread. If the
+      // owner now types free text (not a command / yes / no) within the TTL,
+      // we send the OWNER'S text to this contact instead of the bot's draft.
+      this.pendingDraftEdits.set(owner, {
+        target,
+        targetLabel,
+        draft,
+        inbound,
+        issuedAt: Date.now(),
+      });
       this.broadcast({
         type: "activity",
         data: {
@@ -1042,6 +1070,7 @@ export class IMessageSession {
     }
     if (looksLikeConfirmation(text)) {
       this.pendingSelfChatDrafts.delete(ownerHandle); // one-shot
+      this.pendingDraftEdits.delete(ownerHandle); // B5 — keep maps in sync
       try {
         const res = await this.send(pending.target, pending.draft);
         await this.send(
@@ -1057,6 +1086,7 @@ export class IMessageSession {
     }
     if (looksLikeRejection(text)) {
       this.pendingSelfChatDrafts.delete(ownerHandle);
+      this.pendingDraftEdits.delete(ownerHandle); // B5 — keep maps in sync
       await this.send(ownerHandle, "👍 dropped it.").catch(() => {});
       return true;
     }
@@ -2237,6 +2267,66 @@ export class IMessageSession {
       const parsed = parseNLCommand(text);
       if (parsed) {
         void this.handleOwnerCommand(row.handle, parsed);
+        return;
+      }
+    }
+
+    // B5 — INLINE DRAFT EDITING (parity with the WhatsApp bridge). When a
+    // high-stakes / LOW-confidence reply was just drafted to this owner thread
+    // for approval, the owner can react in self-chat. Reached ONLY AFTER the
+    // command + presence parsing above has had its chance (a real command
+    // already `return`ed), so we know `text` is NOT an owner command.
+    //
+    // DISAMBIGUATION + TTL:
+    //   - Fires only when a pending draft-edit exists for THIS owner thread AND
+    //     it's within DRAFT_EDIT_TTL_MS (10 min). Outside that window the entry
+    //     is GC'd and the message flows to the normal docs / chat path below.
+    //   - "send" / "yes" / "👍" → approve: send the bot's ORIGINAL draft.
+    //   - "no" / "skip" → drop the draft, ack, no send.
+    //   - ANY OTHER free text → the owner's REPLACEMENT message: send the
+    //     OWNER'S text to the original contact (not the bot's draft).
+    //   - NO DOUBLE-SEND: the draft was only ever queued (never auto-sent), and
+    //     both pending entries are deleted BEFORE the send fires.
+    if (text && !isGroup && this.isOwnerChatRow(row)) {
+      this.gcPendingDraftEdits();
+      const editKey = this.pendingDraftEdits.has(row.handle)
+        ? row.handle
+        : this.ownerSelfChatTarget();
+      const pendingEdit = this.pendingDraftEdits.get(editKey);
+      if (pendingEdit && Date.now() - pendingEdit.issuedAt <= IMessageSession.DRAFT_EDIT_TTL_MS) {
+        const label = pendingEdit.targetLabel;
+        // Approve-as-is — send the bot's ORIGINAL draft to the contact.
+        if (looksLikeConfirmation(text)) {
+          this.pendingDraftEdits.delete(editKey);
+          this.pendingSelfChatDrafts.delete(editKey);
+          try {
+            const res = await this.send(pendingEdit.target, pendingEdit.draft);
+            if (res.ok) this.repliesSentToday += 1;
+            await this.send(row.handle, res.ok ? `✅ sent to ${label}.` : `⚠️ couldn't send to ${label}.`).catch(() => {});
+          } catch (err) {
+            this.logger.warn({ err, to: pendingEdit.target }, "B5 approve-as-is send failed");
+            await this.send(row.handle, `⚠️ couldn't send to ${label} — try again.`).catch(() => {});
+          }
+          return;
+        }
+        // Reject — drop the draft, brief ack, no send.
+        if (looksLikeRejection(text)) {
+          this.pendingDraftEdits.delete(editKey);
+          this.pendingSelfChatDrafts.delete(editKey);
+          await this.send(row.handle, `👍 dropped — nothing sent to ${label}.`).catch(() => {});
+          return;
+        }
+        // Free-text replacement — send the OWNER'S words to the contact.
+        this.pendingDraftEdits.delete(editKey);
+        this.pendingSelfChatDrafts.delete(editKey);
+        try {
+          const res = await this.send(pendingEdit.target, text);
+          if (res.ok) this.repliesSentToday += 1;
+          await this.send(row.handle, res.ok ? `✅ sent your version to ${label}.` : `⚠️ couldn't send that to ${label}.`).catch(() => {});
+        } catch (err) {
+          this.logger.warn({ err, to: pendingEdit.target }, "B5 inline-edit send failed");
+          await this.send(row.handle, `⚠️ couldn't send that to ${label} — try again.`).catch(() => {});
+        }
         return;
       }
     }
@@ -3635,39 +3725,36 @@ export class IMessageSession {
     return formatSuggestions(this.lastResolveSuggestions);
   }
 
-  // Build the optional ElevenLabs voice-clone renderer. Returns a
-  // function that takes text and produces a URL Twilio can <Play>,
-  // OR null if ElevenLabs isn't configured (caller falls back to
-  // inline Polly TwiML). The MP3 is served from the bridge's HTTP
-  // server at /voice-cache/<sha1>.mp3 — Twilio fetches it when it
-  // dials. (Requires LANTERN_VOICE_CACHE_PUBLIC_URL to be set to a
-  // publicly-reachable host the bridge serves, e.g. via Cloudflare
-  // Tunnel or ngrok.)
+  // Build the optional ElevenLabs voice-clone renderer (B8). Returns a
+  // function that takes text and produces a URL Twilio can <Play>, OR
+  // undefined when voice-clone is OFF/unconfigured so the orchestrator
+  // skips it and falls back to inline Polly <Say>.
+  //
+  // Triple-gated (see resolveVoiceCloneConfig): LANTERN_VOICE_CLONE=1 +
+  // LANTERN_ELEVENLABS_API_KEY + LANTERN_ELEVENLABS_VOICE_ID. ALSO needs
+  // LANTERN_VOICE_CACHE_PUBLIC_URL — the publicly-reachable host (e.g.
+  // Cloudflare Tunnel / ngrok) the bridge serves /voice-cache/<sha>.mp3
+  // from; Twilio fetches the audio there when it dials. Synthesis is
+  // best-effort and never throws into the call path.
   private makeVoiceRenderer(): ((text: string) => Promise<string | null>) | undefined {
-    const apiKey = process.env.LANTERN_ELEVENLABS_KEY;
-    const voiceId = process.env.LANTERN_ELEVENLABS_VOICE_ID;
     const publicUrlBase = process.env.LANTERN_VOICE_CACHE_PUBLIC_URL;
-    if (!apiKey || !voiceId || !publicUrlBase) return undefined;
-    return async (text: string) => {
-      try {
-        const buf = await renderTextWithElevenLabs(text, { apiKey, voiceId });
-        if (!buf) return null;
-        // Write to disk + return URL. Caching by sha1 of text so
-        // repeated phrases re-use the same audio (saves $).
-        const { createHash } = await import("node:crypto");
-        const { writeFile, mkdir } = await import("node:fs/promises");
-        const { join } = await import("node:path");
-        const { homedir } = await import("node:os");
-        const cacheDir = join(homedir(), ".lantern", "voice-cache");
-        await mkdir(cacheDir, { recursive: true });
-        const sha = createHash("sha1").update(text + voiceId).digest("hex");
-        await writeFile(join(cacheDir, `${sha}.mp3`), buf);
-        return `${publicUrlBase.replace(/\/$/, "")}/voice-cache/${sha}.mp3`;
-      } catch (err) {
-        this.logger.warn({ err }, "ElevenLabs render failed");
-        return null;
-      }
-    };
+    // Gate + credentials live in bridge-core; hosting is bridge-owned.
+    if (!resolveVoiceCloneConfig() || !publicUrlBase) return undefined;
+    return async (text: string) =>
+      synthesizeSpeech(text, {
+        logger: this.logger as any,
+        hostAudio: async (cacheKey, mp3) => {
+          // Write to disk + return URL. Cached by sha1(text+voice) so
+          // repeated phrases re-use the same audio (saves $).
+          const { writeFile, mkdir } = await import("node:fs/promises");
+          const { join } = await import("node:path");
+          const { homedir } = await import("node:os");
+          const cacheDir = join(homedir(), ".lantern", "voice-cache");
+          await mkdir(cacheDir, { recursive: true });
+          await writeFile(join(cacheDir, `${cacheKey}.mp3`), mp3);
+          return `${publicUrlBase.replace(/\/$/, "")}/voice-cache/${cacheKey}.mp3`;
+        },
+      });
   }
 
   // Execute a cached offer from humanize's detectOfferInReply.
@@ -3864,6 +3951,17 @@ export class IMessageSession {
     const cutoff = Date.now() - IMessageSession.OFFER_TTL_MS;
     for (const [key, offer] of this.pendingOffers) {
       if (offer.issuedAt < cutoff) this.pendingOffers.delete(key);
+    }
+  }
+
+  // B5 — GC pending draft-edits — sweep entries older than DRAFT_EDIT_TTL_MS so
+  // a stale heads-up can't capture an unrelated owner message minutes later.
+  // Called lazily on each inline-edit-intercept check (cheap O(n)).
+  private gcPendingDraftEdits(): void {
+    if (this.pendingDraftEdits.size === 0) return;
+    const cutoff = Date.now() - IMessageSession.DRAFT_EDIT_TTL_MS;
+    for (const [key, d] of this.pendingDraftEdits) {
+      if (d.issuedAt < cutoff) this.pendingDraftEdits.delete(key);
     }
   }
 

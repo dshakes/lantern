@@ -198,3 +198,48 @@ curl -s http://localhost:3100/health | jq .quietHours
 # Tail the bridge log for nudge fires:
 tail -f ~/Library/Logs/Lantern/whatsapp-bridge.out.log | grep "nudge\|anticipation"
 ```
+
+---
+
+## 7. Voice clone for outbound calls (ElevenLabs) — OFF by default
+
+By default, outbound calls (voicemails + agent-task calls) are spoken in a
+generic Polly TTS voice. Optionally the bot can speak in **your own cloned
+voice** via ElevenLabs. This is **deepfake-class** and therefore **OFF by
+default**; you must opt in explicitly.
+
+> The two-party-consent announcement ("this call may be saved for …'s
+> records") is **unaffected** — it still plays on calls to all-party-consent
+> states whether you use Polly or your clone. Voice-clone changes the *voice*,
+> not the consent posture.
+
+### Setup
+
+1. In [elevenlabs.io](https://elevenlabs.io) → **Voices** → create an
+   **Instant Voice Clone** of your own voice (upload a minute or two of clean
+   audio of yourself). Copy its **Voice ID**.
+2. Copy your ElevenLabs **API key** (Profile → API Keys).
+3. Stand up a publicly-reachable host for the generated MP3s — Twilio fetches
+   them when it dials. The bridge serves `/voice-cache/<sha>.mp3`; expose it
+   via Cloudflare Tunnel or ngrok and set `LANTERN_VOICE_CACHE_PUBLIC_URL` to
+   that public base URL.
+4. Add to `~/.lantern/env` (or the LaunchAgent plist):
+
+   ```bash
+   export LANTERN_VOICE_CLONE=1                       # master opt-in (off by default)
+   export LANTERN_ELEVENLABS_API_KEY="sk-..."         # never logged
+   export LANTERN_ELEVENLABS_VOICE_ID="your-voice-id"
+   export LANTERN_VOICE_CACHE_PUBLIC_URL="https://<your-tunnel-host>"
+   ```
+
+Restart the bridge. If **any** of the three voice-clone vars (or the public
+URL) is missing, the bridge falls back **cleanly** to the Polly voice — no
+behavior change, the call still goes out. On any ElevenLabs/hosting error
+mid-call, it also falls back to Polly: voice-clone never fails a call.
+
+| Var | Purpose | Default |
+|---|---|---|
+| `LANTERN_VOICE_CLONE` | Master opt-in (`1`/`true`/`on`). Deepfake-class — keep off unless intended | off |
+| `LANTERN_ELEVENLABS_API_KEY` | ElevenLabs API key (legacy alias `LANTERN_ELEVENLABS_KEY`) | — |
+| `LANTERN_ELEVENLABS_VOICE_ID` | The cloned voice to speak in | — |
+| `LANTERN_VOICE_CACHE_PUBLIC_URL` | Public base URL the bridge serves `/voice-cache/<sha>.mp3` from | — |
