@@ -8,16 +8,24 @@
 
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { voiceTranscriptionLangHint, looksGarbledTranscript } from "./language.ts";
+import {
+  voiceTranscriptionLangHint,
+  looksGarbledTranscript,
+  shouldShortCircuitVoiceNote,
+  degradedVoiceAck,
+} from "./language.ts";
 
 // ---------------------------------------------------------------------------
 // voiceTranscriptionLangHint — env / nativity / default precedence
 // ---------------------------------------------------------------------------
 
-test("defaults to Telugu when no env + no nativity", () => {
+test("defaults to AUTO-detect + Telugu prompt when no env + no nativity", () => {
+  // Out of the box we must NOT force `language=te` (Whisper 400s on it).
+  // Auto-detect (iso="") + a Telugu-script prompt biases the decoder
+  // without risking an unsupported_language rejection.
   delete process.env.LANTERN_VOICE_LANG;
   const h = voiceTranscriptionLangHint({});
-  assert.equal(h.iso, "te");
+  assert.equal(h.iso, "", "must auto-detect, not force an unsupported ISO");
   assert.equal(h.lang, "telugu");
   assert.ok(h.prompt.length > 0, "should carry a script-priming prompt");
 });
@@ -45,18 +53,23 @@ test('LANTERN_VOICE_LANG="auto" disables biasing', () => {
   delete process.env.LANTERN_VOICE_LANG;
 });
 
-test("empty env falls through to the default (not auto)", () => {
+test("empty env falls through to the default (auto-detect + Telugu prompt)", () => {
   process.env.LANTERN_VOICE_LANG = "";
   const h = voiceTranscriptionLangHint({});
-  assert.equal(h.iso, "te");
+  assert.equal(h.iso, "");
+  assert.equal(h.lang, "telugu");
+  assert.ok(h.prompt.length > 0);
   delete process.env.LANTERN_VOICE_LANG;
 });
 
-test("owner nativity drives the hint when env is unset", () => {
+test("owner nativity drives the prompt (auto-detect iso) when env is unset", () => {
   delete process.env.LANTERN_VOICE_LANG;
   const h = voiceTranscriptionLangHint({ nativity: "Mumbai — Marathi & Hindi" });
-  // First known language name in the nativity line wins.
-  assert.ok(h.iso === "mr" || h.iso === "hi", `expected mr/hi, got ${h.iso}`);
+  // First known language name in the nativity line wins for the prompt/lang;
+  // iso stays auto-detect (no forced, possibly-unsupported, language).
+  assert.equal(h.iso, "", "nativity-driven hint must auto-detect");
+  assert.ok(h.lang === "marathi" || h.lang === "hindi", `expected marathi/hindi, got ${h.lang}`);
+  assert.ok(h.prompt.length > 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -95,4 +108,77 @@ test("does not flag empty / too-short transcripts (handled separately)", () => {
 test("treats Devanagari as compatible for Hindi/Marathi (shared script)", () => {
   assert.equal(looksGarbledTranscript("मी उद्या येतो", "hindi"), false);
   assert.equal(looksGarbledTranscript("मी उद्या येतो", "marathi"), false);
+});
+
+// ---------------------------------------------------------------------------
+// shouldShortCircuitVoiceNote — degraded/empty/placeholder decision (BUG 2b).
+//
+// A voice note that can't be understood must NEVER reach the LLM (which would
+// emit a "transcription garbled" meta-reply that the bot-tell filter then
+// suppresses → dead silence). These cases short-circuit to a human ack.
+// ---------------------------------------------------------------------------
+
+test("short-circuits an explicitly degraded voice note", () => {
+  assert.equal(
+    shouldShortCircuitVoiceNote({ ok: false, kind: "voice", degraded: true, syntheticText: "" }),
+    true,
+  );
+});
+
+test("short-circuits an empty-transcript voice note", () => {
+  assert.equal(shouldShortCircuitVoiceNote({ ok: false, kind: "voice", syntheticText: "" }), true);
+  assert.equal(shouldShortCircuitVoiceNote({ ok: false, kind: "voice", syntheticText: "   " }), true);
+});
+
+test("short-circuits a bracketed placeholder voice note", () => {
+  assert.equal(
+    shouldShortCircuitVoiceNote({
+      ok: false,
+      kind: "voice",
+      syntheticText: "[voice note — transcription unavailable (400). Add an OpenAI key in Settings.]",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldShortCircuitVoiceNote({ ok: false, kind: "voice", syntheticText: "[voice note — empty transcription]" }),
+    true,
+  );
+});
+
+test("does NOT short-circuit a clean transcript", () => {
+  assert.equal(
+    shouldShortCircuitVoiceNote({
+      ok: true,
+      kind: "voice",
+      syntheticText: "[voice note transcribed] nenu repu vasta",
+    }),
+    false,
+  );
+});
+
+test("does NOT short-circuit non-voice media", () => {
+  assert.equal(shouldShortCircuitVoiceNote({ ok: false, kind: "image", syntheticText: "" }), false);
+  assert.equal(shouldShortCircuitVoiceNote({ ok: true, kind: "image", syntheticText: "[image — looks like: a cat]" }), false);
+});
+
+// ---------------------------------------------------------------------------
+// degradedVoiceAck — never silent; Telugu for Telugu-writing contacts.
+// ---------------------------------------------------------------------------
+
+test("owner self-chat ack nudges to re-type", () => {
+  const ack = degradedVoiceAck({ isOwner: true });
+  assert.ok(ack.length > 0);
+  assert.match(ack, /typing|re-record/i);
+});
+
+test("contact ack is warm + reassuring (English default)", () => {
+  const ack = degradedVoiceAck({ isOwner: false, contactWritesTelugu: false });
+  assert.ok(ack.length > 0);
+  assert.match(ack, /voice note/i);
+});
+
+test("Telugu-writing contact gets a Telugu ack", () => {
+  const ack = degradedVoiceAck({ isOwner: false, contactWritesTelugu: true });
+  assert.ok(ack.length > 0);
+  assert.match(ack, /vini|call chesta|🙏/);
 });

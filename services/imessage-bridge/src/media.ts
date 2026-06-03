@@ -115,24 +115,25 @@ export class MediaHandler {
         this.logger.warn({ status: res.status, body: body.slice(0, 200) }, "transcription proxy failed");
         const fallback = await this.transcribeVoiceDirect(buf, mime, filename, langHint);
         if (fallback) return fallback;
-        return {
-          ok: false,
-          kind: "voice",
-          mime,
-          syntheticText: `[voice note — transcription unavailable (${res.status}). Add an OpenAI key in Settings.]`,
-        };
+        // Transcription unavailable (proxy error, no key, etc.). Mark
+        // `degraded` with EMPTY syntheticText so the caller sends a warm
+        // human ack instead of feeding a "[transcription unavailable]"
+        // placeholder to the LLM (which would emit a meta-reply that the
+        // bot-tell filter suppresses → dead silence). Parity with WA bridge.
+        return { ok: false, kind: "voice", mime, degraded: true, syntheticText: "" };
       }
       const data = (await res.json()) as { text?: string };
       const transcript = (data.text || "").trim();
       if (!transcript) {
-        return { ok: false, kind: "voice", mime, syntheticText: "[voice note — empty transcription]" };
+        // Empty transcription is not a real message — degrade to an ack.
+        return { ok: false, kind: "voice", mime, degraded: true, syntheticText: "" };
       }
       return this.finalizeTranscript(transcript, langHint.lang, mime);
     } catch (err) {
       this.logger.warn({ err }, "transcription proxy exception");
       const fallback = await this.transcribeVoiceDirect(buf, mime, filename, langHint);
       if (fallback) return fallback;
-      return { ok: false, kind: "voice", mime, syntheticText: "[voice note — transcription errored]" };
+      return { ok: false, kind: "voice", mime, degraded: true, syntheticText: "" };
     }
   }
 

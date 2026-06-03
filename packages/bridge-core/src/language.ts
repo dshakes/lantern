@@ -374,18 +374,29 @@ function normalizeLangToken(raw: string): DetectedLanguage | "auto" | "unset" | 
 /** Resolve the Whisper language bias for a voice note.
  *
  *  Precedence: explicit `LANTERN_VOICE_LANG` env (an ISO code, a language
- *  name, or "auto") → owner-profile nativity text → default "te" (this
- *  deployment's owner speaks Telangana Telugu). Passing "auto" anywhere
- *  disables biasing and lets Whisper guess.
+ *  name, or "auto") → owner-profile nativity text → default Telugu (this
+ *  deployment's owner speaks Telangana Telugu).
+ *
+ *  CRITICAL — we only ever send an explicit `iso` (Whisper's `language`
+ *  param) when the OWNER set `LANTERN_VOICE_LANG` to a real ISO code. The
+ *  Whisper API rejects some valid ISO codes (notably "te"/Telugu) with a
+ *  400 `unsupported_language`, which used to kill the whole transcription →
+ *  the contact got dead silence. So out of the box we run AUTO-DETECT
+ *  (iso = "") and rely purely on the script-priming `prompt` to bias the
+ *  decoder toward the right script. The `lang` field still carries the
+ *  expected language so `looksGarbledTranscript` can flag a wrong-script
+ *  mis-decode. Auto-detect + a Telugu-script prompt = no 400, correct
+ *  script bias.
  *
  *  `nativity` is the owner-profile nativity line (e.g. "Hyderabad,
  *  Telangana — Telugu"); we scan it for a known language name so the
- *  hint follows the profile without extra config. */
+ *  prompt follows the profile without extra config. */
 export function voiceTranscriptionLangHint(opts: { nativity?: string } = {}): VoiceLangHint {
   const none: VoiceLangHint = { iso: "", prompt: "", lang: "english" };
 
   // 1. Explicit env override. "auto" disables biasing; a known language
-  //    wins; unset/empty/unrecognized falls through to nativity/default.
+  //    wins (and ONLY here do we force an explicit `iso`); unset/empty/
+  //    unrecognized falls through to nativity/default.
   const envRaw = (typeof process !== "undefined" && process.env?.LANTERN_VOICE_LANG) || "";
   const envTok = normalizeLangToken(envRaw);
   if (envTok === "auto") return none;
@@ -394,18 +405,84 @@ export function voiceTranscriptionLangHint(opts: { nativity?: string } = {}): Vo
   }
 
   // 2. Owner-profile nativity — find the first language name mentioned.
+  //    Auto-detect (iso = "") + the language's script-priming prompt.
   const nat = (opts.nativity || "").toLowerCase();
   if (nat) {
     for (const lang of Object.keys(ISO_639_1) as DetectedLanguage[]) {
       if (lang === "english") continue;
       if (nat.includes(lang)) {
-        return { iso: ISO_639_1[lang] ?? "", prompt: WHISPER_PRIME[lang] ?? "", lang };
+        return { iso: "", prompt: WHISPER_PRIME[lang] ?? "", lang };
       }
     }
   }
 
-  // 3. Default for this deployment: Telugu.
-  return { iso: "te", prompt: WHISPER_PRIME.telugu ?? "", lang: "telugu" };
+  // 3. Default for this deployment: Telugu — auto-detect + Telugu-script
+  //    prompt (NOT a forced "te" `language`, which Whisper 400s on).
+  return { iso: "", prompt: WHISPER_PRIME.telugu ?? "", lang: "telugu" };
+}
+
+// ---------------------------------------------------------------------------
+// Degraded voice-note handling.
+//
+// When a voice note can't be understood (mis-decoded script, empty/garbled
+// transcript, transcription proxy unavailable) the bridge must NOT feed a
+// placeholder to the LLM — the model emits a "your transcription is garbled"
+// meta-reply that the bot-tell filter then suppresses, leaving the contact in
+// DEAD SILENCE. Instead we short-circuit before the LLM and send a brief,
+// warm, human ack in the owner's voice. NEVER let a voice note end in silence.
+// ---------------------------------------------------------------------------
+
+/** A voice-note MediaAnnotation shape (the subset this module reasons about).
+ *  Both bridges' MediaAnnotation are structurally compatible with this. */
+export interface VoiceNoteOutcome {
+  ok: boolean;
+  kind: string;
+  degraded?: boolean;
+  syntheticText?: string;
+}
+
+/** Decide whether a voice-note annotation must short-circuit to a human ack
+ *  (true) instead of flowing into the LLM as a real inbound message.
+ *
+ *  Short-circuit when it's a voice note AND either:
+ *    - it was explicitly marked `degraded` (mis-decoded / unavailable), or
+ *    - it produced no usable `syntheticText` (empty / whitespace), or
+ *    - the `syntheticText` is a bracketed `[…]` placeholder rather than a
+ *      real transcript (defensive: any leftover placeholder must never reach
+ *      the LLM as if the contact had typed it).
+ *
+ *  A clean transcript (`[voice note transcribed] …`) is NOT short-circuited —
+ *  that prefix is stripped downstream and the real words flow to the LLM. */
+export function shouldShortCircuitVoiceNote(a: VoiceNoteOutcome): boolean {
+  if (a.kind !== "voice") return false;
+  if (a.degraded) return true;
+  const t = (a.syntheticText || "").trim();
+  if (!t) return true;
+  // A real transcript is carried as "[voice note transcribed] <words>".
+  // Anything else that is a pure bracketed placeholder (e.g.
+  // "[voice note — transcription unavailable]") must not reach the LLM.
+  if (/^\[voice note transcribed\]/i.test(t)) return false;
+  if (/^\[[^\]]*\]$/.test(t)) return true;
+  return false;
+}
+
+/** The warm human ack sent when a voice note can't be transcribed.
+ *
+ *  Owner self-chat gets the "type it / re-record" nudge (the owner can act on
+ *  it). A contact gets a reassuring "will listen and call/get back" — in
+ *  Telugu (Romanized) when the contact normally writes Telugu, else English.
+ *  Kept short and casual so it reads as the owner, not a bot. */
+export function degradedVoiceAck(opts: {
+  isOwner: boolean;
+  contactWritesTelugu?: boolean;
+}): string {
+  if (opts.isOwner) {
+    return "🎙️ couldn't quite make out that voice note — mind typing it or re-recording?";
+  }
+  if (opts.contactWritesTelugu) {
+    return "voice note vచ్చింది 🙏 vini malli call chesta";
+  }
+  return "got your voice note 🙏 will listen properly and get back to you";
 }
 
 /** Heuristic: does a transcript look garbled / mis-decoded?

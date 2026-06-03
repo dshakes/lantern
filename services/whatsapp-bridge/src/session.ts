@@ -40,10 +40,11 @@ import {
   defaultPersonalDocsConfig,
   isTrivialChatter,
   isGreetingSmallTalk,
+  isCelebratoryWish,
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
-import { detectLanguageHints, languageModalityHint } from "@lantern/bridge-core/language";
+import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@lantern/bridge-core/language";
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
@@ -2247,9 +2248,11 @@ export class WhatsAppSession {
             if (annotation.degraded && annotation.kind === "voice") {
               this.logger.info({ jid: from }, "voice note un-transcribable — sending human ack");
               await this.sendReaction(from, msg.key, "🙏").catch(() => {});
-              const ack = this.isOwnerChat(from)
-                ? "🎙️ got your voice note — couldn't quite make it out, mind typing it?"
-                : "got your voice note 🙏 will listen properly and get back to you";
+              const ownerChat = this.isOwnerChat(from);
+              const ack = degradedVoiceAck({
+                isOwner: ownerChat,
+                contactWritesTelugu: !ownerChat && this.contactWritesTelugu(from),
+              });
               await this.sendMessage(from, ack).catch((err) =>
                 this.logger.warn({ err, jid: from }, "voice-note ack send failed"),
               );
@@ -2391,8 +2394,17 @@ export class WhatsAppSession {
 
           if (m.type !== "notify" || !text) continue;
 
+          // A celebratory WISH that names the owner ("Happy Wedding
+          // Anniversary Shekhar & Manasa 🎉") gets ONE casual thanks IN the
+          // group even when the group isn't monitored and there's no
+          // @mention — staying silent on a wish addressed to the owner reads
+          // as rude. General group chatter still requires an opted-in group
+          // + owner-targeting (the two gates below). Parity with iMessage.
+          const wishToOwner =
+            isGroup && isCelebratoryWish(text) && this.isAddressedToOwner(text);
+
           // Groups are opt-in: silently skip anything not on the monitor list.
-          if (isGroup && !this.isMonitoredGroup(from)) continue;
+          if (isGroup && !this.isMonitoredGroup(from) && !wishToOwner) continue;
 
           // Track inbound for style inference. Groups share a single bucket
           // because group register tends to be uniform; DMs are per-contact.
@@ -2480,10 +2492,11 @@ export class WhatsAppSession {
             this.logger.info({ from }, "agent skipped — contact paused");
             continue;
           }
-          // In groups, only reply when the owner is @mentioned or the
-          // message is a quote-reply to one of the owner's messages.
-          // Noise guard: replying to every group message would be awful.
-          if (isGroup && !this.isOwnerTargeted(msg)) {
+          // In groups, only reply when the owner is @mentioned, the message
+          // is a quote-reply to one of the owner's messages, OR it's a
+          // celebratory wish that names the owner (the exception computed
+          // above). Noise guard: replying to every group message would be awful.
+          if (isGroup && !this.isOwnerTargeted(msg) && !wishToOwner) {
             this.logger.info({ from }, "group message not addressed to owner");
             continue;
           }
@@ -3245,6 +3258,25 @@ export class WhatsAppSession {
       return true;
     }
     return false;
+  }
+
+  // Text-based "is this message addressed to the owner?" — the owner's first
+  // name / full name appears as a word. Used for the celebratory-wish group
+  // exception, where a wish is typed as plain text ("Happy Anniversary
+  // Shekhar") and carries no @mention JID for isOwnerTargeted to catch.
+  // Parity with the iMessage bridge's isAddressedToOwner.
+  private isAddressedToOwner(text: string): boolean {
+    const owner = (process.env.LANTERN_OWNER_NAME || OWNER_NAME).trim();
+    if (!owner || owner === "the owner") return false;
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const firstName = owner.split(/\s+/)[0];
+    const patterns = [
+      new RegExp(`\\b${esc(firstName)}\\b`, "i"),
+      new RegExp(`\\b${esc(owner)}\\b`, "i"),
+      /\b@you\b/i,
+      new RegExp(`@${esc(firstName)}\\b`, "i"),
+    ];
+    return patterns.some((re) => re.test(text));
   }
 
   // Set of remoteJids we've already force-bootstrapped this connection
@@ -6978,6 +7010,20 @@ export class WhatsAppSession {
     } catch {
       return "";
     }
+  }
+
+  // Does this contact normally write in Telugu? Scans their recent inbound
+  // text bucket. Used to pick the degraded-voice-note ack language so a
+  // Telugu-speaking contact gets a Telugu ack. Conservative: any recent
+  // message with a confident Telugu signal flips it on.
+  private contactWritesTelugu(from: string): boolean {
+    const key = this.isGroupJid(from) ? `group:${from}` : from;
+    const bucket = this.inboundHistory.get(key) || [];
+    for (const t of bucket.slice(-8)) {
+      const h = detectLanguageHints(t);
+      if (h.primary === "telugu" && h.confidence >= 0.5) return true;
+    }
+    return false;
   }
 
   private rememberInbound(from: string, text: string) {

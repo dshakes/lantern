@@ -50,10 +50,11 @@ import {
   PersonalDocs,
   defaultPersonalDocsConfig,
   isTrivialChatter,
+  isCelebratoryWish,
   extractAttachMarkers,
 } from "@lantern/bridge-core/personal-docs";
 import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
-import { detectLanguageHints, languageModalityHint } from "@lantern/bridge-core/language";
+import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@lantern/bridge-core/language";
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { ScreenContext, defaultScreenContextConfig } from "@lantern/bridge-core/screen-context";
@@ -2200,9 +2201,11 @@ export class IMessageSession {
       // No transcript text is read/logged here (PII). Parity with WA bridge.
       if (annotation?.degraded && annotation.kind === "voice" && row.handle) {
         this.logger.info({ handle: row.handle }, "voice note un-transcribable — sending human ack");
-        const ack = this.isOwnerChatRow(row)
-          ? "🎙️ got your voice note — couldn't quite make it out, mind typing it?"
-          : "got your voice note 🙏 will listen properly and get back to you";
+        const ownerChat = this.isOwnerChatRow(row);
+        const ack = degradedVoiceAck({
+          isOwner: ownerChat,
+          contactWritesTelugu: !ownerChat && this.contactWritesTelugu(row.handle),
+        });
         await this.send(row.handle, ack).catch((err) =>
           this.logger.warn({ err, handle: row.handle }, "voice-note ack send failed"),
         );
@@ -2492,13 +2495,24 @@ export class IMessageSession {
       //   2. Message must look like it's addressed to the owner —
       //      mention by name, "@you", "@<owner>". Replying to every
       //      group message would be insanely noisy.
-      if (!this.monitoredChats.has(row.chatRowid)) return;
-      if (!this.isAddressedToOwner(text)) {
-        this.broadcast({
-          type: "activity",
-          data: { kind: "agent_skipped", summary: "group msg — not addressed to you", detail: text.slice(0, 120), jid: row.handle, timestamp: Date.now() },
-        });
-        return;
+      //
+      // EXCEPTION: a celebratory WISH that names the owner (e.g. "Happy
+      // Wedding Anniversary Shekhar & Manasa 🎉") gets ONE casual thanks
+      // IN the group even if the chat isn't monitored — staying silent on
+      // a wish addressed to the owner reads as rude. General group chatter
+      // still requires an explicitly-monitored chat. The persona's
+      // "celebratory wish → one short casual thanks, no name unless
+      // certain" rule keeps the reply appropriate.
+      const wishToOwner = isCelebratoryWish(text) && this.isAddressedToOwner(text);
+      if (!wishToOwner) {
+        if (!this.monitoredChats.has(row.chatRowid)) return;
+        if (!this.isAddressedToOwner(text)) {
+          this.broadcast({
+            type: "activity",
+            data: { kind: "agent_skipped", summary: "group msg — not addressed to you", detail: text.slice(0, 120), jid: row.handle, timestamp: Date.now() },
+          });
+          return;
+        }
       }
     }
 
@@ -3979,6 +3993,18 @@ export class IMessageSession {
     if (!arr) { arr = []; this.inboundHistory.set(handle, arr); }
     arr.push(text);
     if (arr.length > HISTORY_DEPTH) arr.splice(0, arr.length - HISTORY_DEPTH);
+  }
+
+  // Does this contact normally write in Telugu? Scans their recent inbound
+  // text bucket — picks the degraded-voice-note ack language. Parity with
+  // the WhatsApp bridge.
+  private contactWritesTelugu(handle: string): boolean {
+    const bucket = this.inboundHistory.get(handle) || [];
+    for (const t of bucket.slice(-8)) {
+      const h = detectLanguageHints(t);
+      if (h.primary === "telugu" && h.confidence >= 0.5) return true;
+    }
+    return false;
   }
 
   // PROACTIVE MEMORY — scan the contact's text for high-confidence
