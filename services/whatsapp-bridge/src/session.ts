@@ -8,7 +8,7 @@ import { Boom } from "@hapi/boom";
 import { WebSocket } from "ws";
 import * as QRCode from "qrcode";
 import { join, dirname } from "path";
-import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, appendFileSync, statSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, appendFileSync, statSync, chmodSync } from "fs";
 import { homedir } from "os";
 import type { Logger } from "pino";
 import { AgentClient } from "@lantern/bridge-core/agent";
@@ -61,6 +61,7 @@ import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-t
 import {
   detectLifeThreat,
   detectPromptInjection,
+  detectNonEnglishInjectionRisk,
   detectRelayPromise,
   refusalReply as escalationRefusalReply,
 } from "@lantern/bridge-core/escalation-detector";
@@ -775,7 +776,10 @@ export class WhatsAppSession {
       try {
         const batch = this.contactNameBuffer.map((e) => JSON.stringify(e)).join("\n") + "\n";
         this.contactNameBuffer = [];
-        appendFileSync(this.contactNamesFile, batch);
+        // JID→name map = PII at rest. Owner-only (0600).
+        const fresh = !existsSync(this.contactNamesFile);
+        appendFileSync(this.contactNamesFile, batch, { mode: 0o600 });
+        if (fresh) { try { chmodSync(this.contactNamesFile, 0o600); } catch {} }
       } catch (err) {
         this.logger.warn({ err }, "wa-contact-names flush failed");
       }
@@ -884,7 +888,10 @@ export class WhatsAppSession {
       // statements at the top of the file.
       const batch = this.historyAppendBuffer.join("\n") + "\n";
       this.historyAppendBuffer = [];
-      appendFileSync(this.historyFile, batch);
+      // wa-history.jsonl holds message text = PII at rest. Owner-only (0600).
+      const fresh = !existsSync(this.historyFile);
+      appendFileSync(this.historyFile, batch, { mode: 0o600 });
+      if (fresh) { try { chmodSync(this.historyFile, 0o600); } catch {} }
       // Truncate on overflow — keep the most recent half.
       try {
         const st = statSync(this.historyFile);
@@ -892,7 +899,8 @@ export class WhatsAppSession {
           const raw = readFileSync(this.historyFile, "utf-8");
           const lines = raw.split("\n");
           const kept = lines.slice(Math.floor(lines.length / 2)).join("\n");
-          writeFileSync(this.historyFile, kept);
+          writeFileSync(this.historyFile, kept, { mode: 0o600 });
+          try { chmodSync(this.historyFile, 0o600); } catch {}
           this.logger.info({ before: st.size, after: kept.length }, "wa-history truncated");
         }
       } catch {}
@@ -1337,7 +1345,8 @@ export class WhatsAppSession {
     if (existsSync(legacyStateFile) && !existsSync(this.stateFile)) {
       try {
         const data = readFileSync(legacyStateFile, "utf8");
-        writeFileSync(this.stateFile, data);
+        writeFileSync(this.stateFile, data, { mode: 0o600 });
+        try { chmodSync(this.stateFile, 0o600); } catch {}
         this.logger.info(
           { from: legacyStateFile, to: this.stateFile },
           "migrated agent_state out of authDir",
@@ -3020,7 +3029,10 @@ export class WhatsAppSession {
         escalationEnabled: this.escalationEnabled,
         pushoverEnabled: this.pushoverEnabled,
       };
-      writeFileSync(this.stateFile, JSON.stringify(payload, null, 2));
+      // Holds ownerSentHistory (owner's message text) + JIDs + pushNames
+      // = PII at rest. Owner-only (0600).
+      writeFileSync(this.stateFile, JSON.stringify(payload, null, 2), { mode: 0o600 });
+      try { chmodSync(this.stateFile, 0o600); } catch {}
     } catch (err) {
       this.logger.warn({ err }, "could not persist agent_state.json");
     }
@@ -5045,8 +5057,11 @@ export class WhatsAppSession {
           .map(([k, v]) => JSON.stringify({ id: k, ...v }))
           .join("\n") + "\n";
         writeFileSync(this.replyMetaFile, out, { mode: 0o600 });
+        try { chmodSync(this.replyMetaFile, 0o600); } catch {}
       } else {
+        const fresh = !existsSync(this.replyMetaFile);
         appendFileSync(this.replyMetaFile, JSON.stringify({ id, ...entry }) + "\n", { mode: 0o600 });
+        if (fresh) { try { chmodSync(this.replyMetaFile, 0o600); } catch {} }
       }
     } catch (err) {
       this.logger.warn({ err }, "reply-meta sidecar append failed (non-fatal)");
@@ -5699,6 +5714,12 @@ export class WhatsAppSession {
     //    "are you an AI", money probe, access probe) →
     //    refuse + escalate. Don't engage.
     // ─────────────────────────────────────────────────────
+    // Soft caution: a non-English inbound from a NON-owner contact that
+    // the deterministic injection patterns can't read. We don't refuse
+    // (it may be benign) — we force the reply through draft-for-owner-
+    // approval (LOW tier) so the owner is the judge. Deterministic, no
+    // LLM on the hot path. Parity with the iMessage bridge.
+    let forceDraftCaution = false;
     if (!opts.isGroup) {
       const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
       const lifeThreat = detectLifeThreat(text);
@@ -5742,6 +5763,26 @@ export class WhatsAppSession {
           this.logger.error({ err, from }, "prompt-injection refusal send failed");
         }
         return;
+      }
+      // Non-English fallback: no English/Telugu pattern fired, but the
+      // message isn't English and the sender isn't the owner. Route to
+      // draft (don't refuse, don't auto-send).
+      if (!this.isOwnerChat(from)) {
+        const langHintForCaution = detectLanguageHints(text);
+        const caution = detectNonEnglishInjectionRisk({
+          text,
+          isOwner: false,
+          alreadyMatched: false,
+          languagePrimary: langHintForCaution.primary,
+          languageConfidence: langHintForCaution.confidence,
+        });
+        if (caution) {
+          forceDraftCaution = true;
+          this.logger.info(
+            { from, reason: caution.reason },
+            "🛡 non-English injection fallback — forcing draft-for-approval",
+          );
+        }
       }
     }
 
@@ -6246,6 +6287,13 @@ export class WhatsAppSession {
       hasPriorSamples: ownerSamples.length > 0,
       hasPriorDislikes: dislikeEntries.length > 0,
     });
+    // Non-English injection fallback forces the riskiest tier so the
+    // reply is drafted for owner approval, never auto-sent. Mutate the
+    // verdict in place so every downstream tier check sees LOW.
+    if (forceDraftCaution && tier.tier !== "LOW") {
+      tier.tier = "LOW";
+      tier.reasons.push("-non-english-injection-fallback");
+    }
     this.logger.info({ from, tier: tierBadge(tier) }, "wa reply confidence");
     if (tier.tier === "LOW" && !opts.isGroup) {
       // DRAFT-AND-CONFIRM (high-stakes default, parity with iMessage). A
@@ -6255,8 +6303,9 @@ export class WhatsAppSession {
       // queue as VIPs) rather than firing after a silent hold. The owner
       // approves from the dashboard / self-chat and the reply goes out then.
       // Disable with LANTERN_DRAFT_HIGH_STAKES=off to restore the old
-      // hold-then-send behavior.
-      if (WhatsAppSession.DRAFT_HIGH_STAKES) {
+      // hold-then-send behavior. A non-English injection caution ALWAYS
+      // drafts (or suppresses) regardless of the high-stakes toggle.
+      if (WhatsAppSession.DRAFT_HIGH_STAKES || forceDraftCaution) {
         const queued = await this.personal.queueDraft(
           from,
           opts.senderName ?? this.contactNames.get(from) ?? undefined,

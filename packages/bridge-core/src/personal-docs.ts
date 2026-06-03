@@ -19,7 +19,7 @@
 // box; other types return a "binary — won't preview" placeholder.
 
 import { spawn } from "child_process";
-import { existsSync, readFileSync, statSync, appendFileSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, statSync, appendFileSync, mkdirSync, writeFileSync, chmodSync } from "fs";
 import { resolve, dirname, basename, extname, join, sep } from "path";
 import { homedir } from "os";
 import { createHash } from "crypto";
@@ -763,7 +763,9 @@ export class PersonalDocs {
   // /usr/bin/osascript and the system PDFKit framework.
   private renderPdfPages(pdfPath: string, outDir: string, maxPages: number): Promise<string[]> {
     return new Promise((resolve) => {
-      try { mkdirSync(outDir, { recursive: true }); } catch {}
+      // 0700: rendered PDF pages are document scans (passport/license/etc.)
+      // — owner-only, matching the OCR-cache standard.
+      try { mkdirSync(outDir, { recursive: true, mode: 0o700 }); } catch {}
       const script = `
 ObjC.import('PDFKit');
 ObjC.import('AppKit');
@@ -824,7 +826,8 @@ function run(argv) {
   // JXA path because qlmanage spins up the Quick Look service.
   private renderPdfPage(pdfPath: string, outDir: string): Promise<boolean> {
     return new Promise((resolve) => {
-      try { mkdirSync(outDir, { recursive: true }); } catch {}
+      // 0700: rendered PDF page is a document scan — owner-only.
+      try { mkdirSync(outDir, { recursive: true, mode: 0o700 }); } catch {}
       const proc = spawn("qlmanage", ["-t", "-s", "1600", "-o", outDir, pdfPath]);
       const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; resolve(false); }, 15_000);
       proc.stderr.on("data", () => {});
@@ -903,7 +906,12 @@ function run(argv) {
   private audit(action: string, data: Record<string, unknown>): void {
     try {
       const line = JSON.stringify({ ts: new Date().toISOString(), action, ...data }) + "\n";
-      appendFileSync(this.cfg.auditLogPath, line);
+      // The audit log records raw doc queries + file paths (PII at rest)
+      // — owner-only (0600), matching the OCR-cache standard. mode on the
+      // append only applies on creation, so chmod defensively each write.
+      const fresh = !existsSync(this.cfg.auditLogPath);
+      appendFileSync(this.cfg.auditLogPath, line, { mode: 0o600 });
+      if (fresh) { try { chmodSync(this.cfg.auditLogPath, 0o600); } catch {} }
     } catch {}
   }
 }

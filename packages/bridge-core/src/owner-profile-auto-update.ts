@@ -21,7 +21,7 @@
 //   - Returns the list of newly-appended lines so the bridge can ack
 //     the owner: "📝 noted: Raju in Poolville MD, Sujith in NJ".
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, chmod } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import type { Logger } from "pino";
 
@@ -257,7 +257,9 @@ async function finalizeStyleWrite(
 ): Promise<WriteStyleLessonsResult> {
   if (updated === existing) return result;
   try {
-    await writeFile(opts.profilePath, updated, "utf8");
+    // Owner profile holds personal facts/names — owner-only at rest (0600).
+    await writeFile(opts.profilePath, updated, { encoding: "utf8", mode: 0o600 });
+    try { await chmod(opts.profilePath, 0o600); } catch { /* best-effort */ }
     log?.info({ added: result.added, updated: result.updated }, "style lessons written");
     opts.invalidate?.();
   } catch (err) {
@@ -551,9 +553,11 @@ export async function maybeAutoUpdateOwnerProfile(
   }
 
   try {
-    await writeFile(opts.profilePath, updated, "utf8");
+    // Owner profile holds personal facts/names — owner-only at rest (0600).
+    await writeFile(opts.profilePath, updated, { encoding: "utf8", mode: 0o600 });
+    try { await chmod(opts.profilePath, 0o600); } catch { /* best-effort */ }
     log?.info(
-      { added: appended.length, skipped: skipped.length, lines: appended.map((f) => f.line) },
+      { added: appended.length, skipped: skipped.length },
       "owner profile auto-updated",
     );
     // Push the freshly-written content live so the next reply sees it.

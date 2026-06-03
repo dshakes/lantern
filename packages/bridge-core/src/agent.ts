@@ -12,7 +12,7 @@
 //     persist its jid→sessionId map to. iMessage doesn't persist
 //     (sessions are short-lived anyway).
 
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "fs";
 import type { Logger } from "pino";
 
 import { authedFetch, authEnabled } from "./auth.js";
@@ -294,7 +294,10 @@ export class AgentClient {
     if (!this.sessionsFile) return;
     try {
       const obj = Object.fromEntries(this.sessions);
-      writeFileSync(this.sessionsFile, JSON.stringify(obj, null, 2));
+      // Keys are contact JIDs (phone numbers) — PII at rest. Owner-only
+      // (0600), matching the OCR-cache / memory-JSONL standard.
+      writeFileSync(this.sessionsFile, JSON.stringify(obj, null, 2), { mode: 0o600 });
+      try { chmodSync(this.sessionsFile, 0o600); } catch { /* best-effort */ }
     } catch (err) {
       this.logger.warn({ err }, "could not persist agent_sessions.json");
     }

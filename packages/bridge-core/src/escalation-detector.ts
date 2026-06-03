@@ -110,6 +110,115 @@ export function detectPromptInjection(text: string): EscalationVerdict | null {
 }
 
 // ─────────────────────────────────────────────────────────────
+// NON-ENGLISH INJECTION FALLBACK (draft-don't-auto-send)
+// ─────────────────────────────────────────────────────────────
+// The PROMPT_INJECTION_PATTERNS above are English + romanized-Telugu
+// only. An injection / social-engineering probe written in another
+// language (Spanish, Hindi native script, Mandarin, Arabic, …) slips
+// straight through to the LLM on an owner-impersonation thread.
+//
+// We CANNOT cheaply pattern-match every language's jailbreak phrasing,
+// and we deliberately do NOT call an LLM judge on the hot path (that
+// would add latency + cost + a fail-open dependency to the safety
+// gate). Instead we degrade SAFELY: when an inbound from a NON-owner
+// contact is clearly non-English (low ASCII ratio OR a confident
+// non-English language detection) AND none of the deterministic
+// English/Telugu patterns fired, we don't refuse and we don't
+// auto-send — we raise a "draft for owner approval" caution so the
+// owner's eyes are the judge. This is the cheap, deterministic,
+// fail-closed posture.
+//
+// This is intentionally a low-noise signal: ordinary multilingual
+// chatter from a contact the owner talks to in that language gets
+// drafted (the owner approves with one tap), not refused. The only
+// cost of a false positive is one approval tap; the cost of a false
+// negative is a leaked secret or a socially-engineered owner.
+
+export interface InjectionCautionInput {
+  /** The inbound message text from the contact. */
+  text: string;
+  /** True when the sender is the verified owner channel. Owner inbound
+   *  is never subject to this fallback — the owner can write in any
+   *  language to their own assistant. */
+  isOwner: boolean;
+  /** True when an existing deterministic detector (life-threat /
+   *  prompt-injection) already fired this turn. If so, the stronger
+   *  verdict wins and we do not also raise the soft caution. */
+  alreadyMatched?: boolean;
+  /** Optional precomputed language signal (from `detectLanguageHints`)
+   *  so callers don't pay for detection twice. When the primary is a
+   *  confident non-English language we treat the message as non-English
+   *  even if its ASCII ratio is high (e.g. romanized Spanish). */
+  languagePrimary?: string;
+  languageConfidence?: number;
+}
+
+export interface InjectionCautionVerdict {
+  /** True → route the reply through draft-for-owner-approval instead of
+   *  auto-sending. */
+  draft: boolean;
+  /** Why we flagged it — for logging + the owner's draft note. */
+  reason: string;
+}
+
+// Fraction of code points that are plain printable ASCII. A message in
+// native non-Latin script (Devanagari, CJK, Arabic, Cyrillic, …) lands
+// well below this; English + emoji stays high.
+const NON_ENGLISH_ASCII_RATIO = 0.6;
+
+function asciiRatio(text: string): number {
+  let ascii = 0;
+  let total = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    // Skip whitespace from the denominator — it's script-neutral and
+    // would otherwise inflate the ASCII ratio of a short native-script
+    // message padded with spaces.
+    if (cp === 0x20 || cp === 0x09 || cp === 0x0a || cp === 0x0d) continue;
+    total++;
+    if (cp >= 0x20 && cp <= 0x7e) ascii++;
+  }
+  if (total === 0) return 1;
+  return ascii / total;
+}
+
+/**
+ * SAFE non-English fallback for the injection gate. Returns a `draft`
+ * verdict when a NON-owner inbound is non-English and no deterministic
+ * detector already fired — so the bridge holds the reply for owner
+ * approval rather than auto-sending an LLM reply to a message the
+ * deterministic safety layer couldn't read.
+ *
+ * Deterministic + cheap: a code-point ASCII-ratio scan plus an optional
+ * reuse of the already-computed language hint. No LLM call.
+ */
+export function detectNonEnglishInjectionRisk(
+  input: InjectionCautionInput,
+): InjectionCautionVerdict | null {
+  const text = (input.text || "").trim();
+  // Owner is exempt; short tokens ("ola", "si", "👍") carry no probe
+  // surface and would be pure noise.
+  if (input.isOwner) return null;
+  if (input.alreadyMatched) return null;
+  if (text.length < 4) return null;
+
+  const ratio = asciiRatio(text);
+  const lowAscii = ratio < NON_ENGLISH_ASCII_RATIO;
+  const confidentNonEnglish =
+    !!input.languagePrimary &&
+    input.languagePrimary !== "english" &&
+    input.languagePrimary !== "unknown" &&
+    (input.languageConfidence ?? 0) >= 0.6;
+
+  if (!lowAscii && !confidentNonEnglish) return null;
+
+  const reason = lowAscii
+    ? `non-English inbound (ascii-ratio ${ratio.toFixed(2)} < ${NON_ENGLISH_ASCII_RATIO}) — beyond deterministic injection patterns; drafting for owner`
+    : `non-English inbound (${input.languagePrimary} @ ${(input.languageConfidence ?? 0).toFixed(2)}) — beyond deterministic injection patterns; drafting for owner`;
+  return { draft: true, reason };
+}
+
+// ─────────────────────────────────────────────────────────────
 // RELAY PROMISE
 // ─────────────────────────────────────────────────────────────
 // Patterns the BOT emits when claiming to relay/alert/notify the

@@ -621,17 +621,186 @@ into both bridges' session handlers.
   real LLM-hallucination bug where the model would claim the reminder
   was set without ever emitting a `[CALENDAR:...]` marker.
 
+### Owner profile (`~/.lantern/owner-profile.md`)
+
+The bridge reads this markdown file (hot-reloaded every 30s or on mtime
+change) and injects sections as ground truth into every reply prompt. File
+location overridable via `LANTERN_OWNER_PROFILE`.
+
+**`## Facts` section** — structured biographical ground truth. Parsed into
+typed fields; the bot must NEVER deny or contradict these when a contact
+references them. Supported keys:
+
+```markdown
+## Facts
+- married: yes
+- spouse: Manasa
+- kids: Aarav, Anaya
+- wedding anniversary: 2017-06-03
+```
+
+Date values must be `YYYY-MM-DD`. The bot renders them as "June 3, 2017" in
+the prompt. `factsBlock()` produces a single injected line like
+`"Owner facts (TRUE — never deny or contradict these): married to Manasa; …"`.
+
+**`## Relationships` section** — per-contact relationship labels plus optional
+addressing rules. Extended grammar (pipe-delimited):
+
+```markdown
+## Relationships
+- Shiva: brother
+- Sujith: college friend | address as: Sujith | never: bava, anna
+- +15125551234: manager
+```
+
+The `address as: X` clause sets what to call this contact. `never: a, b`
+forbids those kinship/nickname terms — using one is an instant bot-tell.
+Parenthetical aliases also work: `Manasa(Manu): wife` indexes both names.
+
+**`## Style lessons (managed)` section** — auto-written by the 👎 learning
+flywheel (see below). Do not hand-edit the `<!-- id:... -->` comment tags;
+the bot uses them to dedup on updates. Safe to delete a bullet to retire a lesson.
+
+**Auto-teaching.** When the owner self-chats a message with teaching
+signals ("Raju moved to MD", "remember: anniversary is June 3 2017",
+"don't call Sujith bava"), `owner-profile-auto-update.ts` runs an LLM
+extraction and appends to the relevant section — typed facts to `## Facts`,
+per-contact rules to `## Relationships`, generic notes to `## Auto-learned
+facts (managed)`. The bridge acks with "📝 noted — …".
+
+### Cross-channel unified memory
+
+iMessage and WhatsApp share a single person graph and timeline keyed by the
+control-plane identity layer (`/v1/people`). Facts, episodes, and topics
+learned on one channel are available on the other for the same canonical
+person.
+
+- **Person graph.** `POST /v1/people/resolve` maps any (channel, handle) to a
+  canonical person row. Handles from different channels that belong to the
+  same person are grouped after a `POST /v1/people/merge`.
+- **14-day episodic memory.** Every substantive exchange is indexed as a
+  `(date, topic, outcome)` episode in `~/.lantern/episodes.jsonl` (mode
+  0600). The 5 most-recent episodes per contact are injected into the reply
+  prompt. Cross-contact mentions (owner self-chats "Sujith landed") are
+  tagged so Sujith's next inbound surfaces that episode via `forMentions`.
+- **7-day topic index.** `~/.lantern/topic-index.jsonl` (mode 0600) stores
+  topic-tagged messages. `SocialGraph.related()` retrieves messages from
+  OTHER contacts that mentioned the same topics, injected as a
+  "## Related context from OTHER threads" block. The prompt instructs the
+  LLM never to volunteer cross-thread details unless asked.
+
+### Overnight message replay (quiet hours)
+
+Messages arriving inside quiet hours are queued to
+`~/.lantern/<bridge>/quiet-queue.jsonl` (mode 0600) and replayed when the
+window reopens, with natural morning pacing. The queue is drained in
+chronological order; `LANTERN_QUIET_QUEUE_MAX` caps its size (default 200).
+Quiet hours default: 01:00–06:00 owner-local time, overridable via
+`LANTERN_QUIET_START` / `LANTERN_QUIET_END` (24h integers).
+
+### Authentic-voice + bot-tell guards
+
+`detectBotTells()` in `natural.ts` is the last pass before every send. It
+suppresses the draft (bridge stays silent) when the LLM:
+
+- Uses customer-service stock phrases ("Certainly!", "Of course!", em-dashes)
+- Narrates its own parsing failure ("I can't see the attachment")
+- Leaks its reasoning ("a real person wouldn't respond to that")
+- Denies the owner's biographical facts ("I'm not even married")
+- Uses textbook Telangana-Telugu long verb forms (`vacchina tarvata`,
+  `-tanu`/`-edanu` endings, `ra`/`ro`/`ayya` end-particles) — the owner
+  uses short forms (`vasta`, `cheptha`, `matladtham`).
+
+The suppressed draft triggers a regeneration attempt, not silence.
+
+### Typing / pacing realism
+
+`pacing.ts` computes the pre-send hold from REAL observed `(inbound_ts,
+reply_ts)` pairs in the chat store — median owner reply latency for THAT
+contact. Adjusted by time-of-day (10:00–16:00 quicker, 21:00–01:00 slower),
+jittered ±20%, clamped 600ms–25s. WhatsApp sends a `composing` presence
+indicator before each burst message; the typing duration is proportional to
+message length.
+
+### 👎 learning flywheel
+
+When the owner taps 👎 on a bot reply:
+1. The `(inbound, bad_reply, good_reply)` triple is appended to
+   `~/.lantern/dislikes.jsonl` (mode 0600).
+2. On a schedule (or threshold hit), `runDislikeConsolidation()` mines the
+   full log for patterns that recur across ≥3 rejections (exclamation marks,
+   long replies, filler openers, hedging, over-formal phrasing).
+3. Graduated lessons are written as `## Style lessons (managed)` bullets in
+   `owner-profile.md` and injected into EVERY future reply prompt — the bot
+   improves globally, not just for the one contact.
+4. Optional LLM clustering pass for fuzzy patterns: enabled by
+   `LANTERN_DISLIKE_LLM_CLUSTER=1` (requires a wired `llmCall`; off by default).
+
+Per-contact dislike memory (the raw JSONL entries) is also surfaced back into
+that contact's specific prompt so the LLM knows what shapes were already
+rejected for them.
+
+### Anticipation engine (proactive nudges)
+
+`computeProactiveNudges()` (`anticipation.ts`) is a pure function that ranks
+signals gathered by the bridge and fires owner-facing nudges to self-chat.
+Four nudge kinds, by priority:
+
+| Kind | Trigger | Example |
+|---|---|---|
+| `pre-meeting` | Calendar event starting within 15 min | "1:1 with Raju starts in 10 min — pulling up the thread" |
+| `relationship-date` | Anniversary/birthday within 1 day lookahead | "heads up: your anniversary is tomorrow — want me to draft something?" |
+| `overdue-reply` | Contact unanswered for >2 days | "you haven't gotten back to Madhu in 3 days — want me to take a crack at it?" |
+| `commitment` | Open promise tracked >4h | "still on your plate: send Raju the deck — want me to handle it?" |
+
+Nudges carry stable `dedupeKey`s persisted to `~/.lantern/<bridge>/fired-nudges.json`
+so the same nudge never fires twice in a day. Respect quiet hours.
+Disable with `LANTERN_PROACTIVE_NUDGES=0`.
+
+### Scheduling negotiation
+
+When `schedulingEnabled` is true and the owner's free slots are passed in,
+the persona can propose, hold, and confirm concrete meeting times. On the
+contact's agreement it emits a `[CALENDAR:title|start-iso|end-iso?|notes?]`
+marker (stripped before send; bridge books it). Work-hours protection still
+applies; the marker is never emitted for unconfirmed proposals.
+
+### Draft-and-confirm
+
+LOW-confidence replies (money amounts, future-date commitments, medical
+topics, cold contacts, prior 👎 history) are held and DM'd to the owner's
+self-chat as "draft to X: …, reply 'send' to approve" before sending.
+Disable with `LANTERN_DRAFT_CONFIRM=0` (falls back to the prior 5s hold
+then auto-send). VIPs always go through the dashboard draft queue regardless.
+
+### Claim verifier
+
+`verifyClaims()` (`verifiable-claims.ts`) is a pre-send pass that rewrites
+completed-action claims ("I sent him an email") to intent form ("I'll send
+him an email") unless the matching action was actually invoked. Covers send,
+add to calendar, notify-third-party, forward, email, book. The
+notify-third-party rewrite ("I let him know" → "I'll make sure he sees this")
+runs unconditionally because the bridge has no channel to truthfully complete
+it mid-thread.
+
 ### Required env (bridge process)
 
 | Var                                   | Purpose                                                                                                                                                                                          |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `LANTERN_OWNER_NAME`                  | First name used for ranker boost ("Shekhar" → boost files whose path contains "shekhar" when the query says "my")                                                                                |
 | `LANTERN_OWNER_EMAIL`                 | Mirror destination for bot status updates                                                                                                                                                        |
+| `LANTERN_OWNER_TIMEZONE`              | IANA timezone (e.g. `America/Los_Angeles`). Used by quiet hours, daily digest scheduling, and calendar lookups. Defaults to process timezone when unset.                                         |
 | `LANTERN_IMESSAGE_OWNER_HANDLE`       | (Optional) Owner's primary iMessage handle (phone or email). When set, bridge accepts DMs from this handle as owner-channel (dedicated-bot mode). When unset, falls back to self-chat detection. |
 | `LANTERN_WA_OWNER_JID`                | (Optional) Owner's primary WhatsApp JID — `15125551234` or `15125551234@s.whatsapp.net`. Same role as the iMessage env.                                                                          |
 | `LANTERN_PERSONAL_DOCS_ROOTS`         | Colon-separated allowed roots (default `~/Documents:~/Desktop:~/Library/Mobile Documents/com~apple~CloudDocs`)                                                                                   |
 | `LANTERN_PERSONAL_DOCS_OCR_MAX_PAGES` | Max PDF pages to render+OCR per file (default 3)                                                                                                                                                 |
-| `LANTERN_DEFAULT_CALENDAR`            | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`)                                                                                          |
+| `LANTERN_DEFAULT_CALENDAR`            | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`)                                                                                         |
+| `LANTERN_QUIET_START`                 | Start of quiet-hours window, 24h integer (default `1` = 1 AM). No auto-reply; messages queued for morning replay.                                                                                |
+| `LANTERN_QUIET_END`                   | End of quiet-hours window, 24h integer (default `6` = 6 AM).                                                                                                                                    |
+| `LANTERN_QUIET_QUEUE_MAX`             | Max messages buffered in the overnight queue per bridge (default 200).                                                                                                                           |
+| `LANTERN_PROACTIVE_NUDGES`            | Set to `0` to disable anticipation nudges entirely (default on).                                                                                                                                 |
+| `LANTERN_DRAFT_CONFIRM`               | Set to `0` or `off` to disable draft-and-confirm for LOW-confidence replies (reverts to 5s hold → auto-send). Default on.                                                                        |
+| `LANTERN_DISLIKE_LLM_CLUSTER`         | Set to `1` to enable the optional LLM fuzzy-clustering pass in the 👎 flywheel consolidation. Default off (deterministic-only pass always runs).                                                 |
 | `LANTERN_VOICE_CALLER_ID`             | (Optional) E.164 caller-ID shown to the RECIPIENT of outbound calls — set to the owner's own number so contacts recognize + answer. MUST be a Twilio number or a **Verified Caller ID** on the account. Unset → falls back to the Twilio DID. SMS heads-up + conference owner-leg always use the Twilio DID. |
 | `LANTERN_VOICE_SMS_HEADSUP`           | `on` (default) / `off`. When on, a one-line heads-up SMS ("…'s assistant — …'s calling you in a few seconds about X") is texted to the recipient from the Twilio DID right before a conference dial, so an unknown caller-ID isn't ignored. Best-effort; never blocks the call. |
 | `LANTERN_TWILIO_NUMBER` / `LANTERN_TWILIO_SMS_FROM` | (Optional) E.164 Twilio number used as the SMS **from** when an iMessage send fails to a non-iMessage (SMS/RCS-only) number — the bridge re-delivers the reply as SMS so the contact still hears back. Unset → no SMS fallback. |
@@ -669,6 +838,13 @@ needs a one-time re-pair; `POST /session/:tenant/reset` wipes creds and
 | Method | Path                                       | Purpose                                                                                    |
 | ------ | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | `POST` | `/v1/vision/ocr`                           | OCR a base64 image via tenant's OpenAI vision key. Used by personal-docs for scanned PDFs. |
+| `POST` | `/v1/people/resolve`                       | Resolve a (channel, handle) to a canonical person row; creates if absent.                  |
+| `GET`  | `/v1/people`                               | List people, most-recently-updated first.                                                  |
+| `POST` | `/v1/people/merge`                         | Merge duplicate person rows (transactional, idempotent).                                   |
+| `GET`  | `/v1/people/duplicates`                    | List candidate duplicate pairs by name similarity.                                         |
+| `POST` | `/v1/people/relationship`                  | Stamp a relationship label onto a resolved person.                                         |
+| `POST` | `/v1/memory/events`                        | Ingest a timeline event for a person (resolved from channel+handle).                       |
+| `GET`  | `/v1/memory/context`                       | Unified cross-channel context for a person. `?windowDays=N` slices to the last N days.    |
 | `GET`  | `/session/:tenantId/has-creds` (WA bridge) | Dashboard probe — when true, show "Reconnect" instead of "Pair with QR"                    |
 | `POST` | `/session/:tenantId/reset` (WA bridge)     | Wipe creds (destructive — forces fresh QR pair)                                            |
 
