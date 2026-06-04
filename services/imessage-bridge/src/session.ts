@@ -35,6 +35,7 @@ import {
   defaultQuietHours,
   detectBotTells,
   detectEscalation,
+  greetingReply,
   inferStyle,
   isQuietHours,
   naturalize,
@@ -2875,7 +2876,12 @@ export class IMessageSession {
     // Call the agent. LLM keys + budgets live in the control-plane.
     const userText = isGroup ? `[group message]\n${text}` : text;
     const draft = await this.agent.respondTo(row.handle, userText, systemHint);
-    if (!draft) return;
+    if (!draft) {
+      // Don't vanish on a greeting just because the LLM round-trip returned
+      // nothing — send a deterministic opener so "hi" always gets a reply.
+      if (!isGroup) await this.sendGreetingFallback(row.handle, text, "empty agent draft");
+      return;
+    }
 
     // BOT-TELL FILTER — last-line defense before send. Catches the
     // wooden "I can't see your message", "looks like an issue with how
@@ -2901,6 +2907,10 @@ export class IMessageSession {
           timestamp: Date.now(),
         },
       });
+      // The classic case: a stranger texts "Hi", the model replies "Hey! How
+      // can I help you?", and the customer-service guard suppresses it →
+      // silence. For a pure greeting, fall back to a human opener instead.
+      if (!isGroup) await this.sendGreetingFallback(row.handle, text, `bot-tell: ${tellCheck.reason}`);
       return;
     }
 
@@ -3890,6 +3900,23 @@ export class IMessageSession {
   // Tone: short, warm, lowercase — matches the Jarvis persona used
   // for doc queries. We DON'T inject the docs context block here
   // (no search runs), so this is just a clean agent round-trip.
+  // Greeting safety-net. NEVER go stone-silent on a plain "hi"/"hey". When the
+  // agent yielded no usable draft — either null (control-plane/LLM unreachable,
+  // SSE timeout, dead session) or a draft the bot-tell filter suppressed (e.g.
+  // "Hey! How can I help you?" trips the customer-service guard) — AND the
+  // inbound is a pure greeting, send a short deterministic opener instead. A
+  // greeting never warrants silence and "hey!" never reads as a bot. Returns
+  // true when it fired. Substantive messages are NOT covered here: there,
+  // "better silent than uncanny" still holds.
+  private async sendGreetingFallback(target: string, inbound: string, why: string): Promise<boolean> {
+    const reply = greetingReply(inbound);
+    if (!reply) return false;
+    this.logger.info({ to: target, why }, "greeting fallback — agent draft unusable, sending deterministic opener");
+    const res = await this.send(target, reply);
+    if (res.ok) this.repliesSentToday += 1;
+    return res.ok;
+  }
+
   private async handleOwnerNaturalChat(jid: string, text: string): Promise<void> {
     // Acquire per-chat busy lock; release on exit (success or throw).
     this.busyChat.add(jid);
@@ -3961,6 +3988,8 @@ export class IMessageSession {
       const draft = await this.agent.respondTo(jid, text, systemHint, { withTools: true });
       if (!draft) {
         this.logger.warn({ jid }, "owner natural chat — no draft");
+        // Even the owner's "hi" deserves a reply when the round-trip fails.
+        await this.sendGreetingFallback(jid, text, "empty owner natural-chat draft");
         return;
       }
       await this.send(jid, draft.trim());

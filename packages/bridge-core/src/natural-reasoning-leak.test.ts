@@ -54,6 +54,11 @@ const REAL_REPLIES = [
   "anything else you want me to add?", // 'add' but not 'nothing to add'
   "i already ate, thanks though", // 'already' but not 'already answered'
   "yeah i'm repeating the same playlist haha", // 'repeating' but not about the inbound
+  // Regression: the un-gated `the (contact|sender|recipient)` pattern used to
+  // suppress these legit replies. The verb-gated leak pattern must leave them be.
+  "sure, i'll send you the contact info in a sec",
+  "the recipient address is on file, all good",
+  "lemme grab the sender's number and text you",
 ];
 
 for (const reply of REAL_REPLIES) {
