@@ -822,6 +822,10 @@ export class WhatsAppSession {
     this.socket.ev.on("messaging-history.set", (h) => {
       const startedAt = Date.now();
       const messages = h.messages || [];
+      const nowMs = Date.now();
+      // Recent messages that arrived via history-sync (not live upsert) and
+      // still deserve a reply. Collected in-loop, dispatched after.
+      const recentToReply: Array<{ jid: string; text: string; senderName: string; isGroup: boolean; msgId: string; participant: string }> = [];
       let appended = 0;
       let skippedNoText = 0;
       let skippedBotSelf = 0;
@@ -852,6 +856,39 @@ export class WhatsAppSession {
           msgId,
         });
         appended++;
+
+        // Route RECENT history-sync messages into the reply pipeline. Hard
+        // guards so a backfill of OLD messages is never answered: must be
+        // newer than the window, have a msgId, not be from us, not already
+        // replied, and pass the live path's gate (DMs always; groups only when
+        // monitored or a wish addressed to the owner).
+        const tsMs = tsRaw * 1000;
+        const isGroup = this.isGroupJid(jid);
+        if (
+          WhatsAppSession.HISTORY_REPLY_ENABLED &&
+          msgId &&
+          !msg.key?.fromMe &&
+          tsMs > nowMs - WhatsAppSession.HISTORY_REPLY_WINDOW_MS &&
+          !this.repliedFromHistory.has(msgId) &&
+          !this.isOwnerChat(jid)
+        ) {
+          const wishToOwner = isGroup && isCelebratoryWish(text) && this.isAddressedToOwner(text);
+          if (!isGroup || this.isMonitoredGroup(jid) || wishToOwner) {
+            this.repliedFromHistory.add(msgId);
+            recentToReply.push({ jid, text, senderName: msg.pushName || "", isGroup, msgId, participant: msg.key?.participant || "" });
+          }
+        }
+      }
+
+      // Dispatch the recent catch-up replies (capped) through the same reply
+      // path the live handler uses. Fire-and-forget; never blocks history sync.
+      for (const r of recentToReply.slice(0, WhatsAppSession.HISTORY_REPLY_MAX_PER_BATCH)) {
+        this.logger.info({ jid: r.jid, isGroup: r.isGroup }, "history-sync: routing recent message to reply pipeline (live upsert missed it)");
+        void this.handleAgentReply(r.jid, r.text, {
+          isGroup: r.isGroup,
+          senderName: r.senderName,
+          msgKey: { id: r.msgId, remoteJid: r.jid, fromMe: false, participant: r.participant },
+        }).catch((err) => this.logger.warn({ err, jid: r.jid }, "history-sync reply route failed"));
       }
 
       this.logger.info({
@@ -1042,6 +1079,19 @@ export class WhatsAppSession {
   // back).
   private static readonly HISTORY_DEDUP_MAX_IDS = 200_000;
   private historySeenIds: Set<string> = new Set();
+
+  // Since 2026-05-31 WhatsApp has been delivering this device's GROUP messages
+  // only via messaging-history.set (offline catch-up), never as live
+  // messages.upsert events — so the reply pipeline never saw them. We route
+  // RECENT history-sync messages into the reply pipeline so they still get
+  // answered. Guarded hard so a full backfill of OLD messages is never replied
+  // to: only messages newer than this window, first-seen, non-fromMe, and
+  // passing the same monitored-group/wish gate as the live path.
+  private repliedFromHistory: Set<string> = new Set();
+  private static readonly HISTORY_REPLY_WINDOW_MS = 8 * 60_000;
+  private static readonly HISTORY_REPLY_MAX_PER_BATCH = 4;
+  private static readonly HISTORY_REPLY_ENABLED =
+    (process.env.LANTERN_HISTORY_REPLY ?? "on").toLowerCase() !== "off";
 
   // Auto-backfill bookkeeping: per-jid one-time attempt flag so a
   // group with sparse history gets ONE automatic fetchMessageHistory
