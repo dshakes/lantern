@@ -145,6 +145,51 @@ export function shouldRespond(text: string): ShouldRespondVerdict {
 }
 
 // ---------------------------------------------------------------------------
+// Greeting safety-net
+// ---------------------------------------------------------------------------
+
+// A pure greeting / opener with no actionable tail: "hi", "hey", "hello",
+// "yo", "good morning", "hi hi", "heyy". Deliberately tight — anything with a
+// real question or task ("hey when's my flight") must NOT match, so it still
+// goes through the LLM. Mirrors isGreetingSmallTalk in personal-docs.ts but is
+// kept self-contained here (natural.ts is dependency-free on purpose).
+const PURE_GREETING_RE =
+  /^(?:hi+|hey+|hello+|heya|hiya|yo+|sup|wassup|wazzup|hii+|hai|gm|gn|good\s*(?:morning|afternoon|evening|night)|namaste|hola)(?:[\s,.!?]+(?:hi+|hey+|hello+|there|again|sup|gm|gn))*[\s!.?]*$/i;
+
+const GREETING_REPLIES = [
+  "hey!",
+  "hey, what's up?",
+  "hey :) what's up?",
+  "hii, what's going on?",
+  "hey! how's it going?",
+];
+
+/**
+ * Deterministic, human reply for a bare greeting. Returns a short casual
+ * opener when `inbound` is a pure greeting, else null.
+ *
+ * This is the safety-net for the worst failure mode: the bot going completely
+ * silent on "hi" because the LLM round-trip returned nothing OR the draft
+ * tripped the bot-tell filter (e.g. "Hey! How can I help you?" → suppressed as
+ * customer-service phrasing). A greeting NEVER warrants silence — a plain
+ * "hey!" is both safe and correct, and never reads as a bot. Not used for
+ * substantive messages: there, "better silent than uncanny" still holds.
+ *
+ * Deterministic per-inbound (hash-indexed, not random) so the same opener
+ * doesn't reorder under retries / cross-device replays.
+ */
+export function greetingReply(inbound: string): string | null {
+  const t = (inbound || "").trim();
+  if (!t || t.length > 40) return null;
+  // Strip a leading name mention ("hey Shekhar", "hi there") is already
+  // covered by the regex tail; keep this purely about the opener shape.
+  if (!PURE_GREETING_RE.test(t)) return null;
+  let h = 0;
+  for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0;
+  return GREETING_REPLIES[h % GREETING_REPLIES.length];
+}
+
+// ---------------------------------------------------------------------------
 // Style profile inferred from past inbound messages
 // ---------------------------------------------------------------------------
 
@@ -627,10 +672,13 @@ const REASONING_LEAK_PATTERNS: { re: RegExp; reason: string }[] = [
     re: /\bempty\s+string\b/i,
     reason: "leaked the 'empty string' no-reply instruction",
   },
-  {
-    re: /\bthe\s+(?:contact|sender|recipient)\b/i,
-    reason: "refers to the contact in the third person (reasoning leak)",
-  },
+  // NOTE: an un-gated `\bthe (contact|sender|recipient)\b` used to live here.
+  // It was over-broad — it suppressed perfectly normal replies that merely
+  // contain the noun ("sure, I'll send you the contact info", "the recipient
+  // address is on file") and made the bot go stone-silent on legit messages.
+  // The verb-gated pattern below ("the contact IS/JUST/SAID …") catches the
+  // genuine third-person reasoning leak without the false positives. (The Go
+  // port in messaging_guard.go was already verb-gated; this realigns the TS.)
   {
     re: /\bno(?:thing)?\b[^.!?\n]{0,30}\b(?:needs?|need|requires?|warrants?|merits?)\b[^.!?\n]{0,15}\b(?:a\s+)?(?:reply|response|answer)\b/i,
     reason: "narrates a no-reply decision",
