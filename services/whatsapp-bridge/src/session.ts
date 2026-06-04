@@ -6905,9 +6905,15 @@ export class WhatsAppSession {
 
     // BOT-TELL FILTER — same defense as the iMessage bridge. Catches
     // "I can't see your message", "looks like an issue", customer-
-    // service phrasing, AI tell-words. Suppressed drafts log to the
-    // dashboard so the owner can see what was almost sent.
-    const tellCheck = detectBotTells(draft);
+    // service phrasing, AI tell-words, and Telangana-dialect tells.
+    // Passing the contact name + relationship enables the fabricated-name
+    // net AND the register-aware formal-"-andi" suppressor (spares elders).
+    // Suppressed drafts log to the dashboard so the owner can see what was
+    // almost sent.
+    const tellCheck = detectBotTells(draft, text, {
+      contactName: opts.isGroup ? undefined : (opts.senderName ?? this.contactNames.get(from)),
+      relationship,
+    });
     if (!tellCheck.ok) {
       this.logger.info({ from, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft suppressed by bot-tell filter");
       this.broadcast({
