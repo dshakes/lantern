@@ -861,9 +861,12 @@ export class WhatsAppSession {
 
         // Route RECENT history-sync messages into the reply pipeline. Hard
         // guards so a backfill of OLD messages is never answered: must be
-        // newer than the window, have a msgId, not be from us, not already
-        // replied, and pass the live path's gate (DMs always; groups only when
-        // monitored or a wish addressed to the owner).
+        // newer than the window, have a msgId, not be from us, and not
+        // already replied. The auto-reply DECISION goes through the SAME
+        // shouldAutoReplyToInbound predicate the live path uses, so a
+        // message that would get a reply live gets the same decision here.
+        // Backfilled group messages carry contextInfo, so isOwnerTargeted
+        // works on them too — the gate is now identical, not weaker.
         const tsMs = tsRaw * 1000;
         const isGroup = this.isGroupJid(jid);
         if (
@@ -872,13 +875,15 @@ export class WhatsAppSession {
           !msg.key?.fromMe &&
           tsMs > nowMs - WhatsAppSession.HISTORY_REPLY_WINDOW_MS &&
           !this.repliedFromHistory.has(msgId) &&
-          !this.isOwnerChat(jid)
+          this.shouldAutoReplyToInbound({
+            jid,
+            text,
+            isGroup,
+            targetsOwner: this.isOwnerTargeted(msg),
+          })
         ) {
-          const wishToOwner = isGroup && isCelebratoryWish(text) && this.isAddressedToOwner(text);
-          if (!isGroup || this.isMonitoredGroup(jid) || wishToOwner) {
-            this.repliedFromHistory.add(msgId);
-            recentToReply.push({ jid, text, senderName: msg.pushName || "", isGroup, msgId, participant: msg.key?.participant || "" });
-          }
+          this.repliedFromHistory.add(msgId);
+          recentToReply.push({ jid, text, senderName: msg.pushName || "", isGroup, msgId, participant: msg.key?.participant || "" });
         }
       }
 
@@ -1387,6 +1392,38 @@ export class WhatsAppSession {
   private static readonly DRAFT_HIGH_STAKES =
     ["on", "1"].includes((process.env.LANTERN_DRAFT_HIGH_STAKES ?? "").toLowerCase());
 
+  // ── Live-socket guard (fix: 440 connectionReplaced flap) ─────────────
+  // start() is reachable from several places (POST /start, the auto-resume
+  // sweep, every reconnect timer). Without a guard, two of them can build a
+  // second Baileys socket while the first is still open/connecting — the
+  // server then kills one with 440 connectionReplaced, which is exactly what
+  // pushes group messages into the messaging-history.set offline-catch-up
+  // path instead of live messages.upsert. We track an in-flight flag so a
+  // concurrent start() no-ops (logs) rather than racing a second socket.
+  // RESET on every connection.update close so the reconnect path never
+  // deadlocks behind a stale flag.
+  private connecting = false;
+
+  // ── getMessage cache (fix: missing makeWASocket getMessage) ──────────
+  // Baileys calls getMessage on a retry receipt to re-send/decrypt a
+  // message it needs to replay. Without it, retries fail → decrypt
+  // failures → dropped messages. We back it with a small bounded LRU of
+  // the proto.IMessage payloads we see in messages.upsert, keyed by
+  // key.id. Insertion-order Map → FIFO eviction at MSG_CACHE_MAX.
+  private msgCache = new Map<string, import("baileys").proto.IMessage>();
+  private static readonly MSG_CACHE_MAX = 1000;
+
+  // ── Operational-drop owner heads-up (fix: silent drops) ──────────────
+  // When an inbound that WOULD have been auto-replied is dropped for an
+  // OPERATIONAL reason (muted, paused, VIP-only/silent, killswitch, or the
+  // LLM returned empty / threw), notify the owner once so a real message
+  // isn't silently lost. Deduped per (jid, reason) within a window so a
+  // flood can't spam self-chat. NEVER fires for the normal "not addressed
+  // to me / low-confidence chatter" non-responses.
+  private droppedNotifyAt = new Map<string, number>();
+  private static readonly DROP_NOTIFY_DEDUP_MS = 10 * 60_000;
+  private static readonly DROP_NOTIFY_MAX_KEYS = 500;
+
   constructor(tenantId: string, logger: Logger) {
     this.tenantId = tenantId;
     this.logger = logger.child({ tenant: tenantId });
@@ -1493,6 +1530,91 @@ export class WhatsAppSession {
     const cutoff = Date.now() - WhatsAppSession.BRIDGE_SENT_TTL_MS;
     for (const [id, ts] of this.bridgeSentIds) {
       if (ts < cutoff) this.bridgeSentIds.delete(id);
+    }
+  }
+
+  // Record a message body in the bounded getMessage cache. Re-inserting an
+  // existing key refreshes its recency (delete + set moves it to the tail).
+  // FIFO-evicts the oldest entry once over MSG_CACHE_MAX.
+  private cacheMessage(id: string | null | undefined, message: import("baileys").proto.IMessage | null | undefined): void {
+    if (!id || !message) return;
+    if (this.msgCache.has(id)) this.msgCache.delete(id);
+    this.msgCache.set(id, message);
+    if (this.msgCache.size > WhatsAppSession.MSG_CACHE_MAX) {
+      const oldest = this.msgCache.keys().next().value;
+      if (oldest !== undefined) this.msgCache.delete(oldest);
+    }
+  }
+
+  // Baileys getMessage callback — resolves a previously-seen message body
+  // for retry-receipt resend/decrypt. Returns undefined when we never saw
+  // it (Baileys then proceeds without the resend, which is correct).
+  private getCachedMessage(key: { id?: string | null }): import("baileys").proto.IMessage | undefined {
+    const id = key?.id || "";
+    return id ? this.msgCache.get(id) : undefined;
+  }
+
+  // Unified auto-reply gate (fix: divergent live vs history-sync gating).
+  // Returns true when an inbound message warrants an auto-reply purely on
+  // ADDRESSING grounds — i.e. it's a DM to us, or a group message we're
+  // monitoring AND that targets the owner (@mention / quote-reply), or a
+  // celebratory wish that names the owner. It deliberately does NOT consider
+  // operational toggles (mute / pause / killswitch / VIP) or the cheap
+  // shouldRespond chatter filter — those are layered on by each caller. Both
+  // the live messages.upsert path and the messaging-history.set path call
+  // this so a message that gets a reply live gets the same decision from
+  // history-sync. The history path passes targetsOwner=true for groups
+  // because backfilled history doesn't carry a live proto to inspect for
+  // @mention; the recency/cap/first-seen guards on that path bound it.
+  private shouldAutoReplyToInbound(args: {
+    jid: string;
+    text: string;
+    isGroup: boolean;
+    targetsOwner: boolean;
+  }): boolean {
+    const { jid, text, isGroup, targetsOwner } = args;
+    if (this.isOwnerChat(jid)) return false; // owner channel is handled elsewhere
+    if (!isGroup) return true; // DMs: no allow-list (downstream gates handle trust)
+    const wishToOwner = isCelebratoryWish(text) && this.isAddressedToOwner(text);
+    if (wishToOwner) return true; // a wish naming the owner bypasses monitoring
+    return this.isMonitoredGroup(jid) && targetsOwner;
+  }
+
+  // Best-effort, deduped owner heads-up when an inbound that WOULD have been
+  // handled is dropped for an OPERATIONAL reason. NEVER throws into the
+  // message loop; never fires for normal not-addressed / chatter
+  // non-responses (callers only invoke it on operational drops). Deduped per
+  // (jid, reason) within DROP_NOTIFY_DEDUP_MS so a flood can't spam.
+  private notifyOwnerOfDrop(args: {
+    jid: string;
+    reason: string;
+    text?: string;
+    senderName?: string;
+  }): void {
+    try {
+      const { jid, reason } = args;
+      if (this.isOwnerChat(jid)) return; // don't page the owner about the owner
+      const key = `${jid}:${reason}`;
+      const now = Date.now();
+      const last = this.droppedNotifyAt.get(key) || 0;
+      if (now - last < WhatsAppSession.DROP_NOTIFY_DEDUP_MS) return;
+      this.droppedNotifyAt.set(key, now);
+      // Bound the dedup map so it can't grow forever.
+      if (this.droppedNotifyAt.size > WhatsAppSession.DROP_NOTIFY_MAX_KEYS) {
+        const oldest = this.droppedNotifyAt.keys().next().value;
+        if (oldest !== undefined) this.droppedNotifyAt.delete(oldest);
+      }
+      const label = args.senderName || this.contactNames.get(jid) || jid.split("@")[0];
+      const preview = (args.text || "").slice(0, 160);
+      const body = [
+        `🔕 *Unanswered message* — ${label}`,
+        `(${reason})`,
+        preview ? "" : undefined,
+        preview ? `> ${preview}` : undefined,
+      ].filter((l) => l !== undefined).join("\n");
+      void this.confirmToSelf(body).catch(() => {});
+    } catch {
+      /* heads-up is best-effort — never break the message loop */
     }
   }
 
@@ -1641,6 +1763,22 @@ export class WhatsAppSession {
   }
 
   async start() {
+    // LIVE-SOCKET GUARD (fix: 440 connectionReplaced flap). start() is
+    // reachable from POST /start, the auto-resume sweep, and every reconnect
+    // timer. If a socket is already open or a start() is mid-flight, opening a
+    // second one races the first and the server kills one with 440 — which is
+    // precisely what shunts group messages into messaging-history.set offline
+    // catch-up instead of live messages.upsert. No-op (log) instead. The
+    // `connecting` flag is reset in the connection.update close handler (and
+    // in the catch below) so the reconnect path never deadlocks behind it.
+    if (this.connecting || this.socket) {
+      this.logger.info(
+        { connecting: this.connecting, hasSocket: !!this.socket, state: this.connectionState },
+        "start() skipped — a socket is already open or connecting (avoids 440 connectionReplaced flap)",
+      );
+      return;
+    }
+    this.connecting = true;
     // A manual start() is the recovery path out of conflict dormancy:
     // clear the storm so we genuinely re-attempt instead of immediately
     // re-dormant. (Reconnect-timer-driven starts never reach here while
@@ -1712,6 +1850,11 @@ export class WhatsAppSession {
         // returns false for ephemeral/protocol messages; we want
         // everything text-bearing for the search index.
         shouldSyncHistoryMessage: () => WhatsAppSession.HISTORY_BACKFILL_ENABLED,
+        // Resolve a previously-seen message body for retry receipts so
+        // Baileys can resend/decrypt on retry instead of dropping the
+        // message. Backed by the bounded msgCache populated in
+        // messages.upsert. async to satisfy the Baileys signature.
+        getMessage: async (key) => this.getCachedMessage(key),
       });
 
       // QR code event
@@ -1748,6 +1891,7 @@ export class WhatsAppSession {
 
         if (connection === "open") {
           const wasFirstPair = !this.paired;
+          this.connecting = false; // socket is live; clear the in-flight guard
           this.connected = true;
           this.paired = true;
           this.currentQR = null;
@@ -1833,6 +1977,10 @@ export class WhatsAppSession {
 
         if (connection === "close") {
           this.connected = false;
+          // Always clear the in-flight guard on close so the reconnect path
+          // (and any later POST /start) can build a fresh socket — never
+          // deadlock behind a stale `connecting` flag.
+          this.connecting = false;
           const statusCode = (lastDisconnect?.error as Boom)?.output
             ?.statusCode;
           const reason = (lastDisconnect?.error as Error | undefined)?.message;
@@ -1980,6 +2128,11 @@ export class WhatsAppSession {
           const from = msg.key.remoteJid || "";
           if (!from) continue;
 
+          // Populate the bounded getMessage cache so Baileys can resend on a
+          // retry receipt. Cache the raw proto body keyed by msg id; fromMe
+          // and inbound both count (a retry receipt can ask for either).
+          if (msg.key.id && msg.message) this.cacheMessage(msg.key.id, msg.message);
+
           // BROADCAST HARD-SKIP (earliest possible point). WhatsApp Status
           // updates (status@broadcast) and newsletters are one-way posts,
           // not messages addressed to the owner. Skipping here — before any
@@ -2012,7 +2165,15 @@ export class WhatsAppSession {
             // dedicated-bot mode the owner DMs the bot from another
             // number → fromMe=false. Accept both.
             if (!(isOwnerChan && releasing)) {
-              continue; // total silence
+              // Total silence to the CONTACT, but give the owner a single
+              // deduped heads-up that a real DM landed while the killswitch
+              // was engaged — otherwise a genuine message is lost with no
+              // trace. Best-effort; deduped per (jid, reason); DMs only (group
+              // chatter under killswitch isn't worth paging about).
+              if (probe && !this.isGroupJid(from) && !isOwnerChan) {
+                this.notifyOwnerOfDrop({ jid: from, reason: "killswitch is engaged", text: probe });
+              }
+              continue; // total silence to the contact
             }
             // Release: fall through to normal handling so the
             // command executor fires + confirms back.
@@ -2551,20 +2712,39 @@ export class WhatsAppSession {
             const ingest = await this.maybeIngestUnknownInbound(from, text).catch(() => "pass" as const);
             if (ingest === "handled") continue;
           }
+          // OPERATIONAL drops below (muted / paused) silence a message that
+          // WOULD otherwise be auto-replied. Gate the owner heads-up on the
+          // same addressing predicate the reply uses so we only page about
+          // messages that were genuinely addressed to us — not group chatter.
+          const wouldAutoReply = this.shouldAutoReplyToInbound({
+            jid: from,
+            text,
+            isGroup,
+            targetsOwner: this.isOwnerTargeted(msg),
+          });
           if (this.muted) {
             this.logger.info({ from }, "agent skipped — globally muted");
+            if (wouldAutoReply) this.notifyOwnerOfDrop({ jid: from, reason: "bot is muted", text, senderName });
             continue;
           }
           if (this.isPaused(from)) {
             this.logger.info({ from }, "agent skipped — contact paused");
+            if (wouldAutoReply) this.notifyOwnerOfDrop({ jid: from, reason: "this thread is paused (you took over)", text, senderName });
             continue;
           }
-          // In groups, only reply when the owner is @mentioned, the message
-          // is a quote-reply to one of the owner's messages, OR it's a
-          // celebratory wish that names the owner (the exception computed
-          // above). Noise guard: replying to every group message would be awful.
-          if (isGroup && !this.isOwnerTargeted(msg) && !wishToOwner) {
-            this.logger.info({ from }, "group message not addressed to owner");
+          // FINAL auto-reply gate — the single predicate the history-sync
+          // path also calls, so a message that gets a reply live gets the
+          // same decision from offline catch-up. For groups it requires the
+          // group be monitored AND the message target the owner (@mention /
+          // quote-reply), unless it's a celebratory wish naming the owner.
+          // DMs always pass (downstream confidence-gating handles trust).
+          if (!this.shouldAutoReplyToInbound({
+            jid: from,
+            text,
+            isGroup,
+            targetsOwner: this.isOwnerTargeted(msg),
+          })) {
+            this.logger.info({ from, isGroup }, "auto-reply gate: not addressed to owner");
             continue;
           }
           // NOTE: no hard allow-list gate here. The old default-deny was
@@ -2588,6 +2768,9 @@ export class WhatsAppSession {
         }
       });
     } catch (err) {
+      // start() failed before/while building the socket — clear the in-flight
+      // flag so a later start() (reconnect timer, POST /start) isn't blocked.
+      this.connecting = false;
       this.logger.error({ err }, "Failed to start WhatsApp session");
       const message = err instanceof Error ? err.message : String(err);
       this.broadcast({ type: "error", data: { message } });
@@ -6690,13 +6873,33 @@ export class WhatsAppSession {
 
     // Wait for draft + naturalize, but don't block on it during the
     // read phase — we'll respect the pacer's read delay below.
-    const draft = await draftPromise;
+    let draft: string | null | undefined;
+    try {
+      draft = await draftPromise;
+    } catch (err) {
+      // LLM call threw (timeout, control-plane error). The contact gets
+      // nothing — page the owner once so a real message isn't silently lost.
+      // DMs only; group chatter that errors isn't worth paging about.
+      this.logger.warn({ err, from }, "agent respondTo threw — reply dropped");
+      if (!opts.isGroup) {
+        this.notifyOwnerOfDrop({ jid: from, reason: "I couldn't generate a reply (LLM error)", text, senderName: opts.senderName });
+      }
+      return;
+    }
 
     if (!draft) {
       // Don't vanish on a greeting just because the LLM round-trip returned
       // nothing — send a deterministic opener so "hi" always gets a reply.
-      if (!opts.isGroup) await this.sendGreetingFallback(from, text, "empty agent draft");
-      // Otherwise no reply needed — never expose a "composing" tell.
+      // If it WASN'T a greeting (fallback sent nothing), then a real DM we
+      // meant to answer got no reply — heads-up the owner once so it isn't
+      // silently dropped. (Groups: empty draft is the normal "nothing to add"
+      // outcome — never page, never expose a "composing" tell.)
+      if (!opts.isGroup) {
+        const sentGreeting = await this.sendGreetingFallback(from, text, "empty agent draft");
+        if (!sentGreeting) {
+          this.notifyOwnerOfDrop({ jid: from, reason: "I had no reply to send (empty response)", text, senderName: opts.senderName });
+        }
+      }
       return;
     }
 
@@ -6775,6 +6978,10 @@ export class WhatsAppSession {
             timestamp: Date.now(),
           },
         });
+        // VIP-only silence is operational (owner flagged them sensitive so
+        // the bot never auto-replies). Heads-up the owner once so they know
+        // to handle this VIP personally — that's the whole point of the flag.
+        this.notifyOwnerOfDrop({ jid: from, reason: "VIP — auto-reply is off for them", text, senderName: opts.senderName });
         return;
       }
       const queued = await this.personal.queueDraft(
@@ -7650,11 +7857,20 @@ export class WhatsAppSession {
       clearTimeout(this.warningFlushTimer);
       this.warningFlushTimer = null;
     }
+    // Stop the daily-digest scheduler so its interval doesn't leak across a
+    // disconnect/reconnect or hold the process open on shutdown.
+    if (this.digestStopFn) {
+      try { this.digestStopFn(); } catch {}
+      this.digestStopFn = null;
+    }
     if (this.socket) {
       this.socket.end(undefined);
       this.socket = null;
     }
     this.connected = false;
+    // Clear the in-flight guard — an explicit disconnect must not leave a
+    // stale `connecting` flag that blocks the next start().
+    this.connecting = false;
     this.currentQR = null;
   }
 

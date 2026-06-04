@@ -453,7 +453,7 @@ function parseSlash(raw: string): ParsedCommand | null {
         if (!target || !message) return { action: "help", echo: "usage: /lantern vm <name> | <message>", explicit };
         return { action: "call-voicemail", callTarget: target, callMessage: message, echo: `📞 voicemail for ${target}`, explicit };
       }
-      case "killswitch": case "kill": case "panic": {
+      case "killswitch": case "kill": {
         const arg = (rest[0] || "").toLowerCase();
         if (arg === "on" || arg === "engage" || arg === "" ) return { action: "killswitch-on", echo: "🚨 kill switch ENGAGED", explicit };
         if (arg === "off" || arg === "release") return { action: "killswitch-off", echo: "✅ kill switch RELEASED", explicit };

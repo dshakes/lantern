@@ -98,6 +98,67 @@ export function isGroupRow(row: {
   if ((row.handle ?? "") === "") return true;
   return false;
 }
+
+// Cursor-safe per-row batch processor (extracted so the loss-prevention
+// rules are unit-testable without a live chat.db / Messages.app).
+//
+// Contract:
+//   - Each row is handled in its own try/catch — one throwing row can
+//     NEVER abort the batch, so rows after it still run.
+//   - The cursor (advanceCursorTo) moves PER ROW, only after that row was
+//     processed (handled or deliberately flood-skipped) OR after a thrown
+//     row was surfaced to onRowError. Advancing past a thrown row is
+//     deliberate: re-reading a poison row every tick would wedge the
+//     whole queue behind it. The throw is reported (onRowError), never
+//     silently swallowed — "at-least-once, and never silently lost".
+//   - is_from_me rows in a backlog flood are skipped but still advance
+//     the cursor (they're handled — by being dropped on purpose).
+export function processPollBatch(
+  rows: BatchRow[],
+  deps: {
+    isFlood: boolean;
+    handleRow: (row: BatchRow) => void;
+    advanceCursorTo: (rowid: number) => void;
+    onRowError: (row: BatchRow, err: unknown) => void;
+  },
+): void {
+  for (const row of rows) {
+    try {
+      if (deps.isFlood && row.isFromMe) {
+        deps.advanceCursorTo(row.rowid); // deliberate skip = handled
+        continue;
+      }
+      deps.handleRow(row);
+      deps.advanceCursorTo(row.rowid);
+    } catch (err) {
+      deps.onRowError(row, err);
+      // Advance past the poison row so the rest of the batch (and all
+      // future inbound) isn't blocked behind it forever.
+      deps.advanceCursorTo(row.rowid);
+    }
+  }
+}
+type BatchRow = { rowid: number; isFromMe: boolean; handle?: string };
+
+// Dedup decision for owner drop-notices (extracted so it's unit-testable
+// without constructing a full IMessageSession). Returns true if a notice
+// for `dedupeKey` should fire now, and MUTATES `state` to record the fire
+// time. GCs entries older than `windowMs` along the way. At most one
+// notice per distinct key per window.
+export function shouldFireDropNotice(
+  state: Map<string, number>,
+  dedupeKey: string,
+  now: number,
+  windowMs: number,
+): boolean {
+  for (const [k, ts] of state) {
+    if (now - ts >= windowMs) state.delete(k);
+  }
+  const last = state.get(dedupeKey);
+  if (last !== undefined && now - last < windowMs) return false;
+  state.set(dedupeKey, now);
+  return true;
+}
 import { MacActions, extractActionMarkers, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
@@ -169,7 +230,7 @@ interface PersistedState {
 
 // chat.db reads are sub-ms (WAL + query_only, watermark-based ROWID scan),
 // so a tighter poll cuts perceived latency without measurable cost. The
-// poll body is synchronous (pollNewMessages) and dispatches handlers
+// poll body is synchronous (peekNewMessages) and dispatches handlers
 // fire-and-forget, so a shorter interval can't overlap-tick. No downstream
 // logic assumes the old 1500ms cadence (thinking-timer/pace-holds/TTLs are
 // all absolute durations).
@@ -627,6 +688,7 @@ export class IMessageSession {
     }
 
     this.setState("ready");
+    this.logConfigSummary();
     // Pre-seed per-contact owner-voice samples from chat.db so the bot
     // can mimic the owner's real style from the first inbound — instead
     // of waiting for the owner to text during this process's lifetime.
@@ -646,6 +708,45 @@ export class IMessageSession {
     this.startLearningFlywheel();
     this.startAnticipationNudges();
     this.logger.info("iMessage session ready");
+  }
+
+  // One-time startup config audit (fix #4). Several load-bearing env
+  // vars silently DISABLE capabilities when unset — a misconfig then
+  // looks like a bug ("why isn't the owner channel working?"). Emit a
+  // single concise summary of what's on/off so the misconfig is visible
+  // in the log at boot instead of invisible. Guarded so a stop/start
+  // cycle doesn't re-spam it.
+  private configSummaryLogged = false;
+  private logConfigSummary(): void {
+    if (this.configSummaryLogged) return;
+    this.configSummaryLogged = true;
+    const has = (v: string | undefined) => !!(v && v.trim());
+    const ownerHandle = has(process.env.LANTERN_IMESSAGE_OWNER_HANDLE);
+    const docsRoots = has(process.env.LANTERN_PERSONAL_DOCS_ROOTS);
+    const calendar = has(process.env.LANTERN_DEFAULT_CALENDAR);
+    const ownerName = has(process.env.LANTERN_OWNER_NAME);
+    const tz = has(process.env.LANTERN_OWNER_TIMEZONE);
+    const summary = {
+      ownerChannel: ownerHandle
+        ? "ON (LANTERN_IMESSAGE_OWNER_HANDLE set)"
+        : "OFF — owner self-chat / docs / agentic actions DISABLED (set LANTERN_IMESSAGE_OWNER_HANDLE)",
+      personalDocsToggle: this.personalDocsEnabled ? "ON" : "OFF (owner disabled via 'docs off')",
+      personalDocsRoots: docsRoots
+        ? "custom (LANTERN_PERSONAL_DOCS_ROOTS set)"
+        : "default (~/Documents:~/Desktop:iCloud Drive — set LANTERN_PERSONAL_DOCS_ROOTS to override)",
+      defaultCalendar: calendar
+        ? "set (LANTERN_DEFAULT_CALENDAR)"
+        : "unset — calendar writes try Home/Calendar/Personal/Work (set LANTERN_DEFAULT_CALENDAR to pin)",
+      ownerName: ownerName ? "set" : "unset — 'my' file-ranking boost OFF (set LANTERN_OWNER_NAME)",
+      ownerTimezone: tz ? "set" : "unset — falling back to process TZ for quiet hours / digests (set LANTERN_OWNER_TIMEZONE)",
+    };
+    // WARN when the owner channel is off (the most common high-impact
+    // misconfig); INFO otherwise so a fully-configured host stays quiet.
+    if (!ownerHandle) {
+      this.logger.warn(summary, "config audit — owner channel DISABLED (LANTERN_IMESSAGE_OWNER_HANDLE unset)");
+    } else {
+      this.logger.info(summary, "config audit — capabilities on/off");
+    }
   }
 
   // True once we've successfully reached `ready` at least once.
@@ -718,6 +819,48 @@ export class IMessageSession {
   // callers must no-op so we never DM a non-owner.
   private ownerSelfChatTarget(): string {
     return (this.ownHandleGuess() || this.lastSelfHandle || "").trim();
+  }
+
+  // Dedup window for owner drop-notices — at most one heads-up per
+  // distinct dedupeKey per window so a flapping LLM / a poison row in a
+  // tight loop can't flood the owner's self-chat.
+  private static readonly DROP_NOTIFY_DEDUP_MS = 5 * 60_000;
+  private recentDropNotices: Map<string, number> = new Map();
+
+  // OWNER HEADS-UP ON OPERATIONAL DROPS (fix #3). When an inbound that
+  // WOULD have been handled is dropped for an OPERATIONAL reason — the
+  // per-row handler threw, the LLM call failed/returned empty, the bot is
+  // muted/paused, or the killswitch is engaged — tell the owner so a
+  // silent failure isn't invisible. Deduped + rate-limited by dedupeKey,
+  // and fully best-effort: it NEVER throws back into the caller (the poll
+  // loop must not die because a notify failed).
+  //
+  // This must NOT be called for NORMAL non-responses — "not the owner",
+  // "not addressed in a group", "low-confidence draft held", "trivial
+  // chatter ack". Those are by-design silence, not drops.
+  private notifyOwnerOfDrop(message: string, dedupeKey: string): void {
+    try {
+      const now = Date.now();
+      if (!shouldFireDropNotice(this.recentDropNotices, dedupeKey, now, IMessageSession.DROP_NOTIFY_DEDUP_MS)) {
+        return;
+      }
+
+      const owner = this.ownerSelfChatTarget();
+      if (!owner) {
+        // No self-chat target known — surface to the dashboard feed so the
+        // drop still leaves a trace the owner can see.
+        this.logger.warn({ dedupeKey, message }, "operational drop — no owner self-chat target to notify");
+        this.broadcast({ type: "activity", data: { kind: "system", summary: `⚠️ ${message}`, timestamp: now } });
+        return;
+      }
+      // Fire-and-forget; swallow send errors (best-effort, never throws).
+      void this.send(owner, `⚠️ ${message}`).catch((err) =>
+        this.logger.warn({ err, dedupeKey }, "owner drop-notice send failed (best-effort)"),
+      );
+    } catch (err) {
+      // Belt-and-suspenders: a notify can never break the poll loop.
+      this.logger.warn({ err, dedupeKey }, "notifyOwnerOfDrop failed (swallowed)");
+    }
   }
 
   // 1) LEARNING FLYWHEEL. Consolidate the 👎 dislike log into general
@@ -1713,33 +1856,63 @@ export class IMessageSession {
   private startPolling(): void {
     if (this.pollTimer) return;
     this.pollTimer = setInterval(() => {
+      // WHOLE-BATCH FAILURE (fix #2). The peek + cursor reads can throw on
+      // a transient chat.db lock (SQLITE_BUSY) or a malformed read. When
+      // that happens we log and return WITHOUT advancing the cursor — the
+      // same rows are re-read on the next tick (at-least-once), so a
+      // transient lock never drops a batch. The loop can't wedge: it just
+      // retries every POLL_INTERVAL_MS.
+      let rows: IMessageRow[];
       try {
-        const rows = this.db.pollNewMessages();
-        if (rows.length === 0) return;
-
-        // BACKLOG-FLOOD GUARD. If the poll returns a large batch where
-        // most rows are is_from_me=1 (the bot's own historical sends
-        // dumped in one tick by iCloud sync OR by chat.db catching up
-        // after a bridge stall), drop ALL is_from_me=1 rows in the
-        // batch but still process inbound user messages (is_from_me=0)
-        // normally. Without this, the bot would re-process every prior
-        // ack / digest / LLM-reply as a fresh query and either echo
-        // for hours or jam the busy-gate.
-        const fromMeCount = rows.filter((r) => r.isFromMe).length;
-        const isFlood = rows.length >= 8 && fromMeCount / rows.length >= 0.5;
-        if (isFlood) {
-          this.logger.warn(
-            { total: rows.length, fromMe: fromMeCount, lastRowid: rows[rows.length - 1]?.rowid },
-            "backlog-flood detected — skipping bot-authored rows in this batch",
-          );
-        }
-        for (const row of rows) {
-          if (isFlood && row.isFromMe) continue;
-          this.handleNewRow(row);
-        }
+        rows = this.db.peekNewMessages();
       } catch (err) {
-        this.logger.warn({ err }, "poll iteration failed");
+        this.logger.warn({ err }, "poll peek failed — not advancing cursor, will retry next tick");
+        return;
       }
+      if (rows.length === 0) return;
+
+      // BACKLOG-FLOOD GUARD. If the poll returns a large batch where
+      // most rows are is_from_me=1 (the bot's own historical sends
+      // dumped in one tick by iCloud sync OR by chat.db catching up
+      // after a bridge stall), drop ALL is_from_me=1 rows in the
+      // batch but still process inbound user messages (is_from_me=0)
+      // normally. Without this, the bot would re-process every prior
+      // ack / digest / LLM-reply as a fresh query and either echo
+      // for hours or jam the busy-gate.
+      const fromMeCount = rows.filter((r) => r.isFromMe).length;
+      const isFlood = rows.length >= 8 && fromMeCount / rows.length >= 0.5;
+      if (isFlood) {
+        this.logger.warn(
+          { total: rows.length, fromMe: fromMeCount, lastRowid: rows[rows.length - 1]?.rowid },
+          "backlog-flood detected — skipping bot-authored rows in this batch",
+        );
+      }
+
+      // PER-ROW ISOLATION + CURSOR SAFETY (fix #1). Delegated to the pure,
+      // unit-tested processPollBatch: each row runs in its own try/catch,
+      // the cursor advances per-row only after the row is handled or
+      // deliberately skipped, and a thrown row is surfaced (never silently
+      // lost) before the cursor steps past it.
+      processPollBatch(rows, {
+        isFlood,
+        handleRow: (row) => this.handleNewRow(row as IMessageRow),
+        advanceCursorTo: (rowid) => this.db.advanceCursorTo(rowid),
+        onRowError: (row, err) => {
+          this.logger.error(
+            { err, rowid: row.rowid, handle: row.handle, isFromMe: row.isFromMe },
+            "row handler threw — surfacing + advancing past poison row to keep the queue moving",
+          );
+          // Best-effort owner heads-up: an inbound that WOULD have been
+          // handled just threw. Only worth paging for inbound (a thrown
+          // bot-echo row is not an operational drop the owner cares about).
+          if (!row.isFromMe && row.handle) {
+            this.notifyOwnerOfDrop(
+              `couldn't process a message from ${this.contactLabel(row.handle)} — it errored out. you may want to check that thread.`,
+              `handler-threw:${row.handle}`,
+            );
+          }
+        },
+      });
     }, POLL_INTERVAL_MS);
   }
 
@@ -1905,6 +2078,16 @@ export class IMessageSession {
       const cmd = txt ? parseNLCommand(txt) : null;
       const isReleaseCmd = !!cmd && cmd.action === "killswitch-off";
       if (!(isOwnerSelf && isReleaseCmd)) {
+        // Operational drop (fix #3): a real inbound was silenced by the
+        // killswitch. One deduped heads-up (single "killswitch" key →
+        // at most one per window, never a flood) so the cone of silence
+        // isn't itself invisible. Skip bot-self echoes and groups.
+        if (!row.isFromMe && row.handle && !isGroupRow(row)) {
+          this.notifyOwnerOfDrop(
+            "killswitch is ON — incoming messages are being ignored. say 'kill switch off' to resume.",
+            "killswitch",
+          );
+        }
         return; // total silence
       }
       // Release command — fall through to normal handling so the
@@ -2490,6 +2673,13 @@ export class IMessageSession {
     // still globally mute or pause per-contact.
     if (this.muted) {
       this.broadcast({ type: "activity", data: { kind: "agent_skipped", summary: `bot muted — ${this.contactLabel(row.handle)}`, jid: row.handle, timestamp: Date.now() } });
+      // Operational drop (fix #3): a real inbound went unanswered because
+      // the owner globally muted auto-reply. One deduped heads-up so the
+      // owner remembers the bot is off and a message is waiting.
+      this.notifyOwnerOfDrop(
+        `${this.contactLabel(row.handle)} messaged but auto-reply is muted — reply yourself or unmute.`,
+        "muted",
+      );
       return;
     }
     const until = this.pausedUntil.get(row.handle);
@@ -2912,7 +3102,21 @@ export class IMessageSession {
     if (!draft) {
       // Don't vanish on a greeting just because the LLM round-trip returned
       // nothing — send a deterministic opener so "hi" always gets a reply.
-      if (!isGroup) await this.sendGreetingFallback(row.handle, text, "empty agent draft");
+      // If it WASN'T a greeting (fallback sent nothing), this is an
+      // operational drop: respondTo returns null on turn-error / dead-session
+      // / disabled, or empty when the LLM had nothing usable — a real inbound
+      // goes unanswered. One deduped heads-up per contact so a misconfigured
+      // LLM key or a control-plane outage isn't an invisible silent failure.
+      if (!isGroup) {
+        const sentGreeting = await this.sendGreetingFallback(row.handle, text, "empty agent draft");
+        if (!sentGreeting) {
+          this.logger.warn({ from: row.handle, isGroup }, "contact reply empty/failed — operational drop");
+          this.notifyOwnerOfDrop(
+            `couldn't generate a reply to ${this.contactLabel(row.handle)} (the assistant returned nothing) — they're waiting on you.`,
+            `llm-empty:${row.handle}`,
+          );
+        }
+      }
       return;
     }
 
