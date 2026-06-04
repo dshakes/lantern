@@ -113,6 +113,7 @@ import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-t
 import {
   detectLifeThreat,
   detectPromptInjection,
+  detectPersonalFactProbe,
   detectNonEnglishInjectionRisk,
   detectRelayPromise,
   refusalReply as escalationRefusalReply,
@@ -2524,6 +2525,34 @@ export class IMessageSession {
       }
     }
 
+    // Owner channel = self-chat OR owner-handle (LANTERN_IMESSAGE_OWNER_HANDLE).
+    // Everything else (groups, non-owner DMs) is a contact. This single
+    // boolean drives the persona's audience: owner → full factual access;
+    // contact → the non-disclosure persona. isOwnerChatRow returns false for
+    // groups and any handle that isn't the owner.
+    const isOwnerChan = this.isOwnerChatRow(row);
+    // Audience for the persona prompt. Default fail-safe is "contact"; only
+    // the verified owner channel gets "owner". A personal-fact probe from a
+    // non-owner (set below) keeps it pinned to "contact" — never escalates.
+    let personaAudience: "owner" | "contact" = isOwnerChan ? "owner" : "contact";
+
+    // Soft privacy boundary: a NON-owner asking about the owner's family,
+    // relationship, home, schedule, or travel. NOT a hard probe — a friendly
+    // "you married?" must not page the owner or cold-refuse. We only log it
+    // and force the contact/deflect path (audience is already "contact" for
+    // non-owner; the persona's non-disclosure directive does the rest).
+    // Deliberately NOT routed through escalation/refusal.
+    if (!isOwnerChan) {
+      const factProbe = detectPersonalFactProbe(text);
+      if (factProbe) {
+        personaAudience = "contact";
+        this.logger.debug(
+          { from: row.handle, reason: factProbe.reason, pattern: factProbe.pattern },
+          "🔒 personal-fact probe from non-owner (iMessage) — pinning persona audience=contact (deflect, no page)",
+        );
+      }
+    }
+
     // ─────────────────────────────────────────────────────
     // SAFETY GUARDS — run BEFORE the LLM. Hard-fail on
     // life-threat + prompt-injection. See escalation-detector.ts.
@@ -2822,6 +2851,10 @@ export class IMessageSession {
       // Anti-repetition — recent replies sent to THIS contact so the
       // model varies its phrasing instead of repeating a canned line.
       recentBotReplies: isGroup ? [] : this.recentBotReplies.get(row.handle) ?? [],
+      // Privacy boundary: owner channel gets full factual access; every
+      // contact (and any personal-fact probe) gets the non-disclosure
+      // persona. Computed from the same isOwnerChatRow predicate above.
+      audience: personaAudience,
     });
     // Per-contact memory: UNIFIED cross-channel view — facts learned on
     // ANY channel (WhatsApp, iMessage, SMS, voice, email) + a 14-day

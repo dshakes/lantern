@@ -13,6 +13,25 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import pino from "pino";
+
+// enabled() delegates to auth.authEnabled(), which is true whenever EITHER a
+// static token OR email+password is configured. The bridge defaults
+// email/password to the dev creds, so the real gate can't be toggled via
+// process.env at runtime (those are captured at module import). Mock the auth
+// module so the enabled()/disabled gating is actually exercisable.
+const mockAuth = vi.hoisted(() => ({ enabled: true }));
+vi.mock("@lantern/bridge-core/auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@lantern/bridge-core/auth")>();
+  return {
+    ...actual,
+    authEnabled: () => mockAuth.enabled,
+    // Bypass the real login-on-demand path (the dev JWT can be expired, which
+    // would inject a /auth/login call ahead of the completions call and make
+    // the body assertions non-deterministic). Tests stub globalThis.fetch.
+    authedFetch: (path: string, init?: RequestInit) => fetch(path, init),
+  };
+});
+
 import { AttentionClassifier, __test } from "../src/attention.js";
 
 const logger = pino({ level: "silent" });
@@ -36,17 +55,17 @@ function stubFetch(response: {
 
 describe("AttentionClassifier.enabled", () => {
   afterEach(() => {
-    delete process.env.LANTERN_API_TOKEN;
+    mockAuth.enabled = true;
   });
 
-  it("is disabled when no token set", () => {
-    delete process.env.LANTERN_API_TOKEN;
+  it("is disabled when auth is unavailable", () => {
+    mockAuth.enabled = false;
     const c = new AttentionClassifier(logger);
     expect(c.enabled()).toBe(false);
   });
 
-  it("is enabled when token set", () => {
-    process.env.LANTERN_API_TOKEN = "t";
+  it("is enabled when auth is available", () => {
+    mockAuth.enabled = true;
     const c = new AttentionClassifier(logger);
     expect(c.enabled()).toBe(true);
   });
@@ -63,10 +82,11 @@ describe("AttentionClassifier.classify", () => {
   });
 
   it("returns null when classifier disabled", async () => {
-    delete process.env.LANTERN_API_TOKEN;
+    mockAuth.enabled = false;
     const c = new AttentionClassifier(logger);
     const r = await c.classify("hi", "Alice");
     expect(r).toBeNull();
+    mockAuth.enabled = true;
   });
 
   it("parses clean JSON responses", async () => {

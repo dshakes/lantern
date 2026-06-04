@@ -64,6 +64,7 @@ import { detectEmotionalRegister } from "@lantern/bridge-core/emotional-register
 import {
   detectLifeThreat,
   detectPromptInjection,
+  detectPersonalFactProbe,
   detectNonEnglishInjectionRisk,
   detectRelayPromise,
   refusalReply as escalationRefusalReply,
@@ -6196,6 +6197,33 @@ export class WhatsAppSession {
   ) {
     if (!this.socket) return;
 
+    // Owner channel = self-chat OR owner-DM (LANTERN_WA_OWNER_JID). Groups
+    // and non-owner DMs are NOT owner. This single boolean drives the
+    // persona's audience: owner → full factual access; contact → the
+    // non-disclosure persona. isOwnerChat already returns false for groups.
+    const isOwnerChan = this.isOwnerChat(from);
+    // Audience for the persona prompt. Default fail-safe is "contact"; only
+    // the verified owner channel gets "owner". A personal-fact probe from a
+    // non-owner (set below) keeps it pinned to "contact" — never escalates.
+    let personaAudience: "owner" | "contact" = isOwnerChan ? "owner" : "contact";
+
+    // Soft privacy boundary: a NON-owner asking about the owner's family,
+    // relationship, home, schedule, or travel. This is NOT a hard probe —
+    // a friendly "you married?" must not page the owner or cold-refuse. We
+    // only log it and force the contact/deflect path (audience is already
+    // "contact" for non-owner; the persona's non-disclosure directive does
+    // the rest). Deliberately NOT routed through escalation/refusal.
+    if (!isOwnerChan) {
+      const factProbe = detectPersonalFactProbe(text);
+      if (factProbe) {
+        personaAudience = "contact";
+        this.logger.debug(
+          { from, reason: factProbe.reason, pattern: factProbe.pattern },
+          "🔒 personal-fact probe from non-owner — pinning persona audience=contact (deflect, no page)",
+        );
+      }
+    }
+
     // ─────────────────────────────────────────────────────
     // SAFETY GUARDS — run BEFORE the LLM so the bot can't
     // be social-engineered into wrong behavior.
@@ -6575,6 +6603,10 @@ export class WhatsAppSession {
         freeSlotsBlock: !opts.isGroup ? this.ownerFreeSlotsBlock() || undefined : undefined,
         // B1 — affect-matched persona modulation (additive hint).
         emotionalRegister,
+        // Privacy boundary: owner channel gets full factual access; every
+        // contact (and any personal-fact probe) gets the non-disclosure
+        // persona. Computed from the same isOwnerChat predicate at the top.
+        audience: personaAudience,
       }
     );
 

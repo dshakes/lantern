@@ -4,7 +4,7 @@
 // and the body in attributedBody, so the bridge saw an empty inbound and the
 // bot stayed silent. decodeAttributedBody must extract the text.
 
-import { test } from "node:test";
+import { test } from "vitest";
 import { strict as assert } from "node:assert";
 import { decodeAttributedBody } from "./attributed-body.js";
 

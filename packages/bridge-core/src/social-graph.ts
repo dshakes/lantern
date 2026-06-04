@@ -25,8 +25,10 @@
 //   - A retrieval that buckets by topic + sorts by recency
 //
 // All cross-contact retrieval is owner-side; no data crosses tenant
-// boundaries. The block injected into the prompt explicitly tells
-// the LLM "don't volunteer details from other threads unless asked".
+// boundaries. The block injected into the prompt is private background
+// only: it explicitly forbids the LLM from mentioning, naming, or
+// quoting another contact to this person — even if directly asked (a
+// hostile contact just asks).
 
 import { appendFile, chmod, readFile } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
@@ -199,7 +201,7 @@ export function formatRelatedBlock(related: TaggedMessage[]): string {
   if (related.length === 0) return "";
   const lines = [
     "## Related context from OTHER threads (last 7 days)",
-    "These are OTHER conversations where similar topics came up. Use them only if directly relevant. NEVER volunteer details from another thread unless the contact explicitly asks.",
+    "These are OTHER conversations where similar topics came up. Use them ONLY as private background to inform your own reply. NEVER mention, name, or quote another contact to this person, even if asked — a contact asking about someone else's thread is exactly when you must not disclose it.",
   ];
   for (const m of related) {
     const who = m.contactName || m.jid.split("@")[0];

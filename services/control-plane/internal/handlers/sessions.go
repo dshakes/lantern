@@ -279,14 +279,31 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	})
 
 	// Resolve system prompt: turn-level hint > stored agent prompt > default.
+	//
+	// Persona floor for bridge agent names: when no systemHint AND no stored
+	// prompt is present, the generic "You are the agent '<name>'" default
+	// yields a dangerously generic assistant that ignores the intended
+	// persona. For bridge agents we log a warning rather than silently
+	// producing an out-of-persona reply; the generic fallback is kept for
+	// non-bridge agents so no existing behaviour is broken.
 	var storedPrompt *string
 	_ = h.srv.Pool.QueryRow(ctx, `
 		SELECT system_prompt FROM agents WHERE name = $1 AND tenant_id = $2
 	`, agentName, tenantID).Scan(&storedPrompt)
 
-	systemPrompt := fmt.Sprintf("You are the agent '%s'. You are in an interactive session. Respond helpfully and concisely.", agentName)
+	isBridgeAgent := agentName == "whatsapp-assistant" || agentName == "imessage-assistant"
+
+	genericDefault := fmt.Sprintf("You are the agent '%s'. You are in an interactive session. Respond helpfully and concisely.", agentName)
+	systemPrompt := genericDefault
 	if storedPrompt != nil && *storedPrompt != "" {
 		systemPrompt = *storedPrompt
+	} else if isBridgeAgent {
+		// Bridge agent has no stored persona prompt — warn loudly; a missing
+		// persona here is the root cause of persona-bleed incidents.
+		h.logger().Warn("bridge agent has no system_prompt stored — using generic fallback; set a persona prompt to avoid out-of-persona replies",
+			zap.String("agent", agentName),
+			zap.String("tenant_id", tenantID),
+		)
 	}
 	if systemHint != "" {
 		systemPrompt = systemHint
@@ -453,9 +470,13 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	}
 	// Run the tool-call loop. Up to 5 turns of tool use. Auto-falls-over
 	// across providers (anthropic ↔ openai) on retryable errors.
+	// userFacing=true: every session reply reaches a real end-user (bridge
+	// contact, dashboard chat), so the local claude-code CLI must never
+	// appear in the provider chain.
+	const userFacing = true
 	result, _, _, _, _, _, llmErr := h.llmProxy.callLLMWithFailover(
 		ctx, tenantID,
-		promptMessages, tools, dispatch, onToolCall, onAttempt, 5,
+		promptMessages, tools, dispatch, onToolCall, onAttempt, 5, userFacing,
 	)
 	if llmErr != nil {
 		h.logger().Error("session: LLM call failed", zap.Error(llmErr))
