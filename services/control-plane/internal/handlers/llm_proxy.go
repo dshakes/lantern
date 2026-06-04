@@ -514,12 +514,12 @@ func resolveAutoModel(hasAnthropic, hasOpenAI bool) (string, string) {
 // provider outage stops every Lantern agent on the tenant.
 //
 // Local Claude Code: when LANTERN_USE_CLAUDE_CODE=1 and the `claude`
-// binary is on PATH, claude-code is PREPENDED as the top candidate.
-// That makes local dev free (uses the user's Claude Max subscription
-// instead of API credits). If the CLI fails for any reason — binary
-// missing, auth not set up, timeout — the failover loop slides down to
-// the API providers automatically.
-func resolveCandidateChain(hasAnthropic, hasOpenAI bool) []struct{ Provider, Model string } {
+// binary is on PATH, claude-code is PREPENDED as the top candidate ONLY
+// when userFacing=false. For any user-facing path (bridge contact replies,
+// SMS, voice, escalation) claude-code is NEVER in the chain — this
+// prevents the local dev persona from bleeding into production replies
+// regardless of env configuration or whether tools are present.
+func resolveCandidateChain(hasAnthropic, hasOpenAI bool, userFacing bool) []struct{ Provider, Model string } {
 	type ranked struct {
 		provider, model string
 		score           float64
@@ -554,10 +554,11 @@ func resolveCandidateChain(hasAnthropic, hasOpenAI bool) []struct{ Provider, Mod
 	// quota tier and are far less likely to be TPM-limited.
 	seen := map[string]bool{}
 	out := make([]struct{ Provider, Model string }, 0, 5)
-	// Local Claude Code goes FIRST when enabled. The failover loop will
-	// slide down to API providers if the CLI errors. Model name is
-	// 'local' purely for log readability.
-	if claudeCodeBinary() != "" {
+	// Local Claude Code goes FIRST when enabled AND this is NOT a
+	// user-facing path. User-facing paths (bridge contact replies, SMS,
+	// voice, escalation) must NEVER route through the local CLI — persona
+	// bleed is catastrophic in production regardless of env/tools.
+	if !userFacing && claudeCodeBinary() != "" {
 		out = append(out, struct{ Provider, Model string }{"claude-code", "local"})
 	}
 	for _, c := range all {
@@ -852,19 +853,6 @@ func (h *LlmProxyHandler) HandleStreamCompletion(w http.ResponseWriter, r *http.
 		}
 	}
 	if llmErr != nil && full == "" {
-		// Last resort: local `claude -p`. Free, no API key needed.
-		// Streams as one chunk since the CLI doesn't expose deltas.
-		h.logger().Warn("hosted providers failed; falling back to claude -p", zap.Error(llmErr))
-		prompt := strings.TrimSpace(body.SystemPrompt + "\n\n" + body.UserPrompt)
-		if local, err := callClaudeCode(ctx, prompt); err == nil && strings.TrimSpace(local) != "" {
-			emit(local)
-			full = local
-			llmErr = nil
-		} else if err != nil {
-			h.logger().Warn("claude -p fallback failed", zap.Error(err))
-		}
-	}
-	if llmErr != nil && full == "" {
 		// All providers exhausted — emit a friendly error, not the raw
 		// vendor error string.
 		fmt.Fprintf(w, "event: error\ndata: %s\n\n", "agent temporarily unavailable")
@@ -1007,10 +995,13 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	// enabled hit 'No LLM provider API key configured' for any plain
 	// completion call — including the agent-detail Generate buttons,
 	// AI-spec generation, etc.
+	//
+	// userFacing=false: this path is a developer-dashboard tool, never a
+	// reply to an end-user contact. claude-code may serve it.
 	if req.AgentName == "" && !req.Stream {
 		text, _, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.callLLMWithFailover(
 			ctx, tenantID,
-			messagesToAny(req.Messages), nil, nil, nil, nil, 1,
+			messagesToAny(req.Messages), nil, nil, nil, nil, 1, false,
 		)
 		if llmErr != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": llmErr.Error()})
@@ -2599,6 +2590,11 @@ type candidateAttempt struct {
 // the same shape as callLLMWithTools plus the actually-used (provider,
 // model) so callers can log the resolution + emit failover steps.
 //
+// userFacing must be true for any reply that reaches an end-user (bridge
+// contact, SMS, voice, escalation). When true, claude-code is excluded
+// from the chain unconditionally — this prevents the local CLI persona
+// from bleeding into production replies.
+//
 // onAttempt is called for every attempt (success OR retryable failure) so
 // callers can stream UI events. Pass nil to skip.
 func (h *LlmProxyHandler) callLLMWithFailover(
@@ -2610,6 +2606,7 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 	onToolCall func(inv ToolInvocation),
 	onAttempt func(att candidateAttempt),
 	maxTurns int,
+	userFacing bool,
 ) (
 	finalText string,
 	invocations []ToolInvocation,
@@ -2620,6 +2617,7 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 	chain := resolveCandidateChain(
 		h.providerAvailable(ctx, tenantID, "anthropic"),
 		h.providerAvailable(ctx, tenantID, "openai"),
+		userFacing,
 	)
 	if len(chain) == 0 {
 		return "", nil, "", "", 0, 0, fmt.Errorf("no LLM provider configured for this tenant")
@@ -2717,12 +2715,17 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 // It reuses callLLMWithFailover so the same provider chain + retry
 // behavior the dashboard sees applies here, but bypasses the HTTP
 // surface entirely — no loopback, no JWT.
+//
+// userFacing=true is hardcoded: these completions always produce a reply
+// that reaches a real end-user, so the local claude-code CLI must never
+// be in the provider chain.
 func (h *LlmProxyHandler) CompleteInternal(ctx context.Context, tenantID, system, user string, _ int) (string, error) {
 	messages := []map[string]any{
 		{"role": "system", "content": system},
 		{"role": "user", "content": user},
 	}
-	text, _, _, _, _, _, err := h.callLLMWithFailover(ctx, tenantID, messages, nil, nil, nil, nil, 1)
+	const userFacing = true
+	text, _, _, _, _, _, err := h.callLLMWithFailover(ctx, tenantID, messages, nil, nil, nil, nil, 1, userFacing)
 	if err != nil {
 		return "", err
 	}

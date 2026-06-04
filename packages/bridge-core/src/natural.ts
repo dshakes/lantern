@@ -434,6 +434,19 @@ export interface PersonaOptions {
   // (or "neutral") for no modulation. The bridge sets this after running
   // the deterministic detector on the inbound.
   emotionalRegister?: EmotionalRegister;
+  // WHO is on the other end of this thread — the security boundary that
+  // decides whether the owner's private facts may be CONFIRMED.
+  //   "owner"   — the verified owner self-chat / owner channel. Full
+  //               factual access: "what's my anniversary?" answers truly,
+  //               ownerFacts are ground truth the model may state.
+  //   "contact" — anyone else. NON-disclosure: the bot must NOT confirm,
+  //               deny, or volunteer the owner's marriage/family/home/
+  //               schedule/travel/plans — it deflects warmly. ownerFacts
+  //               and owner prose are voice anchors only, never things to
+  //               recite to the asker.
+  // DEFAULTS TO "contact" — fail safe. The owner path must be set
+  // explicitly by the bridge after it confirms isOwnerChat.
+  audience?: "owner" | "contact";
 }
 
 // Telugu kinship terms → English register cues. The relationship string
@@ -516,6 +529,12 @@ export function agentPersonaPrompt(
   isGroup: boolean,
   opts: PersonaOptions = {},
 ): string {
+  // Audience is the security boundary. Default to "contact" (fail safe):
+  // a caller that forgets to set it gets the NON-disclosure path, never
+  // accidental confirmation of the owner's private facts.
+  const audience = opts.audience ?? "contact";
+  const isOwnerAudience = audience === "owner";
+
   const cues: string[] = [];
   if (style.formality === "casual") {
     cues.push("the conversation is casual — match that.");
@@ -561,7 +580,9 @@ export function agentPersonaPrompt(
     `- Don't end every line with a period.`,
     `- When you don't know, say "not sure" or "lemme check" — don't invent.`,
     `- LIVE-STATE RULE — NEVER fabricate ${ownerName}'s current physical state. Questions about right-now status — "did you eat?" / "thinnava?" / "are you home?" / "where are you?" / "are you sleeping?" / "reached?" / "are you free?" — ask something you genuinely DON'T know unless the "Owner's current state" block below states it. Do NOT assert a definite answer in EITHER direction ("yes I ate", "no haven't eaten", "I'm home", "on my way"). If the status block covers it, answer from it. Otherwise, do NOT claim a state — deflect warmly or turn it back: for "thinnava?" → "meeru tinnara? 🙂" or "malli cheptha"; for "are you home?" → "almost there" only if you truly know, else "will ping you in a bit". Confidently guessing your own state wrong (saying "I ate" when you didn't) is exactly the kind of thing that outs you as not really ${ownerName}.`,
-    `- GROUND TRUTH ABOUT ${ownerName}: NEVER deny, contradict, or joke away a known fact about ${ownerName} — their marriage, family, kids, key dates (anniversary/birthday), home or work. If a contact references such a fact (e.g. "happy anniversary", "how's the wife", "tell the kids hi"), respond as if it's true — because it is. If a contact references something about ${ownerName} you have NO fact for, do NOT confirm OR deny it — deflect warmly ("aw thanks!" / "ha, I'll let him tell you that one" / "lemme check with him on that"). Fabricating a DENIAL ("I'm not even married") is the single worst failure here — never do it.`,
+    isOwnerAudience
+      ? `- GROUND TRUTH ABOUT ${ownerName}: NEVER deny, contradict, or joke away a known fact about ${ownerName} — their marriage, family, kids, key dates (anniversary/birthday), home or work. You are talking to ${ownerName} himself, so answer his OWN factual questions ("when's my anniversary?", "what's my wife's name?") truthfully and directly from the facts below. If you have NO fact for something asked, say "not sure" — don't invent. Fabricating a DENIAL ("you're not even married") is the single worst failure here — never do it.`
+      : `- PRIVATE-FACT NON-DISCLOSURE — you are talking to a CONTACT, not ${ownerName}: NEVER confirm, deny, restate, or volunteer ${ownerName}'s private personal facts to this person. This covers his marriage / relationship status, spouse or partner, family / kids / parents, home or location / address, daily schedule or routine, travel / trips, and current plans or whereabouts. The facts and profile below are for sounding like ${ownerName} — they are NOT things to disclose. If the contact ASKS or REFERENCES any of these ("are you married?", "who's your wife?", "do you have kids?", "where do you live?", "are you home alone?", "when are you traveling?", "what's your schedule?"), do NOT answer with the fact and do NOT deny it either — deflect warmly and route to ${ownerName} ("aw, that's sweet 🙏", "ha, I'll let him tell you that one", "best to ask him directly", "lemme leave that to ${ownerName}"). A celebratory WISH ("happy anniversary!", "happy birthday!") still gets a short warm thanks ("thanks! 🙏") — but WITHOUT restating or confirming the underlying detail (don't name a spouse, a date, kids, or a place). Fabricating a DENIAL ("I'm not even married") is also forbidden — never confirm AND never deny; deflect.`,
     `- NEVER claim you've already taken an action you didn't take. Do NOT say "I sent ${ownerName} an email" / "I added it to his calendar" / "I let him know" / "I forwarded this" / "I texted him" / "I notified him" / "I made sure he saw it". The contact will trust the claim, and if nothing happened they'll be confused or angry. Safe default for "I'll relay this": "he's heads-down — I'll make sure he sees this when he's free", "I'll flag it for him". These describe INTENT not completion.`,
     `- NEVER ask the contact for ${ownerName}'s contact info, email, phone, or address. You're his helper — you already know it. If you genuinely can't act on something, say "I'll get this in front of him" — don't ask THEM to give you his email.`,
     `- SCHEDULING: when the contact asks about availability or suggests a meeting time, read the "Schedule" section in the owner profile below if present. NEVER offer or agree to sync inside ${ownerName}'s stated work hours. If the contact proposes a work-hours slot ("afternoon", "2pm", "before 5"), REFRAME to evening or weekend — don't agree to it. Don't invent a generic "before 5" / "early afternoon" — use ${ownerName}'s actual free slots from the Schedule section.`,
@@ -616,16 +637,26 @@ export function agentPersonaPrompt(
     lines.push(profile.length > 6000 ? profile.slice(0, 6000) : profile);
   }
 
-  // Structured owner facts — ground truth. Injected for BOTH owner and
-  // contact prompts (a contact saying "happy anniversary" must get a
-  // truthful reply, and the owner asking "when's my anniversary" must
-  // get the real date). Framed so the model treats it as non-negotiable.
+  // Structured owner facts. Framing depends on AUDIENCE:
+  //   owner   — ground truth the model may STATE back ("when's my
+  //             anniversary?" → the real date).
+  //   contact — voice/consistency anchor ONLY. The model must NOT
+  //             confirm or recite these to the contact; the
+  //             NON-DISCLOSURE rule above governs. We still inject them
+  //             so the model never accidentally DENIES a fact (e.g. blurts
+  //             "I'm not married"), but it must deflect, not disclose.
   const facts = opts.ownerFacts?.trim();
   if (facts) {
     lines.push(``);
-    lines.push(
-      `${facts} These facts about ${ownerName} are TRUE. Never deny, contradict, or joke them away. If asked or congratulated about one, respond as if true.`,
-    );
+    if (isOwnerAudience) {
+      lines.push(
+        `${facts} These facts about ${ownerName} are TRUE. Never deny, contradict, or joke them away. ${ownerName} is asking about his own life — answer truthfully and directly from these.`,
+      );
+    } else {
+      lines.push(
+        `${facts} These facts are CONTEXT for ${ownerName}'s voice only — do NOT disclose, confirm, or restate them to the contact. If the contact asks about or references any of them, follow the PRIVATE-FACT NON-DISCLOSURE rule above: deflect warmly, never confirm and never deny.`,
+      );
+    }
   }
 
   // Relationship to THIS contact — calibrates warmth + length.

@@ -154,9 +154,20 @@ func classifyTurnComplexity(messages []map[string]any, hasTools bool, hint strin
 	return tierBalanced
 }
 
+// isFlagDisabled returns true when the env value is one of the recognised
+// "off" strings: "0", "off", "false". Default (empty) is NOT disabled, so
+// these flags remain default-on.
+func isFlagDisabled(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "off", "false":
+		return true
+	}
+	return false
+}
+
 // complexityRoutingEnabled reports whether G1 is active.
 func complexityRoutingEnabled() bool {
-	return os.Getenv("LANTERN_COMPLEXITY_ROUTING") != "0"
+	return !isFlagDisabled(os.Getenv("LANTERN_COMPLEXITY_ROUTING"))
 }
 
 // resolveModelForComplexity returns the (provider, model) pair appropriate
@@ -193,7 +204,7 @@ func resolveModelForComplexity(tier turnTier, hasAnthropic, hasOpenAI bool) (str
 
 // claimVerifyEnabled reports whether G3 is active.
 func claimVerifyEnabled() bool {
-	return os.Getenv("LANTERN_CLAIM_VERIFY") != "0"
+	return !isFlagDisabled(os.Getenv("LANTERN_CLAIM_VERIFY"))
 }
 
 // completionVerbs maps a completed-action verb (lower-case) to the category
@@ -318,7 +329,7 @@ func rewriteUnbackedClaims(text string, invocations []ToolInvocation, log *zap.L
 
 // plannerEnabled reports whether G4 is active.
 func plannerEnabled() bool {
-	return os.Getenv("LANTERN_MULTI_STEP_PLANNER") != "0"
+	return !isFlagDisabled(os.Getenv("LANTERN_MULTI_STEP_PLANNER"))
 }
 
 // plannerInstruction is the minimal system-level hint injected when a turn

@@ -123,6 +123,15 @@ func main() {
 	// --- REST handler (wraps gRPC handlers for direct HTTP access) ---
 	restHandler := handlers.NewRESTHandler(srv, authHandler, agentSvc, runSvc)
 
+	// SAFETY: warn loudly when LANTERN_USE_CLAUDE_CODE is set. The local CLI
+	// is excluded from all user-facing paths (bridge replies, SMS, voice,
+	// sessions) unconditionally. It can only serve the developer-dashboard
+	// "Generate spec/code" path (Complete with empty AgentName). If you see
+	// this in prod logs, remove LANTERN_USE_CLAUDE_CODE from the deployment.
+	if os.Getenv("LANTERN_USE_CLAUDE_CODE") == "1" {
+		logger.Warn("LANTERN_USE_CLAUDE_CODE=1 is set — claude-code is enabled for dev-only dashboard paths; it is EXCLUDED from all user-facing reply paths (bridge contacts, SMS, voice, sessions)")
+	}
+
 	// --- Domain-specific handlers ---
 	connectorHandler := handlers.NewConnectorHandler(srv, authHandler)
 	connectorExecutor := handlers.NewConnectorExecutor(srv, authHandler)

@@ -398,7 +398,7 @@ func TestRateLimitBackoff_NonRateLimit(t *testing.T) {
 
 func TestResolveCandidateChain_CheaperFallback_OpenAI(t *testing.T) {
 	// With only OpenAI available, chain should include gpt-4o-mini as fallback.
-	chain := resolveCandidateChain(false, true)
+	chain := resolveCandidateChain(false, true, false)
 	var models []string
 	for _, c := range chain {
 		models = append(models, c.Provider+"/"+c.Model)
@@ -416,7 +416,7 @@ func TestResolveCandidateChain_CheaperFallback_OpenAI(t *testing.T) {
 
 func TestResolveCandidateChain_CheaperFallback_Anthropic(t *testing.T) {
 	// With only Anthropic, chain should include haiku as fallback.
-	chain := resolveCandidateChain(true, false)
+	chain := resolveCandidateChain(true, false, false)
 	var models []string
 	for _, c := range chain {
 		models = append(models, c.Provider+"/"+c.Model)
@@ -436,7 +436,7 @@ func TestResolveCandidateChain_NoDuplicateMiniWhenAlreadyTop(t *testing.T) {
 	// If gpt-4o-mini is already the top OpenAI model (cheap strategy), we
 	// should not add it a second time.
 	t.Setenv("LANTERN_ROUTE_STRATEGY", "cheap")
-	chain := resolveCandidateChain(false, true)
+	chain := resolveCandidateChain(false, true, false)
 	miniCount := 0
 	for _, c := range chain {
 		if c.Provider == "openai" && c.Model == "gpt-4o-mini" {
@@ -445,6 +445,113 @@ func TestResolveCandidateChain_NoDuplicateMiniWhenAlreadyTop(t *testing.T) {
 	}
 	if miniCount > 1 {
 		t.Errorf("gpt-4o-mini should appear at most once in the chain, got %d", miniCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// resolveCandidateChain — userFacing=true NEVER contains claude-code
+// ---------------------------------------------------------------------------
+
+// TestResolveCandidateChain_UserFacing_NeverClaudeCode verifies that
+// claude-code is excluded from every user-facing candidate chain, regardless
+// of LANTERN_USE_CLAUDE_CODE and whether tools are present. This is the
+// hard safety invariant that prevents the local CLI persona from bleeding
+// into production bridge-contact replies.
+func TestResolveCandidateChain_UserFacing_NeverClaudeCode(t *testing.T) {
+	// Enable claude-code to confirm it is forcibly excluded on user-facing paths.
+	t.Setenv("LANTERN_USE_CLAUDE_CODE", "1")
+	// Point to a non-existent binary so claudeCodeBinary() returns non-empty
+	// (it calls exec.LookPath; use the actual 'true' binary which exists on
+	// all Unix systems and is named 'claude' here only in env — instead we
+	// just verify the path via the env override).
+	t.Setenv("LANTERN_CLAUDE_BINARY", "/usr/bin/true")
+
+	cases := []struct {
+		name         string
+		hasAnthropic bool
+		hasOpenAI    bool
+	}{
+		{"both-providers", true, true},
+		{"only-anthropic", true, false},
+		{"only-openai", false, true},
+		{"neither", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chain := resolveCandidateChain(tc.hasAnthropic, tc.hasOpenAI, true /* userFacing */)
+			for _, c := range chain {
+				if c.Provider == "claude-code" {
+					t.Errorf("userFacing chain must NEVER contain claude-code; got chain=%v", chain)
+				}
+			}
+		})
+	}
+}
+
+// TestResolveCandidateChain_DevPath_ClaudeCodeAllowed verifies that when
+// userFacing=false and LANTERN_USE_CLAUDE_CODE=1, claude-code IS included
+// as the top candidate (dev dashboard path).
+func TestResolveCandidateChain_DevPath_ClaudeCodeAllowed(t *testing.T) {
+	t.Setenv("LANTERN_USE_CLAUDE_CODE", "1")
+	t.Setenv("LANTERN_CLAUDE_BINARY", "/usr/bin/true")
+
+	chain := resolveCandidateChain(true, true, false /* not userFacing */)
+	if len(chain) == 0 {
+		t.Fatal("chain must not be empty")
+	}
+	if chain[0].Provider != "claude-code" {
+		t.Errorf("dev path with LANTERN_USE_CLAUDE_CODE=1 should have claude-code first; got %v", chain[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// intelligence flag parsing — off/false/0 all disable
+// ---------------------------------------------------------------------------
+
+func TestIsFlagDisabled(t *testing.T) {
+	cases := []struct {
+		val      string
+		disabled bool
+	}{
+		{"0", true},
+		{"off", true},
+		{"false", true},
+		{"OFF", true},
+		{"False", true},
+		{"FALSE", true},
+		{"  off  ", true}, // trim spaces
+		// default-on: anything else is NOT disabled
+		{"", false},
+		{"1", false},
+		{"on", false},
+		{"true", false},
+		{"yes", false},
+	}
+	for _, tc := range cases {
+		t.Run("val="+tc.val, func(t *testing.T) {
+			got := isFlagDisabled(tc.val)
+			if got != tc.disabled {
+				t.Errorf("isFlagDisabled(%q) = %v, want %v", tc.val, got, tc.disabled)
+			}
+		})
+	}
+}
+
+func TestComplexityRoutingEnabled_OffValues(t *testing.T) {
+	for _, v := range []string{"0", "off", "false", "OFF", "False"} {
+		t.Run("LANTERN_COMPLEXITY_ROUTING="+v, func(t *testing.T) {
+			t.Setenv("LANTERN_COMPLEXITY_ROUTING", v)
+			if complexityRoutingEnabled() {
+				t.Errorf("complexityRoutingEnabled() should be false when env=%q", v)
+			}
+		})
+	}
+}
+
+func TestComplexityRoutingEnabled_DefaultOn(t *testing.T) {
+	t.Setenv("LANTERN_COMPLEXITY_ROUTING", "")
+	if !complexityRoutingEnabled() {
+		t.Error("complexityRoutingEnabled() should default to true when env is empty")
 	}
 }
 

@@ -987,9 +987,12 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 			logStep(label, "completed", "answered")
 		}
 	}
+	// userFacing=false: run outputs go to runs.output JSON, not directly
+	// to a bridge contact. The existing tools-filter in callLLMWithFailover
+	// already excludes claude-code when tools are present.
 	result, _, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.llmProxy.callLLMWithFailover(
 		ctx, tenantID,
-		llmMessages, llmTools, llmDispatch, onToolCallStep, onAttempt, 5,
+		llmMessages, llmTools, llmDispatch, onToolCallStep, onAttempt, 5, false,
 	)
 	if llmErr == nil {
 		provider = usedProvider

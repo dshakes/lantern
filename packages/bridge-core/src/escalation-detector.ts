@@ -31,7 +31,12 @@
 // in the safety-critical hot path. The bot CAN'T accidentally fail
 // closed because the rules don't depend on the LLM understanding them.
 
-export type EscalationKind = "life-threat" | "prompt-injection" | "relay-promise" | null;
+export type EscalationKind =
+  | "life-threat"
+  | "prompt-injection"
+  | "relay-promise"
+  | "personal-fact-probe"
+  | null;
 
 export interface EscalationVerdict {
   kind: EscalationKind;
@@ -121,6 +126,62 @@ export function detectPromptInjection(text: string): EscalationVerdict | null {
   for (const p of PROMPT_INJECTION_PATTERNS) {
     if (p.re.test(text)) {
       return { kind: "prompt-injection", reason: p.reason, pattern: p.re.source };
+    }
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// PERSONAL-FACT PROBE (soft — deflect, don't page)
+// ─────────────────────────────────────────────────────────────
+// A NON-owner contact asking about the OWNER's relationship, family,
+// home/location, schedule, travel, or current plans. A friendly "you
+// married?" is NOT a phishing attack — it must NOT trip the hard
+// SSN-refuse-and-page tier (that pages the owner and refuses coldly,
+// which is socially wrong for a sweet question). It IS a privacy
+// boundary: the bot must NOT confirm or deny the fact.
+//
+// This detector classifies such a message as a SOFT probe. The bridge
+// uses it to force audience="contact" (NON-disclosure persona) so the
+// reply deflects warmly instead of disclosing. It is deliberately NOT
+// wired into detectEscalationConditions / refusalReply — it neither
+// pages the owner nor short-circuits the LLM. It is the privacy
+// boundary's deterministic signal, not an alarm.
+//
+// Worded narrowly: the verb/frame must be an ASK or a REFERENCE about
+// the owner's private life. Ordinary chatter ("I'm married too", "we
+// have a new baby", "I'm traveling next week") describes the CONTACT,
+// not the owner, and must not over-match.
+const PERSONAL_FACT_PROBE_PATTERNS: Array<{ re: RegExp; reason: string }> = [
+  // Marital / relationship status — "are you married", "you married?",
+  // "is he married", "are you single/seeing anyone".
+  { re: /\b(?:are|r)\s+(?:you|u|he|she|they)\s+(?:married|single|engaged|divorced|seeing\s+(?:someone|anyone)|dating)\b/i, reason: "marital-status-probe" },
+  { re: /\b(?:you|u)\s+married\b/i, reason: "marital-status-probe" },
+  { re: /\b(?:is|are)\s+\w+\s+married\b/i, reason: "marital-status-probe" },
+  // Spouse / partner identity — "who is he married to", "what's your
+  // wife's/husband's name", "who's your wife/partner".
+  { re: /\bwho(?:'?s|\s+is)\s+(?:he|she|they|\w+)\s+married\s+to\b/i, reason: "spouse-identity-probe" },
+  { re: /\b(?:who'?s|who\s+is|what'?s|what\s+is|name\s+of)\s+(?:your|his|her|their|\w+'?s)\s+(?:wife|husband|spouse|partner|girlfriend|boyfriend|fiance|fiancee)\b/i, reason: "spouse-identity-probe" },
+  // Kids / family — "do you have kids", "how many children", "any kids".
+  { re: /\b(?:do|does|have)\s+(?:you|u|he|she|they|\w+)\s+(?:have\s+)?(?:any\s+)?(?:kids|children)\b/i, reason: "family-probe" },
+  { re: /\b(?:have|got)\s+(?:any\s+)?(?:kids|children)\b\??/i, reason: "family-probe" },
+  { re: /\bhow\s+many\s+(?:kids|children)\b/i, reason: "family-probe" },
+  // Home / location — "where do you live", "what's your address", "are
+  // you home", "are you home alone", "where are you staying".
+  { re: /\bwhere\s+(?:do|does)\s+(?:you|u|he|she|they|\w+)\s+(?:live|stay)\b/i, reason: "location-probe" },
+  { re: /\bwhat'?s\s+(?:your|his|her|their|\w+'?s)\s+(?:home\s+)?address\b/i, reason: "location-probe" },
+  { re: /\b(?:are|r)\s+(?:you|u|he|she)\s+home(?:\s+alone)?\b/i, reason: "location-probe" },
+  // Schedule / travel / current plans — "what's your schedule", "when
+  // are you traveling", "what are your plans", "when do you leave".
+  { re: /\bwhat'?s\s+(?:your|his|her|their|\w+'?s)\s+(?:schedule|routine|itinerary)\b/i, reason: "schedule-probe" },
+  { re: /\bwhen\s+(?:are|r|do|does|will)\s+(?:you|u|he|she|they|\w+)\s+(?:travel(?:l?ing)?|leav(?:e|ing)|fly(?:ing)?|go(?:ing)?\s+(?:away|out\s+of\s+town))\b/i, reason: "travel-probe" },
+];
+
+export function detectPersonalFactProbe(text: string): EscalationVerdict | null {
+  if (!text || text.length < 4) return null;
+  for (const p of PERSONAL_FACT_PROBE_PATTERNS) {
+    if (p.re.test(text)) {
+      return { kind: "personal-fact-probe", reason: p.reason, pattern: p.re.source };
     }
   }
   return null;
