@@ -23,6 +23,7 @@ import {
   defaultQuietHours,
   detectBotTells,
   detectEscalation,
+  greetingReply,
   inferStyle,
   isQuietHours,
   naturalize,
@@ -4913,7 +4914,12 @@ export class WhatsAppSession {
           "jarvis-stream: done",
         );
         const clean = (draft || "").trim();
-        if (!clean) return;
+        if (!clean) {
+          // Even the owner's "hi" deserves a reply when the stream yields
+          // nothing — fall back to a deterministic opener in self-chat.
+          if (!firstSentText) await this.sendGreetingFallback(null, text, "empty owner stream draft");
+          return;
+        }
         if (!firstSentText) {
           // Never sent the first chunk early — send the whole thing.
           await this.confirmToSelf(clean);
@@ -4959,7 +4965,10 @@ export class WhatsAppSession {
 
       // Non-streaming fallback (kept for env-disabled deployments).
       const draft = await this.agent.respondTo(jid, text, systemHint, { withTools: true });
-      if (!draft) return;
+      if (!draft) {
+        await this.sendGreetingFallback(null, text, "empty owner natural-chat draft");
+        return;
+      }
       const clean = draft.trim();
       await this.confirmToSelf(clean);
       if (this.lastSelfSentMsgId) {
@@ -5097,6 +5106,29 @@ export class WhatsAppSession {
     } catch (err) {
       this.logger.warn({ err }, "could not send confirmation to self");
     }
+  }
+
+  // Greeting safety-net. NEVER go stone-silent on a plain "hi"/"hey". When the
+  // agent yielded no usable draft — null round-trip (control-plane/LLM
+  // unreachable, SSE timeout, dead session) or a draft the bot-tell filter
+  // suppressed (e.g. "Hey! How can I help you?" trips the customer-service
+  // guard) — AND the inbound is a pure greeting, send a short deterministic
+  // opener instead. A greeting never warrants silence. `to` is the contact JID
+  // for the contact path; pass null to deliver to the owner's self-chat.
+  // Returns true when it fired. Substantive messages are NOT covered here.
+  private async sendGreetingFallback(to: string | null, inbound: string, why: string): Promise<boolean> {
+    const reply = greetingReply(inbound);
+    if (!reply) return false;
+    this.logger.info({ to: to ?? "self", why }, "greeting fallback — agent draft unusable, sending deterministic opener");
+    try {
+      if (to) await this.sendMessage(to, reply);
+      else await this.confirmToSelf(reply);
+    } catch (err) {
+      this.logger.warn({ err, to: to ?? "self" }, "greeting fallback send failed");
+      return false;
+    }
+    this.repliesSentToday += 1;
+    return true;
   }
 
   // Email fallback for bridge status messages. Universal — every phone
@@ -6629,7 +6661,10 @@ export class WhatsAppSession {
     const draft = await draftPromise;
 
     if (!draft) {
-      // No reply needed — never expose a "composing" tell.
+      // Don't vanish on a greeting just because the LLM round-trip returned
+      // nothing — send a deterministic opener so "hi" always gets a reply.
+      if (!opts.isGroup) await this.sendGreetingFallback(from, text, "empty agent draft");
+      // Otherwise no reply needed — never expose a "composing" tell.
       return;
     }
 
@@ -6650,6 +6685,10 @@ export class WhatsAppSession {
           timestamp: Date.now(),
         },
       });
+      // The classic case: a stranger texts "Hi", the model replies "Hey! How
+      // can I help you?", and the customer-service guard suppresses it →
+      // silence. For a pure greeting, fall back to a human opener instead.
+      if (!opts.isGroup) await this.sendGreetingFallback(from, text, `bot-tell: ${tellCheck.reason}`);
       return;
     }
 
