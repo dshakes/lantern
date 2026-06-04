@@ -73,6 +73,12 @@ export interface OwnerProfile {
    *  "## Languages" section, used by the language-modality hint so the
    *  bot replies in the right regional dialect. Empty when not set. */
   nativity: string;
+  /** IANA timezone derived from the "## My world" location line (e.g.
+   *  "Chantilly, VA /EST" → "America/New_York"), falling back to the
+   *  nativity string. Makes the profile the single source of truth for
+   *  the owner's timezone so the bridge env can't drift from it. Empty
+   *  when nothing recognizable is found. */
+  timezone: string;
   /** SEALED owner-only knowledge vault. Body of a "## Private" (also
    *  "## Vault" / "## Security") section: security-grade answers the
    *  owner stores for THEIR OWN use in self-chat — birth city, first
@@ -87,6 +93,14 @@ export interface OwnerProfile {
 }
 
 const RELOAD_TTL_MS = 30_000;
+
+// Whether LANTERN_OWNER_TIMEZONE was explicitly provided by the operator at
+// process start. Captured ONCE at import, before any profile load mutates the
+// env. When true, the profile NEVER overrides the explicit env. When false,
+// the store mirrors the profile-derived timezone into the env so every
+// timezone reader (quiet hours, daily digest, calendar, pacing) uses the
+// single source of truth the owner wrote in "## My world" — no drift.
+const OWNER_TZ_ENV_EXPLICIT = !!process.env.LANTERN_OWNER_TIMEZONE?.trim();
 
 export class OwnerProfileStore {
   private logger: Logger;
@@ -142,6 +156,18 @@ export class OwnerProfileStore {
       this.cache = parseProfile(raw);
       this.lastMtimeMs = mtime;
       this.cachedAt = now;
+      // Single-source-of-truth: when the operator didn't pin the timezone
+      // via env, mirror the profile-derived one into the env so quiet hours,
+      // digests, calendar and pacing can't drift from what the owner wrote.
+      // Re-applied on every reload, so editing "## My world" takes effect.
+      if (!OWNER_TZ_ENV_EXPLICIT && this.cache.timezone &&
+          process.env.LANTERN_OWNER_TIMEZONE !== this.cache.timezone) {
+        process.env.LANTERN_OWNER_TIMEZONE = this.cache.timezone;
+        this.logger.info(
+          { timezone: this.cache.timezone, source: "owner-profile" },
+          "owner timezone set from profile",
+        );
+      }
       this.logger.info(
         { path: this.path, relationships: this.cache.relationships.size },
         "loaded owner profile",
@@ -195,6 +221,14 @@ export class OwnerProfileStore {
    *  language. Returns "" when the profile has no Nativity section. */
   nativity(): string {
     return this.get()?.nativity ?? "";
+  }
+
+  /** IANA timezone derived from the profile's "## My world" location line
+   *  (e.g. "Chantilly, VA /EST" → "America/New_York"). The single source of
+   *  truth so the bridge env can't silently drift from what the owner wrote.
+   *  Returns "" when the profile has no recognizable location/timezone. */
+  timezone(): string {
+    return this.get()?.timezone ?? "";
   }
 
   /** SEALED owner-only knowledge vault body (from the "## Private" /
@@ -405,6 +439,48 @@ function uniqueTokenMatch<T>(map: Map<string, T>, inputs: string[]): T | null {
   return null;
 }
 
+// Timezone abbreviations + zone words → IANA. Only 3+ letter abbreviations
+// and full words are included: bare 2-letter codes (ET/CT/MT/PT) collide
+// with US state codes ("VA", "CT") and would misfire, so we don't match
+// them — people writing a location reliably include "/EST"-style hints.
+const TZ_ABBREV: Record<string, string> = {
+  est: "America/New_York", edt: "America/New_York", eastern: "America/New_York",
+  cst: "America/Chicago", cdt: "America/Chicago", central: "America/Chicago",
+  mst: "America/Denver", mdt: "America/Denver", mountain: "America/Denver",
+  pst: "America/Los_Angeles", pdt: "America/Los_Angeles", pacific: "America/Los_Angeles",
+  akst: "America/Anchorage", akdt: "America/Anchorage",
+  hst: "Pacific/Honolulu",
+  ist: "Asia/Kolkata",
+  gmt: "Europe/London", bst: "Europe/London", utc: "UTC",
+  cet: "Europe/Paris", cest: "Europe/Paris",
+  jst: "Asia/Tokyo", sgt: "Asia/Singapore",
+  aest: "Australia/Sydney", aedt: "Australia/Sydney",
+};
+
+function isValidIana(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Best-effort parse of an IANA timezone from a free-text location/timezone
+ *  string like "Chantilly, VA /EST", "Asia/Kolkata", or "Pacific time".
+ *  Returns "" when nothing recognizable is found. Exported for tests. */
+export function parseTimezone(text: string): string {
+  if (!text) return "";
+  // 1. Explicit IANA zone written verbatim ("America/New_York").
+  const iana = text.match(/\b([A-Za-z]+(?:\/[A-Za-z_]+){1,2})\b/);
+  if (iana && isValidIana(iana[1])) return iana[1];
+  // 2. Abbreviation or zone word (EST, PST, IST, "eastern", "pacific").
+  for (const [abbr, zone] of Object.entries(TZ_ABBREV)) {
+    if (new RegExp(`\\b${abbr}\\b`, "i").test(text)) return zone;
+  }
+  return "";
+}
+
 export function parseProfile(raw: string): OwnerProfile {
   const relationships = new Map<string, string>();
   const addressRules = new Map<string, AddressRule>();
@@ -412,6 +488,7 @@ export function parseProfile(raw: string): OwnerProfile {
   const facts: OwnerFacts = {};
   const proseLines: string[] = [];
   const nativityLines: string[] = [];
+  const myWorldLines: string[] = [];
   const privateVaultLines: string[] = [];
 
   // Markdown section heading: "## Title". We only treat level-2+ ("##",
@@ -427,6 +504,7 @@ export function parseProfile(raw: string): OwnerProfile {
   const lines = raw.split(/\r?\n/);
   let inRelationships = false;
   let inNativity = false;
+  let inMyWorld = false;
   let inFacts = false;
   let inPrivateVault = false;
   // Everything before the first "## " section (the "# Owner profile"
@@ -443,6 +521,9 @@ export function parseProfile(raw: string): OwnerProfile {
       // map to the nativity slot. The line itself stays in prose so the
       // model still sees the header text.
       inNativity = /\b(nativity|language|languages|origin|mother\s*tongue|background\s+&\s+language)\b/i.test(section);
+      // "## My world" / "## Location" — current location line, parsed for
+      // the owner's timezone. Stays in prose (not sensitive).
+      inMyWorld = /\b(my\s*world|location|where\s+i\s+(?:live|am|based)|home\s*base)\b/i.test(section);
       // "## Facts" — structured biographical ground truth. Kept OUT of
       // prose (it's typed data injected via factsBlock(), not free-form
       // voice) the same way the Relationships section is.
@@ -472,6 +553,14 @@ export function parseProfile(raw: string): OwnerProfile {
       }
       // Fall through to prose so it also lives in the free-form context.
       proseLines.push(line);
+      continue;
+    }
+    if (inMyWorld) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith("#")) {
+        myWorldLines.push(trimmed.replace(/^[-*]\s*/, ""));
+      }
+      proseLines.push(line); // stays in prose — not sensitive
       continue;
     }
     if (inFacts) {
@@ -627,6 +716,11 @@ export function parseProfile(raw: string): OwnerProfile {
     aliases,
     facts: hasFacts ? facts : undefined,
     nativity: nativityLines.join(" ").trim(),
+    // Location line wins; fall back to nativity. The bridge prefers an
+    // explicit LANTERN_OWNER_TIMEZONE env over this (see timezone() getter).
+    timezone:
+      parseTimezone(myWorldLines.join(" ")) ||
+      parseTimezone(nativityLines.join(" ")),
     privateVault: privateVaultLines.join("\n").trim(),
   };
 }
