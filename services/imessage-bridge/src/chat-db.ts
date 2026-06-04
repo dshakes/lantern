@@ -28,7 +28,7 @@ export interface IMessageRow {
   // bump it as we read.
   rowid: number;
   // The text body. Newer macOS (and RCS/SMS) often leave `text` NULL and put
-  // the body in `attributedBody` (a typedstream archive); pollNewMessages
+  // the body in `attributedBody` (a typedstream archive); peekNewMessages
   // falls back to decodeAttributedBody() so those messages aren't seen as empty.
   text: string;
   // Apple-epoch nanoseconds. Apple epoch is 2001-01-01 UTC, not Unix.
@@ -162,9 +162,17 @@ export class ChatDB {
     this.db = null;
   }
 
-  // Return all messages with ROWID > lastSeenRowid, then bump the high-
-  // water mark. This is the hot path called by the polling loop.
-  pollNewMessages(): IMessageRow[] {
+  // Return all messages with ROWID > lastSeenRowid WITHOUT advancing the
+  // high-water mark. The caller is responsible for advancing the cursor
+  // per-row (via advanceCursorTo) only AFTER each row has been processed
+  // or deliberately skipped — otherwise a row that throws mid-handling
+  // would be lost forever (the cursor having already moved past it).
+  //
+  // This is the hot path called by the polling loop. It throws on a DB
+  // error (e.g. SQLITE_BUSY on a transient chat.db lock) so the caller
+  // can decline to advance the cursor and retry the whole batch next tick
+  // — at-least-once delivery instead of at-most-once.
+  peekNewMessages(): IMessageRow[] {
     if (!this.db) return [];
     const rows = this.db
       .prepare(
@@ -213,7 +221,6 @@ export class ChatDB {
     }>;
 
     if (rows.length === 0) return [];
-    this.lastSeenRowid = rows[rows.length - 1].rowid;
 
     return rows.map((r) => ({
       rowid: r.rowid,
@@ -241,6 +248,16 @@ export class ChatDB {
         "",
       ),
     }));
+  }
+
+  // Advance the high-water mark to `rowid`, but only ever FORWARD. The
+  // polling loop calls this per-row after a row is processed (or
+  // deliberately skipped) so an unprocessed row that threw stays behind
+  // the cursor and is re-read on the next tick (at-least-once). Monotonic
+  // by construction — a stale/duplicate advance can never rewind the
+  // cursor and re-surface already-handled history.
+  advanceCursorTo(rowid: number): void {
+    if (rowid > this.lastSeenRowid) this.lastSeenRowid = rowid;
   }
 
   // Look up attachments for a specific message. Called lazily when a

@@ -909,8 +909,53 @@ function autoResumeSessions(): void {
   logger.info({ resumed, skipped, total: resumed + skipped }, "auto-resume scan done");
 }
 
+// One-time startup summary of which load-bearing capabilities are ON vs OFF
+// based on env. Several features SILENTLY no-op when their env var is unset
+// (owner-channel detection, personal-docs, the owner heads-up self-chat,
+// control-plane attention token). Without this, a misconfigured deploy looks
+// healthy but quietly does nothing. Concise: one INFO with on/off flags, plus
+// a WARN naming the ones that are off so they're visible in a grep.
+function logConfigCapabilities(): void {
+  const has = (v: string | undefined) => !!(v && v.trim());
+  const caps = {
+    ownerChannel:
+      has(process.env.LANTERN_WA_OWNER_JID) ||
+      has(process.env.LANTERN_OWNER_NAME)
+        ? "on"
+        : "off (self-chat detection only — set LANTERN_WA_OWNER_JID for dedicated-bot mode)",
+    personalDocs: has(process.env.LANTERN_PERSONAL_DOCS_ROOTS)
+      ? "on"
+      : "default-roots (~/Documents:~/Desktop:iCloud — set LANTERN_PERSONAL_DOCS_ROOTS to override)",
+    ownerEmailMirror: has(process.env.LANTERN_OWNER_EMAIL) ? "on" : "off",
+    controlPlaneAuth:
+      has(process.env.LANTERN_BRIDGE_EMAIL) ||
+      has(process.env.LANTERN_API_TOKEN) ||
+      has(process.env.LANTERN_BRIDGE_PASSWORD)
+        ? "on"
+        : "off (no LLM replies / attention — set LANTERN_BRIDGE_EMAIL+PASSWORD or LANTERN_API_TOKEN)",
+    heartbeat:
+      has(CONTROL_PLANE_URL) && has(HEARTBEAT_TOKEN)
+        ? "on"
+        : "off (dashboard falls back to direct probe)",
+    timezone: has(process.env.LANTERN_OWNER_TIMEZONE) ? "set" : "process-default",
+    proactiveNudges:
+      (process.env.LANTERN_PROACTIVE_NUDGES ?? "on").toLowerCase() === "0" ||
+      (process.env.LANTERN_PROACTIVE_NUDGES ?? "on").toLowerCase() === "off"
+        ? "off"
+        : "on",
+  };
+  logger.info({ capabilities: caps }, "WhatsApp bridge capability summary");
+  const off = Object.entries(caps)
+    .filter(([, v]) => v.startsWith("off"))
+    .map(([k]) => k);
+  if (off.length > 0) {
+    logger.warn({ disabled: off }, "some bridge capabilities are OFF (unset env) — confirm this is intentional");
+  }
+}
+
 server.listen(PORT, BIND, () => {
   logger.info({ bind: BIND, port: PORT, build: buildLabel() }, "WhatsApp bridge service started");
+  logConfigCapabilities();
   // Auto-resume runs AFTER listen so the bridge accepts requests
   // immediately. Sessions reconnect in the background; their state
   // flows out via the existing WebSocket broadcast.
@@ -930,11 +975,23 @@ server.listen(PORT, BIND, () => {
 //
 // ALWAYS restart this bridge with SIGTERM (the default `kill`, or
 // `launchctl bootout`), NEVER `kickstart -k` (SIGKILL), so this runs.
+// SINGLE shutdown path. Previously TWO functions (gracefulShutdown +
+// shutdown) BOTH registered on SIGTERM and SIGINT, so each signal ran two
+// concurrent teardowns racing process.exit() — disconnect() fired twice per
+// session and the server.close()/exit timers interleaved. Unified into one
+// idempotent handler: stop the heartbeat interval, disconnect every session
+// (which flushes Baileys' final creds write — critical for Signal integrity),
+// close the HTTP server, then exit. An 8s deadline forces exit if a
+// disconnect hangs.
 let shuttingDown = false;
 async function gracefulShutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info({ signal, sessions: sessions.size }, "graceful shutdown — flushing Signal sessions");
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
   const deadline = setTimeout(() => {
     logger.warn("graceful shutdown timed out — forcing exit");
     process.exit(0);
@@ -948,25 +1005,18 @@ async function gracefulShutdown(signal: string): Promise<void> {
   } finally {
     clearTimeout(deadline);
     logger.info("graceful shutdown complete");
-    process.exit(0);
+    // Close the HTTP server before exit so WhatsApp + clients see a clean
+    // teardown; the exit fires regardless once close completes (or 1s lapses).
+    try {
+      server.close(() => process.exit(0));
+      setTimeout(() => process.exit(0), 1000).unref();
+    } catch {
+      process.exit(0);
+    }
   }
 }
 process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
-
-// Graceful shutdown: close Baileys sockets before exit so WhatsApp sees a
-// clean disconnect and the next reconnect doesn't race a half-open socket.
-function shutdown(signal: string) {
-  logger.info({ signal }, "shutting down bridge");
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  const closes = [...sessions.values()].map((s) => s.disconnect().catch(() => {}));
-  Promise.all(closes).finally(() => {
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 3000).unref();
-  });
-}
-process.on("SIGINT", () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 // Crash-safety: a stray rejected promise anywhere in the bridge (a void
 // fire-and-forget that lost its .catch, a library internal) must NOT take
