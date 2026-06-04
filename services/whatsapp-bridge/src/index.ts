@@ -917,26 +917,31 @@ function autoResumeSessions(): void {
 // a WARN naming the ones that are off so they're visible in a grep.
 function logConfigCapabilities(): void {
   const has = (v: string | undefined) => !!(v && v.trim());
+  // Auth works via the dev default creds (admin@lantern.dev / lantern) baked
+  // into bridge-core even when no explicit env is set, so replies are NOT off
+  // by default — only flag it when those defaults are the active path.
+  const explicitAuth =
+    has(process.env.LANTERN_BRIDGE_EMAIL) ||
+    has(process.env.LANTERN_API_TOKEN) ||
+    has(process.env.LANTERN_BRIDGE_PASSWORD);
   const caps = {
+    // Self-chat detection is a valid owner topology (owner messages
+    // themselves), not a misconfig — only the dedicated-bot mode needs a JID.
     ownerChannel:
-      has(process.env.LANTERN_WA_OWNER_JID) ||
-      has(process.env.LANTERN_OWNER_NAME)
-        ? "on"
-        : "off (self-chat detection only — set LANTERN_WA_OWNER_JID for dedicated-bot mode)",
+      has(process.env.LANTERN_WA_OWNER_JID)
+        ? "on (dedicated-bot mode)"
+        : "on (self-chat mode — set LANTERN_WA_OWNER_JID for dedicated-bot mode)",
     personalDocs: has(process.env.LANTERN_PERSONAL_DOCS_ROOTS)
       ? "on"
       : "default-roots (~/Documents:~/Desktop:iCloud — set LANTERN_PERSONAL_DOCS_ROOTS to override)",
-    ownerEmailMirror: has(process.env.LANTERN_OWNER_EMAIL) ? "on" : "off",
-    controlPlaneAuth:
-      has(process.env.LANTERN_BRIDGE_EMAIL) ||
-      has(process.env.LANTERN_API_TOKEN) ||
-      has(process.env.LANTERN_BRIDGE_PASSWORD)
-        ? "on"
-        : "off (no LLM replies / attention — set LANTERN_BRIDGE_EMAIL+PASSWORD or LANTERN_API_TOKEN)",
+    ownerEmailMirror: has(process.env.LANTERN_OWNER_EMAIL) ? "on" : "off (optional)",
+    controlPlaneAuth: explicitAuth
+      ? "on"
+      : "on (dev default creds — set LANTERN_BRIDGE_EMAIL+PASSWORD or LANTERN_API_TOKEN for prod)",
     heartbeat:
       has(CONTROL_PLANE_URL) && has(HEARTBEAT_TOKEN)
         ? "on"
-        : "off (dashboard falls back to direct probe)",
+        : "off (optional — dashboard falls back to direct probe)",
     timezone: has(process.env.LANTERN_OWNER_TIMEZONE) ? "set" : "process-default",
     proactiveNudges:
       (process.env.LANTERN_PROACTIVE_NUDGES ?? "on").toLowerCase() === "0" ||
@@ -945,11 +950,15 @@ function logConfigCapabilities(): void {
         : "on",
   };
   logger.info({ capabilities: caps }, "WhatsApp bridge capability summary");
-  const off = Object.entries(caps)
-    .filter(([, v]) => v.startsWith("off"))
-    .map(([k]) => k);
-  if (off.length > 0) {
-    logger.warn({ disabled: off }, "some bridge capabilities are OFF (unset env) — confirm this is intentional");
+  // Only warn for states that genuinely degrade core function — not for
+  // normal-optional features (email mirror, heartbeat) being off, which would
+  // cry wolf on a perfectly healthy self-chat deployment.
+  const concerns: string[] = [];
+  if (!explicitAuth) {
+    concerns.push("controlPlaneAuth=dev-default-creds (fine for local; set explicit creds for prod)");
+  }
+  if (concerns.length > 0) {
+    logger.warn({ concerns }, "WhatsApp bridge: review these config notes");
   }
 }
 

@@ -727,26 +727,26 @@ export class IMessageSession {
     const ownerName = has(process.env.LANTERN_OWNER_NAME);
     const tz = has(process.env.LANTERN_OWNER_TIMEZONE);
     const summary = {
+      // Self-chat detection (owner messages themselves on the same Apple ID)
+      // works WITHOUT the handle — that's a valid topology, not a misconfig.
+      // The handle only switches on dedicated-bot mode (owner DMs a separate
+      // bot Apple ID). So unset ≠ disabled.
       ownerChannel: ownerHandle
-        ? "ON (LANTERN_IMESSAGE_OWNER_HANDLE set)"
-        : "OFF — owner self-chat / docs / agentic actions DISABLED (set LANTERN_IMESSAGE_OWNER_HANDLE)",
-      personalDocsToggle: this.personalDocsEnabled ? "ON" : "OFF (owner disabled via 'docs off')",
+        ? "on (dedicated-bot mode — LANTERN_IMESSAGE_OWNER_HANDLE set)"
+        : "on (self-chat mode — set LANTERN_IMESSAGE_OWNER_HANDLE for dedicated-bot mode)",
+      personalDocsToggle: this.personalDocsEnabled ? "on" : "off (owner disabled via 'docs off')",
       personalDocsRoots: docsRoots
         ? "custom (LANTERN_PERSONAL_DOCS_ROOTS set)"
         : "default (~/Documents:~/Desktop:iCloud Drive — set LANTERN_PERSONAL_DOCS_ROOTS to override)",
       defaultCalendar: calendar
         ? "set (LANTERN_DEFAULT_CALENDAR)"
         : "unset — calendar writes try Home/Calendar/Personal/Work (set LANTERN_DEFAULT_CALENDAR to pin)",
-      ownerName: ownerName ? "set" : "unset — 'my' file-ranking boost OFF (set LANTERN_OWNER_NAME)",
+      ownerName: ownerName ? "set" : "unset — 'my' file-ranking boost off (set LANTERN_OWNER_NAME)",
       ownerTimezone: tz ? "set" : "unset — falling back to process TZ for quiet hours / digests (set LANTERN_OWNER_TIMEZONE)",
     };
-    // WARN when the owner channel is off (the most common high-impact
-    // misconfig); INFO otherwise so a fully-configured host stays quiet.
-    if (!ownerHandle) {
-      this.logger.warn(summary, "config audit — owner channel DISABLED (LANTERN_IMESSAGE_OWNER_HANDLE unset)");
-    } else {
-      this.logger.info(summary, "config audit — capabilities on/off");
-    }
+    // Both owner topologies are functional, so a healthy self-chat host stays
+    // quiet (INFO). Nothing here is a high-impact misconfig worth a WARN.
+    this.logger.info(summary, "config audit — capabilities on/off");
   }
 
   // True once we've successfully reached `ready` at least once.
