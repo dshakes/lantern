@@ -10,13 +10,52 @@ import (
 // Migrate runs the core CREATE TABLE statements needed by the control plane.
 // This is a spike-only approach: in production, use a proper migration tool
 // (e.g., golang-migrate or Atlas). All statements are idempotent.
-func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+//
+// seedDev controls whether the well-known dev tenant (00000000-…0001) and
+// admin user (admin@lantern.dev / "lantern") are inserted. Pass false in
+// production — those static-password rows must never exist there.
+func Migrate(ctx context.Context, pool *pgxpool.Pool, seedDev bool) error {
 	for i, stmt := range migrations {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
 			return fmt.Errorf("migration %d failed: %w", i, err)
 		}
 	}
+	if seedDev {
+		for i, stmt := range devSeedStatements {
+			if _, err := pool.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("dev seed statement %d failed: %w", i, err)
+			}
+		}
+	}
 	return nil
+}
+
+// devSeedStatements are run only when seedDev is true (local development).
+// They create a fixed tenant + admin account with a well-known password so
+// `make dev` works out-of-the-box without any manual bootstrapping.
+// These statements MUST NOT run in production — a static bcrypt hash for a
+// known password ("lantern") is a trivially-exploitable backdoor.
+var devSeedStatements = []string{
+	// ---------------------------------------------------------------
+	// Seed default dev tenant and admin user
+	// Password is "lantern" hashed with bcrypt.
+	// ---------------------------------------------------------------
+	`INSERT INTO tenants (id, slug, name, tier, k8s_namespace)
+	 VALUES ('00000000-0000-0000-0000-000000000001', 'dev', 'Development', 'team', 'lantern-t-dev')
+	 ON CONFLICT (id) DO NOTHING`,
+
+	`INSERT INTO users (id, tenant_id, email, display_name, auth_provider, auth_subject, password_hash, role)
+	 VALUES (
+		'00000000-0000-0000-0000-000000000002',
+		'00000000-0000-0000-0000-000000000001',
+		'admin@lantern.dev',
+		'Admin',
+		'local',
+		'admin@lantern.dev',
+		'$2b$10$.hAunSjVIs5aiTYrzIAmfuLbpy1Im2N4xIvhjFVG5v3fak/eeyP7W',
+		'owner'
+	 )
+	 ON CONFLICT DO NOTHING`,
 }
 
 var migrations = []string{
@@ -165,6 +204,12 @@ var migrations = []string{
 	// ---------------------------------------------------------------
 	`ALTER TABLE agents ENABLE ROW LEVEL SECURITY`,
 
+	// FORCE ROW LEVEL SECURITY ensures the table-owner connection (used by
+	// migrations and the app pool) is also subject to the RLS policies.
+	// Without FORCE, superuser / table-owner connections bypass RLS entirely,
+	// making the tenant-isolation policies ineffective for the app role.
+	`ALTER TABLE agents FORCE ROW LEVEL SECURITY`,
+
 	`DO $$
 	BEGIN
 		IF NOT EXISTS (
@@ -177,6 +222,9 @@ var migrations = []string{
 	END$$`,
 
 	`ALTER TABLE runs ENABLE ROW LEVEL SECURITY`,
+
+	// Same rationale as agents above.
+	`ALTER TABLE runs FORCE ROW LEVEL SECURITY`,
 
 	`DO $$
 	BEGIN
@@ -214,27 +262,6 @@ var migrations = []string{
 			ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member';
 		END IF;
 	END$$`,
-
-	// ---------------------------------------------------------------
-	// Seed default dev tenant and admin user
-	// Password is "lantern" hashed with bcrypt.
-	// ---------------------------------------------------------------
-	`INSERT INTO tenants (id, slug, name, tier, k8s_namespace)
-	 VALUES ('00000000-0000-0000-0000-000000000001', 'dev', 'Development', 'team', 'lantern-t-dev')
-	 ON CONFLICT (id) DO NOTHING`,
-
-	`INSERT INTO users (id, tenant_id, email, display_name, auth_provider, auth_subject, password_hash, role)
-	 VALUES (
-		'00000000-0000-0000-0000-000000000002',
-		'00000000-0000-0000-0000-000000000001',
-		'admin@lantern.dev',
-		'Admin',
-		'local',
-		'admin@lantern.dev',
-		'$2b$10$.hAunSjVIs5aiTYrzIAmfuLbpy1Im2N4xIvhjFVG5v3fak/eeyP7W',
-		'owner'
-	 )
-	 ON CONFLICT DO NOTHING`,
 
 	// ---------------------------------------------------------------
 	// Connector installs

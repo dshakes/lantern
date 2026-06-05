@@ -123,14 +123,14 @@ func (h *ForecastHandler) Forecast(w http.ResponseWriter, r *http.Request) {
 	estCost := estimateCost(provider, model, int(estTokensIn), int(estTokensOut))
 
 	reasoning := map[string]any{
-		"historical_runs":         hist.runs,
-		"historical_avg_cost_usd": hist.avgCostUsd,
+		"historical_runs":           hist.runs,
+		"historical_avg_cost_usd":   hist.avgCostUsd,
 		"historical_avg_tokens_in":  hist.avgTokensIn,
 		"historical_avg_tokens_out": hist.avgTokensOut,
-		"input_chars":             len(req.Input),
-		"input_token_estimate":    inputTokens,
-		"pricing_model":           model,
-		"pricing_provider":        provider,
+		"input_chars":               len(req.Input),
+		"input_token_estimate":      inputTokens,
+		"pricing_model":             model,
+		"pricing_provider":          provider,
 	}
 
 	// 4. Check against any configured budget.
@@ -195,11 +195,11 @@ func (h *ForecastHandler) Forecast(w http.ResponseWriter, r *http.Request) {
 // ---------- internals ----------
 
 type historicalStats struct {
-	runs          int
-	avgTokensIn   int64
-	avgTokensOut  int64
-	avgCostUsd    float64
-	confidence    float64
+	runs         int
+	avgTokensIn  int64
+	avgTokensOut int64
+	avgCostUsd   float64
+	confidence   float64
 }
 
 func (h *ForecastHandler) historical(ctx context.Context, tenantID, agentName string) (historicalStats, error) {

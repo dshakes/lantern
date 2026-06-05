@@ -395,9 +395,10 @@ func labelOf(node Node) string {
 // renderTemplate does a tiny {{path.to.value}} substitution. It's intentionally
 // not a full template engine — workflows are user-authored config, not Go
 // code, and we want predictability over power. Supported forms:
-//   {{input.foo}}        — read from the input map
-//   {{steps.<id>}}       — read a prior step's output (stringified)
-//   {{steps.<id>.field}} — read a field of a prior step's map output
+//
+//	{{input.foo}}        — read from the input map
+//	{{steps.<id>}}       — read a prior step's output (stringified)
+//	{{steps.<id>.field}} — read a field of a prior step's map output
 func renderTemplate(s string, vars map[string]any) string {
 	if !strings.Contains(s, "{{") {
 		return s

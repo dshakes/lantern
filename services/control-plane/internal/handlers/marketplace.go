@@ -21,7 +21,7 @@ import (
 type MarketplaceHandler struct {
 	srv    *server.Server
 	auth   *AuthHandler
-	runSvc *RunService // injected to support W11c marketplace.Invoke
+	runSvc *RunService  // injected to support W11c marketplace.Invoke
 	rest   *RESTHandler // for kicking off inline execution after Invoke
 }
 

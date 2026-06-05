@@ -479,8 +479,8 @@ func (h *SurfaceHandler) WhatsAppStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var (
-		status, bridgeState, bridgeVersion           string
-		phoneNumber, displayHandle, lastError        *string
+		status, bridgeState, bridgeVersion                  string
+		phoneNumber, displayHandle, lastError               *string
 		lastHeartbeatAt, lastConnectionEventAt, connectedAt *time.Time
 	)
 	err = h.srv.Pool.QueryRow(ctx, `

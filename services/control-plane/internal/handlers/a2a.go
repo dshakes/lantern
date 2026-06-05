@@ -71,8 +71,8 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 	// is a public discovery endpoint — we only expose agents marked public).
 	ctx := r.Context()
 	var (
-		description  *string
-		labelsJSON   []byte
+		description *string
+		labelsJSON  []byte
 	)
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT description, labels

@@ -582,7 +582,16 @@ func (h *SessionHandler) GetEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	// Reflect origin only when it is in the allowlist (same policy as
+	// CORSMiddleware). SSE responses are authenticated (JWT/API key above),
+	// so wildcard "*" is inappropriate here.
+	if origin := r.Header.Get("Origin"); origin != "" {
+		allowed := corsAllowedOrigins()
+		if _, ok := allowed[origin]; ok {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {

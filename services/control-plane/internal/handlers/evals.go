@@ -36,11 +36,11 @@ func (h *EvalHandler) logger() *zap.Logger { return h.srv.Logger.Named("evals") 
 // ---------- DTOs ----------
 
 type evalCase struct {
-	Name      string         `json:"name"`
-	Input     string         `json:"input"`
-	Expected  string         `json:"expected,omitempty"`
-	Assert    map[string]any `json:"assert,omitempty"` // e.g. {"contains":"foo", "minLen":10}
-	Weight    float64        `json:"weight,omitempty"`
+	Name     string         `json:"name"`
+	Input    string         `json:"input"`
+	Expected string         `json:"expected,omitempty"`
+	Assert   map[string]any `json:"assert,omitempty"` // e.g. {"contains":"foo", "minLen":10}
+	Weight   float64        `json:"weight,omitempty"`
 }
 
 type evalSuiteDTO struct {
@@ -54,14 +54,14 @@ type evalSuiteDTO struct {
 }
 
 type evalCaseResult struct {
-	Name     string  `json:"name"`
-	Passed   bool    `json:"passed"`
-	Score    float64 `json:"score"`
-	Actual   string  `json:"actual,omitempty"`
-	Expected string  `json:"expected,omitempty"`
-	Error    string  `json:"error,omitempty"`
-	LatencyMs int64  `json:"latencyMs,omitempty"`
-	CostUsd  float64 `json:"costUsd,omitempty"`
+	Name      string  `json:"name"`
+	Passed    bool    `json:"passed"`
+	Score     float64 `json:"score"`
+	Actual    string  `json:"actual,omitempty"`
+	Expected  string  `json:"expected,omitempty"`
+	Error     string  `json:"error,omitempty"`
+	LatencyMs int64   `json:"latencyMs,omitempty"`
+	CostUsd   float64 `json:"costUsd,omitempty"`
 }
 
 type evalRunDTO struct {
