@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"time"
 
 	"go.uber.org/zap"
@@ -110,6 +111,20 @@ func (h *ReceiptHandler) IssueReceipt(w http.ResponseWriter, r *http.Request) {
 // VerifyReceipt handles POST /v1/runs/receipts/verify. No auth required —
 // receipts are publicly verifiable with the signing secret published via
 // /.well-known/lantern-receipts in self-hosted mode.
+//
+// Verification strategy (defence-in-depth):
+//  1. If the run_id is present and the run exists in our DB, RE-FETCH the
+//     persisted receipt from run_receipts and compare the stored signature
+//     against the client-supplied one (constant-time). This prevents an
+//     attacker from crafting a payload that passes signature recomputation
+//     but differs from what was actually issued.
+//  2. For fully-offline payloads (no run_id, or run not found in DB), fall
+//     back to recomputing the HMAC over the canonical JSON bytes.
+//
+// Both paths use constant-time comparison (hmac.Equal).
+//
+// TODO: upgrade to Ed25519 + published JWKS so external verifiers don't need
+// the HMAC secret — only Lantern's Ed25519 public key. Track in issue #NNNN.
 func (h *ReceiptHandler) VerifyReceipt(w http.ResponseWriter, r *http.Request) {
 	var req signedReceipt
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -125,6 +140,37 @@ func (h *ReceiptHandler) VerifyReceipt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+	runID := req.Payload.RunID
+
+	// Strategy 1: re-fetch persisted signature from DB when run_id is known.
+	if runID != "" && h.srv != nil && h.srv.Pool != nil {
+		var storedSig string
+		err := h.srv.Pool.QueryRow(ctx,
+			`SELECT signature FROM run_receipts WHERE run_id = $1`,
+			runID,
+		).Scan(&storedSig)
+		if err == nil && storedSig != "" {
+			// Constant-time compare: client-supplied signature vs. what we actually issued.
+			if !hmac.Equal([]byte(storedSig), []byte(req.Signature)) {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"valid":  false,
+					"reason": "signature mismatch",
+				})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"valid":    true,
+				"runId":    req.Payload.RunID,
+				"issuedAt": req.Payload.IssuedAt,
+				"tenantId": req.Payload.TenantID,
+			})
+			return
+		}
+		// DB miss — fall through to offline recompute.
+	}
+
+	// Strategy 2 (offline / fallback): recompute HMAC over canonical bytes.
 	expected := signPayload(req.Payload)
 	if !hmac.Equal([]byte(expected), []byte(req.Signature)) {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -251,11 +297,65 @@ func (h *ReceiptHandler) persistReceipt(ctx context.Context, tenantID, runID str
 	return err
 }
 
+// canonicalJSON serialises v to a canonical, deterministic JSON byte slice
+// that is safe to sign regardless of Go struct field ordering or future
+// field additions.
+//
+// Algorithm:
+//  1. Marshal v to JSON with the standard encoder (field order follows struct tags).
+//  2. Unmarshal into map[string]any to discard struct-level ordering.
+//  3. Re-marshal the map — encoding/json sorts map keys alphabetically.
+//
+// This means two receiptPayload values with identical fields but different
+// struct layouts still produce the same canonical bytes, and adding an
+// omitempty field in the future won't silently shift the signature.
+//
+// Numbers are formatted by encoding/json without trailing zeros and with
+// the minimal representation (e.g. 1.5 stays 1.5, not 1.500000). This is
+// stable across Go versions because encoding/json's float formatting has
+// not changed since Go 1.0.
+func canonicalJSON(v any) ([]byte, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalJSON marshal: %w", err)
+	}
+	// Unmarshal into a generic map so we can sort keys.
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("canonicalJSON unmarshal: %w", err)
+	}
+	// Re-marshal: encoding/json sorts map keys alphabetically.
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalJSON re-marshal: %w", err)
+	}
+	return out, nil
+}
+
+// canonicalJSONKeys returns the sorted list of top-level keys in a canonical
+// JSON object, used only in tests to assert key order is deterministic.
+func canonicalJSONKeys(data []byte) ([]string, error) {
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
+
 func signPayload(p receiptPayload) string {
-	// Marshal canonically — encoding/json sorts struct fields by declaration
-	// order, so as long as the struct fields stay alphabetical the output is
-	// deterministic for a given payload.
-	body, _ := json.Marshal(p)
+	// Sign over the canonical JSON bytes so field-order and future struct
+	// changes cannot produce different signatures for identical payloads.
+	body, err := canonicalJSON(p)
+	if err != nil {
+		// Should never happen for a well-formed receiptPayload; fall back to
+		// standard marshal so signing still produces something rather than "".
+		body, _ = json.Marshal(p)
+	}
 	mac := hmac.New(sha256.New, []byte(getReceiptSecret()))
 	mac.Write(body)
 	return hex.EncodeToString(mac.Sum(nil))

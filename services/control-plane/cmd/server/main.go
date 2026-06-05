@@ -217,6 +217,9 @@ func main() {
 	httpMux.HandleFunc("GET /auth/me", authHandler.GetMe)
 	httpMux.HandleFunc("GET /auth/oauth/{provider}/start", authHandler.OAuthStart)
 	httpMux.HandleFunc("GET /auth/oauth/{provider}/callback", authHandler.OAuthCallback)
+	// One-time-code exchange: the OAuth callback redirects with ?code=… (not
+	// the JWT in the URL); the dashboard POSTs the code here to get the token.
+	httpMux.HandleFunc("POST /auth/oauth/exchange", authHandler.OAuthExchange)
 
 	// REST API endpoints (direct, no gateway needed).
 	httpMux.HandleFunc("GET /v1/agents", restHandler.ListAgents)

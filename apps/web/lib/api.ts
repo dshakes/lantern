@@ -439,6 +439,18 @@ class LanternAPI {
     return this.request<{ redirect_url: string }>(`/auth/oauth/${provider}/start`);
   }
 
+  /** Exchange the one-time OAuth code (delivered to /auth/callback?code=…) for
+   *  a JWT. The token is no longer passed in the redirect URL — the callback
+   *  page POSTs the short-lived, single-use code here to obtain it. */
+  async exchangeOAuthCode(code: string): Promise<{ token: string }> {
+    const data = await this.request<{ token: string }>("/auth/oauth/exchange", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    });
+    this.setToken(data.token);
+    return data;
+  }
+
   logout(): void {
     this.setToken(null);
   }
