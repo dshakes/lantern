@@ -65,6 +65,9 @@ impl AnthropicProvider {
     }
 
     fn map_error(&self, status: u16, body: &str) -> ProviderError {
+        // Untrusted upstream body: log at debug only, never surface a raw
+        // auth-error body to the caller or into run state.
+        tracing::debug!(provider = self.name(), status, body, "provider error response");
         if status == 429 {
             ProviderError::RateLimited {
                 provider: self.name().into(),
@@ -73,7 +76,7 @@ impl AnthropicProvider {
         } else if status == 401 || status == 403 {
             ProviderError::AuthError {
                 provider: self.name().into(),
-                message: body.to_string(),
+                message: "upstream authentication failed (check the provider API key)".into(),
             }
         } else if status == 400 {
             ProviderError::InvalidRequest {
