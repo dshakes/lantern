@@ -136,7 +136,7 @@ test("HARNESS: em-dash reply → SEND with the dash stripped (was suppressed)", 
 
 test("HARNESS: anniversary wish from a contact → SEND a thanks", () => {
   const r = decideReplyAction({
-    inbound: "Happy wedding anniversary Shekhar & Manasa 🎉",
+    inbound: "Happy wedding anniversary Shekhar & Maya 🎉",
     llmReply: "thank you so much 🙏",
     relationship: "friend", contactName: "Sowmyadhar",
   });

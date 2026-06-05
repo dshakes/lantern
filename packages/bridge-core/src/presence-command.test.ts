@@ -33,7 +33,7 @@ test("clear variants", () => {
 });
 
 test("not a presence command → null", () => {
-  for (const c of ["what's my next appointment?", "call manu", "how are you", "I'm at a loss what to do?"]) {
+  for (const c of ["what's my next appointment?", "call mae", "how are you", "I'm at a loss what to do?"]) {
     assert.equal(parsePresenceCommand(c), null, c);
   }
 });

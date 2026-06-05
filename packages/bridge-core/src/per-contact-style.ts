@@ -221,7 +221,7 @@ export function computeContactStyle(
 
     // Uppercase-rate = how often the owner writes in proper sentence case
     // vs. lowercase. The trap: proper nouns are capitalized in otherwise-
-    // lowercase texts ("meeting srinivas at New Jersey", "ved's school"),
+    // lowercase texts ("meeting srinivas at New Jersey", "arin's school"),
     // and code-switched / Telugu messages are correctly lowercase but were
     // mis-flagged by the old `^[A-Z][a-z]+\s+[A-Z][a-z]+` proper-name rule
     // (it fired on ANY two-word capitalized phrase) and the

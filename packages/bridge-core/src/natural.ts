@@ -395,7 +395,7 @@ export interface PersonaOptions {
   lowContext?: boolean;
   // Structured owner facts (from owner-profile.ts → factsBlock). One
   // ground-truth line: "Owner facts (TRUE — never deny…): married to
-  // Manasa; kids: …; wedding anniversary June 3, 2017." Injected for
+  // Maya; kids: …; wedding anniversary June 3, 2017." Injected for
   // BOTH owner + contact prompts so the bot never denies the owner's
   // marriage/family/key dates. Empty when no facts are declared.
   ownerFacts?: string;

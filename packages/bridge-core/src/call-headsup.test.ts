@@ -17,10 +17,10 @@ function confReq(): OutboundCallRequest {
     mode: "CONFERENCE_BRIDGE",
     to: "+15125550000",
     from: "+15128819998", // Twilio DID
-    contactName: "Manu Kumar",
+    contactName: "Mae Kumar",
     reason: "weekend plans",
     ownerInitiated: true,
-    ownerPhone: "+15126088977",
+    ownerPhone: "+15555550100",
   };
 }
 
@@ -29,9 +29,9 @@ function makeDeps(overrides: Partial<OrchestratorDeps> = {}): { deps: Orchestrat
   const deps: OrchestratorDeps = {
     logger: noopLogger,
     twilioFromNumber: "+15128819998",
-    ownerPhone: "+15126088977",
+    ownerPhone: "+15555550100",
     ownerName: "Shekhar",
-    callerId: "+15126088977", // owner's verified cell
+    callerId: "+15555550100", // owner's verified cell
     smsHeadsUp: true,
     resolveContact: async () => null,
     notifyOwner: async () => {},
@@ -61,7 +61,7 @@ test("recipient leg dials FROM the caller-ID override; SMS + owner leg use the T
   assert.match(sms!.body.body, /Shekhar/, "SMS names the owner");
 
   assert.ok(placeCall, "recipient should be dialed");
-  assert.equal(placeCall!.body.from, "+15126088977", "recipient leg uses the caller-ID override");
+  assert.equal(placeCall!.body.from, "+15555550100", "recipient leg uses the caller-ID override");
 
   assert.ok(addPart, "owner conference leg should be added");
   assert.equal(addPart!.body.from, "+15128819998", "owner leg uses the Twilio DID, not the override");

@@ -523,7 +523,7 @@ const RE_NOTE = /\[NOTE:([^\]]+)\]/g;
 const RE_MAIL = /\[MAIL:([^\]]+)\]/g;
 // Outbound call marker — the intelligent replacement for brittle "call X"
 // regexes. The LLM understands call intent in ANY phrasing (typos, "can
-// you call manu", voice notes, other languages) and emits this marker; the
+// you call mae", voice notes, other languages) and emits this marker; the
 // bridge runs it through the real Twilio orchestrator (risk-tier + owner
 // ack). No marker = no call, which also kills the "i'll call her" text
 // hallucination.

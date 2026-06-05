@@ -49,7 +49,7 @@ test("parseProfile: timezone derived from '## My world', not nativity origin", (
     "## My world",
     "- Chantilly, VA /EST",
     "## Nativity",
-    "- From Karimnagar, Telangana, India",
+    "- From Hometown, Telangana, India",
   ].join("\n");
   const p = parseProfile(raw);
   assert.equal(p.timezone, "America/New_York", "should use VA/EST residence, not India origin");

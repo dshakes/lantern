@@ -170,8 +170,8 @@ const OWNER_OK = [
   "lemme check and get back",
   "haha true",
   "for sure, after 6 works",
-  "not sure, will check with manasa",
-  "ved's got school tmrw",
+  "not sure, will check with maya",
+  "arin's got school tmrw",
 ];
 
 for (const ok of OWNER_OK) {
@@ -255,9 +255,9 @@ test("lowercase Telugu / proper-noun messages are NOT classed as uppercase", () 
   const msgs = [
     "repu ostunnaru kada",
     "meeting srinivas at New Jersey tmrw",
-    "ved's school starts monday",
+    "arin's school starts monday",
     "ela undi anna",
-    "manasa said ok",
+    "maya said ok",
   ];
   const style = computeContactStyle(msgs);
   // None of these are sentence-cased; proper nouns shouldn't inflate it.

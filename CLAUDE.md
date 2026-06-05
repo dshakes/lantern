@@ -638,14 +638,14 @@ references them. Supported keys:
 ```markdown
 ## Facts
 - married: yes
-- spouse: Manasa
+- spouse: Maya
 - kids: Aarav, Anaya
 - wedding anniversary: 2017-06-03
 ```
 
 Date values must be `YYYY-MM-DD`. The bot renders them as "June 3, 2017" in
 the prompt. `factsBlock()` produces a single injected line like
-`"Owner facts (TRUE — never deny or contradict these): married to Manasa; …"`.
+`"Owner facts (TRUE — never deny or contradict these): married to Maya; …"`.
 
 **`## Relationships` section** — per-contact relationship labels plus optional
 addressing rules. Extended grammar (pipe-delimited):
@@ -659,7 +659,7 @@ addressing rules. Extended grammar (pipe-delimited):
 
 The `address as: X` clause sets what to call this contact. `never: a, b`
 forbids those kinship/nickname terms — using one is an instant bot-tell.
-Parenthetical aliases also work: `Manasa(Manu): wife` indexes both names.
+Parenthetical aliases also work: `Maya(Mae): wife` indexes both names.
 
 **`## Style lessons (managed)` section** — auto-written by the 👎 learning
 flywheel (see below). Do not hand-edit the `<!-- id:... -->` comment tags;

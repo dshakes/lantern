@@ -164,7 +164,7 @@ SYNTHESIS — produce EXACTLY 4 lines, each a SINGLE bullet starting with • :
 
   Line 1 — TOP PRIORITY: the single most time-critical thing in the next ~24h. Calendar starting in <2h ALWAYS beats anything else. Otherwise: an overdue deadline (passport expires in 14 days), a meeting that needs prep, a VIP message awaiting reply.
 
-  Line 2 — UNREAD ATTENTION: 1-2 specific unread items needing his reply. Cite the person + topic ("manasa asked about weekend plans" / "alex re: invoice"). Pick from messages OR email — whichever has higher-priority items.
+  Line 2 — UNREAD ATTENTION: 1-2 specific unread items needing his reply. Cite the person + topic ("maya asked about weekend plans" / "alex re: invoice"). Pick from messages OR email — whichever has higher-priority items.
 
   Line 3 — UPCOMING DEADLINE / EXPIRY: anything from personal docs that's due within 60 days. Format as "<doc> expires <date> — <action>" e.g. "passport expires sept 14 2031 — well ahead". Skip if nothing within 60d.
 

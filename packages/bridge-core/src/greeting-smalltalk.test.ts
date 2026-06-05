@@ -37,7 +37,7 @@ const ACTIONABLE = [
   "good morning, set a reminder for 9am",
   "how do I renew my license",
   "what's up with my flight booking",
-  "hello, draft a reply to manasa",
+  "hello, draft a reply to maya",
   "morning — what's on my calendar today",
 ];
 
@@ -64,8 +64,8 @@ for (const t of ACTIONABLE) {
 // ---------------------------------------------------------------------------
 
 const WISHES = [
-  "Happy Wedding Anniversary Shekhar & Manasa",
-  "Happy Wedding Anniversary Shekhar & Manasa 🎉",
+  "Happy Wedding Anniversary Shekhar & Maya",
+  "Happy Wedding Anniversary Shekhar & Maya 🎉",
   "Happy Birthday!!",
   "happy bday bro",
   "Happy anniversary to you both 💐",

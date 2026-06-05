@@ -25,6 +25,12 @@ out/
 # and that the Docker builds COPY. Ignoring it broke clone-to-run.
 gen/ts/
 
+# Personal data — never commit a real owner profile. Use the template at
+# docs/personal/owner-profile.example.md and copy it to ~/.lantern/.
+owner-profile.md
+**/owner-profile.md
+.lantern/
+
 # Env / secrets
 .env
 .env.local

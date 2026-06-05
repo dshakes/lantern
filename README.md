@@ -231,7 +231,7 @@ Lantern ships two macOS bridges — **WhatsApp** and **iMessage** — that turn 
 - **Remembers across channels.** A unified person graph, 14‑day episodic memory, and 7‑day topic index are shared between WhatsApp and iMessage.
 - **Proactive & self‑improving.** Anticipation nudges (pre‑meeting, anniversaries, overdue replies, open commitments), a 👎 learning flywheel that mines rejections into durable style lessons, draft‑and‑confirm for low‑confidence replies, and quiet‑hours queueing with natural morning replay.
 
-The owner profile (`~/.lantern/owner-profile.md`) is the single source of truth — facts, per‑contact addressing rules, dialect preferences, and timezone — hot‑reloaded every 30s, never hardcoded. See [`docs/architecture/15-personal-workflows.md`](docs/architecture/).
+The owner profile (`~/.lantern/owner-profile.md`) is the single source of truth — facts, per‑contact addressing rules, dialect preferences, and timezone — hot‑reloaded every 30s, never hardcoded. Copy the template at [`docs/personal/owner-profile.example.md`](docs/personal/owner-profile.example.md) to `~/.lantern/owner-profile.md` to get started (your real profile stays out of the repo — it's gitignored). See [`docs/architecture/15-personal-workflows.md`](docs/architecture/).
 
 ---
 
