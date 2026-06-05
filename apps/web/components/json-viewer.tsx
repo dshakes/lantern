@@ -4,8 +4,18 @@ import { useState } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import clsx from "clsx";
 
+// Escape HTML BEFORE adding highlight spans, so attacker-controlled run I/O
+// (inbound messages, tool results) can't inject markup. Only our own <span>
+// tags below contain real angle brackets; any in the data become entities.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function syntaxHighlight(json: string): string {
-  return json
+  return escapeHtml(json)
     .replace(
       /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?)/g,
       (match) => {

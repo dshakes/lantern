@@ -19,7 +19,7 @@
 // box; other types return a "binary — won't preview" placeholder.
 
 import { spawn } from "child_process";
-import { existsSync, readFileSync, statSync, appendFileSync, mkdirSync, writeFileSync, chmodSync } from "fs";
+import { existsSync, readFileSync, statSync, appendFileSync, mkdirSync, writeFileSync, chmodSync, realpathSync } from "fs";
 import { resolve, dirname, basename, extname, join, sep } from "path";
 import { homedir } from "os";
 import { createHash } from "crypto";
@@ -209,9 +209,19 @@ export class PersonalDocs {
   // Blocks path traversal (../, symlinks pointing outside, etc.).
   isAllowedPath(path: string): boolean {
     try {
-      const resolved = resolve(path.replace(/^~/, homedir()));
+      let resolved = resolve(path.replace(/^~/, homedir()));
+      // Resolve symlinks so a symlink placed INSIDE an allowed root cannot
+      // point outside it (e.g. ~/Documents/x -> /etc). Lexical resolve()
+      // alone does not follow links. Falls back to the lexical path when the
+      // target doesn't exist yet (a non-existent file fails the read anyway).
+      try {
+        resolved = realpathSync(resolved);
+      } catch {}
       for (const root of this.cfg.roots) {
-        const rootResolved = resolve(root);
+        let rootResolved = resolve(root);
+        try {
+          rootResolved = realpathSync(rootResolved);
+        } catch {}
         // Append separator so /tmp/foo doesn't match /tmp/foobar.
         if (resolved === rootResolved || resolved.startsWith(rootResolved + sep)) {
           return true;
