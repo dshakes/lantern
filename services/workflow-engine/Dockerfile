@@ -1,12 +1,17 @@
 FROM golang:1.23-alpine AS builder
 WORKDIR /app
 
-# Copy dependency files first for layer caching.
-COPY go.mod go.sum ./
-RUN go mod download
+# Copy the gen/go module that we depend on via the replace directive.
+# (Build context is the repo root — see infra/docker/docker-compose.yml.)
+COPY gen/go/ /app/gen/go/
 
-# Copy the rest of the source.
-COPY . .
+# Copy the workflow-engine service source.
+COPY services/workflow-engine/ /app/services/workflow-engine/
+
+WORKDIR /app/services/workflow-engine
+
+# Download dependencies.
+RUN go mod download
 
 # Build a statically-linked binary.
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /workflow-engine ./cmd/server

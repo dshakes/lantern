@@ -92,8 +92,10 @@ services:
 
   workflow-engine:
     build:
-      context: ../../services/workflow-engine
-      dockerfile: Dockerfile
+      # Root context so the build can include the gen/go module that
+      # workflow-engine depends on via `replace ../../gen/go`.
+      context: ../..
+      dockerfile: services/workflow-engine/Dockerfile
     ports:
       - "50052:50052"
     environment:
@@ -158,19 +160,12 @@ services:
     ports:
       - "3000:3000"
 
-  whatsapp-bridge:
-    build:
-      context: ../..
-      dockerfile: services/whatsapp-bridge/Dockerfile
-    ports:
-      - "3100:3100"
-    environment:
-      PORT: "3100"
-      LOG_LEVEL: debug
-    volumes:
-      - whatsapp-auth:/app/auth_sessions
+  # NOTE: the WhatsApp + iMessage bridges are macOS-host services (they need
+  # macOS TCC, AppleScript, Contacts/Calendar, and the local chat.db) and do
+  # not run in a Linux container. Run them on the host instead:
+  #   lantern dev        (boots them under tsx with hot reload), or
+  #   make run-whatsapp-bridge / make run-imessage-bridge
 
 volumes:
   pg-data:
   minio-data:
-  whatsapp-auth:

@@ -19,7 +19,11 @@ dist/
 target/
 .next/
 out/
-gen/
+# Generated TypeScript proto output is regenerable via `make proto`.
+# NOTE: gen/go is intentionally TRACKED — it is a build-critical, hand-
+# maintained Go module that services depend on via `replace ../../gen/go`
+# and that the Docker builds COPY. Ignoring it broke clone-to-run.
+gen/ts/
 
 # Env / secrets
 .env

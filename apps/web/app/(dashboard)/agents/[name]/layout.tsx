@@ -8,16 +8,18 @@
 import type { ReactNode } from "react";
 import { RememberAgentVisit } from "@/components/remember-agent-visit";
 
-export default function AgentLayout({
+// Next.js 15: dynamic route `params` is a Promise and must be awaited.
+export default async function AgentLayout({
   children,
   params,
 }: {
   children: ReactNode;
-  params: { name: string };
+  params: Promise<{ name: string }>;
 }) {
+  const { name } = await params;
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <RememberAgentVisit name={params.name} />
+      <RememberAgentVisit name={name} />
       <div className="flex flex-1 flex-col overflow-hidden">{children}</div>
     </div>
   );
