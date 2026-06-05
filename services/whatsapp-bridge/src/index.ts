@@ -61,7 +61,10 @@ const SERVICE_STARTED_AT = Date.now();
 const PORT = parseInt(process.env.PORT || "3100", 10);
 const BIND = process.env.LANTERN_BRIDGE_BIND || "127.0.0.1";
 const BRIDGE_TOKEN = process.env.LANTERN_BRIDGE_TOKEN || "";
-const CORS_ORIGIN = process.env.LANTERN_BRIDGE_ORIGIN || "*";
+// Default to the local dashboard origin rather than "*" so a malicious web
+// page can't drive the loopback bridge API via the browser (DNS-rebinding /
+// CSRF). Override with LANTERN_BRIDGE_ORIGIN (comma-separated) or "*" to widen.
+const CORS_ORIGIN = process.env.LANTERN_BRIDGE_ORIGIN || "http://localhost:3001";
 
 // Optional control-plane heartbeat. When both LANTERN_CONTROL_PLANE_URL
 // and LANTERN_BRIDGE_HEARTBEAT_TOKEN are set, the bridge POSTs the current
