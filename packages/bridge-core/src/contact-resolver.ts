@@ -9,7 +9,7 @@
 //   3. Bridge's in-memory contact-names cache (chat.db / WhatsApp
 //      contact-discovery layer).
 //   4. Owner profile Relationships map (typed names like "Madhu K
-//      Mudarapu") → match if the cache has that handle.
+//      Sharma") → match if the cache has that handle.
 //   5. macOS Contacts.app via AppleScript (catches everyone in
 //      iCloud Contacts even if you've never messaged them).
 //
@@ -457,7 +457,7 @@ async function searchAddressBookDb(
       try {
         conn = new Database(dbPath, { readonly: true, fileMustExist: true });
         // Exact-ish first (first name or full name equals the query), then
-        // substring — so "manu" prefers the contact named "Manu" over
+        // substring — so "mae" prefers the contact named "Mae" over
         // "Anil Kakumanu". A contact can have multiple phones; take the first.
         const row = conn
           .prepare(

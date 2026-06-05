@@ -151,7 +151,7 @@ I'm Shekhar — founder building Lantern. Currently heads-down on launch.
 
 ## Facts
 - married: yes
-- spouse: Manasa
+- spouse: Maya
 - kids: Aarav, Anaya
 - wedding anniversary: 2017-06-03
 

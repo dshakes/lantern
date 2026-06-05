@@ -88,7 +88,7 @@ Open the **Shortcuts** app on your iPhone → tap **+** → name it
 ## Test it
 
 1. Tap the shortcut → it prompts → say *"who is my son"* → it
-   should speak *"your son is Ved Mudarapu."* within ~3s.
+   should speak *"your son is Arin Sharma."* within ~3s.
 2. Try a tool query — *"when does my license expire"* → bot calls
    `search_personal_files` + `read_personal_file` + speaks the
    expiry date.

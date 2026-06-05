@@ -29,7 +29,7 @@ import { formatRelatedBlock } from "./social-graph.ts";
 const OWNER = "Shekhar";
 const STYLE = inferStyle(["hey", "sup", "lol yeah"]);
 const FACTS =
-  "Owner facts (TRUE — never deny or contradict these): married to Manasa; wedding anniversary June 3, 2017.";
+  "Owner facts (TRUE — never deny or contradict these): married to Maya; wedding anniversary June 3, 2017.";
 
 // ── 1. Audience-aware persona ──
 
@@ -57,7 +57,7 @@ test("contact persona does NOT instruct confirming the owner's private facts", (
     "contact persona still tells the model to confirm facts",
   );
   // The facts may be injected as a VOICE anchor, but framed as do-not-disclose.
-  if (p.includes("married to Manasa")) {
+  if (p.includes("married to Maya")) {
     assert.ok(
       /do NOT disclose|non-disclosure/i.test(p),
       "facts injected on contact path without a do-not-disclose frame",
@@ -80,7 +80,7 @@ test("owner persona keeps FULL factual access (what's my anniversary?)", () => {
     ownerFacts: FACTS,
   });
   // The owner can ask their own facts and get a truthful answer.
-  assert.ok(p.includes("married to Manasa"), "owner persona dropped the facts");
+  assert.ok(p.includes("married to Maya"), "owner persona dropped the facts");
   assert.ok(/TRUE/.test(p), "owner persona lost the ground-truth framing");
   assert.ok(
     /answer truthfully|answer his own|asking about his own/i.test(p),

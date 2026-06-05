@@ -188,7 +188,7 @@ function parseDuration(text: string): { ms?: number; phrase?: string } {
 //   "call mom and tell her i'll be late"
 //   "ring CVS to refill metformin"
 //   "leave a voicemail for Sarika saying happy birthday"
-//   "conference me with Manasa"
+//   "conference me with Maya"
 //   "get me on a call with Madhu"
 //
 // All forms return:

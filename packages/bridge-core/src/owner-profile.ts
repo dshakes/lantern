@@ -279,7 +279,7 @@ export class OwnerProfileStore {
    *  framed as ground truth the bot must never deny. Returns "" when no
    *  facts are set. Example:
    *    "Owner facts (TRUE — never deny or contradict these): married to
-   *     Manasa; kids: Aarav, Anaya; wedding anniversary June 3, 2017." */
+   *     Maya; kids: Aarav, Anaya; wedding anniversary June 3, 2017." */
   factsBlock(): string {
     const facts = this.get()?.facts;
     if (!facts) return "";
@@ -668,13 +668,13 @@ export function parseProfile(raw: string): OwnerProfile {
       };
 
       // Index the full key plus any parenthetical alias, so both
-      // "Manasa(Manu)" and the bare "Manasa" / "Manu" match a contact's
+      // "Maya(Mae)" and the bare "Maya" / "Mae" match a contact's
       // display name.
       indexKey(rawKey);
       const paren = rawKey.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
       if (paren) {
-        indexKey(paren[1]); // "Manasa"
-        indexKey(paren[2]); // "Manu"
+        indexKey(paren[1]); // "Maya"
+        indexKey(paren[2]); // "Mae"
       }
 
       // Alias handles ("also: +1555..., work@x.com") — index each so the

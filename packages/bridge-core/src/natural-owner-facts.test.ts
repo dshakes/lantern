@@ -51,9 +51,9 @@ test("detectBotTells leaves genuine replies untouched", () => {
 
 test("agentPersonaPrompt injects ownerFacts as ground truth", () => {
   const p = agentPersonaPrompt("Shekhar", style, false, {
-    ownerFacts: "Owner facts (TRUE — never deny or contradict these): married to Manasa.",
+    ownerFacts: "Owner facts (TRUE — never deny or contradict these): married to Maya.",
   });
-  assert.ok(p.includes("married to Manasa"), "ownerFacts not injected");
+  assert.ok(p.includes("married to Maya"), "ownerFacts not injected");
   assert.ok(/TRUE/.test(p), "ground-truth framing missing");
 });
 
@@ -75,7 +75,7 @@ test("agentPersonaPrompt lists recentBotReplies for anti-repetition", () => {
 
 test("ownerFacts injected for group prompts too", () => {
   const p = agentPersonaPrompt("Shekhar", style, true, {
-    ownerFacts: "Owner facts (TRUE — never deny or contradict these): married to Manasa.",
+    ownerFacts: "Owner facts (TRUE — never deny or contradict these): married to Maya.",
   });
-  assert.ok(p.includes("married to Manasa"), "facts should apply in groups");
+  assert.ok(p.includes("married to Maya"), "facts should apply in groups");
 });

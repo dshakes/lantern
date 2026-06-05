@@ -45,8 +45,8 @@ I'm Shekhar. I'm a founder building Lantern.
 # Format: "- Name: relationship"
 # The bot uses this to match tone — warm for family, measured for work.
 - Shiva: <friend>
-- Manasa(Manu): <Spouse>
-- Ved Mudarapu: <son>
+- Maya(Mae): <Spouse>
+- Arin Sharma: <son>
 - Srinivas Merugu: <brother-in-law, Harika's spouse>
 - +1 (512) 555-1234: college roommate
 `;
@@ -66,13 +66,13 @@ test("comment lines inside relationships do not end the section", () => {
   // If the "# Format:" / "# The bot uses..." comments ended the section,
   // none of these would parse.
   assert.equal(p.relationships.get("shiva"), "friend");
-  assert.equal(p.relationships.get("ved mudarapu"), "son");
+  assert.equal(p.relationships.get("arin sharma"), "son");
 });
 
 test("angle-bracket template values are stripped", () => {
   const p = parseProfile(SAMPLE);
   assert.equal(p.relationships.get("shiva"), "friend"); // not "<friend>"
-  assert.equal(p.relationships.get("ved mudarapu"), "son");
+  assert.equal(p.relationships.get("arin sharma"), "son");
   for (const v of p.relationships.values()) {
     assert.ok(!v.includes("<") && !v.includes(">"), `value kept brackets: ${v}`);
   }
@@ -80,9 +80,9 @@ test("angle-bracket template values are stripped", () => {
 
 test("parenthetical aliases index all forms", () => {
   const p = parseProfile(SAMPLE);
-  assert.equal(p.relationships.get("manasa(manu)"), "Spouse");
-  assert.equal(p.relationships.get("manasa"), "Spouse");
-  assert.equal(p.relationships.get("manu"), "Spouse");
+  assert.equal(p.relationships.get("maya(mae)"), "Spouse");
+  assert.equal(p.relationships.get("maya"), "Spouse");
+  assert.equal(p.relationships.get("mae"), "Spouse");
 });
 
 test("multi-word value with comma survives (split on first colon only)", () => {
@@ -120,7 +120,7 @@ I'm Shekhar.
 
 ## Facts
 - married: yes
-- spouse: Manasa
+- spouse: Maya
 - kids: Aarav, Anaya
 - wedding anniversary: 2017-06-03
 
@@ -133,7 +133,7 @@ test("facts: parses marital status, spouse, kids, key dates", () => {
   const p = parseProfile(FACTS_SAMPLE);
   assert.ok(p.facts, "facts missing");
   assert.equal(p.facts!.maritalStatus, "married");
-  assert.equal(p.facts!.spouse, "Manasa");
+  assert.equal(p.facts!.spouse, "Maya");
   assert.deepEqual(p.facts!.kids, ["Aarav", "Anaya"]);
   assert.deepEqual(p.facts!.keyDates, [
     { label: "wedding anniversary", date: "2017-06-03" },
@@ -160,7 +160,7 @@ test("factsBlock: deterministic ground-truth line", () => {
   const store = storeFrom(FACTS_SAMPLE);
   const block = store.factsBlock();
   assert.ok(block.startsWith("Owner facts (TRUE"), `unexpected: ${block}`);
-  assert.ok(block.includes("married to Manasa"), block);
+  assert.ok(block.includes("married to Maya"), block);
   assert.ok(block.includes("kids: Aarav, Anaya"), block);
   assert.ok(block.includes("wedding anniversary June 3, 2017"), block);
 });

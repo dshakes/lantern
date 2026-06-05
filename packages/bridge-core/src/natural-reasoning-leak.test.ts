@@ -20,7 +20,7 @@ const LEAKS = [
   `I'll stay silent on this one.`,
   `The sender is just acknowledging; I won't respond.`,
   `Empty string is the right call.`,
-  // Second report (DM with Manu): bare token + decision narration that
+  // Second report (DM with Mae): bare token + decision narration that
   // slipped past the first pass.
   `empty`,
   `Empty`,

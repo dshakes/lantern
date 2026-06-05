@@ -2623,7 +2623,7 @@ export class WhatsAppSession {
           if (m.type !== "notify" || !text) continue;
 
           // A celebratory WISH that names the owner ("Happy Wedding
-          // Anniversary Shekhar & Manasa 🎉") gets ONE casual thanks IN the
+          // Anniversary Shekhar & Maya 🎉") gets ONE casual thanks IN the
           // group even when the group isn't monitored and there's no
           // @mention — staying silent on a wish addressed to the owner reads
           // as rude. General group chatter still requires an opted-in group
@@ -4743,8 +4743,8 @@ export class WhatsAppSession {
       `  • Calendar event: [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]`,
       `  • Note:           [NOTE:Title|Body text]`,
       `  • Mail draft:     [MAIL:to@x.com|Subject|Body]`,
-      `  • Phone call:     [CALL:Manasa|conference|why you're calling]   (mode = conference | voicemail | task)`,
-      `CALLS: when ${ownerName} asks you to call / phone / dial / ring / conference / reach someone (ANY phrasing, any language, typos and all — e.g. "call manu", "conference me withe manmanu", "can you ring her") you MUST emit a [CALL:...] marker. The bridge places the real call via Twilio and asks ${ownerName} to confirm before dialing. NEVER say "I'll call" / "calling her" / "will do" WITHOUT the [CALL:...] marker — a reply that claims a call without the marker is a lie, because no call happens. "conference me with X" → mode conference. "leave X a voicemail saying Y" → mode voicemail, message Y. "call the pharmacy to refill" → mode task, message the task. Use the contact's real name as target; the bridge resolves it to a number.`,
+      `  • Phone call:     [CALL:Maya|conference|why you're calling]   (mode = conference | voicemail | task)`,
+      `CALLS: when ${ownerName} asks you to call / phone / dial / ring / conference / reach someone (ANY phrasing, any language, typos and all — e.g. "call mae", "conference me withe manmanu", "can you ring her") you MUST emit a [CALL:...] marker. The bridge places the real call via Twilio and asks ${ownerName} to confirm before dialing. NEVER say "I'll call" / "calling her" / "will do" WITHOUT the [CALL:...] marker — a reply that claims a call without the marker is a lie, because no call happens. "conference me with X" → mode conference. "leave X a voicemail saying Y" → mode voicemail, message Y. "call the pharmacy to refill" → mode task, message the task. Use the contact's real name as target; the bridge resolves it to a number.`,
       `  • Away status:    [STATUS:at the swimming pool|2026-06-02T19:30:00|swimming pool]   (label | until-ISO-or-empty | place)  ·  or  [STATUS:CLEAR]`,
       `STATUS: when ${ownerName} tells you where they are or that they're away/busy/back (ANY phrasing or language — "I am at the pool till 7:30pm est", "in a meeting for 2h", "driving", "I'm back", Telugu, etc.), emit a [STATUS:...] marker. Compute the until-ISO from the time they gave (their local timezone; resolve "till 7:30pm" to today's datetime). When they say they're back/free/available, emit [STATUS:CLEAR]. The bridge then tells anyone who messages — on EVERY channel — that ${ownerName} is at <place> and will get back, and offers to take a message. Confirm to ${ownerName} in your reply ("📍 got it — you're at the pool till 7:30; I'll let people know.").`,
       `OFFER-then-CONFIRM applies ONLY to state-modifying actions (calendar, note, mail). For READ operations (search, list, look up, find), NEVER ask permission — just execute and report results. The user already asked; asking "shall I search?" is wasted turns.`,
@@ -6223,7 +6223,7 @@ export class WhatsAppSession {
     // a backgrounded phone, focus mode, and a screen-off device.
     //
     // Requires:
-    //   - LANTERN_OWNER_PHONE env (E.164, e.g. "+15126088977")
+    //   - LANTERN_OWNER_PHONE env (E.164, e.g. "+15555550100")
     //   - Twilio connector installed with accountSid/authToken/from
     // If either is missing we silently skip — the other 4 channels
     // still deliver the alert.

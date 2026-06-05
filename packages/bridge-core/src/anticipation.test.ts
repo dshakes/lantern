@@ -58,7 +58,7 @@ test("overdue replies rank by contact priority, not just age", () => {
       {
         // Wife, overdue only 3 days — should still outrank the stranger.
         handle: "+1555",
-        displayName: "Manasa",
+        displayName: "Maya",
         lastInboundAt: NOW - 3 * DAY,
         contactSignals: {
           relationship: "wife",
@@ -73,7 +73,7 @@ test("overdue replies rank by contact priority, not just age", () => {
   assert.equal(nudges.length, 2);
   // Highest-priority first → the wife despite being less overdue.
   assert.equal(nudges[0].kind, "overdue-reply");
-  assert.match(nudges[0].text, /Manasa/);
+  assert.match(nudges[0].text, /Maya/);
   assert.match(nudges[1].text, /Random Vendor/);
   assert.ok(nudges[0].priority > nudges[1].priority);
 });

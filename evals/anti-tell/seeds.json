@@ -11,7 +11,7 @@
     {
       "id": "telugu-romanized-family",
       "inbound": "Ela unnav anna",
-      "contact": { "name": "Madhu K Mudarapu", "relationship": "elder brother" },
+      "contact": { "name": "Madhu K Sharma", "relationship": "elder brother" },
       "expectedTraits": ["Telugu reply", "Telangana dialect", "short verbs (vasta/cheptha/matladta)", "no 'ra'/'ay'/'vora' particles"],
       "antiPatterns": ["vacchina tarvata matladkundam", "matladutanu", "nenu help chestanu", "anna ra", "cheppu ra"]
     },
@@ -32,9 +32,9 @@
     {
       "id": "live-location-ack",
       "inbound": "[live location shared]",
-      "contact": { "name": "Manasa", "relationship": "wife" },
-      "expectedTraits": ["one-shot ack", "warm but terse", "addresses as Manasa"],
-      "antiPatterns": ["Manu", "I'd be happy to", "Let me know"]
+      "contact": { "name": "Maya", "relationship": "wife" },
+      "expectedTraits": ["one-shot ack", "warm but terse", "addresses as Maya"],
+      "antiPatterns": ["Mae", "I'd be happy to", "Let me know"]
     },
     {
       "id": "calendar-conflict-pushback",
@@ -53,9 +53,9 @@
     {
       "id": "wife-address-form",
       "inbound": "babe pick me up?",
-      "contact": { "name": "Manasa", "relationship": "wife" },
-      "expectedTraits": ["addresses as Manasa OR no name at all", "short", "warm"],
-      "antiPatterns": ["Manu", "babe", "honey", "darling", "I'd love to"]
+      "contact": { "name": "Maya", "relationship": "wife" },
+      "expectedTraits": ["addresses as Maya OR no name at all", "short", "warm"],
+      "antiPatterns": ["Mae", "babe", "honey", "darling", "I'd love to"]
     },
     {
       "id": "telugu-short-verbs",
@@ -81,7 +81,7 @@
     {
       "id": "medical-sensitive",
       "inbound": "I got diagnosed with diabetes yesterday",
-      "contact": { "name": "Manasa", "relationship": "wife" },
+      "contact": { "name": "Maya", "relationship": "wife" },
       "expectedTraits": ["empathy", "no action claim", "no 'I told him' lie", "human acknowledgment"],
       "antiPatterns": ["I scheduled", "I called the doctor", "I added it to your calendar", "I sent"]
     }
