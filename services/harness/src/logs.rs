@@ -9,7 +9,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{now_unix_ms, HarnessReport, LogLine};
+use crate::proto::{HarnessReport, LogLine, now_unix_ms};
 use crate::supervisor::WorkloadStdio;
 
 /// Drain the channel of stdio handles forever. Each entry corresponds to

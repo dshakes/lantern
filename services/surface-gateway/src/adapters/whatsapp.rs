@@ -280,7 +280,7 @@ impl SurfaceAdapter for WhatsAppAdapter {
 
         let resp = self
             .http
-            .post(&self.api_url())
+            .post(self.api_url())
             .bearer_auth(&self.api_token)
             .json(&body)
             .send()
@@ -350,7 +350,7 @@ impl SurfaceAdapter for WhatsAppAdapter {
 
         let resp = self
             .http
-            .post(&self.api_url())
+            .post(self.api_url())
             .bearer_auth(&self.api_token)
             .json(&body)
             .send()

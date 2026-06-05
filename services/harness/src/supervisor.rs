@@ -8,15 +8,15 @@
 // child.
 
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use anyhow::{Context, Result};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::sync::Mutex;
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{now_unix_ms, AuditEvent, HarnessReport};
+use crate::proto::{AuditEvent, HarnessReport, now_unix_ms};
 
 const DEFAULT_MAX_RESTARTS: i32 = 5;
 

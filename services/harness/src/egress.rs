@@ -26,7 +26,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{now_unix_ms, AuditEvent, EgressRule, HarnessReport};
+use crate::proto::{AuditEvent, EgressRule, HarnessReport, now_unix_ms};
 
 #[derive(Clone, Debug)]
 pub enum Decision {
@@ -189,4 +189,184 @@ async fn handle_client(client: TcpStream, policy: Arc<EgressPolicy>) -> anyhow::
     let t2 = tokio::io::copy(&mut up_r, &mut write_half);
     let _ = tokio::join!(t1, t2);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manager_client::ManagerClient;
+    use crate::proto::EgressRule;
+
+    // ---- pattern_matches (pure) ----
+
+    #[test]
+    fn exact_match_same_host() {
+        assert!(pattern_matches("api.openai.com", "api.openai.com"));
+    }
+
+    #[test]
+    fn exact_match_different_host_fails() {
+        assert!(!pattern_matches("api.openai.com", "api.anthropic.com"));
+    }
+
+    #[test]
+    fn wildcard_matches_subdomain() {
+        assert!(pattern_matches("*.openai.com", "api.openai.com"));
+        assert!(pattern_matches("*.openai.com", "files.openai.com"));
+    }
+
+    #[test]
+    fn wildcard_does_not_match_bare_domain() {
+        // "*.openai.com" must NOT match "openai.com" — no prefix part
+        assert!(!pattern_matches("*.openai.com", "openai.com"));
+    }
+
+    #[test]
+    fn wildcard_does_not_match_different_domain() {
+        assert!(!pattern_matches("*.openai.com", "api.anthropic.com"));
+    }
+
+    #[test]
+    fn wildcard_matches_deep_subdomain() {
+        // "deep.sub.openai.com" ends with ".openai.com" and is longer
+        assert!(pattern_matches("*.openai.com", "deep.sub.openai.com"));
+    }
+
+    #[test]
+    fn empty_pattern_only_matches_empty_host() {
+        assert!(pattern_matches("", ""));
+        assert!(!pattern_matches("", "anything"));
+    }
+
+    #[test]
+    fn wildcard_only_star_dot_suffix() {
+        // "*." with empty suffix would always match — but that's a degenerate
+        // input; the real invariant is suffix length > 0 for sane rules.
+        // Verify it doesn't panic.
+        let _ = pattern_matches("*.", "example.com");
+    }
+
+    // ---- EgressPolicy::evaluate ----
+
+    fn rule(pattern: &str) -> EgressRule {
+        EgressRule {
+            pattern: pattern.to_string(),
+            http_methods: vec![],
+            rate_bps: 0,
+        }
+    }
+
+    fn make_policy(rules: Vec<EgressRule>) -> EgressPolicy {
+        // ManagerClient::new requires an addr + vm_id; enqueue_report is
+        // fire-and-forget and silently drops when no channel is registered,
+        // so a disconnected address is fine for unit tests.
+        let manager = ManagerClient::new("127.0.0.1:0".to_string(), "vm-test".to_string());
+        EgressPolicy::new(rules, manager)
+    }
+
+    #[tokio::test]
+    async fn empty_rules_denies_everything() {
+        let policy = make_policy(vec![]);
+        assert!(matches!(
+            policy.evaluate("api.openai.com", None).await,
+            Decision::Deny(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn matching_exact_rule_allows() {
+        let policy = make_policy(vec![rule("api.openai.com")]);
+        assert!(matches!(
+            policy.evaluate("api.openai.com", None).await,
+            Decision::Allow
+        ));
+    }
+
+    #[tokio::test]
+    async fn non_matching_rule_denies() {
+        let policy = make_policy(vec![rule("api.openai.com")]);
+        assert!(matches!(
+            policy.evaluate("evil.com", None).await,
+            Decision::Deny(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn wildcard_rule_allows_subdomain() {
+        let policy = make_policy(vec![rule("*.anthropic.com")]);
+        assert!(matches!(
+            policy.evaluate("api.anthropic.com", None).await,
+            Decision::Allow
+        ));
+    }
+
+    #[tokio::test]
+    async fn wildcard_rule_denies_bare_domain() {
+        let policy = make_policy(vec![rule("*.anthropic.com")]);
+        assert!(matches!(
+            policy.evaluate("anthropic.com", None).await,
+            Decision::Deny(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn multiple_rules_all_tried() {
+        let policy = make_policy(vec![rule("api.openai.com"), rule("*.anthropic.com")]);
+        assert!(matches!(
+            policy.evaluate("api.openai.com", None).await,
+            Decision::Allow
+        ));
+        assert!(matches!(
+            policy.evaluate("api.anthropic.com", None).await,
+            Decision::Allow
+        ));
+        assert!(matches!(
+            policy.evaluate("evil.com", None).await,
+            Decision::Deny(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn replace_rules_takes_effect_immediately() {
+        let policy = make_policy(vec![rule("old.example.com")]);
+        assert!(matches!(
+            policy.evaluate("old.example.com", None).await,
+            Decision::Allow
+        ));
+        assert!(matches!(
+            policy.evaluate("new.example.com", None).await,
+            Decision::Deny(_)
+        ));
+
+        policy.replace_rules(vec![rule("new.example.com")]).await;
+
+        assert!(matches!(
+            policy.evaluate("old.example.com", None).await,
+            Decision::Deny(_)
+        ));
+        assert!(matches!(
+            policy.evaluate("new.example.com", None).await,
+            Decision::Allow
+        ));
+    }
+
+    #[tokio::test]
+    async fn replace_with_empty_rules_denies_all() {
+        let policy = make_policy(vec![rule("allowed.com")]);
+        assert!(matches!(
+            policy.evaluate("allowed.com", None).await,
+            Decision::Allow
+        ));
+
+        policy.replace_rules(vec![]).await;
+
+        assert!(matches!(
+            policy.evaluate("allowed.com", None).await,
+            Decision::Deny(_)
+        ));
+    }
 }

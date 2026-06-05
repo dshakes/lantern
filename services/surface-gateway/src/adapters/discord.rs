@@ -4,9 +4,7 @@ use chrono::Utc;
 
 use crate::adapter::SurfaceAdapter;
 use crate::error::AppError;
-use crate::types::{
-    ButtonStyle, EventKind, MessageBlock, SurfaceEvent, SurfaceId, SurfaceMessage,
-};
+use crate::types::{ButtonStyle, EventKind, MessageBlock, SurfaceEvent, SurfaceId, SurfaceMessage};
 
 #[allow(dead_code)]
 pub struct DiscordAdapter {
@@ -30,6 +28,7 @@ impl DiscordAdapter {
     /// Discord sends:
     /// - X-Signature-Ed25519: hex-encoded signature
     /// - X-Signature-Timestamp: timestamp string
+    ///
     /// The signed message is: timestamp + body
     fn verify_ed25519(&self, headers: &HeaderMap, body: &[u8]) -> Result<bool, AppError> {
         let signature = headers
@@ -47,14 +46,12 @@ impl DiscordAdapter {
             })?;
 
         // Decode the hex public key.
-        let pub_key_bytes = hex::decode(&self.public_key).map_err(|e| {
-            AppError::Internal(format!("invalid discord public key hex: {e}"))
-        })?;
+        let pub_key_bytes = hex::decode(&self.public_key)
+            .map_err(|e| AppError::Internal(format!("invalid discord public key hex: {e}")))?;
 
         // Decode the hex signature.
-        let sig_bytes = hex::decode(signature).map_err(|e| {
-            AppError::WebhookVerification(format!("invalid signature hex: {e}"))
-        })?;
+        let sig_bytes = hex::decode(signature)
+            .map_err(|e| AppError::WebhookVerification(format!("invalid signature hex: {e}")))?;
 
         if pub_key_bytes.len() != 32 || sig_bytes.len() != 64 {
             return Err(AppError::WebhookVerification(
@@ -79,7 +76,9 @@ impl DiscordAdapter {
 
         // TODO: Replace with ed25519-dalek verify once the dependency is added.
         // For now, presence of valid-length signature + public key is checked above.
-        tracing::debug!("discord signature structure validated (full Ed25519 verify pending ed25519-dalek)");
+        tracing::debug!(
+            "discord signature structure validated (full Ed25519 verify pending ed25519-dalek)"
+        );
         Ok(true)
     }
 
@@ -130,17 +129,16 @@ impl SurfaceAdapter for DiscordAdapter {
             5 => self.parse_modal_submit(&payload),
 
             _ => {
-                tracing::debug!(interaction_type = interaction_type, "ignoring discord interaction type");
+                tracing::debug!(
+                    interaction_type = interaction_type,
+                    "ignoring discord interaction type"
+                );
                 Ok(vec![])
             }
         }
     }
 
-    async fn send_message(
-        &self,
-        session: &str,
-        msg: &SurfaceMessage,
-    ) -> Result<String, AppError> {
+    async fn send_message(&self, session: &str, msg: &SurfaceMessage) -> Result<String, AppError> {
         // session format: "discord:{channel_id}"
         let channel_id = session.strip_prefix("discord:").unwrap_or(session);
 
@@ -160,9 +158,7 @@ impl SurfaceAdapter for DiscordAdapter {
             body["components"] = serde_json::Value::Array(components);
         }
 
-        let url = format!(
-            "https://discord.com/api/v10/channels/{channel_id}/messages"
-        );
+        let url = format!("https://discord.com/api/v10/channels/{channel_id}/messages");
 
         let resp = self
             .http
@@ -185,10 +181,7 @@ impl SurfaceAdapter for DiscordAdapter {
             .await
             .map_err(|e| AppError::Upstream(format!("discord api: {e}")))?;
 
-        let msg_id = result["id"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
+        let msg_id = result["id"].as_str().unwrap_or("unknown").to_string();
 
         tracing::info!(channel_id = %channel_id, message_id = %msg_id, "sent discord message");
         Ok(msg_id)
@@ -234,9 +227,7 @@ impl SurfaceAdapter for DiscordAdapter {
             }]
         });
 
-        let url = format!(
-            "https://discord.com/api/v10/channels/{channel_id}/messages"
-        );
+        let url = format!("https://discord.com/api/v10/channels/{channel_id}/messages");
 
         let resp = self
             .http
@@ -259,10 +250,7 @@ impl SurfaceAdapter for DiscordAdapter {
             .await
             .map_err(|e| AppError::Upstream(format!("discord api: {e}")))?;
 
-        let msg_id = result["id"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
+        let msg_id = result["id"].as_str().unwrap_or("unknown").to_string();
 
         Ok(msg_id)
     }
@@ -287,9 +275,8 @@ impl SurfaceAdapter for DiscordAdapter {
         let components = self.build_components(&msg.blocks);
         body["components"] = serde_json::Value::Array(components);
 
-        let url = format!(
-            "https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}"
-        );
+        let url =
+            format!("https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}");
 
         let resp = self
             .http
@@ -321,10 +308,7 @@ impl DiscordAdapter {
             .or_else(|| payload["user"]["id"].as_str())
             .unwrap_or("unknown")
             .to_string();
-        let guild_id = payload["guild_id"]
-            .as_str()
-            .unwrap_or("dm")
-            .to_string();
+        let guild_id = payload["guild_id"].as_str().unwrap_or("dm").to_string();
         let channel_id = payload["channel_id"]
             .as_str()
             .unwrap_or("unknown")
@@ -335,10 +319,7 @@ impl DiscordAdapter {
             .to_string();
 
         let data = &payload["data"];
-        let command_name = data["name"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
+        let command_name = data["name"].as_str().unwrap_or("unknown").to_string();
 
         // Collect command options as args.
         let options = data["options"].as_array().cloned().unwrap_or_default();
@@ -374,10 +355,7 @@ impl DiscordAdapter {
             .or_else(|| payload["user"]["id"].as_str())
             .unwrap_or("unknown")
             .to_string();
-        let guild_id = payload["guild_id"]
-            .as_str()
-            .unwrap_or("dm")
-            .to_string();
+        let guild_id = payload["guild_id"].as_str().unwrap_or("dm").to_string();
         let channel_id = payload["channel_id"]
             .as_str()
             .unwrap_or("unknown")
@@ -387,9 +365,7 @@ impl DiscordAdapter {
             .unwrap_or(&uuid::Uuid::new_v4().to_string())
             .to_string();
 
-        let custom_id = payload["data"]["custom_id"]
-            .as_str()
-            .unwrap_or("");
+        let custom_id = payload["data"]["custom_id"].as_str().unwrap_or("");
 
         let kind = if let Some(request_id) = custom_id.strip_prefix("approve:") {
             EventKind::ApprovalResponse {
@@ -428,10 +404,7 @@ impl DiscordAdapter {
             .or_else(|| payload["user"]["id"].as_str())
             .unwrap_or("unknown")
             .to_string();
-        let guild_id = payload["guild_id"]
-            .as_str()
-            .unwrap_or("dm")
-            .to_string();
+        let guild_id = payload["guild_id"].as_str().unwrap_or("dm").to_string();
         let channel_id = payload["channel_id"]
             .as_str()
             .unwrap_or("unknown")
@@ -448,10 +421,7 @@ impl DiscordAdapter {
             .unwrap_or_default();
         let mut text_parts = Vec::new();
         for row in &components {
-            let row_components = row["components"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
+            let row_components = row["components"].as_array().cloned().unwrap_or_default();
             for component in &row_components {
                 if let Some(value) = component["value"].as_str() {
                     text_parts.push(value.to_string());

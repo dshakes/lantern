@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::http::Request;
 use axum::response::{IntoResponse, Response};
-use jsonwebtoken::{DecodingKey, Validation, Algorithm};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
@@ -158,4 +158,144 @@ fn extract_tenant_from_api_key(key: &str) -> Result<Claims, AppError> {
         exp: u64::MAX,
         iat: 0,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonwebtoken::{encode, EncodingKey, Header};
+
+    fn make_jwt(claims: &Claims, secret: &str) -> String {
+        encode(
+            &Header::default(),
+            claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap()
+    }
+
+    fn valid_claims() -> Claims {
+        let exp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        Claims {
+            tenant_id: "tenant-abc".to_string(),
+            user_id: "user-1".to_string(),
+            scopes: vec!["read".to_string()],
+            exp,
+            iat: 0,
+        }
+    }
+
+    // ---- decode_jwt ----
+
+    #[test]
+    fn decode_jwt_valid_token() {
+        let secret = "super-secret";
+        let claims = valid_claims();
+        let token = make_jwt(&claims, secret);
+        let result = decode_jwt(&token, secret);
+        assert!(result.is_ok(), "valid JWT must decode successfully");
+        let decoded = result.unwrap();
+        assert_eq!(decoded.tenant_id, "tenant-abc");
+        assert_eq!(decoded.user_id, "user-1");
+    }
+
+    #[test]
+    fn decode_jwt_wrong_secret_rejected() {
+        let claims = valid_claims();
+        let token = make_jwt(&claims, "right-secret");
+        let result = decode_jwt(&token, "wrong-secret");
+        assert!(result.is_err(), "JWT signed with wrong secret must fail");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::Auth(_)),
+            "error must be AppError::Auth"
+        );
+    }
+
+    #[test]
+    fn decode_jwt_expired_token_rejected() {
+        let mut claims = valid_claims();
+        claims.exp = 1; // unix epoch + 1s — always expired
+        let token = make_jwt(&claims, "secret");
+        let result = decode_jwt(&token, "secret");
+        assert!(result.is_err(), "expired JWT must be rejected");
+    }
+
+    #[test]
+    fn decode_jwt_empty_tenant_id_rejected() {
+        let mut claims = valid_claims();
+        claims.tenant_id = String::new();
+        let token = make_jwt(&claims, "secret");
+        let result = decode_jwt(&token, "secret");
+        assert!(result.is_err(), "empty tenant_id must be rejected");
+        let err = result.unwrap_err();
+        assert!(matches!(err, AppError::Auth(_)));
+    }
+
+    #[test]
+    fn decode_jwt_malformed_token_rejected() {
+        let result = decode_jwt("not.a.jwt", "secret");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_jwt_empty_token_rejected() {
+        let result = decode_jwt("", "secret");
+        assert!(result.is_err());
+    }
+
+    // ---- extract_tenant_from_api_key ----
+
+    #[test]
+    fn api_key_live_valid() {
+        let result = extract_tenant_from_api_key("hlx_live_mytenant_randomsuffix");
+        assert!(result.is_ok());
+        let claims = result.unwrap();
+        assert_eq!(claims.tenant_id, "mytenant");
+        assert_eq!(claims.user_id, "api-key-user");
+        assert!(claims.scopes.contains(&"api".to_string()));
+    }
+
+    #[test]
+    fn api_key_test_valid() {
+        let result = extract_tenant_from_api_key("hlx_test_acme_abc123");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().tenant_id, "acme");
+    }
+
+    #[test]
+    fn api_key_wrong_prefix_rejected() {
+        let result = extract_tenant_from_api_key("sk_live_mytenant_abc");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::Auth(_)));
+    }
+
+    #[test]
+    fn api_key_too_few_parts_rejected() {
+        // "hlx_live_only3parts" splits into ["hlx", "live", "only3parts"] < 4
+        let result = extract_tenant_from_api_key("hlx_live_only3");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn api_key_empty_tenant_rejected() {
+        // "hlx_live__suffix" — third part is empty
+        let result = extract_tenant_from_api_key("hlx_live__suffix");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::Auth(_)));
+    }
+
+    #[test]
+    fn api_key_empty_string_rejected() {
+        let result = extract_tenant_from_api_key("");
+        assert!(result.is_err());
+    }
 }

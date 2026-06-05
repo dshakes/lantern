@@ -11,14 +11,14 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use nix::sys::signal::{kill, Signal};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+use nix::sys::signal::{Signal, kill};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::Pid;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc::Receiver as MpscReceiver;
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{now_unix_ms, AuditEvent, HarnessReport};
+use crate::proto::{AuditEvent, HarnessReport, now_unix_ms};
 use crate::supervisor::SupervisorHandles;
 
 const DEFAULT_DRAIN_GRACE_SECS: u64 = 25;

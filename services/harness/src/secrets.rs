@@ -22,7 +22,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{now_unix_ms, AuditEvent, HarnessReport, SecretRef, VendSecretRequest};
+use crate::proto::{AuditEvent, HarnessReport, SecretRef, VendSecretRequest, now_unix_ms};
 
 const REFRESH_LEAD_MS: i64 = 30_000; // refresh 30s before expiry
 const DEFAULT_TTL_SECS: i64 = 300;

@@ -89,7 +89,7 @@ impl SurfaceAdapter for TelegramAdapter {
 
         let resp = self
             .http
-            .post(&self.api_url("sendMessage"))
+            .post(self.api_url("sendMessage"))
             .json(&body)
             .send()
             .await?;
@@ -152,7 +152,7 @@ impl SurfaceAdapter for TelegramAdapter {
 
         let resp = self
             .http
-            .post(&self.api_url("sendMessage"))
+            .post(self.api_url("sendMessage"))
             .json(&body)
             .send()
             .await?;
@@ -194,7 +194,7 @@ impl SurfaceAdapter for TelegramAdapter {
 
         let resp = self
             .http
-            .post(&self.api_url("editMessageText"))
+            .post(self.api_url("editMessageText"))
             .json(&body)
             .send()
             .await?;

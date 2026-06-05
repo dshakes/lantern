@@ -113,8 +113,8 @@ async fn slack_webhook(
     };
 
     // Handle URL verification challenge.
-    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
-        if payload["type"].as_str() == Some("url_verification") {
+    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body_bytes)
+        && payload["type"].as_str() == Some("url_verification") {
             let challenge = payload["challenge"].as_str().unwrap_or("");
             return Ok((
                 StatusCode::OK,
@@ -123,7 +123,6 @@ async fn slack_webhook(
             )
                 .into_response());
         }
-    }
 
     let events = adapter.parse_event(&headers, &body_bytes).await?;
 
@@ -369,8 +368,8 @@ async fn discord_webhook(
     }
 
     // Handle Discord PING interaction (type 1) — must respond with type 1 PONG.
-    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body) {
-        if payload["type"].as_u64() == Some(1) {
+    if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body)
+        && payload["type"].as_u64() == Some(1) {
             return Ok((
                 StatusCode::OK,
                 [("content-type", "application/json")],
@@ -378,7 +377,6 @@ async fn discord_webhook(
             )
                 .into_response());
         }
-    }
 
     let events = adapter.parse_event(&headers, &body).await?;
 

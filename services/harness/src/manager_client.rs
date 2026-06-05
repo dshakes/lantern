@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
 use crate::proto::{
     HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse,
