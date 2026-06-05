@@ -10,18 +10,30 @@ pub struct Config {
     pub slack_bot_token: Option<String>,
     // WhatsApp Business Cloud API
     pub whatsapp_verify_token: Option<String>,
+    /// App Secret from the Meta developer console — used to verify
+    /// X-Hub-Signature-256 on POST webhooks (distinct from verify_token).
+    pub whatsapp_app_secret: Option<String>,
     pub whatsapp_api_token: Option<String>,
     pub whatsapp_phone_number_id: Option<String>,
     // Telegram
     pub telegram_bot_token: Option<String>,
+    /// Optional secret set via setWebhook — verified against
+    /// X-Telegram-Bot-Api-Secret-Token on every inbound POST.
+    pub telegram_secret_token: Option<String>,
     // Twilio
     pub twilio_account_sid: Option<String>,
     pub twilio_auth_token: Option<String>,
     pub twilio_phone_number: Option<String>,
+    /// Public base URL of this surface-gateway as seen by Twilio, e.g.
+    /// "https://hooks.example.com". Required for URL-aware signature
+    /// verification. Set SURFACE_GATEWAY_BASE_URL.
+    pub twilio_webhook_base_url: Option<String>,
     // Discord
     pub discord_bot_token: Option<String>,
     pub discord_public_key: Option<String>,
     pub log_level: String,
+    /// Comma-separated allowed CORS origins. Defaults to "http://localhost:3001".
+    pub allowed_origins: Vec<String>,
 }
 
 impl Config {
@@ -46,15 +58,24 @@ impl Config {
             slack_signing_secret: std::env::var("SLACK_SIGNING_SECRET").ok(),
             slack_bot_token: std::env::var("SLACK_BOT_TOKEN").ok(),
             whatsapp_verify_token: std::env::var("WHATSAPP_VERIFY_TOKEN").ok(),
+            whatsapp_app_secret: std::env::var("WHATSAPP_APP_SECRET").ok(),
             whatsapp_api_token: std::env::var("WHATSAPP_API_TOKEN").ok(),
             whatsapp_phone_number_id: std::env::var("WHATSAPP_PHONE_NUMBER_ID").ok(),
             telegram_bot_token: std::env::var("TELEGRAM_BOT_TOKEN").ok(),
+            telegram_secret_token: std::env::var("TELEGRAM_SECRET_TOKEN").ok(),
             twilio_account_sid: std::env::var("TWILIO_ACCOUNT_SID").ok(),
             twilio_auth_token: std::env::var("TWILIO_AUTH_TOKEN").ok(),
             twilio_phone_number: std::env::var("TWILIO_PHONE_NUMBER").ok(),
+            twilio_webhook_base_url: std::env::var("SURFACE_GATEWAY_BASE_URL").ok(),
             discord_bot_token: std::env::var("DISCORD_BOT_TOKEN").ok(),
             discord_public_key: std::env::var("DISCORD_PUBLIC_KEY").ok(),
             log_level,
+            allowed_origins: std::env::var("ALLOWED_ORIGINS")
+                .unwrap_or_else(|_| "http://localhost:3001".to_string())
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
         })
     }
 }

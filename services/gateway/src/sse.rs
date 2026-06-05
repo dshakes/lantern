@@ -12,10 +12,7 @@ use crate::grpc::StreamEvent;
 
 /// Converts a gRPC server-streaming response of StreamEvents into an Axum SSE
 /// response with heartbeat keep-alive and backpressure support.
-pub fn grpc_stream_to_sse(
-    stream: Streaming<StreamEvent>,
-    from_seq: u64,
-) -> impl IntoResponse {
+pub fn grpc_stream_to_sse(stream: Streaming<StreamEvent>, from_seq: u64) -> impl IntoResponse {
     let event_stream = GrpcSseStream::new(stream, from_seq);
 
     Sse::new(event_stream).keep_alive(
@@ -57,9 +54,10 @@ impl Stream for GrpcSseStream {
                     return Poll::Pending;
                 }
 
-                let is_end = event.payload.as_ref().is_some_and(|p| {
-                    matches!(p, crate::grpc::StreamEventPayload::End(_))
-                });
+                let is_end = event
+                    .payload
+                    .as_ref()
+                    .is_some_and(|p| matches!(p, crate::grpc::StreamEventPayload::End(_)));
 
                 let seq = event.seq;
                 let data = serde_json::to_string(&event)
@@ -85,9 +83,7 @@ impl Stream for GrpcSseStream {
                     "error": status.message(),
                     "code": format!("{:?}", status.code()),
                 });
-                let sse_event = Event::default()
-                    .event("error")
-                    .data(error_data.to_string());
+                let sse_event = Event::default().event("error").data(error_data.to_string());
 
                 Poll::Ready(Some(Ok(sse_event)))
             }

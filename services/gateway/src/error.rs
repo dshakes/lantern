@@ -8,6 +8,9 @@ pub enum AppError {
     #[error("authentication failed: {0}")]
     Auth(String),
 
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+
     #[error("not found: {0}")]
     NotFound(String),
 
@@ -39,6 +42,7 @@ impl AppError {
     fn status_code(&self) -> StatusCode {
         match self {
             AppError::Auth(_) => StatusCode::UNAUTHORIZED,
+            AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -50,6 +54,7 @@ impl AppError {
     fn error_type(&self) -> &'static str {
         match self {
             AppError::Auth(_) => "https://lantern.run/errors/unauthorized",
+            AppError::Forbidden(_) => "https://lantern.run/errors/forbidden",
             AppError::NotFound(_) => "https://lantern.run/errors/not-found",
             AppError::BadRequest(_) => "https://lantern.run/errors/bad-request",
             AppError::Internal(_) => "https://lantern.run/errors/internal",
@@ -61,6 +66,7 @@ impl AppError {
     fn title(&self) -> &'static str {
         match self {
             AppError::Auth(_) => "Unauthorized",
+            AppError::Forbidden(_) => "Forbidden",
             AppError::NotFound(_) => "Not Found",
             AppError::BadRequest(_) => "Bad Request",
             AppError::Internal(_) => "Internal Server Error",

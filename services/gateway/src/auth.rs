@@ -1,5 +1,5 @@
 use axum::body::Body;
-use axum::http::Request;
+use axum::http::{Method, Request};
 use axum::response::{IntoResponse, Response};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,36 @@ pub struct Claims {
     pub scopes: Vec<String>,
     pub exp: u64,
     pub iat: u64,
+}
+
+impl Claims {
+    /// Returns true when the request method is safe (read-only).
+    fn is_read_method(method: &Method) -> bool {
+        matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
+    }
+
+    /// Enforce scope→method mapping:
+    ///   - Mutating requests (POST/PUT/PATCH/DELETE) require a `write` scope.
+    ///   - Read-only requests (GET/HEAD/OPTIONS) are allowed with any scope.
+    ///
+    /// Returns Err(AppError::Auth) with a 403-equivalent message on violation.
+    pub fn enforce_scope(&self, method: &Method) -> Result<(), AppError> {
+        if Self::is_read_method(method) {
+            return Ok(());
+        }
+        // Mutating request — require at least one write-class scope.
+        let has_write = self
+            .scopes
+            .iter()
+            .any(|s| s == "write" || s == "admin" || s == "api");
+        if has_write {
+            Ok(())
+        } else {
+            Err(AppError::Forbidden(
+                "write scope required for mutating requests".to_string(),
+            ))
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -82,6 +112,11 @@ where
                 }
             };
 
+            // H3: enforce scope before the request reaches any handler.
+            if let Err(err) = claims.enforce_scope(req.method()) {
+                return Ok(err.into_response());
+            }
+
             tracing::debug!(
                 tenant_id = %claims.tenant_id,
                 user_id = %claims.user_id,
@@ -106,10 +141,27 @@ fn extract_claims(req: &Request<Body>, jwt_secret: &str) -> Result<Claims, AppEr
     }
 
     if let Some(api_key_header) = req.headers().get("x-api-key") {
-        let key = api_key_header
+        let _key = api_key_header
             .to_str()
             .map_err(|_| AppError::Auth("invalid X-API-Key header encoding".to_string()))?;
-        return extract_tenant_from_api_key(key);
+        // C2: API-key path FAILS CLOSED.
+        //
+        // The gateway has no direct connection to the control-plane's `api_keys`
+        // table and cannot hash-and-lookup the presented key without introducing
+        // a synchronous HTTP/gRPC call on every hot-path request — a design
+        // that belongs in a dedicated auth service or a JWT-exchange endpoint.
+        //
+        // TODO: implement API-key validation by either:
+        //   (a) adding a ValidateApiKey RPC to the control-plane gRPC service and
+        //       calling it here (with an in-process cache keyed by SHA-256(key)),
+        //   (b) exchanging the key for a short-lived JWT at /auth/token and
+        //       having the SDK cache that token.
+        // Until one of those paths exists, we REJECT API-key auth so that
+        // a caller cannot impersonate an arbitrary tenant by forging the key body.
+        return Err(AppError::Auth(
+            "API-key authentication is not supported at this endpoint; use a Bearer JWT"
+                .to_string(),
+        ));
     }
 
     Err(AppError::Auth(
@@ -132,34 +184,6 @@ fn decode_jwt(token: &str, secret: &str) -> Result<Claims, AppError> {
     Ok(token_data.claims)
 }
 
-fn extract_tenant_from_api_key(key: &str) -> Result<Claims, AppError> {
-    // API key format: hlx_live_<tenant_id>_<random>
-    // For the spike, extract tenant_id from the key structure.
-    if !key.starts_with("hlx_live_") && !key.starts_with("hlx_test_") {
-        return Err(AppError::Auth("invalid API key format".to_string()));
-    }
-
-    let parts: Vec<&str> = key.splitn(4, '_').collect();
-    if parts.len() < 4 {
-        return Err(AppError::Auth("malformed API key".to_string()));
-    }
-
-    let tenant_id = parts[2].to_string();
-    if tenant_id.is_empty() {
-        return Err(AppError::Auth(
-            "API key does not contain a valid tenant_id".to_string(),
-        ));
-    }
-
-    Ok(Claims {
-        tenant_id,
-        user_id: "api-key-user".to_string(),
-        scopes: vec!["api".to_string()],
-        exp: u64::MAX,
-        iat: 0,
-    })
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -167,6 +191,7 @@ fn extract_tenant_from_api_key(key: &str) -> Result<Claims, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::Method;
     use jsonwebtoken::{encode, EncodingKey, Header};
 
     fn make_jwt(claims: &Claims, secret: &str) -> String {
@@ -252,50 +277,101 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ---- extract_tenant_from_api_key ----
+    // ---- C2: API-key path fails closed ----
 
     #[test]
-    fn api_key_live_valid() {
-        let result = extract_tenant_from_api_key("hlx_live_mytenant_randomsuffix");
-        assert!(result.is_ok());
-        let claims = result.unwrap();
-        assert_eq!(claims.tenant_id, "mytenant");
-        assert_eq!(claims.user_id, "api-key-user");
-        assert!(claims.scopes.contains(&"api".to_string()));
+    fn api_key_rejected_regardless_of_format() {
+        // Build a minimal request with X-API-Key header.
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/v1/agents")
+            .header("x-api-key", "hlx_live_mytenant_randomsuffix")
+            .body(Body::empty())
+            .unwrap();
+        let result = extract_claims(&req, "jwt-secret");
+        assert!(
+            result.is_err(),
+            "API-key auth must fail closed — no tenant impersonation"
+        );
+        assert!(
+            matches!(result.unwrap_err(), AppError::Auth(_)),
+            "error must be AppError::Auth"
+        );
     }
 
     #[test]
-    fn api_key_test_valid() {
-        let result = extract_tenant_from_api_key("hlx_test_acme_abc123");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().tenant_id, "acme");
-    }
-
-    #[test]
-    fn api_key_wrong_prefix_rejected() {
-        let result = extract_tenant_from_api_key("sk_live_mytenant_abc");
+    fn api_key_arbitrary_tenant_rejected() {
+        // An attacker forging hlx_live_victim_anything must be rejected.
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/runs")
+            .header("x-api-key", "hlx_live_victim-tenant_exploit")
+            .body(Body::empty())
+            .unwrap();
+        let result = extract_claims(&req, "jwt-secret");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::Auth(_)));
+    }
+
+    // ---- H3: scope enforcement ----
+
+    fn claims_with_scopes(scopes: &[&str]) -> Claims {
+        Claims {
+            tenant_id: "t1".to_string(),
+            user_id: "u1".to_string(),
+            scopes: scopes.iter().map(|s| s.to_string()).collect(),
+            exp: u64::MAX,
+            iat: 0,
+        }
     }
 
     #[test]
-    fn api_key_too_few_parts_rejected() {
-        // "hlx_live_only3parts" splits into ["hlx", "live", "only3parts"] < 4
-        let result = extract_tenant_from_api_key("hlx_live_only3");
-        assert!(result.is_err());
+    fn read_scope_allows_get() {
+        let claims = claims_with_scopes(&["read"]);
+        assert!(claims.enforce_scope(&Method::GET).is_ok());
     }
 
     #[test]
-    fn api_key_empty_tenant_rejected() {
-        // "hlx_live__suffix" — third part is empty
-        let result = extract_tenant_from_api_key("hlx_live__suffix");
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::Auth(_)));
+    fn read_scope_blocks_post() {
+        let claims = claims_with_scopes(&["read"]);
+        let err = claims.enforce_scope(&Method::POST);
+        assert!(err.is_err());
+        assert!(matches!(err.unwrap_err(), AppError::Forbidden(_)));
     }
 
     #[test]
-    fn api_key_empty_string_rejected() {
-        let result = extract_tenant_from_api_key("");
-        assert!(result.is_err());
+    fn read_scope_blocks_delete() {
+        let claims = claims_with_scopes(&["read"]);
+        assert!(claims.enforce_scope(&Method::DELETE).is_err());
+    }
+
+    #[test]
+    fn write_scope_allows_post() {
+        let claims = claims_with_scopes(&["write"]);
+        assert!(claims.enforce_scope(&Method::POST).is_ok());
+    }
+
+    #[test]
+    fn admin_scope_allows_delete() {
+        let claims = claims_with_scopes(&["admin"]);
+        assert!(claims.enforce_scope(&Method::DELETE).is_ok());
+    }
+
+    #[test]
+    fn api_scope_allows_post() {
+        // "api" scope (legacy) is treated as write-capable.
+        let claims = claims_with_scopes(&["api"]);
+        assert!(claims.enforce_scope(&Method::POST).is_ok());
+    }
+
+    #[test]
+    fn no_scopes_blocks_post() {
+        let claims = claims_with_scopes(&[]);
+        assert!(claims.enforce_scope(&Method::POST).is_err());
+    }
+
+    #[test]
+    fn options_always_allowed() {
+        let claims = claims_with_scopes(&[]); // no scopes
+        assert!(claims.enforce_scope(&Method::OPTIONS).is_ok());
     }
 }
