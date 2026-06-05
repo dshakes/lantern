@@ -46,8 +46,38 @@ there are no long-term support branches yet.
 
 ## Known advisories (dev-only / tracked)
 
-- `vitest` UI-server advisory (GHSA-5xrq-8626-4rwp) affects only the dev-time
-  `vitest --ui` server; it is a `devDependency`, never shipped to consumers or
-  run in CI/production. Tracked for a major-version upgrade.
 - Go standard-library advisories surfaced by `govulncheck` are resolved by
   building with a patched Go toolchain release.
+- Transitive Rust advisories via `tonic`/`kube` (`rand` unsoundness,
+  unmaintained `backoff`/`instant`/`rustls-pemfile`) require upstream/major
+  upgrades; tracked, not exploitable in our usage.
+
+## Must-close before running UNTRUSTED code in production (GA blockers)
+
+Several hot-path Rust components are pre-1.0 and currently **fail closed**
+(they refuse rather than pretend to be secure). Before executing untrusted /
+hostile agent code in production, these need real implementations:
+
+- **microVM isolation backend** — the Firecracker backend is a stub and is
+  gated behind `LANTERN_ALLOW_FIRECRACKER_STUB`; Hostile/Untrusted schedules
+  hard-fail without a real microVM backend. Implement Firecracker/Kata for
+  real isolation (invariant #5).
+- **Secret vending** — the harness `vend_secret` is gated behind
+  `LANTERN_ALLOW_SECRET_STUB`; implement the manager-side `VendSecret` RPC that
+  binds each vend to the calling VM's authenticated tenant/run and rejects any
+  `secret_uri` not in that VM's AgentSpec (invariant #10).
+- **TLS on the data path** — terminate TLS at the gateway (rustls) or front it
+  with a TLS/mTLS ingress; enable TLS on gateway→control-plane and
+  harness→manager channels. Do not run these plaintext across a network.
+- **Egress firewall** — the in-VM allowlist (port + private-IP/metadata deny)
+  is defense-in-depth; pair it with a host-level nftables/DNS-stub egress
+  firewall, and a real heartbeat RPC so policy revocations propagate.
+- **RBAC** — API-key scopes + `RequireScopeMiddleware` exist; wire scope
+  enforcement onto all mutating routes, and run the app DB role as a
+  non-owner (`infra/db/least-privilege.sql`).
+- **K8s job hardening** — emit a default-deny NetworkPolicy per job and add
+  `seccomp: RuntimeDefault` + `cap_drop: [ALL]` to the job SecurityContext.
+
+Set these in production regardless: `LANTERN_ENV=production`, `JWT_SECRET`,
+`LANTERN_RECEIPT_SECRET`, `LANTERN_CREDENTIAL_KEY` (the control-plane refuses
+to boot without them when `LANTERN_ENV` is prod).
