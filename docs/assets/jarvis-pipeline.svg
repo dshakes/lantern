@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="600" viewBox="0 0 1240 600" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Lantern personal-assistant (Jarvis) reply pipeline">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .t{fill:#e2e8f0;} .sub{fill:#94a3b8;font-size:10.5px;} .h{fill:#f8fafc;font-weight:700;}
+      .step{fill:#e2e8f0;font-size:12.5px;font-weight:700;}
+      .band{fill:#cbd5e1;font-size:12px;font-weight:700;letter-spacing:.14em;}
+      .n{fill:#64748b;font-size:11px;font-weight:700;}
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="600" rx="16" fill="#0b1120"/>
+  <rect x="0" y="0" width="1240" height="600" rx="16" fill="none" stroke="#1e293b"/>
+
+  <text x="32" y="42" class="h" font-size="20">Personal-assistant pipeline</text>
+  <text x="300" y="42" class="sub" font-size="12.5">WhatsApp + iMessage "Jarvis" bridges — every inbound runs this before a single character is sent</text>
+
+  <!-- inbound -->
+  <g transform="translate(32,72)">
+    <rect x="0" y="0" width="200" height="92" rx="10" fill="#11182a" stroke="#8b5cf6"/>
+    <text x="14" y="24" class="step">Inbound message</text>
+    <text x="14" y="44" class="sub">WhatsApp :3100 / iMessage :3200</text>
+    <text x="14" y="66" class="sub">owner-only gate — DMs from</text>
+    <text x="14" y="80" class="sub">non-owners never reach actions</text>
+  </g>
+
+  <!-- safety -->
+  <g transform="translate(264,72)">
+    <rect x="0" y="0" width="216" height="92" rx="10" fill="#1f1410" stroke="#ef4444"/>
+    <text x="14" y="22" class="n" fill="#fca5a5">1 · SAFETY (pre-LLM)</text>
+    <text x="14" y="42" class="sub">life-threat → escalate owner</text>
+    <text x="14" y="58" class="sub">prompt-injection / PII → refuse</text>
+    <text x="14" y="74" class="sub">personal-fact probe → deflect</text>
+    <text x="14" y="88" class="sub" fill="#fca5a5">deterministic · can't fail open</text>
+  </g>
+
+  <!-- context -->
+  <g transform="translate(512,72)">
+    <rect x="0" y="0" width="216" height="92" rx="10" fill="#0e1626" stroke="#38bdf8"/>
+    <text x="14" y="22" class="n" fill="#7dd3fc">2 · CONTEXT</text>
+    <text x="14" y="42" class="sub">owner profile (facts, dialect,</text>
+    <text x="14" y="56" class="sub">  relationships, timezone)</text>
+    <text x="14" y="72" class="sub">14-day episodes · 7-day topics</text>
+    <text x="14" y="86" class="sub">cross-channel person graph</text>
+  </g>
+
+  <!-- persona -->
+  <g transform="translate(760,72)">
+    <rect x="0" y="0" width="216" height="92" rx="10" fill="#13233b" stroke="#38bdf8"/>
+    <text x="14" y="22" class="n" fill="#7dd3fc">3 · PERSONA PROMPT</text>
+    <text x="14" y="42" class="sub">audience-aware:</text>
+    <text x="14" y="58" class="sub">  owner → full facts</text>
+    <text x="14" y="74" class="sub">  contact → non-disclosure</text>
+    <text x="14" y="88" class="sub">medium-tone Telangana voice</text>
+  </g>
+
+  <!-- LLM -->
+  <g transform="translate(1008,72)">
+    <rect x="0" y="0" width="200" height="92" rx="10" fill="#241a37" stroke="#f59e0b"/>
+    <text x="14" y="22" class="n" fill="#fcd34d">4 · LLM</text>
+    <text x="14" y="44" class="sub">control-plane router</text>
+    <text x="14" y="60" class="sub">capability "auto"</text>
+    <text x="14" y="76" class="sub">provider failover</text>
+    <text x="14" y="90" class="sub">(never the local CLI)</text>
+  </g>
+
+  <!-- arrows row 1 -->
+  <line x1="232" y1="118" x2="262" y2="118" stroke="#64748b" marker-end="url(#a)"/>
+  <line x1="480" y1="118" x2="510" y2="118" stroke="#64748b" marker-end="url(#a)"/>
+  <line x1="728" y1="118" x2="758" y2="118" stroke="#64748b" marker-end="url(#a)"/>
+  <line x1="976" y1="118" x2="1006" y2="118" stroke="#64748b" marker-end="url(#a)"/>
+
+  <!-- down from LLM -->
+  <line x1="1108" y1="164" x2="1108" y2="196" stroke="#64748b" marker-end="url(#a)"/>
+
+  <!-- guards (row 2, right to left) -->
+  <g transform="translate(760,200)">
+    <rect x="0" y="0" width="448" height="104" rx="10" fill="#1a1208" stroke="#f59e0b"/>
+    <text x="14" y="22" class="n" fill="#fcd34d">5 · AUTHENTICITY GUARDS — last pass before send</text>
+    <text x="14" y="44" class="sub">• bot-tell suppressor — strips "Certainly!", em-dashes, reasoning leaks</text>
+    <text x="14" y="62" class="sub">• Telangana dialect — formal "-andi" → casual "cheppu" (spares elders)</text>
+    <text x="14" y="80" class="sub">• claim verifier — "I sent it" → "I'll send it" unless the tool actually ran</text>
+    <text x="14" y="98" class="sub">• fabricated-name net — never address a contact by an invented name</text>
+  </g>
+  <line x1="758" y1="252" x2="660" y2="252" stroke="#64748b" marker-end="url(#a)"/>
+
+  <!-- confidence -->
+  <g transform="translate(444,200)">
+    <rect x="0" y="0" width="200" height="104" rx="10" fill="#0e1626" stroke="#a78bfa"/>
+    <text x="14" y="22" class="n" fill="#c4b5fd">6 · CONFIDENCE TIER</text>
+    <text x="14" y="46" class="sub">net signal → HIGH / MED / LOW</text>
+    <text x="14" y="64" class="sub">money · medical · cold contact</text>
+    <text x="14" y="80" class="sub">· prior 👎 → lower tier</text>
+    <text x="14" y="96" class="sub">routes the outcome ↓</text>
+  </g>
+  <line x1="444" y1="252" x2="414" y2="252" stroke="#64748b" marker-end="url(#a)"/>
+  <line x1="544" y1="304" x2="544" y2="340" stroke="#64748b" marker-end="url(#a)"/>
+
+  <!-- outcomes -->
+  <text x="32" y="356" class="band">OUTCOME</text>
+  <g transform="translate(32,372)">
+    <rect x="0" y="0" width="356" height="92" rx="10" fill="#0c1a14" stroke="#34d399"/>
+    <text x="14" y="24" class="step" fill="#6ee7b7">SEND</text>
+    <text x="14" y="46" class="sub">HIGH confidence. Pacing layer holds for the</text>
+    <text x="14" y="62" class="sub">owner's real median latency for THAT contact,</text>
+    <text x="14" y="78" class="sub">shows typing, splits into a natural burst.</text>
+  </g>
+  <g transform="translate(412,372)">
+    <rect x="0" y="0" width="372" height="92" rx="10" fill="#0e1626" stroke="#a78bfa"/>
+    <text x="14" y="24" class="step" fill="#c4b5fd">DRAFT → owner</text>
+    <text x="14" y="46" class="sub">LOW confidence / sensitive. DM'd to the owner's</text>
+    <text x="14" y="62" class="sub">self-chat as "draft to X: … reply 'send' to approve".</text>
+    <text x="14" y="78" class="sub">Nothing goes out until the owner OKs it.</text>
+  </g>
+  <g transform="translate(808,372)">
+    <rect x="0" y="0" width="400" height="92" rx="10" fill="#1f1410" stroke="#ef4444"/>
+    <text x="14" y="24" class="step" fill="#fca5a5">SUPPRESS → regenerate</text>
+    <text x="14" y="46" class="sub">A guard tripped (bot-tell / wrong dialect / fabricated</text>
+    <text x="14" y="62" class="sub">name). The draft is killed and re-generated rather</text>
+    <text x="14" y="78" class="sub">than sending something that breaks the illusion.</text>
+  </g>
+
+  <!-- learning loop -->
+  <g transform="translate(32,492)">
+    <rect x="0" y="0" width="1176" height="76" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="16" y="26" class="t" font-size="12.5" font-weight="700">Always-on background loops</text>
+    <text x="16" y="48" class="sub">👎 learning flywheel (mines rejections → style lessons injected into every reply)   ·   anticipation nudges (pre-meeting, anniversaries, overdue replies, open commitments)</text>
+    <text x="16" y="64" class="sub">quiet-hours queue with natural morning replay   ·   owner profile hot-reloads every 30s   ·   Signal self-heal on decrypt drift   ·   operational-drop heads-up to the owner</text>
+  </g>
+</svg>

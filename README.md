@@ -1,48 +1,160 @@
-# Lantern
+<div align="center">
 
-**The agent platform you can run on your laptop and ship to production with one command. Real WhatsApp/Slack/voice/web channels, durable workflows, predictable cost, eval-in-CI, and cryptographically verifiable receipts — all in your VPC.**
+# 🏮 Lantern
+
+**The agent platform you run on your laptop and ship to production with one command.**
+
+Real WhatsApp / iMessage / Slack / voice / web channels · multi‑LLM routing · durable workflows · predictable cost · eval‑in‑CI · cryptographically verifiable receipts — all in your own cloud.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-lantern.dev-8B5CF6?style=flat-square)](https://docs.lantern.dev)
-[![Discord](https://img.shields.io/discord/placeholder?label=discord&style=flat-square&color=5865F2)](https://discord.gg/lantern)
+[![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
+[![Rust](https://img.shields.io/badge/Rust-2024-CE412B?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Next.js](https://img.shields.io/badge/Next.js-15-000000?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org)
 
 ```bash
-lantern dev   # boots Postgres + Redis + MinIO + API + dashboard + WhatsApp bridge
-              # opens browser, hot-reloads on every save
+make dev        # zero-toolchain: full stack in Docker
+# — or —
+lantern dev     # hot-reload daily driver: infra + API + dashboard + bridges, one verb
 ```
 
-Lantern is the only agent platform that combines five things end-to-end:
-
-1. **One-command local dev.** `lantern dev` spins up the whole stack with hot reload. No five-tab terminal dance.
-2. **Real channels — agents that talk on WhatsApp/Slack/voice/webchat like humans.** Pair your own WhatsApp via QR (we ship the bridge). The natural-communication layer paces replies, mirrors reactions to acks, splits long answers into burst messages, and refuses to sound like ChatGPT. Your friends will not know.
-3. **A cost forecast before every run.** `POST /v1/runs/forecast` returns estimated tokens, dollars, and confidence. Hard-fail budgets block runs that would overspend with HTTP 402.
-4. **Eval-in-CI.** `lantern test --against=last-green` compares this branch to the last green baseline and fails on regression. Rehearsals replay past failures from production against your candidate version.
-5. **Cryptographically verifiable receipts.** Every run can be HMAC-signed. Share the JSON; any third party can verify what executed at `/proof`. Cross-tenant invocations (W11c marketplace) settle through the same primitive.
-
-Plus: multi-LLM routing, durable workflow execution that runs your visual editor's graph (not just saves it), 17 real connector APIs with real OAuth, embeddable webchat widget, A/B with auto-promotion, A2A interop, RLHF feedback baked in, human-takeover for in-flight runs, and a forkable agent marketplace with HMAC-signed cross-tenant commerce.
-
-100% Apache 2.0. No feature gates. The managed cloud is convenience, not a paywall.
+</div>
 
 ---
 
-## The wedge
+## What is Lantern?
 
-| What every agent framework ships | What Lantern adds |
+Lantern is a **production runtime for AI agents**. It is a polyglot monorepo with a **control‑plane / data‑plane split**: a Go/Rust control plane that orchestrates agents, runs, budgets, evals, and routing — and a data plane (your EKS/GKE/AKS or Lantern's edge) where untrusted agent code executes in microVM isolation. Only metadata crosses the boundary; your prompts, tokens, and customer data never leave your cloud.
+
+What makes it different from "another agent framework":
+
+| Most agent frameworks | Lantern |
 |---|---|
-| `npm install` + a tutorial. | **`lantern dev` boots the entire stack** (Postgres + Redis + MinIO + control-plane + dashboard + WhatsApp bridge) with hot reload and tagged log streams. One verb. |
-| Chat-only, in their dashboard. | **Real channels.** Pair your WhatsApp by scanning a QR code. Embed a webchat `<script>` on any site. Voice numbers via Twilio/LiveKit. Agents reply on the surfaces your users already use. |
-| Bot-speak that screams "AI". | **Natural communication layer.** Mirrors thumbs-up to "k", splits long replies into 2-3 paced messages with typing indicators, strips assistant-isms ("Certainly!", "Let me know if you need anything else"), infers conversational register per contact. Tested in 25 unit cases. |
-| "Your agent probably costs about…" | **Pre-run cost forecast.** `POST /v1/runs/forecast` returns estimated tokens, dollars, and confidence grounded in your last 30 days of runs. Hard-fail runs that would exceed budget return HTTP 402. |
-| "Monitor your evals in prod." | **Eval-in-CI + rehearsals.** Define suites declaratively, pin a baseline per branch, regress-check in pre-merge CI. Replay past production failures against new versions before flipping traffic. |
-| Visual workflow designer that doesn't actually run anything. | **Workflow runtime that executes the saved graph.** trigger/ai-step/tool/connector/condition/end nodes all dispatch through the same LLM router + connector executor + budget enforcer as everything else. |
-| "Trust us about what happened." | **Verifiable receipts.** HMAC-signed JSON over the journal-event SHA-256. Share with anyone; they verify at `/proof`. Cross-tenant marketplace invocations settle through the same primitive. |
-| Auto-approve "human in the loop." | **Real takeover handshake.** Workflow approval nodes block on `takeover_requests`; operators grant → optionally exchange WebRTC SDP for live VM view → release when done. |
-| "Deploy to our cloud." | **Deploy in your cloud.** Data plane runs in your EKS/GKE/AKS. Firecracker microVM isolation. Only metadata crosses the tunnel. |
-| Hardcoded Anthropic/OpenAI. | **Provider-agnostic router.** Bring your own keys, swap providers, plug in a custom smart gateway. |
+| `npm install` + a tutorial | **One command boots the whole stack** — Postgres + Redis + MinIO + control‑plane + dashboard + bridges, with hot reload and tagged logs |
+| Chat‑only, inside their dashboard | **Real channels** — pair your own WhatsApp by QR, run iMessage on a Mac, Slack/Telegram/Discord, voice numbers (Twilio/LiveKit), an embeddable webchat `<script>` |
+| "Your agent probably costs about…" | **A cost forecast before every run** — `POST /v1/runs/forecast` returns tokens, dollars, and confidence; hard‑fail budgets block overspend with HTTP 402 |
+| "Monitor your evals in prod" | **Eval‑in‑CI + rehearsals** — pin a baseline per branch, fail the build on regression (HTTP 422), replay real production failures against a candidate before flipping traffic |
+| A visual builder that only *saves* a graph | **A workflow engine that *executes* the graph** through the same router + connector + budget pipeline as everything else |
+| "Trust us about what happened" | **Cryptographically verifiable receipts** — HMAC‑signed over the run's journal; anyone can verify at `/proof` |
+| "Deploy to *our* cloud" | **Deploy in *your* cloud** — data plane in your VPC, Firecracker/Kata isolation, outbound‑only mTLS tunnel |
+
+**100% Apache‑2.0. No feature gates.** Every differentiator here is in this repo; the managed cloud is convenience (one‑click deploy, billing, autoscaling), not a paywall.
+
+<p align="center">
+  <img src="docs/assets/lantern-architecture.svg" alt="Lantern architecture — control plane, data plane, surfaces, and data stores" width="100%">
+</p>
 
 ---
 
-## 60-second example
+## Quick start
+
+### Option A — zero toolchain (Docker only) ⭐ fastest clone‑to‑running
+
+You need only **Docker** (with Compose v2). Everything builds inside containers.
+
+```bash
+git clone https://github.com/dshakes/lantern.git
+cd lantern
+make dev          # builds + starts infra + control-plane + dashboard (+ landing, bridge)
+```
+
+Then open **http://localhost:3001** and log in with **`admin@lantern.dev` / `lantern`**.
+The dev tenant, admin user, and schema are seeded automatically on first boot. Run `make seed` to add sample agents and runs.
+
+### Option B — hot‑reload daily driver (`lantern dev`)
+
+The nicest local DX: host processes with hot reload, one terminal, tagged log streams. Needs Go + Node installed (see [Prerequisites](#prerequisites)).
+
+```bash
+git clone https://github.com/dshakes/lantern.git
+cd lantern
+npm install                                   # workspace deps (dashboard, SDK, bridges)
+( cd packages/cli && go install ./cmd/lantern )   # builds the `lantern` binary onto your PATH
+
+lantern dev       # ↓ boots everything, waits for /healthz, opens the dashboard
+```
+
+`lantern dev` will:
+- start **Postgres + Redis + MinIO** via Docker (detached),
+- run the **control‑plane** API (`:8080` REST, `:50051` gRPC) as a host Go process so edits hot‑reload,
+- run the **Next.js dashboard** (`:3001`) with HMR,
+- run the **WhatsApp** (`:3100`) and **iMessage** (`:3200`, macOS only) bridges under `tsx`,
+- tail every process with per‑service color tags, then open `http://localhost:3001`.
+
+Flags worth knowing:
+
+```bash
+lantern dev --infra-only          # just Postgres + Redis + MinIO (bring your own services)
+lantern dev --no-open             # don't auto-open the browser
+lantern dev --with-whatsapp=false # skip the WhatsApp bridge
+lantern dev --dashboard-port 4000
+lantern dev down [--volumes]      # stop everything (optionally wipe data)
+lantern dev logs <service> -f     # tail a single container
+```
+
+### Option C — power‑user, à la carte
+
+```bash
+make dev-infra        # terminal 1: Postgres + Redis + MinIO only
+make run-api          # terminal 2: control-plane on :8080 (sets DATABASE_URL/REDIS_URL/S3_ENDPOINT)
+make dashboard-dev    # terminal 3: dashboard on :3001
+make run-whatsapp-bridge   # terminal 4 (optional): WhatsApp bridge on :3100
+```
+
+> 💡 `make run-api-free` routes LLM calls through your local `claude` CLI (Claude Max subscription) so you can run the whole platform at **$0** in development.
+
+---
+
+## Prerequisites
+
+`make dev` (Option A) needs **only Docker**. Everything else is for host‑process development.
+
+| Tool | Version | Needed for | Install (macOS) |
+|---|---|---|---|
+| **Docker** + Compose v2 | recent | everything (infra always runs in containers) | `brew install --cask docker` |
+| **Go** | **1.23+** (CLI needs **1.25+**) | control‑plane, engine, scheduler, SDK‑go, CLI | `brew install go` |
+| **Node.js** | **20 LTS+** | dashboard, landing, docs, SDK‑ts, bridges | `brew install node` |
+| **Rust** | **1.85+** (edition 2024) | gateway, model‑router, runtime‑manager, harness | `brew install rustup-init && rustup-init` |
+| **make** | any | task runner | preinstalled / Xcode CLT |
+| **protoc** + `ts-proto` | recent | only `make proto` (regenerating types) | `brew install protobuf` |
+
+On Linux, use your package manager (`apt install golang nodejs npm docker.io protobuf-compiler`, `rustup` from rustup.rs). There is no pinned `.nvmrc`/`rust-toolchain.toml` yet — any current LTS Node and stable Rust ≥ 1.85 work.
+
+### Dev credentials (seeded, local only — never use in production)
+
+| Service | Value |
+|---|---|
+| PostgreSQL | `postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` |
+| Redis | `redis://localhost:6379` |
+| MinIO | `lantern` / `lanternsecret` at `localhost:9000` (console `:9001`) |
+| Dashboard login | `admin@lantern.dev` / `lantern` |
+| Dev tenant / user | `00000000-…-0001` (slug `dev`) / `00000000-…-0002` (role `owner`) |
+
+For optional integrations (Google OAuth, real LLM keys, connector OAuth), copy `.env.example` → `.env.local` (gitignored) and fill in what you need; `make run-*` auto‑loads it.
+
+---
+
+## Service & port reference
+
+| Service | Lang | Port(s) | Role |
+|---|---|---|---|
+| **control‑plane** | Go | `:8080` (REST/SSE) · `:50051` (gRPC) | system of record: agents, runs, sessions, budgets, evals, marketplace, MCP |
+| **workflow‑engine** | Go | `:50052` (gRPC) | durable, event‑sourced step execution — the only mutator of run state |
+| **model‑router** | Rust | `:50053` (gRPC) | capability‑based multi‑LLM routing, failover, caching |
+| **runtime‑scheduler** | Go | `:50055` (gRPC) · `:8085` (REST) | microVM placement (warm‑pool / region / fair‑share / cost / health) |
+| **runtime‑manager** | Rust | `:50054` (gRPC) | spawns isolated workloads (Firecracker / Kata / K8s / Wasmtime) |
+| **harness** | Rust | in‑VM | PID 1 inside every microVM: egress allowlist, JWT vending, heartbeats |
+| **gateway** | Rust | `:8443` (HTTPS) | TLS, auth, rate limit, end‑to‑end token streaming |
+| **surface‑gateway** | Rust | `:8444` (HTTP) | inbound channel webhooks (Slack/WhatsApp/Telegram/Twilio/Discord) |
+| **scheduler / memory / notifier / billing** | Go | internal | cron · vector memory · notifications · usage metering |
+| **whatsapp‑bridge** | TS | `:3100` | macOS WhatsApp "Jarvis" assistant |
+| **imessage‑bridge** | TS | `:3200` | macOS iMessage "Jarvis" assistant |
+| dashboard / landing / docs | TS | `:3001` / `:3000` / `:3002` | Next.js apps |
+| Postgres · Redis · MinIO | — | `:5432` · `:6379` · `:9000`/`:9001` | data stores |
+
+---
+
+## 60‑second SDK example
 
 ```bash
 npm install @lantern/sdk
@@ -54,165 +166,89 @@ import { LanternClient } from "@lantern/sdk";
 const lantern = new LanternClient({ apiKey: process.env.LANTERN_API_KEY });
 
 // 1. Create an agent.
-await lantern.agents.create({
-  name: "triage",
-  description: "Classifies incoming support emails",
-});
+await lantern.agents.create({ name: "triage", description: "Classifies support emails" });
 
-// 2. Set a hard budget — never spend >$25/day, >$0.10/run.
+// 2. Hard budget — never spend >$25/day or >$0.10/run.
 await lantern.budgets.upsert("triage", {
-  maxCostUsdPerDay: 25,
-  maxCostUsdPerRun: 0.10,
-  hardFail: true,
+  maxCostUsdPerDay: 25, maxCostUsdPerRun: 0.10, hardFail: true,
 });
 
-// 3. Forecast before dispatching — HTTP 402 if budget-blocked.
-const forecast = await lantern.runs.forecast({
-  agentName: "triage",
-  input: "Hey, my invoice is wrong again...",
-});
-console.log(`Expect ~$${forecast.estimatedCostUsd} (${Math.round(forecast.confidence * 100)}% confidence)`);
+// 3. Forecast before dispatching — would-exceed-budget returns HTTP 402.
+const f = await lantern.runs.forecast({ agentName: "triage", input: "my invoice is wrong again..." });
+console.log(`~$${f.estimatedCostUsd} (${Math.round(f.confidence * 100)}% confidence)`);
 
 // 4. Run it.
-const run = await lantern.runs.create({
-  agentName: "triage",
-  input: { email: "..." },
-});
+const run = await lantern.runs.create({ agentName: "triage", input: { email: "..." } });
 
-// 5. In CI, fail the build if the new version regresses.
+// 5. In CI: fail the build if the new version regresses against the last green baseline.
 // $ lantern test --agent=triage --suite=golden --against=last-green
 ```
 
----
-
-## Quick start — local dev
-
-```bash
-lantern dev
-```
-
-That's it. One command. It will:
-- Start Postgres + Redis + MinIO via docker-compose (detached).
-- Run the control-plane API (`:8080`) as a host Go process so your edits hot-reload.
-- Run the Next.js dashboard (`:3001`) with HMR.
-- Run the WhatsApp bridge (`:3100`) under `tsx` with hot reload.
-- Tail every process's logs with per-service color tags into one terminal.
-- Wait for `/healthz` and open `http://localhost:3001` in your browser.
-
-Default login: `admin@lantern.dev` / `lantern`.
-
-Flags worth knowing:
-
-```bash
-lantern dev --infra-only        # just Postgres+Redis+MinIO (BYO API + dashboard)
-lantern dev --no-open           # don't auto-open the browser
-lantern dev --dashboard-port 4000
-lantern dev down                # stop everything
-```
-
-The four-Makefile-target dance (`make dev-infra` + `make run-api` + `make dashboard-dev` + `make run-whatsapp-bridge`) still works for power users, but `lantern dev` is the default daily-driver.
+SDKs ship for **TypeScript** (primary), **Python**, and **Go**.
 
 ---
 
-## Feature matrix
+## Features
 
-| Capability | Ships now | Notes |
-|---|:---:|---|
-| **One-command local dev** | ✅ | `lantern dev` boots infra + API + dashboard + bridges, hot reloads |
-| **WhatsApp pairing + natural reply layer** | ✅ | QR pairing, paced burst messages, reaction-mirror on acks, persona prompt |
-| **Embeddable webchat widget** | ✅ | `<script src=".../widget.js">` on any site; talks to `/v1/sessions` |
-| **Voice channel (Twilio/LiveKit pluggable)** | ✅ | `voice_numbers` + `voice_calls`; `VoiceProvider` interface |
-| **Workflow runtime** | ✅ | Saved graphs execute (trigger/ai-step/tool/connector/condition/approval/end) |
-| **Headless microVM runtime** | ✅ | `runtime-scheduler` placement + `harness` (Rust, in-VM) for egress allowlist, JWT secret vending, OTel. Endpoints: `POST /v1/runtime/schedule`, dashboard at `/runtime`, CLI `lantern run <agent.yaml>`. Demos in `examples/headless-agents/` |
-| **Verifiable HMAC receipts** | ✅ | `/v1/runs/{id}/receipt`, public verifier at `/proof`, key fingerprint at `/.well-known/lantern-receipts` |
-| **Cross-tenant marketplace commerce** | ✅ | `POST /v1/marketplace/{slug}/invoke` settles via signed invocation receipt |
-| **Human takeover handshake** | ✅ | `takeover_requests` table + WebRTC SDP fields; workflow approval blocks on it |
-| **Run trace waterfall** | ✅ | Nested-span timeline with per-span tokens, cost, latency |
-| **RLHF feedback widget** | ✅ | Thumbs + preferred-output on every run; feeds rehearsals |
-| **Rehearsals** | ✅ | Replay past failures against candidate version; gates CI merge |
-| **Pre-run cost forecaster** | ✅ | `POST /v1/runs/forecast` — historical + heuristic blend |
-| **Policy-as-code budgets** | ✅ | Per-day cost, per-run cost, per-tool rate limits |
-| **Eval suites + CI gating** | ✅ | Baselines per branch, regression returns HTTP 422 |
-| **A/B experiments** | ✅ | Deterministic FNV-1a traffic split, auto-promotion on >2% lift |
-| **Marketplace (publish/fork/star/buy)** | ✅ | Real tenant isolation, cross-tenant invocation, signed settlement |
-| **MCP server registry** | ✅ | Curated servers, attach to any agent |
-| **Managed sessions** | ✅ | Multi-turn, SSE streaming, persists across restarts |
-| **17 connector APIs (real dispatch)** | ✅ | Gmail, GCal, Drive, Sheets, Slack, Discord, Telegram, Twilio, GitHub, Linear, Jira, Sentry, Vercel, Notion, HubSpot, Salesforce, Stripe — popup OAuth |
-| **Smart model routing** | ✅ | `auto`, `reasoning-large`, `code-large` — balanced/cheap/quality/fast |
-| **Provider-agnostic LLM layer** | ✅ | Bring your own keys; swap vendors anytime |
-| **Visual workflow editor + interpreter** | ✅ | React Flow; saved graph executes against the real LLM+connector pipeline |
-| **Cron scheduling** | ✅ | With optional email delivery |
-| **A2A protocol + agent cards** | ✅ | `/.well-known/agent.json`, cross-tenant invocation |
-| **Guardrails (PII, content, topic)** | ✅ | Per-agent, configurable |
-| **TS SDK (full parity)** | ✅ | Primary SDK |
-| **Python SDK (full parity)** | ✅ | Secondary |
-| **Go SDK** | ✅ | For infra integrations |
-| **`lantern` CLI** | ✅ | `dev`, `init`, `deploy`, `test`, `runs`, `agents`, `logs`, `login` |
-| **Managed cloud (one-click deploy)** | ✅ | Billing + autoscaling |
-| **Customer VPC data plane** | ✅ | EKS/GKE/AKS, Firecracker isolation |
+**Routing & models** · 4 routing strategies (`balanced` / `cheap` / `best` / `fast`) over capability aliases (`auto`, `reasoning-large`, `code-large`, …) — never hardcode a vendor model. Provider‑agnostic with failover and prompt/semantic caching; bring your own Anthropic/OpenAI keys or a custom gateway.
+
+**Agents, runs & sessions** · Immutable agent versions · event‑sourced run journal with replay · interactive multi‑turn sessions with SSE streaming · distributed run locking · cron scheduling.
+
+**Cost & safety rails** · Pre‑run cost forecaster (`/v1/runs/forecast`) · policy‑as‑code budgets (per‑day/per‑run/per‑tool, hard‑fail HTTP 402) · per‑agent guardrails.
+
+**Quality & confidence** · Declarative eval suites with per‑branch baselines and CI gating (HTTP 422 on regression) · rehearsals that replay past production failures · A/B experiments with deterministic FNV‑1a splitting and auto‑promotion on >2% lift · RLHF run feedback.
+
+**Workflows & humans** · Visual editor whose saved graph actually executes (`trigger / ai-step / tool / connector / condition / loop / approval / subagent / end`) · human‑takeover handshake (`takeover_requests` + WebRTC SDP).
+
+**Integrations** · **17 real connector APIs** (Gmail, Google Calendar/Drive/Sheets, Slack, Discord, Telegram, Twilio, GitHub, Linear, Jira, Sentry, Vercel, Notion, HubSpot, Salesforce, Stripe) with real OAuth · **MCP** server registry + per‑agent attachments · **A2A** agent cards (`/.well-known/agent.json`).
+
+**Marketplace** · Publish / fork / star public agents · cross‑tenant invocation with HMAC‑signed settlement.
+
+**Trust** · Verifiable HMAC receipts over the journal SHA‑256, publicly verifiable at `/proof` · AES‑256‑GCM credential encryption at rest · multi‑tenant by default with Postgres RLS · idempotency keys on every external side‑effect · OTel traces carrying `tenant_id`/`run_id`/`step_id`.
+
+**Headless microVM runtime** · Schedule untrusted agents into Firecracker / Kata / K8s Job / Wasmtime / devcontainer isolation; the in‑VM Rust harness enforces an egress allowlist and vends short‑TTL secrets. Per‑tenant quota (HTTP 402 over cap). Demos in [`examples/headless-agents/`](examples/headless-agents/).
+
+**Surfaces** · WhatsApp · iMessage · Slack · Discord · Telegram · Voice (Twilio/LiveKit) · Webchat embed · Email.
 
 ---
 
-## Engineering principles
+## The personal assistant ("Jarvis")
 
-Lantern is written under a deliberate set of rules. They're enforced in `CLAUDE.md` (the AI-agent contributor guide) and in code review.
+Lantern ships two macOS bridges — **WhatsApp** and **iMessage** — that turn an LLM into a personal assistant that texts *as you*, on your own number, indistinguishably. This is a serious differentiator and a showcase of the platform's natural‑communication layer.
 
-1. **No silent mocks.** Every UI hits a real endpoint, a real DB row, a real network call. When the API is unreachable the dashboard shows an explicit "Demo data" banner via `notifySimulated` — the lie is never invisible.
-2. **Truthful wording.** "Provision a data plane" only ships if we provision; until then it says "Register." Words mean what they say.
-3. **Polyglot on purpose.** Go for control plane + workflow engine. Rust for the hot path (gateway, router, runtime-manager). TypeScript for dashboard + primary SDK. Python + Go SDKs at full parity. Each layer uses the right tool, not the unifying one.
-4. **One source of truth per concern.** Tenant IDs come from `useAuth().user.tenantId`, never a hardcoded string. The DEMO_USER sentinel is in *one* place; everything else references it.
-5. **Architectural invariants (in `CLAUDE.md`).** Control plane never touches user code. Workflow engine is the only mutator of run state. All long operations are durable. Streaming is end-to-end with no buffering. Untrusted code runs in a microVM. Models are addressed by capability, not vendor name. Every row has `tenant_id`. Every external side-effect carries an idempotency key.
-6. **Tests before prose.** New behavior ships with unit tests (88 bridge tests, 6 workflow interpreter tests, growing). Bug fixes ship with regression tests.
-7. **No half-finished implementations.** A feature is either real end-to-end or it doesn't exist. Where external dependencies block the last mile (Firecracker microVM for W11a, voice provider for W11d), the platform interface is the boundary and the cred plugs in.
-8. **Cryptographic auditability is a primitive, not a feature.** Every run can be HMAC-signed. Cross-tenant commerce settles through the same signing key. The same `/.well-known/lantern-receipts` fingerprint verifies both surfaces.
+<p align="center">
+  <img src="docs/assets/jarvis-pipeline.svg" alt="Jarvis reply pipeline — safety, context, persona, LLM, authenticity guards, confidence routing" width="100%">
+</p>
 
-## OSS stance
+- **Owner‑only & private.** Only the owner's channel reaches the doc/action pipeline. A contact can never extract the owner's private facts (marriage, family, location, schedule) — the persona deflects warmly instead of confirming or denying.
+- **Personal‑docs assistant.** Answers questions about local files (passport, license, receipts) inside allowlisted roots, OCR'ing scanned PDFs; the OCR cache is `0600` because it holds PII.
+- **Agentic Mac actions.** Creates Calendar events, Notes, and Mail via locale‑safe AppleScript — only after the owner confirms a suggested follow‑up.
+- **Sounds like you.** Authentic‑voice and bot‑tell guards strip "Certainly!", em‑dashes, and reasoning leaks; a register‑aware **medium‑tone Telangana Telugu** layer keeps the dialect right. Pacing replays your real per‑contact reply latency with typing indicators and message bursts.
+- **Remembers across channels.** A unified person graph, 14‑day episodic memory, and 7‑day topic index are shared between WhatsApp and iMessage.
+- **Proactive & self‑improving.** Anticipation nudges (pre‑meeting, anniversaries, overdue replies, open commitments), a 👎 learning flywheel that mines rejections into durable style lessons, draft‑and‑confirm for low‑confidence replies, and quiet‑hours queueing with natural morning replay.
 
-Apache 2.0, no catches. Every differentiator above is in this repo. The managed cloud offers convenience (one-click deploy, billing, autoscaling), not gated features. Self-host the full stack if you want.
-
-You choose:
-- your LLM providers (any combination of Anthropic, OpenAI, Google, open models via your own smart gateway)
-- where the data plane runs (our cloud or yours)
-- which models answer which capability aliases
-- whether to use our smart router or swap in your own
-- which surfaces ship: WhatsApp, Slack, Telegram, voice, webchat, email — pick what you need
-
-The only things we ask for in the managed offering are your money (transparent per-run pricing) and usage telemetry we need to bill you.
+The owner profile (`~/.lantern/owner-profile.md`) is the single source of truth — facts, per‑contact addressing rules, dialect preferences, and timezone — hot‑reloaded every 30s, never hardcoded. See [`docs/architecture/15-personal-workflows.md`](docs/architecture/).
 
 ---
 
 ## Architecture
 
-```
-                              +------------------------+
-        SDK / CLI / ----------|   Control Plane        |
-        Dashboard             |   Go, :8080 REST       |
-                              |   :50051 gRPC          |
-                              +-----------+------------+
-                                          |
-     +----------+-----------+---------+---+-------+-----------+---------+
-     v          v           v         v           v           v         v
- +--------+ +--------+ +----------+ +--------+ +--------+ +--------+ +---------+
- | Agents | | Runs + | | Budgets  | | Evals  | | A/B    | | Market | | MCP     |
- | Versions| |Forecast| |  (policy)| | + CI   | | exps   | | place  | | registry|
- +--------+ +--------+ +----------+ +--------+ +--------+ +--------+ +---------+
-     |          |          |           |          |          |           |
-     +----------+----------+--------+--+----------+----------+-----------+
-                                    |
-                   Postgres (pgvector) + Redis + S3/MinIO
-                                    |
-                     gRPC tunnel (outbound-only, mTLS)
- ===========================================================================
-    DATA PLANE   (customer VPC — EKS/GKE/AKS — or Lantern managed cloud)
+Lantern is **polyglot on purpose**: Go for the control plane and workflow engine (K8s‑native, durable), Rust for the latency‑sensitive hot path (gateway, router, runtime‑manager, harness), TypeScript for the dashboard, primary SDK, and bridges. Protobuf is the single source of truth for cross‑service types.
 
-     +---------------------+     +--------------------+      +-------------+
-     | Workflow Engine     |     | Runtime Manager    |      | Model       |
-     | durable steps       +---->| Firecracker / Kata |----->| Router      |
-     | journal + replay    |     | K8s Jobs           |      | multi-LLM   |
-     +---------------------+     +--------------------+      +-------------+
-```
+**Load‑bearing invariants** (enforced in [`CLAUDE.md`](CLAUDE.md) and review):
 
-Only metadata and routing decisions cross the tunnel. Tokens, prompts, and customer data stay in the data plane's cloud account. See [`docs/architecture/01-overview.md`](docs/architecture/01-overview.md).
+1. Control plane never touches user code — only `runtime-manager` + `harness` do.
+2. The workflow engine is the sole mutator of run state; services emit events.
+3. All long operations are durable, idempotent, and replayable as steps.
+4. Streaming is end‑to‑end (runtime → gateway → SDK → dashboard) with no buffering.
+5. Untrusted code runs in a microVM — never a bare pod.
+6. Models are addressed by capability, not vendor name.
+7. Multi‑tenant by default — every row carries `tenant_id`; no cross‑tenant joins.
+8. Every external side‑effect carries an idempotency key `(run_id, step_id, attempt)`.
+9. Observability is not optional — every service emits OTel traces.
+10. Secrets never appear in logs/traces — resolved at execution time via refs.
+
+Full design docs: [`docs/architecture/`](docs/architecture/) · decisions: [`docs/adr/`](docs/adr/).
 
 ---
 
@@ -221,102 +257,84 @@ Only metadata and routing decisions cross the tunnel. Tokens, prompts, and custo
 ```
 lantern/
   services/
-    control-plane/        Go    -- REST + gRPC, forecaster, budgets, evals, experiments, marketplace, MCP
-    workflow-engine/      Go    -- durable step execution, event sourcing
-    gateway/              Rust  -- API edge, rate limiting, streaming proxy
-    model-router/         Rust  -- multi-LLM routing, caching, cost optimization
-    runtime-manager/      Rust  -- Firecracker, Kata, K8s Job orchestration
-    surface-gateway/      Rust  -- omnichannel webhooks
-    scheduler/            Go    -- cron, delayed jobs
-    memory/               Go    -- core/recall/archival, pgvector
-    notifier/             Go    -- webhooks, email, Slack, SMS
-    billing/              Go    -- usage metering, cost attribution
+    control-plane/      Go    REST + gRPC: agents, runs, budgets, evals, marketplace, MCP, voice
+    workflow-engine/    Go    durable step execution, event-sourced journal + replay
+    model-router/       Rust  capability-based multi-LLM routing, failover, caching
+    runtime-scheduler/  Go    microVM placement engine
+    runtime-manager/    Rust  Firecracker / Kata / K8s / Wasmtime orchestration
+    harness/            Rust  in-microVM init: egress allowlist, JWT vending, heartbeats
+    gateway/            Rust  API edge: TLS, auth, rate limiting, streaming proxy
+    surface-gateway/    Rust  inbound channel webhooks
+    scheduler/          Go    cron + delayed jobs
+    memory/             Go    core / recall (pgvector) / archival
+    notifier/           Go    webhooks, email, Slack, SMS, push
+    billing/            Go    usage metering, cost attribution
+    data-plane-agent/   Go    reverse-tunnel agent for customer-cloud topologies
+    whatsapp-bridge/    TS    macOS WhatsApp "Jarvis" assistant
+    imessage-bridge/    TS    macOS iMessage "Jarvis" assistant
   packages/
-    sdk-ts/               TS    -- primary SDK: agent(), step(), tools
-    sdk-python/           Py    -- Python SDK (full parity)
-    sdk-go/               Go    -- Go SDK (forecasts, budgets, evals, runs)
-    cli/                  Go    -- `lantern` CLI (Cobra)
-    proto/                proto -- gRPC definitions
-    ui-kit/               TS    -- shared React component library
+    sdk-ts/             TS    primary SDK            cli/        Go   `lantern` CLI (Cobra)
+    sdk-python/         Py    Python SDK             proto/      —    protobuf contracts (lantern/v1)
+    sdk-go/             Go    Go SDK                 bridge-core/ TS  shared bridge library
   apps/
-    web/                  TS    -- Next.js 15 dashboard (RSC + streaming)
-    docs/                 TS    -- documentation site
-    landing/              TS    -- marketing site
-  infra/
-    docker/                     -- docker-compose dev stack
-    helm/                       -- Helm charts
-    terraform/                  -- AWS/GCP IaC modules
-  docs/
-    architecture/               -- design documents
-    adr/                        -- Architecture Decision Records
+    web/   Next.js dashboard      landing/  marketing site      docs/  documentation site
+  examples/             runnable agents incl. examples/headless-agents/{01..04}
+  infra/                docker-compose · Helm · Terraform · kind
+  docs/architecture · docs/adr · docs/assets (diagrams)
 ```
 
 ---
 
-## CLI
+## `lantern` CLI
 
 ```
-lantern dev                         # boot the FULL stack (infra + API + dashboard + bridges)
-  --infra-only                      #   just Postgres+Redis+MinIO (BYO services)
-  --with-whatsapp=false             #   skip the WhatsApp bridge
-  --no-open                         #   don't auto-open the browser
-lantern dev down                    # stop infra containers
-
-lantern init                        # scaffold a new agent
-lantern agents list                 # list agents
-lantern runs create --agent=x       # dispatch a run
-lantern test --agent=x --suite=y    # run eval suite + compare to baseline
-  --against=last-green              #   fail the CI build on regression
-  --set-baseline                    #   pin this run as the new baseline
-  --rehearse                        #   replay past failures against current version
-lantern deploy --agent=x --env=prod # ship to managed cloud
-lantern logs --run=<id> -f          # tail event stream
-lantern login                       # token-based auth
+lantern dev                          boot the full stack (infra + API + dashboard + bridges)
+lantern init                         scaffold a new agent
+lantern agents list                  list agents
+lantern runs create --agent=x        dispatch a run
+lantern run <agent.yaml>             schedule a headless microVM agent
+lantern test --agent=x --suite=y     run an eval suite
+  --against=last-green               fail CI on regression
+  --set-baseline                     pin this run as the new baseline
+  --rehearse                         replay past failures against the current version
+lantern deploy --agent=x --env=prod  ship to managed cloud
+lantern logs --run=<id> -f           tail the event stream
+lantern login                        token-based auth
 ```
-
-Four verbs do 95% of the daily workflow: `dev`, `deploy`, `test`, `login`.
 
 ---
 
-## Local development
+## Testing & CI
 
-| Service | Credentials |
-|---|---|
-| PostgreSQL | `lantern:lantern@localhost:5432/lantern` |
-| Redis | `localhost:6379` |
-| MinIO | `lantern:lanternsecret` at `localhost:9000` (console `:9001`) |
-| Dashboard | `admin@lantern.dev` / `lantern` |
+```bash
+make test         # all suites: Go (-race), Rust, TypeScript (vitest), Python (pytest)
+make lint         # golangci-lint + cargo clippy + tsc
+make audit        # govulncheck + cargo audit + npm audit
+make ci-local     # lint + test + audit — the same gate CI runs
+```
 
-### Prerequisites
+New behavior ships with unit tests; bug fixes ship with a regression test. Run `make ci-local` before every push.
 
-- Docker and Docker Compose
-- Go 1.23+
-- Node.js 22+ and npm
+---
 
-### Make targets
+## Deployment model
 
-| Target | What it does |
-|---|---|
-| `make dev` | Full docker-compose stack |
-| `make dev-infra` | Postgres + Redis + MinIO only |
-| `make run-api` | Control-plane API on `:8080` |
-| `make dashboard-dev` | Next.js dashboard on `:3001` |
-| `make build` | Compile Go + Rust + TypeScript |
-| `make proto` | Regenerate from proto definitions |
-| `make test` | All test suites |
-| `make lint` | All linters |
-| `make ci-local` | Lint + test + audit (same as CI) |
+- **Managed cloud** — one‑click deploy, billing, autoscaling. Convenience, not a paywall.
+- **Customer VPC data plane** — runs in your EKS/GKE/AKS; the control plane reaches it over an outbound‑only mTLS tunnel. Prompts, tokens, and customer data stay in your account; only metadata and routing decisions cross. Terraform/Helm in [`infra/`](infra/).
+
+You choose your LLM providers, where the data plane runs, which models answer which capability aliases, whether to use the built‑in router, and which surfaces ship.
 
 ---
 
 ## Contributing
 
-1. Read [`CLAUDE.md`](CLAUDE.md) for repo conventions and architectural invariants.
-2. Read the relevant [ADR](docs/adr/) if your change affects a load-bearing decision.
-3. Run `make ci-local` before pushing.
+1. Read [`CLAUDE.md`](CLAUDE.md) — repo conventions and the architectural invariants above.
+2. Read the relevant [ADR](docs/adr/) if your change touches a load‑bearing decision; add one for cross‑service changes.
+3. Regenerate types with `make proto` after editing a `.proto` (never hand‑edit generated code).
+4. Run `make ci-local` before pushing.
 
 ---
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE).
+[Apache 2.0](LICENSE). No catches — every differentiator above lives in this repo.
