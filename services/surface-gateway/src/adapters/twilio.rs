@@ -61,12 +61,13 @@ impl TwilioAdapter {
         // Parse form-encoded body into sorted key-value pairs.
         let body_str = std::str::from_utf8(body)
             .map_err(|_| AppError::BadRequest("invalid UTF-8 body".to_string()))?;
-        let mut params: Vec<(String, String)> =
-            url::form_urlencoded::parse(body_str.as_bytes())
-                .map(|(k, v): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>)| {
+        let mut params: Vec<(String, String)> = url::form_urlencoded::parse(body_str.as_bytes())
+            .map(
+                |(k, v): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>)| {
                     (k.to_string(), v.to_string())
-                })
-                .collect();
+                },
+            )
+            .collect();
         params.sort_by(|a, b| a.0.cmp(&b.0));
 
         // Build the data string: URL + sorted params concatenated.
@@ -123,9 +124,11 @@ impl SurfaceAdapter for TwilioAdapter {
 
         let params: std::collections::HashMap<String, String> =
             url::form_urlencoded::parse(body_str.as_bytes())
-                .map(|(k, v): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>)| {
-                    (k.to_string(), v.to_string())
-                })
+                .map(
+                    |(k, v): (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>)| {
+                        (k.to_string(), v.to_string())
+                    },
+                )
                 .collect();
 
         // Check if this is an SMS or voice event.
@@ -142,11 +145,7 @@ impl SurfaceAdapter for TwilioAdapter {
         Ok(vec![])
     }
 
-    async fn send_message(
-        &self,
-        session: &str,
-        msg: &SurfaceMessage,
-    ) -> Result<String, AppError> {
+    async fn send_message(&self, session: &str, msg: &SurfaceMessage) -> Result<String, AppError> {
         // session format: "twilio:{phone_number}"
         let to = session.strip_prefix("twilio:").unwrap_or(session);
 
@@ -158,7 +157,7 @@ impl SurfaceAdapter for TwilioAdapter {
 
         let resp = self
             .http
-            .post(&self.sms_api_url())
+            .post(self.sms_api_url())
             .basic_auth(&self.account_sid, Some(&self.auth_token))
             .form(&form)
             .send()
@@ -177,10 +176,7 @@ impl SurfaceAdapter for TwilioAdapter {
             .await
             .map_err(|e| AppError::Upstream(format!("twilio api: {e}")))?;
 
-        let sid = result["sid"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
+        let sid = result["sid"].as_str().unwrap_or("unknown").to_string();
 
         tracing::info!(to = %to, sid = %sid, "sent twilio sms");
         Ok(sid)
@@ -358,4 +354,247 @@ pub fn voice_twiml_say(text: &str) -> String {
     <Say voice="alice">{text}</Say>
 </Response>"#
     )
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_adapter() -> TwilioAdapter {
+        TwilioAdapter::new(
+            "AC_test_sid".to_string(),
+            "auth_token_secret".to_string(),
+            "+15005550006".to_string(),
+        )
+    }
+
+    // ---- verify_twilio_signature ----
+
+    #[test]
+    fn verify_signature_valid() {
+        let adapter = make_adapter();
+        let url = "https://example.com/webhooks/twilio";
+        // Sorted params: Body=hello, From=+1234, To=+5678
+        // data = url + "Body" + "hello" + "From" + "+1234" + "To" + "+5678"
+        let params_sorted = [("Body", "hello"), ("From", "+1234"), ("To", "+5678")];
+        let mut data = url.to_string();
+        for (k, v) in &params_sorted {
+            data.push_str(k);
+            data.push_str(v);
+        }
+        let mut mac = HmacSha1::new_from_slice(adapter.auth_token.as_bytes()).unwrap();
+        mac.update(data.as_bytes());
+        let expected_sig = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            mac.finalize().into_bytes(),
+        );
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-twilio-signature", expected_sig.parse().unwrap());
+
+        // body is the URL-encoded form with the same params (url::form_urlencoded will parse them)
+        let body = "Body=hello&From=%2B1234&To=%2B5678";
+        let result = adapter.verify_twilio_signature(&headers, body.as_bytes(), url);
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    #[test]
+    fn verify_signature_wrong_sig_returns_false() {
+        let adapter = make_adapter();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-twilio-signature", "wrongsig==".parse().unwrap());
+        let result = adapter.verify_twilio_signature(
+            &headers,
+            b"Body=hi",
+            "https://example.com/webhooks/twilio",
+        );
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[test]
+    fn verify_signature_missing_header_returns_err() {
+        let adapter = make_adapter();
+        let headers = HeaderMap::new();
+        let result = adapter.verify_twilio_signature(
+            &headers,
+            b"Body=hi",
+            "https://example.com/webhooks/twilio",
+        );
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::WebhookVerification(_)
+        ));
+    }
+
+    // ---- parse_sms ----
+
+    fn sms_params(extra: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        let mut m: std::collections::HashMap<String, String> = [
+            ("From", "+15125551234"),
+            ("To", "+15005550006"),
+            ("SmsSid", "SM123"),
+            ("NumMedia", "0"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        for (k, v) in extra {
+            m.insert(k.to_string(), v.to_string());
+        }
+        m
+    }
+
+    #[test]
+    fn parse_sms_plain_message() {
+        let adapter = make_adapter();
+        let params = sms_params(&[]);
+        let events = adapter.parse_sms(&params, "Hello world").unwrap();
+        assert_eq!(events.len(), 1);
+        let ev = &events[0];
+        assert_eq!(ev.id, "SM123");
+        assert!(matches!(&ev.kind, EventKind::Message { text, attachments }
+            if text == "Hello world" && attachments.is_empty()));
+    }
+
+    #[test]
+    fn parse_sms_approve_uppercase() {
+        let adapter = make_adapter();
+        let params = sms_params(&[]);
+        let events = adapter.parse_sms(&params, "APPROVE req-42").unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0].kind, EventKind::ApprovalResponse {
+            request_id, approved
+        } if request_id == "req-42" && *approved));
+    }
+
+    #[test]
+    fn parse_sms_approve_lowercase() {
+        let adapter = make_adapter();
+        let params = sms_params(&[]);
+        let events = adapter.parse_sms(&params, "approve req-7").unwrap();
+        assert!(
+            matches!(&events[0].kind, EventKind::ApprovalResponse { approved, .. } if *approved)
+        );
+    }
+
+    #[test]
+    fn parse_sms_deny_uppercase() {
+        let adapter = make_adapter();
+        let params = sms_params(&[]);
+        let events = adapter.parse_sms(&params, "DENY req-99").unwrap();
+        assert!(matches!(&events[0].kind, EventKind::ApprovalResponse {
+            request_id, approved
+        } if request_id == "req-99" && !*approved));
+    }
+
+    #[test]
+    fn parse_sms_deny_lowercase() {
+        let adapter = make_adapter();
+        let params = sms_params(&[]);
+        let events = adapter.parse_sms(&params, "deny req-5  ").unwrap();
+        assert!(
+            matches!(&events[0].kind, EventKind::ApprovalResponse { approved, .. } if !*approved)
+        );
+    }
+
+    #[test]
+    fn parse_sms_with_media_attachments() {
+        let adapter = make_adapter();
+        let params = sms_params(&[
+            ("NumMedia", "2"),
+            ("MediaUrl0", "https://example.com/img.jpg"),
+            ("MediaContentType0", "image/jpeg"),
+            ("MediaUrl1", "https://example.com/doc.pdf"),
+            ("MediaContentType1", "application/pdf"),
+        ]);
+        let events = adapter.parse_sms(&params, "picture").unwrap();
+        let EventKind::Message { attachments, .. } = &events[0].kind else {
+            panic!("expected Message kind");
+        };
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments[0].content_type, "image/jpeg");
+        assert_eq!(attachments[1].content_type, "application/pdf");
+    }
+
+    #[test]
+    fn parse_sms_uses_message_sid_fallback() {
+        let adapter = make_adapter();
+        let mut params = sms_params(&[("MessageSid", "MSG_FALLBACK")]);
+        params.remove("SmsSid");
+        let events = adapter.parse_sms(&params, "hi").unwrap();
+        assert_eq!(events[0].id, "MSG_FALLBACK");
+    }
+
+    // ---- parse_voice_event ----
+
+    fn voice_params(extra: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        let mut m: std::collections::HashMap<String, String> = [
+            ("CallSid", "CA_123"),
+            ("From", "+15125551234"),
+            ("To", "+15005550006"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        for (k, v) in extra {
+            m.insert(k.to_string(), v.to_string());
+        }
+        m
+    }
+
+    #[test]
+    fn parse_voice_ringing_emits_command() {
+        let adapter = make_adapter();
+        let params = voice_params(&[("CallStatus", "ringing")]);
+        let events = adapter.parse_voice_event(&params).unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0].kind, EventKind::Command { name, .. } if name == "voice_call"));
+        assert_eq!(events[0].session_id, "CA_123");
+    }
+
+    #[test]
+    fn parse_voice_non_ringing_produces_no_events() {
+        let adapter = make_adapter();
+        let params = voice_params(&[("CallStatus", "completed")]);
+        let events = adapter.parse_voice_event(&params).unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn parse_voice_transcription_emits_message() {
+        let adapter = make_adapter();
+        let params = voice_params(&[
+            ("TranscriptionText", "Book me a flight"),
+            ("TranscriptionSid", "TR_001"),
+        ]);
+        let events = adapter.parse_voice_event(&params).unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0].kind, EventKind::Message { text, .. } if text == "Book me a flight")
+        );
+    }
+
+    // ---- TwiML helpers ----
+
+    #[test]
+    fn voice_twiml_greeting_is_valid_xml() {
+        let xml = voice_twiml_greeting();
+        assert!(xml.contains("<Response>"));
+        assert!(xml.contains("<Say"));
+        assert!(xml.contains("<Record"));
+    }
+
+    #[test]
+    fn voice_twiml_say_embeds_text() {
+        let xml = voice_twiml_say("Hello, world!");
+        assert!(xml.contains("Hello, world!"));
+        assert!(xml.contains("<Say voice=\"alice\">"));
+    }
 }

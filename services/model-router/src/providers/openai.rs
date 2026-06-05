@@ -584,8 +584,8 @@ impl Provider for OpenAiProvider {
                                 ));
                             }
 
-                            if let Some(ref tool_calls) = choice.delta.tool_calls {
-                                if let Some(tc) = tool_calls.first() {
+                            if let Some(ref tool_calls) = choice.delta.tool_calls
+                                && let Some(tc) = tool_calls.first() {
                                     let proto_chunk = CompleteChunk {
                                         id: chunk.id.clone(),
                                         model_used: chunk.model.clone(),
@@ -613,7 +613,6 @@ impl Provider for OpenAiProvider {
                                         (byte_stream, buffer, provider_name, model_id),
                                     ));
                                 }
-                            }
 
                             if let Some(ref finish_reason) = choice.finish_reason {
                                 // If usage info is present in the final chunk, emit it first.

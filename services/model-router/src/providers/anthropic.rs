@@ -216,6 +216,7 @@ enum AnthropicStreamContentBlock {
 
 #[derive(Deserialize)]
 #[serde(tag = "type")]
+#[allow(clippy::enum_variant_names)]
 enum AnthropicStreamDelta {
     #[serde(rename = "text_delta")]
     TextDelta { text: String },
@@ -663,8 +664,8 @@ impl Provider for AnthropicProvider {
                                 continue;
                             }
                             "message_delta" => {
-                                if let Some(ref delta) = event.delta {
-                                    if let AnthropicStreamDelta::MessageDelta {
+                                if let Some(ref delta) = event.delta
+                                    && let AnthropicStreamDelta::MessageDelta {
                                         stop_reason,
                                         usage,
                                     } = delta
@@ -706,7 +707,6 @@ impl Provider for AnthropicProvider {
                                             (byte_stream, state),
                                         ));
                                     }
-                                }
                                 continue;
                             }
                             "message_stop" => {

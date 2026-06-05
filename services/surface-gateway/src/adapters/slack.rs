@@ -117,9 +117,9 @@ impl SurfaceAdapter for SlackAdapter {
             })?;
 
         // Guard against replay attacks: reject timestamps older than 5 minutes.
-        let ts: i64 = timestamp.parse().map_err(|_| {
-            AppError::WebhookVerification("invalid timestamp".to_string())
-        })?;
+        let ts: i64 = timestamp
+            .parse()
+            .map_err(|_| AppError::WebhookVerification("invalid timestamp".to_string()))?;
         let now = Utc::now().timestamp();
         if (now - ts).unsigned_abs() > 300 {
             return Err(AppError::WebhookVerification(
@@ -165,11 +165,7 @@ impl SurfaceAdapter for SlackAdapter {
         }
     }
 
-    async fn send_message(
-        &self,
-        session: &str,
-        msg: &SurfaceMessage,
-    ) -> Result<String, AppError> {
+    async fn send_message(&self, session: &str, msg: &SurfaceMessage) -> Result<String, AppError> {
         // session format for Slack: "slack:{channel_id}" or "slack:{user_id}"
         let channel = session.strip_prefix("slack:").unwrap_or(session);
 
@@ -200,10 +196,7 @@ impl SurfaceAdapter for SlackAdapter {
             return Err(AppError::Upstream(format!("slack api error: {error}")));
         }
 
-        let ts = result["ts"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
+        let ts = result["ts"].as_str().unwrap_or("unknown").to_string();
 
         tracing::info!(channel = %channel, ts = %ts, "sent slack message");
         Ok(ts)
@@ -304,10 +297,7 @@ impl SlackAdapter {
             return Ok(vec![]);
         }
 
-        let team_id = payload["team_id"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
+        let team_id = payload["team_id"].as_str().unwrap_or("unknown").to_string();
         let user_id = event["user"].as_str().unwrap_or("unknown").to_string();
         let channel = event["channel"].as_str().unwrap_or("unknown").to_string();
         let text = event["text"].as_str().unwrap_or("").to_string();
@@ -355,10 +345,7 @@ impl SlackAdapter {
             .unwrap_or("unknown")
             .to_string();
 
-        let actions = payload["actions"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let actions = payload["actions"].as_array().cloned().unwrap_or_default();
 
         let mut events = Vec::new();
         for action in &actions {
@@ -412,10 +399,7 @@ impl SlackAdapter {
                     .as_str()
                     .or_else(|| f["url_private"].as_str())?;
                 Some(Attachment {
-                    filename: f["name"]
-                        .as_str()
-                        .unwrap_or("unknown")
-                        .to_string(),
+                    filename: f["name"].as_str().unwrap_or("unknown").to_string(),
                     content_type: f["mimetype"]
                         .as_str()
                         .unwrap_or("application/octet-stream")
@@ -425,5 +409,318 @@ impl SlackAdapter {
                 })
             })
             .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_adapter() -> SlackAdapter {
+        SlackAdapter::new(
+            "signing-secret-abc".to_string(),
+            "xoxb-bot-token".to_string(),
+        )
+    }
+
+    // ---- verify_webhook (HMAC-SHA256) ----
+
+    fn build_slack_headers(secret: &str, timestamp: &str, body: &[u8]) -> HeaderMap {
+        let sig_basestring = format!("v0:{timestamp}:{}", String::from_utf8_lossy(body));
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(sig_basestring.as_bytes());
+        let sig = format!("v0={}", hex::encode(mac.finalize().into_bytes()));
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-slack-request-timestamp", timestamp.parse().unwrap());
+        headers.insert("x-slack-signature", sig.parse().unwrap());
+        headers
+    }
+
+    #[tokio::test]
+    async fn verify_webhook_valid_signature() {
+        let adapter = make_adapter();
+        let now = chrono::Utc::now().timestamp().to_string();
+        let body = b"{\"type\":\"event_callback\"}";
+        let headers = build_slack_headers(&adapter.signing_secret, &now, body);
+        let result = adapter.verify_webhook(&headers, body).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn verify_webhook_wrong_signature_returns_false() {
+        let adapter = make_adapter();
+        let now = chrono::Utc::now().timestamp().to_string();
+        let body = b"{\"type\":\"event_callback\"}";
+        let mut headers = build_slack_headers(&adapter.signing_secret, &now, body);
+        // overwrite with a bad sig
+        headers.insert("x-slack-signature", "v0=badhex".parse().unwrap());
+        let result = adapter.verify_webhook(&headers, body).await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn verify_webhook_missing_timestamp_returns_err() {
+        let adapter = make_adapter();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-slack-signature", "v0=abc".parse().unwrap());
+        // no x-slack-request-timestamp
+        let result = adapter.verify_webhook(&headers, b"body").await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::WebhookVerification(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn verify_webhook_missing_signature_returns_err() {
+        let adapter = make_adapter();
+        let now = chrono::Utc::now().timestamp().to_string();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-slack-request-timestamp", now.parse().unwrap());
+        // no x-slack-signature
+        let result = adapter.verify_webhook(&headers, b"body").await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::WebhookVerification(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn verify_webhook_old_timestamp_rejected() {
+        let adapter = make_adapter();
+        let stale = "1000000"; // long in the past
+        let body = b"{}";
+        let headers = build_slack_headers(&adapter.signing_secret, stale, body);
+        let result = adapter.verify_webhook(&headers, body).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::WebhookVerification(_)
+        ));
+    }
+
+    // ---- parse_event_callback ----
+
+    fn make_event_callback(event_type: &str, text: &str, user: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": "event_callback",
+            "team_id": "T123",
+            "event": {
+                "type": event_type,
+                "user": user,
+                "text": text,
+                "channel": "C_GENERAL",
+                "event_ts": "1234567890.123"
+            }
+        })
+    }
+
+    #[test]
+    fn parse_event_callback_message() {
+        let adapter = make_adapter();
+        let payload = make_event_callback("message", "Hello!", "U_BOB");
+        let events = adapter.parse_event_callback(&payload).unwrap();
+        assert_eq!(events.len(), 1);
+        let ev = &events[0];
+        assert_eq!(ev.tenant_id, "T123");
+        assert_eq!(ev.user_id, "U_BOB");
+        assert_eq!(ev.session_id, "C_GENERAL");
+        assert!(matches!(&ev.kind, EventKind::Message { text, .. } if text == "Hello!"));
+    }
+
+    #[test]
+    fn parse_event_callback_app_mention() {
+        let adapter = make_adapter();
+        let payload = make_event_callback("app_mention", "hey bot", "U_ALICE");
+        let events = adapter.parse_event_callback(&payload).unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0].kind, EventKind::Message { .. }));
+    }
+
+    #[test]
+    fn parse_event_callback_bot_message_ignored() {
+        let adapter = make_adapter();
+        let payload = serde_json::json!({
+            "type": "event_callback",
+            "team_id": "T123",
+            "event": {
+                "type": "message",
+                "bot_id": "B_SOME_BOT",
+                "text": "I am a bot",
+                "channel": "C_GENERAL",
+                "event_ts": "111"
+            }
+        });
+        let events = adapter.parse_event_callback(&payload).unwrap();
+        assert!(events.is_empty(), "bot messages must be ignored");
+    }
+
+    #[test]
+    fn parse_event_callback_bot_subtype_ignored() {
+        let adapter = make_adapter();
+        let payload = serde_json::json!({
+            "type": "event_callback",
+            "team_id": "T123",
+            "event": {
+                "type": "message",
+                "subtype": "bot_message",
+                "text": "bot says hi",
+                "channel": "C_X",
+                "event_ts": "222"
+            }
+        });
+        let events = adapter.parse_event_callback(&payload).unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn parse_event_callback_unknown_type_ignored() {
+        let adapter = make_adapter();
+        let payload = serde_json::json!({
+            "type": "event_callback",
+            "team_id": "T123",
+            "event": {
+                "type": "reaction_added",
+                "user": "U1",
+                "channel": "C1",
+                "event_ts": "333"
+            }
+        });
+        let events = adapter.parse_event_callback(&payload).unwrap();
+        assert!(events.is_empty());
+    }
+
+    // ---- parse_block_actions ----
+
+    #[test]
+    fn parse_block_actions_approve() {
+        let adapter = make_adapter();
+        let payload = serde_json::json!({
+            "type": "block_actions",
+            "team": { "id": "T_TEAM" },
+            "user": { "id": "U_USER" },
+            "channel": { "id": "C_CHAN" },
+            "actions": [
+                {
+                    "action_id": "approve_btn",
+                    "value": "approve:req-55"
+                }
+            ]
+        });
+        let events = adapter.parse_block_actions(&payload).unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0].kind, EventKind::ApprovalResponse {
+            request_id, approved
+        } if request_id == "req-55" && *approved));
+        assert_eq!(events[0].tenant_id, "T_TEAM");
+        assert_eq!(events[0].user_id, "U_USER");
+    }
+
+    #[test]
+    fn parse_block_actions_deny() {
+        let adapter = make_adapter();
+        let payload = serde_json::json!({
+            "type": "block_actions",
+            "team": { "id": "T" },
+            "user": { "id": "U" },
+            "channel": { "id": "C" },
+            "actions": [
+                { "action_id": "deny_btn", "value": "deny:req-77" }
+            ]
+        });
+        let events = adapter.parse_block_actions(&payload).unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0].kind, EventKind::ApprovalResponse {
+            request_id, approved
+        } if request_id == "req-77" && !*approved));
+    }
+
+    #[test]
+    fn parse_block_actions_unrecognized_action_ignored() {
+        let adapter = make_adapter();
+        let payload = serde_json::json!({
+            "type": "block_actions",
+            "team": { "id": "T" },
+            "user": { "id": "U" },
+            "channel": { "id": "C" },
+            "actions": [
+                { "action_id": "some_other_btn", "value": "other_value" }
+            ]
+        });
+        let events = adapter.parse_block_actions(&payload).unwrap();
+        assert!(events.is_empty());
+    }
+
+    // ---- parse_slack_files ----
+
+    #[test]
+    fn parse_slack_files_empty_array() {
+        let adapter = make_adapter();
+        let event = serde_json::json!({ "files": [] });
+        assert!(adapter.parse_slack_files(&event).is_empty());
+    }
+
+    #[test]
+    fn parse_slack_files_no_files_key() {
+        let adapter = make_adapter();
+        let event = serde_json::json!({});
+        assert!(adapter.parse_slack_files(&event).is_empty());
+    }
+
+    #[test]
+    fn parse_slack_files_extracts_url_private_download() {
+        let adapter = make_adapter();
+        let event = serde_json::json!({
+            "files": [{
+                "name": "report.pdf",
+                "mimetype": "application/pdf",
+                "url_private_download": "https://files.slack.com/report.pdf",
+                "size": 12345
+            }]
+        });
+        let files = adapter.parse_slack_files(&event);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].filename, "report.pdf");
+        assert_eq!(files[0].content_type, "application/pdf");
+        assert_eq!(files[0].url, "https://files.slack.com/report.pdf");
+        assert_eq!(files[0].size_bytes, Some(12345));
+    }
+
+    #[test]
+    fn parse_slack_files_falls_back_to_url_private() {
+        let adapter = make_adapter();
+        let event = serde_json::json!({
+            "files": [{
+                "name": "image.png",
+                "mimetype": "image/png",
+                "url_private": "https://files.slack.com/image.png"
+            }]
+        });
+        let files = adapter.parse_slack_files(&event);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].url, "https://files.slack.com/image.png");
+    }
+
+    #[test]
+    fn parse_slack_files_skips_entries_without_url() {
+        let adapter = make_adapter();
+        let event = serde_json::json!({
+            "files": [
+                { "name": "no-url.txt" },
+                { "name": "has-url.txt", "url_private_download": "https://x.com/f", "mimetype": "text/plain" }
+            ]
+        });
+        let files = adapter.parse_slack_files(&event);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].filename, "has-url.txt");
     }
 }

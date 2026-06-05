@@ -12,16 +12,16 @@
 // MUST tolerate the manager being unreachable: failures roll into an
 // exponential backoff reconnect loop. The workload keeps running.
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use tokio::sync::mpsc::Sender as MpscSender;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc::Sender as MpscSender;
 
 use crate::egress::EgressPolicy;
 use crate::manager_client::ManagerClient;
-use crate::proto::{now_unix_ms, HeartbeatRequest, ResourceUsage};
+use crate::proto::{HeartbeatRequest, ResourceUsage, now_unix_ms};
 use crate::signals::ControlSignal;
 use crate::supervisor::SupervisorHandles;
 

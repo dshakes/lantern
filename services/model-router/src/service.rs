@@ -40,17 +40,16 @@ impl ModelService for ModelServiceImpl {
         request: tonic::Request<CompleteRequest>,
     ) -> Result<tonic::Response<CompleteResponse>, tonic::Status> {
         let req = request.into_inner();
-        tracing::Span::current().record("tenant_id", &req.tenant_id.as_str());
-        tracing::Span::current().record("run_id", &req.run_id.as_str());
-        tracing::Span::current().record("step_id", &req.step_id.as_str());
+        tracing::Span::current().record("tenant_id", req.tenant_id.as_str());
+        tracing::Span::current().record("run_id", req.run_id.as_str());
+        tracing::Span::current().record("step_id", req.step_id.as_str());
 
         // Check cache first.
-        if let Some(ref cache) = self.cache {
-            if let Some(cached) = cache.get(&req).await {
+        if let Some(ref cache) = self.cache
+            && let Some(cached) = cache.get(&req).await {
                 info!("returning cached response");
                 return Ok(tonic::Response::new(cached));
             }
-        }
 
         let resp = self.router.complete(&req).await.map_err(tonic::Status::from)?;
 
@@ -80,9 +79,9 @@ impl ModelService for ModelServiceImpl {
         request: tonic::Request<CompleteRequest>,
     ) -> Result<tonic::Response<Self::CompleteStreamStream>, tonic::Status> {
         let req = request.into_inner();
-        tracing::Span::current().record("tenant_id", &req.tenant_id.as_str());
-        tracing::Span::current().record("run_id", &req.run_id.as_str());
-        tracing::Span::current().record("step_id", &req.step_id.as_str());
+        tracing::Span::current().record("tenant_id", req.tenant_id.as_str());
+        tracing::Span::current().record("run_id", req.run_id.as_str());
+        tracing::Span::current().record("step_id", req.step_id.as_str());
 
         let (_model_used, _tier, mut provider_stream) = self
             .router
@@ -119,7 +118,7 @@ impl ModelService for ModelServiceImpl {
         request: tonic::Request<EmbedRequest>,
     ) -> Result<tonic::Response<EmbedResponse>, tonic::Status> {
         let req = request.into_inner();
-        tracing::Span::current().record("tenant_id", &req.tenant_id.as_str());
+        tracing::Span::current().record("tenant_id", req.tenant_id.as_str());
 
         let resp = self.router.embed(&req).await.map_err(tonic::Status::from)?;
         Ok(tonic::Response::new(resp))
