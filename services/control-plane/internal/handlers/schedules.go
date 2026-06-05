@@ -262,9 +262,9 @@ func (h *RESTHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":        id,
-		"cronExpr":  cronExpr,
-		"enabled":   enabled,
+		"id":         id,
+		"cronExpr":   cronExpr,
+		"enabled":    enabled,
 		"nextFireAt": nextFire,
 	})
 }

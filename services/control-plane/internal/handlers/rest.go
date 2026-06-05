@@ -613,10 +613,43 @@ func (h *RESTHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 
 // ---------- CORS middleware ----------
 
+// isPublicCORSPath reports whether the request path is an explicitly public
+// endpoint that should carry Access-Control-Allow-Origin: * so that
+// unauthenticated browser clients (e.g. the public /proof verifier page,
+// external receipt auditors, and the well-known discovery documents) can
+// reach it without credentials.
+func isPublicCORSPath(path string) bool {
+	return strings.HasPrefix(path, "/.well-known/") ||
+		path == "/proof" ||
+		path == "/v1/runs/receipts/verify"
+}
+
 // CORSMiddleware wraps an http.Handler to add CORS headers for browser access.
+//
+// Public endpoints (/.well-known/*, /proof, receipt verify) emit
+// Access-Control-Allow-Origin: * so unauthenticated external clients can
+// reach them.
+//
+// All other routes reflect the request Origin only when it appears in the
+// allowlist built from LANTERN_CORS_ORIGINS (comma-separated; default
+// http://localhost:3001). This prevents credential-bearing cross-origin
+// requests from arbitrary origins in production.
 func CORSMiddleware(next http.Handler) http.Handler {
+	allowed := corsAllowedOrigins()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+
+		if isPublicCORSPath(r.URL.Path) {
+			// Public endpoints: allow any origin.
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else if origin != "" {
+			if _, ok := allowed[origin]; ok {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+			}
+			// Unknown origins get no ACAO header — browser will block the request.
+		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
 		w.Header().Set("Access-Control-Max-Age", "86400")
@@ -1694,7 +1727,7 @@ func (h *RESTHandler) autoCreateVersion(ctx context.Context, agentName string) {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	_, _ = tx.Exec(ctx, fmt.Sprintf("SET LOCAL app.tenant_id = '%s'", tenantID))
+	_, _ = tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID)
 
 	// Get the agent ID.
 	var agentID string

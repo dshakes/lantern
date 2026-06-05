@@ -118,9 +118,9 @@ func (h *ReceiptHandler) VerifyReceipt(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Algorithm != "HMAC-SHA256" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error":     "unsupported algorithm",
-			"expected":  "HMAC-SHA256",
-			"received":  req.Algorithm,
+			"error":    "unsupported algorithm",
+			"expected": "HMAC-SHA256",
+			"received": req.Algorithm,
 		})
 		return
 	}
@@ -261,10 +261,14 @@ func signPayload(p receiptPayload) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// getReceiptSecret returns the HMAC signing secret for run receipts.
+//
+// In dev (LANTERN_ENV unset) it falls back to devReceiptSecret so local
+// verification works without configuration. In prod the secret must be set
+// explicitly; main.go enforces this at startup before any traffic is served.
 func getReceiptSecret() string {
 	if v := os.Getenv("LANTERN_RECEIPT_SECRET"); v != "" {
 		return v
 	}
-	// Dev fallback — DO NOT rely on this in production.
-	return "lantern-dev-receipt-secret-do-not-use-in-production"
+	return devReceiptSecret
 }

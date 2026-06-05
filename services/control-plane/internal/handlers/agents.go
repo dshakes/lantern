@@ -34,8 +34,10 @@ func (s *AgentService) logger() *zap.Logger {
 }
 
 // setRLSTenantID sets the session variable used by Postgres RLS policies.
+// The tenant ID is passed as a bound parameter to set_config to prevent
+// GUC injection; true means the setting is transaction-local (SET LOCAL).
 func setRLSTenantID(ctx context.Context, tx pgx.Tx, tenantID string) error {
-	_, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL app.tenant_id = '%s'", tenantID))
+	_, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID)
 	return err
 }
 
@@ -94,12 +96,12 @@ func (s *AgentService) CreateAgent(ctx context.Context, req *lanternv1.CreateAge
 	)
 
 	return &lanternv1.Agent{
-		Id:        id,
-		TenantId:  tenantID,
-		Name:      req.GetName(),
+		Id:          id,
+		TenantId:    tenantID,
+		Name:        req.GetName(),
 		Description: req.GetDescription(),
-		Labels:    req.GetLabels(),
-		CreatedAt: timestamppb.New(createdAt),
+		Labels:      req.GetLabels(),
+		CreatedAt:   timestamppb.New(createdAt),
 	}, nil
 }
 
@@ -378,4 +380,3 @@ func (s *AgentService) ListAgentVersions(ctx context.Context, req *lanternv1.Lis
 func (s *AgentService) PromoteAgentVersion(ctx context.Context, req *lanternv1.PromoteAgentVersionRequest) (*lanternv1.Agent, error) {
 	return nil, status.Error(codes.Unimplemented, "PromoteAgentVersion not yet implemented")
 }
-

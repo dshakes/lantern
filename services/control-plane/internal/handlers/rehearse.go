@@ -56,14 +56,14 @@ type rehearseRequest struct {
 }
 
 type rehearseCase struct {
-	OriginalRunID      string          `json:"originalRunId"`
-	OriginalAgentVer   string          `json:"originalAgentVersion,omitempty"`
-	OriginalStatus     string          `json:"originalStatus"`
-	OriginalScore      *int            `json:"originalScore,omitempty"`
-	Input              json.RawMessage `json:"input"`
-	ExpectedOutput     json.RawMessage `json:"expectedOutput,omitempty"`
-	OriginalCostUsd    float64         `json:"originalCostUsd"`
-	OriginalAt         time.Time       `json:"originalAt"`
+	OriginalRunID    string          `json:"originalRunId"`
+	OriginalAgentVer string          `json:"originalAgentVersion,omitempty"`
+	OriginalStatus   string          `json:"originalStatus"`
+	OriginalScore    *int            `json:"originalScore,omitempty"`
+	Input            json.RawMessage `json:"input"`
+	ExpectedOutput   json.RawMessage `json:"expectedOutput,omitempty"`
+	OriginalCostUsd  float64         `json:"originalCostUsd"`
+	OriginalAt       time.Time       `json:"originalAt"`
 }
 
 type rehearseResponse struct {

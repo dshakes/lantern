@@ -478,13 +478,13 @@ func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) 
 	publicURL := "http://localhost:8080/v1/agents/" + name + "/a2a/invoke"
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id":           deployID,
-		"tenantId":     tenantID,
-		"agentName":    name,
-		"status":       "live",
-		"url":          publicURL,
-		"environment":  "cloud",
-		"deployedAt":   createdAt,
+		"id":          deployID,
+		"tenantId":    tenantID,
+		"agentName":   name,
+		"status":      "live",
+		"url":         publicURL,
+		"environment": "cloud",
+		"deployedAt":  createdAt,
 	})
 }
 

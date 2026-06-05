@@ -29,7 +29,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"time"
 
 	"go.uber.org/zap"
@@ -69,10 +68,7 @@ func signInvocation(
 	invocationID, buyerTenant, sellerTenant, agentName, runID string,
 	costUsd float64, issuedAt time.Time,
 ) (string, error) {
-	secret := os.Getenv("LANTERN_RECEIPT_SECRET")
-	if secret == "" {
-		secret = "lantern-dev-receipt-secret"
-	}
+	secret := getReceiptSecret()
 	canonical := fmt.Sprintf(
 		"%s|%s|%s|%s|%s|%.6f|%s",
 		invocationID, buyerTenant, sellerTenant, agentName, runID,
@@ -221,16 +217,16 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	// were signed so any third-party verifier can recompute the HMAC
 	// using only the receipt JSON + the published key fingerprint.
 	receipt := map[string]any{
-		"invocationId":  invocationID,
-		"buyerTenant":   buyerTenant,
-		"sellerTenant":  sellerTenant,
-		"marketplace":   slug,
-		"agentName":     agentName,
-		"runId":         runID,
-		"costUsd":       costUsd,
-		"issuedAt":      issuedAt.Format(time.RFC3339Nano),
-		"signature":     signature,
-		"algorithm":     "HMAC-SHA256",
+		"invocationId": invocationID,
+		"buyerTenant":  buyerTenant,
+		"sellerTenant": sellerTenant,
+		"marketplace":  slug,
+		"agentName":    agentName,
+		"runId":        runID,
+		"costUsd":      costUsd,
+		"issuedAt":     issuedAt.Format(time.RFC3339Nano),
+		"signature":    signature,
+		"algorithm":    "HMAC-SHA256",
 	}
 	receiptJSON, _ := json.Marshal(receipt)
 
@@ -311,17 +307,17 @@ func (h *MarketplaceHandler) ListInvocations(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		entry := map[string]any{
-			"id":            id,
-			"buyerTenantId": buyer,
-			"sellerTenantId": seller,
+			"id":              id,
+			"buyerTenantId":   buyer,
+			"sellerTenantId":  seller,
 			"marketplaceSlug": slug,
-			"agentName":     agent,
-			"status":        status,
-			"costUsd":       costUsd,
-			"signature":     signature,
-			"errorMessage":  errMsg,
-			"createdAt":     createdAt,
-			"completedAt":   completedAt,
+			"agentName":       agent,
+			"status":          status,
+			"costUsd":         costUsd,
+			"signature":       signature,
+			"errorMessage":    errMsg,
+			"createdAt":       createdAt,
+			"completedAt":     completedAt,
 		}
 		if receiptStr != "" {
 			var r map[string]any

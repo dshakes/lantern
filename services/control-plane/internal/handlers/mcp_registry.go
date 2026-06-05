@@ -125,13 +125,13 @@ type attachRequest struct {
 }
 
 type attachmentDTO struct {
-	ServerSlug  string         `json:"serverSlug"`
-	ServerName  string         `json:"serverName"`
-	Category    string         `json:"category"`
-	Transport   string         `json:"transport"`
-	AuthType    string         `json:"authType"`
-	Config      map[string]any `json:"config"`
-	AttachedAt  string         `json:"attachedAt"`
+	ServerSlug string         `json:"serverSlug"`
+	ServerName string         `json:"serverName"`
+	Category   string         `json:"category"`
+	Transport  string         `json:"transport"`
+	AuthType   string         `json:"authType"`
+	Config     map[string]any `json:"config"`
+	AttachedAt string         `json:"attachedAt"`
 }
 
 // AttachToAgent handles POST /v1/agents/{name}/mcp-servers.

@@ -41,23 +41,23 @@ func (h *ExperimentHandler) logger() *zap.Logger { return h.srv.Logger.Named("ex
 // ---------- DTOs ----------
 
 type experimentDTO struct {
-	ID                string    `json:"id"`
-	AgentName         string    `json:"agentName"`
-	Name              string    `json:"name"`
-	VariantAVersion   string    `json:"variantAVersion"`
-	VariantBVersion   string    `json:"variantBVersion"`
-	TrafficSplitB     int       `json:"trafficSplitB"`
-	EvalSuiteID       string    `json:"evalSuiteId,omitempty"`
-	AutoPromote       bool      `json:"autoPromote"`
-	MinRunsToPromote  int       `json:"minRunsToPromote"`
-	Status            string    `json:"status"`
-	Winner            string    `json:"winner,omitempty"`
-	ARuns             int       `json:"aRuns"`
-	BRuns             int       `json:"bRuns"`
-	AScore            *float64  `json:"aScore,omitempty"`
-	BScore            *float64  `json:"bScore,omitempty"`
-	StartedAt         time.Time `json:"startedAt"`
-	ConcludedAt       *time.Time `json:"concludedAt,omitempty"`
+	ID               string     `json:"id"`
+	AgentName        string     `json:"agentName"`
+	Name             string     `json:"name"`
+	VariantAVersion  string     `json:"variantAVersion"`
+	VariantBVersion  string     `json:"variantBVersion"`
+	TrafficSplitB    int        `json:"trafficSplitB"`
+	EvalSuiteID      string     `json:"evalSuiteId,omitempty"`
+	AutoPromote      bool       `json:"autoPromote"`
+	MinRunsToPromote int        `json:"minRunsToPromote"`
+	Status           string     `json:"status"`
+	Winner           string     `json:"winner,omitempty"`
+	ARuns            int        `json:"aRuns"`
+	BRuns            int        `json:"bRuns"`
+	AScore           *float64   `json:"aScore,omitempty"`
+	BScore           *float64   `json:"bScore,omitempty"`
+	StartedAt        time.Time  `json:"startedAt"`
+	ConcludedAt      *time.Time `json:"concludedAt,omitempty"`
 }
 
 // Create handles POST /v1/experiments.

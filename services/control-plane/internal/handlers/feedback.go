@@ -38,7 +38,7 @@ func (h *FeedbackHandler) logger() *zap.Logger {
 // ---------- DTOs ----------
 
 type feedbackRequest struct {
-	Score           int    `json:"score"`           // 1..5; 1=thumbs-down, 5=thumbs-up
+	Score           int    `json:"score"` // 1..5; 1=thumbs-down, 5=thumbs-up
 	Comment         string `json:"comment,omitempty"`
 	PreferredOutput string `json:"preferredOutput,omitempty"`
 	Source          string `json:"source,omitempty"` // dashboard | sdk | surface
@@ -55,13 +55,13 @@ type feedbackRow struct {
 }
 
 type feedbackSummary struct {
-	AgentName      string  `json:"agentName"`
-	TotalFeedback  int     `json:"totalFeedback"`
-	AvgScore       float64 `json:"avgScore"`
-	ThumbsUp       int     `json:"thumbsUp"`   // score >= 4
-	ThumbsDown     int     `json:"thumbsDown"` // score <= 2
-	HasPreferred   int     `json:"runsWithPreferredOutput"`
-	Last7DaysAvg   float64 `json:"last7DaysAvgScore"`
+	AgentName     string  `json:"agentName"`
+	TotalFeedback int     `json:"totalFeedback"`
+	AvgScore      float64 `json:"avgScore"`
+	ThumbsUp      int     `json:"thumbsUp"`   // score >= 4
+	ThumbsDown    int     `json:"thumbsDown"` // score <= 2
+	HasPreferred  int     `json:"runsWithPreferredOutput"`
+	Last7DaysAvg  float64 `json:"last7DaysAvgScore"`
 }
 
 // ---------- Endpoints ----------

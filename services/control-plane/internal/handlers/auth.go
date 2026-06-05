@@ -841,10 +841,29 @@ func randomHex(n int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// GetJWTSecret returns the JWT secret from the environment, with a default for development.
+// GetJWTSecret returns the JWT secret from the environment.
+//
+// Behaviour by environment:
+//   - Dev (LANTERN_ENV unset): returns the well-known dev fallback so
+//     `make dev` works out of the box, but logs a WARN so developers
+//     notice. The warn is printed to stderr (no zap at call time).
+//   - Prod (LANTERN_ENV=prod/production/staging): returns "" when the
+//     secret is unset or equals the dev default, signalling to main.go
+//     that it must call logger.Fatal before serving any traffic.
+//
+// Callers in main.go should use CheckJWTSecret to enforce the prod guard.
 func GetJWTSecret() string {
-	if s := os.Getenv("JWT_SECRET"); s != "" {
+	s := os.Getenv("JWT_SECRET")
+	if s != "" && s != devJWTSecret {
 		return s
 	}
-	return "lantern-dev-jwt-secret-do-not-use-in-production"
+	if isProd() {
+		// Signal failure — main.go will Fatal on the empty return.
+		return ""
+	}
+	// Dev default: warn once on stderr so it's visible in local logs.
+	if s == "" {
+		os.Stderr.WriteString("[WARN] JWT_SECRET is unset — using insecure dev default; set JWT_SECRET in production\n")
+	}
+	return devJWTSecret
 }

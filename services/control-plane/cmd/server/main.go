@@ -26,6 +26,7 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/handlers"
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/scheduler"
+	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -34,6 +35,10 @@ func main() {
 
 	logger := mustInitLogger(cfg.LogLevel)
 	defer logger.Sync() //nolint:errcheck
+
+	// --- Startup security guards ---
+	// Fail closed in production; warn and continue in dev (LANTERN_ENV unset).
+	runStartupGuards(logger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
@@ -50,8 +55,16 @@ func main() {
 	}
 	logger.Info("connected to postgres")
 
-	// Run migrations for the spike (in production, use a proper migration tool).
-	if err := db.Migrate(ctx, pool); err != nil {
+	// Run migrations. seedDev=true injects the fixed dev tenant + admin account
+	// so `make dev` works without manual bootstrapping. In prod (LANTERN_ENV set)
+	// we skip those rows — a static-password seed is a backdoor.
+	seedDev := !handlers.IsProd()
+	if seedDev {
+		logger.Info("dev mode: seeding dev tenant + admin user (set LANTERN_ENV=prod to disable)")
+	} else {
+		logger.Info("prod mode: skipping dev seed — provision an admin account manually")
+	}
+	if err := db.Migrate(ctx, pool, seedDev); err != nil {
 		logger.Fatal("failed to run migrations", zap.Error(err))
 	}
 	logger.Info("migrations complete")
@@ -509,6 +522,51 @@ func main() {
 	logger.Info("HTTP server stopped")
 
 	logger.Info("control-plane shut down cleanly")
+}
+
+// runStartupGuards enforces fail-closed security checks before the server
+// starts accepting traffic.
+//
+// In production (LANTERN_ENV=prod/production/staging) any missing secret is
+// fatal — we refuse to boot rather than silently operate insecurely.
+// In dev (LANTERN_ENV unset) we WARN and continue so `make dev` still works
+// out-of-the-box with no env configuration.
+func runStartupGuards(logger *zap.Logger) {
+	prod := handlers.IsProd()
+
+	// C1 — JWT secret
+	jwtSecret := handlers.GetJWTSecret()
+	if jwtSecret == "" {
+		// GetJWTSecret returns "" only when isProd() and the secret is
+		// missing or is the well-known dev value.
+		logger.Fatal("JWT_SECRET is unset or is the dev default — set a strong random secret via JWT_SECRET")
+	}
+	if !prod {
+		// Dev warning already printed to stderr by GetJWTSecret(); nothing more needed.
+		_ = jwtSecret
+	}
+
+	// H1 — Receipt signing secret
+	receiptSecret := os.Getenv("LANTERN_RECEIPT_SECRET")
+	if prod && receiptSecret == "" {
+		logger.Fatal("LANTERN_RECEIPT_SECRET is unset — set a strong random secret to secure run receipts and marketplace invocation signatures")
+	}
+	if !prod && receiptSecret == "" {
+		logger.Warn("LANTERN_RECEIPT_SECRET is unset — using insecure dev default; set LANTERN_RECEIPT_SECRET in production")
+	}
+
+	// Secrets (connector keys / LLM API keys at rest)
+	encEnabled, encErr := secrets.EncryptionEnabled()
+	if encErr != nil {
+		// Malformed key — fatal in all environments.
+		logger.Fatal("LANTERN_CREDENTIAL_KEY is malformed", zap.Error(encErr))
+	}
+	if prod && !encEnabled {
+		logger.Fatal("LANTERN_CREDENTIAL_KEY is unset — connector tokens and LLM API keys would be stored in plaintext; set a 32-byte AES-256 key")
+	}
+	if !prod && !encEnabled {
+		logger.Warn("LANTERN_CREDENTIAL_KEY is unset — connector credentials stored in plaintext (acceptable in dev, required in production)")
+	}
 }
 
 // config holds values read from environment variables.

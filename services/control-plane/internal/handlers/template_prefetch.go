@@ -140,9 +140,9 @@ func prefetchMorningBrief(
 ) prefetchResult {
 	type sourceFetch struct {
 		Name   string
-		Header string                  // markdown section header
-		Run    func() (any, error)     // closure that calls the executor
-		Format func(any) string        // turns the raw result into markdown body
+		Header string              // markdown section header
+		Run    func() (any, error) // closure that calls the executor
+		Format func(any) string    // turns the raw result into markdown body
 	}
 
 	// Per-fetch timeout. One hung connector used to block the whole brief
@@ -376,6 +376,7 @@ func formatGmailMessages(raw any) string {
 //   - []any (post-JSON shape)
 //   - []map[string]any (raw Go shape from in-process connector calls)
 //   - any other typed slice — converted via reflection-free best-effort
+//
 // and returns it as []any. Returns nil if the input isn't a list shape.
 // This is necessary because Go's type assertion `x.([]any)` fails on a
 // `[]map[string]any` value even though every element is convertible to
@@ -399,8 +400,9 @@ func normalizeAnyList(v any) []any {
 
 // extractGmailFields returns (from, subject, snippet) from a Gmail
 // message map. Handles both shapes the connector produces:
-//   1. Flat (IMAP path): {"from": "...", "subject": "...", "snippet": "..."}
-//   2. Nested (OAuth API path): {"payload":{"headers":[{"name":"From","value":"..."}, ...]}, "snippet":"..."}
+//  1. Flat (IMAP path): {"from": "...", "subject": "...", "snippet": "..."}
+//  2. Nested (OAuth API path): {"payload":{"headers":[{"name":"From","value":"..."}, ...]}, "snippet":"..."}
+//
 // Without this, OAuth-mode runs printed bare message IDs and the
 // model concluded "nothing real to reply to".
 func extractGmailFields(m map[string]any) (from, subject, snippet string) {

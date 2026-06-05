@@ -49,8 +49,8 @@ func (h *TakeoverHandler) logger() *zap.Logger {
 // ---------- Request a takeover ----------
 
 type requestBody struct {
-	StepID  string `json:"stepId,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	StepID string `json:"stepId,omitempty"`
+	Reason string `json:"reason,omitempty"`
 	// TimeoutMinutes bounds how long the takeover can stay in 'pending'
 	// before being auto-expired. Default 30 min, max 24h.
 	TimeoutMinutes int `json:"timeoutMinutes,omitempty"`
@@ -234,17 +234,17 @@ func (h *TakeoverHandler) ListForRun(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		entry := map[string]any{
-			"id":             id,
-			"stepId":         stepID,
-			"status":         status,
-			"reason":         reason,
-			"notes":          notes,
-			"hasOffer":       hasOffer,
-			"hasAnswer":      hasAnswer,
-			"createdAt":      createdAt,
-			"grantedAt":      grantedAt,
-			"releasedAt":     releasedAt,
-			"expiresAt":      expiresAt,
+			"id":         id,
+			"stepId":     stepID,
+			"status":     status,
+			"reason":     reason,
+			"notes":      notes,
+			"hasOffer":   hasOffer,
+			"hasAnswer":  hasAnswer,
+			"createdAt":  createdAt,
+			"grantedAt":  grantedAt,
+			"releasedAt": releasedAt,
+			"expiresAt":  expiresAt,
 		}
 		out = append(out, entry)
 	}
