@@ -1,0 +1,6 @@
+# Pin the Rust toolchain for reproducible builds across dev, CI, and the
+# Docker images (services/*/Dockerfile use rust:1.93-slim). The codebase uses
+# edition 2024, which requires Rust >= 1.85.
+[toolchain]
+channel = "1.93"
+components = ["rustfmt", "clippy"]
