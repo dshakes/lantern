@@ -6,8 +6,8 @@ The `lantern` command-line tool for [Lantern](https://github.com/dshakes/lantern
 # macOS / Linux
 curl -fsSL https://get.lantern.run | sh
 
-# Or from source
-go install github.com/dshakes/lantern/packages/cli/lantern@latest
+# Or from source (the binary's main package lives at cmd/lantern)
+go install github.com/dshakes/lantern/packages/cli/cmd/lantern@latest
 ```
 
 ## Common commands

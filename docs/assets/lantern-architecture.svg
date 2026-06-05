@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="860" viewBox="0 0 1240 860" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Lantern architecture diagram">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8b5cf6"/>
+    </marker>
+    <style>
+      .t   { fill:#e2e8f0; }
+      .sub { fill:#94a3b8; font-size:11px; }
+      .h   { fill:#f8fafc; font-weight:700; }
+      .port{ fill:#cbd5e1; font-size:10.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .band{ fill:#cbd5e1; font-size:12px; font-weight:700; letter-spacing:.14em; }
+      .lang{ font-size:10px; font-weight:700; }
+    </style>
+  </defs>
+
+  <!-- backdrop -->
+  <rect x="0" y="0" width="1240" height="860" rx="16" fill="#0b1120"/>
+  <rect x="0" y="0" width="1240" height="860" rx="16" fill="none" stroke="#1e293b"/>
+
+  <!-- title -->
+  <text x="32" y="44" class="h" font-size="22">Lantern</text>
+  <text x="118" y="44" class="sub" font-size="13">production runtime for AI agents · control-plane / data-plane split</text>
+  <g transform="translate(1040,30)">
+    <rect x="0" y="0" width="14" height="14" rx="3" fill="#38bdf8"/><text x="20" y="11" class="sub">Go</text>
+    <rect x="58" y="0" width="14" height="14" rx="3" fill="#f59e0b"/><text x="78" y="11" class="sub">Rust</text>
+    <rect x="120" y="0" width="14" height="14" rx="3" fill="#8b5cf6"/><text x="140" y="11" class="sub">TS</text>
+  </g>
+
+  <!-- ============ BAND 1: CHANNELS & CLIENTS ============ -->
+  <text x="32" y="80" class="band">CHANNELS &amp; CLIENTS</text>
+  <g transform="translate(32,92)">
+    <!-- surfaces -->
+    <rect x="0" y="0" width="700" height="64" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="16" y="22" class="t" font-size="12.5" font-weight="700">Surfaces — agents talk where people already are</text>
+    <text x="16" y="44" class="sub">WhatsApp · iMessage · Slack · Discord · Telegram · Voice (Twilio / LiveKit) · Webchat · Email</text>
+    <!-- clients -->
+    <rect x="716" y="0" width="492" height="64" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="732" y="22" class="t" font-size="12.5" font-weight="700">Developer surface</text>
+    <text x="732" y="44" class="sub">SDKs: TypeScript · Python · Go   ·   <tspan font-family="ui-monospace,Menlo,monospace">lantern</tspan> CLI   ·   Next.js Dashboard</text>
+  </g>
+
+  <!-- arrows band1 -> edge -->
+  <line x1="380" y1="156" x2="380" y2="188" stroke="#64748b" marker-end="url(#arr)"/>
+  <line x1="960" y1="156" x2="960" y2="188" stroke="#64748b" marker-end="url(#arr)"/>
+
+  <!-- ============ BAND 2: EDGE ============ -->
+  <g transform="translate(32,190)">
+    <rect x="0" y="0" width="1176" height="62" rx="10" fill="#161e30" stroke="#3b2d63"/>
+    <rect x="16" y="11" width="560" height="40" rx="8" fill="#1c2336" stroke="#475569"/>
+    <text x="30" y="29" class="t" font-size="12.5" font-weight="700">surface-gateway <tspan class="lang" fill="#f59e0b">RUST</tspan></text>
+    <text x="30" y="45" class="sub">inbound webhooks · signature verify · normalize</text>
+    <text x="556" y="35" class="port" text-anchor="end">:8444</text>
+
+    <rect x="600" y="11" width="560" height="40" rx="8" fill="#1c2336" stroke="#475569"/>
+    <text x="614" y="29" class="t" font-size="12.5" font-weight="700">gateway <tspan class="lang" fill="#f59e0b">RUST</tspan></text>
+    <text x="614" y="45" class="sub">TLS · JWT / API-key auth · rate limit · end-to-end token streaming (SSE/WS)</text>
+    <text x="1144" y="35" class="port" text-anchor="end">:8443</text>
+  </g>
+
+  <line x1="620" y1="252" x2="620" y2="286" stroke="#64748b" marker-end="url(#arr)"/>
+
+  <!-- ============ BAND 3: CONTROL PLANE ============ -->
+  <rect x="20" y="280" width="1200" height="252" rx="14" fill="#0e1626" stroke="#38507a"/>
+  <text x="40" y="304" class="band" fill="#7dd3fc">CONTROL PLANE</text>
+  <text x="180" y="304" class="sub">Lantern-managed cloud or self-hosted · never touches user code</text>
+
+  <!-- core trio -->
+  <g transform="translate(40,318)">
+    <rect x="0" y="0" width="372" height="86" rx="10" fill="#13233b" stroke="#38bdf8"/>
+    <text x="16" y="24" class="t" font-size="13.5" font-weight="700">control-plane <tspan class="lang" fill="#38bdf8">GO</tspan></text>
+    <text x="16" y="44" class="sub">REST + gRPC · agents/runs/sessions · auth · RBAC</text>
+    <text x="16" y="61" class="sub">budgets · forecasts · evals · A/B · marketplace · MCP</text>
+    <text x="356" y="24" class="port" text-anchor="end">:8080 · :50051</text>
+  </g>
+  <g transform="translate(432,318)">
+    <rect x="0" y="0" width="358" height="86" rx="10" fill="#13233b" stroke="#38bdf8"/>
+    <text x="16" y="24" class="t" font-size="13.5" font-weight="700">workflow-engine <tspan class="lang" fill="#38bdf8">GO</tspan></text>
+    <text x="16" y="44" class="sub">durable steps · event-sourced journal</text>
+    <text x="16" y="61" class="sub">replay · the only mutator of run state</text>
+    <text x="342" y="24" class="port" text-anchor="end">:50052</text>
+  </g>
+  <g transform="translate(810,318)">
+    <rect x="0" y="0" width="370" height="86" rx="10" fill="#241a37" stroke="#f59e0b"/>
+    <text x="16" y="24" class="t" font-size="13.5" font-weight="700">model-router <tspan class="lang" fill="#f59e0b">RUST</tspan></text>
+    <text x="16" y="44" class="sub">capability addressing ("auto") · 4 routing strategies</text>
+    <text x="16" y="61" class="sub">provider failover · prompt + semantic cache</text>
+    <text x="354" y="24" class="port" text-anchor="end">:50053</text>
+  </g>
+
+  <!-- supporting services -->
+  <g transform="translate(40,420)" class="t">
+    <rect x="0" y="0" width="228" height="44" rx="9" fill="#101a2c" stroke="#334155"/>
+    <text x="16" y="20" font-size="12.5" font-weight="700">scheduler <tspan class="lang" fill="#38bdf8">GO</tspan></text>
+    <text x="16" y="36" class="sub">cron · delayed jobs · retries</text>
+
+    <rect x="244" y="0" width="228" height="44" rx="9" fill="#101a2c" stroke="#334155"/>
+    <text x="260" y="20" font-size="12.5" font-weight="700">memory <tspan class="lang" fill="#38bdf8">GO</tspan></text>
+    <text x="260" y="36" class="sub">core · recall (pgvector) · archival</text>
+
+    <rect x="488" y="0" width="228" height="44" rx="9" fill="#101a2c" stroke="#334155"/>
+    <text x="504" y="20" font-size="12.5" font-weight="700">notifier <tspan class="lang" fill="#38bdf8">GO</tspan></text>
+    <text x="504" y="36" class="sub">webhooks · email · Slack · SMS · push</text>
+
+    <rect x="732" y="0" width="220" height="44" rx="9" fill="#101a2c" stroke="#334155"/>
+    <text x="748" y="20" font-size="12.5" font-weight="700">billing <tspan class="lang" fill="#38bdf8">GO</tspan></text>
+    <text x="748" y="36" class="sub">usage metering · cost attribution</text>
+
+    <rect x="968" y="0" width="172" height="44" rx="9" fill="#101a2c" stroke="#475569"/>
+    <text x="984" y="20" font-size="12.5" font-weight="700">guardrails</text>
+    <text x="984" y="36" class="sub">PII · content · receipts</text>
+  </g>
+
+  <!-- stores -->
+  <g transform="translate(40,478)">
+    <rect x="0" y="0" width="1100" height="40" rx="9" fill="#1c1606" stroke="#a16207"/>
+    <text x="16" y="25" class="t" font-size="12.5" font-weight="700" fill="#fde68a">Data stores</text>
+    <text x="150" y="25" class="sub" fill="#e7c98b">PostgreSQL + pgvector <tspan class="port" fill="#e7c98b">:5432</tspan> — system of record · RLS multi-tenant   ·   Redis <tspan class="port" fill="#e7c98b">:6379</tspan> — cache · queues · SSE pub/sub   ·   S3 / MinIO <tspan class="port" fill="#e7c98b">:9000</tspan> — bundles · snapshots</text>
+  </g>
+
+  <!-- trust boundary tunnel -->
+  <line x1="620" y1="532" x2="620" y2="576" stroke="#8b5cf6" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrv)"/>
+  <rect x="468" y="540" width="304" height="26" rx="13" fill="#1e1635" stroke="#8b5cf6"/>
+  <text x="620" y="557" text-anchor="middle" fill="#c4b5fd" font-size="11.5" font-weight="700">outbound-only mTLS tunnel — metadata only</text>
+
+  <!-- ============ BAND 4: DATA PLANE ============ -->
+  <rect x="20" y="580" width="1200" height="244" rx="14" fill="#0c1a14" stroke="#2f6b4f"/>
+  <text x="40" y="604" class="band" fill="#6ee7b7">DATA PLANE</text>
+  <text x="172" y="604" class="sub">your cloud (EKS / GKE / AKS) or Lantern edge · user code + prompts + data stay here</text>
+
+  <g transform="translate(40,618)">
+    <rect x="0" y="0" width="300" height="80" rx="10" fill="#10241b" stroke="#34d399"/>
+    <text x="16" y="24" class="t" font-size="13" font-weight="700">runtime-scheduler <tspan class="lang" fill="#34d399">GO</tspan></text>
+    <text x="16" y="44" class="sub">placement: warm-pool · region</text>
+    <text x="16" y="60" class="sub">fair-share · cost · health</text>
+    <text x="284" y="24" class="port" text-anchor="end">:50055 · :8085</text>
+  </g>
+  <g transform="translate(360,618)">
+    <rect x="0" y="0" width="300" height="80" rx="10" fill="#241a37" stroke="#f59e0b"/>
+    <text x="16" y="24" class="t" font-size="13" font-weight="700">runtime-manager <tspan class="lang" fill="#f59e0b">RUST</tspan></text>
+    <text x="16" y="44" class="sub">spawns isolated workloads</text>
+    <text x="16" y="60" class="sub">snapshot / restore · seccomp</text>
+    <text x="284" y="24" class="port" text-anchor="end">:50054</text>
+  </g>
+  <!-- microvm -->
+  <g transform="translate(680,618)">
+    <rect x="0" y="0" width="460" height="80" rx="10" fill="#10241b" stroke="#34d399"/>
+    <text x="16" y="22" class="t" font-size="13" font-weight="700">microVM workload</text>
+    <text x="16" y="41" class="sub">Firecracker · Kata · K8s Job · Wasmtime · devcontainer</text>
+    <rect x="250" y="30" width="196" height="38" rx="8" fill="#1a3326" stroke="#f59e0b"/>
+    <text x="264" y="48" class="t" font-size="11.5" font-weight="700">harness <tspan class="lang" fill="#f59e0b">RUST</tspan></text>
+    <text x="264" y="62" class="sub">egress allowlist · JWT vend</text>
+  </g>
+
+  <line x1="340" y1="658" x2="358" y2="658" stroke="#64748b" marker-end="url(#arr)"/>
+  <line x1="660" y1="658" x2="678" y2="658" stroke="#64748b" marker-end="url(#arr)"/>
+
+  <text x="40" y="742" class="sub">Invariants: control plane never runs user code · workflow engine is the sole run-state mutator · long ops are durable + idempotent · streaming is end-to-end · every row carries tenant_id.</text>
+  <text x="40" y="764" class="sub">macOS personal-assistant bridges (WhatsApp <tspan class="port">:3100</tspan> · iMessage <tspan class="port">:3200</tspan>) connect to the control-plane API as ordinary surface clients — see the Jarvis pipeline diagram.</text>
+</svg>
