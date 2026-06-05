@@ -46,13 +46,13 @@ run-api-free: ## Run the API but route LLM calls through local `claude` CLI ($0 
 
 run-whatsapp-bridge: ## Start the WhatsApp bridge service
 	@bash scripts/kill-port.sh 3100
-	cd services/whatsapp-bridge && npm run dev
+	cd services/whatsapp-bridge && npm install --no-audit --no-fund && npm run dev
 
 run-whatsapp: run-whatsapp-bridge ## Alias: start the WhatsApp bridge service
 
 run-imessage-bridge: ## Start the iMessage bridge (macOS only)
 	@bash scripts/kill-port.sh 3200
-	cd services/imessage-bridge && npm run dev
+	cd services/imessage-bridge && npm install --no-audit --no-fund && npm run dev
 
 run-imessage: run-imessage-bridge ## Alias: start the iMessage bridge
 

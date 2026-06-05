@@ -65,12 +65,12 @@ func tag(t procTag, line string) string {
 
 func newDevCommand() *cobra.Command {
 	var (
-		infraOnly   bool
-		withWA      bool
-		withIM      bool
-		noOpen      bool
-		dashPort    int
-		apiPort     int
+		infraOnly bool
+		withWA    bool
+		withIM    bool
+		noOpen    bool
+		dashPort  int
+		apiPort   int
 	)
 
 	cmd := &cobra.Command{
@@ -184,8 +184,10 @@ func runDev(opts devOpts) error {
 	}
 
 	// ---- 3) Dashboard.
+	webDir := filepath.Join(repoRoot, "apps", "web")
+	ensureNodeModules(webDir, tagWeb)
 	webCmd := makeProc(ctx, repoRoot, tagWeb, "npm", "run", "dev")
-	webCmd.Dir = filepath.Join(repoRoot, "apps", "web")
+	webCmd.Dir = webDir
 	webCmd.Env = append(os.Environ(),
 		fmt.Sprintf("PORT=%d", opts.dashPort),
 		fmt.Sprintf("NEXT_PUBLIC_API_URL=http://localhost:%d", opts.apiPort),
@@ -196,8 +198,10 @@ func runDev(opts devOpts) error {
 
 	// ---- 4) WhatsApp bridge (optional).
 	if opts.withWA {
+		waDir := filepath.Join(repoRoot, "services", "whatsapp-bridge")
+		ensureNodeModules(waDir, tagWA)
 		waCmd := makeProc(ctx, repoRoot, tagWA, "npm", "run", "dev")
-		waCmd.Dir = filepath.Join(repoRoot, "services", "whatsapp-bridge")
+		waCmd.Dir = waDir
 		waCmd.Env = append(os.Environ(),
 			fmt.Sprintf("LANTERN_API_URL=http://localhost:%d", opts.apiPort),
 		)
@@ -209,8 +213,10 @@ func runDev(opts devOpts) error {
 
 	// ---- 5) iMessage bridge (macOS only).
 	if opts.withIM && runtime.GOOS == "darwin" {
+		imDir := filepath.Join(repoRoot, "services", "imessage-bridge")
+		ensureNodeModules(imDir, tagIM)
 		imCmd := makeProc(ctx, repoRoot, tagIM, "npm", "run", "dev")
-		imCmd.Dir = filepath.Join(repoRoot, "services", "imessage-bridge")
+		imCmd.Dir = imDir
 		imCmd.Env = append(os.Environ(),
 			fmt.Sprintf("LANTERN_API_URL=http://localhost:%d", opts.apiPort),
 		)
@@ -254,6 +260,25 @@ func runDev(opts devOpts) error {
 
 	wg.Wait()
 	return nil
+}
+
+// ensureNodeModules runs `npm install` in dir when node_modules is absent, so
+// a fresh clone's bridges start cleanly. The bridges depend on
+// @lantern/bridge-core via a file: link whose own deps live in
+// packages/bridge-core/node_modules; the bridge's postinstall hook installs
+// bridge-core in turn. Best-effort + idempotent (no-op once installed).
+func ensureNodeModules(dir string, t procTag) {
+	if _, err := os.Stat(filepath.Join(dir, "node_modules")); err == nil {
+		return // already installed
+	}
+	fmt.Fprintln(os.Stderr, tag(t, "installing dependencies (first run, one-time)…"))
+	c := exec.Command("npm", "install", "--no-audit", "--no-fund")
+	c.Dir = dir
+	c.Stdout = os.Stderr
+	c.Stderr = os.Stderr
+	if err := c.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, tag(t, fmt.Sprintf("npm install failed: %v (bridge may not start)", err)))
+	}
 }
 
 // makeProc constructs an exec.Cmd whose lifetime is bound to ctx — when ctx

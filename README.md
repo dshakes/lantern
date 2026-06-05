@@ -71,13 +71,14 @@ The nicest local DX: host processes with hot reload, one terminal, tagged log st
 ```bash
 git clone https://github.com/dshakes/lantern.git
 cd lantern
-npm install                                   # workspace deps (dashboard, SDK, bridges)
-( cd packages/cli && go install ./cmd/lantern )   # builds the `lantern` binary onto your PATH
+( cd packages/cli && go install ./cmd/lantern )   # build the `lantern` binary onto your PATH
 
 lantern dev       # ↓ boots everything, waits for /healthz, opens the dashboard
 ```
 
-`lantern dev` will:
+`lantern dev` installs each component's npm dependencies on first run (dashboard
+and the bridges, including the shared `bridge-core`), so there's no separate
+`npm install` step. It will:
 - start **Postgres + Redis + MinIO** via Docker (detached),
 - run the **control‑plane** API (`:8080` REST, `:50051` gRPC) as a host Go process so edits hot‑reload,
 - run the **Next.js dashboard** (`:3001`) with HMR,
