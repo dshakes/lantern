@@ -9,7 +9,8 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postinstall": "npm --prefix ../../packages/bridge-core install --no-audit --no-fund"
   },
   "dependencies": {
     "@lantern/bridge-core": "file:../../packages/bridge-core",
