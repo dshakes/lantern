@@ -55,11 +55,14 @@ You need only **Docker** (with Compose v2). Everything builds inside containers.
 ```bash
 git clone https://github.com/dshakes/lantern.git
 cd lantern
-make dev          # builds + starts infra + control-plane + dashboard (+ landing, bridge)
+make dev          # builds + starts infra + control-plane + workflow-engine
+                  # + gateway + model-router + dashboard + landing
 ```
 
 Then open **http://localhost:3001** and log in with **`admin@lantern.dev` / `lantern`**.
 The dev tenant, admin user, and schema are seeded automatically on first boot. Run `make seed` to add sample agents and runs.
+
+> The macOS WhatsApp/iMessage bridges are **host services** (they need macOS Contacts/Calendar/chat.db), so they're not part of the Linux `make dev` stack — run them with `lantern dev` or `make run-whatsapp-bridge` / `make run-imessage-bridge`.
 
 ### Option B — hot‑reload daily driver (`lantern dev`)
 

@@ -7,6 +7,11 @@ export const metadata: Metadata = {
   description: "Manage your AI agents, monitor runs, and control your serverless agent platform.",
 };
 
+// This is an auth-gated, fully data-driven dashboard — render every route
+// dynamically rather than statically prerendering at build time (which fails
+// on client-only APIs like useSearchParams / localStorage during SSG).
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({
   children,
 }: {
