@@ -108,7 +108,7 @@ Without these env vars, Google OAuth is disabled and the sign-in button will sho
 | runtime-manager      | `:50054`                         | gRPC                                         |
 | runtime-scheduler    | `:50055` (gRPC) / `:8085` (REST) | Placement engine for headless agent microVMs |
 | gateway              | `:8443`                          | HTTPS (TLS)                                  |
-| surface-gateway      | `:8000`                          | HTTP (webhooks)                              |
+| surface-gateway      | `:8444`                          | HTTP (webhooks; `LISTEN_ADDR` override)      |
 | PostgreSQL           | `:5432`                          | postgres                                     |
 | Redis                | `:6379`                          | redis                                        |
 | MinIO                | `:9000` / `:9001`                | S3 / console                                 |
@@ -544,8 +544,12 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
 - `LANTERN_DIALER=stub` — force the stub dialer even when
   `LANTERN_DEFAULT_MANAGER_ADDR` is set (debug aid).
 
-Real protoc Go codegen at `gen/go/lantern/v1/` is hand-maintained stubs
-(file gitignored, regenerated locally per `make proto`). Wire is
+Real protoc Go codegen at `gen/go/lantern/v1/` is hand-maintained stubs.
+These are **tracked in git** (NOT gitignored) — they are a build-critical Go
+module that services depend on via `replace ../../gen/go` and that the Docker
+builds `COPY`, so a clean clone must have them. Only the regenerable
+`gen/ts/` output is gitignored. `make proto` can regenerate them, but the
+hand edits below are the source of truth. Wire is
 protobuf-tag-compatible regardless of local Go type names — Go's
 hand-stub renames (e.g. `RuntimeLogLine` to avoid colliding with the
 `LogLine` from `runs.proto`) don't affect interop with the Rust
