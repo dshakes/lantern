@@ -8,15 +8,15 @@ mod sse;
 mod state;
 
 use tower::ServiceBuilder;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 use crate::auth::AuthLayer;
 use crate::config::Config;
-use crate::middleware::RateLimitLayer;
 use crate::middleware::rate_limit::RateLimitConfig;
+use crate::middleware::RateLimitLayer;
 use crate::state::AppState;
 
 #[tokio::main]
@@ -25,8 +25,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
         )
         .json()
         .init();
@@ -39,12 +38,11 @@ async fn main() -> anyhow::Result<()> {
 
     let listen_addr = config.listen_addr;
     let jwt_secret = config.jwt_secret.clone();
-    let app_state = AppState::new(config).await?;
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    // M2: restrict CORS to configured dashboard origins rather than Any.
+    let cors = build_cors(&config.allowed_origins);
+
+    let app_state = AppState::new(config).await?;
 
     let x_request_id = axum::http::HeaderName::from_static("x-request-id");
 
@@ -75,26 +73,65 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Build a CORS layer restricted to the given list of origins.
+/// Falls back to localhost:3001 if the list is empty.
+fn build_cors(origins: &[String]) -> CorsLayer {
+    use axum::http::HeaderValue;
+    use tower_http::cors::AllowOrigin;
+
+    let values: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|o| o.parse::<HeaderValue>().ok())
+        .collect();
+
+    if values.is_empty() {
+        // Misconfigured — default to local dev only; never fall back to Any.
+        tracing::warn!(
+            "ALLOWED_ORIGINS produced no valid origins; defaulting to http://localhost:3001"
+        );
+        let fallback = "http://localhost:3001"
+            .parse::<HeaderValue>()
+            .expect("localhost origin is a valid header value");
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list([fallback]))
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    } else {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(values))
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    }
+}
+
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        // L4: log errors instead of panicking on signal-handler install.
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => tracing::info!("received Ctrl+C"),
+            Err(e) => tracing::error!(error = %e, "Ctrl+C handler error"),
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+                tracing::info!("received SIGTERM");
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
+        }
     };
 
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        () = ctrl_c => { tracing::info!("received Ctrl+C"); }
-        () = terminate => { tracing::info!("received SIGTERM"); }
+        () = ctrl_c => {}
+        () = terminate => {}
     }
 }

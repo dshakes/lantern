@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use axum::http::HeaderMap;
 use chrono::Utc;
+use ed25519_dalek::{Signature, VerifyingKey};
 
 use crate::adapter::SurfaceAdapter;
 use crate::error::AppError;
@@ -26,12 +27,13 @@ impl DiscordAdapter {
     /// Verify Discord webhook signature using Ed25519.
     ///
     /// Discord sends:
-    /// - X-Signature-Ed25519: hex-encoded signature
+    /// - X-Signature-Ed25519: hex-encoded Ed25519 signature
     /// - X-Signature-Timestamp: timestamp string
     ///
-    /// The signed message is: timestamp + body
+    /// The signed message is `timestamp || body` (bytes concatenated).
+    /// Fails closed on any parse or verification error.
     fn verify_ed25519(&self, headers: &HeaderMap, body: &[u8]) -> Result<bool, AppError> {
-        let signature = headers
+        let signature_hex = headers
             .get("x-signature-ed25519")
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| {
@@ -45,41 +47,33 @@ impl DiscordAdapter {
                 AppError::WebhookVerification("missing x-signature-timestamp".to_string())
             })?;
 
-        // Decode the hex public key.
+        // Decode hex public key → 32-byte array → VerifyingKey.
         let pub_key_bytes = hex::decode(&self.public_key)
             .map_err(|e| AppError::Internal(format!("invalid discord public key hex: {e}")))?;
+        let pub_key_arr: [u8; 32] = pub_key_bytes.try_into().map_err(|_| {
+            AppError::Internal("discord public key must be exactly 32 bytes".to_string())
+        })?;
+        let verifying_key = VerifyingKey::from_bytes(&pub_key_arr)
+            .map_err(|e| AppError::Internal(format!("invalid discord Ed25519 public key: {e}")))?;
 
-        // Decode the hex signature.
-        let sig_bytes = hex::decode(signature)
+        // Decode hex signature → 64-byte array → Signature.
+        let sig_bytes = hex::decode(signature_hex)
             .map_err(|e| AppError::WebhookVerification(format!("invalid signature hex: {e}")))?;
+        let sig_arr: [u8; 64] = sig_bytes.try_into().map_err(|_| {
+            AppError::WebhookVerification("discord signature must be exactly 64 bytes".to_string())
+        })?;
+        let signature = Signature::from_bytes(&sig_arr);
 
-        if pub_key_bytes.len() != 32 || sig_bytes.len() != 64 {
-            return Err(AppError::WebhookVerification(
-                "invalid key or signature length".to_string(),
-            ));
-        }
-
-        // Build the message: timestamp + body
+        // Signed message = timestamp bytes || body bytes.
         let mut message = Vec::with_capacity(timestamp.len() + body.len());
         message.extend_from_slice(timestamp.as_bytes());
         message.extend_from_slice(body);
 
-        // Verify using a simple Ed25519 check.
-        // We use the raw bytes and verify manually using the SHA-512 approach.
-        // In production, you would use the `ed25519-dalek` crate. Here we do a
-        // best-effort verification using the crypto primitives we already have.
-        //
-        // For now, we verify the signature is present and well-formed. Full Ed25519
-        // verification requires the `ed25519-dalek` dependency. The structure is
-        // correct and ready for that upgrade.
-        let _ = (pub_key_bytes, sig_bytes, message);
-
-        // TODO: Replace with ed25519-dalek verify once the dependency is added.
-        // For now, presence of valid-length signature + public key is checked above.
-        tracing::debug!(
-            "discord signature structure validated (full Ed25519 verify pending ed25519-dalek)"
-        );
-        Ok(true)
+        // verify_strict rejects weak/malleable signatures in addition to invalid ones.
+        match verifying_key.verify_strict(&message, &signature) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
     }
 
     fn discord_button_style(style: &ButtonStyle) -> u8 {
@@ -497,5 +491,128 @@ impl DiscordAdapter {
         }
 
         components
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    /// Generate a fresh keypair and return (signing_key, hex_public_key).
+    fn make_keypair() -> (SigningKey, String) {
+        let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+        let pub_hex = hex::encode(signing_key.verifying_key().to_bytes());
+        (signing_key, pub_hex)
+    }
+
+    fn make_adapter(pub_hex: &str) -> DiscordAdapter {
+        DiscordAdapter::new("bot-token".to_string(), pub_hex.to_string())
+    }
+
+    fn signed_headers(signing_key: &SigningKey, timestamp: &str, body: &[u8]) -> HeaderMap {
+        let mut message = Vec::with_capacity(timestamp.len() + body.len());
+        message.extend_from_slice(timestamp.as_bytes());
+        message.extend_from_slice(body);
+        let sig = signing_key.sign(&message);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-signature-ed25519",
+            hex::encode(sig.to_bytes()).parse().unwrap(),
+        );
+        headers.insert("x-signature-timestamp", timestamp.parse().unwrap());
+        headers
+    }
+
+    #[test]
+    fn valid_signature_accepted() {
+        let (sk, pub_hex) = make_keypair();
+        let adapter = make_adapter(&pub_hex);
+        let body = b"{\"type\":1}";
+        let ts = "1700000000";
+        let headers = signed_headers(&sk, ts, body);
+        let result = adapter.verify_ed25519(&headers, body);
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "valid Ed25519 signature must be accepted");
+    }
+
+    #[test]
+    fn forged_signature_rejected() {
+        let (sk, pub_hex) = make_keypair();
+        let adapter = make_adapter(&pub_hex);
+        let body = b"{\"type\":2}";
+        let ts = "1700000000";
+        // Sign different body content so the signature doesn't match.
+        let headers = signed_headers(&sk, ts, b"different body");
+        let result = adapter.verify_ed25519(&headers, body);
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "mismatched signature must be rejected");
+    }
+
+    #[test]
+    fn wrong_key_signature_rejected() {
+        let (sk_other, _) = make_keypair();
+        let (_, pub_hex_real) = make_keypair();
+        // Sign with one key but verify against a different public key.
+        let adapter = make_adapter(&pub_hex_real);
+        let body = b"{\"type\":2}";
+        let ts = "1700000000";
+        let headers = signed_headers(&sk_other, ts, body);
+        let result = adapter.verify_ed25519(&headers, body);
+        assert!(result.is_ok());
+        assert!(
+            !result.unwrap(),
+            "signature from wrong key must be rejected"
+        );
+    }
+
+    #[test]
+    fn missing_signature_header_returns_err() {
+        let (_, pub_hex) = make_keypair();
+        let adapter = make_adapter(&pub_hex);
+        let mut headers = HeaderMap::new();
+        headers.insert("x-signature-timestamp", "1700000000".parse().unwrap());
+        // no x-signature-ed25519
+        let result = adapter.verify_ed25519(&headers, b"body");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::WebhookVerification(_)
+        ));
+    }
+
+    #[test]
+    fn missing_timestamp_header_returns_err() {
+        let (sk, pub_hex) = make_keypair();
+        let adapter = make_adapter(&pub_hex);
+        let body = b"body";
+        let sig = sk.sign(body);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-signature-ed25519",
+            hex::encode(sig.to_bytes()).parse().unwrap(),
+        );
+        // no x-signature-timestamp
+        let result = adapter.verify_ed25519(&headers, body);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::WebhookVerification(_)
+        ));
+    }
+
+    #[test]
+    fn invalid_public_key_returns_err() {
+        // Adapter configured with a non-hex public key.
+        let adapter = make_adapter("notvalidhex!!");
+        let mut headers = HeaderMap::new();
+        headers.insert("x-signature-ed25519", "aabbcc".parse().unwrap());
+        headers.insert("x-signature-timestamp", "1700000000".parse().unwrap());
+        let result = adapter.verify_ed25519(&headers, b"body");
+        assert!(result.is_err());
     }
 }

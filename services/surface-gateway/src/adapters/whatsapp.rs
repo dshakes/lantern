@@ -3,6 +3,7 @@ use axum::http::HeaderMap;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 
 use crate::adapter::SurfaceAdapter;
 use crate::error::AppError;
@@ -13,6 +14,12 @@ type HmacSha256 = Hmac<Sha256>;
 #[allow(dead_code)]
 pub struct WhatsAppAdapter {
     verify_token: String,
+    /// M1: Meta signs X-Hub-Signature-256 with the **App Secret**, not the
+    /// verify_token. These are two different credentials in the Meta developer
+    /// console. Set WHATSAPP_APP_SECRET to enable POST webhook verification.
+    /// When None, POST webhooks are accepted without signature verification
+    /// (degraded mode — log a warning).
+    app_secret: Option<String>,
     api_token: String,
     phone_number_id: String,
     http: reqwest::Client,
@@ -20,9 +27,15 @@ pub struct WhatsAppAdapter {
 
 #[allow(dead_code)]
 impl WhatsAppAdapter {
-    pub fn new(verify_token: String, api_token: String, phone_number_id: String) -> Self {
+    pub fn new(
+        verify_token: String,
+        app_secret: Option<String>,
+        api_token: String,
+        phone_number_id: String,
+    ) -> Self {
         Self {
             verify_token,
+            app_secret,
             api_token,
             phone_number_id,
             http: reqwest::Client::new(),
@@ -36,28 +49,53 @@ impl WhatsAppAdapter {
         )
     }
 
-    /// Verify the webhook signature from Meta using HMAC-SHA256.
-    fn verify_signature(&self, headers: &HeaderMap, body: &[u8]) -> Result<bool, AppError> {
-        let signature = headers
-            .get("x-hub-signature-256")
-            .and_then(|v| v.to_str().ok());
-
-        let Some(signature) = signature else {
-            // GET verification challenges don't have a signature.
+    /// Verify the POST webhook signature from Meta using HMAC-SHA256.
+    ///
+    /// Meta signs with the App Secret (not the verify_token).
+    /// The header format is `X-Hub-Signature-256: sha256=<hex>`.
+    ///
+    /// - Signature present + app_secret configured → verify with constant-time compare.
+    /// - Signature absent + app_secret configured → fail closed (required on POST).
+    /// - app_secret not configured → accept with a warning (degraded mode).
+    pub fn verify_post_signature(
+        &self,
+        headers: &HeaderMap,
+        body: &[u8],
+    ) -> Result<bool, AppError> {
+        let Some(secret) = &self.app_secret else {
+            tracing::warn!(
+                "whatsapp POST signature verification disabled: WHATSAPP_APP_SECRET not set"
+            );
             return Ok(true);
         };
 
-        let expected_prefix = "sha256=";
-        let hex_sig = signature.strip_prefix(expected_prefix).ok_or_else(|| {
-            AppError::WebhookVerification("invalid signature format".to_string())
+        let signature = headers
+            .get("x-hub-signature-256")
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| {
+                AppError::WebhookVerification(
+                    "missing X-Hub-Signature-256 header on POST".to_string(),
+                )
+            })?;
+
+        let hex_sig = signature.strip_prefix("sha256=").ok_or_else(|| {
+            AppError::WebhookVerification("invalid X-Hub-Signature-256 format".to_string())
         })?;
 
-        let mut mac = HmacSha256::new_from_slice(self.verify_token.as_bytes())
+        // M1: use app_secret (not verify_token) as the HMAC key.
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
             .map_err(|e| AppError::Internal(format!("hmac init: {e}")))?;
         mac.update(body);
-        let expected = hex::encode(mac.finalize().into_bytes());
+        let expected_hex = hex::encode(mac.finalize().into_bytes());
 
-        Ok(expected == hex_sig)
+        // H5: constant-time comparison.
+        let expected_bytes = expected_hex.as_bytes();
+        let presented_bytes = hex_sig.as_bytes();
+        if expected_bytes.len() != presented_bytes.len() {
+            return Ok(false);
+        }
+        let matches: bool = expected_bytes.ct_eq(presented_bytes).into();
+        Ok(matches)
     }
 }
 
@@ -72,7 +110,7 @@ impl SurfaceAdapter for WhatsAppAdapter {
     }
 
     async fn verify_webhook(&self, headers: &HeaderMap, body: &[u8]) -> Result<bool, AppError> {
-        self.verify_signature(headers, body)
+        self.verify_post_signature(headers, body)
     }
 
     async fn parse_event(
@@ -109,10 +147,7 @@ impl SurfaceAdapter for WhatsAppAdapter {
 
                     let kind = match msg_type {
                         "text" => {
-                            let text = message["text"]["body"]
-                                .as_str()
-                                .unwrap_or("")
-                                .to_string();
+                            let text = message["text"]["body"].as_str().unwrap_or("").to_string();
                             EventKind::Message {
                                 text,
                                 attachments: vec![],
@@ -132,20 +167,14 @@ impl SurfaceAdapter for WhatsAppAdapter {
                                 attachments: vec![Attachment {
                                     filename: format!("{msg_type}_{media_id}"),
                                     content_type: mime_type,
-                                    url: format!(
-                                        "https://graph.facebook.com/v18.0/{media_id}"
-                                    ),
+                                    url: format!("https://graph.facebook.com/v18.0/{media_id}"),
                                     size_bytes: None,
                                 }],
                             }
                         }
                         "location" => {
-                            let lat = message["location"]["latitude"]
-                                .as_f64()
-                                .unwrap_or(0.0);
-                            let lon = message["location"]["longitude"]
-                                .as_f64()
-                                .unwrap_or(0.0);
+                            let lat = message["location"]["latitude"].as_f64().unwrap_or(0.0);
+                            let lon = message["location"]["longitude"].as_f64().unwrap_or(0.0);
                             EventKind::Message {
                                 text: format!("Location: {lat}, {lon}"),
                                 attachments: vec![],
@@ -153,9 +182,7 @@ impl SurfaceAdapter for WhatsAppAdapter {
                         }
                         "interactive" => {
                             // Interactive button/list replies (approval responses).
-                            let reply_type = message["interactive"]["type"]
-                                .as_str()
-                                .unwrap_or("");
+                            let reply_type = message["interactive"]["type"].as_str().unwrap_or("");
                             match reply_type {
                                 "button_reply" => {
                                     let button_id = message["interactive"]["button_reply"]["id"]
@@ -166,8 +193,7 @@ impl SurfaceAdapter for WhatsAppAdapter {
                                             request_id: request_id.to_string(),
                                             approved: true,
                                         }
-                                    } else if let Some(request_id) =
-                                        button_id.strip_prefix("deny:")
+                                    } else if let Some(request_id) = button_id.strip_prefix("deny:")
                                     {
                                         EventKind::ApprovalResponse {
                                             request_id: request_id.to_string(),
@@ -192,9 +218,7 @@ impl SurfaceAdapter for WhatsAppAdapter {
                                             request_id: request_id.to_string(),
                                             approved: true,
                                         }
-                                    } else if let Some(request_id) =
-                                        list_id.strip_prefix("deny:")
-                                    {
+                                    } else if let Some(request_id) = list_id.strip_prefix("deny:") {
                                         EventKind::ApprovalResponse {
                                             request_id: request_id.to_string(),
                                             approved: false,
@@ -261,11 +285,7 @@ impl SurfaceAdapter for WhatsAppAdapter {
         Ok(events)
     }
 
-    async fn send_message(
-        &self,
-        session: &str,
-        msg: &SurfaceMessage,
-    ) -> Result<String, AppError> {
+    async fn send_message(&self, session: &str, msg: &SurfaceMessage) -> Result<String, AppError> {
         // session format: "whatsapp:{phone_number}"
         let to = session.strip_prefix("whatsapp:").unwrap_or(session);
 
@@ -404,5 +424,112 @@ pub fn verify_challenge(
         Err(AppError::WebhookVerification(
             "invalid verify token".to_string(),
         ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    type HmacSha256 = Hmac<Sha256>;
+
+    fn make_adapter(app_secret: Option<&str>) -> WhatsAppAdapter {
+        WhatsAppAdapter::new(
+            "verify-tok".to_string(),
+            app_secret.map(|s| s.to_string()),
+            "api-tok".to_string(),
+            "phone-id".to_string(),
+        )
+    }
+
+    fn make_signature(secret: &str, body: &[u8]) -> String {
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(body);
+        format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
+    }
+
+    fn headers_with_sig(sig: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("x-hub-signature-256", sig.parse().unwrap());
+        h
+    }
+
+    // M1 + H5: correct app_secret signature accepted.
+    #[test]
+    fn valid_app_secret_signature_accepted() {
+        let adapter = make_adapter(Some("app-secret-abc"));
+        let body = b"{\"entry\":[]}";
+        let sig = make_signature("app-secret-abc", body);
+        let headers = headers_with_sig(&sig);
+        let result = adapter.verify_post_signature(&headers, body);
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "correct app_secret signature must pass");
+    }
+
+    // M1: signing with verify_token (old wrong key) must be rejected.
+    #[test]
+    fn verify_token_as_key_rejected() {
+        let adapter = make_adapter(Some("app-secret-abc"));
+        let body = b"{\"entry\":[]}";
+        // Sign with verify_token instead of app_secret — must fail.
+        let sig = make_signature("verify-tok", body);
+        let headers = headers_with_sig(&sig);
+        let result = adapter.verify_post_signature(&headers, body);
+        assert!(result.is_ok());
+        assert!(
+            !result.unwrap(),
+            "verify_token as HMAC key must be rejected"
+        );
+    }
+
+    // H5: forged/wrong signature rejected.
+    #[test]
+    fn wrong_signature_rejected() {
+        let adapter = make_adapter(Some("app-secret-abc"));
+        let headers = headers_with_sig("sha256=deadbeefdeadbeef");
+        let result = adapter.verify_post_signature(&headers, b"body");
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    // POST without header when app_secret is set → fail closed.
+    #[test]
+    fn missing_signature_header_fails_closed() {
+        let adapter = make_adapter(Some("app-secret-abc"));
+        let result = adapter.verify_post_signature(&HeaderMap::new(), b"body");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::WebhookVerification(_)
+        ));
+    }
+
+    // Degraded mode (no app_secret): accepts without signature.
+    #[test]
+    fn no_app_secret_accepts_all() {
+        let adapter = make_adapter(None);
+        let result = adapter.verify_post_signature(&HeaderMap::new(), b"body");
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    // GET challenge path (verify_challenge helper) still works.
+    #[test]
+    fn verify_challenge_valid() {
+        let result = verify_challenge("tok", "subscribe", "tok", "abc123");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "abc123");
+    }
+
+    #[test]
+    fn verify_challenge_wrong_token_rejected() {
+        let result = verify_challenge("tok", "subscribe", "wrong", "abc123");
+        assert!(result.is_err());
     }
 }

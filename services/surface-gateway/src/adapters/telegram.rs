@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use axum::http::HeaderMap;
 use chrono::Utc;
+use subtle::ConstantTimeEq;
 
 use crate::adapter::SurfaceAdapter;
 use crate::error::AppError;
@@ -8,14 +9,21 @@ use crate::types::{Attachment, EventKind, MessageBlock, SurfaceEvent, SurfaceId,
 
 pub struct TelegramAdapter {
     bot_token: String,
+    /// Secret token set via Telegram's setWebhook API (`secret_token` field).
+    /// Telegram sends this back in every update as X-Telegram-Bot-Api-Secret-Token.
+    /// When `None`, webhook verification is disabled and all requests are accepted —
+    /// only appropriate when the webhook URL itself is kept secret (not recommended
+    /// for production). Set TELEGRAM_SECRET_TOKEN to enable verification.
+    secret_token: Option<String>,
     http: reqwest::Client,
 }
 
 #[allow(dead_code)]
 impl TelegramAdapter {
-    pub fn new(bot_token: String) -> Self {
+    pub fn new(bot_token: String, secret_token: Option<String>) -> Self {
         Self {
             bot_token,
+            secret_token,
             http: reqwest::Client::new(),
         }
     }
@@ -35,12 +43,40 @@ impl SurfaceAdapter for TelegramAdapter {
         "Telegram"
     }
 
-    async fn verify_webhook(&self, _headers: &HeaderMap, _body: &[u8]) -> Result<bool, AppError> {
-        // Telegram webhook verification is done by registering with a secret_token.
-        // The secret is sent in the X-Telegram-Bot-Api-Secret-Token header.
-        // For now, we trust that the webhook URL is only known to Telegram (set via setWebhook).
-        // Production deployments should validate the secret_token header.
-        Ok(true)
+    /// C3: verify the X-Telegram-Bot-Api-Secret-Token header using a
+    /// constant-time comparison against the configured secret_token.
+    ///
+    /// - If `secret_token` is configured: the header MUST be present and match.
+    ///   Missing or mismatched → fail closed (Ok(false)).
+    /// - If `secret_token` is not configured: accept all requests (degraded
+    ///   mode — log a warning so operators know verification is off).
+    async fn verify_webhook(&self, headers: &HeaderMap, _body: &[u8]) -> Result<bool, AppError> {
+        let Some(expected) = &self.secret_token else {
+            tracing::warn!("telegram webhook verification disabled: TELEGRAM_SECRET_TOKEN not set");
+            return Ok(true);
+        };
+
+        let presented = headers
+            .get("x-telegram-bot-api-secret-token")
+            .and_then(|v| v.to_str().ok());
+
+        let Some(presented) = presented else {
+            // Header absent — fail closed.
+            return Ok(false);
+        };
+
+        // Constant-time comparison to avoid timing oracle.
+        let expected_bytes = expected.as_bytes();
+        let presented_bytes = presented.as_bytes();
+        // ConstantTimeEq requires equal lengths; a length mismatch is itself
+        // information, but leaking "wrong length" is unavoidable and acceptable
+        // compared to the full timing oracle. We still use ct_eq for the
+        // same-length case.
+        if expected_bytes.len() != presented_bytes.len() {
+            return Ok(false);
+        }
+        let matches: bool = expected_bytes.ct_eq(presented_bytes).into();
+        Ok(matches)
     }
 
     async fn parse_event(
@@ -65,17 +101,17 @@ impl SurfaceAdapter for TelegramAdapter {
         Ok(vec![])
     }
 
-    async fn send_message(
-        &self,
-        session: &str,
-        msg: &SurfaceMessage,
-    ) -> Result<String, AppError> {
+    async fn send_message(&self, session: &str, msg: &SurfaceMessage) -> Result<String, AppError> {
         // session format: "telegram:{chat_id}"
         let chat_id = session.strip_prefix("telegram:").unwrap_or(session);
 
         // Use MarkdownV2 for code blocks, plain text otherwise.
         let text = format_telegram_text(&msg.text, &msg.blocks);
-        let parse_mode = if msg.blocks.iter().any(|b| matches!(b, MessageBlock::Code { .. })) {
+        let parse_mode = if msg
+            .blocks
+            .iter()
+            .any(|b| matches!(b, MessageBlock::Code { .. }))
+        {
             "MarkdownV2"
         } else {
             "HTML"
@@ -128,9 +164,7 @@ impl SurfaceAdapter for TelegramAdapter {
             format!("Approvers: {}", approvers.join(", "))
         };
 
-        let text = format!(
-            "<b>Approval Requested</b>\n\n{reason}\n\n{approver_text}"
-        );
+        let text = format!("<b>Approval Requested</b>\n\n{reason}\n\n{approver_text}");
 
         let body = serde_json::json!({
             "chat_id": chat_id,
@@ -216,10 +250,7 @@ impl SurfaceAdapter for TelegramAdapter {
 }
 
 impl TelegramAdapter {
-    fn parse_message(
-        &self,
-        message: &serde_json::Value,
-    ) -> Result<Vec<SurfaceEvent>, AppError> {
+    fn parse_message(&self, message: &serde_json::Value) -> Result<Vec<SurfaceEvent>, AppError> {
         let chat_id = message["chat"]["id"]
             .as_i64()
             .map(|id| id.to_string())
@@ -236,7 +267,9 @@ impl TelegramAdapter {
         // Check for commands (messages starting with /).
         if let Some(entities) = message["entities"].as_array() {
             for entity in entities {
-                if entity["type"].as_str() == Some("bot_command") && entity["offset"].as_i64() == Some(0) {
+                if entity["type"].as_str() == Some("bot_command")
+                    && entity["offset"].as_i64() == Some(0)
+                {
                     let text = message["text"].as_str().unwrap_or("");
                     let parts: Vec<&str> = text.splitn(2, ' ').collect();
                     let command = parts[0].trim_start_matches('/');
@@ -278,10 +311,7 @@ impl TelegramAdapter {
         if let Some(doc) = message.get("document") {
             let file_id = doc["file_id"].as_str().unwrap_or("").to_string();
             attachments.push(Attachment {
-                filename: doc["file_name"]
-                    .as_str()
-                    .unwrap_or("document")
-                    .to_string(),
+                filename: doc["file_name"].as_str().unwrap_or("document").to_string(),
                 content_type: doc["mime_type"]
                     .as_str()
                     .unwrap_or("application/octet-stream")
@@ -391,7 +421,9 @@ fn format_telegram_text(text: &str, blocks: &[MessageBlock]) -> String {
         match block {
             MessageBlock::Text(t) => parts.push(t.clone()),
             MessageBlock::Code { language, code } => {
-                parts.push(format!("<pre><code class=\"language-{language}\">{code}</code></pre>"));
+                parts.push(format!(
+                    "<pre><code class=\"language-{language}\">{code}</code></pre>"
+                ));
             }
             MessageBlock::Image { url, alt } => {
                 parts.push(format!("[{alt}]({url})"));
@@ -406,4 +438,80 @@ fn format_telegram_text(text: &str, blocks: &[MessageBlock]) -> String {
     }
 
     parts.join("\n\n")
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn adapter_with_token(token: &str) -> TelegramAdapter {
+        TelegramAdapter::new("bot123".to_string(), Some(token.to_string()))
+    }
+
+    fn adapter_no_token() -> TelegramAdapter {
+        TelegramAdapter::new("bot123".to_string(), None)
+    }
+
+    fn headers_with_secret(secret: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("x-telegram-bot-api-secret-token", secret.parse().unwrap());
+        h
+    }
+
+    // C3: secret present + header matches → accept.
+    #[tokio::test]
+    async fn correct_secret_accepted() {
+        let adapter = adapter_with_token("my-secret");
+        let headers = headers_with_secret("my-secret");
+        let result = adapter.verify_webhook(&headers, b"{}").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "matching secret must be accepted");
+    }
+
+    // C3: secret present + header wrong → reject.
+    #[tokio::test]
+    async fn wrong_secret_rejected() {
+        let adapter = adapter_with_token("my-secret");
+        let headers = headers_with_secret("evil-secret");
+        let result = adapter.verify_webhook(&headers, b"{}").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "wrong secret must be rejected");
+    }
+
+    // C3: secret present + header absent → reject.
+    #[tokio::test]
+    async fn missing_secret_header_rejected() {
+        let adapter = adapter_with_token("my-secret");
+        let headers = HeaderMap::new();
+        let result = adapter.verify_webhook(&headers, b"{}").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "missing header must be rejected");
+    }
+
+    // Degraded mode: no secret configured → accept (with warning).
+    #[tokio::test]
+    async fn no_token_configured_accepts_all() {
+        let adapter = adapter_no_token();
+        let headers = HeaderMap::new();
+        let result = adapter.verify_webhook(&headers, b"{}").await;
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap(),
+            "no-token mode should accept (degraded — logged as warning)"
+        );
+    }
+
+    // C3: length-mismatch must not leak via timing (returns false, not panic/error).
+    #[tokio::test]
+    async fn different_length_secret_rejected() {
+        let adapter = adapter_with_token("short");
+        let headers = headers_with_secret("this-is-much-longer-secret");
+        let result = adapter.verify_webhook(&headers, b"{}").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
 }

@@ -3,6 +3,7 @@ use axum::http::HeaderMap;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
+use subtle::ConstantTimeEq;
 
 use crate::adapter::SurfaceAdapter;
 use crate::error::AppError;
@@ -16,16 +17,27 @@ pub struct TwilioAdapter {
     account_sid: String,
     auth_token: String,
     phone_number: String,
+    /// Base URL of this surface-gateway as seen by Twilio, e.g.
+    /// "https://hooks.example.com". Used to reconstruct the absolute URL
+    /// for per-route signature verification. Set SURFACE_GATEWAY_BASE_URL.
+    /// When None, per-route verification is skipped with a warning.
+    pub webhook_base_url: Option<String>,
     http: reqwest::Client,
 }
 
 #[allow(dead_code)]
 impl TwilioAdapter {
-    pub fn new(account_sid: String, auth_token: String, phone_number: String) -> Self {
+    pub fn new(
+        account_sid: String,
+        auth_token: String,
+        phone_number: String,
+        webhook_base_url: Option<String>,
+    ) -> Self {
         Self {
             account_sid,
             auth_token,
             phone_number,
+            webhook_base_url,
             http: reqwest::Client::new(),
         }
     }
@@ -85,7 +97,49 @@ impl TwilioAdapter {
             mac.finalize().into_bytes(),
         );
 
-        Ok(expected == signature)
+        // H5: constant-time compare to avoid timing oracle on the base64 HMAC.
+        let expected_bytes = expected.as_bytes();
+        let presented_bytes = signature.as_bytes();
+        if expected_bytes.len() != presented_bytes.len() {
+            return Ok(false);
+        }
+        let matches: bool = expected_bytes.ct_eq(presented_bytes).into();
+        Ok(matches)
+    }
+
+    /// Called by route handlers with the full absolute URL for that route.
+    /// This is the correct entry-point for production traffic.
+    ///
+    /// When `webhook_base_url` is set, builds the URL as
+    /// `{base_url}{path}` and calls `verify_twilio_signature`.
+    /// When not set, falls back to header-presence check with a warning.
+    pub fn verify_for_route(
+        &self,
+        headers: &HeaderMap,
+        body: &[u8],
+        path: &str,
+    ) -> Result<bool, AppError> {
+        match &self.webhook_base_url {
+            Some(base) => {
+                let url = format!("{}{}", base.trim_end_matches('/'), path);
+                self.verify_twilio_signature(headers, body, &url)
+            }
+            None => {
+                // Degraded: no base URL configured — fall back to header-presence.
+                tracing::warn!(
+                    path = %path,
+                    "Twilio URL-aware signature verification disabled: \
+                     SURFACE_GATEWAY_BASE_URL not set"
+                );
+                if headers.get("x-twilio-signature").is_some() {
+                    Ok(true)
+                } else {
+                    Err(AppError::WebhookVerification(
+                        "missing x-twilio-signature".to_string(),
+                    ))
+                }
+            }
+        }
     }
 }
 
@@ -99,19 +153,16 @@ impl SurfaceAdapter for TwilioAdapter {
         "Twilio"
     }
 
-    async fn verify_webhook(&self, headers: &HeaderMap, _body: &[u8]) -> Result<bool, AppError> {
-        // We need the request URL for Twilio signature verification.
-        // In practice, the route handler passes the full URL.
-        // Here, we use a simplified check using just the signature header presence.
-        // The full URL-based verification is done in the route handler.
-        let has_signature = headers.get("x-twilio-signature").is_some();
-        if !has_signature {
-            return Err(AppError::WebhookVerification(
-                "missing x-twilio-signature".to_string(),
-            ));
-        }
-        // Full verification requires the URL, which is done at route level.
-        Ok(true)
+    /// `verify_webhook` is called by the generic adapter trait path.
+    /// For Twilio the URL is required for a complete verification; routes
+    /// should call `verify_for_route` directly. This implementation delegates
+    /// to `verify_for_route` with an empty path — it will produce a correct
+    /// result when `webhook_base_url` already encodes the full URL, and a
+    /// degraded (header-presence) result otherwise — which is the same
+    /// behaviour as before. All three Twilio routes now call `verify_for_route`
+    /// with the exact path so this branch is not reached in production.
+    async fn verify_webhook(&self, headers: &HeaderMap, body: &[u8]) -> Result<bool, AppError> {
+        self.verify_for_route(headers, body, "")
     }
 
     async fn parse_event(
@@ -369,6 +420,7 @@ mod tests {
             "AC_test_sid".to_string(),
             "auth_token_secret".to_string(),
             "+15005550006".to_string(),
+            Some("https://example.com".to_string()),
         )
     }
 

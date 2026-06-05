@@ -3,6 +3,7 @@ use axum::http::HeaderMap;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 
 use crate::adapter::SurfaceAdapter;
 use crate::error::AppError;
@@ -134,7 +135,15 @@ impl SurfaceAdapter for SlackAdapter {
         mac.update(sig_basestring.as_bytes());
         let expected = format!("v0={}", hex::encode(mac.finalize().into_bytes()));
 
-        Ok(expected == signature)
+        // H5: constant-time compare — both sides are ASCII hex so byte equality
+        // is correct and we avoid timing oracles.
+        let expected_bytes = expected.as_bytes();
+        let presented_bytes = signature.as_bytes();
+        if expected_bytes.len() != presented_bytes.len() {
+            return Ok(false);
+        }
+        let matches: bool = expected_bytes.ct_eq(presented_bytes).into();
+        Ok(matches)
     }
 
     async fn parse_event(

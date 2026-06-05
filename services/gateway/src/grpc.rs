@@ -249,7 +249,10 @@ pub struct StreamEvent {
     pub seq: u64,
     #[prost(message, optional, tag = "4")]
     pub ts: Option<Timestamp>,
-    #[prost(oneof = "StreamEventPayload", tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21")]
+    #[prost(
+        oneof = "StreamEventPayload",
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21"
+    )]
     pub payload: Option<StreamEventPayload>,
 }
 
@@ -407,17 +410,12 @@ pub struct ControlPlaneClient {
 
 impl ControlPlaneClient {
     pub async fn connect(addr: &str) -> anyhow::Result<Self> {
-        let channel = Channel::from_shared(addr.to_string())?
-            .connect_lazy();
+        let channel = Channel::from_shared(addr.to_string())?.connect_lazy();
         tracing::info!(addr = addr, "control-plane channel created (lazy)");
         Ok(Self { channel })
     }
 
-
-    fn inject_tenant_metadata<T>(
-        request: &mut Request<T>,
-        claims: &Claims,
-    ) {
+    fn inject_tenant_metadata<T>(request: &mut Request<T>, claims: &Claims) {
         let metadata = request.metadata_mut();
         if let Ok(val) = claims.tenant_id.parse() {
             metadata.insert("x-tenant-id", val);
@@ -506,11 +504,7 @@ impl ControlPlaneClient {
             .map_err(grpc_status_to_app_error)
     }
 
-    pub async fn get_run(
-        &self,
-        claims: &Claims,
-        req: GetRunRequest,
-    ) -> Result<Run, AppError> {
+    pub async fn get_run(&self, claims: &Claims, req: GetRunRequest) -> Result<Run, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
         Self::inject_tenant_metadata(&mut request, claims);
@@ -604,13 +598,12 @@ impl AgentServiceClient {
         &mut self,
         request: Request<CreateAgentRequest>,
     ) -> Result<tonic::Response<Agent>, tonic::Status> {
-        self.inner.ready().await.map_err(|e| {
-            tonic::Status::unknown(format!("service not ready: {e}"))
-        })?;
+        self.inner
+            .ready()
+            .await
+            .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static(
-            "/lantern.v1.AgentService/CreateAgent",
-        );
+        let path = http::uri::PathAndQuery::from_static("/lantern.v1.AgentService/CreateAgent");
         self.inner.unary(request, path, codec).await
     }
 
@@ -618,13 +611,12 @@ impl AgentServiceClient {
         &mut self,
         request: Request<GetAgentRequest>,
     ) -> Result<tonic::Response<Agent>, tonic::Status> {
-        self.inner.ready().await.map_err(|e| {
-            tonic::Status::unknown(format!("service not ready: {e}"))
-        })?;
+        self.inner
+            .ready()
+            .await
+            .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static(
-            "/lantern.v1.AgentService/GetAgent",
-        );
+        let path = http::uri::PathAndQuery::from_static("/lantern.v1.AgentService/GetAgent");
         self.inner.unary(request, path, codec).await
     }
 
@@ -632,13 +624,12 @@ impl AgentServiceClient {
         &mut self,
         request: Request<ListAgentsRequest>,
     ) -> Result<tonic::Response<ListAgentsResponse>, tonic::Status> {
-        self.inner.ready().await.map_err(|e| {
-            tonic::Status::unknown(format!("service not ready: {e}"))
-        })?;
+        self.inner
+            .ready()
+            .await
+            .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static(
-            "/lantern.v1.AgentService/ListAgents",
-        );
+        let path = http::uri::PathAndQuery::from_static("/lantern.v1.AgentService/ListAgents");
         self.inner.unary(request, path, codec).await
     }
 
@@ -646,13 +637,12 @@ impl AgentServiceClient {
         &mut self,
         request: Request<DeleteAgentRequest>,
     ) -> Result<tonic::Response<DeleteAgentResponse>, tonic::Status> {
-        self.inner.ready().await.map_err(|e| {
-            tonic::Status::unknown(format!("service not ready: {e}"))
-        })?;
+        self.inner
+            .ready()
+            .await
+            .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static(
-            "/lantern.v1.AgentService/DeleteAgent",
-        );
+        let path = http::uri::PathAndQuery::from_static("/lantern.v1.AgentService/DeleteAgent");
         self.inner.unary(request, path, codec).await
     }
 }
@@ -673,13 +663,12 @@ impl RunServiceClient {
         &mut self,
         request: Request<CreateRunRequest>,
     ) -> Result<tonic::Response<Run>, tonic::Status> {
-        self.inner.ready().await.map_err(|e| {
-            tonic::Status::unknown(format!("service not ready: {e}"))
-        })?;
+        self.inner
+            .ready()
+            .await
+            .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static(
-            "/lantern.v1.RunService/CreateRun",
-        );
+        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/CreateRun");
         self.inner.unary(request, path, codec).await
     }
 
@@ -687,13 +676,12 @@ impl RunServiceClient {
         &mut self,
         request: Request<GetRunRequest>,
     ) -> Result<tonic::Response<Run>, tonic::Status> {
-        self.inner.ready().await.map_err(|e| {
-            tonic::Status::unknown(format!("service not ready: {e}"))
-        })?;
+        self.inner
+            .ready()
+            .await
+            .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static(
-            "/lantern.v1.RunService/GetRun",
-        );
+        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/GetRun");
         self.inner.unary(request, path, codec).await
     }
 
@@ -701,13 +689,12 @@ impl RunServiceClient {
         &mut self,
         request: Request<ListRunsRequest>,
     ) -> Result<tonic::Response<ListRunsResponse>, tonic::Status> {
-        self.inner.ready().await.map_err(|e| {
-            tonic::Status::unknown(format!("service not ready: {e}"))
-        })?;
+        self.inner
+            .ready()
+            .await
+            .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static(
-            "/lantern.v1.RunService/ListRuns",
-        );
+        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/ListRuns");
         self.inner.unary(request, path, codec).await
     }
 
@@ -715,13 +702,12 @@ impl RunServiceClient {
         &mut self,
         request: Request<CancelRunRequest>,
     ) -> Result<tonic::Response<Run>, tonic::Status> {
-        self.inner.ready().await.map_err(|e| {
-            tonic::Status::unknown(format!("service not ready: {e}"))
-        })?;
+        self.inner
+            .ready()
+            .await
+            .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static(
-            "/lantern.v1.RunService/CancelRun",
-        );
+        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/CancelRun");
         self.inner.unary(request, path, codec).await
     }
 
@@ -729,13 +715,12 @@ impl RunServiceClient {
         &mut self,
         request: Request<StreamRunEventsRequest>,
     ) -> Result<tonic::Response<Streaming<StreamEvent>>, tonic::Status> {
-        self.inner.ready().await.map_err(|e| {
-            tonic::Status::unknown(format!("service not ready: {e}"))
-        })?;
+        self.inner
+            .ready()
+            .await
+            .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static(
-            "/lantern.v1.RunService/StreamRunEvents",
-        );
+        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/StreamRunEvents");
         self.inner.server_streaming(request, path, codec).await
     }
 
@@ -743,13 +728,12 @@ impl RunServiceClient {
         &mut self,
         request: Request<SignalRunRequest>,
     ) -> Result<tonic::Response<SignalRunResponse>, tonic::Status> {
-        self.inner.ready().await.map_err(|e| {
-            tonic::Status::unknown(format!("service not ready: {e}"))
-        })?;
+        self.inner
+            .ready()
+            .await
+            .map_err(|e| tonic::Status::unknown(format!("service not ready: {e}")))?;
         let codec = tonic::codec::ProstCodec::default();
-        let path = http::uri::PathAndQuery::from_static(
-            "/lantern.v1.RunService/SignalRun",
-        );
+        let path = http::uri::PathAndQuery::from_static("/lantern.v1.RunService/SignalRun");
         self.inner.unary(request, path, codec).await
     }
 }

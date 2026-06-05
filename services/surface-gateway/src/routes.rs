@@ -9,6 +9,7 @@ use axum::routing::{get, post};
 use axum::Router;
 
 use crate::adapter::SurfaceAdapter;
+use crate::adapters::twilio::TwilioAdapter;
 use crate::dispatcher::Dispatcher;
 use crate::error::AppError;
 use crate::types::SurfaceId;
@@ -21,6 +22,9 @@ pub struct RouteState {
     /// WhatsApp verify token for GET challenge (stored separately since it's
     /// needed before the adapter processes the body).
     pub whatsapp_verify_token: Option<String>,
+    /// Typed Twilio adapter kept separately so routes can call
+    /// `verify_for_route` with the exact per-path URL.
+    pub twilio_adapter: Option<Arc<TwilioAdapter>>,
 }
 
 pub fn build_router(state: RouteState) -> Router {
@@ -236,20 +240,27 @@ async fn telegram_webhook(
 }
 
 // ---------------------------------------------------------------------------
-// Twilio
+// Twilio — routes call verify_for_route with the exact path so that
+// URL-aware HMAC-SHA1 verification (H5) is performed per route.
 // ---------------------------------------------------------------------------
+
+/// Resolve the typed TwilioAdapter from state.
+fn twilio_adapter(state: &RouteState) -> Result<&Arc<TwilioAdapter>, AppError> {
+    state
+        .twilio_adapter
+        .as_ref()
+        .ok_or_else(|| AppError::AdapterNotConfigured("twilio".to_string()))
+}
 
 async fn twilio_sms_webhook(
     State(state): State<RouteState>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let adapter = state
-        .adapters
-        .get(&SurfaceId::Twilio)
-        .ok_or_else(|| AppError::AdapterNotConfigured("twilio".to_string()))?;
+    let adapter = twilio_adapter(&state)?;
 
-    if !adapter.verify_webhook(&headers, &body).await? {
+    // H5: URL-aware verification with the exact route path.
+    if !adapter.verify_for_route(&headers, &body, "/webhooks/twilio/sms")? {
         return Err(AppError::WebhookVerification(
             "twilio signature mismatch".to_string(),
         ));
@@ -280,12 +291,9 @@ async fn twilio_voice_webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let adapter = state
-        .adapters
-        .get(&SurfaceId::Twilio)
-        .ok_or_else(|| AppError::AdapterNotConfigured("twilio".to_string()))?;
+    let adapter = twilio_adapter(&state)?;
 
-    if !adapter.verify_webhook(&headers, &body).await? {
+    if !adapter.verify_for_route(&headers, &body, "/webhooks/twilio/voice")? {
         return Err(AppError::WebhookVerification(
             "twilio signature mismatch".to_string(),
         ));
@@ -317,12 +325,9 @@ async fn twilio_transcription_webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, AppError> {
-    let adapter = state
-        .adapters
-        .get(&SurfaceId::Twilio)
-        .ok_or_else(|| AppError::AdapterNotConfigured("twilio".to_string()))?;
+    let adapter = twilio_adapter(&state)?;
 
-    if !adapter.verify_webhook(&headers, &body).await? {
+    if !adapter.verify_for_route(&headers, &body, "/webhooks/twilio/transcription")? {
         return Err(AppError::WebhookVerification(
             "twilio signature mismatch".to_string(),
         ));

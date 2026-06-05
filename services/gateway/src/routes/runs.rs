@@ -180,9 +180,7 @@ async fn create_run(
     Json(body): Json<CreateRunBody>,
 ) -> Result<axum::response::Response, AppError> {
     if body.agent_name.is_empty() {
-        return Err(AppError::BadRequest(
-            "agent_name is required".to_string(),
-        ));
+        return Err(AppError::BadRequest("agent_name is required".to_string()));
     }
 
     let trigger_kind = body
@@ -244,11 +242,7 @@ async fn list_runs(
     Extension(claims): Extension<Claims>,
     Query(params): Query<ListRunsParams>,
 ) -> Result<impl IntoResponse, AppError> {
-    let status_filter = params
-        .status
-        .as_deref()
-        .map(parse_run_status)
-        .unwrap_or(0);
+    let status_filter = params.status.as_deref().map(parse_run_status).unwrap_or(0);
 
     let req = grpc::ListRunsRequest {
         agent_name: params.agent_name,
@@ -309,10 +303,7 @@ async fn stream_events(
         live: true,
     };
 
-    let stream = state
-        .control_plane
-        .stream_run_events(&claims, req)
-        .await?;
+    let stream = state.control_plane.stream_run_events(&claims, req).await?;
 
     Ok(grpc_stream_to_sse(stream, from_seq).into_response())
 }

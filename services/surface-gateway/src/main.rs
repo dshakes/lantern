@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tower::ServiceBuilder;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
@@ -48,6 +48,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Build adapter registry — only register adapters whose credentials are present.
     let mut adapters: HashMap<SurfaceId, Arc<dyn SurfaceAdapter>> = HashMap::new();
+    // Typed Twilio handle for URL-aware signature verification in routes.
+    let mut twilio_adapter_typed: Option<Arc<adapters::twilio::TwilioAdapter>> = None;
 
     if let (Some(signing_secret), Some(bot_token)) =
         (&config.slack_signing_secret, &config.slack_bot_token)
@@ -65,19 +67,31 @@ async fn main() -> anyhow::Result<()> {
         &config.whatsapp_api_token,
         &config.whatsapp_phone_number_id,
     ) {
+        // M1: pass app_secret (distinct from verify_token) for POST signature verification.
         let adapter = adapters::whatsapp::WhatsAppAdapter::new(
             verify_token.clone(),
+            config.whatsapp_app_secret.clone(),
             api_token.clone(),
             phone_number_id.clone(),
         );
         adapters.insert(SurfaceId::WhatsApp, Arc::new(adapter));
-        tracing::info!("registered WhatsApp adapter");
+        tracing::info!(
+            app_secret_configured = config.whatsapp_app_secret.is_some(),
+            "registered WhatsApp adapter"
+        );
     }
 
     if let Some(bot_token) = &config.telegram_bot_token {
-        let adapter = adapters::telegram::TelegramAdapter::new(bot_token.clone());
+        // C3: pass secret_token for X-Telegram-Bot-Api-Secret-Token verification.
+        let adapter = adapters::telegram::TelegramAdapter::new(
+            bot_token.clone(),
+            config.telegram_secret_token.clone(),
+        );
         adapters.insert(SurfaceId::Telegram, Arc::new(adapter));
-        tracing::info!("registered Telegram adapter");
+        tracing::info!(
+            secret_token_configured = config.telegram_secret_token.is_some(),
+            "registered Telegram adapter"
+        );
     }
 
     if let (Some(account_sid), Some(auth_token), Some(phone_number)) = (
@@ -85,13 +99,19 @@ async fn main() -> anyhow::Result<()> {
         &config.twilio_auth_token,
         &config.twilio_phone_number,
     ) {
-        let adapter = adapters::twilio::TwilioAdapter::new(
+        // H5: pass webhook_base_url so routes can do URL-aware HMAC-SHA1 verification.
+        let adapter = Arc::new(adapters::twilio::TwilioAdapter::new(
             account_sid.clone(),
             auth_token.clone(),
             phone_number.clone(),
+            config.twilio_webhook_base_url.clone(),
+        ));
+        adapters.insert(SurfaceId::Twilio, adapter.clone());
+        twilio_adapter_typed = Some(adapter);
+        tracing::info!(
+            base_url_configured = config.twilio_webhook_base_url.is_some(),
+            "registered Twilio adapter"
         );
-        adapters.insert(SurfaceId::Twilio, Arc::new(adapter));
-        tracing::info!("registered Twilio adapter");
     }
 
     if let (Some(bot_token), Some(public_key)) =
@@ -127,12 +147,11 @@ async fn main() -> anyhow::Result<()> {
         adapters,
         dispatcher,
         whatsapp_verify_token: config.whatsapp_verify_token.clone(),
+        twilio_adapter: twilio_adapter_typed,
     };
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    // M2: restrict CORS to configured origins rather than Any.
+    let cors = build_cors(&config.allowed_origins);
 
     let middleware_stack = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
@@ -151,26 +170,63 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Build a CORS layer restricted to the given list of origins.
+fn build_cors(origins: &[String]) -> CorsLayer {
+    use axum::http::HeaderValue;
+    use tower_http::cors::AllowOrigin;
+
+    let values: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|o| o.parse::<HeaderValue>().ok())
+        .collect();
+
+    if values.is_empty() {
+        tracing::warn!(
+            "ALLOWED_ORIGINS produced no valid origins; defaulting to http://localhost:3001"
+        );
+        let fallback = "http://localhost:3001"
+            .parse::<HeaderValue>()
+            .expect("localhost origin is a valid header value");
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list([fallback]))
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    } else {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(values))
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    }
+}
+
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        // L4: log instead of panicking on signal-handler install failure.
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => tracing::info!("received Ctrl+C"),
+            Err(e) => tracing::error!(error = %e, "Ctrl+C handler error"),
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+                tracing::info!("received SIGTERM");
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
+        }
     };
 
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        () = ctrl_c => { tracing::info!("received Ctrl+C"); }
-        () = terminate => { tracing::info!("received SIGTERM"); }
+        () = ctrl_c => {}
+        () = terminate => {}
     }
 }

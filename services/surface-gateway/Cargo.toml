@@ -25,6 +25,11 @@ sha1 = "0.10"
 sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"
+ed25519-dalek = { version = "2", features = ["std", "rand_core"] }
+subtle = "2"
 chrono = { version = "0.4", features = ["serde"] }
 tokio-stream = "0.1"
 url = "2"
+
+[dev-dependencies]
+rand = "0.8"
