@@ -40,6 +40,101 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 )
 
+// ---------- Input schema validation (M4) ----------
+
+// validateInputAgainstSchema performs best-effort validation of the buyer's
+// input map against the seller agent's declared JSON Schema (inputSchema in
+// the agent manifest).
+//
+// This is intentionally lightweight — a full JSON Schema validator is not in
+// scope. We check:
+//   - required fields (schema.required array) are present and non-null.
+//   - property types (schema.properties[key].type) match when declared.
+//
+// If the schema is in an unrecognised shape, we skip validation and return nil
+// so the call proceeds. The goal is to catch obvious misuse (missing a required
+// field), not to replace a proper validator library.
+func validateInputAgainstSchema(input map[string]any, schema map[string]any) error {
+	// Check required fields.
+	if reqRaw, ok := schema["required"]; ok {
+		if reqSlice, ok := reqRaw.([]any); ok {
+			for _, r := range reqSlice {
+				fieldName, ok := r.(string)
+				if !ok {
+					continue
+				}
+				val, present := input[fieldName]
+				if !present || val == nil {
+					return fmt.Errorf("required field %q is missing", fieldName)
+				}
+			}
+		}
+	}
+
+	// Check property types where declared.
+	propsRaw, hasProp := schema["properties"]
+	if !hasProp {
+		return nil
+	}
+	props, ok := propsRaw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	for fieldName, propDef := range props {
+		def, ok := propDef.(map[string]any)
+		if !ok {
+			continue
+		}
+		declaredType, ok := def["type"].(string)
+		if !ok {
+			continue
+		}
+		val, present := input[fieldName]
+		if !present {
+			continue // absence checked in required loop above
+		}
+		if err := checkJSONType(fieldName, val, declaredType); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkJSONType returns an error when val does not match the declared JSON
+// Schema type string. JSON numbers decoded by encoding/json into map[string]any
+// are always float64, so both "integer" and "number" accept float64.
+func checkJSONType(field string, val any, declaredType string) error {
+	switch declaredType {
+	case "string":
+		if _, ok := val.(string); !ok {
+			return fmt.Errorf("field %q must be a string", field)
+		}
+	case "number", "integer":
+		switch val.(type) {
+		case float64, int, int64:
+			// ok
+		default:
+			return fmt.Errorf("field %q must be a number", field)
+		}
+	case "boolean":
+		if _, ok := val.(bool); !ok {
+			return fmt.Errorf("field %q must be a boolean", field)
+		}
+	case "array":
+		switch val.(type) {
+		case []any, []map[string]any:
+			// ok
+		default:
+			return fmt.Errorf("field %q must be an array", field)
+		}
+	case "object":
+		if _, ok := val.(map[string]any); !ok {
+			return fmt.Errorf("field %q must be an object", field)
+		}
+	}
+	return nil
+}
+
 // ---------- Wire types ----------
 
 type marketplaceInvokeRequest struct {
@@ -101,15 +196,51 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Resolve the marketplace entry → seller tenant + agent name.
+	// Also pull the seller agent's input schema (manifest.inputSchema) so we
+	// can validate the buyer's input before spending any resources. (M4)
 	var sellerTenant, agentName string
+	var manifestRaw []byte
 	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT m.source_tenant_id::text, COALESCE(a.name, m.slug)
+		SELECT m.source_tenant_id::text, COALESCE(a.name, m.slug),
+		       COALESCE(m.manifest, '{}'::jsonb)
 		FROM marketplace_agents m
 		LEFT JOIN agents a ON a.id = m.source_agent_id
 		WHERE m.slug = $1
-	`, slug).Scan(&sellerTenant, &agentName)
+	`, slug).Scan(&sellerTenant, &agentName, &manifestRaw)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "marketplace agent not found"})
+		return
+	}
+
+	// M4 — validate buyer-supplied input against the seller's declared input
+	// schema when one is present. Best-effort: if the schema is absent or
+	// unparseable we allow the call to proceed (seller chose not to restrict).
+	if len(manifestRaw) > 0 {
+		var manifest struct {
+			InputSchema map[string]any `json:"inputSchema"`
+		}
+		if jsonErr := json.Unmarshal(manifestRaw, &manifest); jsonErr == nil && len(manifest.InputSchema) > 0 {
+			if validationErr := validateInputAgainstSchema(body.Input, manifest.InputSchema); validationErr != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{
+					"error": "input validation failed: " + validationErr.Error(),
+				})
+				return
+			}
+		}
+	}
+
+	// M4 — check the SELLER agent's budget hard-fail before executing.
+	// A buyer must not be able to bypass the seller's configured limits. We
+	// use an estimated cost of 0 for the pre-check (actual cost is unknown
+	// pre-run); this detects exceeded daily/run count limits. If the seller
+	// has no budget configured, this is a no-op.
+	sellerBudgetCtx := context.Background() // seller-tenant context for budget check
+	sellerBudgetCheck := CheckBudget(sellerBudgetCtx, h.srv.Pool, sellerTenant, agentName, 0)
+	if !sellerBudgetCheck.Allowed && sellerBudgetCheck.HardFail {
+		writeJSON(w, http.StatusPaymentRequired, map[string]any{
+			"error":  "seller agent budget limit reached: " + sellerBudgetCheck.Reason,
+			"reason": sellerBudgetCheck.Reason,
+		})
 		return
 	}
 
@@ -174,6 +305,8 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Wait briefly for the seller's run to complete. The interpreter
 	// runs in-process so for v1 we poll up to 60s.
+	// M4: scope the poll query by the seller's tenant_id so a buyer with a
+	// guessed run_id cannot read another tenant's run state.
 	deadline := time.Now().Add(60 * time.Second)
 	var status string
 	var outputRaw, errRaw []byte
@@ -184,8 +317,8 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(output, 'null'::jsonb),
 			       COALESCE(error, 'null'::jsonb),
 			       COALESCE(cost_usd, 0)
-			FROM runs WHERE id = $1
-		`, runID).Scan(&status, &outputRaw, &errRaw, &costUsd)
+			FROM runs WHERE id = $1 AND tenant_id = $2
+		`, runID, sellerTenant).Scan(&status, &outputRaw, &errRaw, &costUsd)
 		if err == nil && (status == "succeeded" || status == "failed") {
 			break
 		}

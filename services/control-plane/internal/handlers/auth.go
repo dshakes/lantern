@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -80,6 +81,9 @@ type LanternClaims struct {
 	Email    string `json:"email"`
 	Name     string `json:"name"`
 	Role     string `json:"role"`
+	// Scopes is populated for API key auth only (Role=="service").
+	// Empty means "all scopes allowed" (unrestricted key).
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // ---------- handlers ----------
@@ -102,8 +106,8 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Password) < 6 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 6 characters"})
+	if len(req.Password) < 12 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 12 characters"})
 		return
 	}
 
@@ -206,6 +210,37 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// loginRateLimitMax is the maximum number of login attempts allowed per
+// sliding window per key (per-IP and per-account separately).
+const loginRateLimitMax = 10
+
+// loginRateLimitWindow is the sliding window duration for login rate limiting.
+const loginRateLimitWindow = time.Minute
+
+// checkLoginRateLimit checks whether the given key (e.g. "ip:1.2.3.4" or
+// "email:user@example.com") has exceeded loginRateLimitMax attempts in the
+// last loginRateLimitWindow. Returns true when the limit is exceeded.
+//
+// Uses a Redis sliding-window counter (INCR + EXPIRE). When Redis is
+// unavailable, the check is skipped (fail-open) rather than blocking
+// legitimate logins — a down Redis should not lock users out of the system.
+func (h *AuthHandler) checkLoginRateLimit(ctx context.Context, key string) (exceeded bool) {
+	if h.srv.Redis == nil {
+		return false
+	}
+	redisKey := "login_rl:" + key
+	n, err := h.srv.Redis.Incr(ctx, redisKey).Result()
+	if err != nil {
+		// Redis unavailable — fail open.
+		return false
+	}
+	if n == 1 {
+		// First hit in this window — set the expiry.
+		h.srv.Redis.Expire(ctx, redisKey, loginRateLimitWindow) //nolint:errcheck
+	}
+	return n > int64(loginRateLimitMax)
+}
+
 // Login validates credentials and returns a JWT.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
@@ -225,6 +260,22 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	// Rate-limit by client IP and by account (email). Both windows are
+	// checked; a single breach from either triggers 429. This defends
+	// against both credential-stuffing (many IPs targeting one account)
+	// and password-spray (one IP targeting many accounts).
+	clientIP := r.RemoteAddr
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Use the leftmost (client) IP when behind a trusted proxy.
+		if parts := strings.SplitN(xff, ",", 2); len(parts) > 0 {
+			clientIP = strings.TrimSpace(parts[0])
+		}
+	}
+	if h.checkLoginRateLimit(ctx, "ip:"+clientIP) || h.checkLoginRateLimit(ctx, "email:"+req.Email) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many login attempts; please try again later"})
+		return
+	}
 
 	var (
 		userID       string
@@ -361,8 +412,26 @@ func oauthDashboardURL() string {
 	return "http://localhost:3001"
 }
 
+// pkceChallenge generates a PKCE code_verifier and the corresponding S256
+// code_challenge per RFC 7636.
+//
+// Returns (verifier, challenge, error).
+func pkceChallenge() (verifier, challenge string, err error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", "", fmt.Errorf("generate PKCE verifier: %w", err)
+	}
+	verifier = base64.RawURLEncoding.EncodeToString(b)
+	h := sha256.Sum256([]byte(verifier))
+	challenge = base64.RawURLEncoding.EncodeToString(h[:])
+	return verifier, challenge, nil
+}
+
 // OAuthStart initiates an OAuth login flow.
 // GET /auth/oauth/{provider}/start
+//
+// M3: PKCE (S256) is generated here and the verifier stored in Redis with the
+// state. The code_challenge is sent to the authorization endpoint.
 func (h *AuthHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 	providerName := r.PathValue("provider")
 
@@ -391,12 +460,20 @@ func (h *AuthHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 	stateToken := hex.EncodeToString(stateBytes)
 
-	// Store state in Redis with 10-minute TTL.
-	stateData, _ := json.Marshal(map[string]string{
-		"provider": providerName,
-	})
-	err := h.srv.Redis.Set(r.Context(), "oauth_login_state:"+stateToken, string(stateData), 10*time.Minute).Err()
+	// Generate PKCE verifier + challenge (S256). (M3)
+	pkceVerifier, pkceChallengVal, err := pkceChallenge()
 	if err != nil {
+		h.logger().Error("failed to generate PKCE challenge", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+
+	// Store state + PKCE verifier in Redis with 10-minute TTL.
+	stateData, _ := json.Marshal(map[string]string{
+		"provider":      providerName,
+		"pkce_verifier": pkceVerifier,
+	})
+	if err := h.srv.Redis.Set(r.Context(), "oauth_login_state:"+stateToken, string(stateData), 10*time.Minute).Err(); err != nil {
 		h.logger().Error("failed to store OAuth state in Redis", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
@@ -405,11 +482,13 @@ func (h *AuthHandler) OAuthStart(w http.ResponseWriter, r *http.Request) {
 	redirectURI := oauthRedirectBase() + "/auth/oauth/" + providerName + "/callback"
 
 	params := url.Values{
-		"client_id":     {clientID},
-		"redirect_uri":  {redirectURI},
-		"response_type": {"code"},
-		"state":         {stateToken},
-		"scope":         {provider.Scopes},
+		"client_id":             {clientID},
+		"redirect_uri":          {redirectURI},
+		"response_type":         {"code"},
+		"state":                 {stateToken},
+		"scope":                 {provider.Scopes},
+		"code_challenge":        {pkceChallengVal},
+		"code_challenge_method": {"S256"},
 	}
 
 	// Google-specific params.
@@ -454,7 +533,8 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 	h.srv.Redis.Del(ctx, "oauth_login_state:"+state) //nolint:errcheck
 
 	var stateData struct {
-		Provider string `json:"provider"`
+		Provider     string `json:"provider"`
+		PKCEVerifier string `json:"pkce_verifier"`
 	}
 	if err := json.Unmarshal([]byte(stateDataStr), &stateData); err != nil {
 		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Corrupted state data"), http.StatusFound)
@@ -473,8 +553,9 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Exchange authorization code for access token.
-	accessToken, err := h.exchangeOAuthLoginCode(ctx, providerName, provider, code)
+	// Exchange authorization code for access token. Pass the PKCE verifier
+	// so the token endpoint can verify the challenge. (M3)
+	accessToken, err := h.exchangeOAuthLoginCode(ctx, providerName, provider, code, stateData.PKCEVerifier)
 	if err != nil {
 		h.logger().Error("OAuth login token exchange failed", zap.Error(err), zap.String("provider", providerName))
 		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Token exchange failed"), http.StatusFound)
@@ -585,12 +666,65 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Redirect to dashboard with token.
-	http.Redirect(w, r, dashboardURL+"/auth/callback?token="+url.QueryEscape(token), http.StatusFound)
+	// M3: Do NOT put the JWT in the redirect URL — it leaks via Referer
+	// headers, browser history, and server access logs. Instead generate a
+	// short-lived one-time code, store code→JWT in Redis for 60 s, and
+	// redirect with just the code. The dashboard exchanges the code for the
+	// JWT via POST /auth/oauth/exchange (single-use, delete-on-read).
+	onetimeCode, codeErr := randomHex(24)
+	if codeErr != nil {
+		h.logger().Error("failed to generate one-time code", zap.Error(codeErr))
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Internal error"), http.StatusFound)
+		return
+	}
+	if storeErr := h.srv.Redis.Set(ctx, "oauth_code:"+onetimeCode, token, 60*time.Second).Err(); storeErr != nil {
+		h.logger().Error("failed to store one-time code in Redis", zap.Error(storeErr))
+		http.Redirect(w, r, dashboardURL+"/login?error="+url.QueryEscape("Internal error"), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, dashboardURL+"/auth/callback?code="+url.QueryEscape(onetimeCode), http.StatusFound)
+}
+
+// OAuthExchange handles POST /auth/oauth/exchange.
+// Body: { "code": "<one-time code>" }
+// Response: { "token": "<JWT>" }
+//
+// M3 contract: the dashboard calls this endpoint (with CORS credentials)
+// immediately after landing on /auth/callback?code=<code>. The code is
+// consumed (deleted from Redis) on first use so replay attacks are
+// impossible.
+func (h *AuthHandler) OAuthExchange(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Code == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "code is required"})
+		return
+	}
+
+	ctx := r.Context()
+	redisKey := "oauth_code:" + body.Code
+
+	// Read the JWT then delete the key atomically (delete-on-read = single use).
+	token, err := h.srv.Redis.GetDel(ctx, redisKey).Result()
+	if err != nil {
+		// Key missing, already used, or expired.
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired code"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 // exchangeOAuthLoginCode exchanges an authorization code for an access token.
-func (h *AuthHandler) exchangeOAuthLoginCode(ctx context.Context, providerName string, provider oauthLoginProvider, code string) (string, error) {
+// pkceVerifier is the PKCE code_verifier to include in the token request
+// (M3); pass "" to omit (e.g. for providers that don't support PKCE).
+func (h *AuthHandler) exchangeOAuthLoginCode(ctx context.Context, providerName string, provider oauthLoginProvider, code, pkceVerifier string) (string, error) {
 	clientID := os.Getenv(provider.ClientIDEnv)
 	clientSecret := os.Getenv(provider.ClientSecEnv)
 	redirectURI := oauthRedirectBase() + "/auth/oauth/" + providerName + "/callback"
@@ -601,6 +735,9 @@ func (h *AuthHandler) exchangeOAuthLoginCode(ctx context.Context, providerName s
 		"redirect_uri":  {redirectURI},
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
+	}
+	if pkceVerifier != "" {
+		data.Set("code_verifier", pkceVerifier)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, provider.TokenURL, strings.NewReader(data.Encode()))
@@ -622,7 +759,10 @@ func (h *AuthHandler) exchangeOAuthLoginCode(ctx context.Context, providerName s
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, string(body))
+		// Do NOT include the response body in the error — it can contain
+		// token material (access_token, refresh_token, client_secret echoes).
+		// Log only the HTTP status code. (L4)
+		return "", fmt.Errorf("token endpoint returned HTTP %d", resp.StatusCode)
 	}
 
 	var result map[string]any
@@ -659,7 +799,9 @@ func (h *AuthHandler) fetchOAuthUserProfile(ctx context.Context, providerName st
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("userinfo endpoint returned %d: %s", resp.StatusCode, string(body))
+		// Do NOT include the response body — userinfo responses may contain PII.
+		// Log only the HTTP status code. (L4)
+		return "", "", fmt.Errorf("userinfo endpoint returned HTTP %d", resp.StatusCode)
 	}
 
 	var profile map[string]any
@@ -802,16 +944,20 @@ func (h *AuthHandler) validateRequest(r *http.Request) (*LanternClaims, error) {
 // validateAPIKey looks up an API key by its SHA-256 hash and returns synthetic
 // claims with the owning tenant. API keys don't expire unless revoked or
 // explicitly given an expires_at.
+//
+// L1: scopes are fetched and stored in the returned claims. The middleware
+// layer can call HasScope to enforce per-endpoint access.
 func (h *AuthHandler) validateAPIKey(ctx context.Context, rawKey string) (*LanternClaims, error) {
 	hash := sha256.Sum256([]byte(rawKey))
 	keyHash := hex.EncodeToString(hash[:])
 
 	var tenantID, keyID string
+	var scopes []string
 	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT id, tenant_id FROM api_keys
+		SELECT id, tenant_id, COALESCE(scopes, '{}') FROM api_keys
 		WHERE key_hash = $1 AND revoked_at IS NULL
 		AND (expires_at IS NULL OR expires_at > now())
-	`, keyHash).Scan(&keyID, &tenantID)
+	`, keyHash).Scan(&keyID, &tenantID, &scopes)
 	if err != nil {
 		return nil, fmt.Errorf("invalid API key")
 	}
@@ -822,7 +968,112 @@ func (h *AuthHandler) validateAPIKey(ctx context.Context, rawKey string) (*Lante
 	return &LanternClaims{
 		TenantID: tenantID,
 		Role:     "service",
+		Scopes:   scopes,
 	}, nil
+}
+
+// ---------- Scope model (L1) ----------
+
+// Scope is a permission string carried by an API key.
+//
+// Scope model: coarse read/write/admin. Fine-grained per-resource scopes can
+// be added later (e.g. "runs:read", "agents:write") but are not yet assigned
+// to any endpoint — the three coarse values cover the current needs:
+//
+//	"read"  — safe, idempotent operations (GET requests)
+//	"write" — state-mutating operations (POST/PUT/PATCH/DELETE)
+//	"admin" — tenant-admin operations (API key management, billing, settings)
+//
+// When an API key has an empty scopes list, all operations are allowed
+// (backward-compatible with existing keys issued before scopes were enforced).
+type Scope = string
+
+const (
+	ScopeRead  Scope = "read"
+	ScopeWrite Scope = "write"
+	ScopeAdmin Scope = "admin"
+)
+
+// HasScope returns true when the claims allow the requested scope.
+//
+// Rules:
+//   - JWT-based auth (Role != "service"): always allowed — JWT holders are
+//     interactive users, not machine tokens.
+//   - API key with empty scopes list: always allowed (legacy / unrestricted key).
+//   - API key with non-empty scopes: "admin" implies "write" implies "read".
+func HasScope(claims *LanternClaims, required Scope) bool {
+	if claims.Role != "service" {
+		// JWT user — not an API key; no scope restriction.
+		return true
+	}
+	if len(claims.Scopes) == 0 {
+		// Unrestricted API key — all scopes allowed.
+		return true
+	}
+	for _, s := range claims.Scopes {
+		if s == required {
+			return true
+		}
+		// Implication: admin ⊇ write ⊇ read.
+		switch s {
+		case ScopeAdmin:
+			// admin implies write and read.
+			if required == ScopeWrite || required == ScopeRead {
+				return true
+			}
+		case ScopeWrite:
+			// write implies read.
+			if required == ScopeRead {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// RequireScopeMiddleware returns an http.Handler that enforces scope on API key
+// requests. The required scope is derived from the HTTP method:
+//
+//	GET / HEAD / OPTIONS → read
+//	DELETE               → write
+//	POST / PUT / PATCH   → write
+//
+// Requests authenticated with a JWT (interactive users) pass through
+// unconditionally. Unauthenticated requests are rejected with 401.
+//
+// Usage: wrap individual routes or route groups in main.go:
+//
+//	mux.Handle("/v1/agents", RequireScopeMiddleware(auth, next))
+func RequireScopeMiddleware(auth *AuthHandler, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		claims, err := auth.validateRequest(r)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+
+		var required Scope
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+			required = ScopeRead
+		default:
+			required = ScopeWrite
+		}
+
+		if !HasScope(claims, required) {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": fmt.Sprintf("API key missing required scope: %s", required),
+			})
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ---------- util ----------

@@ -11,7 +11,8 @@ function AuthCallbackInner() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const token = searchParams.get("token");
+    const code = searchParams.get("code");
+    const token = searchParams.get("token"); // legacy fallback
     const errorParam = searchParams.get("error");
 
     if (errorParam) {
@@ -20,13 +21,25 @@ function AuthCallbackInner() {
       return;
     }
 
-    if (token) {
+    // Full reload after auth so AuthProvider re-runs its mount effect and
+    // fetches /auth/me with the new token (router.replace keeps stale user).
+    const finish = () => window.location.replace("/agents");
+
+    if (code) {
+      // Preferred: exchange the one-time code for a JWT (token is never in the
+      // URL). The code is single-use and expires in ~60s.
+      api
+        .exchangeOAuthCode(code)
+        .then(finish)
+        .catch(() => {
+          setError("Sign-in link expired or already used");
+          setTimeout(() => router.replace("/login"), 3000);
+        });
+    } else if (token) {
       api.setToken(token);
-      // Full reload so AuthProvider re-runs its mount effect and fetches
-      // /auth/me with the new token. router.replace keeps the stale user.
-      window.location.replace("/agents");
+      finish();
     } else {
-      setError("No token received");
+      setError("No sign-in code received");
       setTimeout(() => router.replace("/login"), 3000);
     }
   }, [searchParams, router]);
