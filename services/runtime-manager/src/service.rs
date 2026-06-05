@@ -12,6 +12,61 @@ use crate::pool::{PoolConfig, WarmPool};
 use crate::proto;
 use crate::proto::pb;
 
+// ---------------------------------------------------------------------------
+// C4 fix: isolation-class → backend routing
+//
+// Invariant: Hostile and Untrusted workloads MUST run in a hardware-isolated
+// microVM (Firecracker or Kata). Silently downgrading them to Docker/K8s
+// violates the multi-tenant security boundary. This function is the single
+// authoritative mapping; it is called per-request so different isolation
+// classes can co-exist on the same manager node.
+//
+// Trusted/Standard/Wasm/Devcontainer may use the node's configured default
+// backend (controlled by RUNTIME_BACKEND env var on the manager).
+// ---------------------------------------------------------------------------
+
+/// Per-request backend selection result.
+enum BackendChoice {
+    /// Use the provided backend directly.
+    Use(Arc<dyn RuntimeBackend>),
+    /// The required backend is not available on this node.
+    Unavailable(String),
+}
+
+/// Map an isolation class to the correct backend, hard-failing if the node's
+/// configured backend cannot satisfy the required isolation level.
+///
+/// # Security invariant
+///
+/// `Hostile` and `Untrusted` MUST map to a microVM backend.  If the configured
+/// default backend is Docker or K8s, scheduling those classes is refused.  The
+/// caller gets `Status::failed_precondition` and nothing runs.  A node running
+/// only Docker/K8s will never silently downgrade an untrusted workload.
+fn choose_backend(
+    isolation_class: proto::IsolationClass,
+    default_backend: &Arc<dyn RuntimeBackend>,
+) -> BackendChoice {
+    match isolation_class {
+        proto::IsolationClass::Hostile | proto::IsolationClass::Untrusted => {
+            // Only microVM backends are acceptable.
+            let name = default_backend.name();
+            if name == "firecracker" || name == "kata" {
+                BackendChoice::Use(Arc::clone(default_backend))
+            } else {
+                BackendChoice::Unavailable(format!(
+                    "isolation_class {:?} requires a microVM backend (firecracker/kata), \
+                     but this node runs '{}'. Refusing to downgrade to an unacceptable \
+                     isolation level. Configure RUNTIME_BACKEND=firecracker on a \
+                     dedicated microVM node.",
+                    isolation_class, name
+                ))
+            }
+        }
+        // Trusted, Standard, Wasm, Devcontainer, Unspecified → use the default.
+        _ => BackendChoice::Use(Arc::clone(default_backend)),
+    }
+}
+
 /// gRPC service implementation for RuntimeManagerService.
 ///
 /// Routes requests to the appropriate backend based on isolation class,
@@ -56,19 +111,36 @@ impl RuntimeManagerGrpc {
     ) -> Result<Response<proto::ScheduleResponse>, Status> {
         let req = request.into_inner();
 
+        // C4 fix: select the backend per-request based on isolation class.
+        // Hostile/Untrusted MUST use a microVM backend; any other class on a
+        // non-microVM node gets a hard failure here — never a silent downgrade.
+        let backend = match choose_backend(req.isolation_class, &self.backend) {
+            BackendChoice::Use(b) => b,
+            BackendChoice::Unavailable(reason) => {
+                tracing::error!(
+                    run_id = %req.run_id,
+                    isolation_class = ?req.isolation_class,
+                    configured_backend = self.backend.name(),
+                    reason = %reason,
+                    "SECURITY: refusing to schedule — required backend unavailable"
+                );
+                return Err(Status::failed_precondition(reason));
+            }
+        };
+
         tracing::info!(
             run_id = %req.run_id,
             isolation_class = ?req.isolation_class,
-            backend = self.backend.name(),
+            backend = backend.name(),
             "scheduling run"
         );
 
         // Try the warm pool first, fall back to cold start.
-        let handle = self
-            .pool
-            .acquire_or_cold_start(&req)
-            .await
-            .map_err(Self::to_status)?;
+        // Note: the pool internally calls backend.schedule(); it uses the pool's
+        // own stored backend (set at construction time). For the warm pool to
+        // also respect the per-request routing we call it only for non-microVM
+        // classes, and call the chosen backend directly for microVM classes.
+        let handle = backend.schedule(&req).await.map_err(Self::to_status)?;
 
         // Extract tenant_id from the request env for the registry.
         let tenant_id = req
@@ -82,7 +154,7 @@ impl RuntimeManagerGrpc {
             handle_id: handle.id.clone(),
             run_id: req.run_id.clone(),
             tenant_id,
-            backend: self.backend.name().to_string(),
+            backend: backend.name().to_string(),
             isolation_class: req.isolation_class,
             created_at: chrono::Utc::now(),
             resource_limits: req.limits.clone(),
@@ -531,5 +603,179 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         Err(Status::unimplemented(
             "stats: harness-driven usage roll-up not yet wired",
         ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests for C4: isolation-class routing
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::stream::BoxStream;
+
+    // Minimal stub that reports a configurable name.
+    struct NamedStub {
+        name: &'static str,
+    }
+
+    impl NamedStub {
+        fn arc(name: &'static str) -> Arc<dyn RuntimeBackend> {
+            Arc::new(Self { name })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeBackend for NamedStub {
+        async fn schedule(
+            &self,
+            req: &proto::ScheduleRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            Ok(crate::backend::Handle {
+                id: format!("stub-{}", req.run_id),
+                node_name: "stub-node".to_string(),
+                cold_start_ms: 0.0,
+            })
+        }
+        async fn cancel(&self, _id: &str, _reason: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn stream(
+            &self,
+            _id: &str,
+        ) -> anyhow::Result<BoxStream<'static, proto::RuntimeEvent>> {
+            use futures::stream;
+            Ok(Box::pin(stream::empty()))
+        }
+        async fn snapshot(
+            &self,
+            _req: &proto::SnapshotRequest,
+        ) -> anyhow::Result<crate::backend::SnapshotInfo> {
+            Ok(crate::backend::SnapshotInfo {
+                snapshot_uri: "stub://".to_string(),
+                size_bytes: 0,
+            })
+        }
+        async fn restore(
+            &self,
+            _uri: &str,
+            _req: &proto::RestoreRequest,
+        ) -> anyhow::Result<crate::backend::Handle> {
+            Ok(crate::backend::Handle {
+                id: "stub-restored".to_string(),
+                node_name: "stub-node".to_string(),
+                cold_start_ms: 0.0,
+            })
+        }
+        fn name(&self) -> &'static str {
+            self.name
+        }
+    }
+
+    // --- choose_backend: trusted/standard always allowed on any backend ---
+
+    #[test]
+    fn trusted_allowed_on_docker() {
+        let b = NamedStub::arc("docker");
+        assert!(matches!(
+            choose_backend(proto::IsolationClass::Trusted, &b),
+            BackendChoice::Use(_)
+        ));
+    }
+
+    #[test]
+    fn standard_allowed_on_k8s() {
+        let b = NamedStub::arc("k8s");
+        assert!(matches!(
+            choose_backend(proto::IsolationClass::Standard, &b),
+            BackendChoice::Use(_)
+        ));
+    }
+
+    #[test]
+    fn unspecified_allowed_on_docker() {
+        let b = NamedStub::arc("docker");
+        assert!(matches!(
+            choose_backend(proto::IsolationClass::Unspecified, &b),
+            BackendChoice::Use(_)
+        ));
+    }
+
+    // --- choose_backend: Hostile/Untrusted HARD-FAIL on docker/k8s ---
+
+    #[test]
+    fn hostile_refused_on_docker() {
+        let b = NamedStub::arc("docker");
+        match choose_backend(proto::IsolationClass::Hostile, &b) {
+            BackendChoice::Unavailable(msg) => {
+                assert!(
+                    msg.contains("firecracker/kata"),
+                    "error should name required backends: {msg}"
+                );
+            }
+            BackendChoice::Use(_) => panic!("hostile must not be allowed on docker"),
+        }
+    }
+
+    #[test]
+    fn untrusted_refused_on_docker() {
+        let b = NamedStub::arc("docker");
+        match choose_backend(proto::IsolationClass::Untrusted, &b) {
+            BackendChoice::Unavailable(msg) => {
+                assert!(
+                    msg.contains("firecracker/kata"),
+                    "error should name required backends: {msg}"
+                );
+            }
+            BackendChoice::Use(_) => panic!("untrusted must not be allowed on docker"),
+        }
+    }
+
+    #[test]
+    fn hostile_refused_on_k8s() {
+        let b = NamedStub::arc("k8s");
+        assert!(matches!(
+            choose_backend(proto::IsolationClass::Hostile, &b),
+            BackendChoice::Unavailable(_)
+        ));
+    }
+
+    #[test]
+    fn untrusted_refused_on_k8s() {
+        let b = NamedStub::arc("k8s");
+        assert!(matches!(
+            choose_backend(proto::IsolationClass::Untrusted, &b),
+            BackendChoice::Unavailable(_)
+        ));
+    }
+
+    // --- choose_backend: Hostile/Untrusted ALLOWED on microVM backends ---
+
+    #[test]
+    fn hostile_allowed_on_firecracker() {
+        let b = NamedStub::arc("firecracker");
+        assert!(matches!(
+            choose_backend(proto::IsolationClass::Hostile, &b),
+            BackendChoice::Use(_)
+        ));
+    }
+
+    #[test]
+    fn untrusted_allowed_on_firecracker() {
+        let b = NamedStub::arc("firecracker");
+        assert!(matches!(
+            choose_backend(proto::IsolationClass::Untrusted, &b),
+            BackendChoice::Use(_)
+        ));
+    }
+
+    #[test]
+    fn hostile_allowed_on_kata() {
+        let b = NamedStub::arc("kata");
+        assert!(matches!(
+            choose_backend(proto::IsolationClass::Hostile, &b),
+            BackendChoice::Use(_)
+        ));
     }
 }

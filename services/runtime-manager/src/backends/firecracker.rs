@@ -122,8 +122,18 @@ pub struct InstanceAction {
 ///
 /// This backend is structured with real Firecracker API types and patterns.
 /// All API calls go through the Firecracker REST API served over a Unix socket.
-/// For the spike, the socket path is configurable but calls log the intended
-/// action and return mock handles.
+///
+/// # M5 fail-closed guard
+///
+/// The real Firecracker socket integration is not yet wired.  `schedule()`
+/// returns an explicit error unless `LANTERN_ALLOW_FIRECRACKER_STUB=1` is set.
+/// That flag is only for developer smoke-testing — **never set it in
+/// production**.  Combined with the C4 backend-routing fix, hostile/untrusted
+/// workloads will fail closed rather than silently running unisolated.
+///
+/// TODO(ADR-0006): wire the actual Firecracker REST-over-Unix-socket transport.
+/// The HTTP client, API types, and machine-config helpers below are the
+/// structural scaffold for that implementation.
 pub struct FirecrackerBackend {
     /// Path to the Firecracker API socket.
     socket_path: String,
@@ -137,10 +147,27 @@ pub struct FirecrackerBackend {
     default_vcpu: u32,
     /// Default memory in MiB.
     default_mem_mib: u32,
+    /// Whether the stub is opt-in allowed for dev environments.
+    allow_stub: bool,
 }
 
 impl FirecrackerBackend {
     pub fn new(socket_path: String) -> Self {
+        // M5 fail-closed: check the opt-in dev flag at construction time so
+        // every subsequent call can act on it without re-reading the env.
+        let allow_stub = std::env::var("LANTERN_ALLOW_FIRECRACKER_STUB")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        if allow_stub {
+            tracing::warn!(
+                "LANTERN_ALLOW_FIRECRACKER_STUB=1 is set: \
+                 Firecracker backend is operating as a STUB and will NOT \
+                 create real microVMs. This is only acceptable in dev/test \
+                 environments. NEVER set this flag in production."
+            );
+        }
+
         Self {
             socket_path,
             http_client: reqwest::Client::new(),
@@ -148,6 +175,7 @@ impl FirecrackerBackend {
             rootfs_path: "/opt/lantern/rootfs.ext4".to_string(),
             default_vcpu: 2,
             default_mem_mib: 512,
+            allow_stub,
         }
     }
 
@@ -229,6 +257,32 @@ impl FirecrackerBackend {
 #[async_trait]
 impl RuntimeBackend for FirecrackerBackend {
     async fn schedule(&self, req: &ScheduleRequest) -> Result<Handle> {
+        // M5 fail-closed: refuse to return a fake success handle unless the
+        // dev opt-in flag is explicitly set.  Without a real Firecracker
+        // socket the caller would believe a microVM was created when none was,
+        // giving a false sense of isolation for Hostile/Untrusted workloads.
+        //
+        // TODO(ADR-0006): replace this entire function body with the real
+        // Firecracker REST-over-Unix-socket implementation once the socket
+        // transport is wired.
+        if !self.allow_stub {
+            anyhow::bail!(
+                "Firecracker backend is not yet implemented in this build. \
+                 Real microVM creation over the Unix socket is pending \
+                 (see ADR-0006). Refusing to return a stub handle that would \
+                 falsely indicate a microVM was created. \
+                 Set LANTERN_ALLOW_FIRECRACKER_STUB=1 only in dev/test \
+                 environments to opt into stub behaviour."
+            );
+        }
+
+        tracing::warn!(
+            run_id = %req.run_id,
+            isolation_class = ?req.isolation_class,
+            "Firecracker STUB: schedule() called with LANTERN_ALLOW_FIRECRACKER_STUB=1 \
+             — no real microVM is being created. Dev/test use only."
+        );
+
         let start = Instant::now();
         let vm_id = Uuid::new_v4().to_string();
 
@@ -236,7 +290,7 @@ impl RuntimeBackend for FirecrackerBackend {
             vm_id = %vm_id,
             run_id = %req.run_id,
             isolation_class = ?req.isolation_class,
-            "creating Firecracker microVM"
+            "creating Firecracker microVM (STUB)"
         );
 
         // Step 1: Configure machine.
@@ -298,10 +352,16 @@ impl RuntimeBackend for FirecrackerBackend {
     }
 
     async fn cancel(&self, handle_id: &str, reason: &str) -> Result<()> {
-        tracing::info!(
+        if !self.allow_stub {
+            anyhow::bail!(
+                "Firecracker backend cancel() not implemented (stub guard). \
+                 See ADR-0006."
+            );
+        }
+        tracing::warn!(
             vm_id = handle_id,
             reason = reason,
-            "sending Ctrl+Alt+Del to Firecracker microVM"
+            "Firecracker STUB: cancel() — no real microVM is being stopped"
         );
 
         let action = InstanceAction {
@@ -309,7 +369,7 @@ impl RuntimeBackend for FirecrackerBackend {
         };
         self.api_put("/actions", &action).await?;
 
-        tracing::info!(vm_id = handle_id, "microVM shutdown initiated");
+        tracing::info!(vm_id = handle_id, "microVM shutdown initiated (stub)");
         Ok(())
     }
 
@@ -380,6 +440,18 @@ impl RuntimeBackend for FirecrackerBackend {
     }
 
     async fn restore(&self, snapshot_uri: &str, req: &RestoreRequest) -> Result<Handle> {
+        if !self.allow_stub {
+            anyhow::bail!(
+                "Firecracker backend restore() not implemented (stub guard). \
+                 See ADR-0006."
+            );
+        }
+        tracing::warn!(
+            run_id = %req.run_id,
+            snapshot_uri = snapshot_uri,
+            "Firecracker STUB: restore() — no real microVM is being restored"
+        );
+
         let start = Instant::now();
         let vm_id = Uuid::new_v4().to_string();
 
@@ -392,7 +464,7 @@ impl RuntimeBackend for FirecrackerBackend {
             vm_id = %vm_id,
             snapshot_path = snapshot_path,
             run_id = %req.run_id,
-            "restoring Firecracker microVM from snapshot"
+            "restoring Firecracker microVM from snapshot (stub)"
         );
 
         let params = SnapshotLoadParams {
