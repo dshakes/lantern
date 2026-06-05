@@ -31,8 +31,12 @@ there are no long-term support branches yet.
   `LANTERN_CREDENTIAL_KEY` is set. If it is unset the code falls back to
   plaintext pass-through for local dev — **always set it in production.**
 - **Multi-tenant isolation** is enforced by `tenant_id` on every row, gRPC
-  metadata, and Postgres Row-Level Security on `agents`/`runs`. Report any path
-  that can read or write across tenants.
+  metadata, and Postgres Row-Level Security (`FORCE ROW LEVEL SECURITY`) on
+  `agents`/`runs`. **In production, run the app as a non-owner DB role** so RLS
+  is not bypassed by the table owner — apply
+  [`infra/db/least-privilege.sql`](infra/db/least-privilege.sql) and point
+  `DATABASE_URL` at `lantern_app`, running schema migrations separately as the
+  owner. Report any path that can read or write across tenants.
 - **The macOS personal-assistant bridges** are owner-only: inbound from
   non-owner contacts never reaches the personal-docs or agentic-action
   pipeline, and the sealed `## Private` profile vault is never injected into a
