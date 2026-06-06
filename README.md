@@ -51,6 +51,10 @@ What makes it different from "another agent framework":
 Lantern is organized as five composable modules over a shared runtime. (For the
 elevator version, see [`PITCH.md`](PITCH.md).)
 
+<p align="center">
+  <img src="docs/assets/modules.svg" alt="Lantern's five modules over one shared runtime" width="100%">
+</p>
+
 | Module | What it gives you | Maturity |
 |---|---|---|
 | **1 · Agent Runtime** | Run agents in *your* cloud: durable workflow engine, capability‑based multi‑LLM router, microVM isolation (scheduler / manager / harness), edge gateway. Control plane never touches user code. | Core prod‑ready; microVM live‑boot is alpha (**fail‑closed**) |
@@ -63,6 +67,13 @@ elevator version, see [`PITCH.md`](PITCH.md).)
 > (Firecracker), the live TLS/mTLS handshake, and secret‑vending transport are
 > implemented + unit‑tested but ship **fail‑closed** pending Linux/KVM
 > integration — enumerated in [`SECURITY.md`](SECURITY.md). Nothing pretends to work.
+
+Every run is durable, budgeted, isolated, and cryptographically verifiable —
+the same path for a backend job or a WhatsApp message:
+
+<p align="center">
+  <img src="docs/assets/run-lifecycle.svg" alt="Agent run lifecycle — budget gate, durable steps, capability routing, microVM isolation, signed receipt, eval-in-CI loop" width="100%">
+</p>
 
 ---
 

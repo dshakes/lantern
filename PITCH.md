@@ -50,6 +50,8 @@ free. Most companies build one or the other; Lantern is the substrate for both.
 
 ## What Lantern is — five modules, one runtime
 
+![Lantern's five modules over one shared runtime](docs/assets/modules.svg)
+
 | Module | What it is | Status |
 |---|---|---|
 | **1. Agent Runtime** | Control plane (Go) + durable workflow engine + capability‑based multi‑LLM router (Rust) + microVM runtime (scheduler/manager/harness) + edge gateway. Run agents in **your** cloud; control plane never touches user code. | Core prod‑ready; microVM live boot is alpha (fail‑closed) |
@@ -67,6 +69,10 @@ free. Most companies build one or the other; Lantern is the substrate for both.
 - **microVM isolation by design** — untrusted code routes to Firecracker/Kata or **hard‑fails**; it never silently downgrades to a bare container.
 - **A personal agent that passes as you** — the natural‑communication layer (voice‑from‑history, pacing, dialect, privacy guards) is the part nobody else has.
 - **Your cloud, your keys.** Data‑plane in your EKS/GKE/AKS; only metadata crosses an outbound‑only mTLS tunnel.
+
+## How a run works — durable, budgeted, isolated, verifiable
+
+![Agent run lifecycle](docs/assets/run-lifecycle.svg)
 
 ## Proof it's real (not slideware)
 
