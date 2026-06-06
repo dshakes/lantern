@@ -408,6 +408,15 @@ export interface PersonaOptions {
   // Used to forbid sending a byte-identical / same-shaped reply twice in
   // a row (the "best to wait for him directly" loop). Empty when none.
   recentBotReplies?: string[];
+  // GLOBAL owner-voice block (from owner-voice.ts → formatOwnerVoiceBlock).
+  // Verbatim exemplars of how the owner ACTUALLY writes, aggregated across
+  // ALL his contacts (not just this one). Injected on EVERY reply so even a
+  // brand-new / sparse contact — which has no per-contact fingerprint —
+  // still mimics the owner's real voice instead of falling back to generic
+  // rules. For Telugu inbound it carries the owner's real Telugu phrasing,
+  // which beats the BAD→GOOD dialect rules. Additive to contactStyleBlock,
+  // never a replacement. Empty when the owner has no usable history yet.
+  ownerVoiceBlock?: string;
   // Scheduling-negotiation capability. When true (the bridge has the
   // owner's free slots + calendar on hand), the persona may PROPOSE,
   // hold, and confirm concrete times — and, on the contact's agreement,
@@ -731,6 +740,18 @@ export function agentPersonaPrompt(
     lines.push(override);
   }
 
+  // GLOBAL owner-voice — verbatim exemplars of how the owner ACTUALLY
+  // writes, aggregated across ALL contacts. Injected on EVERY reply so a
+  // cold/sparse contact (no per-contact fingerprint below) still hears the
+  // owner's real voice rather than generic rules. Placed BEFORE the
+  // per-contact block so the per-contact fingerprint, when present, is the
+  // closer (more specific) anchor.
+  const ownerVoice = opts.ownerVoiceBlock?.trim();
+  if (ownerVoice) {
+    lines.push(``);
+    lines.push(ownerVoice);
+  }
+
   // Per-contact style fingerprint — placed BEFORE the recent
   // transcript so the model anchors on "how I write to this person"
   // before "what we said today". The fingerprint includes verbatim
@@ -770,7 +791,7 @@ export function agentPersonaPrompt(
   if (recentReplies.length > 0) {
     lines.push(``);
     lines.push(
-      `You have ALREADY sent these replies to this contact recently — do NOT repeat any of them or send the same idea reworded the same way. Say something genuinely different, in fresh words:`,
+      `You have ALREADY sent these replies to this contact recently — do NOT repeat any of them or send the same idea reworded the same way. In particular, do NOT reuse the same OPENER or the same concierge OFFER twice (e.g. "want me to pass a specific message along?", "I'll get this in front of him", "want me to let him know?"). Repeating a stock offer is the #1 bot-tell — if you already offered to relay/flag/pass something along on this thread, DON'T offer it again; just answer or stay brief. Say something genuinely different, in fresh words:`,
     );
     for (const r of recentReplies) lines.push(`> ${r}`);
   }
