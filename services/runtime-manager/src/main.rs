@@ -58,9 +58,7 @@ async fn main() -> anyhow::Result<()> {
             config.agent_image.clone(),
         )?),
         RuntimeBackendKind::K8s => Arc::new(K8sBackend::new(config.agent_image.clone()).await?),
-        RuntimeBackendKind::Firecracker => {
-            Arc::new(FirecrackerBackend::new("/tmp/firecracker.sock".to_string()))
-        }
+        RuntimeBackendKind::Firecracker => Arc::new(FirecrackerBackend::new()),
     };
 
     tracing::info!(backend = backend.name(), "runtime backend initialized");
