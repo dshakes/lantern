@@ -1,0 +1,128 @@
+# microVM integration — live Firecracker boot validation.
+#
+# Validates the Firecracker microVM backend the way the macOS dev host cannot:
+# it cold-boots a REAL microVM and asserts boot + harness heartbeat + a secret
+# vended over mTLS, then tears down. See:
+#   - infra/firecracker/build-image.sh        (kernel + rootfs build)
+#   - infra/firecracker/integration-test.sh   (the assertions)
+#   - docs/architecture/04c-microvm-integration-test.md (how + why)
+#
+# ---------------------------------------------------------------------------
+# RUNNER REQUIREMENT: KVM / nested virtualization
+# ---------------------------------------------------------------------------
+# Firecracker needs /dev/kvm. GitHub's standard `ubuntu-latest` hosted runners
+# do NOT expose nested virt, so this job will SKIP there (gracefully — green,
+# not red). To actually RUN the live boot, target one of:
+#
+#   - A self-hosted runner on a bare-metal / nested-virt-enabled host
+#     (label it `kvm`), OR
+#   - A cloud VM that exposes KVM (e.g. GCP nested virt, AWS .metal,
+#     Azure Dv5 with nested virt), registered as a self-hosted runner.
+#
+# Point the job at it by setting the repo/org variable `MICROVM_RUNNER_LABEL`
+# (e.g. `kvm`); it defaults to `ubuntu-latest` so the workflow is valid out of
+# the box and self-skips when /dev/kvm is absent.
+name: "microvm · integration (firecracker)"
+
+on:
+  pull_request:
+    # Only when the runtime backend, harness, or this infra changes — a live
+    # boot is expensive, so don't run it on docs-only PRs.
+    paths:
+      - "services/runtime-manager/**"
+      - "services/harness/**"
+      - "infra/firecracker/**"
+      - "packages/proto/lantern/v1/runtime.proto"
+      - ".github/workflows/microvm-integration.yml"
+  workflow_dispatch: {}        # allow manual runs against a KVM runner
+  schedule:
+    - cron: "0 7 * * 1"        # weekly Monday 07:00 UTC nightly-style guard
+
+permissions:
+  contents: read
+
+concurrency:
+  group: microvm-integration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firecracker-boot:
+    name: firecracker-boot
+    # Defaults to ubuntu-latest (self-skips, no KVM). Set the MICROVM_RUNNER_LABEL
+    # repo/org variable to a KVM-capable self-hosted runner label to run for real.
+    runs-on: ${{ vars.MICROVM_RUNNER_LABEL || 'ubuntu-latest' }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # --- KVM gate ------------------------------------------------------
+      # Probe for nested virt up front. When absent we mark the job skipped
+      # (every later step guards on `steps.kvm.outputs.present`) so the check
+      # is GREEN on a runner without KVM rather than a misleading failure.
+      - name: Probe for KVM
+        id: kvm
+        run: |
+          if [ -e /dev/kvm ] && [ -r /dev/kvm ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::/dev/kvm present — running live Firecracker boot validation."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::/dev/kvm absent on this runner — SKIPPING live microVM boot. \
+            Set vars.MICROVM_RUNNER_LABEL to a KVM-capable runner to run it for real."
+          fi
+
+      - name: Install toolchain (Rust musl + Firecracker + grpcurl)
+        if: steps.kvm.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y musl-tools e2fsprogs jq curl
+
+          # Rust musl target for the static harness binary.
+          rustup target add x86_64-unknown-linux-musl
+
+          # Firecracker release binary onto PATH.
+          FC_VER="v1.10.1"
+          arch="$(uname -m)"
+          curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VER}/firecracker-${FC_VER}-${arch}.tgz" \
+            | tar -xz -C "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/release-${FC_VER}-${arch}/firecracker-${FC_VER}-${arch}" \
+            /usr/local/bin/firecracker
+          firecracker --version
+
+          # grpcurl for driving the manager's gRPC API in the test.
+          GRPCURL_VER="1.9.1"
+          curl -fsSL "https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VER}/grpcurl_${GRPCURL_VER}_linux_x86_64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" grpcurl
+          sudo install "$RUNNER_TEMP/grpcurl" /usr/local/bin/grpcurl
+          grpcurl --version || true
+
+      # --- Build the boot image (kernel + rootfs w/ harness) -------------
+      # Exports FC_KERNEL_PATH / FC_ROOTFS_PATH into $GITHUB_ENV (the script
+      # appends them when running under Actions).
+      - name: Build microVM image (vmlinux + rootfs.ext4)
+        if: steps.kvm.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          # rootfs build needs loop-mount (root); run under sudo, preserve env.
+          sudo --preserve-env=GITHUB_ENV,FC_KERNEL_VERSION,ARCH \
+            bash infra/firecracker/build-image.sh "$RUNNER_TEMP/fc-image"
+
+      # --- Run the live boot validation ----------------------------------
+      - name: Schedule a hello microVM and assert boot + heartbeat + mTLS vend
+        if: steps.kvm.outputs.present == 'true'
+        env:
+          # Set BOTH names: the manager reads RUNTIME_BACKEND today; the task's
+          # LANTERN_RUNTIME_BACKEND is set too so the contract is future-proof
+          # if/when the config is renamed.
+          RUNTIME_BACKEND: firecracker
+          LANTERN_RUNTIME_BACKEND: firecracker
+        run: |
+          set -euo pipefail
+          # Firecracker + loop devices + TAP setup need root.
+          sudo --preserve-env=FC_KERNEL_PATH,FC_ROOTFS_PATH,RUNTIME_BACKEND,LANTERN_RUNTIME_BACKEND \
+            bash infra/firecracker/integration-test.sh
+
+      - name: Skipped (no KVM on this runner)
+        if: steps.kvm.outputs.present != 'true'
+        run: echo "No /dev/kvm — live microVM boot skipped. This is expected on hosted runners."

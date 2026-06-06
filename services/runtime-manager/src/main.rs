@@ -74,10 +74,19 @@ async fn main() -> anyhow::Result<()> {
     let pool_config = PoolConfig::default();
     let grpc_service = RuntimeManagerGrpc::new(backend, pool_config, Arc::clone(&resolver));
 
+    // mTLS: FAIL-CLOSED in prod when env vars absent, WARN+plaintext in dev.
+    // Computed before constructing the harness service so VendSecret knows
+    // whether to enforce the client-cert ↔ vm_id identity check.
+    let mtls_config = tls::build_server_tls_config()?;
+    let mtls_enabled = mtls_config.is_some();
+
     // The RuntimeHarness server shares the same handle registry so
     // VendSecret sees every VM registered by Spawn.
-    let harness_service =
-        RuntimeHarnessGrpc::new(Arc::clone(&grpc_service.registry), Arc::clone(&resolver));
+    let harness_service = RuntimeHarnessGrpc::new(
+        Arc::clone(&grpc_service.registry),
+        Arc::clone(&resolver),
+        mtls_enabled,
+    );
 
     let listen_addr = config.listen_addr;
     let manager_svc = RuntimeManagerServer::new(grpc_service);
@@ -94,10 +103,7 @@ async fn main() -> anyhow::Result<()> {
         zone: config.node_zone.clone(),
     });
 
-    // mTLS: FAIL-CLOSED in prod when env vars absent, WARN+plaintext in dev.
-    let mtls_config = tls::build_server_tls_config()?;
-
-    tracing::info!(%listen_addr, mtls = mtls_config.is_some(), "gRPC server starting");
+    tracing::info!(%listen_addr, mtls = mtls_enabled, "gRPC server starting");
 
     let mut builder = Server::builder();
     if let Some(tls_config) = mtls_config {
