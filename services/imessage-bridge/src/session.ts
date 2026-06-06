@@ -164,6 +164,11 @@ import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type Pend
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
 import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
+import {
+  ownerVoiceExemplars,
+  formatOwnerVoiceBlock,
+  type OwnerVoiceSample,
+} from "@lantern/bridge-core/owner-voice";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
 import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
@@ -177,6 +182,7 @@ import {
   detectPersonalFactProbe,
   detectNonEnglishInjectionRisk,
   detectRelayPromise,
+  detectUrgency,
   refusalReply as escalationRefusalReply,
 } from "@lantern/bridge-core/escalation-detector";
 import {
@@ -827,6 +833,12 @@ export class IMessageSession {
   private static readonly DROP_NOTIFY_DEDUP_MS = 5 * 60_000;
   private recentDropNotices: Map<string, number> = new Map();
 
+  // Per-contact dedup for the URGENCY heads-up (a contact pleading
+  // "URGENT" / "on priority" / "asap"). Keyed by handle → last-fired
+  // epoch-ms so a burst from the same contact in the window is one tap.
+  private static readonly URGENT_NOTIFY_DEDUP_MS = 10 * 60_000;
+  private recentUrgentNotices: Map<string, number> = new Map();
+
   // OWNER HEADS-UP ON OPERATIONAL DROPS (fix #3). When an inbound that
   // WOULD have been handled is dropped for an OPERATIONAL reason — the
   // per-row handler threw, the LLM call failed/returned empty, the bot is
@@ -861,6 +873,58 @@ export class IMessageSession {
       // Belt-and-suspenders: a notify can never break the poll loop.
       this.logger.warn({ err, dedupeKey }, "notifyOwnerOfDrop failed (swallowed)");
     }
+  }
+
+  // URGENCY heads-up (iMessage has no LLM AttentionClassifier, so this
+  // deterministic tier is the ONLY urgency notifier). When a NON-owner
+  // contact pleads urgency ("URGENT URGENT", "on priority", "asap please",
+  // "time-sensitive") the owner gets a self-chat tap. SEPARATE from the
+  // life-threat page (no siren) and does NOT suppress the normal reply —
+  // both happen. Deduped per (handle, ~10min). Best-effort; never throws
+  // into the poll loop.
+  private maybeNotifyUrgent(handle: string, text: string, isGroup = false): void {
+    try {
+      const verdict = detectUrgency(text);
+      if (!verdict) return;
+      const now = Date.now();
+      const last = this.recentUrgentNotices.get(handle) || 0;
+      if (now - last < IMessageSession.URGENT_NOTIFY_DEDUP_MS) return;
+      const owner = this.ownerSelfChatTarget();
+      if (!owner) {
+        this.broadcast({ type: "activity", data: { kind: "attention_dm", summary: `urgent message from ${this.contactLabel(handle)}`, detail: text.slice(0, 200), jid: handle, timestamp: now } });
+        return;
+      }
+      this.recentUrgentNotices.set(handle, now);
+      const label = this.contactLabel(handle);
+      const origin = isGroup ? ` (in a group)` : "";
+      const quote = text.trim().replace(/\s+/g, " ").slice(0, 120);
+      void this.send(owner, `⏰ ${label}${origin} says it's urgent: "${quote}" — they're waiting.`).catch((err) =>
+        this.logger.warn({ err, handle }, "urgency heads-up send failed (best-effort)"),
+      );
+      this.logger.info({ handle, reason: verdict.reason }, "urgency heads-up sent to owner (imessage)");
+    } catch (err) {
+      this.logger.warn({ err, handle }, "maybeNotifyUrgent failed (swallowed)");
+    }
+  }
+
+  // Build the GLOBAL owner-voice persona block from the union of the
+  // owner's sent messages across ALL contacts. ownerSentHistory is seeded
+  // from chat.db (cold-start mining of is_from_me rows) and topped up live,
+  // so its union is the owner's real global voice corpus. This is the
+  // cold-start fix: a contact with no per-contact history still hears the
+  // owner's actual voice. For a Telugu inbound we also pass a Telugu-only
+  // subset so the reply mimics the owner's real Telangana phrasing.
+  private buildOwnerVoiceBlock(ownerName: string, teluguInbound: boolean): string {
+    const samples: OwnerVoiceSample[] = [];
+    for (const msgs of this.ownerSentHistory.values()) {
+      for (const m of msgs) samples.push({ text: m });
+    }
+    if (samples.length === 0) return "";
+    const general = ownerVoiceExemplars(samples, { max: 12 });
+    const telugu = teluguInbound
+      ? ownerVoiceExemplars(samples, { max: 8, lang: "telugu" })
+      : [];
+    return formatOwnerVoiceBlock(ownerName, general, telugu);
   }
 
   // 1) LEARNING FLYWHEEL. Consolidate the 👎 dislike log into general
@@ -2631,6 +2695,15 @@ export class IMessageSession {
       this.rememberInbound(row.handle, text);
     }
 
+    // URGENCY heads-up — deterministic plea detection ("URGENT URGENT",
+    // "on priority", "asap please"). Placed BEFORE the muted/paused gates
+    // so the owner still gets a tap when a contact says it's urgent even if
+    // auto-reply is off — exactly when it matters most. Best-effort, never
+    // suppresses the reply, deduped per (handle, ~10min).
+    if (text && row.handle) {
+      this.maybeNotifyUrgent(row.handle, text, isGroup);
+    }
+
     // PROACTIVE MEMORY. Scan every contact-inbound for high-confidence
     // facts ("my birthday is june 3", "I work at Stripe", "we just had
     // a baby") and auto-save to whatsapp_contact_facts with
@@ -2928,6 +3001,13 @@ export class IMessageSession {
     // context. Each best-effort; empty block when data unavailable
     // (persona falls back to prior behavior).
     const contactStyleBlock = !isGroup ? styleBlockFor(ownerSamples) : "";
+    // GLOBAL owner-voice corpus — aggregate the owner's OWN sent messages
+    // across ALL contacts so even a brand-new/sparse contact (no
+    // per-contact fingerprint above) still mimics the owner's REAL voice
+    // instead of falling back to generic rules. For a Telugu inbound, also
+    // surface the owner's real Telugu phrasing (beats the BAD→GOOD dialect
+    // rules — the source of broken-Telangana output). Cheap pure function.
+    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu");
     // Cross-contact recall — episodes from other chats (self-chat
     // especially) that mention this contact by first name. Surfaces
     // "Sujith was here this weekend" when Sujith messages later.
@@ -3017,6 +3097,7 @@ export class IMessageSession {
       // persona's register (warmer + shorter, acknowledge-first, match-energy).
       emotionalRegister: emotionalRegister?.register,
       contactStyleBlock,
+      ownerVoiceBlock,
       dislikeBlock,
       // Global style lessons mined from the owner's 👎 history (learning
       // flywheel). Cached + refreshed on a schedule; applies to EVERY

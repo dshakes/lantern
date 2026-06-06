@@ -53,6 +53,11 @@ import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLike
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
 import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
+import {
+  ownerVoiceExemplars,
+  formatOwnerVoiceBlock,
+  type OwnerVoiceSample,
+} from "@lantern/bridge-core/owner-voice";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
 import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
@@ -67,6 +72,7 @@ import {
   detectPersonalFactProbe,
   detectNonEnglishInjectionRisk,
   detectRelayPromise,
+  detectUrgency,
   refusalReply as escalationRefusalReply,
 } from "@lantern/bridge-core/escalation-detector";
 // Proactive-intelligence layer (parity with the iMessage bridge):
@@ -1424,6 +1430,13 @@ export class WhatsAppSession {
   private static readonly DROP_NOTIFY_DEDUP_MS = 10 * 60_000;
   private static readonly DROP_NOTIFY_MAX_KEYS = 500;
 
+  // Per-contact dedup for the URGENCY heads-up (a contact pleading "URGENT"
+  // / "on priority" / "asap"). Keyed by jid → last-fired epoch-ms so a
+  // burst of urgent messages from the same contact within the window
+  // produces ONE owner tap, not a flood.
+  private urgentNotifyAt = new Map<string, number>();
+  private static readonly URGENT_NOTIFY_DEDUP_MS = 10 * 60_000;
+
   constructor(tenantId: string, logger: Logger) {
     this.tenantId = tenantId;
     this.logger = logger.child({ tenant: tenantId });
@@ -1616,6 +1629,69 @@ export class WhatsAppSession {
     } catch {
       /* heads-up is best-effort — never break the message loop */
     }
+  }
+
+  // URGENCY heads-up. When a NON-owner contact pleads urgency ("URGENT
+  // URGENT", "on priority", "asap please", "time-sensitive") the owner
+  // MUST get a tap on the shoulder — the deterministic detectUrgency tier
+  // routes here. This is SEPARATE from the life-threat page (no siren) and
+  // does NOT suppress the normal reply: the bot still replies, the owner
+  // also gets the heads-up. Deduped per (contact, ~10min) so repeats don't
+  // spam. Best-effort — wrapped so it can never throw into the message loop.
+  private maybeNotifyUrgent(args: {
+    jid: string;
+    text: string;
+    senderName?: string;
+    isGroup?: boolean;
+  }): void {
+    try {
+      const { jid, text } = args;
+      if (this.isOwnerChat(jid)) return; // never page the owner about himself
+      const verdict = detectUrgency(text);
+      if (!verdict) return;
+      const now = Date.now();
+      const last = this.urgentNotifyAt.get(jid) || 0;
+      if (now - last < WhatsAppSession.URGENT_NOTIFY_DEDUP_MS) return;
+      this.urgentNotifyAt.set(jid, now);
+      // Bound the dedup map.
+      if (this.urgentNotifyAt.size > WhatsAppSession.DROP_NOTIFY_MAX_KEYS) {
+        const oldest = this.urgentNotifyAt.keys().next().value;
+        if (oldest !== undefined) this.urgentNotifyAt.delete(oldest);
+      }
+      const label = args.senderName || this.contactNames.get(jid) || jid.split("@")[0];
+      const origin = args.isGroup ? ` (in a group)` : "";
+      const quote = text.trim().replace(/\s+/g, " ").slice(0, 120);
+      const body = `⏰ ${label}${origin} says it's urgent: "${quote}" — they're waiting.`;
+      void this.confirmToSelf(body).catch(() => {});
+      this.logger.info({ jid, reason: verdict.reason }, "urgency heads-up sent to owner");
+      this.logActivity("attention_dm", `Urgent message from ${label}`, {
+        jid,
+        pushName: args.senderName,
+        scope: args.isGroup ? "group" : "contact",
+      });
+    } catch {
+      /* heads-up is best-effort — never break the message loop */
+    }
+  }
+
+  // Build the GLOBAL owner-voice persona block from the union of the
+  // owner's sent messages across ALL contacts (ownerSentHistory values).
+  // This is the cold-start fix: a contact with no per-contact history still
+  // hears the owner's REAL voice. WhatsApp's ownerSentHistory carries no
+  // per-message timestamps, so samples are undated (recency falls back to
+  // map/insertion order). For a Telugu inbound we also pass a Telugu-only
+  // subset so the reply mimics the owner's actual Telangana phrasing.
+  private buildOwnerVoiceBlock(ownerName: string, teluguInbound: boolean): string {
+    const samples: OwnerVoiceSample[] = [];
+    for (const msgs of this.ownerSentHistory.values()) {
+      for (const m of msgs) samples.push({ text: m });
+    }
+    if (samples.length === 0) return "";
+    const general = ownerVoiceExemplars(samples, { max: 12 });
+    const telugu = teluguInbound
+      ? ownerVoiceExemplars(samples, { max: 8, lang: "telugu" })
+      : [];
+    return formatOwnerVoiceBlock(ownerName, general, telugu);
   }
 
   // Transition the named connection state and broadcast. Idempotent — a
@@ -2699,6 +2775,11 @@ export class WhatsAppSession {
             this.checkAttention(from, text, senderName, isGroup).catch((err) =>
               this.logger.warn({ err, from }, "attention check failed")
             );
+            // Deterministic urgency heads-up — fires on bare "URGENT" /
+            // "on priority" / "asap please" that the LLM AttentionClassifier
+            // (groups-only) and the life-threat siren both miss. Best-effort,
+            // never suppresses the reply; deduped per (contact, ~10min).
+            this.maybeNotifyUrgent({ jid: from, text, senderName, isGroup });
           }
           // Also short-circuit the rest of the message-handling pipeline
           // for broadcast JIDs — auto-reply / monitor / store-history
@@ -6657,6 +6738,14 @@ export class WhatsAppSession {
     // World-class authenticity blocks. Each best-effort with empty
     // fallback so cold contacts and groups keep prior behavior.
     const contactStyleBlock = !opts.isGroup ? styleBlockFor(ownerSamples) : "";
+    // GLOBAL owner-voice corpus — aggregate the owner's OWN sent messages
+    // across ALL contacts so even a brand-new/sparse contact (no
+    // per-contact fingerprint above) still mimics the owner's REAL voice
+    // instead of falling back to generic rules. For a Telugu inbound, also
+    // surface the owner's real Telugu phrasing (beats the BAD→GOOD dialect
+    // rules — the source of the "vazthani Meeru chustha?" garbage). Cheap
+    // pure function; recomputed per reply.
+    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu");
     // Compute the sync prerequisites for the reads up front so the reads
     // themselves can be issued concurrently below.
     const senderName = opts.senderName || this.contactNames.get(from);
@@ -6770,6 +6859,7 @@ export class WhatsAppSession {
         recentBotReplies: this.recentBotReplies.get(from) ?? [],
         languageModality,
         contactStyleBlock,
+        ownerVoiceBlock,
         dislikeBlock,
         presence: presenceLine,
         episodesBlock,

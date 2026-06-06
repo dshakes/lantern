@@ -33,6 +33,7 @@
     "./screen-context": "./src/screen-context.ts",
     "./owner-profile-auto-update": "./src/owner-profile-auto-update.ts",
     "./per-contact-style": "./src/per-contact-style.ts",
+    "./owner-voice": "./src/owner-voice.ts",
     "./dislike-memory": "./src/dislike-memory.ts",
     "./verifiable-claims": "./src/verifiable-claims.ts",
     "./presence": "./src/presence.ts",

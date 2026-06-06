@@ -36,6 +36,7 @@ export type EscalationKind =
   | "prompt-injection"
   | "relay-promise"
   | "personal-fact-probe"
+  | "urgent"
   | null;
 
 export interface EscalationVerdict {
@@ -71,6 +72,62 @@ export function detectLifeThreat(text: string): EscalationVerdict | null {
   for (const p of LIFE_THREAT_PATTERNS) {
     if (p.re.test(text)) {
       return { kind: "life-threat", reason: p.reason, pattern: p.re.source };
+    }
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// URGENCY (soft — owner heads-up, NOT a life-threat siren)
+// ─────────────────────────────────────────────────────────────
+// A contact is signalling this matters NOW: "URGENT URGENT URGENT",
+// "make sure he checks my msg on priority", "need this asap please",
+// "time-sensitive". This is DISTINCT from life-threat — there's no
+// emergency/danger word, so the panic page in detectLifeThreat never
+// fires and the owner gets NO notification. That's the trust-critical
+// gap (real evidence: a contact sent "URGENT URGENT URGENT" + "Make
+// sure to have him check my msg on priority" and the owner saw nothing).
+//
+// This routes to a deduped owner self-chat heads-up — NOT a refusal, NOT
+// a suppressed reply. The normal reply still flows; the owner just also
+// gets a tap on the shoulder. High-precision on purpose: a single casual
+// "urgent" inside an ordinary sentence must NOT fire (that would spam the
+// owner). It fires only on a clear PLEA shape: repetition, all-caps,
+// priority/asap framing, or "time-sensitive".
+const URGENCY_PATTERNS: Array<{ re: RegExp; reason: string }> = [
+  // "urgent" repeated 2+ times anywhere — "urgent urgent", "urgent!! urgent".
+  { re: /\burgent\b[\s\S]*?\burgent\b/i, reason: "urgent-repeated" },
+  // ALL-CAPS shouted URGENT (the caps itself is the plea — a calm
+  // lowercase "is this urgent?" must not trip this).
+  { re: /\bURGENT\b/, reason: "urgent-allcaps" },
+  // Priority framing — "on priority", "check ... on priority", "top priority",
+  // "high priority", "treat as priority".
+  { re: /\b(?:on|top|high|highest|first)\s+priority\b/i, reason: "on-priority" },
+  { re: /\b(?:check|see|read|look\s+at|respond\s+to|reply\s+to)\b[\s\S]{0,40}?\bpriority\b/i, reason: "check-priority" },
+  // ASAP as a plea — "need it asap", "asap please", "reply asap", "as soon
+  // as possible". A bare "asap" with no ask-verb/please nearby is too thin.
+  { re: /\basap\b[\s\S]{0,15}?\b(?:please|pls|plz)\b/i, reason: "asap-plea" },
+  { re: /\b(?:please|pls|plz|need|reply|respond|get\s+back|call|text|send)\b[\s\S]{0,25}?\basap\b/i, reason: "asap-plea" },
+  { re: /\bas\s+soon\s+as\s+possible\b/i, reason: "as-soon-as-possible" },
+  // Explicit time-sensitivity.
+  { re: /\btime[\s-]?sensitive\b/i, reason: "time-sensitive" },
+];
+
+/**
+ * Detect a high-precision URGENCY plea from a contact. Returns an
+ * "urgent" verdict to route to an owner heads-up (NOT a life-threat
+ * page, NOT a refusal). null when the message is merely casual.
+ *
+ * Deterministic regex; no LLM on the hot path. Tuned to fire on the real
+ * evidence ("URGENT URGENT URGENT", "make sure he checks my msg on
+ * priority", "need this asap please", "time-sensitive") while staying
+ * quiet on a lone casual "urgent" in a normal sentence.
+ */
+export function detectUrgency(text: string): EscalationVerdict | null {
+  if (!text || text.length < 4) return null;
+  for (const p of URGENCY_PATTERNS) {
+    if (p.re.test(text)) {
+      return { kind: "urgent", reason: p.reason, pattern: p.re.source };
     }
   }
   return null;
