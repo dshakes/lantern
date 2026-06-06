@@ -4,7 +4,7 @@ go 1.23
 
 require (
 	github.com/dshakes/lantern/gen/go v0.0.0
-	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	go.opentelemetry.io/otel v1.35.0
 	go.uber.org/zap v1.27.0
