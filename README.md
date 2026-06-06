@@ -46,6 +46,26 @@ What makes it different from "another agent framework":
 
 ---
 
+## Five modules, one runtime
+
+Lantern is organized as five composable modules over a shared runtime. (For the
+elevator version, see [`PITCH.md`](PITCH.md).)
+
+| Module | What it gives you | Maturity |
+|---|---|---|
+| **1 · Agent Runtime** | Run agents in *your* cloud: durable workflow engine, capability‑based multi‑LLM router, microVM isolation (scheduler / manager / harness), edge gateway. Control plane never touches user code. | Core prod‑ready; microVM live‑boot is alpha (**fail‑closed**) |
+| **2 · Personal Agent ("Jarvis")** | WhatsApp + iMessage assistant that texts **as you** — owner‑only, learns your real voice from history, agentic macOS actions, cross‑channel memory, urgent‑alerting, privacy guards. | Live |
+| **3 · Trust & Governance** | Policy‑as‑code budgets (hard‑fail 402), eval‑in‑CI + rehearsals, HMAC‑verifiable receipts, guardrails, multi‑tenant RLS, AES‑256‑GCM secrets, fail‑closed‑in‑prod. | Prod‑ready |
+| **4 · Channels & Reach** | WhatsApp · iMessage · Slack · Telegram · Discord · Voice (Twilio/LiveKit) · Webchat · Email — signature‑verified, naturally paced. | Prod‑ready |
+| **5 · Developer Experience** | TS/Python/Go SDKs, `lantern` CLI, one‑command dev, a visual workflow editor that *executes*, MCP registry, A2A cards, forkable agent marketplace. | Prod‑ready |
+
+> **Alpha honesty:** modules 2–5 are in real use; Module 1's microVM **live boot**
+> (Firecracker), the live TLS/mTLS handshake, and secret‑vending transport are
+> implemented + unit‑tested but ship **fail‑closed** pending Linux/KVM
+> integration — enumerated in [`SECURITY.md`](SECURITY.md). Nothing pretends to work.
+
+---
+
 ## Quick start
 
 ### Option A — zero toolchain (Docker only) ⭐ fastest clone‑to‑running
