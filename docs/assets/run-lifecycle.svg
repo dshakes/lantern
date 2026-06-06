@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="540" viewBox="0 0 1240 540" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Lantern agent run lifecycle — durable, budgeted, isolated, verifiable">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#64748b"/></marker>
+    <marker id="av" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8b5cf6"/></marker>
+    <style>
+      .h{fill:#f8fafc;font-weight:700} .sub{fill:#94a3b8;font-size:11px}
+      .step{fill:#e2e8f0;font-size:13px;font-weight:700} .cmp{fill:#cbd5e1;font-size:10px}
+      .n{font-size:10px;font-weight:700} .band{fill:#cbd5e1;font-size:12px;font-weight:700;letter-spacing:.14em}
+      .gate{fill:#fca5a5;font-size:10px;font-weight:700}
+    </style>
+  </defs>
+  <rect width="1240" height="540" rx="16" fill="#0b1120"/>
+  <rect width="1240" height="540" rx="16" fill="none" stroke="#1e293b"/>
+  <text x="32" y="44" class="h" font-size="20">Agent run lifecycle</text>
+  <text x="270" y="44" class="sub" font-size="12.5">durable · budgeted · isolated · cryptographically verifiable — every run, every channel</text>
+
+  <!-- trigger -->
+  <g transform="translate(32,80)">
+    <rect width="168" height="104" rx="10" fill="#160e26" stroke="#8b5cf6"/>
+    <text x="14" y="26" class="step">Trigger</text>
+    <text x="14" y="48" class="cmp">SDK · CLI · cron</text>
+    <text x="14" y="64" class="cmp">WhatsApp/Slack/voice</text>
+    <text x="14" y="80" class="cmp">webchat · A2A · market</text>
+    <text x="14" y="96" class="cmp">place invoke</text>
+  </g>
+  <!-- forecast/budget -->
+  <g transform="translate(224,80)">
+    <rect width="168" height="104" rx="10" fill="#0c1a14" stroke="#34d399"/>
+    <text x="14" y="22" class="n" fill="#6ee7b7">1 · BUDGET</text>
+    <text x="14" y="42" class="cmp">pre-run cost forecast</text>
+    <text x="14" y="58" class="cmp">(tokens · $ · confidence)</text>
+    <text x="14" y="80" class="gate">hard-fail → HTTP 402</text>
+    <text x="14" y="96" class="cmp">per-day/run/tool caps</text>
+  </g>
+  <!-- workflow engine -->
+  <g transform="translate(416,80)">
+    <rect width="168" height="104" rx="10" fill="#13233b" stroke="#38bdf8"/>
+    <text x="14" y="22" class="n" fill="#7dd3fc">2 · DURABLE STEPS</text>
+    <text x="14" y="42" class="cmp">workflow engine</text>
+    <text x="14" y="58" class="cmp">replayable · idempotent</text>
+    <text x="14" y="74" class="cmp">event-sourced journal</text>
+    <text x="14" y="92" class="cmp">sole run-state mutator</text>
+  </g>
+  <!-- model router -->
+  <g transform="translate(608,80)">
+    <rect width="168" height="104" rx="10" fill="#241a37" stroke="#f59e0b"/>
+    <text x="14" y="22" class="n" fill="#fcd34d">3 · MODEL ROUTER</text>
+    <text x="14" y="42" class="cmp">capability "auto"</text>
+    <text x="14" y="58" class="cmp">4 strategies · failover</text>
+    <text x="14" y="74" class="cmp">prompt + semantic cache</text>
+    <text x="14" y="92" class="cmp">your keys, any vendor</text>
+  </g>
+  <!-- isolated exec -->
+  <g transform="translate(800,80)">
+    <rect width="168" height="104" rx="10" fill="#10241b" stroke="#34d399"/>
+    <text x="14" y="22" class="n" fill="#6ee7b7">4 · ISOLATED EXEC</text>
+    <text x="14" y="42" class="cmp">microVM (Firecracker/</text>
+    <text x="14" y="58" class="cmp">Kata) — or hard-fail</text>
+    <text x="14" y="74" class="cmp">egress allowlist</text>
+    <text x="14" y="92" class="cmp">short-TTL vended secrets</text>
+  </g>
+  <!-- receipt -->
+  <g transform="translate(992,80)">
+    <rect width="168" height="104" rx="10" fill="#0e1626" stroke="#a78bfa"/>
+    <text x="14" y="22" class="n" fill="#c4b5fd">5 · RECEIPT</text>
+    <text x="14" y="42" class="cmp">HMAC-signed over the</text>
+    <text x="14" y="58" class="cmp">journal-event SHA-256</text>
+    <text x="14" y="74" class="cmp">anyone verifies at</text>
+    <text x="14" y="92" class="cmp">/proof (no auth)</text>
+  </g>
+
+  <!-- arrows -->
+  <line x1="200" y1="132" x2="222" y2="132" stroke="#8b5cf6" marker-end="url(#av)"/>
+  <line x1="392" y1="132" x2="414" y2="132" stroke="#64748b" marker-end="url(#a)"/>
+  <line x1="584" y1="132" x2="606" y2="132" stroke="#64748b" marker-end="url(#a)"/>
+  <line x1="776" y1="132" x2="798" y2="132" stroke="#64748b" marker-end="url(#a)"/>
+  <line x1="968" y1="132" x2="990" y2="132" stroke="#64748b" marker-end="url(#a)"/>
+
+  <!-- streaming note -->
+  <text x="32" y="214" class="sub">↳ tokens stream end-to-end (runtime → gateway → SDK → dashboard), no buffering · OTel trace carries tenant/run/step ids the whole way.</text>
+
+  <!-- feedback loop -->
+  <text x="32" y="262" class="band">CONTINUOUS SAFETY LOOP</text>
+  <g transform="translate(32,278)">
+    <rect width="1128" height="120" rx="12" fill="#11182a" stroke="#334155"/>
+    <g transform="translate(20,18)">
+      <rect width="350" height="84" rx="10" fill="#1f1410" stroke="#ef4444"/>
+      <text x="14" y="24" class="step" fill="#fca5a5">Eval-in-CI</text>
+      <text x="14" y="46" class="cmp">declarative suites · per-branch baseline</text>
+      <text x="14" y="64" class="cmp">regression FAILS the build → HTTP 422</text>
+    </g>
+    <g transform="translate(390,18)">
+      <rect width="350" height="84" rx="10" fill="#0e1626" stroke="#a78bfa"/>
+      <text x="14" y="24" class="step" fill="#c4b5fd">Rehearsals + RLHF</text>
+      <text x="14" y="46" class="cmp">replay real prod failures vs a candidate</text>
+      <text x="14" y="64" class="cmp">👎 feedback → eval examples + replay queue</text>
+    </g>
+    <g transform="translate(760,18)">
+      <rect width="348" height="84" rx="10" fill="#0c1a14" stroke="#34d399"/>
+      <text x="14" y="24" class="step" fill="#6ee7b7">A/B + auto-promote</text>
+      <text x="14" y="46" class="cmp">deterministic FNV-1a traffic split</text>
+      <text x="14" y="64" class="cmp">promote on &gt;2% lift + min-runs/arm</text>
+    </g>
+  </g>
+  <text x="32" y="438" class="sub">Promote a new agent version only after it clears the gate — and you can always prove what ran (receipt) and what it cost (budget rollup).</text>
+  <text x="32" y="470" class="sub">Multi-tenant by default · secrets AES-256-GCM at rest · fail-closed in production · runs in YOUR cloud.</text>
+</svg>
