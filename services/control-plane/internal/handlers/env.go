@@ -1,8 +1,12 @@
 package handlers
 
 import (
+	"crypto/tls"
+	"fmt"
 	"os"
 	"strings"
+
+	"google.golang.org/grpc/credentials"
 )
 
 // IsProd reports whether the server is running in a production-like environment.
@@ -30,6 +34,43 @@ const devReceiptSecret = "lantern-dev-receipt-secret-do-not-use-in-production"
 // devJWTSecret is the well-known dev-only JWT signing key. It is exported only
 // so main.go can compare against it at startup.
 const devJWTSecret = "lantern-dev-jwt-secret-do-not-use-in-production"
+
+// GRPCServerTLS resolves the server-side TLS credentials for the gRPC server
+// from LANTERN_CONTROL_PLANE_TLS_CERT / LANTERN_CONTROL_PLANE_TLS_KEY (PEM file
+// paths). The audit-H2 boundary is the gateway→control-plane channel: in
+// production we require TLS so that hop is encrypted + authenticated.
+//
+// Return contract mirrors the env.go/main.go fail-closed pattern so main.go can
+// decide Fatal vs WARN without re-reading env:
+//
+//   - creds != nil, err == nil      → TLS configured; serve with these creds.
+//   - creds == nil, err == nil      → TLS not configured (both env vars unset).
+//     In prod this is fatal (caller decides); in dev it means plaintext.
+//   - creds == nil, err != nil      → TLS misconfigured (one var set, or the
+//     cert/key pair failed to load). Always fatal regardless of environment —
+//     a half-configured or broken cert is never the intended state.
+func GRPCServerTLS() (credentials.TransportCredentials, error) {
+	certPath := strings.TrimSpace(os.Getenv("LANTERN_CONTROL_PLANE_TLS_CERT"))
+	keyPath := strings.TrimSpace(os.Getenv("LANTERN_CONTROL_PLANE_TLS_KEY"))
+
+	if certPath == "" && keyPath == "" {
+		// Not configured. Caller (main.go) applies prod-vs-dev policy.
+		return nil, nil
+	}
+	if certPath == "" || keyPath == "" {
+		return nil, fmt.Errorf("control-plane TLS is half-configured: set BOTH LANTERN_CONTROL_PLANE_TLS_CERT and LANTERN_CONTROL_PLANE_TLS_KEY (or neither)")
+	}
+
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading control-plane TLS cert/key (%s, %s): %w", certPath, keyPath, err)
+	}
+
+	return credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}), nil
+}
 
 // corsAllowedOrigins returns the set of origins that are allowed on
 // authenticated API routes. The caller should reflect the request origin back

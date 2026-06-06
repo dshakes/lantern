@@ -99,6 +99,52 @@ pub struct SecretRef {
     pub env_var: String,
 }
 
+/// Network egress policy class for a scheduled workload.
+///
+/// Mirrors `lantern.v1.NetworkPolicy` on the wire. The K8s Job backend maps
+/// this (plus `egress_rules`) onto a Kubernetes `NetworkPolicy` object that is
+/// default-deny with explicit allow rules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[repr(i32)]
+pub enum NetworkPolicyClass {
+    #[default]
+    Unspecified = 0,
+    /// No egress at all (DNS still allowed so the pod can fail fast cleanly).
+    None = 1,
+    /// Domain/CIDR allowlist — default for untrusted workloads.
+    AllowlistDomain = 2,
+    /// Routable inside the tenant's namespace.
+    TenantVpc = 3,
+    /// Dangerous; trusted/wasm only. No K8s NetworkPolicy is emitted.
+    Open = 4,
+}
+
+impl NetworkPolicyClass {
+    pub fn from_i32(v: i32) -> Self {
+        match v {
+            1 => NetworkPolicyClass::None,
+            2 => NetworkPolicyClass::AllowlistDomain,
+            3 => NetworkPolicyClass::TenantVpc,
+            4 => NetworkPolicyClass::Open,
+            _ => NetworkPolicyClass::Unspecified,
+        }
+    }
+}
+
+/// A single egress allowlist entry. `pattern` is a domain (`*.openai.com`) or a
+/// CIDR (`10.0.0.0/8`). The K8s NetworkPolicy backend can only express CIDR
+/// peers natively (domain allowlisting is enforced in-VM by the harness), so
+/// domain patterns are preserved here but only CIDR patterns become `ipBlock`
+/// peers; domains rely on the DNS-allow rule plus the harness allowlist.
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct EgressRule {
+    pub pattern: String,
+    #[serde(default)]
+    pub http_methods: Vec<String>,
+    #[serde(default)]
+    pub rate_bps: i64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScheduleRequest {
     pub run_id: String,
@@ -122,6 +168,14 @@ pub struct ScheduleRequest {
     /// `python:3.11-slim`).
     #[serde(default)]
     pub image: String,
+    /// Egress policy class. The K8s Job backend translates this + `egress_rules`
+    /// into a default-deny Kubernetes NetworkPolicy.
+    #[serde(default)]
+    pub network_policy: NetworkPolicyClass,
+    /// Egress allowlist. CIDR patterns become `ipBlock` peers on the emitted
+    /// NetworkPolicy; domain patterns are enforced in-VM by the harness.
+    #[serde(default)]
+    pub egress_rules: Vec<EgressRule>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

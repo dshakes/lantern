@@ -415,6 +415,16 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
         command: spec.command.clone(),
         args: spec.args.clone(),
         image: spec.image_digest.clone(),
+        network_policy: proto::NetworkPolicyClass::from_i32(spec.network),
+        egress_rules: spec
+            .egress_rules
+            .iter()
+            .map(|r| proto::EgressRule {
+                pattern: r.pattern.clone(),
+                http_methods: r.http_methods.clone(),
+                rate_bps: r.rate_bps,
+            })
+            .collect(),
     })
 }
 
@@ -667,13 +677,23 @@ const MAX_SECRET_TTL_SECS: i64 = 300;
 pub struct RuntimeHarnessGrpc {
     registry: Arc<HandleRegistry>,
     secret_resolver: Arc<dyn SecretResolver>,
+    /// When true, VendSecret enforces the client-cert ↔ vm_id identity check.
+    /// Mirrors whether the manager's gRPC server is serving mTLS. In dev
+    /// (plaintext) the check is skipped because no peer cert exists; in
+    /// production the prod gate forces mTLS on, so this is always true there.
+    mtls_enabled: bool,
 }
 
 impl RuntimeHarnessGrpc {
-    pub fn new(registry: Arc<HandleRegistry>, secret_resolver: Arc<dyn SecretResolver>) -> Self {
+    pub fn new(
+        registry: Arc<HandleRegistry>,
+        secret_resolver: Arc<dyn SecretResolver>,
+        mtls_enabled: bool,
+    ) -> Self {
         Self {
             registry,
             secret_resolver,
+            mtls_enabled,
         }
     }
 }
@@ -707,7 +727,29 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         &self,
         request: Request<pb::VendSecretRequest>,
     ) -> Result<Response<pb::VendSecretResponse>, Status> {
+        // Step 0: cryptographic peer-identity check. Extract the client cert
+        // from the TLS session BEFORE consuming the request, then verify its
+        // CN/SAN matches the claimed vm_id. This is auth by CA-signed cert,
+        // not by network topology. Fail-closed: no cert OR wrong CN → DENIED.
+        //
+        // The check is skipped only when mTLS is not enabled on this manager
+        // (dev plaintext); production forces mTLS on via the prod gate in
+        // `tls::build_server_tls_config`, so the cert is always present there.
+        let peer_cert_der = crate::tls::extract_peer_cert_der(&request);
+
         let req = request.into_inner();
+
+        if self.mtls_enabled
+            && let Err(reason) = crate::tls::authorize_vm_cert(&req.vm_id, peer_cert_der.as_deref())
+        {
+            tracing::warn!(
+                vm_id = %req.vm_id,
+                secret_uri = %req.secret_uri,
+                reason = %reason,
+                "VendSecret DENIED: client-cert identity check failed"
+            );
+            return Err(Status::permission_denied(reason));
+        }
 
         // Step 1: look up the VM in the manager's own registry.
         let info = self
@@ -1000,7 +1042,11 @@ mod tests {
             declared_secret_uris: declared_uris.into_iter().map(String::from).collect(),
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
-        RuntimeHarnessGrpc::new(registry, resolver)
+        // mtls_enabled=false: these tests exercise the allowlist / TTL /
+        // registry-binding logic over plaintext (no peer cert exists in a
+        // synthetic Request). The cert-enforcement path is covered by the
+        // dedicated tests below with mtls_enabled=true.
+        RuntimeHarnessGrpc::new(registry, resolver, false)
     }
 
     #[tokio::test]
@@ -1140,6 +1186,56 @@ mod tests {
             err.code(),
             tonic::Code::Internal,
             "expected INTERNAL for resolver miss, got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // VendSecret client-cert enforcement (mtls_enabled = true)
+    // -----------------------------------------------------------------------
+
+    /// Same as `harness_service` but with mTLS enforcement turned on.
+    fn harness_service_mtls(
+        vm_id: &str,
+        declared_uris: Vec<&str>,
+        resolver_secrets: HashMap<String, String>,
+    ) -> RuntimeHarnessGrpc {
+        let registry = Arc::new(HandleRegistry::new());
+        registry.register(HandleInfo {
+            handle_id: vm_id.to_string(),
+            run_id: "run-mtls".to_string(),
+            tenant_id: "t-mtls".to_string(),
+            backend: "firecracker".to_string(),
+            isolation_class: proto::IsolationClass::Untrusted,
+            created_at: chrono::Utc::now(),
+            resource_limits: proto::ResourceLimits::default(),
+            node_name: "node-1".to_string(),
+            declared_secret_uris: declared_uris.into_iter().map(String::from).collect(),
+        });
+        let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
+        RuntimeHarnessGrpc::new(registry, resolver, true)
+    }
+
+    /// With mTLS enforced, a request carrying NO peer cert (synthetic Request,
+    /// no TLS session) is rejected with PERMISSION_DENIED before the allowlist
+    /// or resolver is ever consulted. This is the fail-closed property:
+    /// topology (reaching the socket) is not sufficient; a CA-signed cert is.
+    #[tokio::test]
+    async fn vend_secret_mtls_rejects_missing_client_cert() {
+        let uri = "lantern.secret://tenant/t-mtls/key/K";
+        let mut secrets = HashMap::new();
+        secrets.insert(uri.to_string(), "should-not-be-vended".to_string());
+
+        let svc = harness_service_mtls("vm-mtls", vec![uri], secrets);
+        let req = Request::new(pb::VendSecretRequest {
+            vm_id: "vm-mtls".to_string(),
+            secret_uri: uri.to_string(),
+            ttl: None,
+        });
+        let err = svc.vend_secret(req).await.unwrap_err();
+        assert_eq!(
+            err.code(),
+            tonic::Code::PermissionDenied,
+            "expected PERMISSION_DENIED when no client cert presented, got {err:?}"
         );
     }
 }

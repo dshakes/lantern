@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -91,7 +92,11 @@ func main() {
 	}
 
 	// --- gRPC server ---
-	grpcServer := grpc.NewServer(
+	// Audit H2: the gateway→control-plane channel must be encryptable. Load
+	// server-side TLS credentials when configured; in prod require them, in dev
+	// fall back to plaintext with a WARN (mirrors runStartupGuards' fail-closed
+	// pattern).
+	grpcOpts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(
 			middleware.UnaryTenantInterceptor(logger),
 			unaryTracingInterceptor(),
@@ -100,7 +105,11 @@ func main() {
 			middleware.StreamTenantInterceptor(logger),
 			streamTracingInterceptor(),
 		),
-	)
+	}
+	if creds := grpcTLSCreds(logger); creds != nil {
+		grpcOpts = append(grpcOpts, grpc.Creds(creds))
+	}
+	grpcServer := grpc.NewServer(grpcOpts...)
 
 	// Register services.
 	agentSvc := handlers.NewAgentService(srv)
@@ -570,6 +579,29 @@ func runStartupGuards(logger *zap.Logger) {
 	if !prod && !encEnabled {
 		logger.Warn("LANTERN_CREDENTIAL_KEY is unset — connector credentials stored in plaintext (acceptable in dev, required in production)")
 	}
+}
+
+// grpcTLSCreds resolves server-side TLS credentials for the gRPC server,
+// applying the prod-vs-dev fail-closed policy (audit H2, gateway→control-plane).
+//
+//   - configured + valid → returns creds; the server serves over TLS.
+//   - misconfigured (half-set or unloadable cert/key) → Fatal in all envs.
+//   - unset in prod → Fatal: the gateway hop must be encryptable.
+//   - unset in dev → WARN + returns nil: plaintext, so `make dev` still works.
+func grpcTLSCreds(logger *zap.Logger) credentials.TransportCredentials {
+	creds, err := handlers.GRPCServerTLS()
+	if err != nil {
+		logger.Fatal("control-plane gRPC TLS is misconfigured", zap.Error(err))
+	}
+	if creds != nil {
+		logger.Info("control-plane gRPC server: TLS enabled (LANTERN_CONTROL_PLANE_TLS_CERT/KEY)")
+		return creds
+	}
+	if handlers.IsProd() {
+		logger.Fatal("control-plane gRPC TLS is unset — set LANTERN_CONTROL_PLANE_TLS_CERT and LANTERN_CONTROL_PLANE_TLS_KEY to encrypt the gateway→control-plane channel")
+	}
+	logger.Warn("control-plane gRPC server: TLS unset — serving plaintext (acceptable in dev, required in production)")
+	return nil
 }
 
 // config holds values read from environment variables.

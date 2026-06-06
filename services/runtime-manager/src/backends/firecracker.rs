@@ -29,10 +29,12 @@
 //! - The `schedule()` / `cancel()` / `restore()` live paths after the
 //!   `firecracker_available()` gate.
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
@@ -40,9 +42,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 use crate::backend::{Handle, RuntimeBackend, SnapshotInfo};
-use crate::proto::{
-    LogLine, RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest, SnapshotRequest,
-};
+use crate::proto::{RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest, SnapshotRequest};
 
 // ---------------------------------------------------------------------------
 // Firecracker REST API request bodies
@@ -181,11 +181,16 @@ pub struct VmConfig {
     /// Snapshot directory (e.g. `/run/lantern/snapshots/<vm-id>`).
     pub snapshot_dir: String,
     /// Per-VM certificate paths for the harness mTLS contract.
-    /// Generation is a paired follow-up (ADR-0006 §TLS); paths are
-    /// threaded through so the Firecracker boot-args can reference them.
+    /// Generation runs in `provision_vm_cert` (Identity phase); these are the
+    /// IN-GUEST paths the boot-args reference and the harness reads off the
+    /// read-only cert drive (see `cert_drive` / `certs_image_path`).
     pub tls_cert_path: String,
     pub tls_key_path: String,
     pub manager_ca_path: String,
+    /// Host path to the read-only block image carrying this VM's cert material,
+    /// attached as a dedicated drive so the in-guest `tls_cert_path` etc.
+    /// resolve. Built from the provisioned `/run/lantern/certs/<vm_id>/` tree.
+    pub certs_image_path: String,
 }
 
 /// Defaults injected when the ScheduleRequest does not set a limit.
@@ -259,6 +264,7 @@ impl VmConfig {
             tls_cert_path,
             tls_key_path,
             manager_ca_path,
+            certs_image_path: format!("/run/lantern/certs/{vm_id}/certs.img"),
         }
     }
 
@@ -288,6 +294,23 @@ impl VmConfig {
             path_on_host: self.rootfs_path.clone(),
             is_root_device: true,
             is_read_only: false,
+            partuuid: None,
+            rate_limiter: None,
+        }
+    }
+
+    /// Produce the read-only cert Drive body for PUT /drives/certs.
+    ///
+    /// Attaches the per-VM cert image (built from the material `provision_vm_cert`
+    /// wrote on the host) so the in-guest harness can read the paths the
+    /// boot-args reference (`tls_cert_path` / `tls_key_path` / `manager_ca_path`).
+    /// Read-only: the guest must never be able to rewrite its own identity.
+    pub fn cert_drive(&self) -> Drive {
+        Drive {
+            drive_id: "certs".to_string(),
+            path_on_host: self.certs_image_path.clone(),
+            is_root_device: false,
+            is_read_only: true,
             partuuid: None,
             rate_limiter: None,
         }
@@ -397,6 +420,62 @@ pub fn build_boot_args(
          lantern.tls_key={tls_key_path} \
          lantern.manager_ca={manager_ca_path}{extra_env}"
     )
+}
+
+/// Provision the per-VM client cert + manager CA onto the host filesystem under
+/// the cert root that `cfg`'s boot-args reference.
+///
+/// Loads the manager's signing CA from env (`tls::load_signing_ca`), issues a
+/// leaf with CN=SAN=vm_id, and writes (via [`crate::tls::write_vm_cert_files`],
+/// key 0600 / dir 0700):
+///   - `<root>/<vm_id>/tls.crt`   (leaf cert)        == `cfg.tls_cert_path`
+///   - `<root>/<vm_id>/tls.key`   (leaf key)         == `cfg.tls_key_path`
+///   - `<root>/manager-ca.crt`    (manager CA cert)  == `cfg.manager_ca_path`
+///
+/// Fail-closed: if the signing CA is unavailable the VM is NOT booted, because
+/// a VM without a client cert could never authenticate to VendSecret and would
+/// be a silent dead-end. (In dev with no CA the Firecracker backend itself is
+/// unavailable, so this path is only reached on a real Linux+KVM node where the
+/// CA is expected to be configured.)
+///
+/// LINUX-ONLY in practice: only reached after `firecracker_available()`.
+fn provision_vm_cert(cfg: &VmConfig) -> Result<()> {
+    use std::path::Path;
+
+    let (ca_cert_pem, ca_key_pem) = crate::tls::load_signing_ca()?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no manager signing CA configured (set {} / {} or {} / {}); \
+             cannot issue per-VM client cert for vm '{}'. Refusing to boot a VM \
+             that could not authenticate to VendSecret.",
+            crate::tls::ENV_SIGNING_CA_CERT,
+            crate::tls::ENV_SIGNING_CA_KEY,
+            crate::tls::ENV_CA,
+            crate::tls::ENV_KEY,
+            cfg.vm_id,
+        )
+    })?;
+
+    let issued = crate::tls::generate_vm_client_cert(&cfg.vm_id, &ca_cert_pem, &ca_key_pem)
+        .with_context(|| format!("issue client cert for vm '{}'", cfg.vm_id))?;
+
+    // The cert root is the grandparent of `<root>/<vm_id>/tls.crt`. Writing
+    // through the shared helper keeps the boot-args paths and the on-disk
+    // layout in lockstep (it produces exactly cfg.tls_cert_path/key_path and
+    // cfg.manager_ca_path for the default VmConfig layout).
+    let cert_root = Path::new(&cfg.tls_cert_path)
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| anyhow::anyhow!("malformed tls_cert_path {:?}", cfg.tls_cert_path))?;
+
+    let paths = crate::tls::write_vm_cert_files(cert_root, &cfg.vm_id, &issued, &ca_cert_pem)
+        .with_context(|| format!("write per-vm cert material for vm '{}'", cfg.vm_id))?;
+
+    tracing::info!(
+        vm_id = %cfg.vm_id,
+        cert = %paths.cert_path.display(),
+        "provisioned per-VM client cert (CN=vm_id, signed by manager CA)"
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -555,8 +634,8 @@ async fn unix_socket_request<T: Serialize>(
     body: Option<&T>,
 ) -> Result<()> {
     use http_body_util::{BodyExt, Full};
-    use hyper::Request;
     use hyper::body::Bytes;
+    use hyper::Request;
     use hyper_util::client::legacy::Client;
     use hyper_util::rt::TokioExecutor;
     use hyperlocal::{UnixConnector, Uri as UnixUri};
@@ -762,6 +841,287 @@ pub async fn teardown_tap_device(tap_name: &str) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Per-VM child-process table
+//
+// `boot_vm` spawns a `firecracker` child process per VM.  To make `cancel()`
+// able to SIGKILL that process as a reliable fallback after a graceful
+// `SendCtrlAltDel`, we have to keep the `Child` handle around keyed by vm_id.
+//
+// The table is generic over the stored value (`P`) so the insert / remove /
+// cancel-selection logic is fully unit-testable with a lightweight stand-in
+// process type — no real `tokio::process::Child` (and therefore no live
+// Firecracker, no KVM) is needed to exercise the bookkeeping.  The live
+// backend instantiates `ProcessTable<tokio::process::Child>`.
+// ---------------------------------------------------------------------------
+
+/// Anything the process table can SIGKILL.  Implemented for
+/// `tokio::process::Child` (LINUX-ONLY in effect — only spawned on a real
+/// node) and for test doubles.
+pub trait Killable {
+    /// Force-terminate the process (SIGKILL semantics).  Idempotent: killing
+    /// an already-dead process must not be an error worth surfacing.
+    fn force_kill(&mut self) -> Result<()>;
+}
+
+// LINUX-ONLY in effect: a `tokio::process::Child` for `firecracker` is only
+// ever spawned after the `firecracker_available()` gate, i.e. on Linux + KVM.
+// `start_kill` itself is cross-platform, which keeps this trait impl buildable
+// (and the kill path therefore reasoned about) on the macOS dev host.
+impl Killable for tokio::process::Child {
+    fn force_kill(&mut self) -> Result<()> {
+        // `start_kill` sends SIGKILL without awaiting reaping; the table drop
+        // / explicit `wait` elsewhere reaps the zombie.  An "already exited"
+        // error is benign — the goal (process gone) is met.
+        match self.start_kill() {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => Ok(()),
+            Err(e) => Err(e).context("SIGKILL firecracker child"),
+        }
+    }
+}
+
+/// Thread-safe map of `vm_id -> child process handle`.
+///
+/// Cloning shares the same underlying table (`Arc`), so the backend can hand a
+/// clone to the stream task while keeping one for the cancel path.
+#[derive(Clone)]
+pub struct ProcessTable<P> {
+    inner: Arc<Mutex<HashMap<String, P>>>,
+}
+
+impl<P> Default for ProcessTable<P> {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+impl<P: Killable> ProcessTable<P> {
+    /// Create an empty table.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record the child process for `vm_id`.  Returns the previous entry if one
+    /// existed (a vm_id collision — should not happen with UUID ids, but the
+    /// caller can log it).
+    pub fn insert(&self, vm_id: &str, child: P) -> Option<P> {
+        self.inner
+            .lock()
+            .expect("process table mutex poisoned")
+            .insert(vm_id.to_string(), child)
+    }
+
+    /// Remove and return the child for `vm_id`, if present.
+    pub fn remove(&self, vm_id: &str) -> Option<P> {
+        self.inner
+            .lock()
+            .expect("process table mutex poisoned")
+            .remove(vm_id)
+    }
+
+    /// Whether `vm_id` is currently tracked.
+    pub fn contains(&self, vm_id: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("process table mutex poisoned")
+            .contains_key(vm_id)
+    }
+
+    /// Number of tracked processes.
+    pub fn len(&self) -> usize {
+        self.inner
+            .lock()
+            .expect("process table mutex poisoned")
+            .len()
+    }
+
+    /// Whether the table is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Cancel-selection logic: look up `vm_id`, remove it, and SIGKILL it.
+    ///
+    /// Returns:
+    /// - `Ok(true)` — a process was tracked and got the kill signal (the
+    ///   fallback fired);
+    /// - `Ok(false)` — no process was tracked for `vm_id` (already reaped, or
+    ///   this manager never owned it: nothing to kill, not an error);
+    /// - `Err(_)` — a process was tracked but the kill itself failed.
+    ///
+    /// The entry is always removed when present, even if the kill errors, so a
+    /// retried cancel doesn't keep finding a doomed handle.
+    pub fn kill(&self, vm_id: &str) -> Result<bool> {
+        let mut child = match self.remove(vm_id) {
+            Some(c) => c,
+            None => return Ok(false),
+        };
+        child.force_kill()?;
+        Ok(true)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// vsock event-loop frame parsing
+//
+// The in-VM harness writes newline-delimited JSON `RuntimeEvent` frames to the
+// host over vsock.  On the host the live loop (LINUX-ONLY) accepts a
+// connection on a `UnixListener` bound to the vsock UDS path and reads bytes.
+//
+// The wire framing — splitting a byte stream into lines and decoding each
+// non-empty line into a `RuntimeEvent` — is a PURE function so it is fully
+// unit-tested without any socket, VM, or KVM.
+// ---------------------------------------------------------------------------
+
+/// Outcome of decoding one newline-delimited frame.
+#[derive(Debug)]
+pub enum FrameOutcome {
+    /// A frame decoded into a `RuntimeEvent`.
+    Event(RuntimeEvent),
+    /// The line was blank (e.g. trailing newline) — skip it.
+    Blank,
+    /// The line was non-empty but failed to decode; carries the error string
+    /// so the loop can log-and-continue rather than tearing down the stream on
+    /// one malformed frame.
+    Malformed(String),
+}
+
+/// Parse a single newline-delimited frame (without the trailing `\n`) into a
+/// [`FrameOutcome`].
+///
+/// Pure — no I/O.  The harness emits `RuntimeEvent` in its `#[serde(tag =
+/// "type")]` form, e.g. `{"type":"Log","level":"info","message":"..","timestamp":".."}`.
+pub fn parse_vsock_frame(line: &str) -> FrameOutcome {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return FrameOutcome::Blank;
+    }
+    match serde_json::from_str::<RuntimeEvent>(trimmed) {
+        Ok(ev) => FrameOutcome::Event(ev),
+        Err(e) => FrameOutcome::Malformed(e.to_string()),
+    }
+}
+
+/// Split a buffer into complete newline-delimited frames, returning the decoded
+/// outcomes and any trailing partial line (no terminating `\n` yet) that the
+/// caller must carry into the next read.
+///
+/// Pure — this is the byte-stream framing the live vsock loop relies on, made
+/// testable in isolation.  A frame is only emitted once its terminating `\n`
+/// has been seen, so a partial JSON object split across two `read()`s is never
+/// mis-parsed as malformed.
+pub fn drain_vsock_frames(buf: &str) -> (Vec<FrameOutcome>, String) {
+    let mut outcomes = Vec::new();
+    // Find the last newline; everything after it is an incomplete remainder.
+    match buf.rfind('\n') {
+        Some(idx) => {
+            let complete = &buf[..idx]; // excludes the final '\n'
+            let remainder = buf[idx + 1..].to_string();
+            for line in complete.split('\n') {
+                outcomes.push(parse_vsock_frame(line));
+            }
+            (outcomes, remainder)
+        }
+        None => {
+            // No complete frame yet; the whole buffer is the remainder.
+            (outcomes, buf.to_string())
+        }
+    }
+}
+
+/// Forward one drained batch of frames to the consumer channel.
+///
+/// Pure-ish glue between [`drain_vsock_frames`] and the mpsc sender, factored
+/// out so the malformed-frame and channel-closed handling is exercised by the
+/// live loop and reasoned about independently.  Returns `false` when the
+/// receiver has been dropped (caller should stop reading).
+async fn forward_frames(
+    outcomes: Vec<FrameOutcome>,
+    tx: &tokio::sync::mpsc::Sender<RuntimeEvent>,
+) -> bool {
+    for outcome in outcomes {
+        match outcome {
+            FrameOutcome::Event(ev) => {
+                if tx.send(ev).await.is_err() {
+                    return false; // consumer gone
+                }
+            }
+            FrameOutcome::Blank => {}
+            FrameOutcome::Malformed(err) => {
+                // Log-and-continue: one bad frame must not tear down the stream.
+                tracing::warn!(error = %err, "vsock: dropping malformed frame");
+            }
+        }
+    }
+    true
+}
+
+/// Live vsock event loop: bind a `UnixListener` on `vsock_path`, accept the
+/// harness connection, and stream decoded `RuntimeEvent`s into `tx` until EOF.
+///
+/// The wire framing is delegated to the pure [`drain_vsock_frames`]; this
+/// function owns only the socket/read I/O so the parsing stays unit-testable.
+///
+/// LINUX-ONLY: only reached after the `firecracker_available()` gate. The vsock
+/// UDS path is created by Firecracker on a real Linux + KVM node; on the macOS
+/// dev host this code is never executed (the `available` guard in `stream`
+/// short-circuits before we get here).
+async fn vsock_event_loop(
+    vsock_path: &str,
+    tx: &tokio::sync::mpsc::Sender<RuntimeEvent>,
+) -> Result<()> {
+    use tokio::io::AsyncReadExt;
+    use tokio::net::UnixListener;
+
+    // Firecracker connects to <uds_path>_<port> for guest-initiated streams; the
+    // harness uses the base path. A stale socket file from a crashed prior run
+    // would make bind() fail with EADDRINUSE, so clear it first (best effort).
+    let _ = tokio::fs::remove_file(vsock_path).await;
+    if let Some(parent) = Path::new(vsock_path).parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create vsock dir {parent:?}"))?;
+    }
+
+    let listener =
+        UnixListener::bind(vsock_path).with_context(|| format!("bind vsock UDS {vsock_path}"))?;
+
+    let (mut conn, _addr) = listener
+        .accept()
+        .await
+        .context("accept harness vsock connection")?;
+
+    let mut read_buf = [0u8; 8192];
+    let mut pending = String::new();
+
+    loop {
+        let n = conn
+            .read(&mut read_buf)
+            .await
+            .context("read from harness vsock")?;
+        if n == 0 {
+            // EOF: harness closed the connection. Flush any complete trailing
+            // frame (one without a terminating newline) before exiting.
+            let trailing = parse_vsock_frame(&pending);
+            if !forward_frames(vec![trailing], tx).await {
+                return Ok(());
+            }
+            return Ok(());
+        }
+
+        pending.push_str(&String::from_utf8_lossy(&read_buf[..n]));
+        let (outcomes, remainder) = drain_vsock_frames(&pending);
+        pending = remainder;
+        if !forward_frames(outcomes, tx).await {
+            // Consumer dropped the receiver; stop reading.
+            return Ok(());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // FirecrackerBackend
 // ---------------------------------------------------------------------------
 
@@ -784,6 +1144,10 @@ pub struct FirecrackerBackend {
     available: bool,
     /// Binary path (cached from the availability probe).
     binary_path: Option<String>,
+    /// Per-VM `firecracker` child processes, keyed by vm_id, so `cancel()` can
+    /// SIGKILL as a reliable fallback after `SendCtrlAltDel`.  Empty on hosts
+    /// where the backend is unavailable (no VM is ever spawned there).
+    processes: ProcessTable<tokio::process::Child>,
 }
 
 impl FirecrackerBackend {
@@ -822,6 +1186,7 @@ impl FirecrackerBackend {
             bridge_name,
             available,
             binary_path,
+            processes: ProcessTable::new(),
         }
     }
 
@@ -855,6 +1220,13 @@ impl FirecrackerBackend {
             .as_deref()
             .ok_or_else(Self::not_available_error)?;
 
+        // Step 0: provision the per-VM client cert (CN=vm_id, signed by the
+        // manager CA) and write it to the paths the boot-args already
+        // reference, so the in-VM harness can present it on the
+        // harness↔manager mTLS channel. Issuance is cryptographic identity,
+        // not topology — VendSecret rejects any cert whose CN != vm_id.
+        provision_vm_cert(cfg)?;
+
         // Step 1: TAP device.
         // LINUX-ONLY: requires CAP_NET_ADMIN / root.
         setup_tap_device(&cfg.tap_dev, self.bridge_name.as_deref()).await?;
@@ -867,14 +1239,18 @@ impl FirecrackerBackend {
             jailer_path: None, // jailer integration: ADR-0006 §Jailer
             log_level: Some("Info".to_string()),
         };
-        // We intentionally drop the Child handle here; in production the
-        // manager would store it in the handle registry or a process table
-        // to SIGKILL on cancel.  That is wired in the cancel path below.
-        // For now, the process runs until SendCtrlAltDel or natural exit.
-        //
-        // TODO(ADR-0006): store child handle per-vm-id for reliable SIGKILL
-        // fallback.
-        let _child = spawn_firecracker_process(&spawn_cfg).await?;
+        // Store the Child handle in the per-VM process table keyed by vm_id so
+        // `cancel()` can SIGKILL it as a reliable fallback after the graceful
+        // SendCtrlAltDel (ADR-0006 §Lifecycle). The process otherwise runs
+        // until SendCtrlAltDel or natural exit.
+        let child = spawn_firecracker_process(&spawn_cfg).await?;
+        if let Some(prev) = self.processes.insert(&cfg.vm_id, child) {
+            // vm_ids are UUIDs, so a collision means a prior boot for the same
+            // id never got reaped. Kill the stale handle defensively.
+            let mut prev = prev;
+            let _ = prev.force_kill();
+            tracing::warn!(vm_id = %cfg.vm_id, "process table collision; killed stale child");
+        }
 
         let sock = &cfg.socket_path;
 
@@ -886,6 +1262,11 @@ impl FirecrackerBackend {
 
         // Step 5: Root drive.
         unix_socket_put(sock, "/drives/rootfs", &cfg.root_drive()).await?;
+
+        // Step 5b: Read-only cert drive — carries the per-VM mTLS material
+        // provisioned in Step 0 so the in-guest harness can read the paths the
+        // boot-args reference. LINUX-ONLY (block device attach on a live VM).
+        unix_socket_put(sock, "/drives/certs", &cfg.cert_drive()).await?;
 
         // Step 6: Network interface.
         unix_socket_put(sock, "/network-interfaces/eth0", &cfg.network_interface()).await?;
@@ -1002,6 +1383,26 @@ impl RuntimeBackend for FirecrackerBackend {
             );
         }
 
+        // Reliable fallback: SIGKILL the firecracker child if we still own its
+        // handle. ACPI shutdown can hang (no guest ACPI handler, wedged guest);
+        // killing the host process tears the VM down unconditionally. A missing
+        // entry (already exited / reaped) is fine — `kill` returns Ok(false).
+        match self.processes.kill(handle_id) {
+            Ok(true) => tracing::info!(
+                vm_id = handle_id,
+                "Firecracker: SIGKILL fallback fired on child process"
+            ),
+            Ok(false) => tracing::debug!(
+                vm_id = handle_id,
+                "Firecracker: no child handle tracked; nothing to SIGKILL"
+            ),
+            Err(e) => tracing::warn!(
+                vm_id = handle_id,
+                error = %e,
+                "Firecracker: SIGKILL fallback failed"
+            ),
+        }
+
         // LINUX-ONLY: TAP cleanup.
         let tap_dev = format!("fc-{}", &handle_id[..8.min(handle_id.len())]);
         teardown_tap_device(&tap_dev).await?;
@@ -1011,14 +1412,20 @@ impl RuntimeBackend for FirecrackerBackend {
 
     /// Stream runtime events from a microVM.
     ///
-    /// In production this reads structured JSON events from the vsock
-    /// device or the Firecracker serial console.  Today it emits a single
-    /// informational log line and then signals exit so callers don't block.
+    /// The in-VM harness writes newline-delimited JSON `RuntimeEvent` frames to
+    /// the host over the vsock device (CID 3).  Firecracker surfaces the host
+    /// side of that vsock as a `UnixListener` on the configured UDS path; this
+    /// method binds that listener, accepts the harness connection, and runs the
+    /// event loop in [`vsock_event_loop`].  The byte-stream framing itself lives
+    /// in the pure, unit-tested [`drain_vsock_frames`] / [`parse_vsock_frame`].
     ///
-    /// LINUX-ONLY (vsock path): vsock connection requires the VM to be running.
+    /// LINUX-ONLY (live loop): binding/accepting the vsock UDS and a running VM
+    /// to talk to it require Linux + /dev/kvm; gated behind `self.available`.
     async fn stream(&self, handle_id: &str) -> Result<BoxStream<'static, RuntimeEvent>> {
         let vm_id = handle_id.to_string();
         let available = self.available;
+        // Same convention as VmConfig::vsock_uds_path.
+        let vsock_path = format!("/run/lantern/vsock/{vm_id}.sock");
 
         let (tx, rx) = tokio::sync::mpsc::channel::<RuntimeEvent>(256);
 
@@ -1036,31 +1443,28 @@ impl RuntimeBackend for FirecrackerBackend {
 
             tracing::info!(
                 vm_id = %vm_id,
+                vsock = %vsock_path,
                 // requires Linux; integration-tested on a Linux host
                 "Firecracker: opening vsock event stream (LINUX-ONLY)"
             );
 
-            // TODO(ADR-0006): replace with real vsock/serial reader.
-            // The harness writes structured JSON events to vsock CID 3;
-            // this read loop decodes them and forwards to `tx`.
-            let _ = tx
-                .send(RuntimeEvent::Log(LogLine {
-                    level: "info".to_string(),
-                    message: format!(
-                        "Firecracker VM {vm_id}: vsock stream connected \
-                         (real event loop pending, see ADR-0006)"
-                    ),
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                }))
-                .await;
+            // LINUX-ONLY: bind + accept + read loop over the vsock UDS.
+            let result = vsock_event_loop(&vsock_path, &tx).await;
 
-            // Emit an exit to avoid blocking callers indefinitely.
-            let _ = tx
-                .send(RuntimeEvent::Exited(RuntimeExited {
+            // Whatever the loop's fate, terminate the stream so callers never
+            // block forever. A loop error becomes a non-zero Exited frame; a
+            // clean EOF (harness closed the connection) becomes Exited(0).
+            let exit = match result {
+                Ok(()) => RuntimeExited {
                     exit_code: 0,
                     error: String::new(),
-                }))
-                .await;
+                },
+                Err(e) => RuntimeExited {
+                    exit_code: 1,
+                    error: format!("vsock event loop ended: {e}"),
+                },
+            };
+            let _ = tx.send(RuntimeEvent::Exited(exit)).await;
         });
 
         Ok(Box::pin(ReceiverStream::new(rx)))
@@ -1256,6 +1660,8 @@ mod tests {
             command: vec![],
             args: vec![],
             image: "sha256:abc".to_string(),
+            network_policy: crate::proto::NetworkPolicyClass::default(),
+            egress_rules: vec![],
         }
     }
 
@@ -1922,5 +2328,324 @@ mod tests {
     fn backend_name_is_firecracker() {
         let backend = FirecrackerBackend::new();
         assert_eq!(backend.name(), "firecracker");
+    }
+
+    // -----------------------------------------------------------------------
+    // 8. Per-VM process table (insert / remove / cancel-selection)
+    //
+    // A lightweight `Killable` test double stands in for tokio::process::Child
+    // so the bookkeeping + kill-selection logic runs with no real process,
+    // no firecracker, no KVM.
+    // -----------------------------------------------------------------------
+
+    /// Test double: records how many times it was killed and whether the kill
+    /// should fail, shared via Arc so the table can take ownership while the
+    /// test still observes the effect.
+    #[derive(Clone)]
+    struct FakeChild {
+        kills: Arc<std::sync::atomic::AtomicUsize>,
+        fail: bool,
+    }
+
+    impl FakeChild {
+        fn new() -> Self {
+            Self {
+                kills: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                fail: false,
+            }
+        }
+        fn failing() -> Self {
+            Self {
+                kills: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                fail: true,
+            }
+        }
+        fn kill_count(&self) -> usize {
+            self.kills.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl Killable for FakeChild {
+        fn force_kill(&mut self) -> Result<()> {
+            self.kills.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.fail {
+                bail!("simulated kill failure")
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn process_table_insert_and_remove() {
+        let table: ProcessTable<FakeChild> = ProcessTable::new();
+        assert!(table.is_empty());
+
+        let child = FakeChild::new();
+        assert!(table.insert("vm-a", child.clone()).is_none());
+        assert_eq!(table.len(), 1);
+        assert!(table.contains("vm-a"));
+        assert!(!table.contains("vm-b"));
+
+        let removed = table.remove("vm-a");
+        assert!(removed.is_some());
+        assert!(table.is_empty());
+        assert!(!table.contains("vm-a"));
+    }
+
+    #[test]
+    fn process_table_insert_returns_previous_on_collision() {
+        let table: ProcessTable<FakeChild> = ProcessTable::new();
+        let first = FakeChild::new();
+        let second = FakeChild::new();
+        assert!(table.insert("vm-a", first).is_none());
+        // Second insert for the same id returns the prior handle.
+        assert!(table.insert("vm-a", second).is_some());
+        assert_eq!(table.len(), 1);
+    }
+
+    #[test]
+    fn process_table_kill_selects_and_removes_tracked_vm() {
+        let table: ProcessTable<FakeChild> = ProcessTable::new();
+        let child = FakeChild::new();
+        let observer = child.clone();
+        table.insert("vm-kill", child);
+
+        // kill returns Ok(true): a tracked process got the signal.
+        assert!(table.kill("vm-kill").unwrap());
+        assert_eq!(observer.kill_count(), 1, "child must be SIGKILLed once");
+        // Entry is removed so a retried cancel finds nothing.
+        assert!(!table.contains("vm-kill"));
+    }
+
+    #[test]
+    fn process_table_kill_unknown_vm_is_ok_false() {
+        let table: ProcessTable<FakeChild> = ProcessTable::new();
+        // No process tracked: not an error, just "nothing to kill".
+        assert!(!table.kill("ghost-vm").unwrap());
+    }
+
+    #[test]
+    fn process_table_kill_removes_entry_even_when_kill_errors() {
+        let table: ProcessTable<FakeChild> = ProcessTable::new();
+        let child = FakeChild::failing();
+        let observer = child.clone();
+        table.insert("vm-bad", child);
+
+        let err = table.kill("vm-bad").unwrap_err();
+        assert!(err.to_string().contains("simulated kill failure"));
+        assert_eq!(observer.kill_count(), 1);
+        // The doomed handle is gone regardless so a retry doesn't re-find it.
+        assert!(
+            !table.contains("vm-bad"),
+            "entry must be removed even when the kill fails"
+        );
+    }
+
+    #[test]
+    fn process_table_clone_shares_state() {
+        let table: ProcessTable<FakeChild> = ProcessTable::new();
+        let clone = table.clone();
+        table.insert("vm-shared", FakeChild::new());
+        // The clone sees the same underlying map.
+        assert!(clone.contains("vm-shared"));
+        assert!(clone.kill("vm-shared").unwrap());
+        assert!(!table.contains("vm-shared"));
+    }
+
+    // -----------------------------------------------------------------------
+    // 9. Cert drive wiring (Identity phase → rootfs mounting)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn vm_config_cert_image_path_uses_vm_id() {
+        let vm_id = "aaaabbbbccccdddd0000111122223333";
+        let req = minimal_schedule_req();
+        let cfg = VmConfig::from_schedule_with_id(&req, "/k", "/r", vm_id);
+        assert!(cfg.certs_image_path.contains(vm_id));
+        assert!(cfg.certs_image_path.ends_with("certs.img"));
+    }
+
+    #[test]
+    fn cert_drive_is_read_only_non_root() {
+        let vm_id = "aaaabbbbccccdddd0000111122223333";
+        let req = minimal_schedule_req();
+        let cfg = VmConfig::from_schedule_with_id(&req, "/k", "/r", vm_id);
+        let d = cfg.cert_drive();
+        assert_eq!(d.drive_id, "certs");
+        assert_eq!(d.path_on_host, cfg.certs_image_path);
+        assert!(d.is_read_only, "cert drive must be read-only");
+        assert!(!d.is_root_device, "cert drive must not be the root device");
+    }
+
+    #[test]
+    fn cert_drive_path_matches_boot_args_vm_id() {
+        // The in-guest cert paths in boot_args and the cert image attached as a
+        // drive must agree on the vm_id, or the harness reads the wrong certs.
+        let vm_id = "aaaabbbbccccdddd0000111122223333";
+        let req = minimal_schedule_req();
+        let cfg = VmConfig::from_schedule_with_id(&req, "/k", "/r", vm_id);
+        assert!(cfg.boot_args.contains(vm_id));
+        assert!(cfg.tls_cert_path.contains(vm_id));
+        assert!(cfg.cert_drive().path_on_host.contains(vm_id));
+    }
+
+    // -----------------------------------------------------------------------
+    // 10. vsock frame parsing (pure, unit-tested without a socket)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_vsock_frame_decodes_log_event() {
+        let line =
+            r#"{"type":"Log","level":"info","message":"hi","timestamp":"2026-01-01T00:00:00Z"}"#;
+        match parse_vsock_frame(line) {
+            FrameOutcome::Event(RuntimeEvent::Log(l)) => {
+                assert_eq!(l.level, "info");
+                assert_eq!(l.message, "hi");
+            }
+            other => panic!("expected Log event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_vsock_frame_decodes_exited_event() {
+        let line = r#"{"type":"Exited","exit_code":42,"error":"boom"}"#;
+        match parse_vsock_frame(line) {
+            FrameOutcome::Event(RuntimeEvent::Exited(e)) => {
+                assert_eq!(e.exit_code, 42);
+                assert_eq!(e.error, "boom");
+            }
+            other => panic!("expected Exited event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_vsock_frame_blank_line_is_skipped() {
+        assert!(matches!(parse_vsock_frame(""), FrameOutcome::Blank));
+        assert!(matches!(parse_vsock_frame("   "), FrameOutcome::Blank));
+        assert!(matches!(parse_vsock_frame("\t"), FrameOutcome::Blank));
+    }
+
+    #[test]
+    fn parse_vsock_frame_malformed_json_is_reported_not_fatal() {
+        match parse_vsock_frame("{not valid json") {
+            FrameOutcome::Malformed(e) => assert!(!e.is_empty()),
+            other => panic!("expected Malformed, got {other:?}"),
+        }
+        // Valid JSON but unknown variant tag is also malformed (not a panic).
+        assert!(matches!(
+            parse_vsock_frame(r#"{"type":"Nope"}"#),
+            FrameOutcome::Malformed(_)
+        ));
+    }
+
+    #[test]
+    fn drain_vsock_frames_splits_complete_lines_and_keeps_remainder() {
+        let buf = concat!(
+            r#"{"type":"Log","level":"info","message":"a","timestamp":"t"}"#,
+            "\n",
+            r#"{"type":"Log","level":"info","message":"b","timestamp":"t"}"#,
+            "\n",
+            r#"{"type":"Log","level":"info","message":"partial"#, // no closing + no newline
+        );
+        let (outcomes, remainder) = drain_vsock_frames(buf);
+        assert_eq!(outcomes.len(), 2, "two complete frames");
+        for o in &outcomes {
+            assert!(matches!(o, FrameOutcome::Event(RuntimeEvent::Log(_))));
+        }
+        // The partial trailing line (no terminating newline) is carried over.
+        assert!(remainder.contains("partial"));
+    }
+
+    #[test]
+    fn drain_vsock_frames_no_newline_buffers_whole_input() {
+        let buf = r#"{"type":"Log","level":"info"#; // incomplete, no newline
+        let (outcomes, remainder) = drain_vsock_frames(buf);
+        assert!(outcomes.is_empty(), "no complete frame yet");
+        assert_eq!(remainder, buf, "entire buffer carried over");
+    }
+
+    #[test]
+    fn drain_vsock_frames_partial_then_completed_across_reads() {
+        // Simulate a JSON object split across two read() calls.
+        let part1 = r#"{"type":"Exited","exit_"#;
+        let (out1, rem1) = drain_vsock_frames(part1);
+        assert!(out1.is_empty());
+        assert_eq!(rem1, part1);
+
+        // Next read brings the rest plus the terminating newline.
+        let combined = format!("{rem1}{}", "code\":7,\"error\":\"\"}\n");
+        let (out2, rem2) = drain_vsock_frames(&combined);
+        assert_eq!(out2.len(), 1);
+        assert!(matches!(
+            &out2[0],
+            FrameOutcome::Event(RuntimeEvent::Exited(e)) if e.exit_code == 7
+        ));
+        assert!(rem2.is_empty(), "remainder consumed once frame completed");
+    }
+
+    #[test]
+    fn drain_vsock_frames_blank_line_between_events() {
+        let buf = concat!(
+            r#"{"type":"Log","level":"info","message":"a","timestamp":"t"}"#,
+            "\n",
+            "\n", // blank line
+            r#"{"type":"Log","level":"info","message":"b","timestamp":"t"}"#,
+            "\n",
+        );
+        let (outcomes, remainder) = drain_vsock_frames(buf);
+        assert_eq!(outcomes.len(), 3, "two events + one blank");
+        assert!(remainder.is_empty());
+        let events = outcomes
+            .iter()
+            .filter(|o| matches!(o, FrameOutcome::Event(_)))
+            .count();
+        let blanks = outcomes
+            .iter()
+            .filter(|o| matches!(o, FrameOutcome::Blank))
+            .count();
+        assert_eq!(events, 2);
+        assert_eq!(blanks, 1);
+    }
+
+    #[tokio::test]
+    async fn forward_frames_sends_events_and_skips_blank_and_malformed() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<RuntimeEvent>(8);
+        let outcomes = vec![
+            FrameOutcome::Event(RuntimeEvent::Log(crate::proto::LogLine {
+                level: "info".to_string(),
+                message: "x".to_string(),
+                timestamp: "t".to_string(),
+            })),
+            FrameOutcome::Blank,
+            FrameOutcome::Malformed("bad".to_string()),
+            FrameOutcome::Event(RuntimeEvent::Exited(RuntimeExited {
+                exit_code: 0,
+                error: String::new(),
+            })),
+        ];
+        let ok = forward_frames(outcomes, &tx).await;
+        assert!(ok, "receiver still open");
+        drop(tx);
+
+        let mut got = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            got.push(ev);
+        }
+        // Only the two real events are forwarded; blank + malformed dropped.
+        assert_eq!(got.len(), 2);
+        assert!(matches!(got[0], RuntimeEvent::Log(_)));
+        assert!(matches!(got[1], RuntimeEvent::Exited(_)));
+    }
+
+    #[tokio::test]
+    async fn forward_frames_reports_closed_consumer() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<RuntimeEvent>(1);
+        drop(rx); // consumer gone before we send
+        let outcomes = vec![FrameOutcome::Event(RuntimeEvent::Exited(RuntimeExited {
+            exit_code: 0,
+            error: String::new(),
+        }))];
+        let ok = forward_frames(outcomes, &tx).await;
+        assert!(!ok, "must report the receiver is gone so the loop can stop");
     }
 }

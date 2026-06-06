@@ -311,6 +311,8 @@ mod tests {
             command: vec![],
             args: vec![],
             image: String::new(),
+            network_policy: crate::proto::NetworkPolicyClass::default(),
+            egress_rules: vec![],
         }
     }
 

@@ -58,34 +58,35 @@ Several hot-path Rust components are pre-1.0 and currently **fail closed**
 (they refuse rather than pretend to be secure). Before executing untrusted /
 hostile agent code in production, these need real implementations:
 
-- **microVM isolation backend** — the Firecracker backend is now implemented
-  (REST API client, VmConfig derivation, lifecycle state machine, availability
-  detection; 103 unit tests) and **fail-closed**: it only boots when Firecracker
-  is genuinely available (Linux + binary + readable `/dev/kvm`), else
-  Hostile/Untrusted schedules hard-fail (invariant #5 holds). RESIDUAL — needs a
-  Linux+KVM host to validate the live boot, plus: build a KVM kernel +
-  harness rootfs (`FC_KERNEL_PATH`/`FC_ROOTFS_PATH`), TAP/bridge networking
-  (`CAP_NET_ADMIN`), jailer wrapping for chroot/uid/cgroup isolation, per-VM
-  mTLS cert provisioning (CN=vm_id), and the real vsock event loop. The live
-  I/O paths are marked `// LINUX-ONLY` in source.
-- **Secret vending** — the manager-side `VendSecret` RPC is now implemented:
-  it binds each vend to the calling VM's registry-recorded tenant/run/declared
-  secret_uris (never caller-asserted), rejects undeclared URIs, caps TTL at
-  300s, and never logs values. RESIDUAL (must close before untrusted prod):
-  the VM is currently authenticated by `vm_id` over a topology-trusted channel
-  — add mTLS with per-VM client certs (CN=vm_id) or vsock peer-credential
-  enforcement so a VM can't impersonate another by guessing its `vm_id`; and
-  wire a production `SecretResolver` (Vault/cloud SM) — only `EnvSecretResolver`
-  ships today (invariant #10).
-- **TLS on the data path** — implemented + fail-closed in prod: the gateway
-  terminates TLS (rustls) on :8443 (refuses to boot in prod without cert/key);
-  harness↔manager is mTLS with a `vm_id`↔client-cert identity check. RESIDUAL
-  wiring: the manager must (a) provision a per-VM cert (CN=vm_id) at spawn and
-  inject `LANTERN_VM_TLS_CERT/KEY` + `LANTERN_MANAGER_TLS_CA`, and (b) extract
-  the peer cert from the tonic request to run the identity check on every
-  VendSecret. The gateway→control-plane channel has opt-in client TLS
-  (`LANTERN_CONTROL_PLANE_TLS_CA`); the Go control-plane gRPC server must serve
-  TLS before it can be required.
+- **Isolation backend.** Two paths:
+  - **K8s Job (deployable prod isolation, no bare-metal needed)** — hardened to
+    default-deny egress NetworkPolicy + `seccomp: RuntimeDefault` + `cap_drop:
+    [ALL]` + non-root + read-only-rootfs + no SA-token. Manifest generation is
+    unit-tested; validate end-to-end against any cluster (kind/k3s). This is the
+    recommended prod isolation for alpha.
+  - **Firecracker (max isolation)** — fully implemented now: availability gate
+    (Linux + binary + `/dev/kvm`), per-VM cert provisioning (CN=vm_id), TAP +
+    process spawn, Firecracker API + InstanceStart, vsock frame parsing,
+    process-table teardown; all KVM-independent logic is unit-tested and it stays
+    **fail-closed** off-KVM. RESIDUAL: the live cold-boot + teardown is validated
+    by `.github/workflows/microvm-integration.yml` on a **KVM runner** (kernel +
+    rootfs built via `infra/firecracker/`) — UNVERIFIED until that CI runs green;
+    jailer wrapping is the remaining hardening. Live paths marked `// LINUX-ONLY`.
+- **Secret vending + per-VM identity** — `VendSecret` binds each vend to the
+  VM's registry-recorded tenant/run/declared `secret_uris` (never
+  caller-asserted), rejects undeclared URIs, caps TTL at 300s, never logs values.
+  The `vm_id`-impersonation residual is now closed in code: the manager issues a
+  per-VM client cert (CN=vm_id) at spawn and the `vend_secret` handler verifies
+  the peer cert's CN matches the request `vm_id`. RESIDUAL: the live two-process
+  mTLS handshake is validated by the KVM CI (UNVERIFIED until it runs); a
+  production `SecretResolver` (Vault/cloud SM) still needs wiring — only
+  `EnvSecretResolver` ships today.
+- **TLS on the data path** — fail-closed in prod across the board now: gateway
+  terminates rustls on :8443; harness↔manager mTLS with the CN==vm_id check; and
+  the **control-plane gRPC server now serves TLS** (`LANTERN_CONTROL_PLANE_TLS_*`,
+  required in prod) so the gateway→control-plane channel can be encrypted
+  end-to-end. RESIDUAL: the live multi-process handshakes are exercised by the
+  KVM/integration CI, not on a single macOS dev box.
 - **Egress firewall** — the in-VM allowlist (port + private-IP/metadata deny)
   is defense-in-depth; pair it with a host-level nftables/DNS-stub egress
   firewall, and a real heartbeat RPC so policy revocations propagate.
