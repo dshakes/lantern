@@ -1364,13 +1364,128 @@ function knownNameTokens(
   return set;
 }
 
-/** Context passed to detectBotTells for the fabricated-name net (BUG A).
+/** Context passed to detectBotTells for the fabricated-name net (BUG A)
+ *  and the whereabouts-leak guard.
  *  All optional + backward-compatible. */
 export interface BotTellContext {
   /** Resolved display name of the contact, when known + confident. */
   contactName?: string;
   /** Relationship label ("brother", "college friend"). */
   relationship?: string;
+  /**
+   * Who is receiving this draft.
+   *   "owner"   — the verified owner self-chat / owner DM. Whereabouts
+   *               leak is ALLOWED (owner may ask where they are).
+   *   "contact" — anyone else. Whereabouts leak SUPPRESSES the draft.
+   * Defaults to "contact" (fail-safe) when omitted: a caller that forgets
+   * to set this gets the non-disclosure path, never accidental location leak.
+   */
+  audience?: "owner" | "contact";
+}
+
+// ---------------------------------------------------------------------------
+// Whereabouts-leak detector — belt-and-suspenders over the persona rule
+// ---------------------------------------------------------------------------
+//
+// The PRESENCE persona rule tells the LLM never to reveal the owner's
+// specific physical location to a contact. Production evidence shows the
+// LLM ignores this: it replied "He's at Poolville, MD" to a contact.
+// This deterministic guard catches the slip before it reaches the wire.
+//
+// HIGH-PRECISION patterns only — we fire when the draft:
+//   (a) States a City, STATE pattern (e.g. "Poolville, MD" / "Austin, TX")
+//       in proximity to a presence verb (he's / she's / they're / at / in).
+//   (b) Uses a full US-state name following a presence verb.
+//   (c) Says "traveling to <place>" / "heading to <place>" — reveals a
+//       future destination the contact shouldn't know.
+//
+// NOT fired on:
+//   - General availability ("he's away", "he's tied up", "he's home")
+//     — these are explicitly allowed by the persona rule.
+//   - Name-only without a state hint ("he's in the office").
+//   - The OWNER channel — the owner may ask where they are.
+//
+// Pattern design: word-boundary anchored, two-token lookbehind (presence
+// verb phrase within 30 chars) so "City, ST" in an unrelated context
+// (a business address the contact sent) doesn't fire.
+
+// US postal state abbreviations — 2-letter, only the real 50+DC.
+const US_STATE_ABBREV_RE =
+  /\b(?:AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b/;
+
+// Full US state names — matched case-insensitively. Only the 50 + DC.
+const US_STATE_NAMES_RE =
+  /\b(?:alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new\s+hampshire|new\s+jersey|new\s+mexico|new\s+york|north\s+carolina|north\s+dakota|ohio|oklahoma|oregon|pennsylvania|rhode\s+island|south\s+carolina|south\s+dakota|tennessee|texas|utah|vermont|virginia|washington|west\s+virginia|wisconsin|wyoming|district\s+of\s+columbia)\b/i;
+
+// Presence verbs — "he's", "she's", "they're", plus prepositional "at" / "in"
+// when used in a location context. These are followed (within ~30 chars) by
+// the location phrase.
+const PRESENCE_VERB_RE =
+  /\b(?:he'?s|she'?s|they'?re|he\s+is|she\s+is|they\s+are|is\s+at|is\s+in|(?:are|is)\s+currently|currently\s+(?:in|at))\b/i;
+
+// "traveling to" / "heading to" / "on his way to" — reveals a future destination.
+const TRAVELING_RE =
+  /\b(?:travel(?:ing|led|s)|heading|head(?:ed)?\s+over|on\s+(?:his|her|their|my)\s+way)\s+to\b/i;
+
+/**
+ * Detect a draft that leaks the owner's specific physical whereabouts to
+ * a contact — the City, ST pattern, a full state name following a
+ * presence verb, or a "traveling to <place>" disclosure.
+ *
+ * Returns a human-readable reason string when a leak is found, null when
+ * the draft is safe. Exported for focused unit tests.
+ *
+ * Only the CONTACT audience is checked — the owner channel is allowed to
+ * know whereabouts (they're asking about their own status). Callers pass
+ * `audience` to avoid double-checking; the caller is responsible for
+ * honouring the result (detectBotTells does this automatically when `ctx`
+ * carries the audience field).
+ */
+export function detectWhereaboutsLeak(draft: string): string | null {
+  const text = (draft || "").trim();
+  if (!text) return null;
+
+  // (a) "City, ST" — a capitalized word immediately followed by ", XX" where
+  //     XX is a 2-letter US state abbreviation. We require the phrase to be
+  //     preceded within 60 chars by a presence verb to stay high-precision.
+  //     Regex: capture the whole "... presence ... City, ST" shape.
+  const cityStateRe =
+    /\b(?:[A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20})?),\s*(?:AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b/;
+  if (cityStateRe.test(text) && PRESENCE_VERB_RE.test(text)) {
+    // Both patterns found in the same draft — high confidence location leak.
+    const match = text.match(cityStateRe);
+    return `whereabouts leak: draft reveals specific location "${match?.[0]}" to a contact`;
+  }
+
+  // (b) Full state name following a presence verb in the same sentence/clause.
+  //     Split on sentence boundaries so "He's traveling. Maryland is nice." won't
+  //     fire — we require presence verb + state name in the same clause (≤ 80 chars).
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  for (const sentence of sentences) {
+    if (PRESENCE_VERB_RE.test(sentence) && US_STATE_NAMES_RE.test(sentence)) {
+      const match = sentence.match(US_STATE_NAMES_RE);
+      return `whereabouts leak: draft reveals owner's state to a contact ("${match?.[0]}")`;
+    }
+  }
+
+  // (c) "traveling to <place>" / "heading to <place>" — any destination.
+  //     We match "traveling/heading to" followed by a capitalized place name
+  //     (at least one capitalized word or a US state name/abbreviation).
+  if (TRAVELING_RE.test(text)) {
+    // Look for a destination: a capitalized word after "to " within 40 chars.
+    const travelMatch = text.match(
+      /\b(?:travel(?:ing|led|s)|heading|head(?:ed)?\s+over|on\s+(?:his|her|their|my)\s+way)\s+to\s+([A-Z][A-Za-z\s]{1,40})/,
+    );
+    if (travelMatch) {
+      return `whereabouts leak: draft reveals travel destination "${travelMatch[1].trim()}" to a contact`;
+    }
+    // Also catch if a state name follows "traveling to"
+    if (US_STATE_NAMES_RE.test(text) || US_STATE_ABBREV_RE.test(text)) {
+      return `whereabouts leak: draft reveals travel destination (state) to a contact`;
+    }
+  }
+
+  return null;
 }
 
 /** Scan a draft for bot-tells. Returns `ok=false` with a reason when
@@ -1386,7 +1501,12 @@ export interface BotTellContext {
  *  enables the FABRICATED-NAME net (BUG A): if the draft addresses the
  *  contact by a first name that appears nowhere in the inbound, the
  *  contact name, or the relationship, the draft has invented a name
- *  (the bot called a contact named Bhramari "Shiva") and is suppressed. */
+ *  (the bot called a contact named Bhramari "Shiva") and is suppressed.
+ *
+ *  `ctx.audience` controls the whereabouts-leak guard: "contact" (default,
+ *  fail-safe) → suppresses any draft that reveals the owner's specific
+ *  physical location; "owner" → whereabouts are allowed (the owner may
+ *  ask where they are). */
 export function detectBotTells(
   draft: string,
   inbound?: string,
@@ -1469,6 +1589,15 @@ export function detectBotTells(
   // the owner's everyday casual register. Needs the relationship from ctx.
   const teluguFormal = detectTeluguFormalImperative(text, ctx?.relationship);
   if (teluguFormal) return { ok: false, reason: teluguFormal };
+
+  // WHEREABOUTS-LEAK guard — belt-and-suspenders over the PRESENCE persona
+  // rule. Only fires for contact audience (default = "contact", fail-safe).
+  // The owner channel is allowed to ask about their own whereabouts.
+  const audience = ctx?.audience ?? "contact";
+  if (audience === "contact") {
+    const leakReason = detectWhereaboutsLeak(text);
+    if (leakReason) return { ok: false, reason: leakReason };
+  }
 
   // Length sanity (A9): a text message is a text message, but a legitimately
   // longer answer shouldn't be a silent non-reply. We only HARD-suppress

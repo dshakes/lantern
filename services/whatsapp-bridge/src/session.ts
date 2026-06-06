@@ -7003,6 +7003,7 @@ export class WhatsAppSession {
     const tellCheck = detectBotTells(draft, text, {
       contactName: opts.isGroup ? undefined : (opts.senderName ?? this.contactNames.get(from)),
       relationship,
+      audience: isOwnerChan ? "owner" : "contact",
     });
     if (!tellCheck.ok) {
       this.logger.info({ from, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft suppressed by bot-tell filter");
