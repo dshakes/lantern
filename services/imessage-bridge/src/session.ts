@@ -3212,6 +3212,7 @@ export class IMessageSession {
       relationship: isGroup
         ? undefined
         : this.ownerProfileStore.relationshipFor(row.handle, this.contactNames.get(row.handle)),
+      audience: isOwnerChan ? "owner" : "contact",
     });
     if (!tellCheck.ok) {
       this.logger.info({ from: row.handle, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft suppressed by bot-tell filter");
