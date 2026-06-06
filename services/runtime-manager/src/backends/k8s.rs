@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use futures::{AsyncBufReadExt, StreamExt};
@@ -11,8 +11,8 @@ use k8s_openapi::api::core::v1::{
     SecurityContext,
 };
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
-use kube::api::{Api, DeleteParams, ListParams, LogParams, PostParams};
 use kube::Client;
+use kube::api::{Api, DeleteParams, ListParams, LogParams, PostParams};
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 

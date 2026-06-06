@@ -14,6 +14,12 @@ pub struct HandleInfo {
     pub created_at: DateTime<Utc>,
     pub resource_limits: ResourceLimits,
     pub node_name: String,
+    /// The `secret_uri` values declared in the `AgentSpec.secrets` list at
+    /// spawn time.  VendSecret authorisation is checked against this list —
+    /// any URI not present here is rejected regardless of what the harness
+    /// asserts.  Set from the manager's own spawn record; never trust the
+    /// caller to provide this.
+    pub declared_secret_uris: Vec<String>,
 }
 
 /// Thread-safe registry of all active sandbox handles.
@@ -122,6 +128,7 @@ mod tests {
             created_at: Utc::now(),
             resource_limits: ResourceLimits::default(),
             node_name: "node-1".to_string(),
+            declared_secret_uris: vec![],
         }
     }
 

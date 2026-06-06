@@ -62,10 +62,15 @@ hostile agent code in production, these need real implementations:
   gated behind `LANTERN_ALLOW_FIRECRACKER_STUB`; Hostile/Untrusted schedules
   hard-fail without a real microVM backend. Implement Firecracker/Kata for
   real isolation (invariant #5).
-- **Secret vending** — the harness `vend_secret` is gated behind
-  `LANTERN_ALLOW_SECRET_STUB`; implement the manager-side `VendSecret` RPC that
-  binds each vend to the calling VM's authenticated tenant/run and rejects any
-  `secret_uri` not in that VM's AgentSpec (invariant #10).
+- **Secret vending** — the manager-side `VendSecret` RPC is now implemented:
+  it binds each vend to the calling VM's registry-recorded tenant/run/declared
+  secret_uris (never caller-asserted), rejects undeclared URIs, caps TTL at
+  300s, and never logs values. RESIDUAL (must close before untrusted prod):
+  the VM is currently authenticated by `vm_id` over a topology-trusted channel
+  — add mTLS with per-VM client certs (CN=vm_id) or vsock peer-credential
+  enforcement so a VM can't impersonate another by guessing its `vm_id`; and
+  wire a production `SecretResolver` (Vault/cloud SM) — only `EnvSecretResolver`
+  ships today (invariant #10).
 - **TLS on the data path** — terminate TLS at the gateway (rustls) or front it
   with a TLS/mTLS ingress; enable TLS on gateway→control-plane and
   harness→manager channels. Do not run these plaintext across a network.

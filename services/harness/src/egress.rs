@@ -27,7 +27,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{now_unix_ms, AuditEvent, EgressRule, HarnessReport};
+use crate::proto::{AuditEvent, EgressRule, HarnessReport, now_unix_ms};
 
 #[derive(Clone, Debug)]
 pub enum Decision {

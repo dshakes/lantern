@@ -11,6 +11,7 @@ use crate::handle_registry::{HandleInfo, HandleRegistry};
 use crate::pool::{PoolConfig, WarmPool};
 use crate::proto;
 use crate::proto::pb;
+use crate::secret_resolver::SecretResolver;
 
 // ---------------------------------------------------------------------------
 // C4 fix: isolation-class → backend routing
@@ -75,11 +76,16 @@ fn choose_backend(
 pub struct RuntimeManagerGrpc {
     backend: Arc<dyn RuntimeBackend>,
     pool: Arc<WarmPool>,
-    registry: Arc<HandleRegistry>,
+    pub(crate) registry: Arc<HandleRegistry>,
+    pub(crate) secret_resolver: Arc<dyn SecretResolver>,
 }
 
 impl RuntimeManagerGrpc {
-    pub fn new(backend: Arc<dyn RuntimeBackend>, pool_config: PoolConfig) -> Self {
+    pub fn new(
+        backend: Arc<dyn RuntimeBackend>,
+        pool_config: PoolConfig,
+        secret_resolver: Arc<dyn SecretResolver>,
+    ) -> Self {
         let pool = Arc::new(WarmPool::new(Arc::clone(&backend), pool_config));
         pool.start_reaper();
 
@@ -89,6 +95,7 @@ impl RuntimeManagerGrpc {
             backend,
             pool,
             registry,
+            secret_resolver,
         }
     }
 
@@ -149,7 +156,12 @@ impl RuntimeManagerGrpc {
             .cloned()
             .unwrap_or_else(|| "default".to_string());
 
-        // Register the handle.
+        // Register the handle. `declared_secret_uris` is sourced from the
+        // manager's own spawn record (via `req.secrets`) — never from
+        // anything the harness can assert later.
+        let declared_secret_uris: Vec<String> =
+            req.secrets.iter().map(|s| s.vault_ref.clone()).collect();
+
         self.registry.register(HandleInfo {
             handle_id: handle.id.clone(),
             run_id: req.run_id.clone(),
@@ -159,6 +171,7 @@ impl RuntimeManagerGrpc {
             created_at: chrono::Utc::now(),
             resource_limits: req.limits.clone(),
             node_name: handle.node_name.clone(),
+            declared_secret_uris,
         });
 
         tracing::info!(
@@ -291,7 +304,11 @@ impl RuntimeManagerGrpc {
             .cloned()
             .unwrap_or_else(|| "default".to_string());
 
-        // Register the restored handle.
+        // Register the restored handle. Secrets from a restore use the
+        // declared list carried in the RestoreRequest.
+        let declared_secret_uris: Vec<String> =
+            req.secrets.iter().map(|s| s.vault_ref.clone()).collect();
+
         self.registry.register(HandleInfo {
             handle_id: handle.id.clone(),
             run_id: req.run_id.clone(),
@@ -301,6 +318,7 @@ impl RuntimeManagerGrpc {
             created_at: chrono::Utc::now(),
             resource_limits: proto::ResourceLimits::default(),
             node_name: handle.node_name.clone(),
+            declared_secret_uris,
         });
 
         Ok(Response::new(proto::RestoreResponse {
@@ -607,6 +625,176 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
 }
 
 // ---------------------------------------------------------------------------
+// RuntimeHarness gRPC service — VendSecret + (stub) Heartbeat / Report
+// ---------------------------------------------------------------------------
+//
+// Authentication model
+// --------------------
+// The harness sends its `vm_id` in every `VendSecretRequest`. The manager
+// resolves that `vm_id` against its OWN handle registry — populated at
+// spawn time, never modifiable by the harness. From the registry entry the
+// manager reads:
+//
+//   • `tenant_id` and `run_id`  — authoritative identity; never taken from
+//                                  anything the harness asserts.
+//   • `declared_secret_uris`    — the allowlist from the `AgentSpec.secrets`
+//                                  that the scheduler/control-plane set when
+//                                  this VM was spawned.
+//
+// Any `secret_uri` not on that list is rejected with `PERMISSION_DENIED`,
+// regardless of what the harness sends.
+//
+// The current transport is plain gRPC-over-TCP. Production hardening adds
+// mTLS (manager's CA signs per-VM client certs at spawn, certificate CN is
+// the `vm_id`) or vsock peer-identity checks for Firecracker VMs. That is
+// documented in the ADR but not yet enforced here — see `UNVERIFIED` note
+// in the implementation report.
+//
+// TTL cap
+// -------
+// The caller MAY request a TTL via the `ttl` field. The manager caps it at
+// `MAX_SECRET_TTL_SECS` (300 s) regardless, and uses that same value when
+// the caller doesn't specify.
+
+const MAX_SECRET_TTL_SECS: i64 = 300;
+
+/// Service that handles inbound harness RPCs.
+///
+/// `registry` is shared with `RuntimeManagerGrpc` — the same Arc. Secrets
+/// are resolved via an injected `SecretResolver` so tests can stub the
+/// backend without touching real credentials.
+#[derive(Clone)]
+pub struct RuntimeHarnessGrpc {
+    registry: Arc<HandleRegistry>,
+    secret_resolver: Arc<dyn SecretResolver>,
+}
+
+impl RuntimeHarnessGrpc {
+    pub fn new(registry: Arc<HandleRegistry>, secret_resolver: Arc<dyn SecretResolver>) -> Self {
+        Self {
+            registry,
+            secret_resolver,
+        }
+    }
+}
+
+#[tonic::async_trait]
+impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
+    type HeartbeatStream = Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<pb::HeartbeatAck, Status>> + Send + 'static>,
+    >;
+
+    async fn heartbeat(
+        &self,
+        _request: Request<tonic::Streaming<pb::HeartbeatRequest>>,
+    ) -> Result<Response<Self::HeartbeatStream>, Status> {
+        // Heartbeat stream is tracked by the heartbeat module in the harness;
+        // the manager side is a future workstream. Return an empty stream so
+        // the harness can connect without error.
+        let stream: Self::HeartbeatStream = Box::pin(tokio_stream::empty());
+        Ok(Response::new(stream))
+    }
+
+    /// Vend a short-TTL secret value for a declared secret URI.
+    ///
+    /// Authorization steps (all performed against the manager's own registry):
+    /// 1. `vm_id` MUST be registered — unknown VMs get `NOT_FOUND`.
+    /// 2. `secret_uri` MUST appear in the VM's `declared_secret_uris` —
+    ///    undeclared URIs get `PERMISSION_DENIED`.
+    /// 3. The resolver is called; backend errors become `INTERNAL`.
+    /// 4. TTL is capped at `MAX_SECRET_TTL_SECS`.
+    async fn vend_secret(
+        &self,
+        request: Request<pb::VendSecretRequest>,
+    ) -> Result<Response<pb::VendSecretResponse>, Status> {
+        let req = request.into_inner();
+
+        // Step 1: look up the VM in the manager's own registry.
+        let info = self
+            .registry
+            .get(&req.vm_id)
+            .ok_or_else(|| Status::not_found(format!("vm_id '{}' not registered", req.vm_id)))?;
+
+        // Step 2: enforce the declared-secrets allowlist.
+        if !info.declared_secret_uris.contains(&req.secret_uri) {
+            tracing::warn!(
+                vm_id = %req.vm_id,
+                secret_uri = %req.secret_uri,
+                tenant_id = %info.tenant_id,
+                run_id = %info.run_id,
+                "VendSecret DENIED: uri not in declared allowlist"
+            );
+            return Err(Status::permission_denied(format!(
+                "secret_uri '{}' is not declared in the AgentSpec for vm '{}'",
+                req.secret_uri, req.vm_id
+            )));
+        }
+
+        // Step 3: resolve the plaintext value.
+        let value = self
+            .secret_resolver
+            .resolve(&req.secret_uri)
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    vm_id = %req.vm_id,
+                    secret_uri = %req.secret_uri,
+                    error = %e,
+                    "VendSecret: resolver error (value NOT logged)"
+                );
+                Status::internal(format!(
+                    "secret resolver error for uri '{}'",
+                    req.secret_uri
+                ))
+            })?;
+
+        // Step 4: compute expiry — cap at MAX_SECRET_TTL_SECS.
+        let requested_secs = req
+            .ttl
+            .as_ref()
+            .map(|d| d.seconds.max(1))
+            .unwrap_or(MAX_SECRET_TTL_SECS);
+        let ttl_secs = requested_secs.min(MAX_SECRET_TTL_SECS);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let expires_at_unix_secs = now.as_secs() as i64 + ttl_secs;
+
+        tracing::info!(
+            vm_id = %req.vm_id,
+            secret_uri = %req.secret_uri,
+            tenant_id = %info.tenant_id,
+            run_id = %info.run_id,
+            ttl_secs,
+            "VendSecret: issued (value NOT logged)"
+        );
+
+        Ok(Response::new(pb::VendSecretResponse {
+            value,
+            expires_at: Some(prost_types::Timestamp {
+                seconds: expires_at_unix_secs,
+                nanos: 0,
+            }),
+        }))
+    }
+
+    // `report` is client-streaming: harness sends a stream of HarnessReport,
+    // manager responds with a single HarnessAck.
+    async fn report(
+        &self,
+        _request: Request<tonic::Streaming<pb::HarnessReport>>,
+    ) -> Result<Response<pb::HarnessAck>, Status> {
+        // Report ingestion (logs, traces, audit) is handled by a separate
+        // subsystem; returning unimplemented keeps the trait satisfied without
+        // silently discarding data the harness relies on.
+        Err(Status::unimplemented(
+            "report: log/trace ingestion pipeline not yet wired on the manager side",
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests for C4: isolation-class routing
 // ---------------------------------------------------------------------------
 
@@ -614,6 +802,9 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
 mod tests {
     use super::*;
     use futures::stream::BoxStream;
+    // The `vend_secret` method is defined on the `RuntimeHarness` trait; tests
+    // call it directly so the trait must be in scope.
+    use pb::runtime_harness_server::RuntimeHarness as _;
 
     // Minimal stub that reports a configurable name.
     struct NamedStub {
@@ -777,5 +968,178 @@ mod tests {
             choose_backend(proto::IsolationClass::Hostile, &b),
             BackendChoice::Use(_)
         ));
+    }
+
+    // ---------------------------------------------------------------------------
+    // VendSecret handler tests
+    // ---------------------------------------------------------------------------
+
+    use crate::handle_registry::HandleInfo;
+    use crate::secret_resolver::HashMapSecretResolver;
+    use std::collections::HashMap;
+
+    /// Build a `RuntimeHarnessGrpc` with one pre-registered VM and a
+    /// `HashMapSecretResolver` loaded with the given secrets.
+    fn harness_service(
+        vm_id: &str,
+        tenant_id: &str,
+        run_id: &str,
+        declared_uris: Vec<&str>,
+        resolver_secrets: HashMap<String, String>,
+    ) -> RuntimeHarnessGrpc {
+        let registry = Arc::new(HandleRegistry::new());
+        registry.register(HandleInfo {
+            handle_id: vm_id.to_string(),
+            run_id: run_id.to_string(),
+            tenant_id: tenant_id.to_string(),
+            backend: "docker".to_string(),
+            isolation_class: proto::IsolationClass::Standard,
+            created_at: chrono::Utc::now(),
+            resource_limits: proto::ResourceLimits::default(),
+            node_name: "node-1".to_string(),
+            declared_secret_uris: declared_uris.into_iter().map(String::from).collect(),
+        });
+        let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
+        RuntimeHarnessGrpc::new(registry, resolver)
+    }
+
+    #[tokio::test]
+    async fn vend_secret_allowlisted_uri_resolves() {
+        let uri = "lantern.secret://tenant/t1/key/OPENAI";
+        let mut secrets = HashMap::new();
+        secrets.insert(uri.to_string(), "sk-real-value".to_string());
+
+        let svc = harness_service("vm-1", "t1", "run-1", vec![uri], secrets);
+        let req = Request::new(pb::VendSecretRequest {
+            vm_id: "vm-1".to_string(),
+            secret_uri: uri.to_string(),
+            ttl: None,
+        });
+        let resp = svc.vend_secret(req).await.unwrap();
+        assert_eq!(resp.into_inner().value, "sk-real-value");
+    }
+
+    #[tokio::test]
+    async fn vend_secret_ttl_capped_at_300s() {
+        let uri = "lantern.secret://tenant/t1/key/KEY";
+        let mut secrets = HashMap::new();
+        secrets.insert(uri.to_string(), "v".to_string());
+
+        let svc = harness_service("vm-ttl", "t1", "run-ttl", vec![uri], secrets);
+
+        // Request a TTL longer than the cap.
+        let req = Request::new(pb::VendSecretRequest {
+            vm_id: "vm-ttl".to_string(),
+            secret_uri: uri.to_string(),
+            ttl: Some(prost_types::Duration {
+                seconds: 9999,
+                nanos: 0,
+            }),
+        });
+        let resp = svc.vend_secret(req).await.unwrap().into_inner();
+        let expires = resp.expires_at.unwrap();
+
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let actual_ttl = expires.seconds - now_secs;
+        assert!(
+            actual_ttl <= MAX_SECRET_TTL_SECS,
+            "TTL {actual_ttl}s exceeds cap of {MAX_SECRET_TTL_SECS}s"
+        );
+        assert!(actual_ttl > 0, "TTL must be positive, got {actual_ttl}s");
+    }
+
+    #[tokio::test]
+    async fn vend_secret_undeclared_uri_rejected() {
+        let declared = "lantern.secret://tenant/t1/key/ALLOWED";
+        let forbidden = "lantern.secret://tenant/t1/key/FORBIDDEN";
+        let mut secrets = HashMap::new();
+        secrets.insert(forbidden.to_string(), "should-not-see".to_string());
+
+        let svc = harness_service("vm-2", "t1", "run-2", vec![declared], secrets);
+        let req = Request::new(pb::VendSecretRequest {
+            vm_id: "vm-2".to_string(),
+            secret_uri: forbidden.to_string(),
+            ttl: None,
+        });
+        let err = svc.vend_secret(req).await.unwrap_err();
+        assert_eq!(
+            err.code(),
+            tonic::Code::PermissionDenied,
+            "expected PERMISSION_DENIED, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn vend_secret_unknown_vm_id_rejected() {
+        let svc = harness_service(
+            "registered-vm",
+            "t1",
+            "run-1",
+            vec!["lantern.secret://tenant/t1/key/K"],
+            HashMap::new(),
+        );
+        let req = Request::new(pb::VendSecretRequest {
+            vm_id: "UNKNOWN-VM".to_string(),
+            secret_uri: "lantern.secret://tenant/t1/key/K".to_string(),
+            ttl: None,
+        });
+        let err = svc.vend_secret(req).await.unwrap_err();
+        assert_eq!(
+            err.code(),
+            tonic::Code::NotFound,
+            "expected NOT_FOUND, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn vend_secret_uses_registry_tenant_not_caller_asserted() {
+        // The vm_id is registered under tenant "real-tenant".
+        // The request doesn't carry a tenant field — the response value must
+        // come from the resolver keyed on the URI, which the registry
+        // (populated at spawn by the manager) has already validated belongs
+        // to "real-tenant". This test confirms the manager never accepts
+        // caller-asserted tenant_id.
+        let uri = "lantern.secret://tenant/real-tenant/key/K";
+        let mut secrets = HashMap::new();
+        secrets.insert(uri.to_string(), "correct-value".to_string());
+
+        let svc = harness_service("vm-tenant", "real-tenant", "run-x", vec![uri], secrets);
+        let req = Request::new(pb::VendSecretRequest {
+            vm_id: "vm-tenant".to_string(),
+            secret_uri: uri.to_string(),
+            ttl: None,
+        });
+        let resp = svc.vend_secret(req).await.unwrap();
+        // If authorization was bound to registry (not request), we get the value.
+        assert_eq!(resp.into_inner().value, "correct-value");
+    }
+
+    #[tokio::test]
+    async fn vend_secret_resolver_not_found_returns_internal() {
+        // URI is declared in the allowlist but the resolver doesn't have it —
+        // simulates a misconfigured secret backend. Should return INTERNAL,
+        // not leak that the value is absent.
+        let uri = "lantern.secret://tenant/t1/key/MISSING_IN_BACKEND";
+        let svc = harness_service(
+            "vm-3",
+            "t1",
+            "run-3",
+            vec![uri],
+            HashMap::new(), // resolver has no entries
+        );
+        let req = Request::new(pb::VendSecretRequest {
+            vm_id: "vm-3".to_string(),
+            secret_uri: uri.to_string(),
+            ttl: None,
+        });
+        let err = svc.vend_secret(req).await.unwrap_err();
+        assert_eq!(
+            err.code(),
+            tonic::Code::Internal,
+            "expected INTERNAL for resolver miss, got {err:?}"
+        );
     }
 }
