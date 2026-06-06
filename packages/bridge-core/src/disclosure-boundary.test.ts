@@ -187,3 +187,18 @@ test("relatedBlock no longer has the 'unless asks' cross-contact hatch", () => {
     "relatedBlock missing the no-mention directive",
   );
 });
+
+// Presence must give availability, never the owner's specific location, to a
+// contact (regression: bot told a probing contact "He's at Poolville, MD").
+test("contact persona forbids revealing the owner's location (presence = availability only)", () => {
+  const style = inferStyle([]);
+  const contact = agentPersonaPrompt("Shekhar", style, false, { audience: "contact" });
+  assert.match(contact, /AVAILABILITY ONLY, NEVER LOCATION/i);
+  assert.match(contact, /never reveal his specific WHEREABOUTS/i);
+  // Owner self-chat keeps full presence (no whereabouts restriction).
+  const owner = agentPersonaPrompt("Shekhar", style, false, { audience: "owner" });
+  assert.ok(
+    !/never reveal his specific WHEREABOUTS/i.test(owner),
+    "owner persona should NOT restrict whereabouts",
+  );
+});
