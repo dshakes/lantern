@@ -11,6 +11,7 @@ mod handle_registry;
 mod pool;
 mod proto;
 mod scheduler_heartbeat;
+mod secret_resolver;
 mod service;
 
 use std::sync::Arc;
@@ -22,8 +23,10 @@ use crate::backend::RuntimeBackend;
 use crate::backends::{DockerBackend, FirecrackerBackend, K8sBackend};
 use crate::config::{Config, RuntimeBackend as RuntimeBackendKind};
 use crate::pool::PoolConfig;
+use crate::proto::pb::runtime_harness_server::RuntimeHarnessServer;
 use crate::proto::pb::runtime_manager_server::RuntimeManagerServer;
-use crate::service::RuntimeManagerGrpc;
+use crate::secret_resolver::{EnvSecretResolver, SecretResolver};
+use crate::service::{RuntimeHarnessGrpc, RuntimeManagerGrpc};
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -61,14 +64,25 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(backend = backend.name(), "runtime backend initialized");
 
+    // Secret resolver — EnvSecretResolver reads LANTERN_SECRET_<encoded_uri>
+    // from the environment (dev/CI default). Swap in a Vault or
+    // control-plane relay resolver here for production.
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvSecretResolver);
+
     // Create the gRPC service with warm pool. `RuntimeManagerGrpc` is Clone
     // (its fields are all `Arc`-wrapped), which lets the generated tonic
     // server hold it by value while still sharing the underlying state.
     let pool_config = PoolConfig::default();
-    let grpc_service = RuntimeManagerGrpc::new(backend, pool_config);
+    let grpc_service = RuntimeManagerGrpc::new(backend, pool_config, Arc::clone(&resolver));
+
+    // The RuntimeHarness server shares the same handle registry so
+    // VendSecret sees every VM registered by Spawn.
+    let harness_service =
+        RuntimeHarnessGrpc::new(Arc::clone(&grpc_service.registry), Arc::clone(&resolver));
 
     let listen_addr = config.listen_addr;
-    let svc = RuntimeManagerServer::new(grpc_service);
+    let manager_svc = RuntimeManagerServer::new(grpc_service);
+    let harness_svc = RuntimeHarnessServer::new(harness_service);
 
     // Self-register with the scheduler on a background task. No-op when
     // SCHEDULER_URL is unset (standalone dev).
@@ -84,7 +98,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(%listen_addr, "gRPC server starting");
 
     Server::builder()
-        .add_service(svc)
+        .add_service(manager_svc)
+        .add_service(harness_svc)
         .serve_with_shutdown(listen_addr, shutdown_signal())
         .await?;
 

@@ -1,12 +1,29 @@
-// Hand-defined types mirroring the RuntimeHarness service in
-// `packages/proto/lantern/v1/runtime.proto`.
+// Proto types for the harness.
 //
-// We deliberately keep this file small: just the wire shapes the harness
-// touches (Heartbeat*, VendSecret*, HarnessReport, AuditEvent, etc.). When
-// tonic codegen lands these get replaced by the generated module — search
-// for `TODO: regenerate from runtime.proto` to find the swap-in points.
+// Two layers:
+//
+// 1. `pb` — tonic-generated wire types from `lantern.v1` (client-only).
+//    Used in `manager_client.rs` for the actual gRPC calls.
+//
+// 2. Hand-defined internal types at the module root — richer/simpler shapes
+//    that the rest of the harness (`secrets.rs`, `heartbeat.rs`, etc.)
+//    consume. `manager_client.rs` converts between these and `pb` types.
 
 use serde::{Deserialize, Serialize};
+
+/// Generated tonic client types — `lantern.v1` package from runtime.proto.
+///
+/// Only the client stubs are compiled (build_server = false). The harness
+/// never serves RPCs; it only calls the manager.
+#[allow(
+    clippy::enum_variant_names,
+    clippy::large_enum_variant,
+    clippy::doc_markdown,
+    clippy::derive_partial_eq_without_eq
+)]
+pub mod pb {
+    tonic::include_proto!("lantern.v1");
+}
 
 // ---------------------------------------------------------------------------
 // Common

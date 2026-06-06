@@ -1,21 +1,34 @@
 // Thin abstraction over the gRPC client to runtime-manager.
 //
-// Today this is a JSON-over-TCP shim that uses tokio's stream primitives so
-// every subsystem can call `client.send_report(...)` / `client.vend_secret(...)`
-// without caring about transport. Once tonic codegen lands, replace the body
-// with the generated `RuntimeHarnessClient` and keep the surface area below.
+// Every subsystem calls `client.enqueue_report(...)` / `client.vend_secret(...)`
+// without caring about transport details.
 //
-// TODO: regenerate from runtime.proto
+// Transport
+// ---------
+// `vend_secret` calls the real `RuntimeHarness.VendSecret` unary RPC over the
+// tonic channel to the manager. This is the H1 GA fix: the stub is gone from
+// the default path. `LANTERN_ALLOW_SECRET_STUB=1` re-enables the old fake
+// value **only** for dev environments that have no manager running.
+//
+// Authentication assumption
+// -------------------------
+// The harness sends its `vm_id` (injected at spawn by the manager) in every
+// `VendSecretRequest`. The manager resolves that vm_id against its own registry
+// — populated at spawn time — to bind the request to the correct
+// tenant_id / run_id / declared-secrets allowlist. The harness never asserts
+// tenant or run identity. mTLS (per-VM client cert, CN = vm_id) is the planned
+// transport-layer binding; for now the TCP connection from inside the VM
+// (vsock or host-network) is the boundary. See ADR note in service.rs.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
-use tokio::sync::mpsc;
+use anyhow::{Context, Result};
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
 use crate::proto::{
-    HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse,
+    self, HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse, pb,
 };
 
 /// Connection state for the manager. The harness MUST tolerate the manager
@@ -73,7 +86,7 @@ impl ManagerClient {
 
     pub async fn note_contact(&self) {
         let mut g = self.inner.lock().await;
-        g.last_contact_ms = crate::proto::now_unix_ms();
+        g.last_contact_ms = proto::now_unix_ms();
         g.has_ever_connected = true;
     }
 
@@ -85,8 +98,8 @@ impl ManagerClient {
     pub async fn open_heartbeat_stream(
         &self,
     ) -> Result<(mpsc::Sender<HeartbeatRequest>, mpsc::Receiver<HeartbeatAck>)> {
-        // TODO: regenerate from runtime.proto — replace this entire body with
-        // the real tonic RuntimeHarnessClient bidirectional stream.
+        // TODO: replace with the real tonic RuntimeHarnessClient bidirectional
+        // Heartbeat stream once the manager's heartbeat handler is wired.
         //
         // For now we install a loopback pair so the supervisor can keep
         // running even with no manager. The heartbeat task treats this as a
@@ -98,23 +111,12 @@ impl ManagerClient {
         let (req_tx, _req_rx) = mpsc::channel::<HeartbeatRequest>(8);
         let (ack_tx, ack_rx) = mpsc::channel::<HeartbeatAck>(8);
 
-        // L3 fix: emit a loud WARN so it is visible in production logs that
-        // the policy-refresh path is stubbed.  A revoked egress allowlist will
-        // NOT propagate to this VM until the real gRPC stream is wired.
-        // Synthetic keepalive ack — production swaps this for the gRPC
-        // response stream.
-        //
-        // TODO: remove this spawn and replace with the real gRPC stream.
-        // Until then, egress rule revocations from the manager are silently
-        // ignored — the in-VM allowlist can only grow, never shrink, during a
-        // session.  This is a known gap; see the L3 finding in the security
-        // audit.
         tracing::warn!(
             vm_id = %self.vm_id,
             manager_addr = %self.manager_addr,
             "heartbeat: policy-refresh is STUBBED — egress rule revocations \
              from the manager will NOT take effect until the real gRPC stream \
-             is wired (TODO: regenerate from runtime.proto)"
+             is wired"
         );
 
         tokio::spawn(async move {
@@ -129,64 +131,144 @@ impl ManagerClient {
         Ok((req_tx, ack_rx))
     }
 
-    /// Unary VendSecret RPC. The harness MUST refresh before expiry.
+    /// Build the clearly-marked stub response used when
+    /// `LANTERN_ALLOW_SECRET_STUB=1`. Extracted so tests can verify the
+    /// format without needing to mutate global env.
+    fn stub_response(vm_id: &str, secret_uri: &str) -> VendSecretResponse {
+        VendSecretResponse {
+            value: format!("LANTERN_STUB_NOT_A_REAL_SECRET::{vm_id}::{secret_uri}"),
+            expires_at_unix_ms: proto::now_unix_ms() + 60_000,
+        }
+    }
+
+    /// Unary VendSecret RPC — calls the real manager gRPC endpoint.
+    ///
+    /// The manager authenticates this call by looking up `vm_id` in its own
+    /// registry (populated at spawn). It enforces the declared-secrets
+    /// allowlist and returns a value with TTL ≤ 300 s.
+    ///
+    /// Dev escape: set `LANTERN_ALLOW_SECRET_STUB=1` to skip the RPC and
+    /// return a clearly-marked stub value. This is intended for local
+    /// development where no manager process is running.
     pub async fn vend_secret(&self, req: VendSecretRequest) -> Result<VendSecretResponse> {
-        // H1 fix: do NOT return a predictable fake secret value.  The old
-        // stub produced `STUB::<vm_id>::<secret_uri>` which is deterministic,
-        // never tenant-bound, and could be inferred by any code that knows
-        // the vm_id and secret URI.
-        //
-        // TODO: regenerate from runtime.proto — replace this body with the
-        // real tonic RuntimeHarnessClient.VendSecret unary RPC.  The manager
-        // must bind the returned value to (tenant_id, run_id, vm_id) and
-        // enforce the declared-secrets allowlist on its side.
-        //
-        // Until the real RPC is wired, opt-in with LANTERN_ALLOW_SECRET_STUB=1
-        // for local development only.  In production, an unresolvable secret
-        // will bubble up as an error to the workload, which is the correct
-        // fail-closed behaviour.
-
-        let allow_stub = std::env::var("LANTERN_ALLOW_SECRET_STUB")
+        // Dev stub escape-hatch — explicit opt-in only.
+        if std::env::var("LANTERN_ALLOW_SECRET_STUB")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-
-        if !allow_stub {
-            // Attempt the TCP connection so callers can distinguish "manager
-            // truly unreachable" from "stub refused".
-            let _conn = tokio::net::TcpStream::connect(&self.manager_addr)
-                .await
-                .map_err(|e| anyhow::anyhow!("vend_secret transport error: {e}"))?;
-
-            anyhow::bail!(
-                "vend_secret: real VendSecret RPC is not yet wired \
-                 (TODO: regenerate from runtime.proto). Refusing to return \
-                 a predictable stub value that could be mistaken for a real \
-                 credential. Set LANTERN_ALLOW_SECRET_STUB=1 only in \
-                 dev/test environments."
+            .unwrap_or(false)
+        {
+            tracing::warn!(
+                vm_id = %self.vm_id,
+                secret_uri = %req.secret_uri,
+                "vend_secret: STUB mode (LANTERN_ALLOW_SECRET_STUB=1) — \
+                 returning a fake value. Dev/test use only."
             );
+            return Ok(Self::stub_response(&self.vm_id, &req.secret_uri));
         }
 
-        tracing::warn!(
-            vm_id = %self.vm_id,
-            secret_uri = %req.secret_uri,
-            "vend_secret: STUB mode (LANTERN_ALLOW_SECRET_STUB=1) — \
-             returning a fake value that is NOT a real credential. \
-             Dev/test use only."
-        );
-
-        let _conn = tokio::net::TcpStream::connect(&self.manager_addr)
+        // Real path: call the manager's RuntimeHarness.VendSecret RPC.
+        let endpoint = format!("http://{}", self.manager_addr);
+        let mut client = pb::runtime_harness_client::RuntimeHarnessClient::connect(endpoint)
             .await
-            .map_err(|e| anyhow::anyhow!("vend_secret transport error: {e}"))?;
+            .with_context(|| {
+                format!(
+                    "vend_secret: could not connect to manager at {}",
+                    self.manager_addr
+                )
+            })?;
 
-        // Stub value is clearly marked so it can never be silently used as a
-        // real credential — any downstream system that sees this prefix should
-        // treat it as an error.
+        let ttl_proto = if req.ttl_secs > 0 {
+            Some(prost_types::Duration {
+                seconds: req.ttl_secs,
+                nanos: 0,
+            })
+        } else {
+            None
+        };
+
+        let wire_req = pb::VendSecretRequest {
+            vm_id: req.vm_id,
+            secret_uri: req.secret_uri.clone(),
+            ttl: ttl_proto,
+        };
+
+        let wire_resp = client
+            .vend_secret(wire_req)
+            .await
+            .with_context(|| format!("vend_secret RPC failed for secret_uri '{}'", req.secret_uri))?
+            .into_inner();
+
+        // Convert the proto Timestamp to unix-ms for the internal cache.
+        let expires_at_unix_ms = wire_resp
+            .expires_at
+            .as_ref()
+            .map(|ts| ts.seconds * 1_000 + i64::from(ts.nanos) / 1_000_000)
+            .unwrap_or_else(|| proto::now_unix_ms() + 300_000);
+
+        self.note_contact().await;
+
         Ok(VendSecretResponse {
-            value: format!(
-                "LANTERN_STUB_NOT_A_REAL_SECRET::{}::{}",
-                self.vm_id, req.secret_uri
-            ),
-            expires_at_unix_ms: crate::proto::now_unix_ms() + 60_000,
+            value: wire_resp.value,
+            expires_at_unix_ms,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// When LANTERN_ALLOW_SECRET_STUB is not set, vend_secret must fail if
+    /// the manager is unreachable rather than returning any value.
+    #[tokio::test]
+    async fn vend_secret_fails_when_manager_unreachable_without_stub() {
+        // Guard: do not accidentally pass when the env var is already set in
+        // the test environment.
+        if std::env::var("LANTERN_ALLOW_SECRET_STUB").is_ok() {
+            return; // skip — env already enables stub; different code path
+        }
+
+        let client = ManagerClient::new(
+            // Port 1 is reserved and will be refused immediately.
+            "127.0.0.1:1".to_string(),
+            "test-vm".to_string(),
+        );
+        let result = client
+            .vend_secret(VendSecretRequest {
+                vm_id: "test-vm".to_string(),
+                secret_uri: "lantern.secret://tenant/t1/key/K".to_string(),
+                ttl_secs: 60,
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "expected error when manager unreachable without stub, got Ok"
+        );
+    }
+
+    /// `stub_response` produces a clearly-marked value — no env mutation needed.
+    #[test]
+    fn stub_response_format_is_marked() {
+        let resp = ManagerClient::stub_response("vm-abc", "lantern.secret://t1/key/K");
+        assert!(
+            resp.value.starts_with("LANTERN_STUB_NOT_A_REAL_SECRET::"),
+            "stub value must carry the STUB prefix, got: {}",
+            resp.value
+        );
+        assert!(
+            resp.value.contains("vm-abc"),
+            "stub value must embed the vm_id"
+        );
+        assert!(
+            resp.value.contains("lantern.secret://t1/key/K"),
+            "stub value must embed the secret_uri"
+        );
+        assert!(
+            resp.expires_at_unix_ms > proto::now_unix_ms(),
+            "stub expiry must be in the future"
+        );
     }
 }
