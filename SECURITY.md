@@ -58,10 +58,16 @@ Several hot-path Rust components are pre-1.0 and currently **fail closed**
 (they refuse rather than pretend to be secure). Before executing untrusted /
 hostile agent code in production, these need real implementations:
 
-- **microVM isolation backend** — the Firecracker backend is a stub and is
-  gated behind `LANTERN_ALLOW_FIRECRACKER_STUB`; Hostile/Untrusted schedules
-  hard-fail without a real microVM backend. Implement Firecracker/Kata for
-  real isolation (invariant #5).
+- **microVM isolation backend** — the Firecracker backend is now implemented
+  (REST API client, VmConfig derivation, lifecycle state machine, availability
+  detection; 103 unit tests) and **fail-closed**: it only boots when Firecracker
+  is genuinely available (Linux + binary + readable `/dev/kvm`), else
+  Hostile/Untrusted schedules hard-fail (invariant #5 holds). RESIDUAL — needs a
+  Linux+KVM host to validate the live boot, plus: build a KVM kernel +
+  harness rootfs (`FC_KERNEL_PATH`/`FC_ROOTFS_PATH`), TAP/bridge networking
+  (`CAP_NET_ADMIN`), jailer wrapping for chroot/uid/cgroup isolation, per-VM
+  mTLS cert provisioning (CN=vm_id), and the real vsock event loop. The live
+  I/O paths are marked `// LINUX-ONLY` in source.
 - **Secret vending** — the manager-side `VendSecret` RPC is now implemented:
   it binds each vend to the calling VM's registry-recorded tenant/run/declared
   secret_uris (never caller-asserted), rejects undeclared URIs, caps TTL at
