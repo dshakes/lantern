@@ -71,9 +71,15 @@ hostile agent code in production, these need real implementations:
   enforcement so a VM can't impersonate another by guessing its `vm_id`; and
   wire a production `SecretResolver` (Vault/cloud SM) — only `EnvSecretResolver`
   ships today (invariant #10).
-- **TLS on the data path** — terminate TLS at the gateway (rustls) or front it
-  with a TLS/mTLS ingress; enable TLS on gateway→control-plane and
-  harness→manager channels. Do not run these plaintext across a network.
+- **TLS on the data path** — implemented + fail-closed in prod: the gateway
+  terminates TLS (rustls) on :8443 (refuses to boot in prod without cert/key);
+  harness↔manager is mTLS with a `vm_id`↔client-cert identity check. RESIDUAL
+  wiring: the manager must (a) provision a per-VM cert (CN=vm_id) at spawn and
+  inject `LANTERN_VM_TLS_CERT/KEY` + `LANTERN_MANAGER_TLS_CA`, and (b) extract
+  the peer cert from the tonic request to run the identity check on every
+  VendSecret. The gateway→control-plane channel has opt-in client TLS
+  (`LANTERN_CONTROL_PLANE_TLS_CA`); the Go control-plane gRPC server must serve
+  TLS before it can be required.
 - **Egress firewall** — the in-VM allowlist (port + private-IP/metadata deny)
   is defense-in-depth; pair it with a host-level nftables/DNS-stub egress
   firewall, and a real heartbeat RPC so policy revocations propagate.

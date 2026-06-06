@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-tonic = "0.12"
+tonic = { version = "0.12", features = ["tls"] }
 prost = "0.13"
 prost-types = "0.13"
 serde = { version = "1", features = ["derive"] }
@@ -28,6 +28,17 @@ libc = "0.2"
 tower = { version = "0.5", features = ["util"] }
 tokio-util = "0.7"
 http = "1"
+# mTLS: explicit deps so we control the crypto provider (ring, not aws-lc-rs)
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+rustls-pki-types = "1"
+# Used by tls::verify_client_cert_vm_id to extract CN/SAN from peer cert DER.
+# Pure-Rust, no native deps.
+x509-parser = "0.16"
+
+[dev-dependencies]
+rcgen = "0.13"
 
 [build-dependencies]
 tonic-build = "0.12"

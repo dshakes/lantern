@@ -409,9 +409,37 @@ pub struct ControlPlaneClient {
 }
 
 impl ControlPlaneClient {
-    pub async fn connect(addr: &str) -> anyhow::Result<Self> {
-        let channel = Channel::from_shared(addr.to_string())?.connect_lazy();
-        tracing::info!(addr = addr, "control-plane channel created (lazy)");
+    /// Connect to the control-plane gRPC server.
+    ///
+    /// `tls_ca_path` is the path to a PEM CA bundle for verifying the
+    /// server's certificate.  When `None` (the default) the channel is
+    /// plaintext — the current production topology until the Go server side
+    /// is also updated to serve TLS (paired follow-up).  When `Some`, the
+    /// channel is upgraded to TLS using the supplied CA.  This is opt-in and
+    /// NOT fail-closed; a misconfigured CA path returns an error rather than
+    /// silently falling back to plaintext.
+    pub async fn connect(addr: &str, tls_ca_path: Option<&str>) -> anyhow::Result<Self> {
+        let endpoint = tonic::transport::Endpoint::from_shared(addr.to_string())?;
+
+        let channel = if let Some(ca_path) = tls_ca_path {
+            use std::fs;
+            use tonic::transport::{Certificate, ClientTlsConfig};
+
+            let pem = fs::read(ca_path).map_err(|e| {
+                anyhow::anyhow!("cannot read LANTERN_CONTROL_PLANE_TLS_CA {ca_path:?}: {e}")
+            })?;
+            let cert = Certificate::from_pem(pem);
+            let tls = ClientTlsConfig::new().ca_certificate(cert);
+            tracing::info!(addr, ca = ca_path, "control-plane channel: TLS enabled");
+            endpoint.tls_config(tls)?.connect_lazy()
+        } else {
+            tracing::info!(
+                addr,
+                "control-plane channel: plaintext (set LANTERN_CONTROL_PLANE_TLS_CA to enable TLS)"
+            );
+            endpoint.connect_lazy()
+        };
+
         Ok(Self { channel })
     }
 
