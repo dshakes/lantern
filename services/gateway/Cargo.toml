@@ -16,7 +16,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 jsonwebtoken = "9"
 redis = { version = "0.27", features = ["tokio-comp"] }
-tonic = "0.12"
+tonic = { version = "0.12", features = ["tls"] }
 prost = "0.13"
 prost-types = "0.13"
 tokio-stream = "0.1"
@@ -25,3 +25,12 @@ anyhow = "1"
 futures-core = "0.3"
 http = "1"
 subtle = "2"
+# TLS termination — rustls-based, config-driven, FAIL-CLOSED in prod
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+rustls-pki-types = "1"
+
+[dev-dependencies]
+# rcgen generates self-signed certs at test-time (never in production code)
+rcgen = "0.13"

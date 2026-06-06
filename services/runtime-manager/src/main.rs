@@ -13,6 +13,7 @@ mod proto;
 mod scheduler_heartbeat;
 mod secret_resolver;
 mod service;
+mod tls;
 
 use std::sync::Arc;
 
@@ -95,9 +96,17 @@ async fn main() -> anyhow::Result<()> {
         zone: config.node_zone.clone(),
     });
 
-    tracing::info!(%listen_addr, "gRPC server starting");
+    // mTLS: FAIL-CLOSED in prod when env vars absent, WARN+plaintext in dev.
+    let mtls_config = tls::build_server_tls_config()?;
 
-    Server::builder()
+    tracing::info!(%listen_addr, mtls = mtls_config.is_some(), "gRPC server starting");
+
+    let mut builder = Server::builder();
+    if let Some(tls_config) = mtls_config {
+        builder = builder.tls_config(tls_config)?;
+    }
+
+    builder
         .add_service(manager_svc)
         .add_service(harness_svc)
         .serve_with_shutdown(listen_addr, shutdown_signal())

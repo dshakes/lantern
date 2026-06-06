@@ -6,6 +6,7 @@ mod middleware;
 mod routes;
 mod sse;
 mod state;
+mod tls;
 
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
@@ -62,12 +63,33 @@ async fn main() -> anyhow::Result<()> {
 
     let app = routes::build_router(app_state).layer(middleware_stack);
 
-    let listener = tokio::net::TcpListener::bind(listen_addr).await?;
-    tracing::info!(%listen_addr, "listening");
+    // TLS termination: build the rustls ServerConfig (FAIL-CLOSED in prod).
+    let tls_config = tls::build_server_config()?;
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    let tcp_listener = tokio::net::TcpListener::bind(listen_addr).await?;
+
+    match tls_config {
+        Some(server_config) => {
+            use tokio_rustls::TlsAcceptor;
+
+            tracing::info!(%listen_addr, "listening (TLS)");
+            let acceptor = TlsAcceptor::from(server_config);
+
+            // Wrap the TcpListener with a TLS acceptor that implements the
+            // axum::serve::Listener trait so we can pass it directly to
+            // axum::serve just like a plain TcpListener.
+            let tls_listener = tls::TlsListener::new(tcp_listener, acceptor);
+            axum::serve(tls_listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await?;
+        }
+        None => {
+            tracing::info!(%listen_addr, "listening (plaintext)");
+            axum::serve(tcp_listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await?;
+        }
+    }
 
     tracing::info!("gateway shut down");
     Ok(())

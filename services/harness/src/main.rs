@@ -25,6 +25,7 @@ mod report;
 mod secrets;
 mod signals;
 mod supervisor;
+mod tls;
 
 use std::sync::Arc;
 

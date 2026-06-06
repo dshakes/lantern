@@ -24,11 +24,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 
 use crate::proto::{
-    self, HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse, pb,
+    self, pb, HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse,
 };
 
 /// Connection state for the manager. The harness MUST tolerate the manager
@@ -166,7 +166,31 @@ impl ManagerClient {
         }
 
         // Real path: call the manager's RuntimeHarness.VendSecret RPC.
-        let endpoint = format!("http://{}", self.manager_addr);
+        //
+        // mTLS: when LANTERN_VM_TLS_CERT / LANTERN_VM_TLS_KEY /
+        // LANTERN_MANAGER_TLS_CA are present (injected by the manager at
+        // spawn), use a TLS channel so the manager can verify this VM's
+        // identity via its client cert.  Falls back to plaintext in dev.
+        let tls_config = crate::tls::build_client_tls_config()
+            .with_context(|| "vend_secret: failed to build TLS client config".to_string())?;
+
+        let scheme = if tls_config.is_some() {
+            "https"
+        } else {
+            "http"
+        };
+        let endpoint_url = format!("{scheme}://{}", self.manager_addr);
+        let endpoint = tonic::transport::Endpoint::from_shared(endpoint_url.clone())
+            .with_context(|| format!("vend_secret: invalid endpoint URL {endpoint_url}"))?;
+
+        let endpoint = if let Some(tls) = tls_config {
+            endpoint.tls_config(tls).with_context(|| {
+                "vend_secret: failed to apply TLS config to endpoint".to_string()
+            })?
+        } else {
+            endpoint
+        };
+
         let mut client = pb::runtime_harness_client::RuntimeHarnessClient::connect(endpoint)
             .await
             .with_context(|| {

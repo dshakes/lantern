@@ -13,7 +13,11 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(config: Config) -> anyhow::Result<Self> {
-        let control_plane = ControlPlaneClient::connect(&config.control_plane_addr).await?;
+        let control_plane = ControlPlaneClient::connect(
+            &config.control_plane_addr,
+            config.control_plane_tls_ca.as_deref(),
+        )
+        .await?;
 
         let redis = match redis::Client::open(config.redis_url.as_str()) {
             Ok(client) => {

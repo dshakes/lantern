@@ -11,6 +11,13 @@ pub struct Config {
     /// "https://app.lantern.run,http://localhost:3001".
     /// Defaults to "http://localhost:3001" when unset.
     pub allowed_origins: Vec<String>,
+    /// Optional path to a PEM CA bundle used to verify the control-plane's
+    /// gRPC server cert (`LANTERN_CONTROL_PLANE_TLS_CA`).  When set the
+    /// gateway→control-plane channel upgrades to TLS.  When absent (the
+    /// default) the channel stays plaintext so the existing Go↔Rust link is
+    /// not broken.  This is opt-in and NOT fail-closed — the control-plane
+    /// gRPC server side is Go and needs a paired follow-up to serve TLS.
+    pub control_plane_tls_ca: Option<String>,
 }
 
 impl Config {
@@ -37,6 +44,8 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect();
 
+        let control_plane_tls_ca = std::env::var("LANTERN_CONTROL_PLANE_TLS_CA").ok();
+
         Ok(Config {
             listen_addr,
             control_plane_addr,
@@ -44,6 +53,7 @@ impl Config {
             jwt_secret,
             log_level,
             allowed_origins,
+            control_plane_tls_ca,
         })
     }
 }
