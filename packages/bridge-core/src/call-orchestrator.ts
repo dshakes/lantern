@@ -73,6 +73,11 @@ export interface OrchestratorDeps {
   // When true, text the recipient a one-line heads-up right before dialing
   // a CONFERENCE (a known human), so they recognize the incoming call.
   smsHeadsUp?: boolean;
+  // Returns a "did you mean: …" block from the most recent resolveContact
+  // miss (the bridge's resolver stashes nearby candidates). Surfaced in the
+  // failure reason so the owner can re-try with the right name. Empty/absent
+  // → the generic "try the full name" hint.
+  lastSuggestions?: () => string;
 }
 
 export interface OutboundCallIntent {
@@ -108,7 +113,7 @@ export async function executeOutboundCall(
     // Bridge may have populated last-resolve suggestions on its
     // contact resolver; surface them in the error so the owner can
     // re-try with the right name.
-    const suggestion = (deps as any).lastSuggestions?.() || "";
+    const suggestion = deps.lastSuggestions?.() || "";
     return {
       ok: false,
       reason: suggestion

@@ -503,7 +503,11 @@ async function searchAddressBookDb(
         const hit = queryAddressBookConn(conn, query);
         if (hit) return hit;
       } catch (err) {
-        logger?.debug({ err, dbPath }, "AddressBook DB read failed for source");
+        // warn, not debug: a read/query error here means name→phone
+        // resolution silently degrades to the (TCC-blocked under launchd)
+        // AppleScript path. Logging at debug is exactly what hid the
+        // "Too many parameter values" binding bug for so long.
+        logger?.warn({ err: (err as Error)?.message || String(err), dbPath }, "AddressBook DB read failed for source");
       } finally {
         try { conn?.close(); } catch { /* ignore */ }
       }
