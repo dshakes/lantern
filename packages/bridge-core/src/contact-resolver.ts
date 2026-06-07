@@ -425,6 +425,51 @@ export async function nameForHandle(
   return null;
 }
 
+// Run the name→phone lookup against ONE open better-sqlite3 connection to an
+// AddressBook-v22 store. Exact-ish first (first name or full name equals the
+// query), then substring — so "mae" prefers the contact named "Mae" over
+// "Anil Kakumanu". A contact can have multiple phones; take the first.
+//
+// CRITICAL: bind with NAMED params (@q / @like), never numbered ?1/?2.
+// better-sqlite3 throws "Too many parameter values were provided" when you
+// bind positional args (.get(a, b)) against a statement that reuses a numbered
+// marker (?1 appears 3×). That throw was swallowed by searchAddressBookDb's
+// per-source catch, so dbHit was ALWAYS null and only pasted numbers dialed —
+// every "call <name>" failed. Extracted + exported so the regression test can
+// drive it against a temp DB without the live macOS AddressBook.
+export function queryAddressBookConn(
+  conn: any,
+  query: string,
+): { name: string; phone: string } | null {
+  const q = query.toLowerCase().trim();
+  const like = `%${q}%`;
+  const row = conn
+    .prepare(
+      `SELECT r.ZFIRSTNAME AS first, r.ZLASTNAME AS last, p.ZFULLNUMBER AS phone,
+              CASE
+                WHEN lower(coalesce(r.ZFIRSTNAME,'')) = @q THEN 0
+                WHEN lower(trim(coalesce(r.ZFIRSTNAME,'')||' '||coalesce(r.ZLASTNAME,''))) = @q THEN 1
+                WHEN lower(coalesce(r.ZNICKNAME,'')) = @q THEN 2
+                ELSE 3
+              END AS rank
+       FROM ZABCDRECORD r
+       JOIN ZABCDPHONENUMBER p ON p.ZOWNER = r.Z_PK
+       WHERE p.ZFULLNUMBER IS NOT NULL AND (
+             lower(coalesce(r.ZFIRSTNAME,'')||' '||coalesce(r.ZLASTNAME,'')) LIKE @like
+             OR lower(coalesce(r.ZNICKNAME,'')) LIKE @like
+             OR lower(coalesce(r.ZORGANIZATION,'')) LIKE @like)
+       ORDER BY rank ASC, r.Z_PK ASC
+       LIMIT 1`,
+    )
+    .get({ q, like }) as { first?: string; last?: string; phone?: string } | undefined;
+  if (row?.phone) {
+    const phone = tryParsePhone(row.phone);
+    const name = [row.first, row.last].filter(Boolean).join(" ").trim() || query;
+    if (phone) return { name, phone };
+  }
+  return null;
+}
+
 // Read the macOS AddressBook SQLite directly (in-process via better-sqlite3).
 // Covered by Full Disk Access — the grant the bridge already holds for
 // chat.db — so it works under launchd where AppleScript Automation for
@@ -449,42 +494,14 @@ async function searchAddressBookDb(
     const Database = sqliteMod.default as any;
     const base = path.join(os.homedir(), "Library/Application Support/AddressBook/Sources");
     if (!fs.existsSync(base)) return null;
-    const like = `%${query.toLowerCase().trim()}%`;
     for (const src of fs.readdirSync(base)) {
       const dbPath = path.join(base, src, "AddressBook-v22.abcddb");
       if (!fs.existsSync(dbPath)) continue;
       let conn: any;
       try {
         conn = new Database(dbPath, { readonly: true, fileMustExist: true });
-        // Exact-ish first (first name or full name equals the query), then
-        // substring — so "mae" prefers the contact named "Mae" over
-        // "Anil Kakumanu". A contact can have multiple phones; take the first.
-        const row = conn
-          .prepare(
-            `SELECT r.ZFIRSTNAME AS first, r.ZLASTNAME AS last, p.ZFULLNUMBER AS phone,
-                    CASE
-                      WHEN lower(coalesce(r.ZFIRSTNAME,'')) = ?1 THEN 0
-                      WHEN lower(trim(coalesce(r.ZFIRSTNAME,'')||' '||coalesce(r.ZLASTNAME,''))) = ?1 THEN 1
-                      WHEN lower(coalesce(r.ZNICKNAME,'')) = ?1 THEN 2
-                      ELSE 3
-                    END AS rank
-             FROM ZABCDRECORD r
-             JOIN ZABCDPHONENUMBER p ON p.ZOWNER = r.Z_PK
-             WHERE p.ZFULLNUMBER IS NOT NULL AND (
-                   lower(coalesce(r.ZFIRSTNAME,'')||' '||coalesce(r.ZLASTNAME,'')) LIKE ?2
-                   OR lower(coalesce(r.ZNICKNAME,'')) LIKE ?2
-                   OR lower(coalesce(r.ZORGANIZATION,'')) LIKE ?2)
-             ORDER BY rank ASC, r.Z_PK ASC
-             LIMIT 1`,
-          )
-          .get(query.toLowerCase().trim(), like) as
-          | { first?: string; last?: string; phone?: string }
-          | undefined;
-        if (row?.phone) {
-          const phone = tryParsePhone(row.phone);
-          const name = [row.first, row.last].filter(Boolean).join(" ").trim() || query;
-          if (phone) return { name, phone };
-        }
+        const hit = queryAddressBookConn(conn, query);
+        if (hit) return hit;
       } catch (err) {
         logger?.debug({ err, dbPath }, "AddressBook DB read failed for source");
       } finally {
