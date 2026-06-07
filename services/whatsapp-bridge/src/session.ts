@@ -4396,6 +4396,9 @@ export class WhatsAppSession {
         ownerName: process.env.LANTERN_OWNER_NAME || undefined,
         smsHeadsUp: (process.env.LANTERN_VOICE_SMS_HEADSUP || "on").toLowerCase() !== "off",
         resolveContact: async (nameOrNumber: string) => this.resolveCallTarget(nameOrNumber),
+        // On a resolve miss, surface the "did you mean: …" candidates the
+        // resolver stashed (populated by the resolveCallTarget call above).
+        lastSuggestions: () => this.getLastResolveSuggestions(),
         authedFetch: authedFetch as any,
         notifyOwner: async (text: string) => {
           // sendSelf fans out across all linked devices (including

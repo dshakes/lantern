@@ -4027,6 +4027,9 @@ export class IMessageSession {
         ownerName: process.env.LANTERN_OWNER_NAME || undefined,
         smsHeadsUp: (process.env.LANTERN_VOICE_SMS_HEADSUP || "on").toLowerCase() !== "off",
         resolveContact: async (nameOrNumber) => this.resolveCallTarget(nameOrNumber),
+        // On a resolve miss, surface the "did you mean: …" candidates the
+        // resolver stashed (populated by the resolveCallTarget call above).
+        lastSuggestions: () => this.getLastResolveSuggestions(),
         authedFetch: authedFetch as any,
         notifyOwner: async (text) => { await this.send(jid, text); },
         cachePendingOffer: (offer) => {
