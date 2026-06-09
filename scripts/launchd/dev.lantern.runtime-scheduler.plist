@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>LISTEN_ADDR</key>
+		<string>:50055</string>
+		<key>HTTP_ADDR</key>
+		<string>:8085</string>
+		<key>JWT_SECRET</key>
+		<string>lantern-dev-jwt-secret-do-not-use-in-production</string>
+		<key>LANTERN_DEFAULT_MANAGER_ADDR</key>
+		<string>localhost:50054</string>
+		<key>LOG_LEVEL</key>
+		<string>info</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:__HOME__/.cargo/bin:/opt/homebrew/opt/go/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>KeepAlive</key>
+	<dict>
+		<key>Crashed</key>
+		<true/>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>Label</key>
+	<string>dev.lantern.runtime-scheduler</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__REPO_ROOT__/scripts/launchd/run-microservice.sh</string>
+		<string>runtime-scheduler</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/Lantern/runtime-scheduler.err.log</string>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/Lantern/runtime-scheduler.out.log</string>
+	<key>ThrottleInterval</key>
+	<integer>15</integer>
+	<key>WorkingDirectory</key>
+	<string>__REPO_ROOT__</string>
+</dict>
+</plist>

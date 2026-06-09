@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>LISTEN_ADDR</key>
+		<string>0.0.0.0:8444</string>
+		<key>REDIS_URL</key>
+		<string>redis://localhost:6379</string>
+		<key>CONTROL_PLANE_ADDR</key>
+		<string>http://localhost:50051</string>
+		<key>ALLOWED_ORIGINS</key>
+		<string>http://localhost:3001</string>
+		<key>LOG_LEVEL</key>
+		<string>info</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:__HOME__/.cargo/bin:/opt/homebrew/opt/go/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>KeepAlive</key>
+	<dict>
+		<key>Crashed</key>
+		<true/>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>Label</key>
+	<string>dev.lantern.surface-gateway</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__REPO_ROOT__/scripts/launchd/run-microservice.sh</string>
+		<string>surface-gateway</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/Lantern/surface-gateway.err.log</string>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/Lantern/surface-gateway.out.log</string>
+	<key>ThrottleInterval</key>
+	<integer>15</integer>
+	<key>WorkingDirectory</key>
+	<string>__REPO_ROOT__</string>
+</dict>
+</plist>
