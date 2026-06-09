@@ -8,16 +8,35 @@ set -euo pipefail
 REPO_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
 cd "$REPO_ROOT"
 
-# Wait up to 60s for Docker to be reachable.
-for i in {1..30}; do
+# Guard: if Docker Desktop isn't set to auto-start at login, launch it
+# ourselves so the stack is self-sufficient on reboot. `open -a Docker`
+# is a no-op-ish focus if it's already running, so only fire it when the
+# daemon isn't reachable. Best-effort — never fail the script on this.
+docker_launched=""
+launch_docker_if_needed() {
+  docker info >/dev/null 2>&1 && return 0
+  [[ -n "$docker_launched" ]] && return 0
+  docker_launched=1
+  echo "[$(date +%T)] docker not reachable — launching Docker Desktop…"
+  open --background -a Docker 2>/dev/null \
+    || echo "[$(date +%T)] WARN: could not 'open -a Docker' (is Docker Desktop installed?)" >&2
+}
+
+# Wait up to 150s for Docker — a cold Docker Desktop launch at reboot can
+# take well over 60s before the daemon accepts connections.
+launch_docker_if_needed
+for i in {1..75}; do
   if docker info >/dev/null 2>&1; then
     echo "[$(date +%T)] docker ready (after ${i}x2s)"
     break
   fi
-  if [[ $i -eq 30 ]]; then
-    echo "[$(date +%T)] docker NEVER became ready — is Docker Desktop running?" >&2
+  if [[ $i -eq 75 ]]; then
+    echo "[$(date +%T)] docker NEVER became ready after launch attempt — is Docker Desktop installed?" >&2
     exit 1
   fi
+  # Re-attempt the launch once at ~20s in case the first open was eaten
+  # during the login storm.
+  [[ $i -eq 10 ]] && launch_docker_if_needed
   sleep 2
 done
 
