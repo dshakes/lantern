@@ -68,6 +68,25 @@ function normalizeForDedup(s: string): string {
   return (s || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+// Pure decision for the unified bot-self / echo guard at the top of
+// handleNewRow. A row must be hard-skipped (never routed as fresh input)
+// when its body is either:
+//   - a near-verbatim copy of something the bridge just sent (the
+//     dual-Apple-ID / self-chat echo that arrives as is_from_me=0), via
+//     the caller-supplied `isOwnBridgeSend` content matcher, OR
+//   - any bot-emitted ack / status / confirmation string, via the
+//     shared isBotSelfMessage prefix backstop.
+// Empty bodies return false so empty-text fromMe / voice-note / tapback
+// handling downstream is untouched. Exported for regression tests.
+export function isBotSelfOrEcho(
+  text: string,
+  isOwnBridgeSend: (t: string) => boolean,
+): boolean {
+  const t = (text || "").trim();
+  if (!t) return false;
+  return isOwnBridgeSend(t) || isBotSelfMessage(t);
+}
+
 // Reliable iMessage group detection.
 //
 // The old heuristic — `chatDisplayName !== "" || handle === ""` — broke
@@ -2083,6 +2102,40 @@ export class IMessageSession {
     // generous for legitimate "user retyped the same thing" — that's
     // not noise-rate user behavior anyway.
     const text = (row.text || "").trim();
+
+    // ── UNIFIED BOT-SELF / ECHO GUARD ──────────────────────────────────
+    // bot-self.ts's contract is that EVERY inbound passes through this
+    // check BEFORE any routing decision. That contract was NOT honored
+    // here: isBotSelfMessage() was only ever run on OUTBOUND (the
+    // verifiable-claims skip at ~L1675), and the echo content-dedup lived
+    // deep inside the per-branch paths (isFromMe at ~L2169, handleInbound
+    // at ~L2439) — AFTER the early confirmation intercept and owner-query
+    // routing could already act on the row.
+    //
+    // In dedicated-bot / dual-Apple-ID setups the bot's OWN sends sync
+    // back into chat.db as is_from_me=0 rows with byte-identical text
+    // (verified against live chat.db). When recentBridgeSends missed
+    // (in-memory loss, or a status string the send-dedup never held), the
+    // bot routed its own message as a fresh owner query and replied to
+    // itself → the doubled-text loop the owner reported.
+    //
+    // One choke point, applied to me=0 AND me=1, kills that whole class:
+    //   - isOwnBridgeSend  → free-form replies we just sent (content match)
+    //   - isBotSelfMessage → every bot ack/status/confirmation prefix
+    // Empty-text rows fall through (the `text &&` guard) so the existing
+    // empty-fromMe / voice-note / tapback handling is untouched.
+    if (isBotSelfOrEcho(text, (t) => this.isOwnBridgeSend(t))) {
+      // Preserve 👎 self-eval GUID pairing for our own echoed sends —
+      // exactly what the isFromMe branch used to do at ~L2173.
+      if (row.isFromMe) {
+        this.harvestPendingReplyMeta(text, row.guid, row.chatRowid);
+      }
+      this.logger.info(
+        { rowid: row.rowid, fromMe: row.isFromMe, textPreview: text.slice(0, 60) },
+        "skipping bot-self / echo row (unified guard)",
+      );
+      return;
+    }
 
     // EARLY CONFIRMATION INTERCEPT — must run BEFORE cross-device dedup and
     // the fromMe-handling path below, both of which were swallowing the
