@@ -133,9 +133,20 @@ final binary is ~6–8 MiB statically linked against musl.
   need a real `tonic-build` codegen pass. Today the harness uses
   hand-defined types in `src/proto.rs` (mirroring the
   `services/runtime-manager` convention) so the crate builds standalone.
-- Per-rule egress rate limiting (`EgressRule.rate_bps`) and HTTP method
-  filtering — the decision point is wired in `egress.rs::EgressPolicy::evaluate`,
-  just not enforced yet. Adding token buckets + L7 inspection plugs into
-  the same path.
-- Cgroup v2 stats collection for richer ResourceUsage. The sampler reads
-  `VmRSS` from `/proc/self/status` today.
+
+## Implemented (previously listed as TODOs)
+
+**Egress rate limiting and HTTP method filtering** (`src/egress.rs`): both are now
+enforced. A per-CONNECT-tunnel token bucket throttles byte throughput when a rule
+carries a non-zero `rate_bps` (burst = 1 second of traffic; rate 0 = unlimited).
+HTTP method filtering applies to plain-HTTP requests where the request line is
+directly visible. CONNECT tunnels carry opaque TLS — the proxy cannot inspect the
+inner HTTP method without MITM termination, so method filtering is intentionally
+not applied to CONNECT connections.
+
+**Cgroup v2 stats** (`src/heartbeat.rs`): the `sample_usage_loop` now tries cgroup
+v2 first: it reads `/proc/self/cgroup` to locate the unified-hierarchy path, then
+reads `memory.current` and `cpu.stat usage_usec` from `/sys/fs/cgroup/<path>/`.
+When those files are absent (macOS dev, cgroup v1, or no cgroup v2 mount) it falls
+back to `VmRSS` from `/proc/self/status`. The Linux cgroup path is
+`#[cfg(target_os = "linux")]`-gated so the harness still builds on macOS.

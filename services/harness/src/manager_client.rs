@@ -24,11 +24,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
 use crate::proto::{
-    self, pb, HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse,
+    self, HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse, pb,
 };
 
 /// Connection state for the manager. The harness MUST tolerate the manager
