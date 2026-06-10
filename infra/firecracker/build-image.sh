@@ -95,11 +95,25 @@ fetch_kernel() {
     return
   fi
 
-  # Firecracker publishes per-arch CI guest kernels in its S3 bucket. The exact
-  # object key encodes arch + kernel series; pin a known-good one here.
-  local base="https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/${ARCH}"
-  local key="vmlinux-${FC_KERNEL_VERSION}.bin"
-  local url="${base}/${key}"
+  # Firecracker publishes per-arch CI guest kernels in its S3 bucket. The object
+  # keys are versioned by full patch release, e.g. `vmlinux-5.10.223` — NOT
+  # `vmlinux-<series>.bin` (an older naming that no longer exists). Resolve the
+  # newest patch for the requested series from the bucket listing so this does
+  # not rot when upstream bumps the patch version.
+  local prefix="firecracker-ci/v1.10/${ARCH}"
+  local host="https://s3.amazonaws.com/spec.ccfc.min"
+  local key
+  # Match the bare `vmlinux-<patch>` keys only — anchor on a trailing digit so
+  # sibling artifacts like `vmlinux-5.10.223.config` are excluded.
+  key=$(curl -fsSL "${host}/?list-type=2&prefix=${prefix}/vmlinux-${FC_KERNEL_VERSION}" 2>/dev/null \
+    | grep -oE "${prefix}/vmlinux-${FC_KERNEL_VERSION}[0-9.]*[0-9]" \
+    | sort -V -u | tail -1)
+  if [ -z "${key}" ]; then
+    die "could not resolve a CI kernel for series ${FC_KERNEL_VERSION} (${ARCH}) \
+from ${host}/${prefix}/. Set FC_KERNEL_URL to a known-good vmlinux, or build one \
+from source (see comment above)."
+  fi
+  local url="${host}/${key}"
 
   log "Fetching prebuilt CI kernel: ${url}"
   if ! curl -fsSL "${url}" -o "${KERNEL_OUT}"; then
