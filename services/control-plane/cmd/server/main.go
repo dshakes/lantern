@@ -477,6 +477,11 @@ func main() {
 	httpMux.HandleFunc("GET /v1/runtime/quota", runtimeHandler.GetQuota)
 	httpMux.HandleFunc("PUT /v1/runtime/quota", runtimeHandler.UpsertQuota)
 	httpMux.HandleFunc("GET /v1/runtime/audit", runtimeHandler.ListAudit)
+	// Secret relay — service-to-service endpoint for the runtime-manager to
+	// resolve lantern.secret/... refs. Fail-closed when
+	// LANTERN_RUNTIME_SECRET_TOKEN is unset (see ADR 0008).
+	runtimeSecretsHandler := handlers.NewRuntimeSecretsHandler(srv, authHandler)
+	httpMux.HandleFunc("POST /v1/runtime/secrets/resolve", runtimeSecretsHandler.ResolveSecrets)
 
 	httpServer := &http.Server{
 		Addr:              ":8080",

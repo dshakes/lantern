@@ -11,6 +11,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -304,7 +305,7 @@ func TestCheckLoginRateLimit_NilRedis_FailOpen(t *testing.T) {
 		// Redis is nil.
 	}}
 	for i := 0; i < 100; i++ {
-		if h.checkLoginRateLimit(t.Context(), "ip:1.2.3.4") {
+		if h.checkLoginRateLimit(context.Background(), "ip:1.2.3.4") {
 			t.Error("expected fail-open (false) when Redis is nil, got exceeded=true")
 		}
 	}
@@ -522,7 +523,7 @@ func TestExchangeOAuthLoginCode_ErrorOmitsBody(t *testing.T) {
 	t.Setenv("FAKE_CLIENT_ID", "cid")
 	t.Setenv("FAKE_CLIENT_SECRET", "csec")
 
-	_, err := h.exchangeOAuthLoginCode(t.Context(), "fake", provider, "auth-code", "")
+	_, err := h.exchangeOAuthLoginCode(context.Background(), "fake", provider, "auth-code", "")
 	if err == nil {
 		t.Fatal("expected error from bad token endpoint")
 	}
@@ -546,7 +547,7 @@ func TestFetchOAuthUserProfile_ErrorOmitsBody(t *testing.T) {
 	h := &AuthHandler{}
 	provider := oauthLoginProvider{UserInfoURL: srv.URL}
 
-	_, _, err := h.fetchOAuthUserProfile(t.Context(), "google", provider, "bad-token")
+	_, _, err := h.fetchOAuthUserProfile(context.Background(), "google", provider, "bad-token")
 	if err == nil {
 		t.Fatal("expected error from bad userinfo endpoint")
 	}

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -124,7 +125,7 @@ func TestLiveKitProviderValidate(t *testing.T) {
 func TestLiveKitHandleInboundWebhookParsesEvent(t *testing.T) {
 	p := &livekitProvider{}
 	body := []byte(`{"event":"participant_joined","room":{"name":"+15125550000","sid":"RM_1"},"participant":{"identity":"+15125551234","sid":"PA_9"}}`)
-	_, ct, meta, err := p.HandleInboundWebhook(t.Context(), map[string]any{}, body, http.Header{})
+	_, ct, meta, err := p.HandleInboundWebhook(context.Background(), map[string]any{}, body, http.Header{})
 	if err != nil {
 		t.Fatalf("handle: %v", err)
 	}
