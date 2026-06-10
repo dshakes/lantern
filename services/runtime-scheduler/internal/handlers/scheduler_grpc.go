@@ -31,15 +31,25 @@ import (
 
 var tracer = otel.Tracer("lantern.runtime-scheduler")
 
+// SnapshotPersister is the optional interface that records snapshot metadata
+// to a durable backend. Nil means in-memory/no-op (the in-memory map of
+// snapshots is implicit in the VM state; this persister is for Postgres).
+type SnapshotPersister interface {
+	// PersistSnapshot is called after a Snapshot RPC completes. It MUST NOT
+	// block the caller significantly; DB errors should be logged internally.
+	PersistSnapshot(ctx context.Context, snapshotID, vmID, tenantID, nodeName string, keepRunning bool, resp *lanternv1.SnapshotResponse)
+}
+
 // SchedulerService implements lanternv1.RuntimeSchedulerServer.
 type SchedulerService struct {
 	lanternv1.UnimplementedRuntimeSchedulerServer
 
-	Store         cluster.ClusterStore
-	Placement     *placement.Engine
-	Dialer        dialer.ManagerDialer
-	Logger        *zap.Logger
-	TenantHardCap int // hard ceiling enforced before placement
+	Store             cluster.ClusterStore
+	Placement         *placement.Engine
+	Dialer            dialer.ManagerDialer
+	Logger            *zap.Logger
+	TenantHardCap     int // hard ceiling enforced before placement
+	SnapshotPersister SnapshotPersister
 }
 
 // NewSchedulerService constructs the service. Caller must wire all deps.
@@ -265,9 +275,11 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 	return &lanternv1.TerminateResponse{Ok: true, Detail: "terminated"}, nil
 }
 
-// Snapshot requests a snapshot of a running VM. Stubbed for now —
-// returns a synthetic snapshot ID. Real implementation forwards to the
-// manager's Snapshot RPC once defined.
+// Snapshot requests a snapshot of a running VM. Forwards the request to the
+// owning node's runtime-manager via the dialer. The manager may return
+// Unimplemented (W12 in-progress); we fall back to a synthetic ID in that
+// case and log the outcome. Snapshot metadata is persisted via SnapshotPersister
+// when one is wired (non-nil).
 func (s *SchedulerService) Snapshot(ctx context.Context, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
@@ -283,21 +295,43 @@ func (s *SchedulerService) Snapshot(ctx context.Context, req *lanternv1.Snapshot
 	if vm.TenantID != tenantID {
 		return nil, status.Errorf(codes.PermissionDenied, "vm %q does not belong to caller", req.VmId)
 	}
-	snapID := req.IdHint
-	if snapID == "" {
-		snapID = "snap-" + uuid.NewString()
+
+	// Resolve the node address.
+	node, _ := s.Store.GetNode(vm.NodeName)
+
+	// Forward to the manager. On error (e.g. Unimplemented), synthesise a
+	// local snapshot ID so callers can still track the intent.
+	managerResp, err := s.Dialer.Snapshot(ctx, node.Address, req)
+	if err != nil {
+		s.Logger.Warn("snapshot forward to manager failed — using synthetic id",
+			zap.String("vm_id", req.VmId),
+			zap.String("node", vm.NodeName),
+			zap.Error(err),
+		)
+		snapID := req.IdHint
+		if snapID == "" {
+			snapID = "snap-" + uuid.NewString()
+		}
+		managerResp = &lanternv1.SnapshotResponse{
+			SnapshotId: snapID,
+			Bytes:      0,
+			Sha256:     "",
+		}
 	}
-	s.Logger.Info("snapshot intent (stub)",
+
+	s.Logger.Info("snapshot recorded",
 		zap.String("vm_id", req.VmId),
-		zap.String("snapshot_id", snapID),
+		zap.String("snapshot_id", managerResp.SnapshotId),
 		zap.Bool("keep_running", req.KeepRunning),
+		zap.Int64("bytes", managerResp.Bytes),
 	)
-	// TODO(W12): forward to manager and persist bytes/sha256.
-	return &lanternv1.SnapshotResponse{
-		SnapshotId: snapID,
-		Bytes:      0,
-		Sha256:     "",
-	}, nil
+
+	// Persist metadata if a persister is wired.
+	if s.SnapshotPersister != nil {
+		s.SnapshotPersister.PersistSnapshot(ctx, managerResp.SnapshotId, req.VmId, tenantID, vm.NodeName, req.KeepRunning, managerResp)
+	}
+
+	return managerResp, nil
 }
 
 // Cluster returns capacity / health for every registered node.

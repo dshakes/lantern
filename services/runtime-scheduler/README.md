@@ -71,6 +71,7 @@ Node heartbeats authenticate with `X-Scheduler-Token` (matches
 | `SCHEDULER_TENANT_MAX_VMS`       | `20`                                                   | Hard cap on concurrent VMs per tenant  |
 | `SCHEDULER_WEIGHT_*`             | see `scoring.DefaultWeights`                           | Tunable score weights                  |
 | `LOG_LEVEL`                      | `info`                                                 | zap level                              |
+| `DATABASE_URL`                   | _(unset)_                                              | Postgres DSN. When set, activates `WriteThroughStore` (Postgres write-through persistence). When unset, falls back to the in-memory store only |
 
 ## Running locally
 
@@ -102,13 +103,31 @@ curl -s -H "Authorization: Bearer $TOKEN" localhost:8085/v1/vms
 curl -s -H "Authorization: Bearer $TOKEN" localhost:8085/v1/cluster
 ```
 
+## Postgres persistence (write-through mode)
+
+When `DATABASE_URL` is set, the scheduler wraps its `InMemoryStore` with a
+`WriteThroughStore` (`internal/store/`). Hot reads (placement scoring, VM lookup)
+still come from memory; every mutation (node heartbeat, VM register/update/delete,
+snapshot record) is also written to Postgres. On startup `LoadFromDB` rebuilds the
+in-memory state from the DB so cluster state survives a scheduler restart.
+
+Three tables, all prefixed `sched_` to avoid collisions with control-plane tables
+on a shared dev instance:
+
+| Table | Purpose |
+|---|---|
+| `sched_nodes` | One row per registered runtime-manager node. Upserted on every heartbeat |
+| `sched_vms` | One row per scheduled VM with state, spec, and timestamps |
+| `sched_snapshots` | Snapshot metadata forwarded from the manager's `Snapshot` RPC |
+
+Migrations run on every boot via `store.Migrate()` (all `CREATE TABLE IF NOT EXISTS`
+— idempotent). DB write failures are logged as warnings and do not fail placement;
+the scheduler degrades to in-memory-only rather than rejecting workloads.
+
 ## TODOs (W12 follow-ups)
 
 * Replace `dialer.LogOnlyDialer` with a real per-node `RuntimeManagerClient`
   pool (cached `grpc.ClientConn` keyed by node address).
-* Wire `Snapshot` to manager (currently returns a synthetic snapshot id).
-* Persist cluster state (etcd or Postgres) — `ClusterStore` interface is
-  the seam for swapping the backend.
 * Replace the lightweight `unaryTracingInterceptor`/`streamTracingInterceptor`
   with `otelgrpc` once the rest of the platform standardizes on it.
 * Per-tenant rate limits beyond concurrency hard cap (e.g. spawn rate).

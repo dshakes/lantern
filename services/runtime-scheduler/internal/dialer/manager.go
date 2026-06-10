@@ -30,6 +30,11 @@ const defaultManagerPort = "50054"
 type ManagerDialer interface {
 	Spawn(ctx context.Context, nodeAddr string, req *lanternv1.SpawnRequest) (*lanternv1.SpawnResponse, error)
 	Stop(ctx context.Context, nodeAddr string, req *lanternv1.StopRequest) (*lanternv1.StopResponse, error)
+	// Snapshot forwards a snapshot request to the node. The node's runtime-manager
+	// may not yet implement this RPC (it will return Unimplemented); callers must
+	// handle a non-nil error gracefully. On success the returned SnapshotResponse
+	// carries the id, sha256, and bytes from the manager.
+	Snapshot(ctx context.Context, nodeAddr string, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error)
 	Close()
 }
 
@@ -71,6 +76,25 @@ func (d *LogOnlyDialer) Stop(_ context.Context, nodeAddr string, req *lanternv1.
 		zap.String("reason", req.Reason),
 	)
 	return &lanternv1.StopResponse{Ok: true, Detail: "stub dialer"}, nil
+}
+
+func (d *LogOnlyDialer) Snapshot(_ context.Context, nodeAddr string, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
+	d.logger.Info("snapshot intent (stub)",
+		zap.String("node_addr", nodeAddr),
+		zap.String("vm_id", req.VmId),
+		zap.String("id_hint", req.IdHint),
+		zap.Bool("keep_running", req.KeepRunning),
+	)
+	// Synthesize a response so the handler can persist stub metadata.
+	snapID := req.IdHint
+	if snapID == "" {
+		snapID = "snap-stub-" + req.VmId
+	}
+	return &lanternv1.SnapshotResponse{
+		SnapshotId: snapID,
+		Bytes:      0,
+		Sha256:     "",
+	}, nil
 }
 
 func (d *LogOnlyDialer) Close() {}
@@ -143,9 +167,9 @@ func sanitizeEnvKey(s string) string {
 	return strings.ToUpper(r.Replace(s))
 }
 
-// clientFor returns a RuntimeManagerClient for the given node address,
-// dialing (and caching) on first use.
-func (d *GRPCDialer) clientFor(nodeAddr string) (lanternv1.RuntimeManagerClient, error) {
+// connFor returns the raw *grpc.ClientConn for the given node address,
+// dialing (and caching) on first use. Used by both clientFor and Snapshot.
+func (d *GRPCDialer) connFor(nodeAddr string) (*grpc.ClientConn, error) {
 	target := resolveTarget(nodeAddr)
 	if target == "" {
 		return nil, fmt.Errorf("dialer: empty target for node %q", nodeAddr)
@@ -155,11 +179,11 @@ func (d *GRPCDialer) clientFor(nodeAddr string) (lanternv1.RuntimeManagerClient,
 	d.mu.RLock()
 	if c, ok := d.conns[nodeAddr]; ok && c != nil {
 		d.mu.RUnlock()
-		return lanternv1.NewRuntimeManagerClient(c), nil
+		return c, nil
 	}
 	if c, ok := d.conns[target]; ok && c != nil {
 		d.mu.RUnlock()
-		return lanternv1.NewRuntimeManagerClient(c), nil
+		return c, nil
 	}
 	d.mu.RUnlock()
 
@@ -170,7 +194,7 @@ func (d *GRPCDialer) clientFor(nodeAddr string) (lanternv1.RuntimeManagerClient,
 		if nodeAddr != "" {
 			d.conns[nodeAddr] = c
 		}
-		return lanternv1.NewRuntimeManagerClient(c), nil
+		return c, nil
 	}
 
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -185,6 +209,15 @@ func (d *GRPCDialer) clientFor(nodeAddr string) (lanternv1.RuntimeManagerClient,
 		zap.String("node_addr", nodeAddr),
 		zap.String("target", target),
 	)
+	return conn, nil
+}
+
+// clientFor returns a RuntimeManagerClient for the given node address.
+func (d *GRPCDialer) clientFor(nodeAddr string) (lanternv1.RuntimeManagerClient, error) {
+	conn, err := d.connFor(nodeAddr)
+	if err != nil {
+		return nil, err
+	}
 	return lanternv1.NewRuntimeManagerClient(conn), nil
 }
 
@@ -215,6 +248,25 @@ func (d *GRPCDialer) Stop(ctx context.Context, nodeAddr string, req *lanternv1.S
 		zap.String("reason", req.Reason),
 	)
 	return client.Stop(ctx, req)
+}
+
+// Snapshot forwards the snapshot request to the runtime-manager at nodeAddr.
+// The manager exposes Snapshot on the RuntimeManager service
+// (/lantern.v1.RuntimeManager/Snapshot).
+func (d *GRPCDialer) Snapshot(ctx context.Context, nodeAddr string, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
+	client, err := d.clientFor(nodeAddr)
+	if err != nil {
+		return nil, err
+	}
+	d.logger.Debug("snapshot forward",
+		zap.String("node_addr", nodeAddr),
+		zap.String("vm_id", req.VmId),
+	)
+	resp, err := client.Snapshot(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot forward to %s: %w", nodeAddr, err)
+	}
+	return resp, nil
 }
 
 // Close tears down every cached gRPC connection. Safe to call multiple
