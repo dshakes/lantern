@@ -1,0 +1,82 @@
+# Dockerfile.harness — multi-stage build that bakes the lantern-harness binary
+# into the web-scraper workload image as PID 1.
+#
+# What this proves
+# ----------------
+# Running the harness as PID 1 (rather than the workload directly) demonstrates
+# the full Lantern microVM contract:
+#
+#   1. The harness initialises /run/lantern, sets rlimits, and mounts a tmpfs
+#      so the workload sees a clean secret/socket directory on every boot.
+#   2. It opens the gRPC Heartbeat stream to runtime-manager so the manager
+#      can push egress-rule overrides and detect unresponsive workloads.
+#   3. The egress CONNECT proxy (127.0.0.1:3128) is enforced — the scraper's
+#      outbound HTTP call is allowed only if the target URL matches an
+#      EgressRule in the AgentSpec, otherwise the harness returns 403 and
+#      emits an audit event.
+#   4. Secrets are vended at runtime via /run/lantern/secrets/<ENV_NAME>,
+#      never baked into the image — the USER_AGENT secret is resolved this way.
+#   5. Workload stdio is forwarded as structured LogLine gRPC frames; any
+#      __LANTERN_EVENT__:{...} prefix on stdout is parsed as a RuntimeEvent.
+#   6. The supervisor restarts the workload on non-zero exit up to
+#      LANTERN_MAX_RESTARTS (default 5), then exits cleanly.
+#
+# Usage (with a running runtime-manager on localhost:50054)
+# ---------------------------------------------------------
+#   docker build -f Dockerfile.harness -t lantern/web-scraper-harness .
+#   docker run --rm \
+#     -e LANTERN_VM_ID=local-test-vm \
+#     -e LANTERN_MANAGER_ADDR=host.docker.internal:50054 \
+#     -e LANTERN_WORKLOAD_CMD="python3 /workload/workload.py" \
+#     -e LANTERN_DECLARED_SECRETS='[{"env_name":"USER_AGENT","secret_uri":"lantern.secret://dev/USER_AGENT"}]' \
+#     lantern/web-scraper-harness
+
+# ---------------------------------------------------------------------------
+# Stage 1: build lantern-harness as a musl-static binary (matches harness
+# Dockerfile exactly — alpine rust toolchain gives us the musl target by
+# default so the binary has no glibc dependency).
+# ---------------------------------------------------------------------------
+FROM rust:1.85-alpine AS harness-builder
+
+RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static
+
+WORKDIR /build
+
+# Copy the harness crate from the monorepo root. The build context must be
+# the repository root (run: docker build -f examples/headless-agents/02-web-scraper/Dockerfile.harness .)
+COPY services/harness/ ./services/harness/
+
+WORKDIR /build/services/harness
+
+RUN cargo build --release --bin lantern-harness
+
+# ---------------------------------------------------------------------------
+# Stage 2: workload image — Python 3.12 slim with the scraper and the harness.
+# The harness binary is the ENTRYPOINT (PID 1); it spawns the workload via
+# LANTERN_WORKLOAD_CMD.
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim
+
+# Runtime deps: ca-certificates so the scraper can verify HTTPS targets.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# The harness needs /run/lantern for its sockets and secret cache.
+RUN mkdir -p /run/lantern
+
+WORKDIR /workload
+COPY examples/headless-agents/02-web-scraper/workload.py ./workload.py
+
+# Copy the statically-linked harness binary from the builder stage.
+COPY --from=harness-builder \
+    /build/services/harness/target/release/lantern-harness \
+    /usr/local/bin/lantern-harness
+
+# The harness is PID 1.  Callers MUST set:
+#   LANTERN_VM_ID         — globally unique identifier for this VM instance
+#   LANTERN_MANAGER_ADDR  — host:port of the runtime-manager gRPC endpoint
+#   LANTERN_WORKLOAD_CMD  — space-separated argv launched as the workload child
+#
+# The harness reads LANTERN_WORKLOAD_CMD and execs the workload as a supervised
+# child process (see services/harness/src/main.rs :: parse_env / supervisor.rs).
+ENTRYPOINT ["/usr/local/bin/lantern-harness"]

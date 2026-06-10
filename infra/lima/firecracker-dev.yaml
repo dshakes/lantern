@@ -1,0 +1,47 @@
+# Lima VM for running Firecracker microVMs on an Apple Silicon Mac.
+#
+# Firecracker requires Linux KVM, which macOS does not have. On M3-or-newer
+# Apple Silicon with macOS 15+, the Virtualization.framework supports NESTED
+# virtualization — KVM works inside this Linux guest, so Firecracker (and the
+# Kata runtime) run natively here while you develop on the Mac.
+#
+#   limactl start infra/lima/firecracker-dev.yaml
+#   limactl shell firecracker-dev            # /dev/kvm exists in here
+#
+# The repo's runtime-manager Firecracker backend (RUNTIME_BACKEND=firecracker)
+# is exercised inside this guest; the Docker backend remains the zero-setup
+# macOS dev path. See services/runtime-manager/README.md.
+vmType: vz
+nestedVirtualization: true
+
+cpus: 4
+memory: 8GiB
+disk: 30GiB
+
+base: template://ubuntu-lts
+
+mounts:
+  - location: "~"
+    writable: false
+
+provision:
+  # Firecracker + tooling. Pinned release; bump deliberately.
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      command -v firecracker && exit 0
+      ARCH="$(uname -m)" # aarch64 on Apple Silicon
+      VER="v1.10.1"
+      curl -fsSL -o /tmp/fc.tgz \
+        "https://github.com/firecracker-microvm/firecracker/releases/download/${VER}/firecracker-${VER}-${ARCH}.tgz"
+      tar -xzf /tmp/fc.tgz -C /tmp
+      install -m 0755 "/tmp/release-${VER}-${ARCH}/firecracker-${VER}-${ARCH}" /usr/local/bin/firecracker
+      rm -rf /tmp/fc.tgz "/tmp/release-${VER}-${ARCH}"
+  # Make /dev/kvm usable by the default user.
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      [ -e /dev/kvm ] || { echo "FATAL: /dev/kvm missing — host needs M3+ and macOS 15+ (nested virt)"; exit 1; }
+      chmod 666 /dev/kvm

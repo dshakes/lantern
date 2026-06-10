@@ -160,6 +160,54 @@ services:
     ports:
       - "3000:3000"
 
+  # ---------- Runtime profile --------------------------------------------------
+  # These services are NOT started by plain `make dev` / `docker compose up`.
+  # To start them alongside the rest of the stack:
+  #   docker compose -f infra/docker/docker-compose.yml --profile runtime up --build
+  #
+  # To also route the control-plane at them, add this env to the control-plane
+  # service definition (or override via .env.local):
+  #   LANTERN_SCHEDULER_GRPC_ADDR: runtime-scheduler:50055
+  # (Not wired here by default so plain `make dev` keeps the stub-scheduler
+  # path — dashboard-only work should not require the Rust runtime-manager.)
+
+  runtime-scheduler:
+    profiles: ["runtime"]
+    build:
+      # Root context so the Dockerfile can COPY gen/go (replace directive).
+      context: ../..
+      dockerfile: services/runtime-scheduler/Dockerfile
+    ports:
+      - "50055:50055"
+      - "8085:8085"
+    environment:
+      LANTERN_DEFAULT_MANAGER_ADDR: runtime-manager:50054
+      JWT_SECRET: lantern-dev-jwt-secret-do-not-use-in-production
+      LOG_LEVEL: debug
+    depends_on:
+      runtime-manager:
+        condition: service_started
+
+  runtime-manager:
+    profiles: ["runtime"]
+    build:
+      context: ../../services/runtime-manager
+      dockerfile: Dockerfile
+    ports:
+      - "50054:50054"
+    environment:
+      LISTEN_ADDR: "0.0.0.0:50054"
+      RUNTIME_BACKEND: docker
+      LOG_LEVEL: debug
+      # Tell the manager to self-register heartbeats with the scheduler.
+      SCHEDULER_URL: http://runtime-scheduler:8085
+    volumes:
+      # Docker socket mount so the docker backend can spawn agent containers.
+      # SECURITY: grants container-escape-equivalent root on the host —
+      # acceptable for dev-only use; replace with a dedicated Docker daemon
+      # socket or rootless Docker in production.
+      - /var/run/docker.sock:/var/run/docker.sock
+
   # NOTE: the WhatsApp + iMessage bridges are macOS-host services (they need
   # macOS TCC, AppleScript, Contacts/Calendar, and the local chat.db) and do
   # not run in a Linux container. Run them on the host instead:
