@@ -473,11 +473,78 @@ fn provision_vm_cert(cfg: &VmConfig) -> Result<()> {
     let paths = crate::tls::write_vm_cert_files(cert_root, &cfg.vm_id, &issued, &ca_cert_pem)
         .with_context(|| format!("write per-vm cert material for vm '{}'", cfg.vm_id))?;
 
+    // Pack the loose PEM files into the read-only ext4 image the guest mounts as
+    // the `certs` drive. Without this the `PUT /drives/certs` API call fails with
+    // "No such file or directory" and the VM never boots.
+    build_cert_image(&cfg.certs_image_path, &paths)
+        .with_context(|| format!("build certs.img for vm '{}'", cfg.vm_id))?;
+
     tracing::info!(
         vm_id = %cfg.vm_id,
         cert = %paths.cert_path.display(),
-        "provisioned per-VM client cert (CN=vm_id, signed by manager CA)"
+        image = %cfg.certs_image_path,
+        "provisioned per-VM client cert (CN=vm_id) + packed cert image"
     );
+    Ok(())
+}
+
+/// Build the `mke2fs` argv that packs `src_dir` into a small ext4 image at
+/// `image_path`. Pure — unit-tested without mke2fs. `-d` populates the
+/// filesystem from a directory with NO loop mount and NO root; `size_kb`
+/// 1 KiB-blocks are allocated (PEM material is a few KB, 1 MiB is ample).
+#[must_use]
+fn build_mke2fs_argv(image_path: &str, src_dir: &str, size_kb: u32) -> Vec<String> {
+    vec![
+        "-t".to_string(),
+        "ext4".to_string(),
+        "-F".to_string(), // operate on a plain file, not a block device
+        "-q".to_string(), // quiet
+        "-b".to_string(),
+        "1024".to_string(),
+        "-d".to_string(),
+        src_dir.to_string(), // populate the fs from this directory
+        image_path.to_string(),
+        size_kb.to_string(),
+    ]
+}
+
+/// Pack the per-VM cert material (`tls.crt`, `tls.key`, `manager-ca.crt`) into
+/// the read-only `certs.img` ext4 image the guest harness mounts.
+///
+/// LINUX-ONLY: shells out to `mke2fs` (e2fsprogs) with `-d`, which builds and
+/// populates an ext4 image from a directory without root or a loop mount. The
+/// Firecracker path is already Linux+KVM gated, so the dependency is safe here.
+fn build_cert_image(image_path: &str, paths: &crate::tls::VmCertPaths) -> Result<()> {
+    use std::path::Path;
+
+    let parent = Path::new(image_path)
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("malformed certs image path {image_path:?}"))?;
+    let staging = parent.join("img-src");
+    std::fs::create_dir_all(&staging)
+        .with_context(|| format!("create cert image staging dir {staging:?}"))?;
+
+    // Names the guest expects at the mount root.
+    for (src, name) in [
+        (&paths.cert_path, "tls.crt"),
+        (&paths.key_path, "tls.key"),
+        (&paths.ca_path, "manager-ca.crt"),
+    ] {
+        std::fs::copy(src, staging.join(name))
+            .with_context(|| format!("stage {name} into certs.img source dir"))?;
+    }
+
+    let argv = build_mke2fs_argv(image_path, &staging.to_string_lossy(), 1024);
+    let output = std::process::Command::new("mke2fs")
+        .args(&argv)
+        .output()
+        .context("run mke2fs to build certs.img (is e2fsprogs installed?)")?;
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "mke2fs failed building {image_path}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
     Ok(())
 }
 
@@ -828,14 +895,16 @@ fn parse_jail_id(raw: Option<&str>, default: u32, var_name: &str) -> u32 {
 
 /// Build the firecracker-level argv (everything after the program name).
 /// Shared by the bare and jailed launch paths.  Pure.
+///
+/// Firecracker has no `--log-level` flag — log level is only configurable
+/// alongside `--log-path` (a file/FIFO) or via the `PUT /logger` API. With
+/// neither set, Firecracker logs to stderr, which the manager already captures
+/// from the child process. So the only CLI arg we pass is `--api-sock`; passing
+/// a bogus `--log-level` makes Firecracker exit 153 ("Found argument 'log-level'
+/// which wasn't expected"), which is what broke the live boot before this fix.
 #[must_use]
-pub fn build_firecracker_argv(api_socket_path: &str, log_level: Option<&str>) -> Vec<String> {
-    let mut argv = vec!["--api-sock".to_string(), api_socket_path.to_string()];
-    if let Some(level) = log_level {
-        argv.push("--log-level".to_string());
-        argv.push(level.to_string());
-    }
-    argv
+pub fn build_firecracker_argv(api_socket_path: &str) -> Vec<String> {
+    vec!["--api-sock".to_string(), api_socket_path.to_string()]
 }
 
 /// Build the jailer argv: jail identity flags, then `--`, then the
@@ -889,13 +958,13 @@ pub fn build_spawn_invocation(cfg: &SpawnConfig) -> (String, Vec<String>) {
     match &cfg.jailer {
         None => (
             cfg.binary_path.clone(),
-            build_firecracker_argv(&cfg.socket_path, cfg.log_level.as_deref()),
+            build_firecracker_argv(&cfg.socket_path),
         ),
         Some(jailer) => {
             // Inside the jail the API socket is at the chroot-relative
             // JAILED_API_SOCKET; cfg.socket_path holds the host-visible
             // location (used by wait_for_socket / the API client).
-            let fc_args = build_firecracker_argv(JAILED_API_SOCKET, cfg.log_level.as_deref());
+            let fc_args = build_firecracker_argv(JAILED_API_SOCKET);
             (
                 jailer.jailer_binary_path.clone(),
                 build_jailer_argv(jailer, &cfg.binary_path, &cfg.vm_id, &fc_args),
@@ -925,8 +994,6 @@ pub struct SpawnConfig {
     /// `FIRECRACKER_JAILER_PATH` is unset) spawns the bare binary,
     /// preserving the pre-jailer behavior exactly.
     pub jailer: Option<JailerConfig>,
-    /// Optional log level override (e.g. "Debug").
-    pub log_level: Option<String>,
 }
 
 /// Spawn the Firecracker process and wait until the API socket is ready.
@@ -1421,6 +1488,457 @@ async fn stage_jailed_artifacts(
 }
 
 // ---------------------------------------------------------------------------
+// Jailed snapshot restore (ADR-0006 §Jailer + ADR-0007 snapshot store)
+//
+// `snapshot()` makes the (possibly chrooted) firecracker write vmstate + mem
+// files, and the service layer persists them through the `SnapshotStore` as
+// `store://<snapshot_id>`.  Restoring under the jailer means the NEW VM's
+// chrooted firecracker can only open paths inside its own jail, so the
+// artifacts must be fetched back out of the store (local `SNAPSHOT_DIR`
+// first, S3 tier fallback when configured) and copied into
+// `<chroot_root>/snapshot/` owned by the jail uid/gid — exactly how
+// kernel/rootfs are staged at boot — and the `PUT /snapshot/load` body must
+// carry the in-jail RELATIVE paths, sent over the in-jail API socket.
+//
+// Everything below except the copy/chown/download executors is pure and
+// unit-tested on macOS.  The live jailed load itself is a
+// LINUX-RUNTIME-ONLY path validated by the microvm integration CI
+// (KVM runner / Lima).
+// ---------------------------------------------------------------------------
+
+/// In-jail directory the snapshot artifacts are staged into for a jailed
+/// restore (`<chroot_root>/snapshot/` on the host).
+pub const JAILED_SNAPSHOT_DIR: &str = "/snapshot";
+/// In-jail path of the staged vmstate file for `PUT /snapshot/load`.
+pub const JAILED_SNAPSHOT_VMSTATE: &str = "/snapshot/vmstate";
+/// In-jail path of the staged guest-memory file for `PUT /snapshot/load`.
+pub const JAILED_SNAPSHOT_MEM: &str = "/snapshot/mem";
+
+/// S3 key prefix the snapshot store uploads under.  Must mirror
+/// `snapshot_store::S3_PREFIX` (kept in sync by the layout doc in
+/// `src/snapshot_store.rs`).
+const STORE_S3_PREFIX: &str = "snapshots";
+
+/// Where a restore's snapshot artifacts come from, parsed from the
+/// `snapshot_uri`.  Pure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SnapshotSource {
+    /// `store://<snapshot_id>` — the SnapshotStore owns the artifacts
+    /// (local `SNAPSHOT_DIR` tier, S3 fallback).
+    Store { snapshot_id: String },
+    /// `fc://<path>` or a bare path — host filesystem locations.  The mem
+    /// file is the vmstate's sibling named `mem` (the layout both
+    /// `snapshot()` and the store write: `<dir>/{snapshot,mem}`).
+    HostPath {
+        vmstate_path: String,
+        mem_path: String,
+    },
+}
+
+/// Parse a `snapshot_uri` into a [`SnapshotSource`].  Pure.
+///
+/// `HostPath` mem-file derivation: the sibling file named `mem` in the
+/// vmstate's directory.  (Deliberately NOT the legacy bare-restore's
+/// substring `replace("/snapshot", "/mem")`, which also rewrites a
+/// `/snapshots/` directory segment — e.g. `/run/lantern/snapshots/<vm>/mem`
+/// would come out as `/run/lantern/mems/<vm>/mem`.  The bare restore path is
+/// left byte-identical; this parser is consumed by the jailed path only.)
+#[must_use]
+pub fn parse_snapshot_source(snapshot_uri: &str) -> SnapshotSource {
+    if let Some(id) = snapshot_uri.strip_prefix("store://") {
+        return SnapshotSource::Store {
+            snapshot_id: id.to_string(),
+        };
+    }
+    let vmstate_path = snapshot_uri
+        .strip_prefix("fc://")
+        .unwrap_or(snapshot_uri)
+        .to_string();
+    let mem_path = match vmstate_path.rsplit_once('/') {
+        Some((dir, _file)) => format!("{dir}/mem"),
+        None => "mem".to_string(),
+    };
+    SnapshotSource::HostPath {
+        vmstate_path,
+        mem_path,
+    }
+}
+
+/// Build the `PUT /snapshot/load` body.  Pure.
+///
+/// - `jailed == false`: the chrooted-vs-bare process sees the same `/` the
+///   host does, so the body carries the absolute HOST paths (the exact
+///   contract the pre-jailer restore always used).
+/// - `jailed == true`: the chrooted firecracker resolves every path inside
+///   its jail, so the body carries the in-jail RELATIVE staging paths
+///   ([`JAILED_SNAPSHOT_VMSTATE`] / [`JAILED_SNAPSHOT_MEM`]); the host paths
+///   are where the manager staged the copies, never sent over the API.
+///
+/// `resume_vm` / `enable_diff_snapshots` match the existing restore
+/// semantics (resume immediately; keep dirty-page tracking restorable).
+#[must_use]
+pub fn build_snapshot_load_body(
+    jailed: bool,
+    host_vmstate_path: &str,
+    host_mem_path: &str,
+) -> SnapshotLoadParams {
+    let (snapshot_path, mem_path) = if jailed {
+        (
+            JAILED_SNAPSHOT_VMSTATE.to_string(),
+            JAILED_SNAPSHOT_MEM.to_string(),
+        )
+    } else {
+        (host_vmstate_path.to_string(), host_mem_path.to_string())
+    };
+    SnapshotLoadParams {
+        snapshot_path,
+        mem_backend: MemBackend {
+            backend_type: "File".to_string(),
+            backend_path: mem_path,
+        },
+        enable_diff_snapshots: Some(true),
+        resume_vm: Some(true),
+    }
+}
+
+/// Staging plan for a jailed restore: which directories to create and which
+/// files to copy into the new VM's chroot, all of which must end up owned by
+/// the jail uid/gid (the dropped-privilege firecracker has to open the
+/// artifacts and bind sockets in those directories).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JailedSnapshotStaging {
+    /// Directories to create, parent before child.  Mirrors the boot-time
+    /// `stage_jailed_artifacts` set (API socket dir, vsock dir, snapshot
+    /// dirs) plus the restore staging dir.
+    pub dirs: Vec<String>,
+    /// `(host_source, host-visible destination under the chroot)` copies.
+    pub copies: Vec<(String, String)>,
+}
+
+impl JailedSnapshotStaging {
+    /// Every path that must be chowned to the jail uid/gid after staging:
+    /// all created directories plus every copied artifact.
+    #[must_use]
+    pub fn owned_paths(&self) -> Vec<&str> {
+        self.dirs
+            .iter()
+            .map(String::as_str)
+            .chain(self.copies.iter().map(|(_, dest)| dest.as_str()))
+            .collect()
+    }
+}
+
+/// Compute the staging plan for restoring a snapshot into a fresh jail.
+/// Pure — unit-tested on any platform.
+///
+/// The vmstate + mem artifacts land at `<chroot_root>/snapshot/{vmstate,mem}`
+/// (in-jail `/snapshot/vmstate` + `/snapshot/mem`).  The `run/lantern/...`
+/// directories are pre-created exactly as at boot so the restored VM can
+/// re-bind its vsock UDS and take further snapshots under
+/// `/run/lantern/snapshots/<new_vm_id>`.
+#[must_use]
+pub fn plan_jailed_snapshot_staging(
+    chroot_root: &str,
+    new_vm_id: &str,
+    host_vmstate_path: &str,
+    host_mem_path: &str,
+) -> JailedSnapshotStaging {
+    let root = chroot_root.trim_end_matches('/');
+    JailedSnapshotStaging {
+        dirs: vec![
+            root.to_string(),
+            format!("{root}/run"),
+            format!("{root}/run/lantern"),
+            format!("{root}/run/lantern/vsock"),
+            format!("{root}/run/lantern/snapshots"),
+            format!("{root}/run/lantern/snapshots/{new_vm_id}"),
+            format!("{root}{JAILED_SNAPSHOT_DIR}"),
+        ],
+        copies: vec![
+            (
+                host_vmstate_path.to_string(),
+                format!("{root}{JAILED_SNAPSHOT_VMSTATE}"),
+            ),
+            (
+                host_mem_path.to_string(),
+                format!("{root}{JAILED_SNAPSHOT_MEM}"),
+            ),
+        ],
+    }
+}
+
+/// Execute a [`JailedSnapshotStaging`] plan: create the directories, copy the
+/// artifacts, chown everything to the jail uid/gid.
+///
+/// Artifacts are **copied** (not hard-linked) for the same reason as the boot
+/// path: chowning a hard link would mutate the snapshot store's canonical
+/// copy.  The mem file can be large (the guest's RAM) — this copy is the same
+/// deliberate restore-latency tradeoff the boot path makes for rootfs.
+///
+/// LINUX-RUNTIME-ONLY (jailed live path): only reached when jailing is
+/// enabled, behind the Linux availability gate.  The plan construction is
+/// pure and unit-tested; this executor is validated by the microvm
+/// integration CI (KVM runner / Lima).
+async fn stage_jailed_snapshot(plan: &JailedSnapshotStaging, jailer: &JailerConfig) -> Result<()> {
+    for dir in &plan.dirs {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .with_context(|| format!("create jail dir {dir}"))?;
+    }
+    for (src, dest) in &plan.copies {
+        tokio::fs::copy(src, dest)
+            .await
+            .with_context(|| format!("stage snapshot artifact {src} into jail at {dest}"))?;
+    }
+    #[cfg(unix)]
+    for path in plan.owned_paths() {
+        std::os::unix::fs::chown(path, Some(jailer.uid), Some(jailer.gid))
+            .with_context(|| format!("chown {path} to {}:{}", jailer.uid, jailer.gid))?;
+    }
+    Ok(())
+}
+
+/// Local snapshot-store root.  Must mirror `SnapshotStore::from_env`
+/// (`SNAPSHOT_DIR`, default `/var/lib/lantern/snapshots`).
+fn snapshot_store_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(
+        std::env::var("SNAPSHOT_DIR").unwrap_or_else(|_| "/var/lib/lantern/snapshots".to_string()),
+    )
+}
+
+/// Optional S3 tier for snapshot retrieval.  Must mirror
+/// `SnapshotStore::from_env` (`S3_ENDPOINT` + `S3_BUCKET` +
+/// `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`); `None` when unconfigured
+/// or the client cannot be built (warn-logged — restore then has only the
+/// local tier, matching the store's own degradation).
+fn snapshot_s3_from_env() -> Option<std::sync::Arc<dyn object_store::ObjectStore>> {
+    let endpoint = std::env::var("S3_ENDPOINT").unwrap_or_default();
+    let bucket = std::env::var("S3_BUCKET").unwrap_or_default();
+    if endpoint.is_empty() || bucket.is_empty() {
+        return None;
+    }
+    let access_key = std::env::var("AWS_ACCESS_KEY_ID").unwrap_or_default();
+    let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_default();
+    match object_store::aws::AmazonS3Builder::new()
+        .with_endpoint(&endpoint)
+        .with_bucket_name(&bucket)
+        .with_access_key_id(&access_key)
+        .with_secret_access_key(&secret_key)
+        .with_virtual_hosted_style_request(false)
+        .with_allow_http(true)
+        .with_region("us-east-1")
+        .build()
+    {
+        Ok(client) => {
+            Some(std::sync::Arc::new(client) as std::sync::Arc<dyn object_store::ObjectStore>)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                endpoint = %endpoint,
+                bucket = %bucket,
+                "restore: failed to build S3 client; falling back to local snapshot tier only"
+            );
+            None
+        }
+    }
+}
+
+/// From a flat listing of S3 object keys, find the `snapshot` (vmstate) and
+/// `mem` artifact keys for `snapshot_id` under
+/// `snapshots/<agent_version_id>/<vm_id>/<snapshot_id>/`.  Pure.
+///
+/// Both artifacts must live in the same snapshot directory; a half-uploaded
+/// snapshot (one artifact missing) is treated as not found rather than
+/// restored with a dangling memory backend.
+#[must_use]
+pub fn find_snapshot_keys_in_listing(
+    keys: &[String],
+    snapshot_id: &str,
+) -> Option<(String, String)> {
+    let vmstate_suffix = format!("/{snapshot_id}/snapshot");
+    let vmstate_key = keys.iter().find(|k| k.ends_with(&vmstate_suffix))?;
+    let mem_key = format!(
+        "{}/mem",
+        vmstate_key.strip_suffix("/snapshot").unwrap_or(vmstate_key)
+    );
+    if keys.contains(&mem_key) {
+        Some((vmstate_key.clone(), mem_key))
+    } else {
+        None
+    }
+}
+
+/// Scan the local snapshot-store tree
+/// (`<root>/<agent_version_id>/<vm_id>/<snapshot_id>/`) for `snapshot_id` and
+/// return the `(vmstate, mem)` file paths when found.
+///
+/// The store's `get` is keyed by the full `(agent_version, vm, snapshot)`
+/// triple, but a `RestoreRequest` only carries `store://<snapshot_id>`, so
+/// the two fixed directory levels are walked.  Snapshot ids are UUIDv4 —
+/// globally unique — so the first hit is the only hit.
+///
+/// Returns an error (not `None`) when the snapshot directory exists but an
+/// artifact is missing: that is a corrupt store entry, not an absent
+/// snapshot, and restoring from it would dangle.
+async fn locate_snapshot_artifacts_local(
+    root: &Path,
+    snapshot_id: &str,
+) -> Result<Option<(std::path::PathBuf, std::path::PathBuf)>> {
+    let mut version_dirs = match tokio::fs::read_dir(root).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("read snapshot store root {root:?}")),
+    };
+
+    while let Some(version_entry) = version_dirs
+        .next_entry()
+        .await
+        .with_context(|| format!("scan snapshot store root {root:?}"))?
+    {
+        let mut vm_dirs = match tokio::fs::read_dir(version_entry.path()).await {
+            Ok(entries) => entries,
+            // Stray file at this level (not a directory) — skip it.
+            Err(_) => continue,
+        };
+        while let Some(vm_entry) = vm_dirs
+            .next_entry()
+            .await
+            .with_context(|| format!("scan snapshot store dir {:?}", version_entry.path()))?
+        {
+            let candidate = vm_entry.path().join(snapshot_id);
+            if tokio::fs::metadata(&candidate).await.is_err() {
+                continue;
+            }
+            let vmstate = candidate.join("snapshot");
+            let mem = candidate.join("mem");
+            let vmstate_ok = tokio::fs::metadata(&vmstate).await.is_ok();
+            let mem_ok = tokio::fs::metadata(&mem).await.is_ok();
+            if !vmstate_ok || !mem_ok {
+                bail!(
+                    "snapshot '{snapshot_id}' found at {candidate:?} but its artifacts are \
+                     incomplete (snapshot present: {vmstate_ok}, mem present: {mem_ok}); \
+                     refusing to restore from a corrupt store entry"
+                );
+            }
+            return Ok(Some((vmstate, mem)));
+        }
+    }
+    Ok(None)
+}
+
+/// Download one S3 object to `dest`, streaming chunk-by-chunk so a
+/// multi-GiB guest-memory file is never buffered in RAM.
+async fn download_s3_object(
+    s3: &dyn object_store::ObjectStore,
+    key: &str,
+    dest: &Path,
+) -> Result<()> {
+    use futures::TryStreamExt;
+    use tokio::io::AsyncWriteExt;
+
+    let mut stream = s3
+        .get(&object_store::path::Path::from(key))
+        .await
+        .with_context(|| format!("S3 get {key}"))?
+        .into_stream();
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .with_context(|| format!("create {dest:?}"))?;
+    while let Some(chunk) = stream
+        .try_next()
+        .await
+        .with_context(|| format!("read S3 object {key}"))?
+    {
+        file.write_all(&chunk)
+            .await
+            .with_context(|| format!("write {dest:?}"))?;
+    }
+    file.flush()
+        .await
+        .with_context(|| format!("flush {dest:?}"))?;
+    Ok(())
+}
+
+/// S3-tier fallback: list the store prefix, find the artifact keys for
+/// `snapshot_id`, and download both into the local store layout under
+/// `cache_root` (so subsequent restores hit disk — same caching behavior as
+/// `SnapshotStore::get`).  Returns `Ok(None)` when the snapshot is not in S3.
+async fn fetch_snapshot_from_s3(
+    s3: &dyn object_store::ObjectStore,
+    snapshot_id: &str,
+    cache_root: &Path,
+) -> Result<Option<(std::path::PathBuf, std::path::PathBuf)>> {
+    use futures::TryStreamExt;
+
+    let prefix = object_store::path::Path::from(STORE_S3_PREFIX);
+    let keys: Vec<String> = s3
+        .list(Some(&prefix))
+        .map_ok(|meta| meta.location.to_string())
+        .try_collect()
+        .await
+        .context("list snapshot objects in S3")?;
+
+    let Some((vmstate_key, mem_key)) = find_snapshot_keys_in_listing(&keys, snapshot_id) else {
+        return Ok(None);
+    };
+
+    // `snapshots/<av>/<vm>/<id>/snapshot` → cache under `<root>/<av>/<vm>/<id>/`.
+    let rel = vmstate_key
+        .strip_prefix(&format!("{STORE_S3_PREFIX}/"))
+        .unwrap_or(&vmstate_key);
+    let dir = match Path::new(rel).parent() {
+        Some(parent) => cache_root.join(parent),
+        None => cache_root.to_path_buf(),
+    };
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .with_context(|| format!("create local snapshot cache dir {dir:?}"))?;
+
+    let vmstate = dir.join("snapshot");
+    let mem = dir.join("mem");
+    download_s3_object(s3, &vmstate_key, &vmstate).await?;
+    download_s3_object(s3, &mem_key, &mem).await?;
+
+    tracing::info!(
+        snapshot_id = %snapshot_id,
+        cache_dir = ?dir,
+        "restore: fetched snapshot artifacts from S3 tier into local cache"
+    );
+    Ok(Some((vmstate, mem)))
+}
+
+/// Resolve a `store://<snapshot_id>` to the host paths of its `(vmstate,
+/// mem)` artifacts: local `SNAPSHOT_DIR` tier first, then the S3 tier when
+/// configured.  Mirrors `SnapshotStore::get`'s retrieval order.
+///
+/// A snapshot found in neither tier is a clear NOT_FOUND-style error — the
+/// restore fails fast instead of booting a VM with dangling backing files.
+async fn resolve_store_snapshot(
+    root: &Path,
+    s3: Option<&dyn object_store::ObjectStore>,
+    snapshot_id: &str,
+) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+    if let Some(found) = locate_snapshot_artifacts_local(root, snapshot_id).await? {
+        return Ok(found);
+    }
+    if let Some(s3) = s3
+        && let Some(found) = fetch_snapshot_from_s3(s3, snapshot_id, root).await?
+    {
+        return Ok(found);
+    }
+    bail!(
+        "snapshot '{snapshot_id}' not found in the snapshot store (local root {root:?}; \
+         S3 tier {}): nothing to restore",
+        if s3.is_some() {
+            "checked, no match"
+        } else {
+            "not configured"
+        }
+    )
+}
+
+// ---------------------------------------------------------------------------
 // FirecrackerBackend
 // ---------------------------------------------------------------------------
 
@@ -1553,6 +2071,21 @@ impl FirecrackerBackend {
         // not topology — VendSecret rejects any cert whose CN != vm_id.
         provision_vm_cert(cfg)?;
 
+        // Step 0.5: ensure the host runtime dirs for the API socket and the
+        // vsock UDS exist. Firecracker binds the vsock host-side Unix socket
+        // itself and fails the `PUT /vsock` with ENOENT ("No such file or
+        // directory") when the parent dir is missing. Jailed launches stage
+        // these inside the chroot, so this only applies to the bare path.
+        if self.jailer.is_none() {
+            for p in [cfg.socket_path.as_str(), cfg.vsock_uds_path.as_str()] {
+                if let Some(dir) = std::path::Path::new(p).parent() {
+                    tokio::fs::create_dir_all(dir)
+                        .await
+                        .with_context(|| format!("create runtime dir {dir:?}"))?;
+                }
+            }
+        }
+
         // Step 1: TAP device.
         // LINUX-ONLY: requires CAP_NET_ADMIN / root.
         setup_tap_device(&cfg.tap_dev, self.bridge_name.as_deref()).await?;
@@ -1589,7 +2122,6 @@ impl FirecrackerBackend {
             socket_path: api_cfg.socket_path.clone(),
             vm_id: cfg.vm_id.clone(),
             jailer: self.jailer.clone(),
-            log_level: Some("Info".to_string()),
         };
         // Store the Child handle in the per-VM process table keyed by vm_id so
         // `cancel()` can SIGKILL it as a reliable fallback after the graceful
@@ -1642,6 +2174,128 @@ impl FirecrackerBackend {
         .await?;
 
         Ok(())
+    }
+
+    /// Jailed restore path (ADR-0006 §Jailer + ADR-0007 snapshot store).
+    ///
+    /// Sequence:
+    ///   1. Resolve the snapshot's `(vmstate, mem)` artifacts on the host —
+    ///      from the snapshot store for `store://<id>` URIs (local
+    ///      `SNAPSHOT_DIR` tier, then S3 fallback when configured; a missing
+    ///      id is a clear not-found error), or directly from the host
+    ///      filesystem for `fc://` / bare-path URIs.
+    ///   2. Stage them into the NEW VM's chroot at
+    ///      `<chroot_root>/snapshot/{vmstate,mem}` owned by the jail
+    ///      uid/gid — the same copy+chown pattern `stage_jailed_artifacts`
+    ///      uses for kernel/rootfs at boot.
+    ///   3. Spawn a fresh jailed firecracker for the new vm_id.
+    ///   4. `PUT /snapshot/load` over the in-jail API socket with the
+    ///      in-jail RELATIVE paths ([`JAILED_SNAPSHOT_VMSTATE`] /
+    ///      [`JAILED_SNAPSHOT_MEM`]), resuming the VM — same semantics as
+    ///      the bare restore.
+    ///
+    /// LINUX-RUNTIME-ONLY: only reached behind the `firecracker_available()`
+    /// gate (Linux + KVM + jailer binary).  The path/body/staging
+    /// construction is pure and unit-tested on any platform; the live jailed
+    /// load is validated by the microvm integration CI (KVM runner / Lima).
+    ///
+    /// Known limitation (Linux-CI territory, shared with drive-state
+    /// fidelity in ADR 0007 Tier 2): Firecracker's snapshot/load also
+    /// requires the drive backing files the vmstate references (rootfs /
+    /// certs image at their boot-time in-jail paths) to resolve inside the
+    /// new chroot.  The store persists vmstate + mem today; persisting and
+    /// re-staging the block-device files is the documented follow-up.
+    async fn restore_jailed(
+        &self,
+        jailer: &JailerConfig,
+        snapshot_uri: &str,
+        req: &RestoreRequest,
+    ) -> Result<Handle> {
+        let start = Instant::now();
+        let binary = self
+            .binary_path
+            .as_deref()
+            .ok_or_else(Self::not_available_error)?;
+        let vm_id = Uuid::new_v4().to_string();
+
+        // Step 1: resolve the snapshot artifacts to host file paths.
+        let (host_vmstate, host_mem) = match parse_snapshot_source(snapshot_uri) {
+            SnapshotSource::HostPath {
+                vmstate_path,
+                mem_path,
+            } => (
+                std::path::PathBuf::from(vmstate_path),
+                std::path::PathBuf::from(mem_path),
+            ),
+            SnapshotSource::Store { snapshot_id } => {
+                let root = snapshot_store_root();
+                let s3 = snapshot_s3_from_env();
+                resolve_store_snapshot(&root, s3.as_deref(), &snapshot_id).await?
+            }
+        };
+
+        tracing::info!(
+            vm_id = %vm_id,
+            run_id = %req.run_id,
+            snapshot_uri = snapshot_uri,
+            vmstate = ?host_vmstate,
+            // requires Linux + /dev/kvm + jailer; validated by microvm CI
+            "Firecracker: restoring from snapshot into a fresh jail (LINUX-ONLY)"
+        );
+
+        // Step 2: stage vmstate + mem into the new chroot (copy + chown to
+        // the jail uid/gid, exactly as kernel/rootfs are staged at boot).
+        let chroot_root = jailer.chroot_root(binary, &vm_id);
+        let plan = plan_jailed_snapshot_staging(
+            &chroot_root,
+            &vm_id,
+            &host_vmstate.display().to_string(),
+            &host_mem.display().to_string(),
+        );
+        stage_jailed_snapshot(&plan, jailer).await?;
+
+        // Step 3: spawn the jailed firecracker for the new VM.
+        // LINUX-ONLY
+        let socket_path = jailer.host_api_socket_path(binary, &vm_id);
+        let child = spawn_firecracker_process(&SpawnConfig {
+            binary_path: binary.to_string(),
+            socket_path: socket_path.clone(),
+            vm_id: vm_id.clone(),
+            jailer: Some(jailer.clone()),
+        })
+        .await?;
+        if let Some(mut prev) = self.processes.insert(&vm_id, child) {
+            let _ = prev.force_kill();
+            tracing::warn!(vm_id = %vm_id, "process table collision; killed stale child");
+        }
+
+        // Step 4: load the snapshot with the in-jail RELATIVE paths and
+        // resume.  LINUX-ONLY
+        unix_socket_put(
+            &socket_path,
+            "/snapshot/load",
+            &build_snapshot_load_body(
+                true,
+                &host_vmstate.display().to_string(),
+                &host_mem.display().to_string(),
+            ),
+        )
+        .await
+        .context("failed to load snapshot in jailed VM")?;
+
+        let restore_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        tracing::info!(
+            vm_id = %vm_id,
+            restore_ms,
+            "Firecracker: microVM restored from snapshot (jailed)"
+        );
+
+        Ok(Handle {
+            id: vm_id,
+            node_name: "firecracker-local".to_string(),
+            cold_start_ms: restore_ms,
+        })
     }
 }
 
@@ -1926,37 +2580,52 @@ impl RuntimeBackend for FirecrackerBackend {
 
     /// Restore a microVM from a snapshot.
     ///
-    /// Sequence:
+    /// Bare (non-jailed) sequence — unchanged from the pre-jailer contract:
     ///   1. Spawn a fresh Firecracker process for the new VM id
-    ///   2. PUT /snapshot/load
+    ///   2. PUT /snapshot/load (absolute host paths)
     ///
-    /// LINUX-ONLY: requires Firecracker binary + /dev/kvm.
-    /// Integration-tested on a Linux host.
+    /// Jailed sequence (`FIRECRACKER_JAILER_PATH` set): delegates to
+    /// [`Self::restore_jailed`], which fetches the artifacts from the
+    /// snapshot store (`store://<id>`; local tier then S3 fallback) or the
+    /// host filesystem (`fc://` / bare path), stages them into the new VM's
+    /// chroot, and loads via the in-jail RELATIVE paths.
+    ///
+    /// LINUX-ONLY: requires Firecracker binary + /dev/kvm (+ jailer for the
+    /// jailed path). Integration-tested on a Linux host.
     async fn restore(&self, snapshot_uri: &str, req: &RestoreRequest) -> Result<Handle> {
         if !self.available {
             return Err(Self::not_available_error());
         }
 
-        // Fail-closed: a jailed restore needs the snapshot's backing files
-        // (rootfs, certs image, mem file) re-staged into the NEW VM's chroot
-        // at the exact in-jail paths recorded in the snapshot.  That staging
-        // is not wired yet; pretending to restore would boot a VM with
-        // dangling block devices.  ADR-0006 §Jailer.
-        if self.jailer.is_some() {
-            bail!(
-                "snapshot restore under the jailer is not yet supported \
-                 (FIRECRACKER_JAILER_PATH is set): the snapshot's backing-file \
-                 paths must be re-staged into the new VM's chroot. \
-                 Boot a fresh VM instead, or unset FIRECRACKER_JAILER_PATH."
-            );
+        // Jailed restore: the chrooted firecracker cannot open host paths,
+        // so the artifacts are staged into the new jail first.
+        // LINUX-RUNTIME-ONLY (behind the availability gate above).
+        if let Some(jailer) = self.jailer.clone() {
+            return self.restore_jailed(&jailer, snapshot_uri, req).await;
         }
 
         let start = Instant::now();
         let vm_id = Uuid::new_v4().to_string();
         let socket_path = format!("/run/firecracker/{vm_id}.sock");
 
-        let snapshot_path = snapshot_uri.strip_prefix("fc://").unwrap_or(snapshot_uri);
-        let mem_file_path = snapshot_path.replace("/snapshot", "/mem");
+        // Derive the sibling mem-file path. NOT a substring replace of
+        // "/snapshot" -> "/mem" — that also rewrites a "/snapshots/" directory
+        // segment (e.g. /run/lantern/snapshots/<vm>/snapshot would yield a
+        // nonexistent /run/lantern/mems/<vm>/mem). parse_snapshot_source takes
+        // the file basename only, the same derivation the jailed path uses.
+        let (snapshot_path, mem_file_path) = match parse_snapshot_source(snapshot_uri) {
+            SnapshotSource::HostPath {
+                vmstate_path,
+                mem_path,
+            } => (vmstate_path, mem_path),
+            // store:// restore is wired through the jailed path; the bare path
+            // only ever receives fc:// / absolute host snapshots.
+            SnapshotSource::Store { snapshot_id } => {
+                return Err(anyhow::anyhow!(
+                    "store:// snapshot restore requires the jailer path (snapshot_id={snapshot_id})"
+                ));
+            }
+        };
 
         tracing::info!(
             vm_id = %vm_id,
@@ -1977,8 +2646,7 @@ impl RuntimeBackend for FirecrackerBackend {
             binary_path: binary.to_string(),
             socket_path: socket_path.clone(),
             vm_id: vm_id.clone(),
-            jailer: None, // jailed restore is refused above
-            log_level: Some("Info".to_string()),
+            jailer: None, // bare path: jailed restore delegated above
         })
         .await?;
 
@@ -3192,12 +3860,7 @@ mod tests {
             Some("/var/jail"),
         )
         .expect("enabled");
-        let fc_args = vec![
-            "--api-sock".to_string(),
-            JAILED_API_SOCKET.to_string(),
-            "--log-level".to_string(),
-            "Info".to_string(),
-        ];
+        let fc_args = vec!["--api-sock".to_string(), JAILED_API_SOCKET.to_string()];
         let argv = build_jailer_argv(&j, "/usr/bin/firecracker", "vm-abc", &fc_args);
 
         // Flag/value pairs land correctly.
@@ -3232,19 +3895,30 @@ mod tests {
 
     #[test]
     fn build_firecracker_argv_matches_bare_launch_contract() {
+        // Only `--api-sock` — Firecracker has no `--log-level` flag.
         assert_eq!(
-            build_firecracker_argv("/run/firecracker/vm-1.sock", Some("Info")),
-            vec![
-                "--api-sock",
-                "/run/firecracker/vm-1.sock",
-                "--log-level",
-                "Info"
-            ]
-        );
-        assert_eq!(
-            build_firecracker_argv("/run/firecracker/vm-1.sock", None),
+            build_firecracker_argv("/run/firecracker/vm-1.sock"),
             vec!["--api-sock", "/run/firecracker/vm-1.sock"]
         );
+    }
+
+    #[test]
+    fn mke2fs_argv_populates_from_dir_as_plain_file() {
+        let argv = build_mke2fs_argv(
+            "/run/lantern/certs/vm-1/certs.img",
+            "/run/lantern/certs/vm-1/img-src",
+            1024,
+        );
+        // -d <dir> populates the fs; -F lets mke2fs write a plain file.
+        assert!(
+            argv.windows(2)
+                .any(|w| w == ["-d", "/run/lantern/certs/vm-1/img-src"])
+        );
+        assert!(argv.iter().any(|a| a == "-F"));
+        assert!(argv.iter().any(|a| a == "ext4"));
+        // image path then block count are the trailing positional args.
+        assert_eq!(argv[argv.len() - 2], "/run/lantern/certs/vm-1/certs.img");
+        assert_eq!(argv.last().unwrap(), "1024");
     }
 
     #[test]
@@ -3255,19 +3929,10 @@ mod tests {
             socket_path: "/run/firecracker/vm-1.sock".to_string(),
             vm_id: "vm-1".to_string(),
             jailer: None,
-            log_level: Some("Info".to_string()),
         };
         let (program, argv) = build_spawn_invocation(&cfg);
         assert_eq!(program, "/usr/bin/firecracker");
-        assert_eq!(
-            argv,
-            vec![
-                "--api-sock",
-                "/run/firecracker/vm-1.sock",
-                "--log-level",
-                "Info"
-            ]
-        );
+        assert_eq!(argv, vec!["--api-sock", "/run/firecracker/vm-1.sock"]);
     }
 
     #[test]
@@ -3279,7 +3944,6 @@ mod tests {
             socket_path: jailer.host_api_socket_path("/usr/bin/firecracker", "vm-9"),
             vm_id: "vm-9".to_string(),
             jailer: Some(jailer),
-            log_level: Some("Info".to_string()),
         };
         let (program, argv) = build_spawn_invocation(&cfg);
         assert_eq!(program, "/usr/bin/jailer");
@@ -3297,13 +3961,326 @@ mod tests {
 
         // Inside the jail, firecracker gets the chroot-RELATIVE socket —
         // never the host-expanded one.
-        assert_eq!(
-            &argv[sep + 1..],
-            ["--api-sock", JAILED_API_SOCKET, "--log-level", "Info"]
-        );
+        assert_eq!(&argv[sep + 1..], ["--api-sock", JAILED_API_SOCKET]);
         assert!(
             !argv[sep + 1..].iter().any(|a| a.contains("/srv/jailer")),
             "host chroot prefix must not leak into in-jail firecracker args"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 11. Jailed snapshot restore (pure construction + store lookup)
+    //
+    // Construction-only coverage: load-body paths, staging plan destinations
+    // + ownership set, snapshot-URI parsing, S3 key matching, and the local
+    // store scan (tempdir).  No firecracker/jailer exec — the live jailed
+    // load is LINUX-RUNTIME-ONLY (microvm CI / Lima).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn snapshot_load_body_jailed_uses_in_jail_relative_paths() {
+        let body = build_snapshot_load_body(
+            true,
+            "/var/lib/lantern/snapshots/av/vm/id/snapshot",
+            "/var/lib/lantern/snapshots/av/vm/id/mem",
+        );
+        // In-jail RELATIVE paths only — the host staging locations must
+        // never be sent to the chrooted firecracker.
+        assert_eq!(body.snapshot_path, JAILED_SNAPSHOT_VMSTATE);
+        assert_eq!(body.snapshot_path, "/snapshot/vmstate");
+        assert_eq!(body.mem_backend.backend_type, "File");
+        assert_eq!(body.mem_backend.backend_path, JAILED_SNAPSHOT_MEM);
+        assert_eq!(body.mem_backend.backend_path, "/snapshot/mem");
+        // Existing restore semantics: resume immediately, diff snapshots on.
+        assert_eq!(body.enable_diff_snapshots, Some(true));
+        assert_eq!(body.resume_vm, Some(true));
+
+        let json: serde_json::Value = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["snapshot_path"], "/snapshot/vmstate");
+        assert_eq!(json["mem_backend"]["backend_path"], "/snapshot/mem");
+        assert!(
+            !serde_json::to_string(&body).unwrap().contains("/var/lib"),
+            "host paths must not leak into the jailed load body"
+        );
+    }
+
+    #[test]
+    fn snapshot_load_body_bare_matches_legacy_host_path_contract() {
+        let body = build_snapshot_load_body(
+            false,
+            "/run/lantern/snapshots/vm-1/snapshot",
+            "/run/lantern/snapshots/vm-1/mem",
+        );
+        // Byte-identical to the body the pre-jailer restore always sent.
+        assert_eq!(
+            body,
+            SnapshotLoadParams {
+                snapshot_path: "/run/lantern/snapshots/vm-1/snapshot".to_string(),
+                mem_backend: MemBackend {
+                    backend_type: "File".to_string(),
+                    backend_path: "/run/lantern/snapshots/vm-1/mem".to_string(),
+                },
+                enable_diff_snapshots: Some(true),
+                resume_vm: Some(true),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_snapshot_source_store_uri() {
+        assert_eq!(
+            parse_snapshot_source("store://4a5b6c7d-0000-1111-2222-333344445555"),
+            SnapshotSource::Store {
+                snapshot_id: "4a5b6c7d-0000-1111-2222-333344445555".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_snapshot_source_fc_and_bare_paths_use_sibling_mem_file() {
+        // The mem file is the vmstate's SIBLING named `mem` — and the
+        // `/snapshots/` directory segment must survive intact (the legacy
+        // substring-replace would have mangled it to `/mems/`).
+        let fc = parse_snapshot_source("fc:///run/lantern/snapshots/vm-1/snapshot");
+        assert_eq!(
+            fc,
+            SnapshotSource::HostPath {
+                vmstate_path: "/run/lantern/snapshots/vm-1/snapshot".to_string(),
+                mem_path: "/run/lantern/snapshots/vm-1/mem".to_string(),
+            }
+        );
+        let bare = parse_snapshot_source("/snaps/vm-2/snapshot");
+        assert_eq!(
+            bare,
+            SnapshotSource::HostPath {
+                vmstate_path: "/snaps/vm-2/snapshot".to_string(),
+                mem_path: "/snaps/vm-2/mem".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn jailed_snapshot_staging_plan_destinations_under_chroot() {
+        let plan = plan_jailed_snapshot_staging(
+            "/srv/jailer/firecracker/vm-new/root",
+            "vm-new",
+            "/var/lib/lantern/snapshots/av/vm-old/snap-1/snapshot",
+            "/var/lib/lantern/snapshots/av/vm-old/snap-1/mem",
+        );
+        assert_eq!(
+            plan.copies,
+            vec![
+                (
+                    "/var/lib/lantern/snapshots/av/vm-old/snap-1/snapshot".to_string(),
+                    "/srv/jailer/firecracker/vm-new/root/snapshot/vmstate".to_string(),
+                ),
+                (
+                    "/var/lib/lantern/snapshots/av/vm-old/snap-1/mem".to_string(),
+                    "/srv/jailer/firecracker/vm-new/root/snapshot/mem".to_string(),
+                ),
+            ]
+        );
+        // Directories are parent-before-child so create_dir_all + chown can
+        // run in order; the set mirrors the boot-time staging dirs plus the
+        // restore staging dir.
+        assert_eq!(
+            plan.dirs,
+            vec![
+                "/srv/jailer/firecracker/vm-new/root".to_string(),
+                "/srv/jailer/firecracker/vm-new/root/run".to_string(),
+                "/srv/jailer/firecracker/vm-new/root/run/lantern".to_string(),
+                "/srv/jailer/firecracker/vm-new/root/run/lantern/vsock".to_string(),
+                "/srv/jailer/firecracker/vm-new/root/run/lantern/snapshots".to_string(),
+                "/srv/jailer/firecracker/vm-new/root/run/lantern/snapshots/vm-new".to_string(),
+                "/srv/jailer/firecracker/vm-new/root/snapshot".to_string(),
+            ]
+        );
+        for (i, dir) in plan.dirs.iter().enumerate().skip(1) {
+            assert!(
+                plan.dirs[..i].iter().any(|d| dir.starts_with(d.as_str())),
+                "dir {dir} must come after a parent"
+            );
+        }
+
+        // Trailing slash on the chroot root must not double the separator.
+        let slashed =
+            plan_jailed_snapshot_staging("/srv/j/fc/vm/root/", "vm", "/a/snapshot", "/a/mem");
+        assert!(
+            slashed.copies[0]
+                .1
+                .starts_with("/srv/j/fc/vm/root/snapshot/")
+        );
+        assert!(!slashed.copies[0].1.contains("//"));
+    }
+
+    #[test]
+    fn jailed_snapshot_staging_ownership_covers_every_staged_path() {
+        let plan = plan_jailed_snapshot_staging(
+            "/srv/jailer/firecracker/vm-x/root",
+            "vm-x",
+            "/store/snap",
+            "/store/mem",
+        );
+        let owned: std::collections::HashSet<&str> = plan.owned_paths().into_iter().collect();
+        // Every directory and every copied artifact is chowned to the jail
+        // uid/gid — the dropped-privilege firecracker must be able to open
+        // the artifacts and bind sockets in the directories.
+        for dir in &plan.dirs {
+            assert!(owned.contains(dir.as_str()), "dir {dir} must be chowned");
+        }
+        for (_, dest) in &plan.copies {
+            assert!(owned.contains(dest.as_str()), "copy {dest} must be chowned");
+        }
+        assert_eq!(
+            owned.len(),
+            plan.dirs.len() + plan.copies.len(),
+            "ownership set is exactly the staged paths"
+        );
+    }
+
+    #[test]
+    fn find_snapshot_keys_requires_both_artifacts_in_same_dir() {
+        let keys = vec![
+            "snapshots/av1/vm1/snap-a/meta.json".to_string(),
+            "snapshots/av1/vm1/snap-a/snapshot".to_string(),
+            "snapshots/av1/vm1/snap-a/mem".to_string(),
+            "snapshots/av2/vm9/snap-b/snapshot".to_string(), // mem missing
+        ];
+        assert_eq!(
+            find_snapshot_keys_in_listing(&keys, "snap-a"),
+            Some((
+                "snapshots/av1/vm1/snap-a/snapshot".to_string(),
+                "snapshots/av1/vm1/snap-a/mem".to_string(),
+            ))
+        );
+        // Half-uploaded snapshot (mem absent) is treated as not found.
+        assert_eq!(find_snapshot_keys_in_listing(&keys, "snap-b"), None);
+        // Unknown id.
+        assert_eq!(find_snapshot_keys_in_listing(&keys, "snap-zzz"), None);
+    }
+
+    #[tokio::test]
+    async fn resolve_store_snapshot_finds_local_artifacts() {
+        let root = tempfile::TempDir::new().unwrap();
+        let dir = root.path().join("agent-v1").join("vm-old").join("snap-123");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("snapshot"), b"vmstate-bytes")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.join("mem"), b"mem-bytes")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.join("meta.json"), b"{}")
+            .await
+            .unwrap();
+
+        let none: Option<&dyn object_store::ObjectStore> = None;
+        let (vmstate, mem) = resolve_store_snapshot(root.path(), none, "snap-123")
+            .await
+            .expect("snapshot must be found locally");
+        assert_eq!(vmstate, dir.join("snapshot"));
+        assert_eq!(mem, dir.join("mem"));
+    }
+
+    #[tokio::test]
+    async fn resolve_store_snapshot_missing_id_is_not_found_error() {
+        let root = tempfile::TempDir::new().unwrap();
+        // Store root exists but holds a different snapshot.
+        let other = root.path().join("av").join("vm").join("snap-other");
+        tokio::fs::create_dir_all(&other).await.unwrap();
+        tokio::fs::write(other.join("snapshot"), b"x")
+            .await
+            .unwrap();
+        tokio::fs::write(other.join("mem"), b"y").await.unwrap();
+
+        let none: Option<&dyn object_store::ObjectStore> = None;
+        let err = resolve_store_snapshot(root.path(), none, "snap-ghost")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("not found"),
+            "must be a not-found error: {err}"
+        );
+        assert!(
+            err.contains("snap-ghost"),
+            "must name the missing id: {err}"
+        );
+        assert!(
+            err.contains("not configured"),
+            "must say the S3 tier was not configured: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_store_snapshot_missing_root_is_not_found_error() {
+        let root = tempfile::TempDir::new().unwrap();
+        let nonexistent = root.path().join("never-created");
+        let none: Option<&dyn object_store::ObjectStore> = None;
+        let err = resolve_store_snapshot(&nonexistent, none, "snap-1")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("not found"),
+            "must be a not-found error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_store_snapshot_incomplete_entry_is_corruption_error() {
+        let root = tempfile::TempDir::new().unwrap();
+        let dir = root.path().join("av").join("vm").join("snap-half");
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        // vmstate present, mem missing → corrupt entry, not "absent".
+        tokio::fs::write(dir.join("snapshot"), b"x").await.unwrap();
+
+        let none: Option<&dyn object_store::ObjectStore> = None;
+        let err = resolve_store_snapshot(root.path(), none, "snap-half")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("incomplete"),
+            "must flag the corrupt entry, not report not-found: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_jailed_with_missing_store_snapshot_does_not_exec() {
+        // End-to-end through restore(): jailer configured, snapshot id
+        // absent → the not-found error fires BEFORE any staging or spawn.
+        // `available` is forced true to get past the gate; no firecracker
+        // or jailer binary is ever exec'd because resolution fails first.
+        //
+        // No env mutation (set_var is unsafe + racy under the parallel test
+        // runner): a freshly generated UUID cannot exist in whatever store
+        // root / S3 tier the environment points at, so resolution is
+        // guaranteed to miss.
+        let mut backend = FirecrackerBackend::new();
+        backend.available = true;
+        backend.binary_path = Some("/usr/bin/firecracker".to_string());
+        backend.jailer = Some(jailer_with_defaults());
+
+        let missing_id = Uuid::new_v4().to_string();
+        let uri = format!("store://{missing_id}");
+        let req = crate::proto::RestoreRequest {
+            snapshot_uri: uri.clone(),
+            run_id: "run-1".to_string(),
+            input: serde_json::Value::Null,
+            env: HashMap::new(),
+            secrets: vec![],
+        };
+        let err = backend.restore(&uri, &req).await.unwrap_err().to_string();
+
+        assert!(
+            err.contains("not found"),
+            "must be a not-found error: {err}"
+        );
+        assert!(err.contains(&missing_id), "must name the id: {err}");
+        assert!(
+            backend.processes.is_empty(),
+            "no process may be spawned when resolution fails"
         );
     }
 }
