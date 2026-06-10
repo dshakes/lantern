@@ -10,6 +10,9 @@ path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
+# ReceiverStream for the in-guest exec server's response stream.
+# Already a transitive dep of tonic — no new crate enters the tree.
+tokio-stream = "0.1"
 tonic = { version = "0.12", features = ["tls"] }
 prost = "0.13"
 prost-types = "0.13"
