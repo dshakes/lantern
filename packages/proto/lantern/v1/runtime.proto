@@ -282,6 +282,10 @@ service RuntimeManager {
 
   // Live stats.
   rpc Stats (StatsRequest) returns (stream ResourceUsage);
+
+  // Take a snapshot of a running VM — durable, identified by sha256.
+  // Reuses the same SnapshotRequest/SnapshotResponse as RuntimeScheduler.
+  rpc Snapshot (SnapshotRequest) returns (SnapshotResponse);
 }
 
 message SpawnRequest {
