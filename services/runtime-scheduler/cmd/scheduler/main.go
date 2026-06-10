@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -36,6 +37,7 @@ import (
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/placement"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/scoring"
+	"github.com/dshakes/lantern/services/runtime-scheduler/internal/store"
 )
 
 func main() {
@@ -47,7 +49,42 @@ func main() {
 	defer cancel()
 
 	// --- Cluster state + placement engine ---
-	store := cluster.NewInMemoryStore()
+	mem := cluster.NewInMemoryStore()
+
+	// Optional Postgres persistence: activated when DATABASE_URL is set.
+	// When absent the scheduler runs purely in-memory (original behaviour).
+	var clusterStore cluster.ClusterStore = mem
+	var snapPersister handlers.SnapshotPersister
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		logger.Info("DATABASE_URL set — enabling Postgres persistence")
+		pool, err := pgxpool.New(ctx, dbURL)
+		if err != nil {
+			logger.Fatal("failed to open DB pool", zap.Error(err))
+		}
+		defer pool.Close()
+
+		migrateCtx, migrateCancel := context.WithTimeout(ctx, 15*time.Second)
+		if err := store.Migrate(migrateCtx, pool); err != nil {
+			migrateCancel()
+			logger.Fatal("DB migration failed", zap.Error(err))
+		}
+		migrateCancel()
+
+		wt := store.NewWriteThroughStore(mem, pool, logger)
+		loadCtx, loadCancel := context.WithTimeout(ctx, 15*time.Second)
+		if err := wt.LoadFromDB(loadCtx, cluster.HeartbeatDeadline); err != nil {
+			loadCancel()
+			logger.Warn("failed to load persisted state — starting fresh", zap.Error(err))
+		} else {
+			loadCancel()
+		}
+		clusterStore = wt
+		snapPersister = wt
+		logger.Info("write-through store ready")
+	} else {
+		logger.Info("DATABASE_URL not set — using in-memory store only")
+	}
+
 	weights := scoring.Weights{
 		WarmPool:  cfg.WeightWarmPool,
 		Region:    cfg.WeightRegion,
@@ -55,7 +92,7 @@ func main() {
 		Cost:      cfg.WeightCost,
 		Health:    cfg.WeightHealth,
 	}
-	pl := &placement.Engine{Store: store, Weights: weights}
+	pl := &placement.Engine{Store: clusterStore, Weights: weights}
 
 	var managerDialer dialer.ManagerDialer
 	if os.Getenv("LANTERN_DIALER") == "stub" || os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR") == "" {
@@ -68,12 +105,13 @@ func main() {
 	defer managerDialer.Close()
 
 	// --- Background heartbeat reaper ---
-	cluster.StartHeartbeatReaper(ctx, store, cluster.HeartbeatDeadline, 5*time.Second, func(name string) {
+	cluster.StartHeartbeatReaper(ctx, clusterStore, cluster.HeartbeatDeadline, 5*time.Second, func(name string) {
 		logger.Warn("node heartbeat expired, marking draining", zap.String("node", name))
 	})
 
 	// --- gRPC server ---
-	schedSvc := handlers.NewSchedulerService(store, pl, managerDialer, logger, cfg.TenantMaxVMs)
+	schedSvc := handlers.NewSchedulerService(clusterStore, pl, managerDialer, logger, cfg.TenantMaxVMs)
+	schedSvc.SnapshotPersister = snapPersister
 
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
@@ -104,7 +142,7 @@ func main() {
 	}()
 
 	// --- REST gateway ---
-	rest := handlers.NewRESTHandler(schedSvc, store, []byte(cfg.JWTSecret), logger)
+	rest := handlers.NewRESTHandler(schedSvc, clusterStore, []byte(cfg.JWTSecret), logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
