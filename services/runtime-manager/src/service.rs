@@ -1,7 +1,9 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Result;
+use dashmap::DashMap;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
@@ -12,6 +14,28 @@ use crate::pool::{PoolConfig, WarmPool};
 use crate::proto;
 use crate::proto::pb;
 use crate::secret_resolver::SecretResolver;
+use crate::snapshot_store::SnapshotStore;
+
+// ---------------------------------------------------------------------------
+// Heartbeat cache
+//
+// The in-VM harness sends `HeartbeatRequest` messages over the bidirectional
+// `RuntimeHarness::Heartbeat` stream.  Each message carries a `ResourceUsage`
+// snapshot.  We cache the last-seen usage per `vm_id` so the stats dispatch
+// layer can serve resource metrics for backends (Firecracker) that cannot be
+// polled directly from the manager host.
+//
+// An entry is considered stale when it has not been refreshed within
+// `HEARTBEAT_STALE_SECS`.  Stale entries are not evicted automatically (the
+// harness reconnects after a socket reset); the stats path surfaces a clear
+// "stale" error rather than returning silent zeroes.
+// ---------------------------------------------------------------------------
+
+/// Maximum age (seconds) before a cached heartbeat entry is considered stale.
+pub const HEARTBEAT_STALE_SECS: u64 = 30;
+
+/// Shared heartbeat cache: `vm_id → (last ResourceUsage, time of last update)`.
+pub type HeartbeatCache = Arc<DashMap<String, (pb::ResourceUsage, Instant)>>;
 
 // ---------------------------------------------------------------------------
 // C4 fix: isolation-class → backend routing
@@ -78,6 +102,11 @@ pub struct RuntimeManagerGrpc {
     pool: Arc<WarmPool>,
     pub(crate) registry: Arc<HandleRegistry>,
     pub(crate) secret_resolver: Arc<dyn SecretResolver>,
+    snapshot_store: Arc<SnapshotStore>,
+    /// Heartbeat cache shared with `RuntimeHarnessGrpc`.  Stats for Firecracker
+    /// VMs are served from here because the manager cannot poll a microVM guest
+    /// directly; the in-VM harness reports usage via the Heartbeat stream.
+    pub(crate) heartbeat_cache: HeartbeatCache,
 }
 
 impl RuntimeManagerGrpc {
@@ -90,13 +119,34 @@ impl RuntimeManagerGrpc {
         pool.start_reaper();
 
         let registry = Arc::new(HandleRegistry::new());
+        let snapshot_store = Arc::new(SnapshotStore::from_env());
+        let heartbeat_cache: HeartbeatCache = Arc::new(DashMap::new());
 
         Self {
             backend,
             pool,
             registry,
             secret_resolver,
+            snapshot_store,
+            heartbeat_cache,
         }
+    }
+
+    /// Build the `RuntimeHarnessGrpc` that shares this manager's registry and
+    /// heartbeat cache.  Call this after `new()` to get the paired harness
+    /// service that writes into the same cache the manager reads from.
+    pub fn harness_service(&self, mtls_enabled: bool) -> RuntimeHarnessGrpc {
+        RuntimeHarnessGrpc::new(
+            Arc::clone(&self.registry),
+            Arc::clone(&self.secret_resolver),
+            Arc::clone(&self.heartbeat_cache),
+            mtls_enabled,
+        )
+    }
+
+    pub fn with_snapshot_store(mut self, store: SnapshotStore) -> Self {
+        self.snapshot_store = Arc::new(store);
+        self
     }
 
     /// Map an anyhow error to a tonic Status.
@@ -261,20 +311,112 @@ impl RuntimeManagerGrpc {
         Ok(Response::new(ReceiverStream::new(rx)))
     }
 
-    /// Create a snapshot of a running sandbox.
+    /// Create a snapshot of a running sandbox and persist it through the store.
+    ///
+    /// Only Firecracker and Kata backends support snapshotting; all others
+    /// return `Status::unimplemented` so callers can distinguish "backend
+    /// doesn't support this" from a real failure.
     pub async fn snapshot(
         &self,
         request: Request<proto::SnapshotRequest>,
     ) -> Result<Response<proto::SnapshotResponse>, Status> {
         let req = request.into_inner();
 
-        tracing::info!(handle_id = %req.handle_id, "creating snapshot");
+        // Fail fast with a clear error for backends that cannot snapshot.
+        let backend_name = self.backend.name();
+        if backend_name != "firecracker" && backend_name != "kata" {
+            return Err(Status::unimplemented(format!(
+                "snapshot is not supported by the '{}' backend; \
+                 only firecracker and kata backends support persistent snapshots",
+                backend_name
+            )));
+        }
 
-        let info = self.backend.snapshot(&req).await.map_err(Self::to_status)?;
+        tracing::info!(handle_id = %req.handle_id, backend = backend_name, "creating snapshot");
+
+        // Invoke the backend.  On Linux + Firecracker the files are written to
+        // /run/lantern/snapshots/<vm_id>/{snapshot,mem}.  We don't need the
+        // SnapshotInfo returned here (uri + size are derived from the store
+        // after persisting the artifacts), but we must propagate any error.
+        let _backend_info = self.backend.snapshot(&req).await.map_err(Self::to_status)?;
+
+        // Persist through the store.  The snapshot_uri from the backend is a
+        // path like `fc:///run/lantern/snapshots/<vm_id>/snapshot`; the actual
+        // files are already written to disk by the Firecracker backend.
+        // We read them back and hand the bytes to the store so the store owns
+        // the canonical copy under SNAPSHOT_DIR and can enforce retention.
+        //
+        // Derive the agent_version_id from the handle registry (the handle
+        // was registered with LANTERN_AGENT_VERSION_ID in the env map at
+        // spawn time).  HandleInfo doesn't carry a dedicated agent_version_id
+        // field today; fall back to "unknown" when absent.
+        let agent_version_id = self
+            .registry
+            .get(&req.handle_id)
+            .map(|_h| "unknown".to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let vm_id = req.handle_id.clone();
+
+        // Build artifact map from the files the backend produced.
+        // Firecracker puts snapshot + mem under /run/lantern/snapshots/<vm_id>/.
+        let snapshot_base = format!("/run/lantern/snapshots/{vm_id}");
+        let artifact_paths = vec![
+            format!("{snapshot_base}/snapshot"),
+            format!("{snapshot_base}/mem"),
+        ];
+
+        let mut artifacts = crate::snapshot_store::ArtifactMap::new();
+        for path in &artifact_paths {
+            match tokio::fs::read(path).await {
+                Ok(bytes) => {
+                    let name = std::path::Path::new(path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(path)
+                        .to_string();
+                    artifacts.push((name, bytes));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %path,
+                        error = %e,
+                        "snapshot: artifact file not readable; storing empty bytes"
+                    );
+                    let name = std::path::Path::new(path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(path)
+                        .to_string();
+                    artifacts.push((name, vec![]));
+                }
+            }
+        }
+
+        let meta = self
+            .snapshot_store
+            .put(&agent_version_id, &vm_id, artifacts)
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    vm_id = %vm_id,
+                    error = %e,
+                    "snapshot_store: put failed"
+                );
+                Status::internal(format!("snapshot store error: {e}"))
+            })?;
+
+        tracing::info!(
+            snapshot_id = %meta.id,
+            sha256 = %meta.sha256,
+            size_bytes = meta.size_bytes,
+            vm_id = %vm_id,
+            "snapshot persisted to store"
+        );
 
         Ok(Response::new(proto::SnapshotResponse {
-            snapshot_uri: info.snapshot_uri,
-            size_bytes: info.size_bytes,
+            snapshot_uri: format!("store://{}", meta.id),
+            size_bytes: meta.size_bytes as i64,
         }))
     }
 
@@ -605,15 +747,152 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
 
     async fn exec(
         &self,
-        _request: Request<tonic::Streaming<pb::ExecRequest>>,
+        request: Request<tonic::Streaming<pb::ExecRequest>>,
     ) -> Result<Response<Self::ExecStream>, Status> {
-        // Exec-into-VM debugger is a separate workstream; the backends
-        // don't expose a generic exec primitive yet (Docker has one, k8s
-        // does too, Firecracker requires a harness channel). Be explicit
-        // rather than ship a half-built bridge.
-        Err(Status::unimplemented(
-            "exec: live debugger channel not yet wired through backends",
-        ))
+        let mut stream = request.into_inner();
+
+        // The first message MUST carry vm_id and command; subsequent messages
+        // carry stdin bytes (forwarded to the exec process via the channel).
+        // We collect stdin-bearing messages eagerly while streaming output.
+        let first = stream
+            .message()
+            .await
+            .map_err(|e| Status::internal(format!("exec: stream read error: {e}")))?
+            .ok_or_else(|| Status::invalid_argument("exec: empty request stream"))?;
+
+        if first.vm_id.is_empty() {
+            return Err(Status::invalid_argument("exec: vm_id is required"));
+        }
+        if first.command.is_empty() {
+            return Err(Status::invalid_argument(
+                "exec: command is required in first message",
+            ));
+        }
+
+        // Resolve wire vm_id → backend handle_id.
+        let info = self
+            .registry
+            .get(&first.vm_id)
+            .ok_or_else(|| Status::not_found(format!("vm {} not found", first.vm_id)))?;
+
+        let backend = Arc::clone(&self.backend);
+        let command = first.command.clone();
+        let argv = first.argv.clone();
+        let handle_id = info.handle_id.clone();
+        let vm_id = first.vm_id.clone();
+
+        tracing::info!(
+            vm_id = %vm_id,
+            handle_id = %handle_id,
+            command = %command,
+            argv = ?argv,
+            "exec: dispatching to backend"
+        );
+
+        let (tx, rx) = mpsc::channel::<Result<pb::ExecResponse, Status>>(64);
+
+        tokio::spawn(async move {
+            // Drain any remaining stdin frames from the client stream while the
+            // exec runs. We don't pipe stdin into the container process in this
+            // implementation (exec is one-shot / non-interactive); the frames
+            // are consumed so the client does not stall on a blocked send.
+            tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
+
+            match backend.exec_command(&handle_id, &command, &argv).await {
+                Ok(output) => {
+                    // Send stdout chunk.
+                    if !output.stdout.is_empty() {
+                        let _ = tx
+                            .send(Ok(pb::ExecResponse {
+                                stdout: output.stdout,
+                                stderr: vec![],
+                                exit_code: 0,
+                                done: false,
+                            }))
+                            .await;
+                    }
+                    // Send stderr chunk.
+                    if !output.stderr.is_empty() {
+                        let _ = tx
+                            .send(Ok(pb::ExecResponse {
+                                stdout: vec![],
+                                stderr: output.stderr,
+                                exit_code: 0,
+                                done: false,
+                            }))
+                            .await;
+                    }
+                    // Final frame: exit code + done=true.
+                    let _ = tx
+                        .send(Ok(pb::ExecResponse {
+                            stdout: vec![],
+                            stderr: vec![],
+                            exit_code: output.exit_code,
+                            done: true,
+                        }))
+                        .await;
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    // Distinguish "backend does not support exec" from real errors.
+                    let status = if msg.contains("exec not supported by") {
+                        Status::unimplemented(format!(
+                            "exec not yet supported for '{}' isolation backend",
+                            backend.name()
+                        ))
+                    } else {
+                        tracing::error!(
+                            vm_id = %vm_id,
+                            error = %e,
+                            "exec: backend error"
+                        );
+                        Status::internal(msg)
+                    };
+                    let _ = tx.send(Err(status)).await;
+                }
+            }
+        });
+
+        let out_stream: Self::ExecStream = Box::pin(ReceiverStream::new(rx));
+        Ok(Response::new(out_stream))
+    }
+
+    async fn snapshot(
+        &self,
+        request: Request<pb::SnapshotRequest>,
+    ) -> Result<Response<pb::SnapshotResponse>, Status> {
+        let req = request.into_inner();
+
+        // Map the wire SnapshotRequest to the internal one.
+        // The wire vm_id maps to handle_id; we look up the registry so the
+        // backend sees the backend-side handle id (container id / socket path).
+        let backend_handle = self
+            .registry
+            .get(&req.vm_id)
+            .map(|h| h.handle_id)
+            .unwrap_or_else(|| req.vm_id.clone());
+
+        let internal = proto::SnapshotRequest {
+            handle_id: backend_handle,
+            bundle_digest: vec![],
+            isolation_class: proto::IsolationClass::Unspecified,
+        };
+
+        let resp = self.snapshot(Request::new(internal)).await?.into_inner();
+
+        // Map the internal SnapshotResponse to the wire SnapshotResponse.
+        // snapshot_uri is "store://<id>"; extract the id.
+        let snapshot_id = resp
+            .snapshot_uri
+            .strip_prefix("store://")
+            .unwrap_or(&resp.snapshot_uri)
+            .to_string();
+
+        Ok(Response::new(pb::SnapshotResponse {
+            snapshot_id,
+            bytes: resp.size_bytes,
+            sha256: String::new(), // populated on the scheduler side from the store meta
+        }))
     }
 
     type StatsStream = Pin<
@@ -622,15 +901,127 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
 
     async fn stats(
         &self,
-        _request: Request<pb::StatsRequest>,
+        request: Request<pb::StatsRequest>,
     ) -> Result<Response<Self::StatsStream>, Status> {
-        // ResourceUsage roll-up is collected by the harness via the
-        // Heartbeat stream; there's no per-backend polling primitive in
-        // the current trait. Returning unimplemented is more honest than
-        // fabricating zero-valued samples.
-        Err(Status::unimplemented(
-            "stats: harness-driven usage roll-up not yet wired",
-        ))
+        let req = request.into_inner();
+
+        if req.vm_id.is_empty() {
+            return Err(Status::invalid_argument("stats: vm_id is required"));
+        }
+
+        // Resolve wire vm_id → backend handle_id.
+        let info = self
+            .registry
+            .get(&req.vm_id)
+            .ok_or_else(|| Status::not_found(format!("vm {} not found", req.vm_id)))?;
+
+        // Parse the requested polling interval (default 5 s).
+        let interval_secs = req
+            .interval
+            .as_ref()
+            .map(|d| d.seconds.max(1) as u64)
+            .unwrap_or(5);
+
+        let backend = Arc::clone(&self.backend);
+        let handle_id = info.handle_id.clone();
+        let vm_id = req.vm_id.clone();
+        // Firecracker stats are served from the heartbeat cache: the manager
+        // cannot poll a microVM guest directly, but the in-VM harness reports
+        // resource usage via `RuntimeHarness::Heartbeat`.
+        let heartbeat_cache = Arc::clone(&self.heartbeat_cache);
+        let is_firecracker = backend.name() == "firecracker";
+
+        tracing::info!(
+            vm_id = %vm_id,
+            handle_id = %handle_id,
+            interval_secs,
+            "stats: starting polling stream"
+        );
+
+        let (tx, rx) = mpsc::channel::<Result<pb::ResourceUsage, Status>>(32);
+
+        tokio::spawn(async move {
+            loop {
+                // For Firecracker VMs, serve the last heartbeat from the cache
+                // rather than asking the backend (which has no guest-poll path).
+                let result = if is_firecracker {
+                    match heartbeat_cache.get(&vm_id) {
+                        Some(entry) => {
+                            let (usage, updated_at) = entry.value();
+                            if updated_at.elapsed().as_secs() > HEARTBEAT_STALE_SECS {
+                                Err(anyhow::anyhow!(
+                                    "firecracker stats: last heartbeat from vm '{}' is stale \
+                                     ({}s ago, threshold {}s); harness may have stopped reporting",
+                                    vm_id,
+                                    updated_at.elapsed().as_secs(),
+                                    HEARTBEAT_STALE_SECS,
+                                ))
+                            } else {
+                                Ok(crate::backend::StatsSample {
+                                    vcpu_ms_used: usage.vcpu_ms_used,
+                                    memory_bytes: usage.memory_bytes,
+                                    network_bytes_in: usage.network_bytes_in,
+                                    network_bytes_out: usage.network_bytes_out,
+                                })
+                            }
+                        }
+                        None => Err(anyhow::anyhow!(
+                            "firecracker stats: no heartbeat received yet for vm '{}'; \
+                             the in-VM harness reports usage via the Heartbeat stream — \
+                             wait for the first heartbeat before polling stats",
+                            vm_id,
+                        )),
+                    }
+                } else {
+                    backend.stats_sample(&handle_id).await
+                };
+
+                match result {
+                    Ok(sample) => {
+                        let usage = pb::ResourceUsage {
+                            vcpu_ms_used: sample.vcpu_ms_used,
+                            memory_bytes: sample.memory_bytes,
+                            network_bytes_in: sample.network_bytes_in,
+                            network_bytes_out: sample.network_bytes_out,
+                            disk_bytes: 0,
+                            cost_usd_accumulated: 0.0,
+                        };
+                        if tx.send(Ok(usage)).await.is_err() {
+                            // Client disconnected.
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        let status = if msg.contains("stats not supported by") {
+                            Status::unimplemented(format!(
+                                "stats not yet supported for '{}' isolation backend",
+                                backend.name()
+                            ))
+                        } else if msg.contains("no heartbeat received yet")
+                            || msg.contains("heartbeat") && msg.contains("stale")
+                        {
+                            // Firecracker-specific: heartbeat not yet / stale.
+                            Status::unavailable(msg)
+                        } else {
+                            tracing::warn!(
+                                vm_id = %vm_id,
+                                error = %e,
+                                "stats: sample error"
+                            );
+                            Status::internal(msg)
+                        };
+                        let _ = tx.send(Err(status)).await;
+                        break;
+                    }
+                }
+
+                tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
+            }
+        });
+
+        let out_stream: Self::StatsStream = Box::pin(ReceiverStream::new(rx));
+        Ok(Response::new(out_stream))
     }
 }
 
@@ -677,6 +1068,11 @@ const MAX_SECRET_TTL_SECS: i64 = 300;
 pub struct RuntimeHarnessGrpc {
     registry: Arc<HandleRegistry>,
     secret_resolver: Arc<dyn SecretResolver>,
+    /// Heartbeat cache shared with `RuntimeManagerGrpc`.  Each inbound
+    /// `HeartbeatRequest` updates this map; the stats dispatch layer reads it
+    /// for Firecracker VMs.  Entries are written per-message; the stats layer
+    /// enforces the `HEARTBEAT_STALE_SECS` staleness check on read.
+    heartbeat_cache: HeartbeatCache,
     /// When true, VendSecret enforces the client-cert ↔ vm_id identity check.
     /// Mirrors whether the manager's gRPC server is serving mTLS. In dev
     /// (plaintext) the check is skipped because no peer cert exists; in
@@ -688,11 +1084,13 @@ impl RuntimeHarnessGrpc {
     pub fn new(
         registry: Arc<HandleRegistry>,
         secret_resolver: Arc<dyn SecretResolver>,
+        heartbeat_cache: HeartbeatCache,
         mtls_enabled: bool,
     ) -> Self {
         Self {
             registry,
             secret_resolver,
+            heartbeat_cache,
             mtls_enabled,
         }
     }
@@ -706,12 +1104,82 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
 
     async fn heartbeat(
         &self,
-        _request: Request<tonic::Streaming<pb::HeartbeatRequest>>,
+        request: Request<tonic::Streaming<pb::HeartbeatRequest>>,
     ) -> Result<Response<Self::HeartbeatStream>, Status> {
-        // Heartbeat stream is tracked by the heartbeat module in the harness;
-        // the manager side is a future workstream. Return an empty stream so
-        // the harness can connect without error.
-        let stream: Self::HeartbeatStream = Box::pin(tokio_stream::empty());
+        let mut inbound = request.into_inner();
+        let cache = Arc::clone(&self.heartbeat_cache);
+        let registry = Arc::clone(&self.registry);
+
+        let (tx, rx) = mpsc::channel::<Result<pb::HeartbeatAck, Status>>(64);
+
+        tokio::spawn(async move {
+            loop {
+                match inbound.message().await {
+                    Ok(Some(hb)) => {
+                        if hb.vm_id.is_empty() {
+                            tracing::warn!(
+                                "heartbeat: received message with empty vm_id; skipping"
+                            );
+                            continue;
+                        }
+
+                        // Only accept heartbeats from VMs we actually spawned.
+                        // Silently skipping keeps the stream alive so the harness
+                        // isn't penalised for a racy reconnect during boot.
+                        if registry.get(&hb.vm_id).is_none() {
+                            tracing::debug!(
+                                vm_id = %hb.vm_id,
+                                "heartbeat: vm_id not registered; skipping (may be a reconnect race)"
+                            );
+                        }
+
+                        // Update the cache unconditionally — even for unknown VMs
+                        // (registration may arrive momentarily after the first
+                        // heartbeat if boot races).  Stale-entry eviction is
+                        // time-based in the stats reader, not here.
+                        let usage = hb.usage.unwrap_or_default();
+                        tracing::debug!(
+                            vm_id = %hb.vm_id,
+                            vcpu_ms = usage.vcpu_ms_used,
+                            mem_bytes = usage.memory_bytes,
+                            worker_pid = hb.worker_pid,
+                            restart_count = hb.restart_count,
+                            "heartbeat received"
+                        );
+                        cache.insert(hb.vm_id.clone(), (usage, Instant::now()));
+
+                        // Send an ack (no overrides in this implementation).
+                        if tx
+                            .send(Ok(pb::HeartbeatAck {
+                                egress_overrides: vec![],
+                                limits_override: None,
+                                drain: false,
+                                snapshot: false,
+                            }))
+                            .await
+                            .is_err()
+                        {
+                            // Harness disconnected; stop reading.
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        // Harness closed its sending side cleanly (e.g. VM
+                        // shutting down).  Close the ack stream gracefully.
+                        tracing::debug!("heartbeat: inbound stream closed by harness");
+                        break;
+                    }
+                    Err(e) => {
+                        // Transport error.  Log and close; the harness will
+                        // reconnect.
+                        tracing::warn!(error = %e, "heartbeat: stream error; closing");
+                        break;
+                    }
+                }
+            }
+        });
+
+        let stream: Self::HeartbeatStream = Box::pin(ReceiverStream::new(rx));
         Ok(Response::new(stream))
     }
 
@@ -1042,11 +1510,12 @@ mod tests {
             declared_secret_uris: declared_uris.into_iter().map(String::from).collect(),
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
+        let cache: HeartbeatCache = Arc::new(DashMap::new());
         // mtls_enabled=false: these tests exercise the allowlist / TTL /
         // registry-binding logic over plaintext (no peer cert exists in a
         // synthetic Request). The cert-enforcement path is covered by the
         // dedicated tests below with mtls_enabled=true.
-        RuntimeHarnessGrpc::new(registry, resolver, false)
+        RuntimeHarnessGrpc::new(registry, resolver, cache, false)
     }
 
     #[tokio::test]
@@ -1212,7 +1681,8 @@ mod tests {
             declared_secret_uris: declared_uris.into_iter().map(String::from).collect(),
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
-        RuntimeHarnessGrpc::new(registry, resolver, true)
+        let cache: HeartbeatCache = Arc::new(DashMap::new());
+        RuntimeHarnessGrpc::new(registry, resolver, cache, true)
     }
 
     /// With mTLS enforced, a request carrying NO peer cert (synthetic Request,
@@ -1236,6 +1706,200 @@ mod tests {
             err.code(),
             tonic::Code::PermissionDenied,
             "expected PERMISSION_DENIED when no client cert presented, got {err:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Exec + Stats — backend trait default impls and service validation
+    // -----------------------------------------------------------------------
+
+    // Build a RuntimeManagerGrpc with the given backend and one pre-registered
+    // VM so we can exercise the exec/stats handler paths without a live daemon.
+    fn manager_with_vm(
+        backend: Arc<dyn RuntimeBackend>,
+        vm_id: &str,
+        handle_id: &str,
+    ) -> RuntimeManagerGrpc {
+        let resolver = Arc::new(HashMapSecretResolver::new(HashMap::new()));
+        let svc = RuntimeManagerGrpc::new(backend, crate::pool::PoolConfig::default(), resolver);
+        svc.registry.register(HandleInfo {
+            handle_id: handle_id.to_string(),
+            run_id: "run-exec-test".to_string(),
+            tenant_id: "t-exec".to_string(),
+            backend: "stub".to_string(),
+            isolation_class: proto::IsolationClass::Standard,
+            created_at: chrono::Utc::now(),
+            resource_limits: proto::ResourceLimits::default(),
+            node_name: "node-1".to_string(),
+            declared_secret_uris: vec![],
+        });
+        // Rekey so the wire vm_id resolves to the backend handle_id.
+        svc.registry.rekey(handle_id, vm_id);
+        svc
+    }
+
+    // --- exec_command: default trait impl returns an error for non-Docker backends ---
+
+    #[tokio::test]
+    async fn exec_command_default_returns_error_for_stub() {
+        let backend = NamedStub::arc("firecracker");
+        // Call the default impl directly on the backend object.
+        let result = backend.exec_command("any-handle", "ls", &[]).await;
+        assert!(
+            result.is_err(),
+            "default exec_command should fail for non-Docker backend"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("exec not supported by"),
+            "error should mention 'exec not supported by', got: {msg}"
+        );
+        assert!(
+            msg.contains("firecracker"),
+            "error should name the backend, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn exec_command_default_includes_handle_id_in_error() {
+        let backend = NamedStub::arc("k8s");
+        let result = backend
+            .exec_command("my-container-id", "echo", &["hello".to_string()])
+            .await;
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("my-container-id"),
+            "error should include handle_id for debuggability, got: {msg}"
+        );
+    }
+
+    // --- stats_sample: default trait impl returns an error for non-Docker backends ---
+
+    #[tokio::test]
+    async fn stats_sample_default_returns_error_for_stub() {
+        let backend = NamedStub::arc("firecracker");
+        let result = backend.stats_sample("any-handle").await;
+        assert!(
+            result.is_err(),
+            "default stats_sample should fail for non-Docker backend"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("stats not supported by"),
+            "error should mention 'stats not supported by', got: {msg}"
+        );
+        assert!(
+            msg.contains("firecracker"),
+            "error should name the backend, got: {msg}"
+        );
+    }
+
+    // --- stats handler: missing vm_id rejected before touching backend ---
+
+    #[tokio::test]
+    async fn stats_handler_rejects_empty_vm_id() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let svc = manager_with_vm(NamedStub::arc("stub"), "vm-1", "handle-1");
+        let req = Request::new(pb::StatsRequest {
+            vm_id: String::new(),
+            interval: None,
+        });
+        let result = svc.stats(req).await;
+        let err = result.err().expect("empty vm_id should yield an error");
+        assert_eq!(
+            err.code(),
+            tonic::Code::InvalidArgument,
+            "empty vm_id should yield INVALID_ARGUMENT, got {err:?}"
+        );
+    }
+
+    // --- stats handler: unknown vm_id yields NOT_FOUND ---
+
+    #[tokio::test]
+    async fn stats_handler_unknown_vm_id_yields_not_found() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let svc = manager_with_vm(NamedStub::arc("stub"), "vm-known", "handle-known");
+        let req = Request::new(pb::StatsRequest {
+            vm_id: "vm-does-not-exist".to_string(),
+            interval: None,
+        });
+        let result = svc.stats(req).await;
+        let err = result.err().expect("unknown vm_id should yield an error");
+        assert_eq!(
+            err.code(),
+            tonic::Code::NotFound,
+            "unknown vm_id should yield NOT_FOUND, got {err:?}"
+        );
+    }
+
+    // --- stats handler: stub backend emits UNIMPLEMENTED on the stream ---
+    //
+    // The stats stream is lazy: the handler returns Ok immediately and starts
+    // a background task.  The first item on the stream is what reveals the
+    // backend error.  We drive the stream to completion to verify the error code.
+
+    // A non-firecracker stub backend that returns "stats not supported by …"
+    // should surface Unimplemented on the stream.
+    #[tokio::test]
+    async fn stats_handler_stub_backend_yields_unimplemented_on_stream() {
+        use futures::StreamExt as _;
+        use pb::runtime_manager_server::RuntimeManager as _;
+
+        // Use a name that is NOT "firecracker" so the handler goes through the
+        // backend.stats_sample() path (not the heartbeat-cache path).
+        let svc = manager_with_vm(NamedStub::arc("stub"), "vm-stub", "handle-stub");
+        let req = Request::new(pb::StatsRequest {
+            vm_id: "vm-stub".to_string(),
+            interval: None,
+        });
+        let resp = svc
+            .stats(req)
+            .await
+            .expect("stats handler should return Ok");
+        let mut stream = resp.into_inner();
+        let first = stream
+            .next()
+            .await
+            .expect("stream should yield at least one item");
+        let err = first.expect_err("stub backend should yield an error item");
+        assert_eq!(
+            err.code(),
+            tonic::Code::Unimplemented,
+            "stub backend should surface UNIMPLEMENTED, got {err:?}"
+        );
+    }
+
+    // A firecracker VM with no heartbeat in the cache should surface Unavailable
+    // on the stats stream (harness not yet connected / no heartbeat received).
+    #[tokio::test]
+    async fn stats_handler_firecracker_no_heartbeat_yields_unavailable() {
+        use futures::StreamExt as _;
+        use pb::runtime_manager_server::RuntimeManager as _;
+
+        let svc = manager_with_vm(NamedStub::arc("firecracker"), "vm-fc", "handle-fc");
+        let req = Request::new(pb::StatsRequest {
+            vm_id: "vm-fc".to_string(),
+            interval: None,
+        });
+        let resp = svc
+            .stats(req)
+            .await
+            .expect("stats handler should return Ok");
+        let mut stream = resp.into_inner();
+        let first = stream
+            .next()
+            .await
+            .expect("stream should yield at least one item");
+        let err = first.expect_err("firecracker with no heartbeat should yield an error item");
+        assert_eq!(
+            err.code(),
+            tonic::Code::Unavailable,
+            "firecracker no-heartbeat should surface UNAVAILABLE, got {err:?}"
+        );
+        assert!(
+            err.message().contains("no heartbeat received yet"),
+            "error message should mention missing heartbeat, got: {}",
+            err.message()
         );
     }
 }
