@@ -325,6 +325,12 @@ message ExecRequest {
   repeated string argv = 3;
   bytes  stdin    = 4;
   bool   tty      = 5;
+  // Interactive (tty=true) only: initial PTY geometry + TERM, applied when
+  // the PTY is allocated. Zero rows/cols fall back to 24x80; empty term
+  // falls back to "xterm". Mid-session resize is out of scope for now.
+  uint32 term_rows = 6;
+  uint32 term_cols = 7;
+  string term      = 8;   // e.g. "xterm-256color"
 }
 
 message ExecResponse {

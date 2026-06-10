@@ -8,7 +8,7 @@ use bollard::container::{
     Config as ContainerConfig, CreateContainerOptions, LogOutput, LogsOptions,
     RemoveContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
 };
-use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
+use bollard::exec::{CreateExecOptions, ResizeExecOptions, StartExecOptions, StartExecResults};
 use bollard::image::CommitContainerOptions;
 use futures::StreamExt;
 use futures::stream::BoxStream;
@@ -169,6 +169,33 @@ impl DockerBackend {
             cpu.parse::<f64>()
                 .ok()
                 .map(|v| (v * 1_000_000_000.0) as i64)
+        }
+    }
+
+    /// Build the `CreateExecOptions` for a TTY exec (`lantern vm exec -t`
+    /// against a docker-backed VM). Factored out of [`Self::exec_command_tty`]
+    /// so the option wiring is unit-testable without a Docker daemon.
+    fn build_tty_exec_options(
+        command: &str,
+        argv: &[String],
+        term: &str,
+    ) -> CreateExecOptions<String> {
+        let mut cmd: Vec<String> = Vec::with_capacity(1 + argv.len());
+        cmd.push(command.to_string());
+        cmd.extend(argv.iter().cloned());
+
+        CreateExecOptions {
+            attach_stdout: Some(true),
+            attach_stderr: Some(true),
+            attach_stdin: Some(false),
+            tty: Some(true),
+            env: if term.is_empty() {
+                None
+            } else {
+                Some(vec![format!("TERM={term}")])
+            },
+            cmd: Some(cmd),
+            ..Default::default()
         }
     }
 
@@ -623,6 +650,102 @@ impl RuntimeBackend for DockerBackend {
         })
     }
 
+    /// Run a one-shot command with a TTY allocated inside a running container.
+    ///
+    /// With `Tty: true` the Docker daemon merges stdout and stderr into a
+    /// single raw stream (PTY semantics) delivered as `LogOutput::Console`
+    /// frames; everything lands in the result's `stdout`. The initial
+    /// geometry is applied via the resize-exec API (best-effort — a failed
+    /// resize leaves the daemon default rather than failing the exec). Stdin
+    /// is not piped, matching the non-tty path.
+    async fn exec_command_tty(
+        &self,
+        handle_id: &str,
+        command: &str,
+        argv: &[String],
+        rows: u32,
+        cols: u32,
+        term: &str,
+    ) -> Result<ExecOutput> {
+        // Step 1: create the exec instance with a TTY.
+        let exec = self
+            .client
+            .create_exec(handle_id, Self::build_tty_exec_options(command, argv, term))
+            .await
+            .with_context(|| {
+                format!("docker tty exec create failed for container {handle_id} cmd={command}")
+            })?;
+
+        let exec_id = exec.id;
+
+        // Step 2: start the exec.
+        let result = self
+            .client
+            .start_exec(
+                &exec_id,
+                Some(StartExecOptions {
+                    detach: false,
+                    tty: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .with_context(|| format!("docker tty exec start failed for exec_id={exec_id}"))?;
+
+        // Step 3: apply the caller's terminal geometry (0 → daemon default).
+        if rows > 0 && cols > 0 {
+            let resize = ResizeExecOptions {
+                height: u16::try_from(rows).unwrap_or(u16::MAX),
+                width: u16::try_from(cols).unwrap_or(u16::MAX),
+            };
+            if let Err(e) = self.client.resize_exec(&exec_id, resize).await {
+                tracing::warn!(
+                    exec_id = %exec_id,
+                    rows,
+                    cols,
+                    error = %e,
+                    "tty exec: resize failed; keeping daemon default geometry"
+                );
+            }
+        }
+
+        // Step 4: collect merged output.
+        let mut stdout = Vec::new();
+        if let StartExecResults::Attached { mut output, .. } = result {
+            while let Some(chunk) = output.next().await {
+                match chunk.context("tty exec output stream error")? {
+                    LogOutput::Console { message }
+                    | LogOutput::StdOut { message }
+                    | LogOutput::StdErr { message } => stdout.extend_from_slice(&message),
+                    LogOutput::StdIn { .. } => {}
+                }
+            }
+        }
+
+        // Step 5: retrieve the exit code via inspect.
+        let inspect = self
+            .client
+            .inspect_exec(&exec_id)
+            .await
+            .with_context(|| format!("docker tty exec inspect failed for exec_id={exec_id}"))?;
+
+        let exit_code = inspect.exit_code.map(|c| c as i32).unwrap_or(-1);
+
+        tracing::debug!(
+            container_id = handle_id,
+            command,
+            exit_code,
+            stdout_bytes = stdout.len(),
+            "tty exec completed"
+        );
+
+        Ok(ExecOutput {
+            stdout,
+            stderr: vec![],
+            exit_code,
+        })
+    }
+
     /// Return a single resource-usage snapshot for a running container.
     ///
     /// Uses bollard's `stats` API with `stream=false, one_shot=true` so it
@@ -690,5 +813,43 @@ fn gethostname() -> String {
     #[cfg(not(unix))]
     {
         "localhost".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // build_tty_exec_options is pure — these tests verify the exec options
+    // wiring without a Docker daemon. The live attached TTY stream is
+    // daemon-runtime-only.
+
+    #[test]
+    fn tty_exec_options_allocate_a_tty() {
+        let opts =
+            DockerBackend::build_tty_exec_options("bash", &["-l".to_string()], "xterm-256color");
+
+        assert_eq!(opts.tty, Some(true), "tty=true must request a PTY");
+        assert_eq!(opts.attach_stdout, Some(true));
+        assert_eq!(opts.attach_stderr, Some(true));
+        assert_eq!(opts.attach_stdin, Some(false), "stdin is not piped");
+        assert_eq!(
+            opts.cmd,
+            Some(vec!["bash".to_string(), "-l".to_string()]),
+            "cmd must be [command, argv...]"
+        );
+        assert_eq!(
+            opts.env,
+            Some(vec!["TERM=xterm-256color".to_string()]),
+            "term must be exported as TERM"
+        );
+    }
+
+    #[test]
+    fn tty_exec_options_omit_term_when_empty() {
+        let opts = DockerBackend::build_tty_exec_options("sh", &[], "");
+        assert_eq!(opts.tty, Some(true));
+        assert_eq!(opts.env, None, "empty term must not export a TERM var");
+        assert_eq!(opts.cmd, Some(vec!["sh".to_string()]));
     }
 }

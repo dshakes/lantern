@@ -1846,10 +1846,16 @@ type ExecRequest struct {
 	VmId  string                 `protobuf:"bytes,1,opt,name=vm_id,json=vmId,proto3" json:"vm_id,omitempty"`
 	// First message in the stream MUST set `command` (and optional argv).
 	// Subsequent messages carry stdin bytes via `stdin`.
-	Command       string   `protobuf:"bytes,2,opt,name=command,proto3" json:"command,omitempty"`
-	Argv          []string `protobuf:"bytes,3,rep,name=argv,proto3" json:"argv,omitempty"`
-	Stdin         []byte   `protobuf:"bytes,4,opt,name=stdin,proto3" json:"stdin,omitempty"`
-	Tty           bool     `protobuf:"varint,5,opt,name=tty,proto3" json:"tty,omitempty"`
+	Command string   `protobuf:"bytes,2,opt,name=command,proto3" json:"command,omitempty"`
+	Argv    []string `protobuf:"bytes,3,rep,name=argv,proto3" json:"argv,omitempty"`
+	Stdin   []byte   `protobuf:"bytes,4,opt,name=stdin,proto3" json:"stdin,omitempty"`
+	Tty     bool     `protobuf:"varint,5,opt,name=tty,proto3" json:"tty,omitempty"`
+	// Interactive (tty=true) only: initial PTY geometry + TERM, applied when
+	// the PTY is allocated. Zero rows/cols fall back to 24x80; empty term
+	// falls back to "xterm". Mid-session resize is out of scope for now.
+	TermRows      uint32 `protobuf:"varint,6,opt,name=term_rows,json=termRows,proto3" json:"term_rows,omitempty"`
+	TermCols      uint32 `protobuf:"varint,7,opt,name=term_cols,json=termCols,proto3" json:"term_cols,omitempty"`
+	Term          string `protobuf:"bytes,8,opt,name=term,proto3" json:"term,omitempty"` // e.g. "xterm-256color"
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1917,6 +1923,27 @@ func (x *ExecRequest) GetTty() bool {
 		return x.Tty
 	}
 	return false
+}
+
+func (x *ExecRequest) GetTermRows() uint32 {
+	if x != nil {
+		return x.TermRows
+	}
+	return 0
+}
+
+func (x *ExecRequest) GetTermCols() uint32 {
+	if x != nil {
+		return x.TermCols
+	}
+	return 0
+}
+
+func (x *ExecRequest) GetTerm() string {
+	if x != nil {
+		return x.Term
+	}
+	return ""
 }
 
 type ExecResponse struct {
@@ -2867,13 +2894,16 @@ const file_lantern_v1_runtime_proto_rawDesc = "" +
 	"\x06follow\x18\x02 \x01(\bR\x06follow\x12\x1d\n" +
 	"\n" +
 	"tail_lines\x18\x03 \x01(\x03R\ttailLines\x120\n" +
-	"\x05since\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\"x\n" +
+	"\x05since\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\"\xc6\x01\n" +
 	"\vExecRequest\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12\x18\n" +
 	"\acommand\x18\x02 \x01(\tR\acommand\x12\x12\n" +
 	"\x04argv\x18\x03 \x03(\tR\x04argv\x12\x14\n" +
 	"\x05stdin\x18\x04 \x01(\fR\x05stdin\x12\x10\n" +
-	"\x03tty\x18\x05 \x01(\bR\x03tty\"o\n" +
+	"\x03tty\x18\x05 \x01(\bR\x03tty\x12\x1b\n" +
+	"\tterm_rows\x18\x06 \x01(\rR\btermRows\x12\x1b\n" +
+	"\tterm_cols\x18\a \x01(\rR\btermCols\x12\x12\n" +
+	"\x04term\x18\b \x01(\tR\x04term\"o\n" +
 	"\fExecResponse\x12\x16\n" +
 	"\x06stdout\x18\x01 \x01(\fR\x06stdout\x12\x16\n" +
 	"\x06stderr\x18\x02 \x01(\fR\x06stderr\x12\x1b\n" +
@@ -2951,18 +2981,20 @@ const file_lantern_v1_runtime_proto_rawDesc = "" +
 	"\x04List\x12\x17.lantern.v1.ListRequest\x1a\x18.lantern.v1.ListResponse\x12H\n" +
 	"\tTerminate\x12\x1c.lantern.v1.TerminateRequest\x1a\x1d.lantern.v1.TerminateResponse\x12E\n" +
 	"\bSnapshot\x12\x1b.lantern.v1.SnapshotRequest\x1a\x1c.lantern.v1.SnapshotResponse\x12B\n" +
-	"\aCluster\x12\x1a.lantern.v1.ClusterRequest\x1a\x1b.lantern.v1.ClusterResponse2\xc7\x02\n" +
+	"\aCluster\x12\x1a.lantern.v1.ClusterRequest\x1a\x1b.lantern.v1.ClusterResponse2\x8e\x03\n" +
 	"\x0eRuntimeManager\x12<\n" +
 	"\x05Spawn\x12\x18.lantern.v1.SpawnRequest\x1a\x19.lantern.v1.SpawnResponse\x129\n" +
 	"\x04Stop\x12\x17.lantern.v1.StopRequest\x1a\x18.lantern.v1.StopResponse\x12=\n" +
 	"\x04Logs\x12\x17.lantern.v1.LogsRequest\x1a\x1a.lantern.v1.RuntimeLogLine0\x01\x12=\n" +
 	"\x04Exec\x12\x17.lantern.v1.ExecRequest\x1a\x18.lantern.v1.ExecResponse(\x010\x01\x12>\n" +
-	"\x05Stats\x12\x18.lantern.v1.StatsRequest\x1a\x19.lantern.v1.ResourceUsage0\x012\xe5\x01\n" +
+	"\x05Stats\x12\x18.lantern.v1.StatsRequest\x1a\x19.lantern.v1.ResourceUsage0\x01\x12E\n" +
+	"\bSnapshot\x12\x1b.lantern.v1.SnapshotRequest\x1a\x1c.lantern.v1.SnapshotResponse2\xa4\x02\n" +
 	"\x0eRuntimeHarness\x12G\n" +
 	"\tHeartbeat\x12\x1c.lantern.v1.HeartbeatRequest\x1a\x18.lantern.v1.HeartbeatAck(\x010\x01\x12K\n" +
 	"\n" +
 	"VendSecret\x12\x1d.lantern.v1.VendSecretRequest\x1a\x1e.lantern.v1.VendSecretResponse\x12=\n" +
-	"\x06Report\x12\x19.lantern.v1.HarnessReport\x1a\x16.lantern.v1.HarnessAck(\x01BOZMgithub.com/dshakes/lantern/services/control-plane/gen/go/lantern/v1;lanternv1b\x06proto3"
+	"\x06Report\x12\x19.lantern.v1.HarnessReport\x1a\x16.lantern.v1.HarnessAck(\x01\x12=\n" +
+	"\x04Exec\x12\x17.lantern.v1.ExecRequest\x1a\x18.lantern.v1.ExecResponse(\x010\x01BOZMgithub.com/dshakes/lantern/services/control-plane/gen/go/lantern/v1;lanternv1b\x06proto3"
 
 var (
 	file_lantern_v1_runtime_proto_rawDescOnce sync.Once
@@ -3082,25 +3114,29 @@ var file_lantern_v1_runtime_proto_depIdxs = []int32{
 	26, // 52: lantern.v1.RuntimeManager.Logs:input_type -> lantern.v1.LogsRequest
 	27, // 53: lantern.v1.RuntimeManager.Exec:input_type -> lantern.v1.ExecRequest
 	29, // 54: lantern.v1.RuntimeManager.Stats:input_type -> lantern.v1.StatsRequest
-	30, // 55: lantern.v1.RuntimeHarness.Heartbeat:input_type -> lantern.v1.HeartbeatRequest
-	32, // 56: lantern.v1.RuntimeHarness.VendSecret:input_type -> lantern.v1.VendSecretRequest
-	34, // 57: lantern.v1.RuntimeHarness.Report:input_type -> lantern.v1.HarnessReport
-	8,  // 58: lantern.v1.RuntimeScheduler.Schedule:output_type -> lantern.v1.VmHandle
-	9,  // 59: lantern.v1.RuntimeScheduler.Events:output_type -> lantern.v1.StatusEvent
-	15, // 60: lantern.v1.RuntimeScheduler.List:output_type -> lantern.v1.ListResponse
-	17, // 61: lantern.v1.RuntimeScheduler.Terminate:output_type -> lantern.v1.TerminateResponse
-	19, // 62: lantern.v1.RuntimeScheduler.Snapshot:output_type -> lantern.v1.SnapshotResponse
-	21, // 63: lantern.v1.RuntimeScheduler.Cluster:output_type -> lantern.v1.ClusterResponse
-	23, // 64: lantern.v1.RuntimeManager.Spawn:output_type -> lantern.v1.SpawnResponse
-	25, // 65: lantern.v1.RuntimeManager.Stop:output_type -> lantern.v1.StopResponse
-	11, // 66: lantern.v1.RuntimeManager.Logs:output_type -> lantern.v1.RuntimeLogLine
-	28, // 67: lantern.v1.RuntimeManager.Exec:output_type -> lantern.v1.ExecResponse
-	10, // 68: lantern.v1.RuntimeManager.Stats:output_type -> lantern.v1.ResourceUsage
-	31, // 69: lantern.v1.RuntimeHarness.Heartbeat:output_type -> lantern.v1.HeartbeatAck
-	33, // 70: lantern.v1.RuntimeHarness.VendSecret:output_type -> lantern.v1.VendSecretResponse
-	35, // 71: lantern.v1.RuntimeHarness.Report:output_type -> lantern.v1.HarnessAck
-	58, // [58:72] is the sub-list for method output_type
-	44, // [44:58] is the sub-list for method input_type
+	18, // 55: lantern.v1.RuntimeManager.Snapshot:input_type -> lantern.v1.SnapshotRequest
+	30, // 56: lantern.v1.RuntimeHarness.Heartbeat:input_type -> lantern.v1.HeartbeatRequest
+	32, // 57: lantern.v1.RuntimeHarness.VendSecret:input_type -> lantern.v1.VendSecretRequest
+	34, // 58: lantern.v1.RuntimeHarness.Report:input_type -> lantern.v1.HarnessReport
+	27, // 59: lantern.v1.RuntimeHarness.Exec:input_type -> lantern.v1.ExecRequest
+	8,  // 60: lantern.v1.RuntimeScheduler.Schedule:output_type -> lantern.v1.VmHandle
+	9,  // 61: lantern.v1.RuntimeScheduler.Events:output_type -> lantern.v1.StatusEvent
+	15, // 62: lantern.v1.RuntimeScheduler.List:output_type -> lantern.v1.ListResponse
+	17, // 63: lantern.v1.RuntimeScheduler.Terminate:output_type -> lantern.v1.TerminateResponse
+	19, // 64: lantern.v1.RuntimeScheduler.Snapshot:output_type -> lantern.v1.SnapshotResponse
+	21, // 65: lantern.v1.RuntimeScheduler.Cluster:output_type -> lantern.v1.ClusterResponse
+	23, // 66: lantern.v1.RuntimeManager.Spawn:output_type -> lantern.v1.SpawnResponse
+	25, // 67: lantern.v1.RuntimeManager.Stop:output_type -> lantern.v1.StopResponse
+	11, // 68: lantern.v1.RuntimeManager.Logs:output_type -> lantern.v1.RuntimeLogLine
+	28, // 69: lantern.v1.RuntimeManager.Exec:output_type -> lantern.v1.ExecResponse
+	10, // 70: lantern.v1.RuntimeManager.Stats:output_type -> lantern.v1.ResourceUsage
+	19, // 71: lantern.v1.RuntimeManager.Snapshot:output_type -> lantern.v1.SnapshotResponse
+	31, // 72: lantern.v1.RuntimeHarness.Heartbeat:output_type -> lantern.v1.HeartbeatAck
+	33, // 73: lantern.v1.RuntimeHarness.VendSecret:output_type -> lantern.v1.VendSecretResponse
+	35, // 74: lantern.v1.RuntimeHarness.Report:output_type -> lantern.v1.HarnessAck
+	28, // 75: lantern.v1.RuntimeHarness.Exec:output_type -> lantern.v1.ExecResponse
+	60, // [60:76] is the sub-list for method output_type
+	44, // [44:60] is the sub-list for method input_type
 	44, // [44:44] is the sub-list for extension type_name
 	44, // [44:44] is the sub-list for extension extendee
 	0,  // [0:44] is the sub-list for field type_name

@@ -10,6 +10,11 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- **Interactive TTY exec** — `lantern vm exec <vm> -it -- <cmd>` allocates a real
+  PTY in the guest (harness `openpty` + controlling terminal + winsize) and
+  streams it bidirectionally; the CLI enters raw mode (no-op on non-terminal
+  stdin). Docker backend sets `Tty: true`. Non-tty exec is byte-identical.
+  `ExecRequest` gains `tty`/`term_rows`/`term_cols`/`term`.
 - **Firecracker guest exec** — the in-guest harness now serves its first RPC
   (`RuntimeHarness.Exec`); the manager records each VM's guest address from the
   heartbeat peer and forwards `lantern vm exec` into firecracker-class VMs over
