@@ -1,0 +1,51 @@
+# Default-deny NetworkPolicy for one run's pod: deny ALL ingress + egress,
+# then allow only DNS (port 53) and the runtime manager.
+#
+# What k8s.rs emits today (build_network_policy) vs this hardened target:
+#   MATCHES: per-run podSelector on lantern.dev/run-id; default-deny egress;
+#            DNS allow on UDP+TCP 53 to any peer; CIDR allowlist peers for
+#            AllowlistDomain/TenantVpc classes (none used here).
+#   GAP 1:   k8s.rs sets policyTypes: [Egress] only — no ingress deny. This
+#            manifest adds Ingress with no rules (deny all inbound).
+#   GAP 2:   k8s.rs has no manager-allow egress rule (harness -> runtime
+#            manager heartbeats/logs would be fenced too). This manifest
+#            allows TCP 50054 to the manager pod in lantern-system.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lantern-run-validate-00000001-egress
+  namespace: lantern-t-validate
+  labels:
+    app.kubernetes.io/name: lantern-agent-runner
+    app.kubernetes.io/managed-by: lantern-runtime-manager
+    lantern.dev/run-id: run-validate-00000001
+    lantern.dev/isolation-class: untrusted
+spec:
+  podSelector:
+    matchLabels:
+      lantern.dev/run-id: run-validate-00000001
+  policyTypes:
+    - Ingress
+    - Egress
+  # No ingress rules => deny all inbound.
+  ingress: []
+  egress:
+    # DNS (UDP+TCP 53) to any peer — i.e. cluster DNS — so the harness can
+    # resolve allowlisted domains and the pod can fail cleanly. Same rule
+    # k8s.rs dns_egress_rule() emits.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The runtime manager (log/heartbeat/secret-vend channel), gRPC :50054.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: lantern-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: lantern-runtime-manager
+      ports:
+        - protocol: TCP
+          port: 50054
