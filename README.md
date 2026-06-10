@@ -57,16 +57,19 @@ elevator version, see [`PITCH.md`](PITCH.md).)
 
 | Module | What it gives you | Maturity |
 |---|---|---|
-| **1 · Agent Runtime** | Run agents in *your* cloud: durable workflow engine, capability‑based multi‑LLM router, microVM isolation (scheduler / manager / harness), edge gateway. Control plane never touches user code. | Core prod‑ready; microVM live‑boot is alpha (**fail‑closed**) |
+| **1 · Agent Runtime** | Run agents in *your* cloud: durable workflow engine, capability‑based multi‑LLM router, isolated execution (scheduler / manager / harness; Docker, Firecracker, Kata, K8s Jobs, Wasm backends), edge gateway. Control plane never touches user code. | Core prod‑ready; Firecracker live‑boot is alpha (**fail‑closed** off‑KVM) |
 | **2 · Personal Agent ("Jarvis")** | WhatsApp + iMessage assistant that texts **as you** — owner‑only, learns your real voice from history, agentic macOS actions, cross‑channel memory, urgent‑alerting, privacy guards. | Live |
 | **3 · Trust & Governance** | Policy‑as‑code budgets (hard‑fail 402), eval‑in‑CI + rehearsals, HMAC‑verifiable receipts, guardrails, multi‑tenant RLS, AES‑256‑GCM secrets, fail‑closed‑in‑prod. | Prod‑ready |
 | **4 · Channels & Reach** | WhatsApp · iMessage · Slack · Telegram · Discord · Voice (Twilio/LiveKit) · Webchat · Email — signature‑verified, naturally paced. | Prod‑ready |
 | **5 · Developer Experience** | TS/Python/Go SDKs, `lantern` CLI, one‑command dev, a visual workflow editor that *executes*, MCP registry, A2A cards, forkable agent marketplace. | Prod‑ready |
 
 > **Alpha honesty:** modules 2–5 are in real use; Module 1's microVM **live boot**
-> (Firecracker), the live TLS/mTLS handshake, and secret‑vending transport are
-> implemented + unit‑tested but ship **fail‑closed** pending Linux/KVM
-> integration — enumerated in [`SECURITY.md`](SECURITY.md). Nothing pretends to work.
+> (Firecracker) and the live two‑process mTLS handshake are implemented +
+> unit‑tested but need Linux/KVM (the CI runner or the [`infra/lima/`](infra/lima/)
+> nested‑virt guest) — live‑boot CI is not green yet, and jailer wrapping is
+> still open; enumerated in [`SECURITY.md`](SECURITY.md). On hosts without KVM,
+> Hostile/Untrusted workloads **fail closed** rather than downgrade. Nothing
+> pretends to work.
 
 Every run is durable, budgeted, isolated, and cryptographically verifiable —
 the same path for a backend job or a WhatsApp message:
@@ -93,7 +96,7 @@ make dev          # builds + starts infra + control-plane + workflow-engine
 Then open **http://localhost:3001** and log in with **`admin@lantern.dev` / `lantern`**.
 The dev tenant, admin user, and schema are seeded automatically on first boot. Run `make seed` to add sample agents and runs.
 
-> The macOS WhatsApp/iMessage bridges are **host services** (they need macOS Contacts/Calendar/chat.db), so they're not part of the Linux `make dev` stack — run them with `lantern dev` or `make run-whatsapp-bridge` / `make run-imessage-bridge`.
+> The macOS WhatsApp/iMessage bridges are **host services** (they need macOS Contacts/Calendar/chat.db), so they're not part of the Linux `make dev` stack — run them with `lantern dev` or `make run-whatsapp-bridge` / `make run-imessage-bridge`. First time? `make bridge-setup` is an interactive wizard that checks prereqs, fills in `.env.local`, and validates the macOS permissions.
 
 ### Option B — hot‑reload daily driver (`lantern dev`)
 
@@ -177,7 +180,7 @@ For optional integrations (Google OAuth, real LLM keys, connector OAuth), copy `
 | **workflow‑engine** | Go | `:50052` (gRPC) | durable, event‑sourced step execution — the only mutator of run state |
 | **model‑router** | Rust | `:50053` (gRPC) | capability‑based multi‑LLM routing, failover, caching |
 | **runtime‑scheduler** | Go | `:50055` (gRPC) · `:8085` (REST) | microVM placement (warm‑pool / region / fair‑share / cost / health) |
-| **runtime‑manager** | Rust | `:50054` (gRPC) | spawns isolated workloads (Firecracker / Kata / K8s / Wasmtime) |
+| **runtime‑manager** | Rust | `:50054` (gRPC) | spawns isolated workloads (Docker / Firecracker / Kata / K8s / Wasmtime) |
 | **harness** | Rust | in‑VM | PID 1 inside every microVM: egress allowlist, JWT vending, heartbeats |
 | **gateway** | Rust | `:8443` (HTTPS) | TLS, auth, rate limit, end‑to‑end token streaming |
 | **surface‑gateway** | Rust | `:8444` (HTTP) | inbound channel webhooks (Slack/WhatsApp/Telegram/Twilio/Discord) |
@@ -241,7 +244,7 @@ SDKs ship for **TypeScript** (primary), **Python**, and **Go**.
 
 **Trust** · Verifiable HMAC receipts over the journal SHA‑256, publicly verifiable at `/proof` · AES‑256‑GCM credential encryption at rest · multi‑tenant by default with Postgres RLS · idempotency keys on every external side‑effect · OTel traces carrying `tenant_id`/`run_id`/`step_id`.
 
-**Headless microVM runtime** · Schedule untrusted agents into Firecracker / Kata / K8s Job / Wasmtime / devcontainer isolation; the in‑VM Rust harness enforces an egress allowlist and vends short‑TTL secrets. Per‑tenant quota (HTTP 402 over cap). Demos in [`examples/headless-agents/`](examples/headless-agents/).
+**Headless microVM runtime** · Schedule untrusted agents into isolated workloads via five backends: **Docker** (laptop default), **Firecracker** and **Kata** (Linux/KVM), **K8s Jobs**, and **Wasm** (in‑process Wasmtime — runs anywhere). Exec, stats, snapshots (local filesystem + S3/MinIO tier), and the control‑plane secret relay (ADR 0008) are wired; the in‑VM Rust harness enforces an egress allowlist with per‑rule rate limits and vends short‑TTL secrets. Per‑tenant quota (HTTP 402 over cap). Hostile/Untrusted workloads are refused on non‑Firecracker/Kata nodes — never silently downgraded. Demos in [`examples/headless-agents/`](examples/headless-agents/).
 
 Run the headless runtime locally (Docker backend — no Linux/KVM needed):
 
@@ -252,6 +255,8 @@ make run-scheduler        # terminal 3: scheduler on :50055 / :8085
 make run-api-runtime      # terminal 4: control-plane wired to the scheduler on :8080
 lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name":"world"}'
 ```
+
+Prefer containers? The Compose stack has an opt‑in profile: `docker compose -f infra/docker/docker-compose.yml --profile runtime up --build`. And to run **real Firecracker on an Apple Silicon Mac** (M3+/macOS 15+), [`infra/lima/`](infra/lima/) provisions a Lima guest with nested‑virt KVM — a microVM boots to login in ~1.6 s (verified on an M4 Max).
 
 **Surfaces** · WhatsApp · iMessage · Slack · Discord · Telegram · Voice (Twilio/LiveKit) · Webchat embed · Email.
 
@@ -306,7 +311,7 @@ lantern/
     workflow-engine/    Go    durable step execution, event-sourced journal + replay
     model-router/       Rust  capability-based multi-LLM routing, failover, caching
     runtime-scheduler/  Go    microVM placement engine
-    runtime-manager/    Rust  Firecracker / Kata / K8s / Wasmtime orchestration
+    runtime-manager/    Rust  Docker / Firecracker / Kata / K8s / Wasmtime orchestration
     harness/            Rust  in-microVM init: egress allowlist, JWT vending, heartbeats
     gateway/            Rust  API edge: TLS, auth, rate limiting, streaming proxy
     surface-gateway/    Rust  inbound channel webhooks
@@ -324,7 +329,8 @@ lantern/
   apps/
     web/   Next.js dashboard      landing/  marketing site      docs/  documentation site
   examples/             runnable agents incl. examples/headless-agents/{01..04}
-  infra/                docker-compose · Helm · Terraform · kind
+  e2e/                  live-stack end-to-end suites (runtime control path) — `make test-e2e`
+  infra/                docker-compose · Helm · Terraform · kind · k8s (isolation validation) · lima (Firecracker on Apple Silicon)
   docs/architecture · docs/adr · docs/assets (diagrams)
 ```
 
@@ -353,6 +359,9 @@ lantern login                        token-based auth
 
 ```bash
 make test         # all suites: Go (-race), Rust, TypeScript (vitest), Python (pytest)
+make test-db      # Go tests that need a live Postgres (starts dev Postgres if needed)
+make test-e2e     # live-stack e2e suites against the real API on :8080 — skips green when the stack is down (see e2e/README.md)
+make k8s-validate # K8s Job isolation harness: throwaway kind cluster + Calico, proves default-deny egress / seccomp / cap-drop / PSA live
 make lint         # golangci-lint + cargo clippy + tsc
 make audit        # govulncheck + cargo audit + npm audit
 make ci-local     # lint + test + audit — the same gate CI runs
@@ -396,8 +405,9 @@ granted to the Node binary in System Settings → Privacy → Full Disk Access.
 **microVM live-boot fails** — Firecracker requires Linux + `/dev/kvm`. On macOS (and
 any host without KVM) the runtime-manager refuses Hostile/Untrusted workloads with
 `FAILED_PRECONDITION` and is **fail-closed** by design. Use `RUNTIME_BACKEND=docker`
-(the default) for local development; reserve Firecracker for a Linux CI runner or
-dedicated node.
+(the default) for local development; for real Firecracker on an Apple Silicon Mac
+(M3+/macOS 15+), use the Lima nested-virt guest in [`infra/lima/`](infra/lima/) —
+otherwise reserve it for a Linux CI runner or dedicated node.
 
 ---
 

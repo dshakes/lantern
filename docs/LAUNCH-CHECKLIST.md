@@ -79,7 +79,7 @@ Items required before GA / "run untrusted code from the public in production".
 
 ### Security (hard gates from `SECURITY.md`)
 
-- [ ] **Firecracker jailer wrapping** — sandboxes must run under `firecracker-jailer` for filesystem and network isolation; noted as remaining hardening in `SECURITY.md`
+- [x] **Firecracker jailer wrapping** — implemented opt-in via `FIRECRACKER_JAILER_PATH` (chroot + drop to non-root `FIRECRACKER_JAILER_UID`/`GID`, default 123:100, `FIRECRACKER_CHROOT_BASE` default `/srv/jailer`) in `services/runtime-manager/src/backends/firecracker.rs`; argv construction unit-tested, jailed exec is Linux-runtime-only. Residual: jailed snapshot-restore fails closed (not yet wired)
 - [x] **Kata backend implemented** — `KataBackend` implemented in `services/runtime-manager/src/backends/kata.rs`; `RUNTIME_BACKEND=kata` + `KATA_RUNTIME_NAME`. Requires Linux host with Kata Containers installed and registered in Docker daemon; Exec/Stats work through inner Docker client
 - [x] **Wasm backend implemented** — `WasmBackend` implemented in `services/runtime-manager/src/backends/wasm.rs` via Wasmtime (WASIp1); memory limits + epoch timeouts; `RUNTIME_BACKEND=wasm`
 - [ ] **Real heartbeat RPC for egress policy revocation** — policy changes must propagate to running VMs; the harness heartbeat `AckFields` design is in `services/harness/README.md` but the manager side is a stub
