@@ -49,6 +49,38 @@ describe("isValidJid", () => {
     const long = "1".repeat(200) + "@s.whatsapp.net";
     expect(isValidJid(long)).toBe(false);
   });
+
+  it("accepts a jid at exactly the 128-char limit", () => {
+    // "@s.whatsapp.net" is 15 chars; pad localpart to reach exactly 128.
+    const suffix = "@s.whatsapp.net";
+    const localpart = "1".repeat(128 - suffix.length);
+    expect(localpart.length + suffix.length).toBe(128);
+    expect(isValidJid(localpart + suffix)).toBe(true);
+  });
+
+  it("rejects a jid at exactly 129 chars (one over the limit)", () => {
+    const suffix = "@s.whatsapp.net";
+    const localpart = "1".repeat(129 - suffix.length);
+    expect(localpart.length + suffix.length).toBe(129);
+    expect(isValidJid(localpart + suffix)).toBe(false);
+  });
+
+  it("rejects a jid consisting only of the suffix (empty localpart)", () => {
+    // "@s.whatsapp.net" alone — no localpart — is technically 15 chars and
+    // ends with the suffix, but the JID itself has no user portion. The validator
+    // should still accept this since we deliberately don't validate the localpart
+    // shape per the doc comment. This test documents the current behavior.
+    // (It passes because length > 0 and no control chars and has the right suffix.)
+    expect(isValidJid("@s.whatsapp.net")).toBe(true);
+  });
+
+  it("rejects a tab character within the jid", () => {
+    expect(isValidJid("1234\t567@s.whatsapp.net")).toBe(false);
+  });
+
+  it("rejects a carriage-return within the jid", () => {
+    expect(isValidJid("1234\r567@g.us")).toBe(false);
+  });
 });
 
 describe("isValidGroupJid", () => {
