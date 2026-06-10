@@ -80,6 +80,15 @@ async fn main() -> anyhow::Result<()> {
     let pool_config = PoolConfig::default();
     let grpc_service = RuntimeManagerGrpc::new(backend, pool_config, Arc::clone(&resolver));
 
+    // rustls 0.23 requires a process-level CryptoProvider. We pin the `ring`
+    // provider (Cargo.toml: rustls default-features off + features=["ring"]),
+    // and with only `ring` enabled rustls does NOT auto-install a default — so
+    // the tonic TLS server panics on the first handshake unless we install it
+    // here. (This path only runs on the Linux mTLS data path, so it is invisible
+    // to macOS unit tests; the live microVM integration test is what catches a
+    // regression. `.ok()` because a second install is a harmless no-op.)
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // mTLS: FAIL-CLOSED in prod when env vars absent, WARN+plaintext in dev.
     // Computed before constructing the harness service so VendSecret knows
     // whether to enforce the client-cert ↔ vm_id identity check.

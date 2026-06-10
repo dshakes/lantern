@@ -183,8 +183,13 @@ impl RuntimeManagerGrpc {
 
     /// Map an anyhow error to a tonic Status.
     fn to_status(e: anyhow::Error) -> Status {
-        tracing::error!(error = %e, "runtime manager error");
-        Status::internal(e.to_string())
+        // `{:#}` renders the full anyhow source chain (top context + every
+        // `.context()` cause), not just the outermost message — otherwise a
+        // wrapped failure like "failed to boot microVM" hides the real cause
+        // (e.g. the `ip tuntap add` stderr). The Status message carries the
+        // chain too so a gRPC client sees the actual reason.
+        tracing::error!(error = format!("{e:#}"), "runtime manager error");
+        Status::internal(format!("{e:#}"))
     }
 
     /// Decide where an exec for `vm_id` goes.
