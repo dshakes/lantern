@@ -38,10 +38,19 @@ provision:
       tar -xzf /tmp/fc.tgz -C /tmp
       install -m 0755 "/tmp/release-${VER}-${ARCH}/firecracker-${VER}-${ARCH}" /usr/local/bin/firecracker
       rm -rf /tmp/fc.tgz "/tmp/release-${VER}-${ARCH}"
-  # Make /dev/kvm usable by the default user.
+  # Make /dev/kvm usable by the default user — PERSISTENTLY. A one-off chmod is
+  # reverted on the next reboot (the device node is recreated mode 0660
+  # root:kvm), so add the user to the kvm group AND drop a udev rule that fixes
+  # the mode every boot. Both, because group membership only applies to new
+  # login sessions while the udev rule covers the current one.
   - mode: system
     script: |
       #!/bin/bash
       set -eux -o pipefail
       [ -e /dev/kvm ] || { echo "FATAL: /dev/kvm missing — host needs M3+ and macOS 15+ (nested virt)"; exit 1; }
-      chmod 666 /dev/kvm
+      getent group kvm >/dev/null || groupadd -r kvm
+      usermod -aG kvm "${LIMA_CIDATA_USER:-$(logname 2>/dev/null || echo "${SUDO_USER:-}")}" || true
+      printf 'KERNEL=="kvm", GROUP="kvm", MODE="0666"\n' > /etc/udev/rules.d/65-kvm.rules
+      udevadm control --reload-rules 2>/dev/null || true
+      udevadm trigger --name-match=kvm 2>/dev/null || true
+      chmod 0666 /dev/kvm
