@@ -247,4 +247,62 @@ describe("AttentionClassifier dedup", () => {
     c.markNotified("a@s.whatsapp.net");
     expect(c.shouldNotify("b@s.whatsapp.net")).toBe(true);
   });
+
+  it("gcDedup evicts stale entries when map exceeds DEDUP_MAX_ENTRIES", () => {
+    // Fill the map past the cap. markNotified triggers gcDedup when size >
+    // DEDUP_MAX_ENTRIES. Because our dedup window is 30 min and we set all
+    // entries at the same fake-time, none are stale at time-of-gc — so the
+    // map stays at or near DEDUP_MAX_ENTRIES, not zero. We verify that the
+    // cap is enforced (doesn't grow unbounded) and that a just-added entry
+    // still survives because it's fresh.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-18T10:00:00Z"));
+
+    const c = new AttentionClassifier(logger);
+    const { DEDUP_MAX_ENTRIES } = __test;
+
+    // Fill up to the cap; entries 0..MAX-1 are all "current" time.
+    for (let i = 0; i < DEDUP_MAX_ENTRIES; i++) {
+      c.markNotified(`${i}@s.whatsapp.net`);
+    }
+
+    // Advance time past 2×dedupMs (2×30min=60min) so all those entries
+    // are now stale and eligible for GC.
+    vi.advanceTimersByTime(61 * 60_000);
+
+    // One more markNotified triggers gcDedup. All old entries are stale →
+    // GC clears them. New entry goes in. Map should contain exactly 1 entry.
+    const newJid = "fresh@s.whatsapp.net";
+    c.markNotified(newJid);
+
+    // The fresh JID was just added — it must still be in the dedup window.
+    expect(c.shouldNotify(newJid)).toBe(false);
+
+    // All stale entries should be gone. We can verify indirectly: any old
+    // JID that was beyond 2×window should now be allowed.
+    expect(c.shouldNotify("0@s.whatsapp.net")).toBe(true);
+  });
+
+  it("LANTERN_ATTENTION_DEDUP_MIN=0 (falsy) falls back to default 30 min", () => {
+    // The expression is: Math.max(1, Number(env) || DEFAULT_DEDUP_MIN) * 60_000
+    // When env="0", Number("0")=0 which is falsy → 0 || 30 = 30.
+    // So setting to "0" acts as "use the default", not "clamp to 1 minute".
+    process.env.LANTERN_ATTENTION_DEDUP_MIN = "0";
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-18T10:00:00Z"));
+
+    const c = new AttentionClassifier(logger);
+    const jid = "15551234567@s.whatsapp.net";
+    c.markNotified(jid);
+
+    // 25 minutes later — still within the 30-min default window.
+    vi.advanceTimersByTime(25 * 60_000);
+    expect(c.shouldNotify(jid)).toBe(false);
+
+    // 31 minutes after the initial notify — window cleared.
+    vi.advanceTimersByTime(6 * 60_000 + 1000);
+    expect(c.shouldNotify(jid)).toBe(true);
+
+    delete process.env.LANTERN_ATTENTION_DEDUP_MIN;
+  });
 });
