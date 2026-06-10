@@ -23,7 +23,10 @@
 //! - `unix_socket_put` / `unix_socket_patch`: actual HTTP-over-Unix-socket
 //!   I/O via `hyperlocal`.  Tagged with `// LINUX-ONLY` comments.
 //! - `spawn_firecracker_process`: forks the `firecracker` binary with
-//!   `--api-sock`.  Tagged `// LINUX-ONLY`.
+//!   `--api-sock` — or, when `FIRECRACKER_JAILER_PATH` is set, the `jailer`
+//!   binary (chroot + uid/gid drop; ADR-0006 §Jailer).  Argv/path
+//!   construction is pure and unit-tested; the jailed launch itself is
+//!   validated by the microvm integration CI (KVM runner / Lima).
 //! - `setup_tap_device`: creates a TAP device and attaches it to a bridge.
 //!   Marked `// LINUX-ONLY: requires root / CAP_NET_ADMIN`.
 //! - The `schedule()` / `cancel()` / `restore()` live paths after the
@@ -684,6 +687,224 @@ async fn unix_socket_request<T: Serialize>(
 }
 
 // ---------------------------------------------------------------------------
+// Jailer configuration (ADR-0006 §Jailer)
+//
+// Production hardening for the Firecracker launch: when enabled, the VM
+// process is started via the `jailer` binary, which chroots `firecracker`
+// under `<chroot_base>/<exec_basename>/<vm_id>/root/`, drops to an
+// unprivileged uid/gid, and execs firecracker inside the jail.  Because the
+// process is chrooted, every path Firecracker itself opens (API socket,
+// kernel, drives, vsock UDS, snapshots) resolves INSIDE the jail; the
+// manager stages artifacts in and translates paths back out.
+//
+// All argv/path construction below is pure and unit-tested on any platform.
+// The live jailed launch is LINUX-ONLY and validated by the microvm
+// integration CI (KVM runner / Lima), NOT unit-exec-tested.
+// ---------------------------------------------------------------------------
+
+/// Default uid the jailer drops `firecracker` to when `FIRECRACKER_JAILER_UID`
+/// is unset.  123:100 is the unprivileged identity used throughout the
+/// upstream Firecracker jailer documentation; non-root by construction.
+pub const DEFAULT_JAILER_UID: u32 = 123;
+/// Default gid (see [`DEFAULT_JAILER_UID`]).
+pub const DEFAULT_JAILER_GID: u32 = 100;
+/// Default chroot base directory when `FIRECRACKER_CHROOT_BASE` is unset.
+pub const DEFAULT_CHROOT_BASE: &str = "/srv/jailer";
+/// In-jail API socket path.  Matches the jailer's documented default
+/// location (`<jail root>/run/firecracker.socket`); passed explicitly after
+/// `--` so the contract does not depend on binary defaults.
+pub const JAILED_API_SOCKET: &str = "/run/firecracker.socket";
+
+/// Jailer launch parameters, read once from the environment at backend
+/// construction.  `None` (env unset) preserves the bare-`firecracker`
+/// launch path exactly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JailerConfig {
+    /// Path to the `jailer` binary (`FIRECRACKER_JAILER_PATH`).
+    pub jailer_binary_path: String,
+    /// Uid the jail drops to (`FIRECRACKER_JAILER_UID`, default 123).
+    pub uid: u32,
+    /// Gid the jail drops to (`FIRECRACKER_JAILER_GID`, default 100).
+    pub gid: u32,
+    /// Chroot base directory (`FIRECRACKER_CHROOT_BASE`, default `/srv/jailer`).
+    pub chroot_base_dir: String,
+}
+
+impl JailerConfig {
+    /// Read the jailer configuration from the environment.
+    ///
+    /// Jailing is enabled if and only if `FIRECRACKER_JAILER_PATH` is set to
+    /// a non-empty value — the default (unset) keeps today's bare launch.
+    pub fn from_env() -> Option<Self> {
+        Self::from_parts(
+            std::env::var("FIRECRACKER_JAILER_PATH")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .as_deref(),
+            std::env::var("FIRECRACKER_JAILER_UID").ok().as_deref(),
+            std::env::var("FIRECRACKER_JAILER_GID").ok().as_deref(),
+            std::env::var("FIRECRACKER_CHROOT_BASE").ok().as_deref(),
+        )
+    }
+
+    /// Derive the config from raw env-shaped inputs.  Injectable for unit
+    /// tests (same pattern as [`AvailabilityProbe`]) — no filesystem or env
+    /// access.
+    ///
+    /// `None`/empty `jailer_path` disables jailing.  An unparseable or `0`
+    /// uid/gid falls back to the non-root default (123:100), never to root.
+    pub fn from_parts(
+        jailer_path: Option<&str>,
+        uid: Option<&str>,
+        gid: Option<&str>,
+        chroot_base: Option<&str>,
+    ) -> Option<Self> {
+        let jailer_binary_path = jailer_path.filter(|p| !p.is_empty())?.to_string();
+        Some(JailerConfig {
+            jailer_binary_path,
+            uid: parse_jail_id(uid, DEFAULT_JAILER_UID, "FIRECRACKER_JAILER_UID"),
+            gid: parse_jail_id(gid, DEFAULT_JAILER_GID, "FIRECRACKER_JAILER_GID"),
+            chroot_base_dir: chroot_base
+                .filter(|s| !s.is_empty())
+                .unwrap_or(DEFAULT_CHROOT_BASE)
+                .to_string(),
+        })
+    }
+
+    /// Host path of the per-VM jail directory the jailer creates:
+    /// `<chroot_base>/<exec_file_basename>/<vm_id>`.
+    #[must_use]
+    pub fn jail_dir(&self, fc_binary_path: &str, vm_id: &str) -> String {
+        let exec_name = Path::new(fc_binary_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("firecracker");
+        format!(
+            "{}/{exec_name}/{vm_id}",
+            self.chroot_base_dir.trim_end_matches('/')
+        )
+    }
+
+    /// Host path of the jail's chroot root (`<jail_dir>/root`) — the `/` the
+    /// chrooted firecracker process sees.
+    #[must_use]
+    pub fn chroot_root(&self, fc_binary_path: &str, vm_id: &str) -> String {
+        format!("{}/root", self.jail_dir(fc_binary_path, vm_id))
+    }
+
+    /// Host-visible path of the jailed VM's API socket.
+    #[must_use]
+    pub fn host_api_socket_path(&self, fc_binary_path: &str, vm_id: &str) -> String {
+        self.host_path(fc_binary_path, vm_id, JAILED_API_SOCKET)
+    }
+
+    /// Map an in-jail absolute path to its host-visible location under the
+    /// chroot root.
+    #[must_use]
+    pub fn host_path(&self, fc_binary_path: &str, vm_id: &str, in_jail_path: &str) -> String {
+        format!("{}{in_jail_path}", self.chroot_root(fc_binary_path, vm_id))
+    }
+}
+
+/// Parse a uid/gid env value, falling back to the non-root default on
+/// missing, unparseable, or `0` (root would defeat the jail's purpose).
+fn parse_jail_id(raw: Option<&str>, default: u32, var_name: &str) -> u32 {
+    match raw {
+        None => default,
+        Some(s) => match s.trim().parse::<u32>() {
+            Ok(v) if v != 0 => v,
+            Ok(_) | Err(_) => {
+                tracing::warn!(
+                    var = var_name,
+                    value = s,
+                    fallback = default,
+                    "invalid jailer uid/gid (must be a non-zero u32); using default"
+                );
+                default
+            }
+        },
+    }
+}
+
+/// Build the firecracker-level argv (everything after the program name).
+/// Shared by the bare and jailed launch paths.  Pure.
+#[must_use]
+pub fn build_firecracker_argv(api_socket_path: &str, log_level: Option<&str>) -> Vec<String> {
+    let mut argv = vec!["--api-sock".to_string(), api_socket_path.to_string()];
+    if let Some(level) = log_level {
+        argv.push("--log-level".to_string());
+        argv.push(level.to_string());
+    }
+    argv
+}
+
+/// Build the jailer argv: jail identity flags, then `--`, then the
+/// firecracker args to exec inside the jail.  Pure — unit-tested without a
+/// jailer binary or Linux.
+///
+/// Cgroup flags are intentionally omitted: the jailer only needs them when
+/// imposing cgroup limits, and resource limits are already enforced via the
+/// Firecracker machine-config (vcpu/mem).  Cgroup confinement is a
+/// follow-up hardening layer.
+#[must_use]
+pub fn build_jailer_argv(
+    jailer: &JailerConfig,
+    fc_binary_path: &str,
+    vm_id: &str,
+    fc_args: &[String],
+) -> Vec<String> {
+    let mut argv = vec![
+        "--id".to_string(),
+        vm_id.to_string(),
+        "--exec-file".to_string(),
+        fc_binary_path.to_string(),
+        "--uid".to_string(),
+        jailer.uid.to_string(),
+        "--gid".to_string(),
+        jailer.gid.to_string(),
+        "--chroot-base-dir".to_string(),
+        jailer.chroot_base_dir.clone(),
+        "--".to_string(),
+    ];
+    argv.extend(fc_args.iter().cloned());
+    argv
+}
+
+/// In-jail path where a host artifact is staged: `/<basename>` directly
+/// under the chroot root.  Pure.
+#[must_use]
+pub fn jail_artifact_path(host_path: &str) -> String {
+    let name = Path::new(host_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("artifact");
+    format!("/{name}")
+}
+
+/// Resolve the `(program, argv)` pair for spawning a VM process — the bare
+/// `firecracker` invocation, or the `jailer`-wrapped one when jailing is
+/// enabled.  Pure — unit-tested on any platform.
+#[must_use]
+pub fn build_spawn_invocation(cfg: &SpawnConfig) -> (String, Vec<String>) {
+    match &cfg.jailer {
+        None => (
+            cfg.binary_path.clone(),
+            build_firecracker_argv(&cfg.socket_path, cfg.log_level.as_deref()),
+        ),
+        Some(jailer) => {
+            // Inside the jail the API socket is at the chroot-relative
+            // JAILED_API_SOCKET; cfg.socket_path holds the host-visible
+            // location (used by wait_for_socket / the API client).
+            let fc_args = build_firecracker_argv(JAILED_API_SOCKET, cfg.log_level.as_deref());
+            (
+                jailer.jailer_binary_path.clone(),
+                build_jailer_argv(jailer, &cfg.binary_path, &cfg.vm_id, &fc_args),
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Process management shims (Linux-only)
 // ---------------------------------------------------------------------------
 
@@ -692,11 +913,18 @@ async fn unix_socket_request<T: Serialize>(
 pub struct SpawnConfig {
     /// Path to the `firecracker` binary.
     pub binary_path: String,
-    /// Path where the API Unix socket should be created.
+    /// HOST-visible path where the API Unix socket appears.  Bare launch:
+    /// the socket firecracker binds directly.  Jailed launch: the
+    /// chroot-expanded location (`<chroot_root>/run/firecracker.socket`)
+    /// where the in-jail socket surfaces on the host.
     pub socket_path: String,
-    /// Optional path to the jailer binary.  When set, `firecracker` is
-    /// launched via `jailer` for stronger isolation (chroot + cgroup).
-    pub jailer_path: Option<String>,
+    /// VM id — becomes the jailer `--id` (names the per-VM chroot dir).
+    pub vm_id: String,
+    /// When set, `firecracker` is launched via `jailer` for stronger
+    /// isolation (chroot + uid/gid drop).  `None` (the default when
+    /// `FIRECRACKER_JAILER_PATH` is unset) spawns the bare binary,
+    /// preserving the pre-jailer behavior exactly.
+    pub jailer: Option<JailerConfig>,
     /// Optional log level override (e.g. "Debug").
     pub log_level: Option<String>,
 }
@@ -710,24 +938,25 @@ pub struct SpawnConfig {
 /// `firecracker` binary and its `--api-sock` flag only work on Linux.
 /// Integration-tested on a Linux host with a `vmlinux` kernel and rootfs.
 ///
-/// NOTE: jailer integration (chroot, cgroup, UID mapping) is the next
-/// hardening step; today this spawns the bare binary.  See ADR-0006 §Jailer.
+/// Jailer integration (ADR-0006 §Jailer) is implemented: when
+/// `cfg.jailer` is set, the process is launched via `jailer` (chroot +
+/// uid/gid drop) with argv from the pure [`build_spawn_invocation`].  The
+/// jailed launch itself is a Linux-only runtime path validated by the
+/// microvm integration CI (KVM runner / Lima), not unit-exec-tested.
 pub async fn spawn_firecracker_process(cfg: &SpawnConfig) -> Result<tokio::process::Child> {
     use tokio::process::Command;
 
-    // Ensure the socket directory exists.
+    // Ensure the socket directory exists (idempotent; on the jailed path
+    // `stage_jailed_artifacts` already created + chowned the jail's /run).
     if let Some(parent) = Path::new(&cfg.socket_path).parent() {
         tokio::fs::create_dir_all(parent)
             .await
             .with_context(|| format!("create socket dir {:?}", parent))?;
     }
 
-    let mut cmd = Command::new(&cfg.binary_path);
-    cmd.arg("--api-sock").arg(&cfg.socket_path);
-
-    if let Some(level) = &cfg.log_level {
-        cmd.arg("--log-level").arg(level);
-    }
+    let (program, argv) = build_spawn_invocation(cfg);
+    let mut cmd = Command::new(&program);
+    cmd.args(&argv);
 
     // Prevent the child from inheriting the parent's signal handlers.
     // LINUX-ONLY: `setsid` is a Unix concept; on non-Linux the build
@@ -748,7 +977,7 @@ pub async fn spawn_firecracker_process(cfg: &SpawnConfig) -> Result<tokio::proce
 
     let child = cmd
         .spawn()
-        .with_context(|| format!("failed to spawn firecracker at {}", cfg.binary_path))?;
+        .with_context(|| format!("failed to spawn {program} for VM {}", cfg.vm_id))?;
 
     // Poll until the API socket appears (up to 2 seconds).
     // LINUX-ONLY: Unix domain socket path.
@@ -1121,6 +1350,76 @@ async fn vsock_event_loop(
     }
 }
 
+/// Stage boot artifacts into the jail root so the chrooted `firecracker`
+/// can reach them, and pre-create the in-jail directories it binds sockets
+/// into (API socket, vsock UDS, snapshots).
+///
+/// Artifacts are **copied** (not hard-linked) so the chown to the jail
+/// uid/gid never mutates the shared base images (chowning a hard link
+/// changes the source inode's ownership).  The copy cost is a deliberate
+/// cold-start tradeoff; per-VM CoW scratch images are the follow-up
+/// optimization.
+///
+/// LINUX-ONLY (jailed live path): only reached when jailing is enabled,
+/// which sits behind the Linux availability gate.  Validated by the microvm
+/// integration CI (KVM runner / Lima), not unit-exec-tested.
+async fn stage_jailed_artifacts(
+    cfg: &VmConfig,
+    jailer: &JailerConfig,
+    chroot_root: &str,
+) -> Result<()> {
+    // Every directory level we create must be owned by the jail uid/gid —
+    // the dropped-privilege firecracker creates sockets/files inside them.
+    let mut owned_paths = vec![
+        chroot_root.to_string(),
+        format!("{chroot_root}/run"),
+        format!("{chroot_root}/run/lantern"),
+        format!("{chroot_root}/run/lantern/vsock"),
+        format!("{chroot_root}/run/lantern/snapshots"),
+        format!("{chroot_root}/run/lantern/snapshots/{}", cfg.vm_id),
+    ];
+    for dir in [&owned_paths[3], &owned_paths[5]] {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .with_context(|| format!("create jail dir {dir}"))?;
+    }
+
+    let artifacts = [
+        cfg.kernel_image_path.as_str(),
+        cfg.rootfs_path.as_str(),
+        cfg.certs_image_path.as_str(),
+    ];
+    // Artifacts land at /<basename>; two identical basenames would silently
+    // overwrite each other inside the jail.
+    let in_jail: Vec<String> = artifacts.iter().map(|p| jail_artifact_path(p)).collect();
+    let unique: std::collections::HashSet<&str> = in_jail.iter().map(String::as_str).collect();
+    if unique.len() != in_jail.len() {
+        bail!(
+            "jailer staging: artifact basename collision among kernel/rootfs/certs: {in_jail:?} \
+             (rename the images so their basenames are distinct)"
+        );
+    }
+
+    for (host, rel) in artifacts.iter().zip(&in_jail) {
+        let dest = format!("{chroot_root}{rel}");
+        tokio::fs::copy(host, &dest)
+            .await
+            .with_context(|| format!("stage {host} into jail at {dest}"))?;
+        owned_paths.push(dest);
+    }
+
+    // The jailer drops firecracker to uid:gid; everything it must open or
+    // create under the jail has to be owned by that identity.  chown is a
+    // metadata syscall (microseconds) — fine inline on the boot path.
+    #[cfg(unix)]
+    for path in &owned_paths {
+        std::os::unix::fs::chown(path, Some(jailer.uid), Some(jailer.gid))
+            .with_context(|| format!("chown {path} to {}:{}", jailer.uid, jailer.gid))?;
+    }
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // FirecrackerBackend
 // ---------------------------------------------------------------------------
@@ -1144,6 +1443,10 @@ pub struct FirecrackerBackend {
     available: bool,
     /// Binary path (cached from the availability probe).
     binary_path: Option<String>,
+    /// Jailer launch parameters (ADR-0006 §Jailer).  `Some` when
+    /// `FIRECRACKER_JAILER_PATH` is set; `None` (the default) preserves the
+    /// bare-`firecracker` launch path exactly.
+    jailer: Option<JailerConfig>,
     /// Per-VM `firecracker` child processes, keyed by vm_id, so `cancel()` can
     /// SIGKILL as a reliable fallback after `SendCtrlAltDel`.  Empty on hosts
     /// where the backend is unavailable (no VM is ever spawned there).
@@ -1164,12 +1467,14 @@ impl FirecrackerBackend {
             .unwrap_or_else(|_| "/opt/lantern/rootfs.ext4".to_string());
         let bridge_name = std::env::var("FC_BRIDGE").ok().filter(|s| !s.is_empty());
         let binary_path = probe.firecracker_binary_path;
+        let jailer = JailerConfig::from_env();
 
         if available {
             tracing::info!(
                 binary = ?binary_path,
                 kernel = %kernel_image_path,
                 rootfs = %rootfs_path,
+                jailed = jailer.is_some(),
                 "Firecracker backend: available"
             );
         } else {
@@ -1186,7 +1491,28 @@ impl FirecrackerBackend {
             bridge_name,
             available,
             binary_path,
+            jailer,
             processes: ProcessTable::new(),
+        }
+    }
+
+    /// Host-visible API socket path for a VM, jail-aware: the conventional
+    /// `/run/firecracker/<vm_id>.sock` for bare launches, or the
+    /// chroot-expanded location when jailing is enabled.
+    fn api_socket_path(&self, vm_id: &str) -> String {
+        match (&self.jailer, self.binary_path.as_deref()) {
+            (Some(jailer), Some(bin)) => jailer.host_api_socket_path(bin, vm_id),
+            _ => format!("/run/firecracker/{vm_id}.sock"),
+        }
+    }
+
+    /// Map an in-jail absolute path to its host-visible location.  Identity
+    /// when jailing is disabled (the chrooted-vs-bare process sees the same
+    /// path the host does).
+    fn host_vm_path(&self, vm_id: &str, in_jail_path: &str) -> String {
+        match (&self.jailer, self.binary_path.as_deref()) {
+            (Some(jailer), Some(bin)) => jailer.host_path(bin, vm_id, in_jail_path),
+            _ => in_jail_path.to_string(),
         }
     }
 
@@ -1231,12 +1557,38 @@ impl FirecrackerBackend {
         // LINUX-ONLY: requires CAP_NET_ADMIN / root.
         setup_tap_device(&cfg.tap_dev, self.bridge_name.as_deref()).await?;
 
-        // Step 2: Spawn the Firecracker process.
+        // Step 1.5 (jailed launches only): stage artifacts into the jail and
+        // derive the jail-relative view of the config.  The chrooted
+        // firecracker resolves every path it opens inside the jail, so the
+        // kernel / rootfs / certs image paths sent over the API become
+        // `/<basename>` (staged at `<chroot_root>/<basename>`), and the API
+        // socket the manager connects to becomes the chroot-expanded host
+        // path.  `vsock_uds_path` / snapshot paths stay in-jail-relative in
+        // the API bodies; host-side consumers translate via `host_vm_path`.
+        // LINUX-ONLY (jailed path): validated by the microvm CI, not
+        // unit-exec-tested.  When jailing is disabled (`jailer` None, the
+        // default) `cfg` is used untouched — bare-launch behavior is
+        // bit-identical to the pre-jailer implementation.
+        let mut jailed_cfg: Option<VmConfig> = None;
+        if let Some(jailer) = &self.jailer {
+            let chroot_root = jailer.chroot_root(binary, &cfg.vm_id);
+            stage_jailed_artifacts(cfg, jailer, &chroot_root).await?;
+            let mut c = cfg.clone();
+            c.socket_path = jailer.host_api_socket_path(binary, &cfg.vm_id);
+            c.kernel_image_path = jail_artifact_path(&cfg.kernel_image_path);
+            c.rootfs_path = jail_artifact_path(&cfg.rootfs_path);
+            c.certs_image_path = jail_artifact_path(&cfg.certs_image_path);
+            jailed_cfg = Some(c);
+        }
+        let api_cfg: &VmConfig = jailed_cfg.as_ref().unwrap_or(cfg);
+
+        // Step 2: Spawn the Firecracker process (via jailer when enabled).
         // LINUX-ONLY: requires the firecracker binary and /dev/kvm.
         let spawn_cfg = SpawnConfig {
             binary_path: binary.to_string(),
-            socket_path: cfg.socket_path.clone(),
-            jailer_path: None, // jailer integration: ADR-0006 §Jailer
+            socket_path: api_cfg.socket_path.clone(),
+            vm_id: cfg.vm_id.clone(),
+            jailer: self.jailer.clone(),
             log_level: Some("Info".to_string()),
         };
         // Store the Child handle in the per-VM process table keyed by vm_id so
@@ -1252,27 +1604,32 @@ impl FirecrackerBackend {
             tracing::warn!(vm_id = %cfg.vm_id, "process table collision; killed stale child");
         }
 
-        let sock = &cfg.socket_path;
+        let sock = &api_cfg.socket_path;
 
         // Step 3: Machine config.
-        unix_socket_put(sock, "/machine-config", &cfg.machine_config()).await?;
+        unix_socket_put(sock, "/machine-config", &api_cfg.machine_config()).await?;
 
         // Step 4: Boot source.
-        unix_socket_put(sock, "/boot-source", &cfg.boot_source()).await?;
+        unix_socket_put(sock, "/boot-source", &api_cfg.boot_source()).await?;
 
         // Step 5: Root drive.
-        unix_socket_put(sock, "/drives/rootfs", &cfg.root_drive()).await?;
+        unix_socket_put(sock, "/drives/rootfs", &api_cfg.root_drive()).await?;
 
         // Step 5b: Read-only cert drive — carries the per-VM mTLS material
         // provisioned in Step 0 so the in-guest harness can read the paths the
         // boot-args reference. LINUX-ONLY (block device attach on a live VM).
-        unix_socket_put(sock, "/drives/certs", &cfg.cert_drive()).await?;
+        unix_socket_put(sock, "/drives/certs", &api_cfg.cert_drive()).await?;
 
         // Step 6: Network interface.
-        unix_socket_put(sock, "/network-interfaces/eth0", &cfg.network_interface()).await?;
+        unix_socket_put(
+            sock,
+            "/network-interfaces/eth0",
+            &api_cfg.network_interface(),
+        )
+        .await?;
 
         // Step 7: Vsock.
-        unix_socket_put(sock, "/vsock", &cfg.vsock_device()).await?;
+        unix_socket_put(sock, "/vsock", &api_cfg.vsock_device()).await?;
 
         // Step 8: InstanceStart.
         unix_socket_put(
@@ -1356,7 +1713,7 @@ impl RuntimeBackend for FirecrackerBackend {
             return Err(Self::not_available_error());
         }
 
-        let socket_path = format!("/run/firecracker/{handle_id}.sock");
+        let socket_path = self.api_socket_path(handle_id);
 
         tracing::info!(
             vm_id = handle_id,
@@ -1407,6 +1764,21 @@ impl RuntimeBackend for FirecrackerBackend {
         let tap_dev = format!("fc-{}", &handle_id[..8.min(handle_id.len())]);
         teardown_tap_device(&tap_dev).await?;
 
+        // Jailed VMs leave a per-VM chroot with copied artifacts (rootfs can
+        // be hundreds of MB) — reclaim the disk.  Best-effort: a failure here
+        // must not turn a successful teardown into an error.
+        if let (Some(jailer), Some(bin)) = (&self.jailer, self.binary_path.as_deref()) {
+            let jail_dir = jailer.jail_dir(bin, handle_id);
+            if let Err(e) = tokio::fs::remove_dir_all(&jail_dir).await {
+                tracing::warn!(
+                    vm_id = handle_id,
+                    jail_dir = %jail_dir,
+                    error = %e,
+                    "Firecracker: failed to remove jail dir (non-fatal; disk leak)"
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -1424,8 +1796,9 @@ impl RuntimeBackend for FirecrackerBackend {
     async fn stream(&self, handle_id: &str) -> Result<BoxStream<'static, RuntimeEvent>> {
         let vm_id = handle_id.to_string();
         let available = self.available;
-        // Same convention as VmConfig::vsock_uds_path.
-        let vsock_path = format!("/run/lantern/vsock/{vm_id}.sock");
+        // Same convention as VmConfig::vsock_uds_path; jailed VMs surface the
+        // in-jail UDS under the chroot root on the host.
+        let vsock_path = self.host_vm_path(handle_id, &format!("/run/lantern/vsock/{vm_id}.sock"));
 
         let (tx, rx) = tokio::sync::mpsc::channel::<RuntimeEvent>(256);
 
@@ -1483,7 +1856,9 @@ impl RuntimeBackend for FirecrackerBackend {
             return Err(Self::not_available_error());
         }
 
-        let socket_path = format!("/run/firecracker/{}.sock", req.handle_id);
+        let socket_path = self.api_socket_path(&req.handle_id);
+        // In-jail-relative for jailed VMs (the chrooted firecracker writes
+        // them inside the jail); identical to the host path for bare VMs.
         let snapshot_dir = format!("/run/lantern/snapshots/{}", req.handle_id);
         let snapshot_path = format!("{snapshot_dir}/snapshot");
         let mem_file_path = format!("{snapshot_dir}/mem");
@@ -1539,8 +1914,12 @@ impl RuntimeBackend for FirecrackerBackend {
             "Firecracker: snapshot created"
         );
 
+        // The URI carries the HOST-visible location so the snapshot is
+        // addressable after the VM (and its jail) is gone.
+        let host_snapshot_path = self.host_vm_path(&req.handle_id, &snapshot_path);
+
         Ok(SnapshotInfo {
-            snapshot_uri: format!("fc://{snapshot_path}"),
+            snapshot_uri: format!("fc://{host_snapshot_path}"),
             size_bytes: 0, // actual file size populated on Linux via metadata
         })
     }
@@ -1556,6 +1935,20 @@ impl RuntimeBackend for FirecrackerBackend {
     async fn restore(&self, snapshot_uri: &str, req: &RestoreRequest) -> Result<Handle> {
         if !self.available {
             return Err(Self::not_available_error());
+        }
+
+        // Fail-closed: a jailed restore needs the snapshot's backing files
+        // (rootfs, certs image, mem file) re-staged into the NEW VM's chroot
+        // at the exact in-jail paths recorded in the snapshot.  That staging
+        // is not wired yet; pretending to restore would boot a VM with
+        // dangling block devices.  ADR-0006 §Jailer.
+        if self.jailer.is_some() {
+            bail!(
+                "snapshot restore under the jailer is not yet supported \
+                 (FIRECRACKER_JAILER_PATH is set): the snapshot's backing-file \
+                 paths must be re-staged into the new VM's chroot. \
+                 Boot a fresh VM instead, or unset FIRECRACKER_JAILER_PATH."
+            );
         }
 
         let start = Instant::now();
@@ -1583,7 +1976,8 @@ impl RuntimeBackend for FirecrackerBackend {
         let _child = spawn_firecracker_process(&SpawnConfig {
             binary_path: binary.to_string(),
             socket_path: socket_path.clone(),
-            jailer_path: None,
+            vm_id: vm_id.clone(),
+            jailer: None, // jailed restore is refused above
             log_level: Some("Info".to_string()),
         })
         .await?;
@@ -1657,6 +2051,8 @@ impl RuntimeBackend for FirecrackerBackend {
 //   3. Lifecycle state machine transitions
 //   4. Availability detection logic (injectable probe)
 //   5. boot_args construction and env injection
+//   6. Jailer config + argv/path construction (pure; no jailer binary, no
+//      Linux — the jailed launch itself is microvm-CI / Lima territory)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -2669,5 +3065,245 @@ mod tests {
         }))];
         let ok = forward_frames(outcomes, &tx).await;
         assert!(!ok, "must report the receiver is gone so the loop can stop");
+    }
+
+    // -----------------------------------------------------------------------
+    // 6. Jailer config + argv/path construction (ADR-0006 §Jailer)
+    //
+    // Pure-function tests only — no jailer binary, no Linux, no process
+    // exec.  The live jailed launch is validated by the microvm CI / Lima.
+    // -----------------------------------------------------------------------
+
+    fn jailer_with_defaults() -> JailerConfig {
+        JailerConfig::from_parts(Some("/usr/bin/jailer"), None, None, None)
+            .expect("non-empty jailer path must enable jailing")
+    }
+
+    #[test]
+    fn jailing_disabled_by_default_when_env_unset() {
+        // Env unset ⇒ all parts None ⇒ jailing disabled — the existing
+        // bare-firecracker launch is the default behavior.
+        assert_eq!(JailerConfig::from_parts(None, None, None, None), None);
+        // Empty value behaves like unset.
+        assert_eq!(JailerConfig::from_parts(Some(""), None, None, None), None);
+    }
+
+    #[test]
+    fn jailer_config_applies_documented_defaults() {
+        let j = jailer_with_defaults();
+        assert_eq!(j.jailer_binary_path, "/usr/bin/jailer");
+        assert_eq!(j.uid, DEFAULT_JAILER_UID);
+        assert_eq!(j.gid, DEFAULT_JAILER_GID);
+        assert_eq!(j.chroot_base_dir, DEFAULT_CHROOT_BASE);
+        assert_eq!((j.uid, j.gid), (123, 100));
+        assert_eq!(j.chroot_base_dir, "/srv/jailer");
+    }
+
+    #[test]
+    fn jailer_config_honors_custom_overrides() {
+        let j = JailerConfig::from_parts(
+            Some("/opt/fc/jailer"),
+            Some("5001"),
+            Some("5002"),
+            Some("/var/jail"),
+        )
+        .expect("enabled");
+        assert_eq!(j.jailer_binary_path, "/opt/fc/jailer");
+        assert_eq!(j.uid, 5001);
+        assert_eq!(j.gid, 5002);
+        assert_eq!(j.chroot_base_dir, "/var/jail");
+    }
+
+    #[test]
+    fn jailer_config_rejects_bad_uid_gid_never_root() {
+        // Table: (uid input, gid input) → expected (uid, gid).
+        let cases = [
+            (Some("notanumber"), Some("alsobad"), 123, 100),
+            (Some("0"), Some("0"), 123, 100), // root refused
+            (Some("-1"), Some("4294967296"), 123, 100), // out of u32 range
+            (Some(" 200 "), Some("300"), 200, 300), // whitespace tolerated
+            (None, Some("7"), 123, 7),
+        ];
+        for (uid_in, gid_in, want_uid, want_gid) in cases {
+            let j = JailerConfig::from_parts(Some("/usr/bin/jailer"), uid_in, gid_in, None)
+                .expect("enabled");
+            assert_eq!(
+                (j.uid, j.gid),
+                (want_uid, want_gid),
+                "uid_in={uid_in:?} gid_in={gid_in:?}"
+            );
+            assert_ne!(j.uid, 0, "jail uid must never be root");
+            assert_ne!(j.gid, 0, "jail gid must never be root");
+        }
+    }
+
+    #[test]
+    fn jailer_chroot_and_socket_paths() {
+        let j = jailer_with_defaults();
+        assert_eq!(
+            j.jail_dir("/usr/bin/firecracker", "vm-1"),
+            "/srv/jailer/firecracker/vm-1"
+        );
+        assert_eq!(
+            j.chroot_root("/usr/bin/firecracker", "vm-1"),
+            "/srv/jailer/firecracker/vm-1/root"
+        );
+        assert_eq!(
+            j.host_api_socket_path("/usr/bin/firecracker", "vm-1"),
+            "/srv/jailer/firecracker/vm-1/root/run/firecracker.socket"
+        );
+        assert_eq!(
+            j.host_path(
+                "/usr/bin/firecracker",
+                "vm-1",
+                "/run/lantern/vsock/vm-1.sock"
+            ),
+            "/srv/jailer/firecracker/vm-1/root/run/lantern/vsock/vm-1.sock"
+        );
+
+        // Trailing slash on the base + non-standard exec basename.
+        let j2 = JailerConfig::from_parts(Some("/usr/bin/jailer"), None, None, Some("/var/jail/"))
+            .expect("enabled");
+        assert_eq!(
+            j2.jail_dir("/opt/fc-v1.7", "vm-2"),
+            "/var/jail/fc-v1.7/vm-2"
+        );
+    }
+
+    #[test]
+    fn jail_artifact_path_maps_to_root_basename() {
+        assert_eq!(jail_artifact_path("/opt/lantern/vmlinux"), "/vmlinux");
+        assert_eq!(
+            jail_artifact_path("/opt/lantern/rootfs.ext4"),
+            "/rootfs.ext4"
+        );
+        assert_eq!(
+            jail_artifact_path("/run/lantern/certs/vm-1/certs.img"),
+            "/certs.img"
+        );
+    }
+
+    #[test]
+    fn build_jailer_argv_places_flags_and_separator() {
+        let j = JailerConfig::from_parts(
+            Some("/usr/bin/jailer"),
+            Some("321"),
+            Some("654"),
+            Some("/var/jail"),
+        )
+        .expect("enabled");
+        let fc_args = vec![
+            "--api-sock".to_string(),
+            JAILED_API_SOCKET.to_string(),
+            "--log-level".to_string(),
+            "Info".to_string(),
+        ];
+        let argv = build_jailer_argv(&j, "/usr/bin/firecracker", "vm-abc", &fc_args);
+
+        // Flag/value pairs land correctly.
+        let flag_val = |flag: &str| -> &str {
+            let i = argv
+                .iter()
+                .position(|a| a == flag)
+                .unwrap_or_else(|| panic!("missing {flag} in {argv:?}"));
+            &argv[i + 1]
+        };
+        assert_eq!(flag_val("--id"), "vm-abc");
+        assert_eq!(flag_val("--exec-file"), "/usr/bin/firecracker");
+        assert_eq!(flag_val("--uid"), "321");
+        assert_eq!(flag_val("--gid"), "654");
+        assert_eq!(flag_val("--chroot-base-dir"), "/var/jail");
+
+        // The `--` separator precedes ALL firecracker args.
+        let sep = argv
+            .iter()
+            .position(|a| a == "--")
+            .expect("missing -- separator");
+        assert_eq!(
+            &argv[sep + 1..],
+            fc_args.as_slice(),
+            "everything after -- must be the firecracker args, in order"
+        );
+        for flag in ["--id", "--exec-file", "--uid", "--gid", "--chroot-base-dir"] {
+            let i = argv.iter().position(|a| a == flag).expect("flag present");
+            assert!(i < sep, "{flag} must precede the -- separator");
+        }
+    }
+
+    #[test]
+    fn build_firecracker_argv_matches_bare_launch_contract() {
+        assert_eq!(
+            build_firecracker_argv("/run/firecracker/vm-1.sock", Some("Info")),
+            vec![
+                "--api-sock",
+                "/run/firecracker/vm-1.sock",
+                "--log-level",
+                "Info"
+            ]
+        );
+        assert_eq!(
+            build_firecracker_argv("/run/firecracker/vm-1.sock", None),
+            vec!["--api-sock", "/run/firecracker/vm-1.sock"]
+        );
+    }
+
+    #[test]
+    fn spawn_invocation_without_jailer_is_bare_firecracker() {
+        // jailer None (the env-unset default) ⇒ exact pre-jailer invocation.
+        let cfg = SpawnConfig {
+            binary_path: "/usr/bin/firecracker".to_string(),
+            socket_path: "/run/firecracker/vm-1.sock".to_string(),
+            vm_id: "vm-1".to_string(),
+            jailer: None,
+            log_level: Some("Info".to_string()),
+        };
+        let (program, argv) = build_spawn_invocation(&cfg);
+        assert_eq!(program, "/usr/bin/firecracker");
+        assert_eq!(
+            argv,
+            vec![
+                "--api-sock",
+                "/run/firecracker/vm-1.sock",
+                "--log-level",
+                "Info"
+            ]
+        );
+    }
+
+    #[test]
+    fn spawn_invocation_with_jailer_wraps_and_uses_in_jail_socket() {
+        let jailer = jailer_with_defaults();
+        let cfg = SpawnConfig {
+            binary_path: "/usr/bin/firecracker".to_string(),
+            // Host-visible socket (what the manager polls/connects to).
+            socket_path: jailer.host_api_socket_path("/usr/bin/firecracker", "vm-9"),
+            vm_id: "vm-9".to_string(),
+            jailer: Some(jailer),
+            log_level: Some("Info".to_string()),
+        };
+        let (program, argv) = build_spawn_invocation(&cfg);
+        assert_eq!(program, "/usr/bin/jailer");
+
+        // Defaults land in the jailer flags.
+        let sep = argv.iter().position(|a| a == "--").expect("-- present");
+        assert!(argv[..sep].windows(2).any(|w| w == ["--uid", "123"]));
+        assert!(argv[..sep].windows(2).any(|w| w == ["--gid", "100"]));
+        assert!(
+            argv[..sep]
+                .windows(2)
+                .any(|w| w == ["--chroot-base-dir", "/srv/jailer"])
+        );
+        assert!(argv[..sep].windows(2).any(|w| w == ["--id", "vm-9"]));
+
+        // Inside the jail, firecracker gets the chroot-RELATIVE socket —
+        // never the host-expanded one.
+        assert_eq!(
+            &argv[sep + 1..],
+            ["--api-sock", JAILED_API_SOCKET, "--log-level", "Info"]
+        );
+        assert!(
+            !argv[sep + 1..].iter().any(|a| a.contains("/srv/jailer")),
+            "host chroot prefix must not leak into in-jail firecracker args"
+        );
     }
 }
