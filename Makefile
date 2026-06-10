@@ -1,4 +1,4 @@
-.PHONY: help dev build test lint ci-local clean proto local-dev local-kind seed docker-build
+.PHONY: help dev build test test-db lint ci-local clean proto local-dev local-kind seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -34,6 +34,32 @@ run-api: ## Run the control-plane API server locally
 	LOG_LEVEL="debug" \
 	go run ./cmd/server
 
+run-scheduler: ## Run the runtime-scheduler locally on :50055 (gRPC) and :8085 (REST)
+	@bash scripts/kill-port.sh 50055 8085
+	cd services/runtime-scheduler && \
+	LANTERN_DEFAULT_MANAGER_ADDR="localhost:50054" \
+	JWT_SECRET="lantern-dev-jwt-secret-do-not-use-in-production" \
+	LOG_LEVEL="debug" \
+	go run ./cmd/scheduler
+
+run-runtime-manager: ## Run the Rust runtime-manager locally on :50054 (Docker backend)
+	@bash scripts/kill-port.sh 50054
+	cd services/runtime-manager && \
+	LISTEN_ADDR="0.0.0.0:50054" \
+	RUNTIME_BACKEND="docker" \
+	LOG_LEVEL="debug" \
+	cargo run
+
+run-api-runtime: ## Run the control-plane API wired to the real runtime-scheduler at :50055
+	@bash scripts/kill-port.sh 8080 50051
+	cd services/control-plane && \
+	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
+	REDIS_URL="redis://localhost:6379" \
+	S3_ENDPOINT="http://localhost:9000" \
+	LOG_LEVEL="debug" \
+	LANTERN_SCHEDULER_GRPC_ADDR="localhost:50055" \
+	go run ./cmd/server
+
 run-api-free: ## Run the API but route LLM calls through local `claude` CLI ($0 — uses Claude Max subscription)
 	@bash scripts/kill-port.sh 8080 50051
 	cd services/control-plane && \
@@ -43,6 +69,9 @@ run-api-free: ## Run the API but route LLM calls through local `claude` CLI ($0 
 	LOG_LEVEL="debug" \
 	LANTERN_USE_CLAUDE_CODE=1 \
 	go run ./cmd/server
+
+bridge-setup: ## Interactive setup wizard for the personal-assistant bridges (WhatsApp / iMessage)
+	@bash scripts/bridge-setup.sh
 
 run-whatsapp-bridge: ## Start the WhatsApp bridge service
 	@bash scripts/kill-port.sh 3100
@@ -152,6 +181,25 @@ test-ts: ## Run TypeScript tests
 
 test-python: ## Run Python tests
 	cd packages/sdk-python && python3 -m pytest tests/ -v
+
+test-db: ## Start dev Postgres if needed, then run Go tests that require a live DB
+	@echo "==> Ensuring Postgres is up..."
+	@docker compose -f infra/docker/docker-compose.yml up -d postgres minio-init redis || true
+	@echo "==> Waiting for Postgres to be ready (up to 30s)..."
+	@for i in $$(seq 1 30); do \
+		docker compose -f infra/docker/docker-compose.yml exec -T postgres \
+			pg_isready -U lantern -d lantern -q 2>/dev/null && break; \
+		echo "  attempt $$i/30 — not ready yet"; sleep 1; \
+	done
+	@docker compose -f infra/docker/docker-compose.yml exec -T postgres \
+		pg_isready -U lantern -d lantern -q || (echo "ERROR: Postgres never became ready" && exit 1)
+	@echo "==> Running Go tests with DATABASE_URL..."
+	cd services/control-plane && \
+		DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
+		go test -race -count=1 ./...
+	cd services/runtime-scheduler && \
+		DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
+		go test -race -count=1 ./...
 
 # ---------- Lint ----------
 

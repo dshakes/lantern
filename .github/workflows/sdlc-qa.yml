@@ -23,6 +23,22 @@ jobs:
   qa:
     name: qa               # stable check name — referenced by branch-protection required checks
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: lantern
+          POSTGRES_PASSWORD: lantern
+          POSTGRES_DB: lantern
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lantern -d lantern"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

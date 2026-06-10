@@ -97,6 +97,25 @@ jobs:
           sudo install "$RUNNER_TEMP/grpcurl" /usr/local/bin/grpcurl
           grpcurl --version || true
 
+      # --- Rust unit + integration tests ---------------------------------
+      # Run the full test suites for runtime-manager and harness on the live
+      # Linux/KVM runner where the cgroup-v2 reader path, wasm backend, and
+      # egress rate-limit paths are all reachable.  We run these BEFORE the
+      # heavier image build so a test regression fails fast.
+      - name: cargo test — runtime-manager
+        if: steps.kvm.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          cd services/runtime-manager
+          cargo test --all
+
+      - name: cargo test — harness
+        if: steps.kvm.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          cd services/harness
+          cargo test --all
+
       # --- Build the boot image (kernel + rootfs w/ harness) -------------
       # Exports FC_KERNEL_PATH / FC_ROOTFS_PATH into $GITHUB_ENV (the script
       # appends them when running under Actions).
