@@ -346,11 +346,12 @@ var RuntimeScheduler_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	RuntimeManager_Spawn_FullMethodName = "/lantern.v1.RuntimeManager/Spawn"
-	RuntimeManager_Stop_FullMethodName  = "/lantern.v1.RuntimeManager/Stop"
-	RuntimeManager_Logs_FullMethodName  = "/lantern.v1.RuntimeManager/Logs"
-	RuntimeManager_Exec_FullMethodName  = "/lantern.v1.RuntimeManager/Exec"
-	RuntimeManager_Stats_FullMethodName = "/lantern.v1.RuntimeManager/Stats"
+	RuntimeManager_Spawn_FullMethodName    = "/lantern.v1.RuntimeManager/Spawn"
+	RuntimeManager_Stop_FullMethodName     = "/lantern.v1.RuntimeManager/Stop"
+	RuntimeManager_Logs_FullMethodName     = "/lantern.v1.RuntimeManager/Logs"
+	RuntimeManager_Exec_FullMethodName     = "/lantern.v1.RuntimeManager/Exec"
+	RuntimeManager_Stats_FullMethodName    = "/lantern.v1.RuntimeManager/Stats"
+	RuntimeManager_Snapshot_FullMethodName = "/lantern.v1.RuntimeManager/Snapshot"
 )
 
 // RuntimeManagerClient is the client API for RuntimeManager service.
@@ -366,6 +367,8 @@ type RuntimeManagerClient interface {
 	Exec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecRequest, ExecResponse], error)
 	// Live stats.
 	Stats(ctx context.Context, in *StatsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ResourceUsage], error)
+	// Take a snapshot — durable, identified by sha256.
+	Snapshot(ctx context.Context, in *SnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error)
 }
 
 type runtimeManagerClient struct {
@@ -447,6 +450,16 @@ func (c *runtimeManagerClient) Stats(ctx context.Context, in *StatsRequest, opts
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RuntimeManager_StatsClient = grpc.ServerStreamingClient[ResourceUsage]
 
+func (c *runtimeManagerClient) Snapshot(ctx context.Context, in *SnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SnapshotResponse)
+	err := c.cc.Invoke(ctx, RuntimeManager_Snapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RuntimeManagerServer is the server API for RuntimeManager service.
 // All implementations must embed UnimplementedRuntimeManagerServer
 // for forward compatibility.
@@ -460,6 +473,8 @@ type RuntimeManagerServer interface {
 	Exec(grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error
 	// Live stats.
 	Stats(*StatsRequest, grpc.ServerStreamingServer[ResourceUsage]) error
+	// Take a snapshot — durable, identified by sha256.
+	Snapshot(context.Context, *SnapshotRequest) (*SnapshotResponse, error)
 	mustEmbedUnimplementedRuntimeManagerServer()
 }
 
@@ -484,6 +499,9 @@ func (UnimplementedRuntimeManagerServer) Exec(grpc.BidiStreamingServer[ExecReque
 }
 func (UnimplementedRuntimeManagerServer) Stats(*StatsRequest, grpc.ServerStreamingServer[ResourceUsage]) error {
 	return status.Errorf(codes.Unimplemented, "method Stats not implemented")
+}
+func (UnimplementedRuntimeManagerServer) Snapshot(context.Context, *SnapshotRequest) (*SnapshotResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Snapshot not implemented")
 }
 func (UnimplementedRuntimeManagerServer) mustEmbedUnimplementedRuntimeManagerServer() {}
 func (UnimplementedRuntimeManagerServer) testEmbeddedByValue()                        {}
@@ -571,6 +589,24 @@ func _RuntimeManager_Stats_Handler(srv interface{}, stream grpc.ServerStream) er
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RuntimeManager_StatsServer = grpc.ServerStreamingServer[ResourceUsage]
 
+func _RuntimeManager_Snapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RuntimeManagerServer).Snapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RuntimeManager_Snapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RuntimeManagerServer).Snapshot(ctx, req.(*SnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RuntimeManager_ServiceDesc is the grpc.ServiceDesc for RuntimeManager service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -585,6 +621,10 @@ var RuntimeManager_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Stop",
 			Handler:    _RuntimeManager_Stop_Handler,
+		},
+		{
+			MethodName: "Snapshot",
+			Handler:    _RuntimeManager_Snapshot_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
