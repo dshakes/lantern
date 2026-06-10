@@ -137,6 +137,17 @@ This project is pre-1.0; there are no stable release branches yet.
   virtualization — provisions the pinned Firecracker release and validates
   `/dev/kvm`. Verified: Ubuntu 22.04 microVM boots to login in ~1.6 s on an M4 Max.
 
+### Fixed (live-boot validation on KVM)
+- Running `infra/firecracker/integration-test.sh` on a real KVM host surfaced and
+  fixed six runtime-manager bugs that blocked an actual microVM boot: missing
+  rustls CryptoProvider (mTLS panic), invalid firecracker `--log-level` flag,
+  unbuilt `certs.img` drive, missing vsock runtime dir, swallowed anyhow error
+  chain, and a corrupting bare snapshot-restore mem-path derivation. A real
+  microVM now boots end-to-end; the in-guest harness VendSecret agent remains
+  the one open piece. Also fixed the build-image.sh CI kernel URL (upstream
+  renamed the artifact keys) and the integration test's certs (Go's TLS needs
+  EKU extensions openssl omits).
+
 ---
 
 ## [0.1.0] - Unreleased

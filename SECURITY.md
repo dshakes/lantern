@@ -70,10 +70,15 @@ hostile agent code in production, these need real implementations:
     process-table teardown; all KVM-independent logic is unit-tested and it stays
     **fail-closed** off-KVM. RESIDUAL: the live cold-boot + teardown is validated
     by `.github/workflows/microvm-integration.yml` on a **KVM runner** (kernel +
-    rootfs built via `infra/firecracker/`) — UNVERIFIED until that CI runs green.
-    Jailer wrapping (chroot + drop to a non-root uid/gid) is implemented as an
-    opt-in via `FIRECRACKER_JAILER_PATH`; jailed snapshot-restore is the residual
-    (fails closed today). Live paths marked `// LINUX-ONLY`.
+    rootfs built via `infra/firecracker/`). The live cold-boot is now VERIFIED
+    on a real KVM host (Apple Silicon Lima nested-virt): the backend reports
+    available and a microVM boots end-to-end. The remaining gap is the in-guest
+    harness agent that performs the mTLS `VendSecret` round-trip (reads cert
+    paths from `/proc/cmdline`, mounts the `certs` drive, builds the mTLS
+    client) — the manager half (per-VM cert issuance, packed `certs.img`,
+    fail-closed boot) is done. Jailer wrapping (chroot + drop to a non-root
+    uid/gid) and jailed snapshot-restore are implemented (opt-in via
+    `FIRECRACKER_JAILER_PATH`). Live paths marked `// LINUX-ONLY`.
 - **Secret vending + per-VM identity** — `VendSecret` binds each vend to the
   VM's registry-recorded tenant/run/declared `secret_uris` (never
   caller-asserted), rejects undeclared URIs, caps TTL at 300s, never logs values.
