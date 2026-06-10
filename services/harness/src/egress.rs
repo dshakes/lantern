@@ -14,15 +14,25 @@
 //   3. DNS goes through a stub resolver bound to 127.0.0.1:53 that only
 //      resolves names matching the allowlist patterns.
 //
-// v1 implements HTTP CONNECT termination + pattern matching. Full L7
-// (header/method enforcement, per-rule rate buckets) is wired as the
-// `EgressPolicy::evaluate` decision point — extend that and the rest of
-// the pipeline keeps working.
+// v1 implements HTTP CONNECT termination + pattern matching.
+//
+// Egress rate limiting (rate_bps): when a rule carries a non-zero rate_bps
+// value, a per-CONNECT-tunnel token bucket throttles how many bytes per
+// second flow through the splice loop. Burst = 1 second of traffic.
+// A rate of 0 means unlimited.
+//
+// HTTP method filtering (http_methods): applies to PLAIN HTTP requests
+// (non-CONNECT). CONNECT tunnels carry opaque TLS; the proxy cannot inspect
+// the inner HTTP method without MITM termination, so method filtering is
+// NOT applied to CONNECT connections. When the inner protocol is plain HTTP
+// the request line is already available, so the rule's http_methods list is
+// checked before forwarding.
 
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 
@@ -33,6 +43,66 @@ use crate::proto::{AuditEvent, EgressRule, HarnessReport, now_unix_ms};
 pub enum Decision {
     Allow,
     Deny(&'static str),
+}
+
+// ---------------------------------------------------------------------------
+// Token bucket — per-tunnel byte-rate limiter.
+//
+// `rate_bps` = bytes per second. Burst capacity = 1 full second.
+// A rate of 0 means unlimited (bucket is never consulted).
+// ---------------------------------------------------------------------------
+
+/// A simple token-bucket rate limiter for byte streams.
+///
+/// Tokens are bytes. The bucket is refilled at `rate_bps` bytes/second with
+/// a burst cap of `rate_bps` bytes (one second of traffic). The caller calls
+/// `consume(n)` before writing `n` bytes; the call sleeps until enough tokens
+/// are available.
+pub struct TokenBucket {
+    /// Bytes per second. 0 = unlimited (all `consume` calls return immediately).
+    rate_bps: u64,
+    /// Tokens currently available (fractional, stored as f64 for precision).
+    tokens: f64,
+    /// Wall-clock of last refill.
+    last_refill: Instant,
+}
+
+impl TokenBucket {
+    /// Create a new bucket. `rate_bps == 0` disables throttling.
+    #[must_use]
+    pub fn new(rate_bps: u64) -> Self {
+        Self {
+            rate_bps,
+            tokens: rate_bps as f64, // start full
+            last_refill: Instant::now(),
+        }
+    }
+
+    /// Consume `n` bytes from the bucket, sleeping until tokens are available.
+    /// Returns immediately when `rate_bps` is 0 (unlimited).
+    pub async fn consume(&mut self, n: u64) {
+        if self.rate_bps == 0 || n == 0 {
+            return;
+        }
+        // Refill based on elapsed time.
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.last_refill = now;
+        let burst = self.rate_bps as f64;
+        self.tokens = (self.tokens + elapsed * burst).min(burst);
+
+        let needed = n as f64;
+        if self.tokens >= needed {
+            self.tokens -= needed;
+        } else {
+            // How long until we have enough tokens?
+            let deficit = needed - self.tokens;
+            let wait_secs = deficit / burst;
+            tokio::time::sleep(tokio::time::Duration::from_secs_f64(wait_secs)).await;
+            // After sleeping, tokens are replenished; consume what we need.
+            self.tokens = 0.0;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +199,17 @@ impl EgressPolicy {
     ///
     /// `host` is the bare hostname from the CONNECT target (no port).
     /// `port` is the destination port parsed from the CONNECT target.
-    pub async fn evaluate(&self, host: &str, port: u16, _method: Option<&str>) -> Decision {
+    ///
+    /// Returns `(Decision, rate_bps)`. `rate_bps` is non-zero only when the
+    /// matched rule carries a per-tunnel byte-rate limit; the caller uses it to
+    /// construct a `TokenBucket` for the splice loop. For CONNECT tunnels (opaque
+    /// TLS), method filtering is not applied here — see `check_method` for the
+    /// plain-HTTP path.
+    pub async fn evaluate_with_rate(&self, host: &str, port: u16) -> (Decision, u64) {
+        self.evaluate_inner(host, port).await
+    }
+
+    async fn evaluate_inner(&self, host: &str, port: u16) -> (Decision, u64) {
         // H4 (a): port allowlist — checked first, cheapest rejection.
         if !self.allowed_ports.contains(&port) {
             tracing::warn!(
@@ -138,7 +218,7 @@ impl EgressPolicy {
                 allowed = ?self.allowed_ports,
                 "egress: CONNECT rejected — port not in allowlist"
             );
-            return Decision::Deny("port not in allowlist");
+            return (Decision::Deny("port not in allowlist"), 0);
         }
 
         // H4 (b): reject IP-literal CONNECT targets unconditionally unless
@@ -150,17 +230,18 @@ impl EgressPolicy {
                     port = port,
                     "egress: CONNECT rejected — IP literal resolves to private/metadata range"
                 );
-                return Decision::Deny("IP literal in private/metadata range");
+                return (Decision::Deny("IP literal in private/metadata range"), 0);
             }
             // Public IP literal: allow only if explicitly listed in a rule
             // (exact match, not wildcard). Wildcard patterns are for hostnames.
             let g = self.rules.read().await;
             for rule in g.iter() {
                 if rule.pattern == host {
-                    return Decision::Allow;
+                    let rate = rule.rate_bps.max(0) as u64;
+                    return (Decision::Allow, rate);
                 }
             }
-            return Decision::Deny("IP literal not explicitly allowlisted");
+            return (Decision::Deny("IP literal not explicitly allowlisted"), 0);
         }
 
         // Hostname path.
@@ -168,18 +249,45 @@ impl EgressPolicy {
         if g.is_empty() {
             // Default-deny when no rules configured. Manager pushes overrides
             // via Heartbeat acks; an empty rule set means "no egress yet".
-            return Decision::Deny("no rules configured");
+            return (Decision::Deny("no rules configured"), 0);
         }
         for rule in g.iter() {
             if pattern_matches(&rule.pattern, host) {
-                // TODO: rate-limit using rule.rate_bps + a per-rule token bucket.
-                // TODO: filter by rule.http_methods (requires L7 inspection,
-                //       which we don't do for CONNECT tunnels — would need
-                //       MITM termination).
-                return Decision::Allow;
+                let rate = rule.rate_bps.max(0) as u64;
+                return (Decision::Allow, rate);
             }
         }
-        Decision::Deny("no matching allowlist rule")
+        (Decision::Deny("no matching allowlist rule"), 0)
+    }
+
+    /// Check whether `method` is permitted by the first rule matching `host`.
+    ///
+    /// Only meaningful for PLAIN HTTP (non-CONNECT) requests where the method
+    /// is already visible in the request line. CONNECT tunnels carry opaque TLS;
+    /// method filtering CANNOT be applied to them without MITM termination.
+    ///
+    /// Returns `true` (allowed) when:
+    ///  - the rule has an empty `http_methods` list (all methods permitted), or
+    ///  - `method` appears (case-insensitively) in the list.
+    ///
+    /// Returns `false` only when the rule explicitly lists methods and `method`
+    /// is not among them.
+    pub async fn check_method(&self, host: &str, method: &str) -> bool {
+        let g = self.rules.read().await;
+        for rule in g.iter() {
+            if pattern_matches(&rule.pattern, host) || rule.pattern == host {
+                if rule.http_methods.is_empty() {
+                    return true;
+                }
+                return rule
+                    .http_methods
+                    .iter()
+                    .any(|m| m.eq_ignore_ascii_case(method));
+            }
+        }
+        // No rule matched — decision should already be deny from evaluate;
+        // treat as allowed here so the deny path surfaces the right reason.
+        true
     }
 
     /// Post-connect DNS-rebinding guard: resolve the target and verify the
@@ -294,7 +402,8 @@ async fn handle_client(client: TcpStream, policy: Arc<EgressPolicy>) -> anyhow::
     let mut request_line = String::new();
     reader.read_line(&mut request_line).await?;
 
-    // Drain headers (we only care about the request line for CONNECT).
+    // Collect all headers into a buffer so we can forward them for plain HTTP.
+    let mut raw_headers: Vec<String> = Vec::new();
     let mut hdr = String::new();
     loop {
         hdr.clear();
@@ -302,20 +411,51 @@ async fn handle_client(client: TcpStream, policy: Arc<EgressPolicy>) -> anyhow::
         if n == 0 || hdr == "\r\n" || hdr == "\n" {
             break;
         }
+        raw_headers.push(hdr.clone());
     }
 
-    // Parse "CONNECT host:port HTTP/1.1".
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() < 2 || !parts[0].eq_ignore_ascii_case("CONNECT") {
-        let _ = write_half
-            .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-            .await;
-        return Ok(());
-    }
-    let target = parts[1];
+    // Extract method and target as owned strings before moving request_line.
+    let (method, request_target) = {
+        let parts: Vec<&str> = request_line.split_whitespace().collect();
+        if parts.len() < 2 {
+            let _ = write_half
+                .write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+                .await;
+            return Ok(());
+        }
+        (parts[0].to_string(), parts[1].to_string())
+    };
 
+    if method.eq_ignore_ascii_case("CONNECT") {
+        handle_connect(&request_target, reader, write_half, policy).await
+    } else {
+        // Plain HTTP (non-CONNECT) — method filtering applies here because the
+        // request line is visible in plaintext.
+        handle_plain_http(
+            &method,
+            &request_target,
+            request_line,
+            raw_headers,
+            reader,
+            write_half,
+            policy,
+        )
+        .await
+    }
+}
+
+/// Handle an HTTP CONNECT tunnel.
+///
+/// NOTE: method filtering is NOT applied to CONNECT tunnels. The tunnel
+/// carries opaque TLS; we cannot inspect the inner HTTP method without MITM
+/// termination. Rate limiting via `rate_bps` IS applied to the byte stream.
+async fn handle_connect(
+    target: &str,
+    reader: BufReader<tokio::net::tcp::OwnedReadHalf>,
+    mut write_half: tokio::net::tcp::OwnedWriteHalf,
+    policy: Arc<EgressPolicy>,
+) -> anyhow::Result<()> {
     // H4 (a): extract host and port from "host:port".
-    // If port is absent or unparseable, default-deny (400).
     let (host, port) = match parse_host_port(target) {
         Some(hp) => hp,
         None => {
@@ -326,7 +466,7 @@ async fn handle_client(client: TcpStream, policy: Arc<EgressPolicy>) -> anyhow::
         }
     };
 
-    let decision = policy.evaluate(&host, port, None).await;
+    let (decision, rate_bps) = policy.evaluate_with_rate(&host, port).await;
     policy.audit(&host, port, &decision).await;
 
     match decision {
@@ -338,8 +478,7 @@ async fn handle_client(client: TcpStream, policy: Arc<EgressPolicy>) -> anyhow::
         Decision::Allow => {}
     }
 
-    // H4 (b): post-allowlist DNS-rebinding check — resolve and verify the IP
-    // is not in a private/metadata range before opening the connection.
+    // H4 (b): post-allowlist DNS-rebinding check.
     let ip_decision = policy.check_resolved_ip(target).await;
     policy.audit(&host, port, &ip_decision).await;
     match ip_decision {
@@ -364,18 +503,180 @@ async fn handle_client(client: TcpStream, policy: Arc<EgressPolicy>) -> anyhow::
         .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         .await?;
 
-    // Splice both directions. Forward any bytes the BufReader buffered
-    // past the CRLF first so we don't drop the start of the TLS handshake.
+    // Splice both directions. Forward any bytes the BufReader already consumed
+    // past the CRLF so we don't drop the start of the TLS handshake.
     let (mut up_r, mut up_w) = upstream.into_split();
     let buffered = reader.buffer().to_vec();
     let mut client_read = reader.into_inner();
     if !buffered.is_empty() {
         up_w.write_all(&buffered).await?;
     }
-    let t1 = tokio::io::copy(&mut client_read, &mut up_w);
+
+    if rate_bps == 0 {
+        // Unlimited — use the fast tokio::io::copy path.
+        let t1 = tokio::io::copy(&mut client_read, &mut up_w);
+        let t2 = tokio::io::copy(&mut up_r, &mut write_half);
+        let _ = tokio::join!(t1, t2);
+    } else {
+        // Rate-limited — run both halves concurrently, each with its own
+        // token bucket seeded at rate_bps bytes/s, burst = 1 second.
+        let t1 = throttled_copy(client_read, up_w, rate_bps);
+        let t2 = throttled_copy(up_r, write_half, rate_bps);
+        let _ = tokio::join!(t1, t2);
+    }
+    Ok(())
+}
+
+/// Handle a plain (non-CONNECT) HTTP request.
+///
+/// Method filtering IS enforced here because the method is visible in the
+/// request line. The full request (line + headers + body) is forwarded to
+/// the upstream after the checks pass.
+async fn handle_plain_http(
+    method: &str,
+    request_target: &str,
+    request_line: String,
+    raw_headers: Vec<String>,
+    mut body_reader: BufReader<tokio::net::tcp::OwnedReadHalf>,
+    mut write_half: tokio::net::tcp::OwnedWriteHalf,
+    policy: Arc<EgressPolicy>,
+) -> anyhow::Result<()> {
+    // Derive host from the absolute-form URI or the Host header.
+    let host = extract_host_for_plain_http(request_target, &raw_headers);
+    // Default to port 80 for plain HTTP.
+    let (hostname, port) = if let Some(h) = &host {
+        parse_host_port_with_default(h, 80)
+    } else {
+        let _ = write_half
+            .write_all(b"HTTP/1.1 400 Bad Request\r\nX-Lantern-Reason: missing-host\r\n\r\n")
+            .await;
+        return Ok(());
+    };
+
+    let (decision, _rate_bps) = policy.evaluate_with_rate(&hostname, port).await;
+    policy.audit(&hostname, port, &decision).await;
+    match decision {
+        Decision::Deny(reason) => {
+            let body = format!("HTTP/1.1 403 Forbidden\r\nX-Lantern-Reason: {reason}\r\n\r\n");
+            let _ = write_half.write_all(body.as_bytes()).await;
+            return Ok(());
+        }
+        Decision::Allow => {}
+    }
+
+    // Method filtering — checked after the allowlist so the deny reason is
+    // specific (403 Method Not Allowed vs. 403 Forbidden).
+    if !policy.check_method(&hostname, method).await {
+        tracing::warn!(
+            host = %hostname,
+            method = method,
+            "egress: plain HTTP request rejected — method not permitted by rule"
+        );
+        let _ = write_half
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nX-Lantern-Reason: method-not-allowed\r\n\r\n")
+            .await;
+        return Ok(());
+    }
+
+    let target = format!("{hostname}:{port}");
+    // Post-allowlist DNS-rebinding guard.
+    let ip_decision = policy.check_resolved_ip(&target).await;
+    policy.audit(&hostname, port, &ip_decision).await;
+    match ip_decision {
+        Decision::Deny(reason) => {
+            let body = format!("HTTP/1.1 403 Forbidden\r\nX-Lantern-Reason: {reason}\r\n\r\n");
+            let _ = write_half.write_all(body.as_bytes()).await;
+            return Ok(());
+        }
+        Decision::Allow => {}
+    }
+
+    let mut upstream = match TcpStream::connect(&target).await {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = write_half
+                .write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+                .await;
+            return Err(anyhow::anyhow!("upstream connect failed: {e}"));
+        }
+    };
+
+    // Forward the original request to the upstream verbatim.
+    upstream.write_all(request_line.as_bytes()).await?;
+    for h in &raw_headers {
+        upstream.write_all(h.as_bytes()).await?;
+    }
+    upstream.write_all(b"\r\n").await?;
+
+    // Pipe the rest of the request body + the response back.
+    let (mut up_r, mut up_w) = upstream.into_split();
+    let t1 = tokio::io::copy(&mut body_reader, &mut up_w);
     let t2 = tokio::io::copy(&mut up_r, &mut write_half);
     let _ = tokio::join!(t1, t2);
     Ok(())
+}
+
+/// Copy bytes from `reader` to `writer` with token-bucket throttling at
+/// `rate_bps` bytes/second. Burst = 1 second. Used for both halves of a
+/// rate-limited CONNECT tunnel concurrently.
+async fn throttled_copy<R, W>(mut reader: R, mut writer: W, rate_bps: u64) -> std::io::Result<u64>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut bucket = TokenBucket::new(rate_bps);
+    let mut buf = vec![0u8; 16 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        bucket.consume(n as u64).await;
+        writer.write_all(&buf[..n]).await?;
+        total += n as u64;
+    }
+    Ok(total)
+}
+
+/// Extract the hostname (with optional port) for a plain HTTP request.
+///
+/// Tries, in order:
+/// 1. Absolute-form URI: `GET http://api.example.com/path HTTP/1.1`
+/// 2. `Host:` header.
+fn extract_host_for_plain_http(request_target: &str, headers: &[String]) -> Option<String> {
+    // Absolute-form URI.
+    if let Some(after) = request_target
+        .strip_prefix("http://")
+        .or_else(|| request_target.strip_prefix("https://"))
+    {
+        let authority = after.split('/').next().unwrap_or("");
+        if !authority.is_empty() {
+            return Some(authority.to_string());
+        }
+    }
+    // Host header.
+    for h in headers {
+        if let Some(val) = h.strip_prefix("Host:").or_else(|| h.strip_prefix("host:")) {
+            let v = val.trim().trim_end_matches('\r').trim_end_matches('\n');
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Parse "host:port" returning (host, port). Falls back to `default_port`
+/// when no colon is present. Handles IPv6 `[::1]:80`.
+fn parse_host_port_with_default(s: &str, default_port: u16) -> (String, u16) {
+    if let Some((h, p)) = parse_host_port(s) {
+        (h, p)
+    } else {
+        // No port in the string — strip any trailing brackets for IPv6.
+        let host = s.trim_matches('[').trim_matches(']').to_string();
+        (host, default_port)
+    }
 }
 
 /// Split "host:port" into (host, port). Returns `None` if the port is absent
@@ -566,7 +867,7 @@ mod tests {
     async fn empty_rules_denies_everything() {
         let policy = make_policy(vec![]);
         assert!(matches!(
-            policy.evaluate("api.openai.com", 443, None).await,
+            policy.evaluate_with_rate("api.openai.com", 443).await.0,
             Decision::Deny(_)
         ));
     }
@@ -575,7 +876,7 @@ mod tests {
     async fn matching_exact_rule_allows() {
         let policy = make_policy(vec![rule("api.openai.com")]);
         assert!(matches!(
-            policy.evaluate("api.openai.com", 443, None).await,
+            policy.evaluate_with_rate("api.openai.com", 443).await.0,
             Decision::Allow
         ));
     }
@@ -584,7 +885,7 @@ mod tests {
     async fn non_matching_rule_denies() {
         let policy = make_policy(vec![rule("api.openai.com")]);
         assert!(matches!(
-            policy.evaluate("evil.com", 443, None).await,
+            policy.evaluate_with_rate("evil.com", 443).await.0,
             Decision::Deny(_)
         ));
     }
@@ -593,7 +894,7 @@ mod tests {
     async fn wildcard_rule_allows_subdomain() {
         let policy = make_policy(vec![rule("*.anthropic.com")]);
         assert!(matches!(
-            policy.evaluate("api.anthropic.com", 443, None).await,
+            policy.evaluate_with_rate("api.anthropic.com", 443).await.0,
             Decision::Allow
         ));
     }
@@ -602,7 +903,7 @@ mod tests {
     async fn wildcard_rule_denies_bare_domain() {
         let policy = make_policy(vec![rule("*.anthropic.com")]);
         assert!(matches!(
-            policy.evaluate("anthropic.com", 443, None).await,
+            policy.evaluate_with_rate("anthropic.com", 443).await.0,
             Decision::Deny(_)
         ));
     }
@@ -611,15 +912,15 @@ mod tests {
     async fn multiple_rules_all_tried() {
         let policy = make_policy(vec![rule("api.openai.com"), rule("*.anthropic.com")]);
         assert!(matches!(
-            policy.evaluate("api.openai.com", 443, None).await,
+            policy.evaluate_with_rate("api.openai.com", 443).await.0,
             Decision::Allow
         ));
         assert!(matches!(
-            policy.evaluate("api.anthropic.com", 443, None).await,
+            policy.evaluate_with_rate("api.anthropic.com", 443).await.0,
             Decision::Allow
         ));
         assert!(matches!(
-            policy.evaluate("evil.com", 443, None).await,
+            policy.evaluate_with_rate("evil.com", 443).await.0,
             Decision::Deny(_)
         ));
     }
@@ -628,22 +929,22 @@ mod tests {
     async fn replace_rules_takes_effect_immediately() {
         let policy = make_policy(vec![rule("old.example.com")]);
         assert!(matches!(
-            policy.evaluate("old.example.com", 443, None).await,
+            policy.evaluate_with_rate("old.example.com", 443).await.0,
             Decision::Allow
         ));
         assert!(matches!(
-            policy.evaluate("new.example.com", 443, None).await,
+            policy.evaluate_with_rate("new.example.com", 443).await.0,
             Decision::Deny(_)
         ));
 
         policy.replace_rules(vec![rule("new.example.com")]).await;
 
         assert!(matches!(
-            policy.evaluate("old.example.com", 443, None).await,
+            policy.evaluate_with_rate("old.example.com", 443).await.0,
             Decision::Deny(_)
         ));
         assert!(matches!(
-            policy.evaluate("new.example.com", 443, None).await,
+            policy.evaluate_with_rate("new.example.com", 443).await.0,
             Decision::Allow
         ));
     }
@@ -652,14 +953,14 @@ mod tests {
     async fn replace_with_empty_rules_denies_all() {
         let policy = make_policy(vec![rule("allowed.com")]);
         assert!(matches!(
-            policy.evaluate("allowed.com", 443, None).await,
+            policy.evaluate_with_rate("allowed.com", 443).await.0,
             Decision::Allow
         ));
 
         policy.replace_rules(vec![]).await;
 
         assert!(matches!(
-            policy.evaluate("allowed.com", 443, None).await,
+            policy.evaluate_with_rate("allowed.com", 443).await.0,
             Decision::Deny(_)
         ));
     }
@@ -671,7 +972,7 @@ mod tests {
         let policy = make_policy(vec![rule("api.openai.com")]);
         // Port 80 is not in the default allowlist [443].
         assert!(matches!(
-            policy.evaluate("api.openai.com", 80, None).await,
+            policy.evaluate_with_rate("api.openai.com", 80).await.0,
             Decision::Deny(_)
         ));
     }
@@ -680,7 +981,7 @@ mod tests {
     async fn port_443_allowed_by_default() {
         let policy = make_policy(vec![rule("api.openai.com")]);
         assert!(matches!(
-            policy.evaluate("api.openai.com", 443, None).await,
+            policy.evaluate_with_rate("api.openai.com", 443).await.0,
             Decision::Allow
         ));
     }
@@ -693,7 +994,7 @@ mod tests {
         // private-range check fires first.
         let policy = make_policy(vec![rule("10.0.0.1")]);
         assert!(matches!(
-            policy.evaluate("10.0.0.1", 443, None).await,
+            policy.evaluate_with_rate("10.0.0.1", 443).await.0,
             Decision::Deny(_)
         ));
     }
@@ -702,7 +1003,7 @@ mod tests {
     async fn metadata_ip_literal_denied() {
         let policy = make_policy(vec![rule("169.254.169.254")]);
         assert!(matches!(
-            policy.evaluate("169.254.169.254", 443, None).await,
+            policy.evaluate_with_rate("169.254.169.254", 443).await.0,
             Decision::Deny(_)
         ));
     }
@@ -712,7 +1013,7 @@ mod tests {
         // A public IP with no rule → denied.
         let policy = make_policy(vec![rule("api.openai.com")]);
         assert!(matches!(
-            policy.evaluate("8.8.8.8", 443, None).await,
+            policy.evaluate_with_rate("8.8.8.8", 443).await.0,
             Decision::Deny(_)
         ));
     }
@@ -721,7 +1022,7 @@ mod tests {
     async fn public_ip_literal_allowed_with_explicit_rule() {
         let policy = make_policy(vec![rule("8.8.8.8")]);
         assert!(matches!(
-            policy.evaluate("8.8.8.8", 443, None).await,
+            policy.evaluate_with_rate("8.8.8.8", 443).await.0,
             Decision::Allow
         ));
     }
@@ -731,7 +1032,7 @@ mod tests {
         // A wildcard pattern must not cover an IP literal.
         let policy = make_policy(vec![rule("*.openai.com")]);
         assert!(matches!(
-            policy.evaluate("1.2.3.4", 443, None).await,
+            policy.evaluate_with_rate("1.2.3.4", 443).await.0,
             Decision::Deny(_)
         ));
     }
@@ -743,12 +1044,210 @@ mod tests {
         // A misconfigured "*." rule must not become allow-all.
         let policy = make_policy(vec![rule("*.")]);
         assert!(matches!(
-            policy.evaluate("anything.com", 443, None).await,
+            policy.evaluate_with_rate("anything.com", 443).await.0,
             Decision::Deny(_)
         ));
         assert!(matches!(
-            policy.evaluate("evil.com", 443, None).await,
+            policy.evaluate_with_rate("evil.com", 443).await.0,
             Decision::Deny(_)
         ));
+    }
+
+    // ---- rate_bps: evaluate_with_rate returns correct rate ----
+
+    fn rule_with_rate(pattern: &str, rate_bps: i64) -> EgressRule {
+        EgressRule {
+            pattern: pattern.to_string(),
+            http_methods: vec![],
+            rate_bps,
+        }
+    }
+
+    #[tokio::test]
+    async fn evaluate_with_rate_returns_zero_for_unlimited_rule() {
+        let policy = make_policy(vec![rule("api.openai.com")]);
+        let (decision, rate) = policy.evaluate_with_rate("api.openai.com", 443).await;
+        assert!(matches!(decision, Decision::Allow));
+        assert_eq!(rate, 0);
+    }
+
+    #[tokio::test]
+    async fn evaluate_with_rate_returns_nonzero_for_rate_limited_rule() {
+        let policy = make_policy(vec![rule_with_rate("api.openai.com", 1_000_000)]);
+        let (decision, rate) = policy.evaluate_with_rate("api.openai.com", 443).await;
+        assert!(matches!(decision, Decision::Allow));
+        assert_eq!(rate, 1_000_000);
+    }
+
+    #[tokio::test]
+    async fn evaluate_with_rate_deny_returns_zero_rate() {
+        let policy = make_policy(vec![rule_with_rate("api.openai.com", 500_000)]);
+        let (decision, rate) = policy.evaluate_with_rate("evil.com", 443).await;
+        assert!(matches!(decision, Decision::Deny(_)));
+        assert_eq!(rate, 0);
+    }
+
+    #[tokio::test]
+    async fn evaluate_with_rate_negative_rate_bps_treated_as_zero() {
+        // rate_bps is i64 in the proto; negative means misconfigured — clamp to 0.
+        let policy = make_policy(vec![rule_with_rate("api.openai.com", -100)]);
+        let (decision, rate) = policy.evaluate_with_rate("api.openai.com", 443).await;
+        assert!(matches!(decision, Decision::Allow));
+        assert_eq!(rate, 0);
+    }
+
+    // ---- TokenBucket: pure math tests ----
+
+    #[tokio::test]
+    async fn token_bucket_unlimited_never_sleeps() {
+        // rate_bps == 0 means unlimited; consume should return immediately.
+        let mut bucket = TokenBucket::new(0);
+        let start = std::time::Instant::now();
+        bucket.consume(1_000_000).await;
+        // Should complete well under 1ms, certainly under 100ms.
+        assert!(start.elapsed().as_millis() < 100);
+    }
+
+    #[tokio::test]
+    async fn token_bucket_burst_consumes_without_wait() {
+        // A fresh bucket starts full (1 second of burst). Consuming up to
+        // rate_bps bytes must not sleep.
+        let rate: u64 = 100_000;
+        let mut bucket = TokenBucket::new(rate);
+        let start = std::time::Instant::now();
+        bucket.consume(rate).await; // exactly one burst — should not sleep
+        assert!(start.elapsed().as_millis() < 100, "burst should not wait");
+    }
+
+    #[tokio::test]
+    async fn token_bucket_overdraft_waits() {
+        // Consuming 2× the burst should require waiting ~1 second.
+        let rate: u64 = 50_000;
+        let mut bucket = TokenBucket::new(rate);
+        // Drain the burst first (no sleep).
+        bucket.consume(rate).await;
+        // Now consume another burst — this should sleep ~1s.
+        let start = std::time::Instant::now();
+        bucket.consume(rate).await;
+        let elapsed = start.elapsed();
+        // Allow generous bounds: must wait at least 800ms, not more than 3s.
+        assert!(
+            elapsed.as_millis() >= 800,
+            "expected ~1s wait, got {}ms",
+            elapsed.as_millis()
+        );
+        assert!(
+            elapsed.as_millis() < 3000,
+            "wait took too long: {}ms",
+            elapsed.as_millis()
+        );
+    }
+
+    #[tokio::test]
+    async fn token_bucket_zero_consume_is_noop() {
+        let mut bucket = TokenBucket::new(1000);
+        let start = std::time::Instant::now();
+        bucket.consume(0).await;
+        assert!(start.elapsed().as_millis() < 50);
+    }
+
+    // ---- HTTP method filtering: check_method ----
+
+    fn rule_with_methods(pattern: &str, methods: &[&str]) -> EgressRule {
+        EgressRule {
+            pattern: pattern.to_string(),
+            http_methods: methods.iter().map(|s| s.to_string()).collect(),
+            rate_bps: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn check_method_empty_list_allows_all() {
+        // An empty http_methods list means all methods are permitted.
+        let policy = make_policy(vec![rule("api.example.com")]);
+        assert!(policy.check_method("api.example.com", "GET").await);
+        assert!(policy.check_method("api.example.com", "POST").await);
+        assert!(policy.check_method("api.example.com", "DELETE").await);
+    }
+
+    #[tokio::test]
+    async fn check_method_allows_listed_method() {
+        let policy = make_policy(vec![rule_with_methods("api.example.com", &["GET", "POST"])]);
+        assert!(policy.check_method("api.example.com", "GET").await);
+        assert!(policy.check_method("api.example.com", "POST").await);
+    }
+
+    #[tokio::test]
+    async fn check_method_denies_unlisted_method() {
+        let policy = make_policy(vec![rule_with_methods("api.example.com", &["GET"])]);
+        assert!(!policy.check_method("api.example.com", "POST").await);
+        assert!(!policy.check_method("api.example.com", "DELETE").await);
+    }
+
+    #[tokio::test]
+    async fn check_method_is_case_insensitive() {
+        let policy = make_policy(vec![rule_with_methods("api.example.com", &["GET"])]);
+        assert!(policy.check_method("api.example.com", "get").await);
+        assert!(policy.check_method("api.example.com", "Get").await);
+    }
+
+    #[tokio::test]
+    async fn check_method_wildcard_rule_allows_all_methods() {
+        let policy = make_policy(vec![rule_with_methods("*.example.com", &["GET"])]);
+        assert!(policy.check_method("api.example.com", "GET").await);
+        assert!(!policy.check_method("api.example.com", "DELETE").await);
+    }
+
+    // ---- extract_host_for_plain_http (pure) ----
+
+    #[test]
+    fn host_extracted_from_absolute_uri() {
+        let headers: Vec<String> = vec![];
+        assert_eq!(
+            extract_host_for_plain_http("http://api.example.com/path", &headers),
+            Some("api.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn host_extracted_from_absolute_uri_with_port() {
+        let headers: Vec<String> = vec![];
+        assert_eq!(
+            extract_host_for_plain_http("http://api.example.com:8080/path", &headers),
+            Some("api.example.com:8080".to_string())
+        );
+    }
+
+    #[test]
+    fn host_extracted_from_host_header() {
+        let headers = vec!["Host: api.example.com\r\n".to_string()];
+        assert_eq!(
+            extract_host_for_plain_http("/path", &headers),
+            Some("api.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn host_returns_none_when_absent() {
+        let headers: Vec<String> = vec![];
+        assert_eq!(extract_host_for_plain_http("/path", &headers), None);
+    }
+
+    // ---- parse_host_port_with_default ----
+
+    #[test]
+    fn parse_with_default_uses_explicit_port() {
+        assert_eq!(
+            parse_host_port_with_default("api.example.com:8080", 80),
+            ("api.example.com".to_string(), 8080)
+        );
+    }
+
+    #[test]
+    fn parse_with_default_falls_back_to_default_port() {
+        assert_eq!(
+            parse_host_port_with_default("api.example.com", 80),
+            ("api.example.com".to_string(), 80)
+        );
     }
 }
