@@ -199,6 +199,8 @@ curl -s http://localhost:3100/health | jq .quietHours
 tail -f ~/Library/Logs/Lantern/whatsapp-bridge.out.log | grep "nudge\|anticipation"
 ```
 
+For Twilio SMS fallback and RCS upgrade (so the iMessage bridge can reach SMS/RCS-only contacts), see [`RCS-SETUP.md`](RCS-SETUP.md).
+
 ---
 
 ## 7. Voice clone for outbound calls (ElevenLabs) — OFF by default

@@ -243,6 +243,16 @@ SDKs ship for **TypeScript** (primary), **Python**, and **Go**.
 
 **Headless microVM runtime** · Schedule untrusted agents into Firecracker / Kata / K8s Job / Wasmtime / devcontainer isolation; the in‑VM Rust harness enforces an egress allowlist and vends short‑TTL secrets. Per‑tenant quota (HTTP 402 over cap). Demos in [`examples/headless-agents/`](examples/headless-agents/).
 
+Run the headless runtime locally (Docker backend — no Linux/KVM needed):
+
+```bash
+make dev-infra            # terminal 1: Postgres + Redis + MinIO
+make run-runtime-manager  # terminal 2: runtime-manager on :50054 (Docker backend)
+make run-scheduler        # terminal 3: scheduler on :50055 / :8085
+make run-api-runtime      # terminal 4: control-plane wired to the scheduler on :8080
+lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name":"world"}'
+```
+
 **Surfaces** · WhatsApp · iMessage · Slack · Discord · Telegram · Voice (Twilio/LiveKit) · Webchat embed · Email.
 
 ---
@@ -358,6 +368,36 @@ New behavior ships with unit tests; bug fixes ship with a regression test. Run `
 - **Customer VPC data plane** — runs in your EKS/GKE/AKS; the control plane reaches it over an outbound‑only mTLS tunnel. Prompts, tokens, and customer data stay in your account; only metadata and routing decisions cross. Terraform/Helm in [`infra/`](infra/).
 
 You choose your LLM providers, where the data plane runs, which models answer which capability aliases, whether to use the built‑in router, and which surfaces ship.
+
+---
+
+## Troubleshooting
+
+**Port already in use** — every `make run-*` target calls `scripts/kill-port.sh`
+first, so a stale process is usually cleared automatically. If it isn't:
+
+```bash
+bash scripts/kill-port.sh 8080 50051 50054 50055
+```
+
+**`make dev-infra` fails** — Docker isn't running. Start Docker Desktop (or the
+Docker daemon) and retry.
+
+**`make run-api` fails with a Postgres auth error** — don't call `go run ./cmd/server`
+directly; the bare command defaults to your OS user for Postgres auth, which will
+fail. `make run-api` sets `DATABASE_URL`, `REDIS_URL`, and `S3_ENDPOINT` correctly.
+
+**WhatsApp / iMessage bridges don't start** — the bridges are macOS-only (they need
+`chat.db` for iMessage and Contacts access). They are not part of the Linux
+`make dev` Docker stack. Run them on a Mac with `make run-whatsapp-bridge` or
+`make run-imessage-bridge`. The iMessage bridge additionally needs Full Disk Access
+granted to the Node binary in System Settings → Privacy → Full Disk Access.
+
+**microVM live-boot fails** — Firecracker requires Linux + `/dev/kvm`. On macOS (and
+any host without KVM) the runtime-manager refuses Hostile/Untrusted workloads with
+`FAILED_PRECONDITION` and is **fail-closed** by design. Use `RUNTIME_BACKEND=docker`
+(the default) for local development; reserve Firecracker for a Linux CI runner or
+dedicated node.
 
 ---
 

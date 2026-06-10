@@ -509,7 +509,7 @@ in-VM `harness` (Rust, baked into the image) enforces egress allowlist,
 vends short-TTL JWT secrets, and streams heartbeats + logs back. Full
 contract is in `packages/proto/lantern/v1/runtime.proto`; arch overview is
 `docs/architecture/04b-microvm-productionization.md`; rationale per
-component is in ADRs 0002–0007. Quota is per tenant; cap exceeded returns
+component is in ADRs 0002–0008. Quota is per tenant; cap exceeded returns
 HTTP 402.
 
 | Method   | Path                             | Description                                                                                             |
@@ -543,6 +543,14 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   via DNS.
 - `LANTERN_DIALER=stub` — force the stub dialer even when
   `LANTERN_DEFAULT_MANAGER_ADDR` is set (debug aid).
+- `LANTERN_RUNTIME_SECRET_TOKEN` — pre-shared token the runtime-manager sends
+  as `X-Lantern-Runtime-Token` to `POST /v1/runtime/secrets/resolve`. Set on
+  both the control-plane (to accept) and the manager (to send). When unset on
+  the control-plane the endpoint returns 403 (fail-closed). See ADR 0008.
+- `LANTERN_CONTROL_PLANE_URL` — base URL the runtime-manager uses to call the
+  relay endpoint (e.g. `http://control-plane:8080`). Must be set together with
+  `LANTERN_RUNTIME_SECRET_TOKEN` to activate `RelaySecretResolver`; otherwise
+  dev `EnvSecretResolver` is used.
 
 Real protoc Go codegen at `gen/go/lantern/v1/` is hand-maintained stubs.
 These are **tracked in git** (NOT gitignored) — they are a build-critical Go

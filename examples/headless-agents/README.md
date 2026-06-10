@@ -27,11 +27,26 @@ layer (`packages/proto/lantern/v1/runtime.proto`, `services/runtime-scheduler`,
 
 Requirements:
 - `make dev-infra` running (Postgres + Redis + MinIO).
-- `make run-api`, `make run-scheduler`, `make run-runtime-manager` (or just `make dev` if you have all the local services wired).
-- One Lantern node registered with the scheduler (the runtime-manager auto-registers on boot).
-- Docker / containerd present on the node — the demos use OCI images.
+- `make run-runtime-manager`, `make run-scheduler`, and `make run-api-runtime` running
+  (or `make dev` if you want the full containerised stack).
+- Docker present on the host — the demos use OCI images; no Linux/KVM required for
+  the `trusted` / `standard` demos (01, 03, 04). Demo 02 (`untrusted`) needs
+  `RUNTIME_BACKEND=firecracker` on Linux; use the Docker backend to exercise the
+  scheduler/manager/harness path without KVM.
 
 ```bash
+# Terminal 1 — infra
+make dev-infra
+
+# Terminal 2 — runtime-manager (Docker backend, :50054)
+make run-runtime-manager
+
+# Terminal 3 — scheduler (:50055 / :8085)
+make run-scheduler
+
+# Terminal 4 — control-plane wired to the scheduler (:8080)
+make run-api-runtime
+
 # Build all four demo images locally
 make -C examples/headless-agents build-all
 
@@ -45,7 +60,7 @@ curl -X POST http://localhost:8080/v1/runtime/schedule \
   -d @examples/headless-agents/01-hello/spec.json
 ```
 
-The dashboard at `localhost:3000/runtime` shows the live VM, its log stream,
+The dashboard at `localhost:3001/runtime` shows the live VM, its log stream,
 resource usage, and lets you exec into it for debugging.
 
 ---
