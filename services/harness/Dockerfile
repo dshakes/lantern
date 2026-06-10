@@ -4,7 +4,7 @@
 # (no glibc loader, no shared libs). The final image is alpine-based and
 # exposes /run/lantern as a mount point for sockets the workload reads.
 
-FROM rust:1.83-alpine AS builder
+FROM rust:1.85-alpine AS builder
 RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static
 WORKDIR /app
 COPY . .
