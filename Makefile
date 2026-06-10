@@ -1,4 +1,4 @@
-.PHONY: help dev build test test-db lint ci-local clean proto local-dev local-kind seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: help dev build test test-db test-e2e lint ci-local clean proto local-dev local-kind k8s-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -121,6 +121,9 @@ local-dev: ## One-command local dev setup (docker-compose)
 local-kind: ## Set up a local Kind cluster with Helm
 	./scripts/local-dev.sh kind
 
+k8s-validate: ## Validate K8s Job isolation end-to-end on a throwaway kind cluster (Calico-enforced default-deny + seccomp + cap-drop)
+	@bash infra/k8s/validate.sh
+
 seed: ## Seed sample data into running services
 	./scripts/seed-data.sh
 
@@ -181,6 +184,9 @@ test-ts: ## Run TypeScript tests
 
 test-python: ## Run Python tests
 	cd packages/sdk-python && python3 -m pytest tests/ -v
+
+test-e2e: ## Run live-stack e2e suites (needs `make dev-infra` + control-plane on :8080; skips green when down) — see e2e/README.md
+	cd e2e/runtime && go test -tags e2e -count=1 -v ./...
 
 test-db: ## Start dev Postgres if needed, then run Go tests that require a live DB
 	@echo "==> Ensuring Postgres is up..."
