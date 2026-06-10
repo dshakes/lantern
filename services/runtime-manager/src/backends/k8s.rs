@@ -4,11 +4,11 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use futures::{AsyncBufReadExt, StreamExt};
+use futures::{AsyncBufReadExt, StreamExt, TryStreamExt};
 use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{
-    Capabilities, Container, ContainerPort, EnvVar, PodSecurityContext, PodSpec, PodTemplateSpec,
-    ResourceRequirements, SeccompProfile, SecurityContext,
+    Capabilities, Container, ContainerPort, EnvVar, Pod, PodSecurityContext, PodSpec,
+    PodTemplateSpec, ResourceRequirements, SeccompProfile, SecurityContext,
 };
 use k8s_openapi::api::networking::v1::{
     IPBlock, NetworkPolicy as K8sNetworkPolicy, NetworkPolicyEgressRule, NetworkPolicyPeer,
@@ -18,15 +18,40 @@ use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::Client;
-use kube::api::{Api, DeleteParams, ListParams, LogParams, PostParams};
+use kube::api::{Api, AttachParams, DeleteParams, ListParams, LogParams, PostParams};
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
-use crate::backend::{Handle, RuntimeBackend, SnapshotInfo};
+use crate::backend::{ExecOutput, Handle, RuntimeBackend, SnapshotInfo, StatsSample};
 use crate::proto::{
     LogLine, NetworkPolicyClass, RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest,
     SnapshotRequest,
 };
+
+// ---------------------------------------------------------------------------
+// PodMetrics: partial JSON shape for the metrics.k8s.io/v1beta1 API.
+// We only need cpu/memory from the first container; we don't need to
+// reproduce the full schema (the raw request approach gives us a serde_json
+// Value that we parse into this struct).
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize, Debug)]
+struct PodMetrics {
+    containers: Vec<ContainerMetrics>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct ContainerMetrics {
+    usage: ContainerUsage,
+}
+
+/// Resource usage reported by metrics-server.
+/// Both fields are Kubernetes quantity strings (e.g. "250m" cpu, "64Mi" memory).
+#[derive(serde::Deserialize, Debug)]
+struct ContainerUsage {
+    cpu: String,
+    memory: String,
+}
 
 /// Kubernetes Job backend for trusted workloads.
 ///
@@ -94,6 +119,30 @@ impl K8sBackend {
     /// Wait for the job's pod to be scheduled and running (or failed).
     async fn wait_for_pod(&self, namespace: &str, job_name: &str) -> Result<String> {
         wait_for_pod_impl(&self.client, namespace, job_name).await
+    }
+
+    /// Resolve a `handle_id` of the form `"namespace/job_name"` to
+    /// `(namespace, job_name, pod_name)`.  Looks up the pod via the job label.
+    async fn resolve_pod(&self, handle_id: &str) -> Result<(String, String, String)> {
+        let (namespace, job_name) = handle_id
+            .split_once('/')
+            .context("invalid handle_id: expected namespace/job_name")?;
+
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), namespace);
+        let label_selector = format!("job-name={job_name}");
+        let list = pods
+            .list(&ListParams::default().labels(&label_selector))
+            .await
+            .context("list pods for job")?;
+
+        let pod_name = list
+            .items
+            .first()
+            .and_then(|p| p.metadata.name.as_deref())
+            .context("no pod found for job")?
+            .to_string();
+
+        Ok((namespace.to_string(), job_name.to_string(), pod_name))
     }
 }
 
@@ -440,6 +489,162 @@ impl RuntimeBackend for K8sBackend {
     fn name(&self) -> &'static str {
         "k8s"
     }
+
+    /// Execute a one-shot command in the running pod for this job handle.
+    ///
+    /// Uses the kube `ws` feature (`Api::exec` / `AttachedProcess`) to attach
+    /// to the pod's `agent-runner` container.  Collects stdout, stderr, and the
+    /// exit code once the process completes.
+    ///
+    /// Requires the `ws` feature on the `kube` crate (added to Cargo.toml).
+    async fn exec_command(
+        &self,
+        handle_id: &str,
+        command: &str,
+        argv: &[String],
+    ) -> Result<ExecOutput> {
+        let (namespace, _job_name, pod_name) = self.resolve_pod(handle_id).await?;
+
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), &namespace);
+
+        let mut cmd = vec![command.to_string()];
+        cmd.extend_from_slice(argv);
+        let cmd_refs: Vec<&str> = cmd.iter().map(String::as_str).collect();
+
+        tracing::debug!(
+            pod = %pod_name,
+            namespace = %namespace,
+            command = ?cmd_refs,
+            "k8s exec_command"
+        );
+
+        let mut proc = pods
+            .exec(
+                &pod_name,
+                cmd_refs,
+                &AttachParams {
+                    container: Some("agent-runner".to_string()),
+                    stdout: true,
+                    stderr: true,
+                    stdin: false,
+                    tty: false,
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("failed to exec into pod")?;
+
+        // Collect stdout.
+        let stdout_bytes = if let Some(stdout_stream) = proc.stdout() {
+            let mut buf = Vec::new();
+            let mut reader = tokio_util::io::ReaderStream::new(stdout_stream);
+            while let Some(chunk) = reader.try_next().await? {
+                buf.extend_from_slice(&chunk);
+            }
+            buf
+        } else {
+            vec![]
+        };
+
+        // Collect stderr.
+        let stderr_bytes = if let Some(stderr_stream) = proc.stderr() {
+            let mut buf = Vec::new();
+            let mut reader = tokio_util::io::ReaderStream::new(stderr_stream);
+            while let Some(chunk) = reader.try_next().await? {
+                buf.extend_from_slice(&chunk);
+            }
+            buf
+        } else {
+            vec![]
+        };
+
+        // Wait for the process to finish and get the exit code.
+        // take_status() returns Option<impl Future<Output = Option<Status>>>.
+        // The inner Option<Status> is None if the channel was dropped before
+        // the process sent its exit status.
+        let exit_code = match proc.take_status() {
+            None => -1,
+            Some(status_fut) => {
+                match status_fut.await {
+                    Some(s) => {
+                        // status field is "Success" for exit_code == 0;
+                        // otherwise `code` carries the numeric exit code.
+                        if s.status.as_deref() == Some("Success") {
+                            0i32
+                        } else {
+                            s.code.unwrap_or(-1)
+                        }
+                    }
+                    None => -1,
+                }
+            }
+        };
+
+        Ok(ExecOutput {
+            stdout: stdout_bytes,
+            stderr: stderr_bytes,
+            exit_code,
+        })
+    }
+
+    /// Return a resource-usage sample for this pod by querying the
+    /// Kubernetes metrics-server API.
+    ///
+    /// Endpoint: `GET /apis/metrics.k8s.io/v1beta1/namespaces/{ns}/pods/{name}`
+    ///
+    /// If the metrics-server is not installed, the API server returns 404 /
+    /// 503 with a message indicating the group is unavailable; we surface a
+    /// clear "metrics.k8s.io unavailable" error in that case rather than an
+    /// opaque transport error.
+    async fn stats_sample(&self, handle_id: &str) -> Result<StatsSample> {
+        let (namespace, _job_name, pod_name) = self.resolve_pod(handle_id).await?;
+
+        // Build the raw request for the pod metrics resource.
+        // `client.request::<T>` accepts `Request<Vec<u8>>` and deserializes
+        // the response body into T — the cleanest path for non-standard API
+        // groups (metrics.k8s.io) that don't have k8s-openapi generated types.
+        let url = format!("/apis/metrics.k8s.io/v1beta1/namespaces/{namespace}/pods/{pod_name}");
+
+        let req = http::Request::builder()
+            .method(http::Method::GET)
+            .uri(&url)
+            .body(vec![])
+            .context("build metrics request")?;
+
+        let pod_metrics: PodMetrics = self.client.request(req).await.map_err(|e| {
+            // Detect "group not found" style errors that indicate the
+            // metrics-server is not installed on this cluster.
+            let msg = e.to_string();
+            if msg.contains("not found")
+                || msg.contains("no matches for kind")
+                || msg.contains("metrics.k8s.io")
+                || msg.contains("ServiceUnavailable")
+            {
+                anyhow::anyhow!(
+                    "metrics.k8s.io unavailable: metrics-server is not installed \
+                         on this cluster (error: {msg})"
+                )
+            } else {
+                anyhow::anyhow!("metrics API request failed: {msg}")
+            }
+        })?;
+
+        // Sum usage across all containers in the pod.
+        let mut vcpu_ms: i64 = 0;
+        let mut memory_bytes: i64 = 0;
+
+        for container in &pod_metrics.containers {
+            vcpu_ms += parse_cpu_quantity_to_vcpu_ms(&container.usage.cpu);
+            memory_bytes += parse_memory_quantity_to_bytes(&container.usage.memory);
+        }
+
+        Ok(StatsSample {
+            vcpu_ms_used: vcpu_ms,
+            memory_bytes,
+            network_bytes_in: 0,  // not available from metrics-server
+            network_bytes_out: 0, // not available from metrics-server
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -621,6 +826,59 @@ fn build_network_policy(
             ingress: None,
         }),
     })
+}
+
+// ---------------------------------------------------------------------------
+// Quantity parsers for metrics-server responses (pure, unit-testable)
+// ---------------------------------------------------------------------------
+
+/// Parse a Kubernetes CPU quantity string (from metrics-server) to
+/// vcpu-milliseconds.  The metrics-server reports instantaneous CPU usage in
+/// nanocores (e.g. `"250000000n"` = 250 millicores = 250 ms/s).
+///
+/// Supported suffixes: `n` (nanocores), `m` (millicores), none (whole cores).
+/// Returns `0` for empty / unrecognised inputs.
+fn parse_cpu_quantity_to_vcpu_ms(cpu: &str) -> i64 {
+    if cpu.is_empty() {
+        return 0;
+    }
+    if let Some(n_str) = cpu.strip_suffix('n') {
+        // nanocores → vcpu-ms: 1 vcpu = 1_000_000_000 ns/s = 1_000 ms/s
+        // nanocores ÷ 1_000_000 ≈ vcpu-ms (per second, which is what the
+        // metrics-server "usage" snapshot represents).
+        n_str.parse::<i64>().unwrap_or(0) / 1_000_000
+    } else if let Some(m_str) = cpu.strip_suffix('m') {
+        // millicores → vcpu-ms (1 millicore = 1 ms of 1 vCPU per second)
+        m_str.parse::<i64>().unwrap_or(0)
+    } else {
+        // whole cores
+        cpu.parse::<i64>().unwrap_or(0) * 1_000
+    }
+}
+
+/// Parse a Kubernetes memory quantity string (from metrics-server) to bytes.
+///
+/// Supported suffixes: `Ki`, `Mi`, `Gi`, `K`, `M`, `G`, none (bytes).
+/// Returns `0` for empty / unrecognised inputs.
+fn parse_memory_quantity_to_bytes(mem: &str) -> i64 {
+    if mem.is_empty() {
+        return 0;
+    }
+    if let Some(s) = mem.strip_suffix("Ki") {
+        s.parse::<i64>().unwrap_or(0) * 1_024
+    } else if let Some(s) = mem.strip_suffix("Mi") {
+        s.parse::<i64>().unwrap_or(0) * 1_024 * 1_024
+    } else if let Some(s) = mem.strip_suffix("Gi") {
+        s.parse::<i64>().unwrap_or(0) * 1_024 * 1_024 * 1_024
+    } else if let Some(s) = mem.strip_suffix('K') {
+        s.parse::<i64>().unwrap_or(0) * 1_000
+    } else if let Some(s) = mem.strip_suffix('M') {
+        s.parse::<i64>().unwrap_or(0) * 1_000_000
+    } else if let Some(s) = mem.strip_suffix('G') {
+        s.parse::<i64>().unwrap_or(0) * 1_000_000_000
+    } else {
+        mem.parse::<i64>().unwrap_or(0)
+    }
 }
 
 /// Parse a container log line, looking for structured Lantern events.
@@ -887,6 +1145,101 @@ mod tests {
         assert_eq!(
             network_policy_name("lantern-run-abc-001"),
             "lantern-run-abc-001-egress"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // CPU / memory quantity parsing (unit-testable without a cluster)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_cpu_nanocores() {
+        // 250_000_000 n = 250 millicores = 250 ms of a vCPU per second
+        assert_eq!(parse_cpu_quantity_to_vcpu_ms("250000000n"), 250);
+    }
+
+    #[test]
+    fn parse_cpu_millicores() {
+        assert_eq!(parse_cpu_quantity_to_vcpu_ms("500m"), 500);
+        assert_eq!(parse_cpu_quantity_to_vcpu_ms("1000m"), 1000);
+    }
+
+    #[test]
+    fn parse_cpu_whole_cores() {
+        assert_eq!(parse_cpu_quantity_to_vcpu_ms("2"), 2_000);
+    }
+
+    #[test]
+    fn parse_cpu_empty_returns_zero() {
+        assert_eq!(parse_cpu_quantity_to_vcpu_ms(""), 0);
+    }
+
+    #[test]
+    fn parse_memory_kibibytes() {
+        assert_eq!(parse_memory_quantity_to_bytes("64Ki"), 64 * 1_024);
+    }
+
+    #[test]
+    fn parse_memory_mebibytes() {
+        assert_eq!(parse_memory_quantity_to_bytes("128Mi"), 128 * 1_024 * 1_024);
+    }
+
+    #[test]
+    fn parse_memory_gibibytes() {
+        assert_eq!(
+            parse_memory_quantity_to_bytes("2Gi"),
+            2 * 1_024 * 1_024 * 1_024
+        );
+    }
+
+    #[test]
+    fn parse_memory_plain_bytes() {
+        assert_eq!(parse_memory_quantity_to_bytes("1073741824"), 1_073_741_824);
+    }
+
+    #[test]
+    fn parse_memory_empty_returns_zero() {
+        assert_eq!(parse_memory_quantity_to_bytes(""), 0);
+    }
+
+    /// Verify that a well-formed PodMetrics JSON blob (inline fixture)
+    /// round-trips through `serde_json::from_str::<PodMetrics>` and
+    /// produces the expected cpu/memory values after quantity parsing.
+    #[test]
+    fn pod_metrics_json_parses_correctly() {
+        let raw = r#"{
+            "kind": "PodMetrics",
+            "apiVersion": "metrics.k8s.io/v1beta1",
+            "metadata": { "name": "my-pod", "namespace": "default" },
+            "containers": [
+                { "name": "agent-runner", "usage": { "cpu": "500m", "memory": "64Mi" } }
+            ]
+        }"#;
+
+        let pm: PodMetrics = serde_json::from_str(raw).expect("parse PodMetrics");
+        assert_eq!(pm.containers.len(), 1);
+        let cpu_ms = parse_cpu_quantity_to_vcpu_ms(&pm.containers[0].usage.cpu);
+        let mem = parse_memory_quantity_to_bytes(&pm.containers[0].usage.memory);
+        assert_eq!(cpu_ms, 500);
+        assert_eq!(mem, 64 * 1_024 * 1_024);
+    }
+
+    /// handle_id parsing: the pure split_once logic that resolve_pod uses.
+    #[test]
+    fn handle_id_split_namespace_and_job() {
+        let handle_id = "lantern-t-dev/lantern-run-abcd1234-ef012345";
+        let (ns, job) = handle_id
+            .split_once('/')
+            .expect("should split on first slash");
+        assert_eq!(ns, "lantern-t-dev");
+        assert_eq!(job, "lantern-run-abcd1234-ef012345");
+    }
+
+    #[test]
+    fn handle_id_missing_slash_fails_split() {
+        assert!(
+            "no-slash-here".split_once('/').is_none(),
+            "handle_id without slash must be caught as invalid"
         );
     }
 }

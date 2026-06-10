@@ -34,7 +34,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
@@ -634,8 +634,8 @@ async fn unix_socket_request<T: Serialize>(
     body: Option<&T>,
 ) -> Result<()> {
     use http_body_util::{BodyExt, Full};
-    use hyper::body::Bytes;
     use hyper::Request;
+    use hyper::body::Bytes;
     use hyper_util::client::legacy::Client;
     use hyper_util::rt::TokioExecutor;
     use hyperlocal::{UnixConnector, Uri as UnixUri};
@@ -1623,6 +1623,28 @@ impl RuntimeBackend for FirecrackerBackend {
 
     fn name(&self) -> &'static str {
         "firecracker"
+    }
+
+    /// Exec is not supported via the host-side Firecracker REST API.
+    ///
+    /// Guest-exec (running a command inside the microVM) arrives via the
+    /// harness channel: the in-VM `RuntimeHarness` service accepts exec
+    /// requests over the harness gRPC channel, not through the host-side
+    /// Firecracker REST API.  Wiring a dedicated guest-exec RPC through the
+    /// harness channel is a future change; for now callers should use the
+    /// harness streaming protocol directly.
+    async fn exec_command(
+        &self,
+        handle_id: &str,
+        _command: &str,
+        _argv: &[String],
+    ) -> anyhow::Result<crate::backend::ExecOutput> {
+        anyhow::bail!(
+            "exec not supported by the 'firecracker' backend (handle_id={}): \
+             guest exec arrives via the harness channel (RuntimeHarness gRPC) — \
+             a dedicated in-VM exec RPC is a future change",
+            handle_id,
+        );
     }
 }
 

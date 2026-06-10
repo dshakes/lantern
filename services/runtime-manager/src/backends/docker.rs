@@ -6,15 +6,16 @@ use async_trait::async_trait;
 use bollard::Docker;
 use bollard::container::{
     Config as ContainerConfig, CreateContainerOptions, LogOutput, LogsOptions,
-    RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+    RemoveContainerOptions, StartContainerOptions, StatsOptions, StopContainerOptions,
 };
+use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bollard::image::CommitContainerOptions;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
-use crate::backend::{Handle, RuntimeBackend, SnapshotInfo};
+use crate::backend::{ExecOutput, Handle, RuntimeBackend, SnapshotInfo, StatsSample};
 use crate::proto::{
     LogLine, RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest, SnapshotRequest,
 };
@@ -40,6 +41,32 @@ impl DockerBackend {
             client,
             agent_image,
         })
+    }
+
+    /// Return a reference to the underlying bollard `Docker` client.
+    ///
+    /// Exposed for the `KataBackend` newtype so it can reuse the same
+    /// daemon connection for the create/start pair with a custom runtime.
+    pub fn client_ref(&self) -> &Docker {
+        &self.client
+    }
+
+    /// Return the default agent image string.
+    ///
+    /// Exposed for `KataBackend` so it can resolve the image reference
+    /// using the same fallback logic as `DockerBackend::ensure_image`.
+    pub fn agent_image(&self) -> &str {
+        &self.agent_image
+    }
+
+    /// Public wrapper around `parse_memory_bytes` for use by `KataBackend`.
+    pub fn parse_memory_bytes_pub(memory: &str) -> Option<i64> {
+        Self::parse_memory_bytes(memory)
+    }
+
+    /// Public wrapper around `parse_nano_cpus` for use by `KataBackend`.
+    pub fn parse_nano_cpus_pub(cpu: &str) -> Option<i64> {
+        Self::parse_nano_cpus(cpu)
     }
 
     /// Ensure the image is available locally, pulling it if missing.
@@ -503,6 +530,147 @@ impl RuntimeBackend for DockerBackend {
 
     fn name(&self) -> &'static str {
         "docker"
+    }
+
+    /// Run a one-shot command inside a running container and collect its output.
+    ///
+    /// Uses the Docker exec API (create + start) rather than shelling out to
+    /// `docker exec`, matching the bollard pattern already used in this module.
+    /// The exec runs non-interactively (no TTY) so stdout and stderr are
+    /// multiplexed in the standard Docker framing.  After the stream drains,
+    /// `inspect_exec` fetches the exit code.
+    async fn exec_command(
+        &self,
+        handle_id: &str,
+        command: &str,
+        argv: &[String],
+    ) -> Result<ExecOutput> {
+        // Build the full argv: [command, argv...].
+        let mut cmd: Vec<&str> = vec![command];
+        cmd.extend(argv.iter().map(String::as_str));
+
+        // Step 1: create the exec instance.
+        let exec = self
+            .client
+            .create_exec(
+                handle_id,
+                CreateExecOptions {
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    attach_stdin: Some(false),
+                    tty: Some(false),
+                    cmd: Some(cmd),
+                    ..Default::default()
+                },
+            )
+            .await
+            .with_context(|| {
+                format!("docker exec create failed for container {handle_id} cmd={command}")
+            })?;
+
+        let exec_id = exec.id;
+
+        // Step 2: start the exec and collect output.
+        let result = self
+            .client
+            .start_exec(
+                &exec_id,
+                Some(StartExecOptions {
+                    detach: false,
+                    tty: false,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .with_context(|| format!("docker exec start failed for exec_id={exec_id}"))?;
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        if let StartExecResults::Attached { mut output, .. } = result {
+            while let Some(chunk) = output.next().await {
+                match chunk.context("exec output stream error")? {
+                    LogOutput::StdOut { message } => stdout.extend_from_slice(&message),
+                    LogOutput::StdErr { message } => stderr.extend_from_slice(&message),
+                    LogOutput::Console { message } => stdout.extend_from_slice(&message),
+                    LogOutput::StdIn { .. } => {}
+                }
+            }
+        }
+
+        // Step 3: retrieve the exit code via inspect.
+        let inspect = self
+            .client
+            .inspect_exec(&exec_id)
+            .await
+            .with_context(|| format!("docker exec inspect failed for exec_id={exec_id}"))?;
+
+        let exit_code = inspect.exit_code.map(|c| c as i32).unwrap_or(-1);
+
+        tracing::debug!(
+            container_id = handle_id,
+            command,
+            exit_code,
+            stdout_bytes = stdout.len(),
+            stderr_bytes = stderr.len(),
+            "exec completed"
+        );
+
+        Ok(ExecOutput {
+            stdout,
+            stderr,
+            exit_code,
+        })
+    }
+
+    /// Return a single resource-usage snapshot for a running container.
+    ///
+    /// Uses bollard's `stats` API with `stream=false, one_shot=true` so it
+    /// fetches exactly one sample without blocking for a second delta cycle.
+    /// CPU usage is expressed as vcpu·ms consumed in total (not a rate) to
+    /// match the `vcpu_ms_used` field in `ResourceUsage` proto.
+    async fn stats_sample(&self, handle_id: &str) -> Result<StatsSample> {
+        let options = StatsOptions {
+            stream: false,
+            one_shot: true,
+        };
+
+        // stats() returns a Stream; we only need the first item.
+        let mut stream = self.client.stats(handle_id, Some(options));
+
+        let stats = stream
+            .next()
+            .await
+            .ok_or_else(|| {
+                anyhow::anyhow!("docker stats returned empty stream for container {handle_id}")
+            })?
+            .with_context(|| format!("docker stats error for container {handle_id}"))?;
+
+        // CPU: convert nanoseconds → milliseconds.
+        let cpu_ns = stats.cpu_stats.cpu_usage.total_usage;
+        let vcpu_ms_used = (cpu_ns / 1_000_000) as i64;
+
+        // Memory: prefer `usage` (current RSS); fall back to 0 when unavailable
+        // (e.g. cgroup v2 on some kernels omits it).
+        let memory_bytes = stats.memory_stats.usage.map(|v| v as i64).unwrap_or(0);
+
+        // Network: sum all interfaces.
+        let (network_bytes_in, network_bytes_out) = if let Some(networks) = &stats.networks {
+            let rx: u64 = networks.values().map(|n| n.rx_bytes).sum();
+            let tx: u64 = networks.values().map(|n| n.tx_bytes).sum();
+            (rx as i64, tx as i64)
+        } else if let Some(n) = &stats.network {
+            (n.rx_bytes as i64, n.tx_bytes as i64)
+        } else {
+            (0, 0)
+        };
+
+        Ok(StatsSample {
+            vcpu_ms_used,
+            memory_bytes,
+            network_bytes_in,
+            network_bytes_out,
+        })
     }
 }
 

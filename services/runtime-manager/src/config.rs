@@ -5,6 +5,8 @@ pub enum RuntimeBackend {
     Docker,
     K8s,
     Firecracker,
+    Kata,
+    Wasm,
 }
 
 impl RuntimeBackend {
@@ -13,6 +15,8 @@ impl RuntimeBackend {
             "docker" => Ok(RuntimeBackend::Docker),
             "k8s" | "kubernetes" => Ok(RuntimeBackend::K8s),
             "firecracker" | "fc" => Ok(RuntimeBackend::Firecracker),
+            "kata" => Ok(RuntimeBackend::Kata),
+            "wasm" | "wasmtime" => Ok(RuntimeBackend::Wasm),
             other => Err(ConfigError::InvalidBackend(other.to_string())),
         }
     }
@@ -109,6 +113,6 @@ impl Config {
 pub enum ConfigError {
     #[error("invalid LISTEN_ADDR: {0}")]
     InvalidAddr(String),
-    #[error("invalid RUNTIME_BACKEND: {0} (expected docker, k8s, or firecracker)")]
+    #[error("invalid RUNTIME_BACKEND: {0} (expected docker, k8s, firecracker, kata, or wasm)")]
     InvalidBackend(String),
 }

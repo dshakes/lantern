@@ -24,6 +24,27 @@ pub struct SnapshotInfo {
     pub size_bytes: i64,
 }
 
+/// Exec result: combined output (stdout and stderr interleaved) and exit code.
+#[derive(Clone, Debug)]
+pub struct ExecOutput {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub exit_code: i32,
+}
+
+/// A single stats sample for a running sandbox.
+#[derive(Clone, Debug, Default)]
+pub struct StatsSample {
+    /// CPU time consumed by the container in milliseconds (vcpu·ms).
+    pub vcpu_ms_used: i64,
+    /// Current memory usage in bytes.
+    pub memory_bytes: i64,
+    /// Total bytes received from the network across all interfaces.
+    pub network_bytes_in: i64,
+    /// Total bytes sent over the network across all interfaces.
+    pub network_bytes_out: i64,
+}
+
 /// Trait that each runtime backend must implement.
 ///
 /// Backends translate high-level scheduling operations into concrete
@@ -48,4 +69,39 @@ pub trait RuntimeBackend: Send + Sync {
 
     /// Return a human-readable name for this backend.
     fn name(&self) -> &'static str;
+
+    /// Run a one-shot command inside a running sandbox and collect its output.
+    ///
+    /// `command` is the executable; `argv` are additional arguments.  The call
+    /// blocks until the command exits and returns the combined output.
+    ///
+    /// Backends that do not support in-container exec (e.g. Firecracker, K8s)
+    /// return an `unimplemented` error with a clear message rather than
+    /// silently failing.  The default implementation does exactly that so
+    /// new backends are fail-safe until they add first-class exec support.
+    async fn exec_command(
+        &self,
+        handle_id: &str,
+        _command: &str,
+        _argv: &[String],
+    ) -> Result<ExecOutput> {
+        anyhow::bail!(
+            "exec not supported by the '{}' backend (handle_id={})",
+            self.name(),
+            handle_id,
+        );
+    }
+
+    /// Return a single resource-usage sample for a running sandbox.
+    ///
+    /// Backends that do not expose real-time metrics (Firecracker, K8s)
+    /// return an `unimplemented` error.  The default implementation does
+    /// exactly that — new backends are fail-safe without extra boilerplate.
+    async fn stats_sample(&self, handle_id: &str) -> Result<StatsSample> {
+        anyhow::bail!(
+            "stats not supported by the '{}' backend (handle_id={})",
+            self.name(),
+            handle_id,
+        );
+    }
 }

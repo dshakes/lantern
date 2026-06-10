@@ -13,6 +13,7 @@ mod proto;
 mod scheduler_heartbeat;
 mod secret_resolver;
 mod service;
+mod snapshot_store;
 mod tls;
 
 use std::sync::Arc;
@@ -21,13 +22,13 @@ use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
 
 use crate::backend::RuntimeBackend;
-use crate::backends::{DockerBackend, FirecrackerBackend, K8sBackend};
+use crate::backends::{DockerBackend, FirecrackerBackend, K8sBackend, KataBackend, WasmBackend};
 use crate::config::{Config, RuntimeBackend as RuntimeBackendKind};
 use crate::pool::PoolConfig;
 use crate::proto::pb::runtime_harness_server::RuntimeHarnessServer;
 use crate::proto::pb::runtime_manager_server::RuntimeManagerServer;
-use crate::secret_resolver::{EnvSecretResolver, SecretResolver};
-use crate::service::{RuntimeHarnessGrpc, RuntimeManagerGrpc};
+use crate::secret_resolver::SecretResolver;
+use crate::service::RuntimeManagerGrpc;
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -59,14 +60,19 @@ async fn main() -> anyhow::Result<()> {
         )?),
         RuntimeBackendKind::K8s => Arc::new(K8sBackend::new(config.agent_image.clone()).await?),
         RuntimeBackendKind::Firecracker => Arc::new(FirecrackerBackend::new()),
+        RuntimeBackendKind::Kata => Arc::new(KataBackend::from_env(
+            &config.docker_socket,
+            config.agent_image.clone(),
+        )?),
+        RuntimeBackendKind::Wasm => Arc::new(WasmBackend::new()?),
     };
 
     tracing::info!(backend = backend.name(), "runtime backend initialized");
 
-    // Secret resolver — EnvSecretResolver reads LANTERN_SECRET_<encoded_uri>
-    // from the environment (dev/CI default). Swap in a Vault or
-    // control-plane relay resolver here for production.
-    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvSecretResolver);
+    // Secret resolver — build() selects the relay (ADR 0008) when both
+    // LANTERN_CONTROL_PLANE_URL and LANTERN_RUNTIME_SECRET_TOKEN are set;
+    // otherwise falls back to EnvSecretResolver (dev/CI default).
+    let resolver: Arc<dyn SecretResolver> = crate::secret_resolver::build();
 
     // Create the gRPC service with warm pool. `RuntimeManagerGrpc` is Clone
     // (its fields are all `Arc`-wrapped), which lets the generated tonic
@@ -80,13 +86,10 @@ async fn main() -> anyhow::Result<()> {
     let mtls_config = tls::build_server_tls_config()?;
     let mtls_enabled = mtls_config.is_some();
 
-    // The RuntimeHarness server shares the same handle registry so
-    // VendSecret sees every VM registered by Spawn.
-    let harness_service = RuntimeHarnessGrpc::new(
-        Arc::clone(&grpc_service.registry),
-        Arc::clone(&resolver),
-        mtls_enabled,
-    );
+    // The RuntimeHarness server shares the handle registry AND the heartbeat
+    // cache with the manager service so VendSecret sees every VM registered by
+    // Spawn and Stats for Firecracker VMs reads from the heartbeat cache.
+    let harness_service = grpc_service.harness_service(mtls_enabled);
 
     let listen_addr = config.listen_addr;
     let manager_svc = RuntimeManagerServer::new(grpc_service);
