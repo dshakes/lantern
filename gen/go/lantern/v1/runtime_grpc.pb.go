@@ -652,6 +652,7 @@ const (
 	RuntimeHarness_Heartbeat_FullMethodName  = "/lantern.v1.RuntimeHarness/Heartbeat"
 	RuntimeHarness_VendSecret_FullMethodName = "/lantern.v1.RuntimeHarness/VendSecret"
 	RuntimeHarness_Report_FullMethodName     = "/lantern.v1.RuntimeHarness/Report"
+	RuntimeHarness_Exec_FullMethodName       = "/lantern.v1.RuntimeHarness/Exec"
 )
 
 // RuntimeHarnessClient is the client API for RuntimeHarness service.
@@ -666,6 +667,12 @@ type RuntimeHarnessClient interface {
 	VendSecret(ctx context.Context, in *VendSecretRequest, opts ...grpc.CallOption) (*VendSecretResponse, error)
 	// Forward structured logs / traces / metrics.
 	Report(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[HarnessReport, HarnessAck], error)
+	// Live exec into the guest. Unlike Heartbeat/VendSecret/Report (which the
+	// harness CALLS on the manager), Exec is SERVED by the in-guest harness:
+	// the manager dials back to the guest address it learned from the
+	// Heartbeat peer and forwards the RuntimeManager.Exec stream. Reuses the
+	// same ExecRequest/ExecResponse framing as RuntimeManager.Exec.
+	Exec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecRequest, ExecResponse], error)
 }
 
 type runtimeHarnessClient struct {
@@ -712,6 +719,19 @@ func (c *runtimeHarnessClient) Report(ctx context.Context, opts ...grpc.CallOpti
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RuntimeHarness_ReportClient = grpc.ClientStreamingClient[HarnessReport, HarnessAck]
 
+func (c *runtimeHarnessClient) Exec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecRequest, ExecResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RuntimeHarness_ServiceDesc.Streams[2], RuntimeHarness_Exec_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExecRequest, ExecResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RuntimeHarness_ExecClient = grpc.BidiStreamingClient[ExecRequest, ExecResponse]
+
 // RuntimeHarnessServer is the server API for RuntimeHarness service.
 // All implementations must embed UnimplementedRuntimeHarnessServer
 // for forward compatibility.
@@ -724,6 +744,12 @@ type RuntimeHarnessServer interface {
 	VendSecret(context.Context, *VendSecretRequest) (*VendSecretResponse, error)
 	// Forward structured logs / traces / metrics.
 	Report(grpc.ClientStreamingServer[HarnessReport, HarnessAck]) error
+	// Live exec into the guest. Unlike Heartbeat/VendSecret/Report (which the
+	// harness CALLS on the manager), Exec is SERVED by the in-guest harness:
+	// the manager dials back to the guest address it learned from the
+	// Heartbeat peer and forwards the RuntimeManager.Exec stream. Reuses the
+	// same ExecRequest/ExecResponse framing as RuntimeManager.Exec.
+	Exec(grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error
 	mustEmbedUnimplementedRuntimeHarnessServer()
 }
 
@@ -742,6 +768,9 @@ func (UnimplementedRuntimeHarnessServer) VendSecret(context.Context, *VendSecret
 }
 func (UnimplementedRuntimeHarnessServer) Report(grpc.ClientStreamingServer[HarnessReport, HarnessAck]) error {
 	return status.Errorf(codes.Unimplemented, "method Report not implemented")
+}
+func (UnimplementedRuntimeHarnessServer) Exec(grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method Exec not implemented")
 }
 func (UnimplementedRuntimeHarnessServer) mustEmbedUnimplementedRuntimeHarnessServer() {}
 func (UnimplementedRuntimeHarnessServer) testEmbeddedByValue()                        {}
@@ -796,6 +825,13 @@ func _RuntimeHarness_Report_Handler(srv interface{}, stream grpc.ServerStream) e
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RuntimeHarness_ReportServer = grpc.ClientStreamingServer[HarnessReport, HarnessAck]
 
+func _RuntimeHarness_Exec_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RuntimeHarnessServer).Exec(&grpc.GenericServerStream[ExecRequest, ExecResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RuntimeHarness_ExecServer = grpc.BidiStreamingServer[ExecRequest, ExecResponse]
+
 // RuntimeHarness_ServiceDesc is the grpc.ServiceDesc for RuntimeHarness service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -818,6 +854,12 @@ var RuntimeHarness_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Report",
 			Handler:       _RuntimeHarness_Report_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "Exec",
+			Handler:       _RuntimeHarness_Exec_Handler,
+			ServerStreams: true,
 			ClientStreams: true,
 		},
 	},

@@ -11,10 +11,11 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Generated tonic client types — `lantern.v1` package from runtime.proto.
+/// Generated tonic types — `lantern.v1` package from runtime.proto.
 ///
-/// Only the client stubs are compiled (build_server = false). The harness
-/// never serves RPCs; it only calls the manager.
+/// Client stubs are used by `manager_client.rs` to call the manager;
+/// server stubs back the in-guest exec server (`exec.rs`), which serves
+/// `RuntimeHarness.Exec` so the manager can dial back into the guest.
 #[allow(
     clippy::enum_variant_names,
     clippy::large_enum_variant,

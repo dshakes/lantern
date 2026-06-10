@@ -38,6 +38,31 @@ pub const HEARTBEAT_STALE_SECS: u64 = 30;
 pub type HeartbeatCache = Arc<DashMap<String, (pb::ResourceUsage, Instant)>>;
 
 // ---------------------------------------------------------------------------
+// Harness dial-back addresses
+//
+// The manager cannot reach into a Firecracker guest through the backend (no
+// host-side exec channel — the jailer owns the VM process). Instead, the
+// in-guest harness serves `RuntimeHarness.Exec` on its tap address, and the
+// manager learns that address from the PEER of the harness's Heartbeat
+// stream. This map caches `vm_id → guest IP`; the exec dispatch dials
+// `http://<guest_ip>:<LANTERN_HARNESS_EXEC_PORT>` and forwards the stream.
+// ---------------------------------------------------------------------------
+
+/// Shared harness dial-back map: `vm_id → guest IP` (from the Heartbeat peer).
+pub type HarnessAddrs = Arc<DashMap<String, std::net::IpAddr>>;
+
+/// Port the in-guest harness exec server listens on. Must match the
+/// harness's `LANTERN_HARNESS_EXEC_ADDR` (default `0.0.0.0:50056`).
+const DEFAULT_HARNESS_EXEC_PORT: u16 = 50056;
+
+fn harness_exec_port() -> u16 {
+    std::env::var("LANTERN_HARNESS_EXEC_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_HARNESS_EXEC_PORT)
+}
+
+// ---------------------------------------------------------------------------
 // C4 fix: isolation-class → backend routing
 //
 // Invariant: Hostile and Untrusted workloads MUST run in a hardware-isolated
@@ -107,6 +132,10 @@ pub struct RuntimeManagerGrpc {
     /// VMs are served from here because the manager cannot poll a microVM guest
     /// directly; the in-VM harness reports usage via the Heartbeat stream.
     pub(crate) heartbeat_cache: HeartbeatCache,
+    /// Harness dial-back addresses shared with `RuntimeHarnessGrpc`. Exec for
+    /// Firecracker VMs is forwarded to the in-guest harness at the IP recorded
+    /// from the Heartbeat stream's peer.
+    pub(crate) harness_addrs: HarnessAddrs,
 }
 
 impl RuntimeManagerGrpc {
@@ -121,6 +150,7 @@ impl RuntimeManagerGrpc {
         let registry = Arc::new(HandleRegistry::new());
         let snapshot_store = Arc::new(SnapshotStore::from_env());
         let heartbeat_cache: HeartbeatCache = Arc::new(DashMap::new());
+        let harness_addrs: HarnessAddrs = Arc::new(DashMap::new());
 
         Self {
             backend,
@@ -129,6 +159,7 @@ impl RuntimeManagerGrpc {
             secret_resolver,
             snapshot_store,
             heartbeat_cache,
+            harness_addrs,
         }
     }
 
@@ -140,6 +171,7 @@ impl RuntimeManagerGrpc {
             Arc::clone(&self.registry),
             Arc::clone(&self.secret_resolver),
             Arc::clone(&self.heartbeat_cache),
+            Arc::clone(&self.harness_addrs),
             mtls_enabled,
         )
     }
@@ -153,6 +185,125 @@ impl RuntimeManagerGrpc {
     fn to_status(e: anyhow::Error) -> Status {
         tracing::error!(error = %e, "runtime manager error");
         Status::internal(e.to_string())
+    }
+
+    /// Decide where an exec for `vm_id` goes.
+    ///
+    /// Firecracker VMs cannot be exec'd through the backend (the manager has
+    /// no host-side channel into the guest), so they route to the in-guest
+    /// harness at the address learned from its Heartbeat peer. A firecracker
+    /// VM whose harness has never connected yields `FAILED_PRECONDITION`.
+    /// Every other backend keeps the existing `backend.exec_command` path.
+    // `Status` is ~176 bytes by design (tonic uses it everywhere); a one-shot
+    // routing helper isn't going to gain anything from boxing it.
+    #[allow(clippy::result_large_err)]
+    fn route_exec(&self, vm_id: &str) -> Result<ExecRoute, Status> {
+        let info = self
+            .registry
+            .get(vm_id)
+            .ok_or_else(|| Status::not_found(format!("vm {vm_id} not found")))?;
+
+        if info.backend != "firecracker" {
+            return Ok(ExecRoute::Backend {
+                handle_id: info.handle_id,
+            });
+        }
+
+        let guest_ip = self
+            .harness_addrs
+            .get(vm_id)
+            .map(|entry| *entry.value())
+            .ok_or_else(|| {
+                Status::failed_precondition(format!(
+                    "harness not connected for vm '{vm_id}': no heartbeat-derived guest \
+                     address yet — exec into a firecracker guest requires the in-VM \
+                     harness to have opened its Heartbeat stream"
+                ))
+            })?;
+
+        // SocketAddr Display brackets IPv6 correctly for the URI.
+        let sock = std::net::SocketAddr::new(guest_ip, harness_exec_port());
+        Ok(ExecRoute::Harness {
+            endpoint: format!("http://{sock}"),
+        })
+    }
+}
+
+/// Where an exec request is dispatched (see [`RuntimeManagerGrpc::route_exec`]).
+#[derive(Debug)]
+enum ExecRoute {
+    /// Run through the backend's host-side exec channel (docker/kata/k8s/...).
+    Backend { handle_id: String },
+    /// Forward the stream to the in-guest harness exec server (firecracker).
+    Harness { endpoint: String },
+}
+
+impl RuntimeManagerGrpc {
+    /// Forward an exec to the in-guest harness exec server and relay its
+    /// response frames back to the caller.
+    ///
+    /// Only the first frame is forwarded — exec is one-shot / non-interactive
+    /// (stdin is not piped), mirroring the docker backend path; the harness
+    /// drains any extra frames on its side too. The hop is plaintext over the
+    /// VM's host-local tap link; mTLS for this listener rides on the per-VM
+    /// cert provisioning tracked in `tls.rs`.
+    fn exec_via_harness(
+        first: pb::ExecRequest,
+        endpoint: String,
+    ) -> Pin<Box<dyn tokio_stream::Stream<Item = Result<pb::ExecResponse, Status>> + Send + 'static>>
+    {
+        tracing::info!(
+            vm_id = %first.vm_id,
+            endpoint = %endpoint,
+            command = %first.command,
+            argv = ?first.argv,
+            "exec: forwarding to in-guest harness"
+        );
+
+        let (tx, rx) = mpsc::channel::<Result<pb::ExecResponse, Status>>(64);
+
+        tokio::spawn(async move {
+            let mut client =
+                match pb::runtime_harness_client::RuntimeHarnessClient::connect(endpoint.clone())
+                    .await
+                {
+                    Ok(client) => client,
+                    Err(e) => {
+                        let _ = tx
+                            .send(Err(Status::unavailable(format!(
+                                "exec: cannot reach in-guest harness at {endpoint}: {e}"
+                            ))))
+                            .await;
+                        return;
+                    }
+                };
+
+            let mut inbound = match client.exec(tokio_stream::once(first)).await {
+                Ok(resp) => resp.into_inner(),
+                Err(status) => {
+                    let _ = tx.send(Err(status)).await;
+                    return;
+                }
+            };
+
+            loop {
+                match inbound.message().await {
+                    Ok(Some(frame)) => {
+                        if tx.send(Ok(frame)).await.is_err() {
+                            // Caller hung up; stop relaying.
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(status) => {
+                        let _ = tx.send(Err(status)).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        Box::pin(ReceiverStream::new(rx))
     }
 }
 
@@ -769,16 +920,26 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             ));
         }
 
-        // Resolve wire vm_id → backend handle_id.
-        let info = self
-            .registry
-            .get(&first.vm_id)
-            .ok_or_else(|| Status::not_found(format!("vm {} not found", first.vm_id)))?;
+        // Resolve wire vm_id → dispatch target. Firecracker VMs forward to
+        // the in-guest harness; everything else goes through the backend.
+        let route = self.route_exec(&first.vm_id)?;
+
+        // Drain any remaining stdin frames from the client stream while the
+        // exec runs. We don't pipe stdin into the exec'd process in this
+        // implementation (exec is one-shot / non-interactive); the frames
+        // are consumed so the client does not stall on a blocked send.
+        tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
+
+        let handle_id = match route {
+            ExecRoute::Harness { endpoint } => {
+                return Ok(Response::new(Self::exec_via_harness(first, endpoint)));
+            }
+            ExecRoute::Backend { handle_id } => handle_id,
+        };
 
         let backend = Arc::clone(&self.backend);
         let command = first.command.clone();
         let argv = first.argv.clone();
-        let handle_id = info.handle_id.clone();
         let vm_id = first.vm_id.clone();
 
         tracing::info!(
@@ -792,12 +953,6 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         let (tx, rx) = mpsc::channel::<Result<pb::ExecResponse, Status>>(64);
 
         tokio::spawn(async move {
-            // Drain any remaining stdin frames from the client stream while the
-            // exec runs. We don't pipe stdin into the container process in this
-            // implementation (exec is one-shot / non-interactive); the frames
-            // are consumed so the client does not stall on a blocked send.
-            tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
-
             match backend.exec_command(&handle_id, &command, &argv).await {
                 Ok(output) => {
                     // Send stdout chunk.
@@ -1073,6 +1228,10 @@ pub struct RuntimeHarnessGrpc {
     /// for Firecracker VMs.  Entries are written per-message; the stats layer
     /// enforces the `HEARTBEAT_STALE_SECS` staleness check on read.
     heartbeat_cache: HeartbeatCache,
+    /// Harness dial-back map shared with `RuntimeManagerGrpc`. The Heartbeat
+    /// handler records the stream's peer IP per `vm_id`; the exec dispatch
+    /// dials it to forward `lantern vm exec` into Firecracker guests.
+    harness_addrs: HarnessAddrs,
     /// When true, VendSecret enforces the client-cert ↔ vm_id identity check.
     /// Mirrors whether the manager's gRPC server is serving mTLS. In dev
     /// (plaintext) the check is skipped because no peer cert exists; in
@@ -1085,12 +1244,14 @@ impl RuntimeHarnessGrpc {
         registry: Arc<HandleRegistry>,
         secret_resolver: Arc<dyn SecretResolver>,
         heartbeat_cache: HeartbeatCache,
+        harness_addrs: HarnessAddrs,
         mtls_enabled: bool,
     ) -> Self {
         Self {
             registry,
             secret_resolver,
             heartbeat_cache,
+            harness_addrs,
             mtls_enabled,
         }
     }
@@ -1106,9 +1267,14 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         &self,
         request: Request<tonic::Streaming<pb::HeartbeatRequest>>,
     ) -> Result<Response<Self::HeartbeatStream>, Status> {
+        // Capture the peer address before consuming the request: it is the
+        // guest-side IP of this harness connection, which the exec dispatch
+        // dials back to reach the in-guest exec server.
+        let peer_ip = request.remote_addr().map(|addr| addr.ip());
         let mut inbound = request.into_inner();
         let cache = Arc::clone(&self.heartbeat_cache);
         let registry = Arc::clone(&self.registry);
+        let harness_addrs = Arc::clone(&self.harness_addrs);
 
         let (tx, rx) = mpsc::channel::<Result<pb::HeartbeatAck, Status>>(64);
 
@@ -1147,6 +1313,11 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
                             "heartbeat received"
                         );
                         cache.insert(hb.vm_id.clone(), (usage, Instant::now()));
+
+                        // Record the dial-back address for exec forwarding.
+                        if let Some(ip) = peer_ip {
+                            harness_addrs.insert(hb.vm_id.clone(), ip);
+                        }
 
                         // Send an ack (no overrides in this implementation).
                         if tx
@@ -1300,6 +1471,25 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         // silently discarding data the harness relies on.
         Err(Status::unimplemented(
             "report: log/trace ingestion pipeline not yet wired on the manager side",
+        ))
+    }
+
+    type ExecStream = Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<pb::ExecResponse, Status>> + Send + 'static>,
+    >;
+
+    // `RuntimeHarness.Exec` is the one RPC of this service that is SERVED by
+    // the in-guest harness, not by the manager (the manager is its CLIENT —
+    // see `RuntimeManagerGrpc::exec_via_harness`). The method exists on the
+    // manager's copy of the service only because tonic requires the full
+    // trait; calling it here is always a dispatch error.
+    async fn exec(
+        &self,
+        _request: Request<tonic::Streaming<pb::ExecRequest>>,
+    ) -> Result<Response<Self::ExecStream>, Status> {
+        Err(Status::unimplemented(
+            "exec is served by the in-guest harness; call RuntimeManager.Exec on the \
+             manager instead — it forwards to the right guest",
         ))
     }
 }
@@ -1511,11 +1701,12 @@ mod tests {
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
+        let addrs: HarnessAddrs = Arc::new(DashMap::new());
         // mtls_enabled=false: these tests exercise the allowlist / TTL /
         // registry-binding logic over plaintext (no peer cert exists in a
         // synthetic Request). The cert-enforcement path is covered by the
         // dedicated tests below with mtls_enabled=true.
-        RuntimeHarnessGrpc::new(registry, resolver, cache, false)
+        RuntimeHarnessGrpc::new(registry, resolver, cache, addrs, false)
     }
 
     #[tokio::test]
@@ -1682,7 +1873,8 @@ mod tests {
         });
         let resolver = Arc::new(HashMapSecretResolver::new(resolver_secrets));
         let cache: HeartbeatCache = Arc::new(DashMap::new());
-        RuntimeHarnessGrpc::new(registry, resolver, cache, true)
+        let addrs: HarnessAddrs = Arc::new(DashMap::new());
+        RuntimeHarnessGrpc::new(registry, resolver, cache, addrs, true)
     }
 
     /// With mTLS enforced, a request carrying NO peer cert (synthetic Request,
@@ -1901,5 +2093,102 @@ mod tests {
             "error message should mention missing heartbeat, got: {}",
             err.message()
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Exec routing — firecracker forwards to the in-guest harness
+    // -----------------------------------------------------------------------
+
+    /// Like `manager_with_vm` but records the given backend name in the
+    /// registry entry, which is what `route_exec` dispatches on.
+    fn manager_with_backend_vm(
+        backend_name: &'static str,
+        vm_id: &str,
+        handle_id: &str,
+    ) -> RuntimeManagerGrpc {
+        let resolver = Arc::new(HashMapSecretResolver::new(HashMap::new()));
+        let svc = RuntimeManagerGrpc::new(
+            NamedStub::arc(backend_name),
+            crate::pool::PoolConfig::default(),
+            resolver,
+        );
+        svc.registry.register(HandleInfo {
+            handle_id: handle_id.to_string(),
+            run_id: "run-exec-route".to_string(),
+            tenant_id: "t-exec".to_string(),
+            backend: backend_name.to_string(),
+            isolation_class: proto::IsolationClass::Untrusted,
+            created_at: chrono::Utc::now(),
+            resource_limits: proto::ResourceLimits::default(),
+            node_name: "node-1".to_string(),
+            declared_secret_uris: vec![],
+        });
+        svc.registry.rekey(handle_id, vm_id);
+        svc
+    }
+
+    /// A firecracker VM whose harness has never heartbeated cannot be exec'd:
+    /// the dispatch must fail with FAILED_PRECONDITION, not fall through to
+    /// the backend (which has no guest channel).
+    #[tokio::test]
+    async fn exec_route_firecracker_without_harness_is_failed_precondition() {
+        let svc = manager_with_backend_vm("firecracker", "vm-fc", "handle-fc");
+        let err = svc
+            .route_exec("vm-fc")
+            .expect_err("firecracker without harness addr must not route");
+        assert_eq!(
+            err.code(),
+            tonic::Code::FailedPrecondition,
+            "expected FAILED_PRECONDITION, got {err:?}"
+        );
+        assert!(
+            err.message().contains("harness not connected"),
+            "message should say the harness is not connected, got: {}",
+            err.message()
+        );
+    }
+
+    /// Once the heartbeat handler has recorded the guest peer IP, exec for a
+    /// firecracker VM routes to the in-guest harness endpoint at that IP.
+    #[tokio::test]
+    async fn exec_route_firecracker_with_harness_addr_targets_guest() {
+        let svc = manager_with_backend_vm("firecracker", "vm-fc2", "handle-fc2");
+        svc.harness_addrs.insert(
+            "vm-fc2".to_string(),
+            "192.168.127.5"
+                .parse::<std::net::IpAddr>()
+                .expect("test ip"),
+        );
+
+        match svc.route_exec("vm-fc2").expect("route must resolve") {
+            ExecRoute::Harness { endpoint } => {
+                let expected = format!("http://192.168.127.5:{}", harness_exec_port());
+                assert_eq!(endpoint, expected, "endpoint must dial the guest IP");
+            }
+            other => panic!("expected harness route, got {other:?}"),
+        }
+    }
+
+    /// Non-firecracker backends keep the existing backend exec path, resolved
+    /// to the backend-side handle id.
+    #[tokio::test]
+    async fn exec_route_docker_uses_backend_handle() {
+        let svc = manager_with_backend_vm("docker", "vm-docker", "container-abc");
+        match svc.route_exec("vm-docker").expect("route must resolve") {
+            ExecRoute::Backend { handle_id } => {
+                assert_eq!(handle_id, "container-abc");
+            }
+            other => panic!("expected backend route, got {other:?}"),
+        }
+    }
+
+    /// Unknown vm_id is NOT_FOUND before any dispatch decision.
+    #[tokio::test]
+    async fn exec_route_unknown_vm_is_not_found() {
+        let svc = manager_with_backend_vm("firecracker", "vm-known", "handle-known");
+        let err = svc
+            .route_exec("vm-unknown")
+            .expect_err("unknown vm must not route");
+        assert_eq!(err.code(), tonic::Code::NotFound);
     }
 }

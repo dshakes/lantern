@@ -354,6 +354,13 @@ service RuntimeHarness {
 
   // Forward structured logs / traces / metrics.
   rpc Report (stream HarnessReport) returns (HarnessAck);
+
+  // Live exec into the guest. Unlike Heartbeat/VendSecret/Report (which the
+  // harness CALLS on the manager), Exec is SERVED by the in-guest harness:
+  // the manager dials back to the guest address it learned from the
+  // Heartbeat peer and forwards the RuntimeManager.Exec stream. Reuses the
+  // same ExecRequest/ExecResponse framing as RuntimeManager.Exec.
+  rpc Exec (stream ExecRequest) returns (stream ExecResponse);
 }
 
 message HeartbeatRequest {

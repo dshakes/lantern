@@ -15,6 +15,7 @@
 #![allow(clippy::needless_return)]
 
 mod egress;
+mod exec;
 mod heartbeat;
 mod init;
 mod logs;
@@ -135,6 +136,19 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             if let Err(e) = egress::run_proxy(p).await {
                 tracing::error!(error = %e, "egress: proxy exited");
+            }
+        });
+    }
+
+    // 4b. In-guest exec server — serves RuntimeHarness.Exec so the manager
+    //     can dial back for `lantern vm exec`. Failure is tolerated: the
+    //     workload always runs even if exec is unavailable.
+    {
+        let m = manager.clone();
+        let vm_id = env.vm_id.clone();
+        tokio::spawn(async move {
+            if let Err(e) = exec::run(vm_id, m).await {
+                tracing::error!(error = %e, "exec: server exited");
             }
         });
     }
