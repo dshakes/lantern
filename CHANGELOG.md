@@ -10,6 +10,22 @@ This project is pre-1.0; there are no stable release branches yet.
 ## [Unreleased]
 
 ### Added
+- **Firecracker guest exec** — the in-guest harness now serves its first RPC
+  (`RuntimeHarness.Exec`); the manager records each VM's guest address from the
+  heartbeat peer and forwards `lantern vm exec` into firecracker-class VMs over
+  that channel (`services/harness/src/exec.rs`, `runtime-manager` service.rs).
+- **Firecracker jailer wrapping** — opt-in via `FIRECRACKER_JAILER_PATH`
+  (chroot + drop to non-root `FIRECRACKER_JAILER_UID`/`GID`, default 123:100;
+  `FIRECRACKER_CHROOT_BASE` default `/srv/jailer`). Argv construction unit-tested;
+  jailed exec is Linux-runtime-only; jailed snapshot-restore fails closed.
+- **K8s isolation validation harness** (`infra/k8s/`, `make k8s-validate`) — kind
+  + Calico cluster asserting default-deny egress, seccomp/cap-drop, and admission
+  rejection of privileged pods. Ran green (18/18).
+- **End-to-end runtime suite** (`e2e/runtime/`, `make test-e2e`) — drives the live
+  control-plane REST surface through the full VM lifecycle; skips when the stack
+  is down.
+- **Lima Firecracker dev path** (`infra/lima/`) — run real microVMs on Apple
+  Silicon (M3+/macOS 15+) via nested virt; verified ~1.6 s boot on an M4 Max.
 - `Exec` and `Stats` gRPC handlers for the Docker backend in `runtime-manager`
   (`services/runtime-manager/src/service.rs`). Both were previously
   `UNIMPLEMENTED` stubs; the Docker path is now backed.
