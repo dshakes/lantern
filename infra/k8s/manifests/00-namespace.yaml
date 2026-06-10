@@ -1,0 +1,27 @@
+# Tenant namespace + minimal-RBAC service account for the sample workload.
+#
+# GAP vs services/runtime-manager/src/backends/k8s.rs (documented, not fixed
+# here): the backend NEVER creates the namespace, the `lantern-agent-runner`
+# ServiceAccount, or Pod Security Admission labels — it assumes tenant
+# namespace provisioning (control-plane) did it. These manifests are what that
+# provisioning step SHOULD produce. The `restricted` PSA enforce label is what
+# makes assertion (d) in validate.sh deterministic: a pod requesting
+# privilege escalation / runAsRoot is REJECTED at admission.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lantern-t-validate
+  labels:
+    app.kubernetes.io/managed-by: lantern-runtime-manager
+    lantern.dev/tenant: validate
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lantern-agent-runner
+  namespace: lantern-t-validate
+  labels:
+    app.kubernetes.io/managed-by: lantern-runtime-manager
+automountServiceAccountToken: false

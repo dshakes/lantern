@@ -1,0 +1,15 @@
+# kind-cluster.yaml — throwaway cluster for validating the K8s Job isolation
+# class end-to-end (SECURITY.md "must-close" / docs/LAUNCH-CHECKLIST.md beta gate).
+#
+# IMPORTANT: kind's default CNI (kindnet) does NOT enforce NetworkPolicy, so a
+# default-deny egress test against it would pass vacuously. We disable the
+# default CNI and validate.sh installs Calico, which DOES enforce, so the
+# egress-block assertions are real.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: lantern-k8s-validate
+networking:
+  disableDefaultCNI: true # validate.sh installs Calico (real NetworkPolicy enforcement)
+  podSubnet: "192.168.0.0/16" # Calico's default IPv4 pool — keep them aligned
+nodes:
+  - role: control-plane
