@@ -1,3 +1,5 @@
+> **Quick setup:** run `make bridge-setup` in the repo root — the interactive wizard handles prereq checks, creates `.env.local`, and walks you through bridge selection in ~5 minutes. Come back here for details.
+
 # Lantern Personal — Setup guide
 
 End-to-end walkthrough for setting up Lantern as your personal
@@ -184,6 +186,8 @@ it). One-tap approve / edit / discard.
 - **/personal/drafts** → approve VIP drafts
 
 ## Troubleshooting
+
+For RCS delivery, inbound branded lane setup, and the Twilio SMS fallback from the iMessage bridge, see [`RCS-SETUP.md`](RCS-SETUP.md).
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
