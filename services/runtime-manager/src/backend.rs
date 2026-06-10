@@ -92,6 +92,34 @@ pub trait RuntimeBackend: Send + Sync {
         );
     }
 
+    /// Like [`Self::exec_command`] but with a TTY allocated for the command.
+    ///
+    /// PTY semantics merge stdout and stderr into one stream, so the result's
+    /// `stdout` carries everything and `stderr` is empty. `rows`/`cols` set
+    /// the initial geometry (0 → backend default) and `term` is exported as
+    /// `TERM` (empty → backend default). Stdin is not piped — the TTY gives
+    /// programs a terminal, not interactivity; interactive execs ride the
+    /// harness dial-back path, never a backend.
+    ///
+    /// The default implementation fails with a message containing
+    /// "exec not supported by" so the dispatch layer maps it to
+    /// `UNIMPLEMENTED`, same as [`Self::exec_command`].
+    async fn exec_command_tty(
+        &self,
+        handle_id: &str,
+        _command: &str,
+        _argv: &[String],
+        _rows: u32,
+        _cols: u32,
+        _term: &str,
+    ) -> Result<ExecOutput> {
+        anyhow::bail!(
+            "tty exec not supported by the '{}' backend (handle_id={})",
+            self.name(),
+            handle_id,
+        );
+    }
+
     /// Return a single resource-usage sample for a running sandbox.
     ///
     /// Backends that do not expose real-time metrics (Firecracker, K8s)

@@ -247,13 +247,19 @@ impl RuntimeManagerGrpc {
     /// Forward an exec to the in-guest harness exec server and relay its
     /// response frames back to the caller.
     ///
-    /// Only the first frame is forwarded — exec is one-shot / non-interactive
-    /// (stdin is not piped), mirroring the docker backend path; the harness
-    /// drains any extra frames on its side too. The hop is plaintext over the
-    /// VM's host-local tap link; mTLS for this listener rides on the per-VM
-    /// cert provisioning tracked in `tls.rs`.
+    /// The first frame is forwarded verbatim — including the `tty`,
+    /// `term_rows`/`term_cols`, and `term` fields. For interactive execs
+    /// (`first.tty == true`) the caller's remaining frames (stdin bytes) are
+    /// relayed to the guest too via `caller_stream`; for one-shot execs
+    /// `caller_stream` is `None` and the request stream half-closes after
+    /// the first frame, exactly as before (stdin is not piped, mirroring the
+    /// docker backend path; the harness drains any extra frames on its side
+    /// too). The hop is plaintext over the VM's host-local tap link; mTLS
+    /// for this listener rides on the per-VM cert provisioning tracked in
+    /// `tls.rs`.
     fn exec_via_harness(
         first: pb::ExecRequest,
+        caller_stream: Option<tonic::Streaming<pb::ExecRequest>>,
         endpoint: String,
     ) -> Pin<Box<dyn tokio_stream::Stream<Item = Result<pb::ExecResponse, Status>> + Send + 'static>>
     {
@@ -262,10 +268,30 @@ impl RuntimeManagerGrpc {
             endpoint = %endpoint,
             command = %first.command,
             argv = ?first.argv,
+            tty = first.tty,
             "exec: forwarding to in-guest harness"
         );
 
         let (tx, rx) = mpsc::channel::<Result<pb::ExecResponse, Status>>(64);
+
+        // Outbound request stream toward the harness: the first frame, then
+        // — interactive only — every stdin frame the caller sends. Dropping
+        // `req_tx` half-closes the stream toward the guest.
+        let (req_tx, req_rx) = mpsc::channel::<pb::ExecRequest>(64);
+        tokio::spawn(async move {
+            if req_tx.send(first).await.is_err() {
+                return;
+            }
+            let Some(mut caller_stream) = caller_stream else {
+                return; // one-shot: half-close after the first frame
+            };
+            while let Ok(Some(frame)) = caller_stream.message().await {
+                if req_tx.send(frame).await.is_err() {
+                    // Harness side hung up; stop relaying.
+                    break;
+                }
+            }
+        });
 
         tokio::spawn(async move {
             let mut client =
@@ -283,7 +309,7 @@ impl RuntimeManagerGrpc {
                     }
                 };
 
-            let mut inbound = match client.exec(tokio_stream::once(first)).await {
+            let mut inbound = match client.exec(ReceiverStream::new(req_rx)).await {
                 Ok(resp) => resp.into_inner(),
                 Err(status) => {
                     let _ = tx.send(Err(status)).await;
@@ -929,36 +955,61 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         // the in-guest harness; everything else goes through the backend.
         let route = self.route_exec(&first.vm_id)?;
 
-        // Drain any remaining stdin frames from the client stream while the
-        // exec runs. We don't pipe stdin into the exec'd process in this
-        // implementation (exec is one-shot / non-interactive); the frames
-        // are consumed so the client does not stall on a blocked send.
-        tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
-
         let handle_id = match route {
             ExecRoute::Harness { endpoint } => {
-                return Ok(Response::new(Self::exec_via_harness(first, endpoint)));
+                // Interactive execs relay the caller's stdin frames into the
+                // guest; one-shot execs half-close after the first frame and
+                // drain the caller's stream (unchanged behavior).
+                let caller_stream = if first.tty {
+                    Some(stream)
+                } else {
+                    tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
+                    None
+                };
+                return Ok(Response::new(Self::exec_via_harness(
+                    first,
+                    caller_stream,
+                    endpoint,
+                )));
             }
             ExecRoute::Backend { handle_id } => handle_id,
         };
+
+        // Backend route: stdin is never piped — even with a TTY the backend
+        // exec is one-shot (the PTY gives programs a terminal, not
+        // interactivity). Drain the remaining frames so the client does not
+        // stall on a blocked send.
+        tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
 
         let backend = Arc::clone(&self.backend);
         let command = first.command.clone();
         let argv = first.argv.clone();
         let vm_id = first.vm_id.clone();
+        let tty = first.tty;
+        let term_rows = first.term_rows;
+        let term_cols = first.term_cols;
+        let term = first.term.clone();
 
         tracing::info!(
             vm_id = %vm_id,
             handle_id = %handle_id,
             command = %command,
             argv = ?argv,
+            tty,
             "exec: dispatching to backend"
         );
 
         let (tx, rx) = mpsc::channel::<Result<pb::ExecResponse, Status>>(64);
 
         tokio::spawn(async move {
-            match backend.exec_command(&handle_id, &command, &argv).await {
+            let result = if tty {
+                backend
+                    .exec_command_tty(&handle_id, &command, &argv, term_rows, term_cols, &term)
+                    .await
+            } else {
+                backend.exec_command(&handle_id, &command, &argv).await
+            };
+            match result {
                 Ok(output) => {
                     // Send stdout chunk.
                     if !output.stdout.is_empty() {
@@ -2195,5 +2246,65 @@ mod tests {
             .route_exec("vm-unknown")
             .expect_err("unknown vm must not route");
         assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    // -----------------------------------------------------------------------
+    // Interactive (tty) exec — wire fields + backend trait default.
+    //
+    // The live PTY pump (CLI ↔ manager ↔ harness) is guest/tty-runtime-only;
+    // here we verify what is testable headless: the proto round-trip and the
+    // fail-safe trait default.
+    // -----------------------------------------------------------------------
+
+    /// The tty/term fields must survive a prost encode/decode round trip —
+    /// guards against a field-number mismatch with the Go stubs (tty=5,
+    /// term_rows=6, term_cols=7, term=8).
+    #[test]
+    fn exec_request_tty_fields_round_trip() {
+        use prost::Message as _;
+
+        let req = pb::ExecRequest {
+            vm_id: "vm-1".to_string(),
+            command: "bash".to_string(),
+            argv: vec!["-l".to_string()],
+            stdin: vec![0x04],
+            tty: true,
+            term_rows: 48,
+            term_cols: 160,
+            term: "xterm-256color".to_string(),
+        };
+
+        let bytes = req.encode_to_vec();
+        let decoded = pb::ExecRequest::decode(bytes.as_slice()).expect("decode must succeed");
+        assert_eq!(decoded, req, "all fields must round-trip");
+        assert!(decoded.tty);
+        assert_eq!(decoded.term_rows, 48);
+        assert_eq!(decoded.term_cols, 160);
+        assert_eq!(decoded.term, "xterm-256color");
+    }
+
+    /// The default `exec_command_tty` must fail with a message the exec
+    /// dispatch maps to UNIMPLEMENTED (it matches on "exec not supported by").
+    #[tokio::test]
+    async fn exec_command_tty_default_returns_error_for_stub() {
+        let backend = NamedStub::arc("k8s");
+        let result = backend
+            .exec_command_tty("my-handle", "bash", &[], 24, 80, "xterm")
+            .await;
+        let msg = result
+            .expect_err("default exec_command_tty should fail")
+            .to_string();
+        assert!(
+            msg.contains("tty exec not supported by"),
+            "error should mention tty exec, got: {msg}"
+        );
+        assert!(
+            msg.contains("exec not supported by"),
+            "message must keep the substring the dispatch maps to UNIMPLEMENTED, got: {msg}"
+        );
+        assert!(
+            msg.contains("k8s") && msg.contains("my-handle"),
+            "error should name backend + handle_id, got: {msg}"
+        );
     }
 }

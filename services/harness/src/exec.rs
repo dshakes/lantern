@@ -8,11 +8,16 @@
 // command inside the guest.
 //
 // Framing mirrors the manager's docker exec path exactly:
-//   - The FIRST ExecRequest frame carries `command` (+ optional argv).
-//   - Subsequent frames (stdin) are drained but NOT piped — exec is
-//     one-shot / non-interactive, same as the docker backend.
-//   - stdout/stderr stream back as chunks; the FINAL frame carries the
-//     exit code with `done = true`.
+//   - The FIRST ExecRequest frame carries `command` (+ optional argv) and,
+//     for interactive execs, `tty = true` + initial geometry (`term_rows`,
+//     `term_cols`) + `term`.
+//   - tty == false (one-shot, unchanged): subsequent frames (stdin) are
+//     drained but NOT piped, same as the docker backend.
+//   - tty == true (interactive): the command runs under a freshly-allocated
+//     PTY; subsequent frames carry stdin bytes that are written to the PTY
+//     master, and everything the PTY emits streams back as `stdout` chunks
+//     (a PTY merges stdout and stderr — that is terminal semantics).
+//   - The FINAL frame carries the exit code with `done = true` either way.
 //
 // Transport: plaintext inside the guest's tap network (host ↔ guest only).
 // This matches the current harness↔manager posture — mTLS server identity
@@ -189,6 +194,196 @@ where
     }
 }
 
+// ---------------------------------------------------------------------------
+// Interactive (tty) exec — PTY-backed
+// ---------------------------------------------------------------------------
+
+/// Build the initial PTY window size for an interactive exec. Zero rows or
+/// cols (caller didn't measure its terminal) fall back to a conventional
+/// 24x80 so the guest shell always has a sane geometry; values beyond
+/// `u16::MAX` are clamped to the ioctl's field width.
+fn tty_winsize(rows: u32, cols: u32) -> nix::pty::Winsize {
+    let clamp = |v: u32, default: u16| -> u16 {
+        if v == 0 {
+            default
+        } else {
+            u16::try_from(v).unwrap_or(u16::MAX)
+        }
+    };
+    nix::pty::Winsize {
+        ws_row: clamp(rows, 24),
+        ws_col: clamp(cols, 80),
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    }
+}
+
+/// Spawn `command argv...` with the PTY slave as stdin/stdout/stderr and as
+/// the controlling terminal (setsid + TIOCSCTTY in `pre_exec`). `TERM` is
+/// exported for the child (empty → "xterm").
+fn spawn_on_pty(
+    command: &str,
+    argv: &[String],
+    term: &str,
+    slave: &std::os::fd::OwnedFd,
+) -> std::io::Result<tokio::process::Child> {
+    let mut cmd = tokio::process::Command::new(command);
+    cmd.args(argv)
+        .env("TERM", if term.is_empty() { "xterm" } else { term })
+        .stdin(std::process::Stdio::from(slave.try_clone()?))
+        .stdout(std::process::Stdio::from(slave.try_clone()?))
+        .stderr(std::process::Stdio::from(slave.try_clone()?))
+        .kill_on_drop(true);
+    // SAFETY: `pre_exec` runs in the forked child before exec; setsid(2) and
+    // ioctl(2) are both async-signal-safe.
+    unsafe {
+        cmd.pre_exec(|| {
+            // New session, then adopt the PTY slave (the child's stdin, fd 0)
+            // as the controlling terminal.
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::ioctl(0, libc::TIOCSCTTY as _, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd.spawn()
+}
+
+/// Run `command argv...` under a freshly-allocated PTY and pump the master
+/// side bidirectionally: PTY output → `ExecResponse.stdout` frames (stdout
+/// and stderr are merged — that is PTY semantics), inbound stdin bytes
+/// (`stdin_rx`) → PTY master. The final frame carries the exit code with
+/// `done = true`; a spawn failure surfaces as a single `Err(Status)`.
+///
+/// The PTY allocation, spawn, and pumps are unit-testable headless — no
+/// controlling terminal is needed because the child gets a NEW session whose
+/// controlling tty is the freshly-opened slave. Only the full
+/// CLI ↔ manager ↔ harness round trip is guest/tty-runtime-only.
+async fn run_exec_tty(
+    command: String,
+    argv: Vec<String>,
+    term: String,
+    winsize: nix::pty::Winsize,
+    mut stdin_rx: mpsc::Receiver<Vec<u8>>,
+    tx: mpsc::Sender<Result<pb::ExecResponse, Status>>,
+) {
+    // openpty applies `winsize` to the slave at allocation — equivalent to a
+    // TIOCSWINSZ immediately after open.
+    let nix::pty::OpenptyResult { master, slave } = match nix::pty::openpty(Some(&winsize), None) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = tx
+                .send(Err(Status::internal(format!("exec: openpty failed: {e}"))))
+                .await;
+            return;
+        }
+    };
+
+    let mut child = match spawn_on_pty(&command, &argv, &term, &slave) {
+        Ok(child) => child,
+        Err(e) => {
+            let _ = tx
+                .send(Err(Status::internal(format!(
+                    "exec: failed to spawn '{command}' on pty: {e}"
+                ))))
+                .await;
+            return;
+        }
+    };
+    // The parent must close its copy of the slave or the master never sees
+    // EOF/EIO when the child exits.
+    drop(slave);
+
+    // PTY master fds are not pollable through tokio's `File` wrapper (and
+    // hangup semantics differ per platform: EOF on macOS, EIO on Linux), so
+    // pump them on dedicated blocking threads via `spawn_blocking` — never
+    // on the async executor itself.
+    let read_file = match master.try_clone() {
+        Ok(fd) => std::fs::File::from(fd),
+        Err(e) => {
+            let _ = tx
+                .send(Err(Status::internal(format!(
+                    "exec: dup of pty master failed: {e}"
+                ))))
+                .await;
+            return;
+        }
+    };
+    let write_file = std::fs::File::from(master);
+
+    let out_tx = tx.clone();
+    let reader = tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut pty = read_file;
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        loop {
+            match pty.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let frame = pb::ExecResponse {
+                        stdout: buf[..n].to_vec(),
+                        stderr: vec![],
+                        exit_code: 0,
+                        done: false,
+                    };
+                    if out_tx.blocking_send(Ok(frame)).is_err() {
+                        // Manager hung up; stop reading.
+                        break;
+                    }
+                }
+                // EIO is the normal Linux signal that the last slave fd
+                // closed (child exited) — treat any error as end-of-stream.
+                Err(_) => break,
+            }
+        }
+    });
+
+    // stdin pump: ends when the client half-closes its send stream
+    // (`stdin_rx` yields `None`) or the PTY goes away. The thread may park
+    // on `blocking_recv` past child exit until the client closes — that is
+    // fine, it holds nothing but a master dup.
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut pty = write_file;
+        while let Some(bytes) = stdin_rx.blocking_recv() {
+            if pty.write_all(&bytes).is_err() {
+                break;
+            }
+        }
+    });
+
+    let status = child.wait().await;
+    // Drain the reader so every output byte is flushed before the final
+    // frame; it terminates on EOF/EIO once the child is gone.
+    let _ = reader.await;
+
+    match status {
+        Ok(status) => {
+            // On Unix a signal-terminated child has no exit code; report -1
+            // so the caller can distinguish it from a clean zero.
+            let exit_code = status.code().unwrap_or(-1);
+            let _ = tx
+                .send(Ok(pb::ExecResponse {
+                    stdout: vec![],
+                    stderr: vec![],
+                    exit_code,
+                    done: true,
+                }))
+                .await;
+        }
+        Err(e) => {
+            let _ = tx
+                .send(Err(Status::internal(format!(
+                    "exec: wait on '{command}' failed: {e}"
+                ))))
+                .await;
+        }
+    }
+}
+
 #[tonic::async_trait]
 impl pb::runtime_harness_server::RuntimeHarness for ExecService {
     type HeartbeatStream = Pin<
@@ -261,13 +456,39 @@ impl pb::runtime_harness_server::RuntimeHarness for ExecService {
             }))
             .await;
 
-        // Drain any stdin frames so the manager-side relay never stalls on
-        // a blocked send. Exec is one-shot — stdin is not piped (mirrors
-        // the docker backend path).
-        tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
-
         let (tx, rx) = mpsc::channel::<Result<pb::ExecResponse, Status>>(64);
-        tokio::spawn(run_exec(first.command, first.argv, tx));
+
+        if first.tty {
+            // Interactive: forward inbound stdin frames into the PTY. Once
+            // the exec finishes (receiver dropped) keep draining so the
+            // manager-side relay never stalls on a blocked send.
+            let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(64);
+            tokio::spawn(async move {
+                let mut sink_closed = false;
+                while let Ok(Some(frame)) = stream.message().await {
+                    if sink_closed || frame.stdin.is_empty() {
+                        continue;
+                    }
+                    if stdin_tx.send(frame.stdin).await.is_err() {
+                        sink_closed = true;
+                    }
+                }
+            });
+            tokio::spawn(run_exec_tty(
+                first.command,
+                first.argv,
+                first.term,
+                tty_winsize(first.term_rows, first.term_cols),
+                stdin_rx,
+                tx,
+            ));
+        } else {
+            // One-shot (unchanged): drain any stdin frames so the
+            // manager-side relay never stalls on a blocked send. Stdin is
+            // not piped (mirrors the docker backend path).
+            tokio::spawn(async move { while let Ok(Some(_)) = stream.message().await {} });
+            tokio::spawn(run_exec(first.command, first.argv, tx));
+        }
 
         let out: Self::ExecStream = Box::pin(ReceiverStream::new(rx));
         Ok(Response::new(out))
@@ -385,9 +606,7 @@ mod tests {
         let frame = pb::ExecRequest {
             vm_id: "vm-1".to_string(),
             command: String::new(),
-            argv: vec![],
-            stdin: vec![],
-            tty: false,
+            ..Default::default()
         };
         let err = validate_first_frame(&frame, "vm-1").expect_err("empty command must fail");
         assert_eq!(err.code(), tonic::Code::InvalidArgument);
@@ -398,9 +617,7 @@ mod tests {
         let frame = pb::ExecRequest {
             vm_id: "vm-other".to_string(),
             command: "ls".to_string(),
-            argv: vec![],
-            stdin: vec![],
-            tty: false,
+            ..Default::default()
         };
         let err = validate_first_frame(&frame, "vm-mine").expect_err("vm_id mismatch must fail");
         assert_eq!(err.code(), tonic::Code::InvalidArgument);
@@ -417,14 +634,174 @@ mod tests {
             let frame = pb::ExecRequest {
                 vm_id: vm_id.to_string(),
                 command: "ls".to_string(),
-                argv: vec![],
-                stdin: vec![],
-                tty: false,
+                ..Default::default()
             };
             assert!(
                 validate_first_frame(&frame, "vm-mine").is_ok(),
                 "vm_id {vm_id:?} should be accepted"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Interactive (tty) exec.
+    //
+    // These run headless: openpty does not need a controlling terminal (the
+    // child gets a fresh session whose controlling tty is the new slave).
+    // The full CLI ↔ manager ↔ harness interactive round trip is
+    // guest/tty-runtime-only and is NOT covered here.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tty_winsize_defaults_to_24x80() {
+        let ws = tty_winsize(0, 0);
+        assert_eq!(ws.ws_row, 24);
+        assert_eq!(ws.ws_col, 80);
+        assert_eq!(ws.ws_xpixel, 0);
+        assert_eq!(ws.ws_ypixel, 0);
+    }
+
+    #[test]
+    fn tty_winsize_uses_caller_geometry_and_clamps() {
+        let ws = tty_winsize(50, 120);
+        assert_eq!(ws.ws_row, 50);
+        assert_eq!(ws.ws_col, 120);
+
+        let ws = tty_winsize(u32::MAX, 1);
+        assert_eq!(ws.ws_row, u16::MAX, "rows beyond u16 must clamp");
+        assert_eq!(ws.ws_col, 1);
+    }
+
+    #[test]
+    fn first_frame_with_tty_fields_validates() {
+        let frame = pb::ExecRequest {
+            vm_id: "vm-1".to_string(),
+            command: "sh".to_string(),
+            tty: true,
+            term_rows: 40,
+            term_cols: 132,
+            term: "xterm-256color".to_string(),
+            ..Default::default()
+        };
+        assert!(validate_first_frame(&frame, "vm-1").is_ok());
+    }
+
+    /// Drain every frame from a run_exec_tty channel, feeding `stdin_writes`
+    /// into the PTY first.
+    async fn collect_tty(
+        command: &str,
+        argv: &[&str],
+        stdin_writes: Vec<Vec<u8>>,
+    ) -> Vec<Result<pb::ExecResponse, Status>> {
+        let (stdin_tx, stdin_rx) = mpsc::channel(8);
+        for w in stdin_writes {
+            stdin_tx.send(w).await.expect("stdin channel open");
+        }
+        drop(stdin_tx); // half-close, like a client ending its send stream
+
+        let (tx, mut rx) = mpsc::channel(64);
+        run_exec_tty(
+            command.to_string(),
+            argv.iter().map(|s| s.to_string()).collect(),
+            "dumb".to_string(),
+            tty_winsize(24, 80),
+            stdin_rx,
+            tx,
+        )
+        .await;
+        let mut frames = Vec::new();
+        while let Some(f) = rx.recv().await {
+            frames.push(f);
+        }
+        frames
+    }
+
+    /// Concatenate stdout bytes and pull the final frame out of a tty run.
+    fn tty_output(frames: &[Result<pb::ExecResponse, Status>]) -> (Vec<u8>, pb::ExecResponse) {
+        let mut stdout = Vec::new();
+        for f in frames {
+            let f = f.as_ref().expect("no error frames expected");
+            stdout.extend_from_slice(&f.stdout);
+            assert!(
+                f.stderr.is_empty(),
+                "tty exec must never emit stderr frames"
+            );
+        }
+        let last = frames
+            .last()
+            .expect("at least the final frame must arrive")
+            .as_ref()
+            .expect("final frame must be Ok")
+            .clone();
+        (stdout, last)
+    }
+
+    #[tokio::test]
+    async fn tty_exec_merges_stderr_into_stdout_and_reports_exit_code() {
+        let frames = collect_tty(
+            "/bin/sh",
+            &["-c", "printf out; printf err 1>&2; exit 3"],
+            vec![],
+        )
+        .await;
+        let (stdout, last) = tty_output(&frames);
+
+        assert_eq!(
+            stdout, b"outerr",
+            "on a PTY both streams arrive merged, in write order"
+        );
+        assert!(last.done, "final frame must carry done=true");
+        assert_eq!(last.exit_code, 3, "final frame must carry the exit code");
+    }
+
+    #[tokio::test]
+    async fn tty_exec_pipes_stdin_through_the_pty() {
+        // `read` pulls one line from the controlling tty, so the child only
+        // exits if the stdin pump delivered the bytes to the PTY master.
+        let frames = collect_tty(
+            "/bin/sh",
+            &["-c", r#"read line && printf "got:%s" "$line""#],
+            vec![b"hi\n".to_vec()],
+        )
+        .await;
+        let (stdout, last) = tty_output(&frames);
+
+        let text = String::from_utf8_lossy(&stdout);
+        assert!(
+            text.contains("got:hi"),
+            "stdin must reach the child through the PTY, got: {text:?}"
+        );
+        assert!(last.done);
+        assert_eq!(last.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn tty_exec_exports_term() {
+        let frames = collect_tty("/bin/sh", &["-c", "printf \"%s\" \"$TERM\""], vec![]).await;
+        let (stdout, last) = tty_output(&frames);
+
+        assert_eq!(
+            stdout, b"dumb",
+            "TERM from the request must reach the child"
+        );
+        assert_eq!(last.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn tty_exec_spawn_failure_surfaces_internal_status() {
+        let frames = collect_tty("/nonexistent/lantern-test-binary", &[], vec![]).await;
+
+        assert_eq!(
+            frames.len(),
+            1,
+            "spawn failure should yield exactly one frame"
+        );
+        let err = frames[0].as_ref().expect_err("expected an error frame");
+        assert_eq!(err.code(), tonic::Code::Internal);
+        assert!(
+            err.message().contains("failed to spawn"),
+            "message should name the spawn failure, got: {}",
+            err.message()
+        );
     }
 }

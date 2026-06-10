@@ -17,6 +17,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,7 +27,11 @@ import (
 	"strings"
 	"time"
 
+	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"gopkg.in/yaml.v3"
 )
 
@@ -119,6 +124,7 @@ func newVmCommand() *cobra.Command {
 	cmd.AddCommand(newVmGetCommand())
 	cmd.AddCommand(newVmLogsCommand())
 	cmd.AddCommand(newVmStopCommand())
+	cmd.AddCommand(newVmExecCommand())
 	cmd.AddCommand(newVmClusterCommand())
 	cmd.AddCommand(newVmQuotaCommand())
 	return cmd
@@ -231,6 +237,192 @@ func newVmStopCommand() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&graceSeconds, "grace", 30, "seconds to wait for graceful drain before SIGKILL")
 	return cmd
+}
+
+// --- `lantern vm exec` -------------------------------------------------------
+//
+// Exec speaks the RuntimeManager.Exec gRPC bidi stream directly (the
+// control-plane REST surface has no streaming exec channel). The first
+// frame carries the command + tty parameters; with --tty subsequent frames
+// stream this terminal's raw stdin into the guest PTY and everything the
+// PTY emits comes back as stdout chunks. The final frame carries the exit
+// code.
+
+// defaultManagerAddr is where the runtime-manager serves gRPC locally
+// (see the service-ports table in the repo CLAUDE.md).
+const defaultManagerAddr = "localhost:50054"
+
+// resolveManagerAddr picks the runtime-manager gRPC address: explicit flag,
+// then $LANTERN_MANAGER_ADDR, then the local default.
+func resolveManagerAddr(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if v := os.Getenv("LANTERN_MANAGER_ADDR"); v != "" {
+		return v
+	}
+	return defaultManagerAddr
+}
+
+// execFirstFrame builds the stream-opening ExecRequest. rows/cols <= 0 are
+// omitted (the guest falls back to 24x80); termName is only sent for tty
+// execs.
+func execFirstFrame(vmID, command string, argv []string, tty bool, rows, cols int, termName string) *lanternv1.ExecRequest {
+	req := &lanternv1.ExecRequest{
+		VmId:    vmID,
+		Command: command,
+		Argv:    argv,
+		Tty:     tty,
+	}
+	if tty {
+		if rows > 0 {
+			req.TermRows = uint32(rows)
+		}
+		if cols > 0 {
+			req.TermCols = uint32(cols)
+		}
+		req.Term = termName
+	}
+	return req
+}
+
+// enterRawMode puts fd into raw mode when it is a terminal and returns the
+// restore func. When fd is NOT a terminal (CI, piped stdin) it is a no-op:
+// the guest still gets its PTY, there is just no local raw mode to manage.
+func enterRawMode(fd int) (restore func(), err error) {
+	if !term.IsTerminal(fd) {
+		return func() {}, nil
+	}
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return nil, fmt.Errorf("enter raw mode: %w", err)
+	}
+	return func() { _ = term.Restore(fd, state) }, nil
+}
+
+func newVmExecCommand() *cobra.Command {
+	var (
+		tty         bool
+		interactive bool
+		managerAddr string
+	)
+	cmd := &cobra.Command{
+		Use:   "exec <vm-id> -- <command> [args...]",
+		Short: "Run a command inside a running VM",
+		Long: `Runs a command inside a running VM over the runtime-manager's Exec stream.
+
+With -t/--tty a PTY is allocated in the guest and wired to this terminal:
+stdin streams into the guest, output streams back, and stdout/stderr arrive
+merged (terminal semantics). -i/--interactive implies --tty. Without a tty
+the exec is one-shot: no stdin, stdout/stderr kept separate.
+
+Examples:
+  lantern vm exec vm-1234 -- ls -la /tmp
+  lantern vm exec -it vm-1234 -- /bin/sh`,
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runVmExec(cmd, args[0], args[1], args[2:],
+				tty || interactive, resolveManagerAddr(managerAddr))
+		},
+	}
+	cmd.Flags().BoolVarP(&tty, "tty", "t", false, "allocate a PTY in the guest and wire it to this terminal")
+	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "keep stdin open (implies --tty)")
+	cmd.Flags().StringVar(&managerAddr, "manager-addr", "",
+		"runtime-manager gRPC address (default $LANTERN_MANAGER_ADDR or "+defaultManagerAddr+")")
+	return cmd
+}
+
+func runVmExec(cmd *cobra.Command, vmID, command string, argv []string, tty bool, managerAddr string) error {
+	conn, err := grpc.NewClient(managerAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return fmt.Errorf("dial runtime-manager %s: %w", managerAddr, err)
+	}
+	defer conn.Close()
+
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	stream, err := lanternv1.NewRuntimeManagerClient(conn).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("open exec stream: %w", err)
+	}
+
+	rows, cols := 0, 0
+	termName := ""
+	if tty {
+		termName = os.Getenv("TERM")
+		if termName == "" {
+			termName = "xterm-256color"
+		}
+		if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			cols, rows = w, h
+		}
+		restore, err := enterRawMode(int(os.Stdin.Fd()))
+		if err != nil {
+			return err
+		}
+		// Restore runs before cobra prints any error — the deferred order
+		// (restore, then cancel/close) keeps the terminal sane on every path.
+		defer restore()
+	}
+
+	if err := stream.Send(execFirstFrame(vmID, command, argv, tty, rows, cols, termName)); err != nil {
+		return fmt.Errorf("send exec request: %w", err)
+	}
+
+	if tty {
+		// stdin pump: raw bytes → stdin frames. Ends on local EOF (half-
+		// close lets the guest see ^D) or when the RPC is torn down.
+		go func() {
+			buf := make([]byte, 4096)
+			for {
+				n, rerr := os.Stdin.Read(buf)
+				if n > 0 {
+					if serr := stream.Send(&lanternv1.ExecRequest{Stdin: buf[:n]}); serr != nil {
+						return
+					}
+				}
+				if rerr != nil {
+					_ = stream.CloseSend()
+					return
+				}
+			}
+		}()
+	} else {
+		// One-shot: stdin is not piped — half-close right after the first
+		// frame, matching the manager's non-interactive contract.
+		if err := stream.CloseSend(); err != nil {
+			return fmt.Errorf("close send: %w", err)
+		}
+	}
+
+	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
+	exitCode := 0
+	for {
+		resp, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("exec stream: %w", err)
+		}
+		if len(resp.Stdout) > 0 {
+			_, _ = out.Write(resp.Stdout)
+		}
+		if len(resp.Stderr) > 0 {
+			_, _ = errOut.Write(resp.Stderr)
+		}
+		if resp.Done {
+			exitCode = int(resp.ExitCode)
+		}
+	}
+
+	if exitCode != 0 {
+		return fmt.Errorf("command exited with code %d", exitCode)
+	}
+	return nil
 }
 
 func newVmClusterCommand() *cobra.Command {
