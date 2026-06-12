@@ -234,7 +234,8 @@ documents what it proves about the platform:
 - Audit events on every operation.
 - Dashboard `/runtime` list + per-VM debug view with live SSE logs.
 - All CLI subcommands (`lantern run`, `lantern vm
-  {list,get,logs,stop,cluster,quota}`).
+  {list,get,logs,exec,stop,cluster,quota}`) — `vm exec` supports
+  interactive TTY via `-it` (CLI raw mode, real PTY in the guest).
 - Rust `harness` compiles + has unit-tested subsystems (egress proxy,
   secret vending, heartbeat reconnect). Reachable from the manager
   once a real microVM image is built that includes it.
@@ -243,16 +244,21 @@ documents what it proves about the platform:
   has hand-stub Go code in `gen/go/lantern/v1/`).
 
 **Honest gaps that remain:**
-- **`vm exec`**: returns `Status::unimplemented` / a stub placeholder.
-  Bidi streams are wired through tonic on the Rust side but the
-  per-backend exec primitive isn't exposed in `RuntimeBackend`, and the
-  Go control-plane's hand-stub gRPC code doesn't include bidi streaming
-  glue. TODO(W12-exec).
-- **`vm stats`**: `Status::unimplemented` — `ResourceUsage` rolls up via
-  the harness `Heartbeat` stream, not per-backend polling, so returning
-  zero samples would be misleading.
-- **Snapshot**: scheduler accepts the call and records intent; the
-  manager-side snapshot/restore wire for Firecracker is the next mile.
+- **`vm exec`**: ✅ FIXED. Backed for the Docker and Kata backends, and
+  forwarded into firecracker-class VMs over the in-guest harness channel
+  (`RuntimeHarness.Exec`). Interactive TTY (`-it`) allocates a real PTY in
+  the guest. Wasm and K8s return a clear unsupported error.
+- **`vm stats`**: ✅ FIXED. `Stats` is backed for the Docker and Kata
+  backends; the harness additionally reports cgroup v2 stats over
+  `Heartbeat`.
+- **Snapshot**: ✅ WIRED. `SnapshotStore` persists snapshots under
+  `SNAPSHOT_DIR` with ADR 0007 Tier-2 retention (+ optional S3 fallback);
+  Firecracker snapshot-restore is validated on KVM. Jailed
+  snapshot-restore fails closed (see `docs/LAUNCH-CHECKLIST.md`).
+- **In-guest VendSecret**: the harness boots as PID 1 and heartbeats, but
+  `manager_client.rs` is still a stub for the guest half of secret
+  vending (mTLS client from the certs drive → `VendSecret`). Tracked in
+  `docs/LAUNCH-CHECKLIST.md`.
 - **Real protoc Go codegen**: ✅ FIXED. `gen/go/` is now true
   protoc-gen-go output (run `make proto` to regenerate). The old
   `engine.proto` runtime stubs (ScheduleRequest / ResourceLimits /
