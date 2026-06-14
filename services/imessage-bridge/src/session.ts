@@ -3216,8 +3216,12 @@ export class IMessageSession {
       styleLessonsBlock: this.styleLessonsBlock || undefined,
       // Scheduling negotiation — let the bot propose/hold/confirm times
       // from the owner's free slots, reusing the [CALENDAR:] path.
-      schedulingEnabled: true,
-      freeSlotsBlock: this.freeSlotsBlock() || undefined,
+      // REACTIVE scheduling only — was always-on, so the bot volunteered
+      // meeting offers ("want me to pencil one in?") unprompted, the #1 spam
+      // tell. Now injected ONLY when the contact actually raised meeting/
+      // availability; a normal chat never triggers a scheduling offer.
+      schedulingEnabled: !isGroup && (needsCalendar(text) || looksLikeAppointmentQuery(text)),
+      freeSlotsBlock: !isGroup && (needsCalendar(text) || looksLikeAppointmentQuery(text)) ? this.freeSlotsBlock() || undefined : undefined,
       presence: presenceLine,
       episodesBlock,
       relatedBlock,

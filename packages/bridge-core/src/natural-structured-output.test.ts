@@ -45,3 +45,29 @@ test("suppresses the customer-service tells from the screenshot", () => {
   assert.equal(detectBotTells("I'll do my best to assist").ok, false);
   assert.equal(detectBotTells("sorry about that").ok, false);
 });
+
+test("suppresses corporate connective tissue (sales-bot register)", () => {
+  const corporate = [
+    "let's aim for sometime after 6 PM this week to discuss further?",
+    "happy to circle back next week",
+    "we should touch base soon",
+    "let's sync up on this",
+    "I'd love to formalize our engagement",
+    "looking forward to connecting",
+  ];
+  for (const d of corporate) {
+    assert.equal(detectBotTells(d).ok, false, `should suppress: ${JSON.stringify(d)}`);
+  }
+});
+
+test("does NOT suppress a natural human reply about the same topics", () => {
+  const human = [
+    "nice, Wells Fargo is big — when are you in SF?",
+    "oh sick, congrats man",
+    "tomorrow evening works for me",
+    "yeah let's grab a coffee when you're around",
+  ];
+  for (const d of human) {
+    assert.equal(detectBotTells(d).ok, true, `should NOT suppress: ${JSON.stringify(d)}`);
+  }
+});

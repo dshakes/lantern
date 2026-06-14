@@ -34,7 +34,7 @@ test("distress addendum lands AFTER the scheduling block so it can override it",
     freeSlotsBlock: "Saturday morning",
     emotionalRegister: "distress",
   });
-  const schedIdx = prompt.indexOf("you can negotiate times");
+  const schedIdx = prompt.indexOf("SCHEDULING —");
   const emoIdx = prompt.indexOf("EMOTIONAL READ");
   assert.ok(schedIdx >= 0, "scheduling block missing");
   assert.ok(emoIdx >= 0, "emotional addendum missing");
