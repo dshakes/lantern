@@ -37,6 +37,7 @@ export type EscalationKind =
   | "relay-promise"
   | "personal-fact-probe"
   | "urgent"
+  | "bot-clocked"
   | null;
 
 export interface EscalationVerdict {
@@ -128,6 +129,41 @@ export function detectUrgency(text: string): EscalationVerdict | null {
   for (const p of URGENCY_PATTERNS) {
     if (p.re.test(text)) {
       return { kind: "urgent", reason: p.reason, pattern: p.re.source };
+    }
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// BOT CLOCKED (soft — owner heads-up, NOT a hard refusal)
+// ─────────────────────────────────────────────────────────────
+// The contact has figured out (or is needling) that they're talking to a
+// bot, OR is frustrated with it — "oh it's your LLM again haha", "bad
+// robot", "is this a bot?", "are you chatgpt". This is DISTINCT from the
+// `ai-identity-probe` in detectPromptInjection: that path is a hostile
+// social-engineering attempt and triggers a HARD REFUSAL ("do not engage").
+// A friendly/annoyed callout is the opposite situation — coldly refusing a
+// friend who said "haha it's your LLM again" outs the bot far worse. The
+// correct move here is to KEEP REPLYING naturally but page the owner so a
+// human can step in. So this detector only fires a deduped heads-up; it
+// never refuses, pauses, or suppresses the reply. Worded to catch the
+// casual/annoyed forms the injection patterns deliberately miss.
+const BOT_CLOCKED_PATTERNS: Array<{ re: RegExp; reason: string }> = [
+  { re: /\b(?:bad|dumb|stupid|terrible|useless|annoying|broken|silly)\s+(?:bot|robot|ai)\b/i, reason: "bot-insult" },
+  { re: /\b(?:it'?s|its|this\s+is|that'?s|here'?s)\s+(?:your|the|a|an)\s+(?:llm|bot|robot|ai|chatbot)\b/i, reason: "callout-its-the-bot" },
+  { re: /\byour\s+(?:llm|bot|robot|chatbot|ai)\b/i, reason: "callout-your-bot" },
+  { re: /\b(?:talking|chatting|texting)\s+(?:to|with)\s+(?:a\s+|an\s+|the\s+)?(?:bot|robot|ai|llm|machine|chatgpt|chatbot)\b/i, reason: "talking-to-a-bot" },
+  { re: /\b(?:is|are|r)\s+(?:this|that|u|you|it)\s+(?:really\s+)?(?:a\s+|an\s+)?(?:bot|robot|llm|chatgpt|chatbot)\b/i, reason: "is-this-a-bot" },
+  { re: /\b(?:u|you|ya)\s+(?:a\s+|an\s+)?(?:bot|robot|chatbot)\b/i, reason: "you-are-a-bot" },
+  { re: /\bchat\s?gpt\b/i, reason: "chatgpt-mention" },
+  { re: /\b(?:not|isn'?t|aint|ain'?t)\s+(?:really\s+)?(?:a\s+)?(?:human|real\s+person|the\s+real\s+\w+)\b/i, reason: "not-human" },
+];
+
+export function detectBotClocked(text: string): EscalationVerdict | null {
+  if (!text || text.length < 3) return null;
+  for (const p of BOT_CLOCKED_PATTERNS) {
+    if (p.re.test(text)) {
+      return { kind: "bot-clocked", reason: p.reason, pattern: p.re.source };
     }
   }
   return null;

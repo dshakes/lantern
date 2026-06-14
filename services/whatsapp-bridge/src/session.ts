@@ -73,8 +73,11 @@ import {
   detectNonEnglishInjectionRisk,
   detectRelayPromise,
   detectUrgency,
+  detectBotClocked,
   refusalReply as escalationRefusalReply,
 } from "@lantern/bridge-core/escalation-detector";
+import { ownerTakeoverPauseMs } from "@lantern/bridge-core/owner-handoff";
+import { OutboundDedupe } from "@lantern/bridge-core/outbound-dedupe";
 // Proactive-intelligence layer (parity with the iMessage bridge):
 //   - anticipation: pure ranker that turns gathered signals (key dates,
 //     overdue replies, upcoming events) into owner-facing nudges.
@@ -172,6 +175,13 @@ const QR_VALID_MS = 20_000;
 
 const PAUSE_TTL_MS =
   Math.max(1, Number(process.env.LANTERN_AGENT_PAUSE_MIN) || 60) * 60_000;
+// Longer pause applied when the owner's manual message is an explicit
+// handoff/commitment ("I'll call you this evening", "human here") — a flat
+// 60-min pause let the bot barge back into a thread the owner said they'd
+// handle (real field bug). Default 12h; override via
+// LANTERN_AGENT_HANDOFF_PAUSE_HOURS.
+const HANDOFF_PAUSE_MS =
+  Math.max(1, Number(process.env.LANTERN_AGENT_HANDOFF_PAUSE_HOURS) || 12) * 60 * 60_000;
 // Explicit `/bot off` in a contact thread pauses that contact for a year —
 // effectively indefinite until the owner sends `/bot on` there.
 const INDEFINITE_MS = 365 * 24 * 60 * 60_000;
@@ -1245,6 +1255,10 @@ export class WhatsAppSession {
   // echo never arrived — otherwise this Set would grow forever.
   private bridgeSentIds: Map<string, number> = new Map();
   private static readonly BRIDGE_SENT_TTL_MS = 5 * 60_000;
+  // Last-line duplicate-send backstop: drops an exact-duplicate contact reply
+  // within a short window (covers the live + overnight-replay race that sent
+  // the same reply twice in the field). Contact-facing text only.
+  private outboundDedupe = new OutboundDedupe();
   // jid -> epoch_ms of last live/static-location ack. Live locations
   // re-emit on every coordinate update (every few seconds while
   // sharing), so we ack the FIRST share per jid and stay silent for
@@ -2889,6 +2903,18 @@ export class WhatsAppSession {
     }
     // Ensure the JID format is correct
     const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
+    // Duplicate-send backstop. Only contact-facing substantive replies — bot
+    // self-acks/nudges and owner self-chat may legitimately repeat. If the
+    // exact same text just went to this contact, drop it (a double-dispatch).
+    if (text && !isBotSelfMessage(text) && !this.isOwnerChat(jid)) {
+      if (this.outboundDedupe.check(jid, text, Date.now())) {
+        this.logger.warn(
+          { to: jid, textPreview: text.slice(0, 80) },
+          "duplicate outbound suppressed — same reply already sent to this contact",
+        );
+        return undefined;
+      }
+    }
     const sendOpts = opts.quoted ? { quoted: opts.quoted } : undefined;
     const sent = await this.socket.sendMessage(jid, { text }, sendOpts);
     if (sent?.key?.id) this.bridgeSentIds.set(sent.key.id, Date.now());
@@ -4149,16 +4175,22 @@ export class WhatsAppSession {
 
     // Non-command manual reply in a friend's thread = rolling takeover pause.
     // Skip for groups — the owner typing in a group is normal conversation,
-    // not a handoff signal.
+    // not a handoff signal. When the message is an explicit handoff/commitment
+    // ("I'll call you this evening", "human here"), pause much longer so the
+    // bot doesn't barge back into a thread the owner said they'd handle.
     if (!self && !group) {
-      this.pauseContact(jid, PAUSE_TTL_MS);
+      const { ms: pauseMs, handoff } = ownerTakeoverPauseMs(text, PAUSE_TTL_MS, HANDOFF_PAUSE_MS);
+      this.pauseContact(jid, pauseMs);
       this.logger.info(
-        { from: jid, ttlMs: PAUSE_TTL_MS },
+        { from: jid, ttlMs: pauseMs, handoff: handoff.matched ? handoff.reason : undefined },
         "agent paused — owner took over"
       );
+      const dur = pauseMs >= 60 * 60_000 ? `${Math.round(pauseMs / 60 / 60_000)}h` : `${Math.round(pauseMs / 60_000)}m`;
       this.logActivity(
         "contact_paused",
-        `You took over the thread with ${jid.split("@")[0]} — auto-reply paused ${Math.round(PAUSE_TTL_MS / 60_000)}m`,
+        handoff.matched
+          ? `You took over (handoff: ${handoff.reason}) — auto-reply paused ${dur} for ${jid.split("@")[0]}`
+          : `You took over the thread with ${jid.split("@")[0]} — auto-reply paused ${dur}`,
         { jid, scope: "contact" }
       );
     }
@@ -6554,6 +6586,27 @@ export class WhatsAppSession {
         }
         return;
       }
+
+      // Bot-clocked: the contact called out the bot or is frustrated with it
+      // ("oh it's your LLM again", "bad robot", "is this a bot?"). This is NOT
+      // the hostile injection probe above — coldly refusing a friend here outs
+      // the bot worse. So we DON'T refuse, pause, or suppress: we page the
+      // owner (deduped) so a human can step in, and let the normal reply
+      // proceed. The bot keeps the thread warm; the owner decides whether to
+      // take over (which triggers the long handoff pause).
+      const clocked = detectBotClocked(text);
+      if (clocked && !this.isOwnerChat(from)) {
+        this.logger.info(
+          { from, reason: clocked.reason, textPreview: text.slice(0, 120) },
+          "🤖 contact clocked the bot — paging owner (still replying)",
+        );
+        this.notifyOwnerOfDrop({
+          jid: from,
+          reason: `they may have clocked the bot (${clocked.reason}) — consider taking over`,
+          text,
+          senderName: opts.senderName,
+        });
+      }
       // Non-English fallback: OPT-IN ONLY (LANTERN_NONENGLISH_DRAFT=on),
       // default OFF. It kept mis-flagging the owner's own Telugu/Hindi (native
       // script + romanized + voice-note transcripts) as foreign probes and
@@ -6883,6 +6936,10 @@ export class WhatsAppSession {
         // contact (and any personal-fact probe) gets the non-disclosure
         // persona. Computed from the same isOwnerChat predicate at the top.
         audience: personaAudience,
+        // Current-time anchor so the model never re-proposes a time that
+        // already passed ("after 6pm today" at 8:19pm). Owner-local clock.
+        now: new Date(),
+        ownerTimezone: process.env.LANTERN_OWNER_TIMEZONE || undefined,
       }
     );
 

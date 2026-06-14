@@ -42,6 +42,8 @@
     "./social-graph": "./src/social-graph.ts",
     "./confidence-tier": "./src/confidence-tier.ts",
     "./escalation-detector": "./src/escalation-detector.ts",
+    "./owner-handoff": "./src/owner-handoff.ts",
+    "./outbound-dedupe": "./src/outbound-dedupe.ts",
     "./call-risk-tier": "./src/call-risk-tier.ts",
     "./call-commitments": "./src/call-commitments.ts",
     "./outbound-call": "./src/outbound-call.ts",
