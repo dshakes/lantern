@@ -3640,9 +3640,14 @@ export class IMessageSession {
         outbound: draft,
         // LLM fallback wired via agent.respondTo with empty system —
         // cheap one-shot call only when the rule extractor misses.
+        // CRITICAL: use a DEDICATED session key (`::episode`), never the
+        // contact's live jid. respondTo maps jid → a stateful control-plane
+        // conversation; extracting on the contact's own session injected a
+        // "return JSON {topic,outcome}" turn into their chat history, and the
+        // next real reply mimicked it — leaking raw JSON to the contact.
         llmCall: async (prompt) => {
           try {
-            const out = await this.agent.respondTo(row.handle, prompt, "", { withTools: false });
+            const out = await this.agent.respondTo(`${row.handle}::episode`, prompt, "", { withTools: false });
             return out || "";
           } catch { return ""; }
         },

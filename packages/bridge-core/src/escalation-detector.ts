@@ -156,6 +156,12 @@ const BOT_CLOCKED_PATTERNS: Array<{ re: RegExp; reason: string }> = [
   { re: /\b(?:is|are|r)\s+(?:this|that|u|you|it)\s+(?:really\s+)?(?:a\s+|an\s+)?(?:bot|robot|llm|chatgpt|chatbot)\b/i, reason: "is-this-a-bot" },
   { re: /\b(?:u|you|ya)\s+(?:a\s+|an\s+)?(?:bot|robot|chatbot)\b/i, reason: "you-are-a-bot" },
   { re: /\bchat\s?gpt\b/i, reason: "chatgpt-mention" },
+  // "this LLM response", "the bot reply", "your AI answer" — calling out the
+  // message itself as machine-generated.
+  { re: /\b(?:this|that|the|your|ur)\s+(?:llm|bot|robot|chatbot|ai)\s+(?:response|reply|message|answer|thing|stuff)\b/i, reason: "callout-bot-response" },
+  // Bare "LLM" — nobody drops "LLM" into casual chat except to call out the
+  // bot. Behavior is a soft owner heads-up, so a rare false positive is cheap.
+  { re: /\bllm\b/i, reason: "llm-mention" },
   { re: /\b(?:not|isn'?t|aint|ain'?t)\s+(?:really\s+)?(?:a\s+)?(?:human|real\s+person|the\s+real\s+\w+)\b/i, reason: "not-human" },
 ];
 

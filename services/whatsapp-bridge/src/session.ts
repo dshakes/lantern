@@ -7462,9 +7462,14 @@ export class WhatsAppSession {
         jid: from,
         inbound: text,
         outbound: draft,
+        // CRITICAL: dedicated `::episode` session key, never the contact's
+        // live jid. respondTo maps jid → a stateful control-plane
+        // conversation; extracting on the contact's own session injected a
+        // "return JSON {topic,outcome}" turn into their chat history and the
+        // next real reply mimicked it — leaking raw JSON to the contact.
         llmCall: async (prompt) => {
           try {
-            const out = await this.agent.respondTo(from, prompt, "", { withTools: false });
+            const out = await this.agent.respondTo(`${from}::episode`, prompt, "", { withTools: false });
             return out || "";
           } catch { return ""; }
         },
