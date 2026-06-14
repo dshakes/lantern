@@ -3296,8 +3296,13 @@ export class IMessageSession {
     }
 
     // Call the agent. LLM keys + budgets live in the control-plane.
+    // turnHint pins a model FLOOR so the owner's outgoing texts are never
+    // drafted by the weakest (trivial-tier) model — "balanced" = Sonnet by
+    // default; set LANTERN_REPLY_MODEL_TIER=hard for Opus-grade replies.
     const userText = isGroup ? `[group message]\n${text}` : text;
-    const draft = await this.agent.respondTo(row.handle, userText, systemHint);
+    const draft = await this.agent.respondTo(row.handle, userText, systemHint, {
+      turnHint: process.env.LANTERN_REPLY_MODEL_TIER || "balanced",
+    });
     if (!draft) {
       // Don't vanish on a greeting just because the LLM round-trip returned
       // nothing — send a deterministic opener so "hi" always gets a reply.
