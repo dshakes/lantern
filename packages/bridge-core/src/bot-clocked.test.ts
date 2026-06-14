@@ -9,6 +9,7 @@ import { detectBotClocked } from "./escalation-detector.ts";
 test("flags the real field phrasings that outed the bot", () => {
   const clocked = [
     "Oh it's your LLM again haha - I'd love to sync with you soon",
+    "Haha this LLM response, hilarious. if you're not able to help me out lmk",
     "Bad robot",
     "is this a bot?",
     "are you a bot",
@@ -18,6 +19,7 @@ test("flags the real field phrasings that outed the bot", () => {
     "this is a bot isn't it",
     "am i talking to a bot",
     "you're not really a human are you",
+    "that bot reply was wild",
   ];
   for (const t of clocked) {
     assert.ok(detectBotClocked(t), `expected bot-clocked match for: ${JSON.stringify(t)}`);

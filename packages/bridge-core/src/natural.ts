@@ -1047,7 +1047,7 @@ const CHATBOT_PATTERNS: { re: RegExp; reason: string }[] = [
     reason: "self-identifies as AI",
   },
   {
-    re: /\b(?:i\s+apologize|my\s+apologies|sorry\s+for\s+the\s+(?:confusion|inconvenience|delay))\b/i,
+    re: /\b(?:i\s+apologize|my\s+apologies|sorry\s+for\s+the\s+(?:confusion|inconvenience|delay)|(?:i'?m\s+)?(?:so\s+|really\s+)?sorry\s+about\s+that)\b/i,
     reason: "corporate apology",
   },
   // Bright-cheery assistant-isms ("sounds good!", "absolutely!") are the
@@ -1065,6 +1065,10 @@ const CHATBOT_PATTERNS: { re: RegExp; reason: string }[] = [
   },
   {
     re: /\b(?:happy\s+to\s+help|let\s+me\s+know\s+if\s+you\s+need\s+anything)\b/i,
+    reason: "assistant offer-of-help",
+  },
+  {
+    re: /\b(?:do\s+my\s+best\s+to\s+(?:help|assist)|i'?ll\s+(?:do\s+my\s+best|assist\s+you|help\s+you\s+out)|here\s+to\s+(?:help|assist))\b/i,
     reason: "assistant offer-of-help",
   },
 ];
@@ -1602,6 +1606,35 @@ export function detectBotTells(
 ): BotTellVerdict {
   const text = (draft || "").trim();
   if (!text) return { ok: false, reason: "empty draft (stay silent)" };
+
+  // STRUCTURED-OUTPUT net — the single most embarrassing failure: the model
+  // emitted raw JSON / a tool-call / an internal extraction object and it got
+  // sent verbatim to the contact (real incident: an episodic-memory
+  // `{"topic":...,"outcome":...}` extraction leaked into a live thread). A
+  // human NEVER texts a JSON blob. Suppress any draft that looks like
+  // structured data so the bridge stays silent + regenerates rather than ship
+  // it. Runs first, before every other check.
+  {
+    const fenced = text
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```\s*$/i, "")
+      .trim();
+    // (a) object/array-shaped draft that parses as JSON, or carries quoted
+    //     keys (`"key":`) — the unmistakable shape of leaked structured data.
+    if (/^[{[]/.test(fenced) && /[}\]]$/.test(fenced)) {
+      let isJson = false;
+      try { JSON.parse(fenced); isJson = true; } catch { /* not strict JSON */ }
+      if (isJson || /"[\w-]+"\s*:/.test(fenced)) {
+        return { ok: false, reason: "structured data (JSON/tool-call) leaked into draft" };
+      }
+    }
+    // (b) the known internal extraction keys, anywhere — episodic memory
+    //     (topic/outcome), fact/intent/sentiment extractors. These quoted
+    //     keys never appear in real human texting.
+    if (/"(?:topic|outcome|intent|sentiment|action|fact|reason|confidence)"\s*:/i.test(fenced)) {
+      return { ok: false, reason: "internal extraction object leaked into draft" };
+    }
+  }
 
   // FABRICATED-NAME net (BUG A) — deterministic last-resort guard. If the
   // draft uses a clear vocative first-name ("happy anniversary Shiva",
