@@ -42,6 +42,21 @@ func TestClassifyTurnComplexity_ExplicitHintHard(t *testing.T) {
 	}
 }
 
+func TestClassifyTurnComplexity_ExplicitHintBalanced_FloorsTrivial(t *testing.T) {
+	// The personal-chat bridges pass hint=balanced so a short inbound that
+	// would otherwise classify trivial (weak model) is floored at balanced.
+	for _, hint := range []string{"balanced", "quality"} {
+		tier := classifyTurnComplexity(msgs("", "hi"), false, hint)
+		if tier != tierBalanced {
+			t.Errorf("hint=%q must floor short inbound at balanced, got tier=%d", hint, tier)
+		}
+	}
+	// It is a FLOOR, not a cap — it must not force the frontier tier.
+	if tier := classifyTurnComplexity(msgs("", "hey"), false, "balanced"); tier == tierHard {
+		t.Errorf("hint=balanced should not escalate to hard")
+	}
+}
+
 func TestClassifyTurnComplexity_ShortGreeting_Trivial(t *testing.T) {
 	for _, msg := range []string{"hi", "ok", "thanks", "sure"} {
 		tier := classifyTurnComplexity(msgs("", msg), false, "")

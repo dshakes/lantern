@@ -7024,7 +7024,12 @@ export class WhatsAppSession {
     // round-trip happens in parallel with the natural read delay below;
     // by the time the read delay ends, the draft is usually already
     // available so we can switch on "composing" then.
-    const draftPromise = this.agent.respondTo(from, userText, systemHint);
+    // turnHint pins a model FLOOR so the owner's outgoing texts are never
+    // drafted by the weakest (trivial-tier) model — "balanced" = Sonnet by
+    // default; set LANTERN_REPLY_MODEL_TIER=hard for Opus-grade replies.
+    const draftPromise = this.agent.respondTo(from, userText, systemHint, {
+      turnHint: process.env.LANTERN_REPLY_MODEL_TIER || "balanced",
+    });
 
     // Wait for draft + naturalize, but don't block on it during the
     // read phase — we'll respect the pacer's read delay below.

@@ -54,10 +54,10 @@ export class AgentClient {
   // and is wrong for personal-docs replies where the prompt is
   // already large with OCR context. The bridges' natural-chat path
   // sets this to true so the bot can actually use Gmail when asked.
-  async respondTo(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean }): Promise<string | null> {
+  async respondTo(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; turnHint?: string }): Promise<string | null> {
     if (!this.enabled()) return null;
     const prev = this.inflight.get(jid) ?? Promise.resolve<string | null>(null);
-    const next = prev.then(() => this.runTurn(jid, userText, systemHint, opts?.withTools === true)).catch((err) => {
+    const next = prev.then(() => this.runTurn(jid, userText, systemHint, opts?.withTools === true, opts?.turnHint)).catch((err) => {
       this.logger.error({ err, jid }, "turn errored");
       return null;
     });
@@ -67,7 +67,7 @@ export class AgentClient {
     return reply;
   }
 
-  private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false): Promise<string | null> {
+  private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false, turnHint?: string): Promise<string | null> {
     // Up to ONE retry on dead-session errors. A prior turn that got
     // SSE-aborted (timeout, network hiccup) leaves the control-plane
     // session in "ended" state — the next POST then 409s with
@@ -92,6 +92,11 @@ export class AgentClient {
         noTools: !withTools,
       };
       if (systemHint) postBody.systemHint = systemHint;
+      // Optional complexity floor. The personal-chat reply path passes
+      // "balanced" so the owner's outgoing texts are never drafted by the
+      // weakest (trivial-tier) model, even for short inbounds. Omitted on
+      // cheap auxiliary calls (episode extraction) which can use any tier.
+      if (turnHint) postBody.turnHint = turnHint;
 
       const postRes = await authedFetch(`/v1/sessions/${sessionId}/messages`, {
         method: "POST",

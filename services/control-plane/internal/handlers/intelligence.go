@@ -58,6 +58,13 @@ func classifyTurnComplexity(messages []map[string]any, hasTools bool, hint strin
 		return tierTrivial
 	case "hard", "reasoning", "frontier":
 		return tierHard
+	case "balanced", "quality":
+		// Hard floor at the balanced model — never downgrade to the trivial
+		// (cheap/weak) tier. Used by the personal-chat bridges so the owner's
+		// outgoing texts are never drafted by the weakest model, even when the
+		// inbound is short. Does not force the frontier tier (cost), just keeps
+		// it off the floor.
+		return tierBalanced
 	}
 
 	// Collect text from the most-recent user message (and system) only.
