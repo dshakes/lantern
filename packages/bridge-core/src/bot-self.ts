@@ -102,6 +102,20 @@ const BOT_SELF_PREFIXES: string[] = [
   // ── Permission / setup messages ──
   "personal-docs ",          // "personal-docs ENABLED", "personal-docs DISABLED"
   "bot ",                    // "bot off", "bot on" — bot status echoes
+
+  // ── Owner heads-up / escalation PAGES (self-chat) ──
+  // fireOwnerEscalation + notifyOwnerOfDrop + the appointment detector post
+  // these into the owner self-chat. They were NOT registered, so once they
+  // aged past the recentBridgeSends window the bot read its OWN page back as
+  // an owner query, ran a doc-query on it, and replied — each reply a new
+  // self-chat row that looped → the self-chat flood. These emoji prefixes are
+  // bot-only (a human never opens a text with them).
+  "🛡",                      // "🛡 PROMPT-INJECTION (bot refused + paged you)"
+  "📨",                      // "📨 bot promised to relay — here's what they said"
+  "🚨🚨",                    // "🚨🚨 LIFE-THREAT ESCALATION" (double-siren page)
+  "📅 looks like an appointment", // appointment-detector heads-up
+  "📍 got it",               // presence/status acks ("📍 got it — you're …")
+  "🟡 medium-confidence",    // medium-confidence reply heads-up
 ];
 
 // Common LLM-reply patterns we've ALSO observed leaking through as
@@ -119,6 +133,16 @@ const BOT_LLM_PATTERNS: RegExp[] = [
   // Call-flow model output that echoed back as a fake query.
   /^sorry,? i can'?t actually make calls/i,
   /\bi'?ll (?:call|ring|reach) .{0,40}\bvia the twilio number\b/i,
+  // Owner heads-up PAGES whose prefix carries a variable handle/name (so a
+  // fixed prefix can't catch them) — match a distinctive interior phrase
+  // instead. Each is bot-emitted into the self-chat; without these the bot
+  // re-ingests its own page as an owner query and replies to itself.
+  /\bmessaged but auto-reply is (?:muted|off)\b/i,        // "⚠️ <h> messaged but auto-reply is muted"
+  /\bcouldn'?t generate a reply to\b/i,                   // "⚠️ couldn't generate a reply to <h>"
+  /\bmay have clocked the bot\b/i,                        // bot-clocked heads-up
+  /\bbot promised to relay\b/i,                           // relay page (belt + suspenders w/ 📨)
+  /\bprompt-injection \(bot refused/i,                    // injection page
+  /^🚨 \*escalation/i,                                    // "🚨 *Escalation: <name>*"
 ];
 
 /**

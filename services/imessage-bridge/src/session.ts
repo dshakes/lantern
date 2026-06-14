@@ -363,14 +363,23 @@ export class IMessageSession {
   // shared-Mac iCloud sync, or shrink for a memory-tight host). The
   // persistent on-disk store (sent.json) survives bridge restarts
   // independently.
+  // 24h window (was 60min): the content-based echo guard is what stops the
+  // bot re-ingesting its OWN self-chat sends as fresh owner queries. iCloud
+  // cross-device sync can echo a message back HOURS later, and self-chat
+  // heads-ups (escalations, drops, status acks) accumulate across the day —
+  // a 60-min window let aged sends slip through and the bot replied to itself,
+  // flooding the self-chat. 24h covers any realistic echo/aging lag.
   private static readonly BRIDGE_SEND_DEDUP_MS =
     Number(process.env.LANTERN_BRIDGE_SEND_DEDUP_MS) > 0
       ? Number(process.env.LANTERN_BRIDGE_SEND_DEDUP_MS)
-      : 60 * 60_000;
+      : 24 * 60 * 60_000;
+  // 2000 entries (was 500): on a busy day the bot easily sends >500 messages;
+  // a count cap below the day's volume evicts older sends before the TTL and
+  // reopens the same loop. Short strings — 2000 is cheap to keep + persist.
   private static readonly BRIDGE_SEND_MAX_ENTRIES =
     Number(process.env.LANTERN_BRIDGE_SEND_MAX_ENTRIES) > 0
       ? Number(process.env.LANTERN_BRIDGE_SEND_MAX_ENTRIES)
-      : 500;
+      : 2000;
   private bridgeSendsPersistPath: string = "";
   private bridgeSendsDirty: boolean = false;
   private bridgeSendsPersistTimer: NodeJS.Timeout | null = null;
