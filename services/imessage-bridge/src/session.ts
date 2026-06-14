@@ -202,8 +202,11 @@ import {
   detectNonEnglishInjectionRisk,
   detectRelayPromise,
   detectUrgency,
+  detectBotClocked,
   refusalReply as escalationRefusalReply,
 } from "@lantern/bridge-core/escalation-detector";
+import { ownerTakeoverPauseMs } from "@lantern/bridge-core/owner-handoff";
+import { OutboundDedupe } from "@lantern/bridge-core/outbound-dedupe";
 import {
   executeOutboundCall,
   synthesizeSpeech,
@@ -267,6 +270,12 @@ function escapeRe(s: string): string {
 // WhatsApp bridge's env var so the owner sets it once in shared config).
 const PAUSE_DURATION_MS =
   Math.max(1, Number(process.env.LANTERN_AGENT_PAUSE_MIN) || 60) * 60_000;
+// Longer pause when the owner's manual message is an explicit handoff/
+// commitment ("I'll call you this evening", "human here") — a flat 60-min
+// pause let the bot barge back into a thread the owner said they'd handle.
+// Default 12h; override via LANTERN_AGENT_HANDOFF_PAUSE_HOURS (shared with WA).
+const HANDOFF_PAUSE_MS =
+  Math.max(1, Number(process.env.LANTERN_AGENT_HANDOFF_PAUSE_HOURS) || 12) * 60 * 60_000;
 const HISTORY_DEPTH = 20; // per-contact inbound message ring buffer
 // Per-contact depth of the owner's OWN sent messages kept as verbatim
 // few-shot voice samples + style-fingerprint signal. Deeper than inbound
@@ -292,6 +301,10 @@ export class IMessageSession {
   private muted = false;
   private pausedUntil: Map<string, number> = new Map();
   private monitoredChats: Set<number> = new Set();
+  // Last-line duplicate-send backstop: drops an exact-duplicate contact reply
+  // within a short window (covers the live + quiet-replay race that sent the
+  // same reply twice in the field). Contact-facing text only.
+  private outboundDedupe = new OutboundDedupe();
   // 1:1 handles approved for auto-reply. Empty = bot stays silent to
   // everyone but the owner. See PersistedState.enabledContacts.
   private enabledContacts: Set<string> = new Set();
@@ -1701,6 +1714,19 @@ export class IMessageSession {
         text = verdict.text;
       }
     }
+    // Duplicate-send backstop. Only contact-facing substantive replies — bot
+    // self-acks/nudges and owner self-chat may legitimately repeat. If the
+    // exact same text just went to this contact, drop it (a double-dispatch).
+    const ownerSelf = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim();
+    if (text && !isBotSelfMessage(text) && to !== ownerSelf) {
+      if (this.outboundDedupe.check(to, text, Date.now())) {
+        this.logger.warn(
+          { to, textPreview: text.slice(0, 80) },
+          "duplicate outbound suppressed — same reply already sent to this contact",
+        );
+        return { ok: true };
+      }
+    }
     const res = await this.sender.send(to, text);
     if (!res.ok) {
       // iMessage couldn't deliver (e.g. SMS/RCS-only number) — try SMS.
@@ -2374,13 +2400,25 @@ export class IMessageSession {
         this.rememberOwnerSent(row.handle, text);
         this.persist();
       }
-      // Pause auto-reply for this contact — the user just typed.
+      // Pause auto-reply for this contact — the user just typed. When the
+      // message is an explicit handoff/commitment ("I'll call you this
+      // evening", "human here"), pause much longer so the bot doesn't barge
+      // back into a thread the owner said they'd handle (real field bug).
       if (row.handle && !isGroup) {
-        this.pausedUntil.set(row.handle, Date.now() + PAUSE_DURATION_MS);
+        const { ms: pauseMs, handoff } = ownerTakeoverPauseMs(text, PAUSE_DURATION_MS, HANDOFF_PAUSE_MS);
+        this.pausedUntil.set(row.handle, Date.now() + pauseMs);
         this.persist();
+        const dur = pauseMs >= 60 * 60_000 ? `${Math.round(pauseMs / 60 / 60_000)}h` : `${Math.round(pauseMs / 60_000)}m`;
         this.broadcast({
           type: "activity",
-          data: { kind: "contact_paused", summary: `you typed — pausing bot for ${this.contactLabel(row.handle)}`, jid: row.handle, timestamp: Date.now() },
+          data: {
+            kind: "contact_paused",
+            summary: handoff.matched
+              ? `you took over (${handoff.reason}) — pausing bot ${dur} for ${this.contactLabel(row.handle)}`
+              : `you typed — pausing bot ${dur} for ${this.contactLabel(row.handle)}`,
+            jid: row.handle,
+            timestamp: Date.now(),
+          },
         });
       }
       this.broadcast({
@@ -2924,6 +2962,25 @@ export class IMessageSession {
         }
         return;
       }
+
+      // Bot-clocked: the contact called out the bot or is frustrated with it
+      // ("oh it's your LLM again", "bad robot", "is this a bot?"). NOT the
+      // hostile injection probe above — coldly refusing a friend here outs the
+      // bot worse. We DON'T refuse, pause, or suppress: page the owner
+      // (deduped) so a human can step in, and let the normal reply proceed.
+      if (row.handle && !this.isOwnerChatRow(row)) {
+        const clocked = detectBotClocked(text);
+        if (clocked) {
+          this.logger.info(
+            { from: row.handle, reason: clocked.reason, textPreview: text.slice(0, 120) },
+            "🤖 contact clocked the bot — paging owner (still replying)",
+          );
+          this.notifyOwnerOfDrop(
+            `${this.contactLabel(row.handle)} may have clocked the bot (${clocked.reason}) — consider taking over: "${text.slice(0, 160)}"`,
+            `bot-clocked:${row.handle}`,
+          );
+        }
+      }
       // Non-English fallback: OPT-IN ONLY (LANTERN_NONENGLISH_DRAFT=on),
       // default OFF — it mis-flagged the owner's own Telugu/Hindi as foreign
       // probes and silenced normal chat. Deterministic injection + PII refusal
@@ -3179,6 +3236,10 @@ export class IMessageSession {
       // contact (and any personal-fact probe) gets the non-disclosure
       // persona. Computed from the same isOwnerChatRow predicate above.
       audience: personaAudience,
+      // Current-time anchor so the model never re-proposes a time that
+      // already passed ("after 6pm today" at 8:19pm). Owner-local clock.
+      now: new Date(),
+      ownerTimezone: process.env.LANTERN_OWNER_TIMEZONE || undefined,
     });
     // Per-contact memory: UNIFIED cross-channel view — facts learned on
     // ANY channel (WhatsApp, iMessage, SMS, voice, email) + a 14-day

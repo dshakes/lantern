@@ -456,6 +456,15 @@ export interface PersonaOptions {
   // DEFAULTS TO "contact" — fail safe. The owner path must be set
   // explicitly by the bridge after it confirms isOwnerChat.
   audience?: "owner" | "contact";
+  // Current wall-clock instant + the owner's IANA timezone. Injected as a
+  // "Right now it is …" anchor so the model stops proposing times that have
+  // already passed (a real bug: it re-proposed "after 6pm today" at 8:19pm
+  // because nothing told it the current time). The bridge passes
+  // `new Date()` + LANTERN_OWNER_TIMEZONE on every reply. Omitted → no
+  // anchor, keeping agentPersonaPrompt pure for tests that don't exercise
+  // time.
+  now?: Date;
+  ownerTimezone?: string;
 }
 
 // Telugu kinship terms → English register cues. The relationship string
@@ -839,6 +848,15 @@ export function agentPersonaPrompt(
     lines.push(clampTranscript(transcript));
   }
 
+  // Current-time anchor. The model has no clock of its own; without this it
+  // re-proposes times that already passed (real bug: "after 6pm today" sent
+  // at 8:19pm). Injected just before scheduling so it's fresh in context and
+  // governs every "today / tonight / tomorrow" decision the model makes.
+  if (opts.now) {
+    lines.push(``);
+    lines.push(formatNowContext(opts.now, opts.ownerTimezone));
+  }
+
   // Scheduling-negotiation block — flag-gated. When the bridge has the
   // owner's free slots, the persona graduates from "reframe away from
   // work hours" to "propose / hold / confirm concrete times and emit a
@@ -881,6 +899,40 @@ export function agentPersonaPrompt(
       : `Reply as ${ownerName}, in plain text, no quoting, no preface.`,
   );
   return lines.join("\n");
+}
+
+/**
+ * Human-readable "right now" anchor for the persona prompt. The LLM has no
+ * reliable clock of its own, so without this it reasons about "today" /
+ * "tonight" / "this evening" blind and re-proposes times that have already
+ * passed (real bug: it offered "after 6pm today" at 8:19pm). Exported for
+ * tests. `timezone` is an IANA name (e.g. "America/Los_Angeles"); an
+ * unknown/empty value falls back to the host clock formatting.
+ */
+export function formatNowContext(now: Date, timezone?: string): string {
+  let stamp: string;
+  try {
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZoneName: "short",
+      ...(timezone ? { timeZone: timezone } : {}),
+    });
+    stamp = fmt.format(now);
+  } catch {
+    // Bad/unknown IANA zone — never throw inside prompt assembly.
+    stamp = now.toString();
+  }
+  return [
+    `Right now it is ${stamp}. That is the CURRENT date and time — "today", "tonight", "this evening", "later", and "tomorrow" are all relative to this exact moment.`,
+    `- NEVER propose or agree to a time that has already passed. If the current time above is already past a slot today (e.g. it's 8pm and you'd say "after 6pm today"), that time is GONE — offer later tonight or another day instead, never the stale time.`,
+    `- Do not reuse a time you (or the contact) mentioned earlier in the thread without re-checking it against the current time above — what was valid this morning may be in the past now.`,
+  ].join("\n");
 }
 
 /**
