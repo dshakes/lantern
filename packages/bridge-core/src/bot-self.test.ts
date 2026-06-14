@@ -126,3 +126,36 @@ test("bot-self: case insensitivity", () => {
   assert.equal(isBotSelfMessage("📁 ONE SEC — LOOKING"), true);
   assert.equal(isBotSelfMessage("📊 *Lantern Morning Report*"), true);
 });
+
+test("bot-self: owner heads-up PAGES are recognized (self-chat flood fix)", () => {
+  // The exact strings that looped in the field — bot read its own page back
+  // as an owner query and replied to itself, flooding the self-chat.
+  const pages = [
+    "🛡 PROMPT-INJECTION (bot refused + paged you)\nfrom: Ronit (+15551234567)",
+    "📨 bot promised to relay — here's what they said\nfrom: Manu",
+    "🚨🚨 LIFE-THREAT ESCALATION\nfrom: someone",
+    "🚨 *Escalation: Sarah*\n\nReason: _money_",
+    "📅 Looks like an appointment text from united_airlines_dsqop",
+    "📍 got it — you're at work. I'll tell anyone who messages",
+    "⚠️ +16303475128 messaged but auto-reply is muted — reply yourself",
+    "⚠️ couldn't generate a reply to davidfernandez3784@outlook.com",
+    "⚠️ Ronit may have clocked the bot (bot-insult) — consider taking over",
+    "🟡 medium-confidence reply sent to Sarah",
+  ];
+  for (const t of pages) {
+    assert.equal(isBotSelfMessage(t), true, `expected bot-self match for page: ${JSON.stringify(t)}`);
+  }
+});
+
+test("bot-self: a contact's real message is not swallowed by the page guards", () => {
+  // Make sure the new patterns don't eat genuine inbound.
+  const real = [
+    "got the appointment confirmation, see you then",
+    "can you relay this to your manager?",
+    "i muted the group chat lol",
+    "the meeting is at 3, don't be late",
+  ];
+  for (const t of real) {
+    assert.equal(isBotSelfMessage(t), false, `false positive on real text: ${JSON.stringify(t)}`);
+  }
+});
