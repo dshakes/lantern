@@ -6928,8 +6928,13 @@ export class WhatsAppSession {
         // concrete times from the owner's free slots (reuses the [CALENDAR:]
         // path on agreement). Work-hours guardrail still applies inside the
         // persona. 1:1 only — never negotiate on the owner's behalf in groups.
-        schedulingEnabled: !opts.isGroup,
-        freeSlotsBlock: !opts.isGroup ? this.ownerFreeSlotsBlock() || undefined : undefined,
+        // REACTIVE scheduling only — the single biggest spam tell was the
+        // bot volunteering "want me to pencil one in?" when nobody asked.
+        // Now the scheduling block + free slots are injected ONLY when the
+        // contact's message is actually about meeting/availability. A normal
+        // chat never sees scheduling, so the bot never brings it up unbidden.
+        schedulingEnabled: !opts.isGroup && needsCalendar(text),
+        freeSlotsBlock: !opts.isGroup && needsCalendar(text) ? this.ownerFreeSlotsBlock() || undefined : undefined,
         // B1 — affect-matched persona modulation (additive hint).
         emotionalRegister,
         // Privacy boundary: owner channel gets full factual access; every
