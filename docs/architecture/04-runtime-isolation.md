@@ -1,5 +1,28 @@
 # Runtime Isolation — How User Code Actually Runs
 
+> **Substrate update (2026-06-18):** [ADR 0009](../adr/0009-kubernetes-default-runtime-substrate.md)
+> supersedes the class→backend mapping in this document. **Kubernetes is now the
+> default runtime substrate.** Isolation is expressed as a `runtimeClassName` on a
+> pod — not as five separate backends. The table below (Firecracker as STANDARD
+> default, five distinct backends) reflects the ADR 0002 design; the authoritative
+> current mapping is in ADR 0009:
+>
+> | IsolationClass | RuntimeClass |
+> |---|---|
+> | `TRUSTED` | `runc` (shared nodes) |
+> | `STANDARD` | `gvisor` (default) |
+> | `UNTRUSTED` | `gvisor` + egress allowlist + seccomp deny-default |
+> | `HOSTILE` | `kata-qemu` / `kata-fc` (dedicated pool) |
+> | `WASM` | `crun`+Wasm (or in-process Wasmtime) |
+> | `DEVCONTAINER` | long-lived pod + PVC, `gvisor` |
+>
+> The fail-closed guarantee from ADR 0002 is preserved: a node lacking the required
+> hardened RuntimeClass still refuses UNTRUSTED/HOSTILE workloads. Firecracker is
+> not removed — it is the `kata-fc` tier. See ADR 0009 for the full decision and
+> migration path. The narrative below remains useful for understanding the design
+> rationale for each isolation tier; the cold-start targets and hardening details
+> apply to the equivalent RuntimeClass tier.
+
 > **What this is:** the deep dive on the physical runtimes Lantern uses to execute agent code, and which one to pick for which workload. Read this if you're touching `services/runtime-manager` or any of the `runtimes/` subdirs.
 >
 > **Why it matters:** the wrong isolation choice is the difference between a serverless platform and a security incident.

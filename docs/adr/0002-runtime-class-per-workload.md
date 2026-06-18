@@ -1,9 +1,17 @@
 # ADR 0002 — Runtime isolation class is declared per workload, not chosen by the platform
 
-- **Status:** Accepted
+- **Status:** Accepted (class→backend mapping superseded in part by [ADR 0009](0009-kubernetes-default-runtime-substrate.md))
 - **Date:** 2026-05-12
 - **Deciders:** Lantern runtime team
 - **Tags:** runtime, isolation, scheduling
+
+> **Note (2026-06-18):** the *principle* of this ADR — the author declares an
+> `IsolationClass` and the platform honors it with a safe default, refusing to
+> downgrade — still holds. The concrete **class→backend table** below is superseded by
+> [ADR 0009](0009-kubernetes-default-runtime-substrate.md): Kubernetes is now the
+> default substrate and isolation is expressed as a **RuntimeClass tier on a pod**
+> (runc→gVisor→Kata) rather than five separate backends. `STANDARD`'s default is now
+> gVisor-on-K8s, not bare Firecracker.
 
 ## Context
 
