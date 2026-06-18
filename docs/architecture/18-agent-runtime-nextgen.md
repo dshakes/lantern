@@ -468,8 +468,15 @@ gVisor, hostile on Kata; (b) a node without the RuntimeClass **refuses** untrust
   `ScheduleRequest`; `spawn_to_schedule`/`restore` fail closed on empty, strip + re-inject
   the authenticated value (caller can't shadow), and `namespace_for` derives solely
   from it (refuses empty). Tested.
-- **Per-agent-instance identity:** SPIFFE SVID / OIDC short-lived token minted at
-  spawn; stamp `agent_instance_id` on every audit row, secret vend, and tool call.
+- ✅ *(done, this branch)* **Per-agent-instance identity:** every schedule mints a
+  short-lived HS256-signed identity token (`internal/agentidentity`, `typ=agent-instance`,
+  claims: instance/tenant/run/version) — injected into the spawn env
+  (`LANTERN_AGENT_INSTANCE_{ID,TOKEN}`), persisted on `runtime_vms`, stamped on
+  `runtime_audit_events`, and verified by the secret relay when presented as a Bearer
+  token (cross-checked to vm_id+tenant+non-terminal; additive/backward-compatible).
+  *Follow-up:* manager/harness wiring to actually present the Bearer token on
+  `VendSecret`; consider migrating the signature to SPIFFE SVID / Ed25519 for external
+  verification, and stamp `agent_instance_id` on tool-call spans.
 - **Non-owner Postgres role** with RLS validated end-to-end.
 **Gate:** security-auditor review; tests for (a) cross-tenant identity isolation;
 (b) ✅ a missing scope → 403 on every mutating route; (c) RLS denies a non-owner read;
