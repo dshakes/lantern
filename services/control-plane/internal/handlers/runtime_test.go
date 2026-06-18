@@ -34,6 +34,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -81,6 +82,7 @@ func newTestRuntimeHandler(t *testing.T, sched SchedulerClient) *RuntimeHandler 
 		srv:       srv,
 		auth:      auth,
 		scheduler: sched,
+		identity:  agentidentity.New(auth.JWTSecret()),
 	}
 	return h
 }
@@ -99,6 +101,7 @@ func newTestRuntimeHandlerWithPool(t *testing.T, pool *pgxpool.Pool, sched Sched
 		srv:       srv,
 		auth:      auth,
 		scheduler: sched,
+		identity:  agentidentity.New(auth.JWTSecret()),
 	}
 }
 
