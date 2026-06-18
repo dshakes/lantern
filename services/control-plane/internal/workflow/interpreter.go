@@ -103,6 +103,13 @@ type Deps struct {
 	// contract. Production wiring (rest.go) is a follow-up; the interpreter
 	// stays decoupled from HTTP here.
 	RunSubAgent func(ctx context.Context, agentName string, input map[string]any) (map[string]any, error)
+
+	// CompletedStep checks whether a node has already been successfully
+	// executed in a prior attempt of this run. If done is true, the
+	// interpreter reuses output rather than re-invoking side-effecting deps
+	// (LLM, connector, subagent), making re-runs idempotent on replay.
+	// When nil (e.g. in tests that don't opt in), each node always executes.
+	CompletedStep func(ctx context.Context, runID, stepID string) (output map[string]any, done bool, err error)
 }
 
 // ApprovalDisposition reports what the human did with an approval step.
@@ -269,6 +276,21 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 type emitFn func(kind, stepID string, payload map[string]any)
 
 func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node Node, vars map[string]any, out map[string][]Edge, byID map[string]Node) (any, error) {
+	// Replay idempotency: before touching any side-effecting dep, check
+	// whether this node was already completed in a prior attempt. Pure
+	// structural nodes (trigger, condition, end) are always re-evaluated —
+	// they are cheap and their "output" is just derived state, not a
+	// billable or side-effecting operation.
+	switch node.Type {
+	case "ai-step", "tool", "connector", "subagent", "approval":
+		if deps.CompletedStep != nil {
+			if cached, done, csErr := deps.CompletedStep(ctx, runID, node.ID); csErr == nil && done {
+				return cached, nil
+			}
+			// On error we fall through and re-execute — safe to retry.
+		}
+	}
+
 	switch node.Type {
 	case "trigger":
 		// Trigger is a no-op at runtime — it just marks the entry.

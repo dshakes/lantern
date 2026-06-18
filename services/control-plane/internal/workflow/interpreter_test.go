@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -533,6 +534,171 @@ func TestSubagent_DepErrorFailsNode(t *testing.T) {
 	}
 	if !failedEmitted {
 		t.Errorf("expected step_failed for subagent node; events: %v", eventKinds(stub))
+	}
+}
+
+// ---- Subagent depth-cap test -------------------------------------------------
+
+// TestSubagent_DepthCapBlocksRecursion verifies that when RunSubAgent returns
+// a depth-limit error the workflow correctly marks the run as failed with that
+// error surfaced in LastError. This mirrors what the production wiring does
+// via context-value depth tracking — the interpreter itself doesn't enforce
+// the cap; it just propagates the error from the dep.
+func TestSubagent_DepthCapBlocksRecursion(t *testing.T) {
+	const capErrMsg = "subagent depth limit (5) exceeded — possible workflow cycle"
+
+	stub := newStubDeps(nil)
+	// Wire RunSubAgent to return the depth-limit error unconditionally,
+	// simulating what happens when the production dep hits maxSubagentDepth.
+	stub.subagentErr = fmt.Errorf(capErrMsg)
+
+	res, err := Run(context.Background(), "run_depth", stub.deps(), subagentDef("recursive-agent"), nil)
+	if err != nil {
+		t.Fatalf("Run returned unexpected top-level error: %v", err)
+	}
+	if !res.Failed {
+		t.Fatal("expected workflow to fail when depth cap is hit")
+	}
+	if !strings.Contains(res.LastError, "depth limit") {
+		t.Errorf("expected depth-limit error in LastError, got %q", res.LastError)
+	}
+
+	// step_failed must be emitted for the subagent node.
+	var failedEmitted bool
+	for _, ev := range stub.events {
+		if ev.Kind == "step_failed" && ev.StepID == "sa" {
+			failedEmitted = true
+		}
+	}
+	if !failedEmitted {
+		t.Errorf("expected step_failed for subagent node; events: %v", eventKinds(stub))
+	}
+}
+
+// ---- Replay / CompletedStep tests -------------------------------------------
+
+// TestReplay_CachedStepSkipsExecution verifies that when CompletedStep returns
+// done=true for a node, the node's dep (CallLLM) is NOT invoked and the cached
+// output flows downstream.
+func TestReplay_CachedStepSkipsExecution(t *testing.T) {
+	cachedOutput := map[string]any{"result": "cached-reply", "source": "replay"}
+
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{"prompt": "Hello"}},
+			{ID: "z", Type: "end", Data: map[string]any{"outputExpression": "{{steps.a}}"}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "z"},
+		},
+	}
+
+	stub := newStubDeps(nil)
+	d := stub.deps()
+	// Wire CompletedStep to return the cached output for node "a".
+	d.CompletedStep = func(_ context.Context, runID, stepID string) (map[string]any, bool, error) {
+		if stepID == "a" {
+			return cachedOutput, true, nil
+		}
+		return nil, false, nil
+	}
+
+	res, err := Run(context.Background(), "run_replay", d, def, map[string]any{})
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+	if res.Failed {
+		t.Fatalf("unexpected failure: %s", res.LastError)
+	}
+
+	// CallLLM must NOT have been invoked — the cached output was reused.
+	stub.mu.Lock()
+	llmCalls := stub.llmCalls
+	stub.mu.Unlock()
+	if len(llmCalls) != 0 {
+		t.Errorf("expected 0 LLM calls on replay, got %d: %v", len(llmCalls), llmCalls)
+	}
+
+	// The end-node's outputExpression {{steps.a}} must resolve to the
+	// cached output (JSON-stringified map).
+	if !strings.Contains(res.Output, "cached-reply") {
+		t.Errorf("expected cached-reply in output, got %q", res.Output)
+	}
+}
+
+// TestReplay_NilHookExecutesNormally verifies backward compatibility: when
+// CompletedStep is nil, every node executes as before — no behavioural change.
+func TestReplay_NilHookExecutesNormally(t *testing.T) {
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{"prompt": "Hello"}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "z"},
+		},
+	}
+
+	stub := newStubDeps(nil)
+	d := stub.deps()
+	// Explicitly nil — should be the default, but make it explicit.
+	d.CompletedStep = nil
+
+	_, err := Run(context.Background(), "run_no_replay", d, def, nil)
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+
+	stub.mu.Lock()
+	calls := stub.llmCalls
+	stub.mu.Unlock()
+	if len(calls) != 1 {
+		t.Errorf("expected 1 LLM call when CompletedStep is nil, got %d", len(calls))
+	}
+}
+
+// TestReplay_ConnectorNodeSkippedOnReplay verifies that a connector node
+// (side-effecting) is not re-invoked when CompletedStep returns done.
+func TestReplay_ConnectorNodeSkippedOnReplay(t *testing.T) {
+	cached := map[string]any{"connector": "slack", "ok": true, "replay": true}
+
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "c", Type: "connector", Data: map[string]any{
+				"connector": "slack", "action": "post_message",
+			}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "c"},
+			{ID: "e2", Source: "c", Target: "z"},
+		},
+	}
+
+	stub := newStubDeps(nil)
+	d := stub.deps()
+	d.CompletedStep = func(_ context.Context, _, stepID string) (map[string]any, bool, error) {
+		if stepID == "c" {
+			return cached, true, nil
+		}
+		return nil, false, nil
+	}
+
+	_, err := Run(context.Background(), "run_conn_replay", d, def, nil)
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+
+	stub.mu.Lock()
+	connCalls := stub.connCalls
+	stub.mu.Unlock()
+	if len(connCalls) != 0 {
+		t.Errorf("expected connector NOT called on replay, got %d calls: %v", len(connCalls), connCalls)
 	}
 }
 
