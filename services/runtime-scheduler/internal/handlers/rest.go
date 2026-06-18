@@ -20,6 +20,7 @@ import (
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
+	"github.com/dshakes/lantern/services/runtime-scheduler/internal/metrics"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
 )
 
@@ -29,6 +30,7 @@ type RESTHandler struct {
 	Store   cluster.ClusterStore
 	Secret  []byte
 	Logger  *zap.Logger
+	Metrics *metrics.Registry
 }
 
 // NewRESTHandler constructs the gateway.
@@ -204,5 +206,8 @@ func (h *RESTHandler) NodeHeartbeat(w http.ResponseWriter, r *http.Request, expe
 		RecentOOMCount:     body.RecentOOMCount,
 		RecentKernelEvents: body.RecentKernelEvts,
 	})
+	if h.Metrics != nil {
+		h.Metrics.Nodes.Set(float64(len(h.Store.ListNodes())))
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

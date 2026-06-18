@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -34,6 +35,8 @@ import (
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/dialer"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/handlers"
+	"github.com/dshakes/lantern/services/runtime-scheduler/internal/leader"
+	"github.com/dshakes/lantern/services/runtime-scheduler/internal/metrics"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/placement"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/scoring"
@@ -85,6 +88,30 @@ func main() {
 		logger.Info("DATABASE_URL not set — using in-memory store only")
 	}
 
+	// --- Leader election ---
+	// When DATABASE_URL is set, campaign for the Postgres advisory lock.
+	// The authoritative background loops and mutating RPCs (Schedule, Terminate,
+	// Snapshot) run only on the leader. Read-only RPCs (List, Events, Cluster)
+	// serve on every replica.
+	// When DATABASE_URL is unset (single-node dev), default to always-leader.
+	var elector *leader.Elector
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		var err error
+		elector, err = leader.Campaign(ctx, dbURL, logger)
+		if err != nil {
+			// Campaign never returns an error today (it starts a goroutine),
+			// but guard against future changes.
+			logger.Fatal("leader election init failed", zap.Error(err))
+		}
+		logger.Info("leader election started — waiting to acquire advisory lock")
+	} else {
+		elector = leader.AlwaysLeader()
+		logger.Info("DATABASE_URL unset — running as always-leader (single-node mode)")
+	}
+
+	// --- Prometheus metrics ---
+	sched_metrics := metrics.New()
+
 	weights := scoring.Weights{
 		WarmPool:  cfg.WeightWarmPool,
 		Region:    cfg.WeightRegion,
@@ -104,14 +131,37 @@ func main() {
 	}
 	defer managerDialer.Close()
 
-	// --- Background heartbeat reaper ---
+	// --- Background heartbeat reaper (leader-gated) ---
 	cluster.StartHeartbeatReaper(ctx, clusterStore, cluster.HeartbeatDeadline, 5*time.Second, func(name string) {
+		if !elector.IsLeader() {
+			return // standby: skip mutating drain work
+		}
 		logger.Warn("node heartbeat expired, marking draining", zap.String("node", name))
 	})
 
 	// --- gRPC server ---
 	schedSvc := handlers.NewSchedulerService(clusterStore, pl, managerDialer, logger, cfg.TenantMaxVMs)
 	schedSvc.SnapshotPersister = snapPersister
+	schedSvc.Elector = elector
+	schedSvc.Metrics = sched_metrics
+
+	// Keep the is_leader gauge in sync with the elector.
+	go func() {
+		t := time.NewTicker(2 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if elector.IsLeader() {
+					sched_metrics.IsLeader.Set(1)
+				} else {
+					sched_metrics.IsLeader.Set(0)
+				}
+			}
+		}
+	}()
 
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
@@ -143,6 +193,7 @@ func main() {
 
 	// --- REST gateway ---
 	rest := handlers.NewRESTHandler(schedSvc, clusterStore, []byte(cfg.JWTSecret), logger)
+	rest.Metrics = sched_metrics
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -153,6 +204,9 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "ok")
 	})
+
+	// /metrics — Prometheus scrape endpoint.
+	mux.Handle("/metrics", promhttp.HandlerFor(sched_metrics.Prometheus(), promhttp.HandlerOpts{}))
 
 	mux.HandleFunc("POST /v1/schedule", rest.Schedule)
 	mux.HandleFunc("GET /v1/vms", rest.ListVMs)
