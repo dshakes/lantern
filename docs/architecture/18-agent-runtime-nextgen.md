@@ -461,11 +461,13 @@ gVisor, hostile on Kata; (b) a node without the RuntimeClass **refuses** untrust
   granted/released/denied/expired (30-min timeout). Follow-up: swap the 1s poll for
   Postgres LISTEN/NOTIFY.
 **Remaining:**
-- **`tenant_id` provenance (P0 security):** the runtime-manager K8s backend derives
-  the namespace from `LANTERN_TENANT_ID` in `req.env` rather than authenticated gRPC
-  metadata (violates invariant #7). Forward tenant_id as gRPC metadata
-  control-plane → scheduler → manager and read it there; reject a spec whose body
-  tenant_id disagrees with the authenticated principal.
+- ✅ *(done, this branch)* **`tenant_id` provenance (P0 security, invariant #7):** the
+  K8s backend derived the namespace from caller-supplied `env[LANTERN_TENANT_ID]` —
+  an empty `spec.tenant_id` + caller env let a pod land in another tenant's namespace.
+  Fixed: tenant is now a first-class authenticated field on the internal
+  `ScheduleRequest`; `spawn_to_schedule`/`restore` fail closed on empty, strip + re-inject
+  the authenticated value (caller can't shadow), and `namespace_for` derives solely
+  from it (refuses empty). Tested.
 - **Per-agent-instance identity:** SPIFFE SVID / OIDC short-lived token minted at
   spawn; stamp `agent_instance_id` on every audit row, secret vend, and tool call.
 - **Non-owner Postgres role** with RLS validated end-to-end.
