@@ -499,9 +499,16 @@ assert failover < N s; spawn-storm test asserts the rate limit holds. Publish me
 SLOs.
 
 ### Phase 4 — Observability + cost (FinOps for agents)
-**Scope:**
-- OTel GenAI semconv on every span; `tenant_id`/`run_id`/`step_id`/`agent_instance_id`
-  on all; control-plane + scheduler runtime metrics.
+**Status:**
+- ✅ *(done, this branch)* **OTel tracing foundation** (`internal/telemetry`, env-gated
+  OTLP exporter — no-op when unset, no collector dependency) + **GenAI semconv spans**
+  on the LLM path (`gen_ai.system/request.model/operation.name/usage.input_tokens/
+  output_tokens`, `lantern.cost_usd`) and a `runtime.schedule` span carrying
+  `tenant_id/run_id/agent_version_id/agent_instance_id/isolation_class/vm_id`. Tested
+  with an in-memory span recorder.
+**Remaining:**
+- Propagate spans across scheduler/manager/harness (W3C context) + scheduler/
+  control-plane runtime metrics.
 - Loop/retry anomaly detection as a first-class incident class; per-step token+cost
   (reasoning + cache tokens) in the journal; inline `gen_ai.evaluation.result`.
 **Gate:** trace-completeness test (every step emits a conformant span with required
