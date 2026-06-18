@@ -702,6 +702,161 @@ func TestReplay_ConnectorNodeSkippedOnReplay(t *testing.T) {
 	}
 }
 
+// ---- runSubgraph cap tests ---------------------------------------------------
+
+// TestLoopBody_ExceedsMaxBodySteps verifies that a body subgraph chain longer
+// than maxBodySteps (50) produces an explicit error rather than silently
+// completing. The off-by-one fix ensures the loop doesn't just fall through on
+// the 50th iteration and return a success result.
+func TestLoopBody_ExceedsMaxBodySteps(t *testing.T) {
+	// Build a body chain: trigger → loop → body0 → body1 → … → body49 → body50
+	// The loop body edge targets body0, which chains to body50 via 50 "next"
+	// edges. That is maxBodySteps+1 nodes visited inside the body — must error.
+	const chainLen = 51 // one more than maxBodySteps=50
+
+	nodes := []Node{
+		{ID: "t", Type: "trigger", Data: map[string]any{}},
+		{ID: "L", Type: "loop", Data: map[string]any{"arrayExpression": `["x"]`}},
+		{ID: "z", Type: "end", Data: map[string]any{}},
+	}
+	edges := []Edge{
+		{ID: "e-tL", Source: "t", Target: "L"},
+		{ID: "e-Lz", Source: "L", Target: "z"},
+	}
+	// Build body chain: body0 → body1 → … → body(chainLen-1)
+	for i := 0; i < chainLen; i++ {
+		id := fmt.Sprintf("body%d", i)
+		nodes = append(nodes, Node{
+			ID:   id,
+			Type: "ai-step",
+			Data: map[string]any{"prompt": fmt.Sprintf("step %d", i)},
+		})
+	}
+	// body edge: L → body0
+	edges = append(edges, Edge{ID: "e-Lbody", Source: "L", Target: "body0", Label: strPtr("body")})
+	// chain edges: body0 → body1 → … → body(chainLen-1) → (no outgoing)
+	for i := 0; i < chainLen-1; i++ {
+		edges = append(edges, Edge{
+			ID:     fmt.Sprintf("e-b%d", i),
+			Source: fmt.Sprintf("body%d", i),
+			Target: fmt.Sprintf("body%d", i+1),
+		})
+	}
+
+	def := Definition{Nodes: nodes, Edges: edges}
+	stub := newStubDeps(nil)
+	res, err := Run(context.Background(), "run_maxbody", stub.deps(), def, nil)
+	if err != nil {
+		t.Fatalf("Run returned unexpected top-level error: %v", err)
+	}
+	// The loop body exceeded the cap, so the loop node must fail.
+	if !res.Failed {
+		t.Error("expected workflow to fail when loop body exceeds maxBodySteps")
+	}
+	if !strings.Contains(res.LastError, "maxBodySteps") {
+		t.Errorf("expected maxBodySteps in error, got %q", res.LastError)
+	}
+	// step_failed must have been emitted for the loop node (the error propagates
+	// up through executeLoop → executeNode → Run's step-error path).
+	var failedEmitted bool
+	for _, ev := range stub.events {
+		if ev.Kind == "step_failed" && ev.StepID == "L" {
+			failedEmitted = true
+		}
+	}
+	if !failedEmitted {
+		t.Errorf("expected step_failed for loop node; events: %v", eventKinds(stub))
+	}
+}
+
+// ---- shallowCopyVars isolation tests ----------------------------------------
+
+// TestLoop_BodyStepDoesNotBleedAcrossIterations verifies that a body node
+// writing to vars["steps"]["body"] in iteration N does not pollute iteration
+// N+1's view: each iteration must start with an isolated steps map.
+func TestLoop_BodyStepDoesNotBleedAcrossIterations(t *testing.T) {
+	// Workflow: loop over ["a", "b"], body is a single ai-step "body" whose
+	// reply we track. The test checks that iteration 1's LLM prompt does not
+	// contain the step result from iteration 0 injected via steps["body"].
+	stub := newStubDeps(map[string]string{
+		"process a": "reply-for-a",
+		"process b": "reply-for-b",
+	})
+
+	// Use the shared loopDef helper which has a body ai-step with ID "body".
+	def := loopDef(`["a","b"]`, nil)
+	res, err := Run(context.Background(), "run_isolation", stub.deps(), def, nil)
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+	if res.Failed {
+		t.Fatalf("unexpected failure: %s", res.LastError)
+	}
+
+	stub.mu.Lock()
+	calls := stub.llmCalls
+	stub.mu.Unlock()
+
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 LLM calls, got %d: %v", len(calls), calls)
+	}
+	// Iteration 1's prompt must NOT contain "reply-for-a" (the step result
+	// from iteration 0's body). If shallowCopyVars shares the steps map,
+	// runSubgraph would write stepsMap["body"] = "reply-for-a" in iteration 0,
+	// and that would appear in iteration 1's {{steps.body}} template.
+	// (The loopDef body prompt is "process {{loop.item}} index={{loop.index}}"
+	// which doesn't reference steps.body directly, but we verify the map is
+	// isolated by checking that iteration 1 does NOT see the iteration 0 body
+	// result via a direct steps-map check via a custom workflow.)
+	//
+	// For a more direct assertion: build a workflow where the body prompt
+	// references {{steps.body}} and confirm it stays empty on iteration 1.
+	stub2 := newStubDeps(nil)
+	def2 := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "L", Type: "loop", Data: map[string]any{"arrayExpression": `["a","b"]`}},
+			{ID: "body", Type: "ai-step", Data: map[string]any{
+				// If steps["body"] bleeds across, iteration 1 sees "ITER0-RESULT" here.
+				"prompt": "item={{loop.item}} prev={{steps.body}}",
+			}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "L"},
+			{ID: "e2", Source: "L", Target: "body", Label: strPtr("body")},
+			{ID: "e3", Source: "L", Target: "z"},
+		},
+	}
+	// stub2 replies with a fixed string for iteration 0's body call.
+	stub2.llmReplies = map[string]string{"item=a": "ITER0-RESULT"}
+	res2, err := Run(context.Background(), "run_isolation2", stub2.deps(), def2, nil)
+	if err != nil {
+		t.Fatalf("Run2 errored: %v", err)
+	}
+	if res2.Failed {
+		t.Fatalf("unexpected failure2: %s", res2.LastError)
+	}
+
+	stub2.mu.Lock()
+	calls2 := stub2.llmCalls
+	stub2.mu.Unlock()
+
+	if len(calls2) != 2 {
+		t.Fatalf("expected 2 LLM calls in isolation test, got %d", len(calls2))
+	}
+	// Iteration 1's prompt (calls2[1]) must have prev= empty (or the literal
+	// string for an unresolved path), NOT "ITER0-RESULT".
+	iter1Prompt := calls2[1]
+	if strings.Contains(iter1Prompt, "ITER0-RESULT") {
+		t.Errorf("iteration 1 prompt contains iteration 0 body result — steps map not isolated.\nprompt: %q", iter1Prompt)
+	}
+	// Confirm iteration 0 did include the correct item.
+	if !strings.Contains(calls2[0], "item=a") {
+		t.Errorf("iteration 0 prompt malformed: %q", calls2[0])
+	}
+}
+
 func sliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

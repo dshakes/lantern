@@ -111,7 +111,12 @@ func (h *RESTHandler) RecoverOrphanedRuns(ctx context.Context) (recovered, skipp
 				zap.String("run_id", run.runID),
 				zap.Error(driveErr),
 			)
-			markRunFailed(ctx, h.srv.Pool, run.runID, driveErr)
+			if markErr := markRunFailed(ctx, h.srv.Pool, run.runID, driveErr); markErr != nil {
+				log.Error("recovery sweep: failed to mark run as failed — run may remain stuck",
+					zap.String("run_id", run.runID),
+					zap.Error(markErr),
+				)
+			}
 			skipped++
 			continue
 		}
@@ -135,7 +140,7 @@ func findOrphanedRuns(ctx context.Context, pool *pgxpool.Pool) ([]orphanedRun, e
 		       COALESCE(a.name, '') AS agent_name,
 		       COALESCE(r.input, '{}'::jsonb)::text::bytea AS input_json
 		FROM   runs r
-		LEFT   JOIN agents a ON a.id = r.agent_id
+		LEFT   JOIN agents a ON a.id = r.agent_id AND a.tenant_id = r.tenant_id
 		LEFT   JOIN run_locks rl ON rl.run_id = r.id
 		WHERE  r.status IN ('running', 'queued')
 		  AND  (rl.run_id IS NULL OR rl.expires_at < now())
@@ -179,16 +184,23 @@ func acquireRecoveryLock(ctx context.Context, pool *pgxpool.Pool, runID, workerI
 }
 
 // markRunFailed stamps runs.status = 'failed' with a recovery error message.
-func markRunFailed(ctx context.Context, pool *pgxpool.Pool, runID string, cause error) {
+// It returns an error when the UPDATE itself fails (e.g. DB connectivity
+// problem), so callers can log a distinct "mark-failed itself failed" message
+// and know the run is still stuck in 'running'/'queued'.
+func markRunFailed(ctx context.Context, pool *pgxpool.Pool, runID string, cause error) error {
 	errJSON, _ := json.Marshal(map[string]string{
 		"code":    "recovery_failed",
 		"message": fmt.Sprintf("crash-recovery re-drive failed: %v", cause),
 	})
-	_, _ = pool.Exec(ctx, `
+	_, execErr := pool.Exec(ctx, `
 		UPDATE runs
 		SET status = 'failed', finished_at = now(), error = $2::jsonb
 		WHERE id = $1 AND status IN ('running', 'queued')
 	`, runID, string(errJSON))
+	if execErr != nil {
+		return fmt.Errorf("markRunFailed(%s): %w", runID, execErr)
+	}
+	return nil
 }
 
 // redriveRun re-executes a single orphaned run.

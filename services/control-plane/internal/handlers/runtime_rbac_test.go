@@ -30,7 +30,8 @@ import (
 )
 
 // mintSvcToken returns a signed JWT with Role="service" and the given scopes.
-// An empty scopes slice means an unrestricted API key (all scopes allowed).
+// An empty scopes slice produces a key with no explicit scopes; authorizeRuntimeScope
+// treats those as least-privilege (read only, not unrestricted).
 func mintSvcToken(t *testing.T, tenantID string, scopes []string) string {
 	t.Helper()
 	now := time.Now()
@@ -82,10 +83,11 @@ func TestAuthorizeRuntimeScope(t *testing.T) {
 		{"member/write", "member", nil, ScopeRuntimeWrite, false},
 		{"member/admin", "member", nil, ScopeRuntimeAdmin, false},
 
-		// service, unrestricted (empty scopes)
-		{"svc-unrestricted/read", "service", []string{}, ScopeRuntimeRead, true},
-		{"svc-unrestricted/write", "service", []string{}, ScopeRuntimeWrite, true},
-		{"svc-unrestricted/admin", "service", []string{}, ScopeRuntimeAdmin, true},
+		// service, empty scopes — least-privilege: read only (not unrestricted).
+		// An API key with no explicit scopes must not silently gain write/admin.
+		{"svc-empty-scopes/read", "service", []string{}, ScopeRuntimeRead, true},
+		{"svc-empty-scopes/write", "service", []string{}, ScopeRuntimeWrite, false},
+		{"svc-empty-scopes/admin", "service", []string{}, ScopeRuntimeAdmin, false},
 
 		// service with runtime:read only
 		{"svc-read/read", "service", []string{ScopeRuntimeRead}, ScopeRuntimeRead, true},
@@ -106,8 +108,10 @@ func TestAuthorizeRuntimeScope(t *testing.T) {
 		{"svc-other/read", "service", []string{"agents:write"}, ScopeRuntimeRead, false},
 		{"svc-other/write", "service", []string{"agents:write"}, ScopeRuntimeWrite, false},
 
-		// unknown role — treated like member (read only)
-		{"unknown/read", "analyst", nil, ScopeRuntimeRead, true},
+		// unknown role — denied unconditionally (fail-closed, not even read).
+		// Granting read to an unrecognised role leaks VM metadata to callers
+		// that should not pass the gate.
+		{"unknown/read", "analyst", nil, ScopeRuntimeRead, false},
 		{"unknown/write", "analyst", nil, ScopeRuntimeWrite, false},
 	}
 
@@ -200,17 +204,12 @@ func TestScheduleRBAC_SvcWithAdminAllowed(t *testing.T) {
 	}
 }
 
-func TestScheduleRBAC_SvcUnrestrictedAllowed(t *testing.T) {
+func TestScheduleRBAC_SvcEmptyScopesDenied(t *testing.T) {
+	// Empty scopes → least-privilege (read only). Schedule requires write → 403.
 	h := newTestRuntimeHandler(t, &recScheduler{})
-	tok := mintSvcToken(t, "tenant-1", []string{}) // empty = unrestricted
-	var w *httptest.ResponseRecorder
-	func() {
-		defer func() { recover() }() //nolint:errcheck
-		w = doSchedule(h, tok, map[string]any{"imageDigest": "sha256:test"})
-	}()
-	if w != nil && (w.Code == http.StatusUnauthorized || w.Code == http.StatusForbidden) {
-		t.Errorf("unrestricted service key must not be denied on Schedule: got %d", w.Code)
-	}
+	tok := mintSvcToken(t, "tenant-1", []string{}) // empty = read-only by new policy
+	w := doSchedule(h, tok, map[string]any{"imageDigest": "sha256:test"})
+	assert403WithScope(t, w, ScopeRuntimeWrite)
 }
 
 // ---------------------------------------------------------------------------
@@ -458,6 +457,76 @@ func TestListVMsRBAC_SvcWrongScopeDenied(t *testing.T) {
 	tok := mintSvcToken(t, "tenant-1", []string{"billing:read"})
 	w := doListVMs(h, tok)
 	assert403WithScope(t, w, ScopeRuntimeRead)
+}
+
+// ---------------------------------------------------------------------------
+// Unknown role — fail-closed: denied even for read-only routes
+// ---------------------------------------------------------------------------
+
+func TestListVMsRBAC_UnknownRoleDenied(t *testing.T) {
+	// An unrecognised role must be denied even the lowest-privilege (read)
+	// route. Before this fix, the default: arm returned true for read, leaking
+	// VM metadata to callers whose role is not explicitly authorised.
+	h := newTestRuntimeHandler(t, &recScheduler{})
+	// Mint a token with an unknown role directly (not via mintTestToken which
+	// accepts any string but let's use mintSvcToken-style to keep the JWT valid).
+	now := time.Now()
+	claims := LanternClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "analyst-key",
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(24 * time.Hour)),
+			Issuer:    "lantern-test",
+		},
+		TenantID: "tenant-1",
+		Email:    "analyst@test.example",
+		Name:     "Analyst",
+		Role:     "analyst", // unrecognised role
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	s, err := tok.SignedString([]byte(testJWTSecret))
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	w := doListVMs(h, s)
+	// Must be forbidden, not allowed through to the DB.
+	if w.Code != http.StatusForbidden {
+		t.Errorf("unknown role must be denied on ListVMs (read): got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Empty-scope service key — allowed on read, denied on write/admin
+// ---------------------------------------------------------------------------
+
+func TestListVMsRBAC_SvcEmptyScopesAllowedRead(t *testing.T) {
+	// Empty scopes → least-privilege (runtime:read only). ListVMs requires
+	// runtime:read, so the request must be allowed through (panics on nil DB,
+	// which is proof the scope gate was passed).
+	h := newTestRuntimeHandler(t, &recScheduler{})
+	tok := mintSvcToken(t, "tenant-1", []string{})
+	panicked := false
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicked = true
+			}
+		}()
+		w := doListVMs(h, tok)
+		if w.Code == http.StatusForbidden {
+			t.Errorf("empty-scope service key must be allowed on ListVMs (read): got 403 body=%s", w.Body.String())
+		}
+	}()
+	_ = panicked
+}
+
+func TestScheduleRBAC_SvcEmptyScopesDeniedWrite(t *testing.T) {
+	// Already covered by TestScheduleRBAC_SvcEmptyScopesDenied above; this
+	// adds an explicit ExecVM (admin) check for completeness.
+	h := newTestRuntimeHandler(t, &recScheduler{})
+	tok := mintSvcToken(t, "tenant-1", []string{})
+	w := doExec(h, tok, "vm-1")
+	assert403WithScope(t, w, ScopeRuntimeAdmin)
 }
 
 // ---------------------------------------------------------------------------

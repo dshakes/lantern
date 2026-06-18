@@ -1552,24 +1552,27 @@ const (
 // Authorization rules:
 //   - Role "owner" or "admin" → always allowed (human tenant administrators).
 //   - Role "service" (API key) → allowed when Scopes contains the required
-//     scope, or a superseding scope (admin ⊇ write ⊇ read). An empty scopes
-//     slice means "unrestricted key" — all scopes allowed.
+//     scope, or a superseding scope (admin ⊇ write ⊇ read). An empty/nil
+//     scopes slice grants at most runtime:read (least-privilege default for
+//     unscoped keys — they must not gain write or admin just by omission).
 //   - Role "member" → allowed for runtime:read only; denied for write/admin.
-//   - Any other unrecognised role → denied for write/admin (fail-closed).
+//   - Any other unrecognised role → denied (fail-closed; not even read).
 func authorizeRuntimeScope(claims *LanternClaims, required string) bool {
 	switch claims.Role {
 	case "owner", "admin":
 		return true
 	case "service":
 		if len(claims.Scopes) == 0 {
-			// Unrestricted API key — all scopes allowed.
-			return true
+			// Empty/nil scope set: least-privilege — grant read only.
+			// A service key with no explicit scopes must not silently gain
+			// write or admin access to the runtime (ExecVM, Schedule, etc.).
+			return required == ScopeRuntimeRead
 		}
 		for _, s := range claims.Scopes {
 			if s == required {
 				return true
 			}
-			// Implication: admin ⊇ write ⊇ read.
+			// Implication chain: admin ⊇ write ⊇ read.
 			if s == ScopeRuntimeAdmin {
 				return true // admin implies write and read
 			}
@@ -1582,7 +1585,10 @@ func authorizeRuntimeScope(claims *LanternClaims, required string) bool {
 		// Members may only perform read operations on their tenant's resources.
 		return required == ScopeRuntimeRead
 	default:
-		return required == ScopeRuntimeRead
+		// Unknown role: deny unconditionally (fail-closed).
+		// Granting read to an unrecognised role leaks log/VM metadata to
+		// callers that should not be allowed past the gate at all.
+		return false
 	}
 }
 

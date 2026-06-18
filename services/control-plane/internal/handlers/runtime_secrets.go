@@ -517,14 +517,16 @@ func (h *RuntimeSecretsHandler) verifyInstanceToken(ctx context.Context, r *http
 		return "", fmt.Errorf("invalid agent-instance token: %w", err)
 	}
 
-	// The token's embedded instance id must map to the exact vm_id in the
-	// request body for this tenant, and the VM must be non-terminal.
-	var rowTenantID, rowState string
+	// Single query: fetch tenant_id, vm_id, and state in one round-trip.
+	// This eliminates the TOCTOU window that existed when these were two
+	// sequential SELECTs (the row could change between them) and halves
+	// the DB load on the hot secret-resolve path.
+	var rowTenantID, rowVmID, rowState string
 	dbErr := h.srv.Pool.QueryRow(ctx, `
-		SELECT tenant_id, state
+		SELECT tenant_id, vm_id, state
 		FROM runtime_vms
 		WHERE agent_instance_id = $1
-	`, claims.AgentInstanceID).Scan(&rowTenantID, &rowState)
+	`, claims.AgentInstanceID).Scan(&rowTenantID, &rowVmID, &rowState)
 	if dbErr != nil {
 		if errors.Is(dbErr, pgx.ErrNoRows) {
 			return "", errors.New("agent_instance_id not found in runtime_vms")
@@ -538,12 +540,7 @@ func (h *RuntimeSecretsHandler) verifyInstanceToken(ctx context.Context, r *http
 	if rowTenantID != tenantID {
 		return "", errors.New("agent_instance_id belongs to a different tenant")
 	}
-	// The vm_id in the body must match what the DB associates with this instance.
-	var rowVmID string
-	lookupErr := h.srv.Pool.QueryRow(ctx, `
-		SELECT vm_id FROM runtime_vms WHERE agent_instance_id = $1
-	`, claims.AgentInstanceID).Scan(&rowVmID)
-	if lookupErr != nil || rowVmID != vmID {
+	if rowVmID != vmID {
 		return "", errors.New("agent_instance_id does not match vm_id")
 	}
 	for _, terminal := range terminalVMStates {

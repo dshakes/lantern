@@ -1087,7 +1087,8 @@ var migrations = []string{
 		WHERE agent_instance_id IS NOT NULL`,
 
 	// -----------------------------------------------------------------------
-	// Phase 2 governance: non-owner application role (RLS enforcement).
+	// Phase 2 governance: non-owner application role (RLS role + policy
+	// foundation).
 	//
 	// Background
 	// ----------
@@ -1097,38 +1098,41 @@ var migrations = []string{
 	// table. This means the tenant-isolation policies on 'agents' and 'runs'
 	// have no effect at runtime despite being present in the schema.
 	//
-	// Fix
-	// ---
-	// Introduce 'lantern_app': a non-superuser LOGIN role that the app pool
-	// connects as. It has no BYPASSRLS attribute, so the FORCE ROW LEVEL
-	// SECURITY setting on 'agents' and 'runs' will actually enforce the
-	// tenant_isolation_* policies for app connections. The 'lantern' superuser
-	// connection is retained for migrations (which need DDL rights) but must
-	// not be used by the long-lived app pool.
+	// What this migration does
+	// ------------------------
+	// Creates 'lantern_app', a non-superuser LOGIN role with no BYPASSRLS
+	// attribute, and grants it the DML privileges it needs. Proves the RLS
+	// policy enforcement via SET LOCAL ROLE in internal/db/rls_test.go
+	// (the test drops to lantern_app inside a transaction and verifies
+	// cross-tenant reads are denied).
 	//
-	// Connection model
-	// ----------------
-	// The pool is opened with DATABASE_URL that includes
+	// What this migration does NOT do
+	// --------------------------------
+	// It does NOT switch the live app pool to connect as 'lantern_app'.
+	// The pool DSN still uses the 'lantern' superuser, so RLS is NOT yet
+	// enforced at runtime. The pool-DSN cutover (connect as lantern_app and
+	// set app.tenant_id GUC on every agents/runs read path) is a tracked
+	// follow-up; it requires testing every handler path against the new role
+	// before the switch can be made safely in production.
+	//
+	// Connection model (future)
+	// -------------------------
+	// Once the cutover lands, the pool will use a DATABASE_URL that includes
 	// "user=lantern_app password=<LANTERN_APP_DB_PASSWORD>". The migration
-	// role ('lantern' superuser) is only used by Migrate() at startup — the
-	// pool handed to handlers must be opened as 'lantern_app'.
+	// role ('lantern' superuser) will be used only by Migrate() at startup.
 	//
-	// Per-request tenant scoping
-	// --------------------------
-	// Before every transactional query that touches 'agents' or 'runs' the
-	// handler calls:
+	// Per-request tenant scoping (future)
+	// ------------------------------------
+	// Each query path will call:
 	//   SELECT set_config('app.tenant_id', $1, true)  -- true = transaction-local
-	// This is already done by setRLSTenantID() in handlers/agents.go for the
-	// gRPC agent service and in rest.go for a subset of REST paths. Any path
-	// that omits the GUC call will see an empty result set (the policy
+	// Paths that omit the GUC will see an empty result (the policy
 	// current_setting('app.tenant_id', true) returns '' which matches no
 	// tenant_id) — a safe fail-closed default.
 	//
 	// Idempotency
 	// -----------
 	// CREATE ROLE has no IF NOT EXISTS; we use a DO block to guard it.
-	// GRANT and ALTER TABLE … FORCE ROW LEVEL SECURITY are idempotent by
-	// nature (re-running is a no-op in Postgres).
+	// GRANT and ALTER DEFAULT PRIVILEGES are idempotent by nature in Postgres.
 	// -----------------------------------------------------------------------
 
 	// 1. Create the application role (non-superuser, no BYPASSRLS).
@@ -1200,6 +1204,16 @@ var migrations = []string{
 	TO lantern_app`,
 
 	// 5. Sequence usage — needed for BIGSERIAL / gen_random_uuid() columns
-	//    whose sequences are owned by the tables above.
+	//    whose sequences are owned by the tables above. This snapshot grant
+	//    covers sequences that already exist at migration time.
 	`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO lantern_app`,
+
+	// 6. Default privileges for future sequences — any sequence created by
+	//    the 'lantern' superuser in future migrations is automatically
+	//    usable by 'lantern_app'. Without this, each new migration that adds
+	//    a BIGSERIAL/SERIAL column requires a follow-up GRANT; with it the
+	//    grant is pre-authorised for any sequence the owner creates in public.
+	//    Idempotent: ALTER DEFAULT PRIVILEGES is a no-op if the privilege is
+	//    already recorded.
+	`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO lantern_app`,
 }

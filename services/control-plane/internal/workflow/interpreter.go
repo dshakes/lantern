@@ -655,6 +655,12 @@ func executeLoop(ctx context.Context, runID string, deps Deps, emit emitFn, node
 // Stops when it reaches a node with no outgoing edge, an "end" node, or when
 // the next node is loopNodeID (the loop boundary — prevents re-entering the
 // loop). Returns the last body node's result.
+//
+// Cap semantics: the body may visit at most maxBodySteps nodes. If after
+// executing the maxBodySteps-th node there is still an outgoing edge (the
+// loop body hasn't ended naturally), the call returns an error rather than
+// silently completing — a maxBodySteps-long body chain must not look
+// identical to a body that actually finished within the cap.
 func runSubgraph(ctx context.Context, runID string, deps Deps, emit emitFn, startID string, vars map[string]any, out map[string][]Edge, byID map[string]Node, loopNodeID string) (any, error) {
 	const maxBodySteps = 50
 
@@ -687,18 +693,44 @@ func runSubgraph(ctx context.Context, runID string, deps Deps, emit emitFn, star
 		if next == "" {
 			break
 		}
+
+		// Off-by-one guard: if we are about to leave the last allowed iteration
+		// but still have a next node, the body exceeds the cap — fail explicitly
+		// so the loop body appears as failed, not as silently completed.
+		if step == maxBodySteps-1 {
+			return nil, fmt.Errorf("loop body exceeded maxBodySteps=%d (possible cycle or oversized body)", maxBodySteps)
+		}
+
 		current = next
 	}
 	return lastResult, nil
 }
 
-// shallowCopyVars makes a one-level copy of the vars map so per-iteration
-// keys ("loop") are isolated while shared references ("steps", "input")
-// remain visible across iterations.
+// shallowCopyVars makes a per-iteration copy of the vars map with the
+// following isolation semantics:
+//
+//   - "input" is SHARED: body nodes reference the workflow's top-level input.
+//   - "steps" is COPIED (one level deep): each loop iteration gets its own
+//     steps map so that a body node whose ID matches an outer step ID cannot
+//     overwrite the outer step's result, and so that body-node results from
+//     iteration N do not bleed into iteration N+1's namespace. The copy is
+//     pre-populated with all steps visible at the point the loop fires, so
+//     body nodes can still reference prior outer steps via {{steps.<id>}}.
+//   - All other top-level keys (e.g. "loop") are copied by value.
 func shallowCopyVars(vars map[string]any) map[string]any {
 	cp := make(map[string]any, len(vars))
 	for k, v := range vars {
 		cp[k] = v
+	}
+	// Isolate the steps map: copy its current entries into a fresh map so
+	// body-node writes (stepsMap[node.ID] = result inside runSubgraph) don't
+	// mutate the parent's steps map.
+	if parentSteps, ok := vars["steps"].(map[string]any); ok {
+		iterSteps := make(map[string]any, len(parentSteps))
+		for k, v := range parentSteps {
+			iterSteps[k] = v
+		}
+		cp["steps"] = iterSteps
 	}
 	return cp
 }
