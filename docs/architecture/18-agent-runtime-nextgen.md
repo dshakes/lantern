@@ -36,20 +36,38 @@ control-plane/data-plane split + `journal_events` + `run_receipts` + per-session
 microVM + cross-channel memory. **That coherence is the thing no single-layer
 vendor can ship — and it is Lantern's wedge.**
 
-**Where Lantern is today (honest):** the architecture and contracts are
-genuinely strong and ahead of the field on *design* (six isolation classes, a
-clean scheduler/manager/harness proto split, defense-in-depth egress, tenant-bound
-secret relay, signed receipts, cross-channel memory). But **two load-bearing seams
-are still stubbed** and block any real end-to-end agent boot:
+**Where Lantern is today (honest, verified 2026-06-18 by reading the code, not a
+summary):** the runtime is **substantially further along than an earlier draft of
+this doc implied**. The architecture and contracts are genuinely strong and ahead of
+the field on *design* (six isolation classes, a clean scheduler/manager/harness proto
+split, defense-in-depth egress, tenant-bound secret relay with mTLS, signed receipts,
+cross-channel memory), and most of the data path is real:
 
-1. **Scheduler → Manager dispatch is a `LogOnlyDialer` stub** — placement is real,
-   the spawn RPC never reaches a node. (`services/runtime-scheduler/internal/dialer/manager.go`)
-2. **Harness → Manager authentication is incomplete** — the in-VM harness cannot
-   yet read its identity from `/proc/cmdline`, mount its mTLS certs, or call
-   `VendSecret`. (`services/harness/src/manager_client.rs`, `secrets.rs`)
+- **Scheduler → Manager dispatch** is a real `GRPCDialer` (connection-pooled,
+  per-node), selected whenever `LANTERN_DEFAULT_MANAGER_ADDR` is set; the
+  `LogOnlyDialer` is only a dev fallback. *Not a blocker.*
+  (`services/runtime-scheduler/internal/dialer/manager.go`,
+  `cmd/scheduler/main.go:97`)
+- **Control-plane → Scheduler** is a real `grpcSchedulerClient`, selected on
+  `LANTERN_SCHEDULER_GRPC_ADDR`; `stubSchedulerClient` is the unset fallback.
+  *Not a blocker.* (`services/control-plane/internal/handlers/runtime.go:442`)
+- **Harness `VendSecret`** calls the real `RuntimeHarness.VendSecret` RPC over an
+  mTLS tonic channel (`tls.rs`); the stub is an explicit opt-in
+  (`LANTERN_ALLOW_SECRET_STUB=1`). *Done.*
+- **Harness heartbeat stream** — *was* a loopback stub (heartbeats dropped, egress
+  revocations never propagated). **Closed in this branch** (commit on
+  `feat/agent-runtime-nextgen`): a real bidirectional `RuntimeHarness.Heartbeat`
+  tonic stream over the same mTLS channel, with proto round-trip conversions and
+  unit tests.
 
-Closing those two seams is the difference between an impressive design and a
-running runtime. They are **Phase 0**.
+**What genuinely remains for Phase 0:** (1) the manager-side **Report ingestion
+pipeline** is `unimplemented` (`service.rs` `report` handler), so harness OTLP/log
+forwarding has nowhere to land; (2) the wiring is **config-gated, not yet the
+default** (env vars must be set) — making it the default is part of the K8s-default
+work (Phase 1); (3) there is **no end-to-end integration test on a real cluster**
+proving `schedule → place → spawn → mTLS heartbeat → vend secret → egress-deny →
+terminate` with zero mocks. Phase 0 is "prove it boots end-to-end and make the real
+path the default"; it is mostly *validation + defaulting*, not greenfield.
 
 **The directional bet (this branch):** **make Kubernetes the default substrate**
 (ADR 0009) and express isolation as a **RuntimeClass tier on a pod**
@@ -176,7 +194,7 @@ analyst material. Treat funding figures / exact version tags as directional.
 | Capability | **AWS AgentCore** | **Google Agent Engine** | **Anthropic** | **OpenAI** | **Temporal** | **Lantern (today)** |
 |---|---|---|---|---|---|---|
 | What it *is* | Managed agent runtime (7+ composable services) | Managed serverless agent runtime | Framework (Agent SDK) + **Managed Agents (beta)** | LLM+tools+SDK; durability lib (Apr 2026) | Durable-execution engine | **Full-stack runtime + control/data plane** |
-| Per-session isolation | ✅ microVM, sanitized teardown | ✅ serverless + code-exec sandbox (no-net, 300s) | Hosted code sandbox (5GiB/1CPU/no-net); managed via Bedrock | BYO sandbox (E2B/Modal/…) | N/A (you host workers) | ✅ 6 classes designed; **dispatch stubbed** |
+| Per-session isolation | ✅ microVM, sanitized teardown | ✅ serverless + code-exec sandbox (no-net, 300s) | Hosted code sandbox (5GiB/1CPU/no-net); managed via Bedrock | BYO sandbox (E2B/Modal/…) | N/A (you host workers) | ✅ 6 classes; dispatch + mTLS heartbeat real; **no RuntimeClass tiering / cluster e2e yet** |
 | Max session | 8h | quota-limited | long/resumable (beta) | provider-dependent | days–years (durable timers) | design supports long; replay partial |
 | Durable execution | Memory persists; runtime ephemeral | Sessions GA; runtime ephemeral | server-side event log (beta) | snapshot/rehydrate (BYO compute) | ✅ **best-in-class** replay | journal_events ✅; **replay partial** |
 | Per-agent identity | IAM + workload identity | ✅ **SPIFFE + X.509-bound tokens** | Workload Identity Federation | OpenAI-cloud centric | namespaces (Cloud RBAC) | tenant_id everywhere; **no per-instance agent identity** |
@@ -219,25 +237,30 @@ not exhaustive.
 | Component | Grade | Reality |
 |---|---|---|
 | **Scheduler placement** (`runtime-scheduler/internal/scoring`) | ✅ | 5-factor score (warm-pool/region/fair-share/cost/health), per-tenant hard cap, Postgres write-through. |
-| **Scheduler → Manager dispatch** (`internal/dialer/manager.go`) | ❌ | **`LogOnlyDialer` — logs intent, returns synthetic OK. The spawn never reaches a node.** Top blocker. |
+| **Scheduler → Manager dispatch** (`internal/dialer/manager.go`) | ✅ | Real connection-pooled `GRPCDialer`, selected on `LANTERN_DEFAULT_MANAGER_ADDR`. `LogOnlyDialer` is a dev fallback only. |
 | **Manager: Firecracker** (`backends/firecracker.rs`) | ⚠️ | Cold-boot KVM validated; warm snapshots via mmap; TAP+seccomp. Jailer snapshot-restore untested. |
 | **Manager: K8s Job** (`backends/k8s.rs`) | ✅~ | Full kube client, Job+Pod, resource limits, seccomp, NetworkPolicy. **No RuntimeClass tiering yet** (needed for ADR 0009). |
 | **Manager: Kata / Wasmtime / Docker** | ⚠️ | Kata lifecycle exists, no IT; Wasmtime WASIp1 + epoch timeouts solid; Docker dev-only. |
-| **Control-plane → Scheduler** (`handlers/runtime.go`) | ❌ | `stubSchedulerClient` stamps `pending`, never calls gRPC. Real `grpcSchedulerClient` exists, unwired. |
-| **Harness: boot + egress** (`harness/src/egress.rs`) | ✅ | HTTP CONNECT proxy + nftables + token-bucket + audit-on-deny. |
-| **Harness ↔ Manager mTLS** (`manager_client.rs`) | ❌ | **Cannot read vm_id from `/proc/cmdline`, mount certs, or build TLS client.** Security-critical blocker. |
-| **Harness `VendSecret`** (`secrets.rs`) | ❌ | Returns dummy values; does not call the manager/relay. |
+| **Control-plane → Scheduler** (`handlers/runtime.go`) | ✅ | Real `grpcSchedulerClient`, selected on `LANTERN_SCHEDULER_GRPC_ADDR`. `stubSchedulerClient` is the unset fallback. |
+| **Harness: boot + egress** (`harness/src/egress.rs`) | ✅ | HTTP CONNECT proxy + nftables + token-bucket + audit-on-deny + deny private/link-local (169.254/RFC1918). |
+| **Harness ↔ Manager mTLS** (`manager_client.rs`, `tls.rs`) | ✅ | TLS channel from injected per-VM cert/key/CA; https when present, http dev fallback. |
+| **Harness `VendSecret`** (`manager_client.rs`) | ✅ | Calls the real `RuntimeHarness.VendSecret` RPC; stub is opt-in (`LANTERN_ALLOW_SECRET_STUB=1`). |
+| **Harness heartbeat stream** (`manager_client.rs`) | ✅ | **Closed in this branch** — real bidi `Heartbeat` tonic stream over mTLS; proto round-trip + unit tests. Egress revocations on `HeartbeatAck` now propagate. |
+| **Harness `Report` / manager ingestion** (`report.rs`, `service.rs`) | ❌ | Manager `report` handler is `unimplemented`; harness `forward_one` returns Err honestly. OTLP/log forwarding has nowhere to land yet. |
 | **Control-plane secret relay** (`handlers/runtime_secrets.go`) | ✅ | Token auth (constant-time), fail-closed, VM-binding check, rate-limited, audited. ADR 0008. |
 | **Workflow interpreter** (`internal/workflow/interpreter.go`) | ⚠️ | trigger/ai-step/tool/connector/condition/approval execute; **loop + subagent are no-ops; approval auto-approves**. |
 | **journal_events / receipts / run_locks** | ✅ | Event-sourced log, HMAC-signed receipts bound to journal hash, distributed locking. **Crash-replay not wired into the run path.** |
 | **OTel traces** | ⚠️ | `trace_id` propagates; **tenant_id/run_id/step_id missing on many spans**; collectors partial. |
 
-### 3.2 The two seams that block everything
-1. **`LogOnlyDialer`** (scheduler) — replace with a real `grpc.ClientConn` pool per node.
-2. **Harness auth** — parse `/proc/cmdline`, mount the certs drive, build the mTLS
-   client, then implement the real `VendSecret` call.
-
-Until both close, **no agent actually boots end-to-end via the scheduler.** They are Phase 0.
+### 3.2 What actually remains for Phase 0
+The data path is real and config-gated. The remaining Phase-0 work is **validation +
+defaulting + telemetry sink**, not greenfield:
+1. **Manager Report ingestion** — wire the `report` handler (`service.rs`) so harness
+   OTLP/logs/audit have a sink; then connect `report.rs::forward_one`.
+2. **Make the real path the default** — today it needs env vars; the K8s-default
+   install (Phase 1) sets them as standard.
+3. **End-to-end cluster integration test** — `schedule → place → K8s spawn → mTLS
+   heartbeat → vend secret → egress-deny → terminate`, zero mocks, on kind/k3s in CI.
 
 ---
 
@@ -396,19 +419,22 @@ Each phase ships behind **explicit test + validation gates**. A phase is **not d
 until its gate is green *and observed* (per repo rule: never report a check clean
 without running it). Estimates assume the current team; sequence matters more than dates.
 
-### Phase 0 — Make it actually boot (close the two seams) · *blocker*
+### Phase 0 — Prove it boots end-to-end + make the real path default
+**Status:** dispatch (`GRPCDialer`/`grpcSchedulerClient`), harness mTLS, `VendSecret`,
+and the **heartbeat stream** are real (the last closed in this branch). Remaining:
 **Scope:**
-- Replace `LogOnlyDialer` with a real per-node `grpc.ClientConn` pool
-  (`runtime-scheduler/internal/dialer/manager.go`); wire `LANTERN_SCHEDULER_GRPC_ADDR`
-  so control-plane uses `grpcSchedulerClient` not `stubSchedulerClient`.
-- Harness identity: parse `/proc/cmdline` for `vm_id`, mount the certs drive, build
-  the vsock mTLS client (`harness/src/manager_client.rs`).
-- Real `VendSecret`: harness → manager → control-plane relay; cache short-TTL tokens
-  (`harness/src/secrets.rs`).
+- ✅ *(done)* Real `GRPCDialer` + `grpcSchedulerClient` (config-gated); harness mTLS +
+  `VendSecret`; **bidi `Heartbeat` stream over mTLS** (this branch, with unit tests).
+- Wire the manager-side **Report ingestion** handler (`service.rs`) and connect
+  `harness/src/report.rs::forward_one` so OTLP/logs/audit have a sink.
+- Make the real path the **default** in the data-plane install (set
+  `LANTERN_SCHEDULER_GRPC_ADDR` / `LANTERN_DEFAULT_MANAGER_ADDR`), lands with Phase 1.
 **Gate:** end-to-end integration test — `control-plane Schedule → scheduler placement
 → manager Spawn (K8s) → harness boots, authenticates over mTLS, vends one real secret,
-egress-denies a blocked domain, reports a heartbeat → Terminate`. Run on CI with a
-kind/k3s cluster. **No mocks in the happy path.** Owner re-runs the gate on returned work.
+egress-denies a blocked domain, streams a heartbeat the manager records → Terminate`.
+Run on CI with a kind/k3s cluster. **No mocks in the happy path.** Owner re-runs the
+gate on returned work. *(Cluster e2e is the open item; cargo/go unit + clippy gates are
+green now.)*
 
 ### Phase 1 — Kubernetes-default substrate + isolation tiering (ADR 0009)
 **Scope:**
