@@ -61,8 +61,8 @@
 //! in a stable public API).  If the instance has already exited, returns
 //! `not supported` consistent with the default.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -72,13 +72,14 @@ use futures::stream::BoxStream;
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 use wasmtime::{Config as WasmConfig, Engine, Linker, Module, Store, StoreLimitsBuilder};
-use wasmtime_wasi::WasiCtxBuilder;
-use wasmtime_wasi::p1::{WasiP1Ctx, add_to_linker_async};
+use wasmtime_wasi::p1::{add_to_linker_async, WasiP1Ctx};
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
+use wasmtime_wasi::WasiCtxBuilder;
 
 use crate::backend::{Handle, RuntimeBackend, SnapshotInfo, StatsSample};
 use crate::proto::{
-    LogLine, RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest, SnapshotRequest,
+    IsolationClass, LogLine, RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest,
+    SnapshotRequest,
 };
 
 // ---------------------------------------------------------------------------
@@ -439,6 +440,13 @@ impl RuntimeBackend for WasmBackend {
 
     fn name(&self) -> &'static str {
         "wasm"
+    }
+
+    /// The Wasm backend accepts WASM-class workloads and other non-isolated
+    /// classes; it refuses UNTRUSTED and HOSTILE because it provides no
+    /// kernel-level isolation (in-process sandbox only).
+    fn satisfies_isolation(&self, class: IsolationClass) -> bool {
+        !matches!(class, IsolationClass::Untrusted | IsolationClass::Hostile)
     }
 
     /// Wasm modules have no shell; exec is not supported.

@@ -63,16 +63,17 @@ fn harness_exec_port() -> u16 {
 }
 
 // ---------------------------------------------------------------------------
-// C4 fix: isolation-class → backend routing
+// Isolation-class → backend routing (ADR-0009)
 //
-// Invariant: Hostile and Untrusted workloads MUST run in a hardware-isolated
-// microVM (Firecracker or Kata). Silently downgrading them to Docker/K8s
-// violates the multi-tenant security boundary. This function is the single
-// authoritative mapping; it is called per-request so different isolation
-// classes can co-exist on the same manager node.
+// Invariant: Hostile and Untrusted workloads MUST have hardware/kernel
+// isolation. Under the default K8s substrate this is expressed as a hardened
+// runtimeClassName (gVisor for Untrusted, Kata for Hostile). Each backend
+// declares its capability via `RuntimeBackend::satisfies_isolation`; the
+// `choose_backend` function is the single authoritative gate — it is called
+// per-request and never silently downgrades a workload.
 //
 // Trusted/Standard/Wasm/Devcontainer may use the node's configured default
-// backend (controlled by RUNTIME_BACKEND env var on the manager).
+// backend (controlled by RUNTIME_BACKEND env var on the manager; default: k8s).
 // ---------------------------------------------------------------------------
 
 /// Per-request backend selection result.
@@ -88,32 +89,40 @@ enum BackendChoice {
 ///
 /// # Security invariant
 ///
-/// `Hostile` and `Untrusted` MUST map to a microVM backend.  If the configured
-/// default backend is Docker or K8s, scheduling those classes is refused.  The
-/// caller gets `Status::failed_precondition` and nothing runs.  A node running
-/// only Docker/K8s will never silently downgrade an untrusted workload.
+/// `Hostile` and `Untrusted` MUST have hardware/kernel isolation. Under the K8s
+/// substrate that means a hardened `runtimeClassName` (gVisor for untrusted, Kata
+/// for hostile). Each backend declares its capability via
+/// [`RuntimeBackend::satisfies_isolation`]; if it returns `false` the request is
+/// refused with `Status::failed_precondition` and nothing runs. A node whose
+/// backend cannot satisfy the class will never silently downgrade the workload.
 fn choose_backend(
     isolation_class: proto::IsolationClass,
     default_backend: &Arc<dyn RuntimeBackend>,
 ) -> BackendChoice {
-    match isolation_class {
-        proto::IsolationClass::Hostile | proto::IsolationClass::Untrusted => {
-            // Only microVM backends are acceptable.
-            let name = default_backend.name();
-            if name == "firecracker" || name == "kata" {
-                BackendChoice::Use(Arc::clone(default_backend))
-            } else {
-                BackendChoice::Unavailable(format!(
-                    "isolation_class {:?} requires a microVM backend (firecracker/kata), \
-                     but this node runs '{}'. Refusing to downgrade to an unacceptable \
-                     isolation level. Configure RUNTIME_BACKEND=firecracker on a \
-                     dedicated microVM node.",
-                    isolation_class, name
-                ))
+    if default_backend.satisfies_isolation(isolation_class) {
+        BackendChoice::Use(Arc::clone(default_backend))
+    } else {
+        let name = default_backend.name();
+        let hint = match isolation_class {
+            proto::IsolationClass::Untrusted => {
+                "UNTRUSTED requires the gVisor RuntimeClass; \
+                 set LANTERN_RUNTIMECLASS_GVISOR on a node that has gVisor installed"
+                    .to_string()
             }
-        }
-        // Trusted, Standard, Wasm, Devcontainer, Unspecified → use the default.
-        _ => BackendChoice::Use(Arc::clone(default_backend)),
+            proto::IsolationClass::Hostile => {
+                "HOSTILE requires the Kata RuntimeClass; \
+                 set LANTERN_RUNTIMECLASS_KATA on a node that has Kata Containers installed"
+                    .to_string()
+            }
+            _ => format!(
+                "isolation_class {:?} is not supported by the '{}' backend",
+                isolation_class, name
+            ),
+        };
+        BackendChoice::Unavailable(format!(
+            "isolation_class {:?} cannot be satisfied by the '{}' backend on this node: {}.",
+            isolation_class, name, hint
+        ))
     }
 }
 
@@ -350,9 +359,9 @@ impl RuntimeManagerGrpc {
     ) -> Result<Response<proto::ScheduleResponse>, Status> {
         let req = request.into_inner();
 
-        // C4 fix: select the backend per-request based on isolation class.
-        // Hostile/Untrusted MUST use a microVM backend; any other class on a
-        // non-microVM node gets a hard failure here — never a silent downgrade.
+        // Select the backend per-request based on isolation class (ADR-0009).
+        // Hostile/Untrusted MUST have hardware/kernel isolation; if the backend
+        // cannot satisfy the class, refuse here — never a silent downgrade.
         let backend = match choose_backend(req.isolation_class, &self.backend) {
             BackendChoice::Use(b) => b,
             BackendChoice::Unavailable(reason) => {
@@ -374,11 +383,12 @@ impl RuntimeManagerGrpc {
             "scheduling run"
         );
 
-        // Try the warm pool first, fall back to cold start.
-        // Note: the pool internally calls backend.schedule(); it uses the pool's
-        // own stored backend (set at construction time). For the warm pool to
-        // also respect the per-request routing we call it only for non-microVM
-        // classes, and call the chosen backend directly for microVM classes.
+        // Cold-start: call the chosen backend directly. The warm pool is not
+        // consulted here because pool.acquire() uses the pool's own backend
+        // (set at construction time) and does not go through `choose_backend`,
+        // meaning it would bypass the isolation gate. If warm-pool support is
+        // added in the future it must propagate the post-gate `backend` arc,
+        // not the pool's stored backend, to preserve the security invariant.
         let handle = backend.schedule(&req).await.map_err(Self::to_status)?;
 
         // Extract tenant_id from the request env for the registry.
@@ -1551,7 +1561,7 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
 }
 
 // ---------------------------------------------------------------------------
-// Tests for C4: isolation-class routing
+// Tests for isolation-class → backend routing (ADR-0009)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1562,14 +1572,30 @@ mod tests {
     // call it directly so the trait must be in scope.
     use pb::runtime_harness_server::RuntimeHarness as _;
 
-    // Minimal stub that reports a configurable name.
+    // Minimal stub that reports a configurable name and an explicit isolation
+    // capability flag. The flag drives `satisfies_isolation` so we can exercise
+    // `choose_backend` without wiring actual K8s/Firecracker backends.
     struct NamedStub {
         name: &'static str,
+        /// When `true`, the stub accepts UNTRUSTED and HOSTILE (microVM semantics).
+        /// When `false` (default), the conservative trait default applies.
+        accepts_hostile: bool,
     }
 
     impl NamedStub {
         fn arc(name: &'static str) -> Arc<dyn RuntimeBackend> {
-            Arc::new(Self { name })
+            Arc::new(Self {
+                name,
+                accepts_hostile: false,
+            })
+        }
+
+        /// Build a microVM-style stub that accepts all isolation classes.
+        fn microvm(name: &'static str) -> Arc<dyn RuntimeBackend> {
+            Arc::new(Self {
+                name,
+                accepts_hostile: true,
+            })
         }
     }
 
@@ -1618,6 +1644,18 @@ mod tests {
         fn name(&self) -> &'static str {
             self.name
         }
+
+        fn satisfies_isolation(&self, class: proto::IsolationClass) -> bool {
+            if self.accepts_hostile {
+                true // microVM: accept everything
+            } else {
+                // conservative default
+                !matches!(
+                    class,
+                    proto::IsolationClass::Untrusted | proto::IsolationClass::Hostile
+                )
+            }
+        }
     }
 
     // --- choose_backend: trusted/standard always allowed on any backend ---
@@ -1649,7 +1687,7 @@ mod tests {
         ));
     }
 
-    // --- choose_backend: Hostile/Untrusted HARD-FAIL on docker/k8s ---
+    // --- choose_backend: Hostile/Untrusted HARD-FAIL when backend refuses ---
 
     #[test]
     fn hostile_refused_on_docker() {
@@ -1657,11 +1695,15 @@ mod tests {
         match choose_backend(proto::IsolationClass::Hostile, &b) {
             BackendChoice::Unavailable(msg) => {
                 assert!(
-                    msg.contains("firecracker/kata"),
-                    "error should name required backends: {msg}"
+                    msg.contains("Kata RuntimeClass"),
+                    "error should name the required RuntimeClass: {msg}"
+                );
+                assert!(
+                    msg.contains("LANTERN_RUNTIMECLASS_KATA"),
+                    "error should name the config env var: {msg}"
                 );
             }
-            BackendChoice::Use(_) => panic!("hostile must not be allowed on docker"),
+            BackendChoice::Use(_) => panic!("hostile must not be allowed on a non-microVM backend"),
         }
     }
 
@@ -1671,16 +1713,23 @@ mod tests {
         match choose_backend(proto::IsolationClass::Untrusted, &b) {
             BackendChoice::Unavailable(msg) => {
                 assert!(
-                    msg.contains("firecracker/kata"),
-                    "error should name required backends: {msg}"
+                    msg.contains("gVisor RuntimeClass"),
+                    "error should name the required RuntimeClass: {msg}"
+                );
+                assert!(
+                    msg.contains("LANTERN_RUNTIMECLASS_GVISOR"),
+                    "error should name the config env var: {msg}"
                 );
             }
-            BackendChoice::Use(_) => panic!("untrusted must not be allowed on docker"),
+            BackendChoice::Use(_) => panic!("untrusted must not be allowed on a non-microVM backend"),
         }
     }
 
+    // The `NamedStub::arc` stubs use the conservative default — UNTRUSTED/HOSTILE
+    // are refused regardless of name. These tests confirm the gate is purely
+    // capability-based, not name-based.
     #[test]
-    fn hostile_refused_on_k8s() {
+    fn hostile_refused_on_k8s_without_kata() {
         let b = NamedStub::arc("k8s");
         assert!(matches!(
             choose_backend(proto::IsolationClass::Hostile, &b),
@@ -1689,7 +1738,7 @@ mod tests {
     }
 
     #[test]
-    fn untrusted_refused_on_k8s() {
+    fn untrusted_refused_on_k8s_without_gvisor() {
         let b = NamedStub::arc("k8s");
         assert!(matches!(
             choose_backend(proto::IsolationClass::Untrusted, &b),
@@ -1697,11 +1746,11 @@ mod tests {
         ));
     }
 
-    // --- choose_backend: Hostile/Untrusted ALLOWED on microVM backends ---
+    // --- choose_backend: Hostile/Untrusted ALLOWED on microVM-capable backends ---
 
     #[test]
     fn hostile_allowed_on_firecracker() {
-        let b = NamedStub::arc("firecracker");
+        let b = NamedStub::microvm("firecracker");
         assert!(matches!(
             choose_backend(proto::IsolationClass::Hostile, &b),
             BackendChoice::Use(_)
@@ -1710,7 +1759,7 @@ mod tests {
 
     #[test]
     fn untrusted_allowed_on_firecracker() {
-        let b = NamedStub::arc("firecracker");
+        let b = NamedStub::microvm("firecracker");
         assert!(matches!(
             choose_backend(proto::IsolationClass::Untrusted, &b),
             BackendChoice::Use(_)
@@ -1719,10 +1768,49 @@ mod tests {
 
     #[test]
     fn hostile_allowed_on_kata() {
-        let b = NamedStub::arc("kata");
+        let b = NamedStub::microvm("kata");
         assert!(matches!(
             choose_backend(proto::IsolationClass::Hostile, &b),
             BackendChoice::Use(_)
+        ));
+    }
+
+    // --- ADR-0009: K8s with gVisor/Kata configured accepts the hard classes ---
+
+    #[test]
+    fn untrusted_allowed_on_k8s_with_gvisor_stub() {
+        // A stub that reports it satisfies untrusted (simulates K8s+gVisor).
+        struct GvisorStub;
+        #[async_trait::async_trait]
+        impl RuntimeBackend for GvisorStub {
+            async fn schedule(&self, req: &proto::ScheduleRequest) -> anyhow::Result<crate::backend::Handle> {
+                Ok(crate::backend::Handle { id: req.run_id.clone(), node_name: "n".to_string(), cold_start_ms: 0.0 })
+            }
+            async fn cancel(&self, _: &str, _: &str) -> anyhow::Result<()> { Ok(()) }
+            async fn stream(&self, _: &str) -> anyhow::Result<BoxStream<'static, proto::RuntimeEvent>> {
+                Ok(Box::pin(futures::stream::empty()))
+            }
+            async fn snapshot(&self, _: &proto::SnapshotRequest) -> anyhow::Result<crate::backend::SnapshotInfo> {
+                anyhow::bail!("stub")
+            }
+            async fn restore(&self, _: &str, _: &proto::RestoreRequest) -> anyhow::Result<crate::backend::Handle> {
+                anyhow::bail!("stub")
+            }
+            fn name(&self) -> &'static str { "k8s" }
+            fn satisfies_isolation(&self, class: proto::IsolationClass) -> bool {
+                // Simulates K8s with gVisor configured (accepts UNTRUSTED but not HOSTILE).
+                !matches!(class, proto::IsolationClass::Hostile)
+            }
+        }
+        let b: Arc<dyn RuntimeBackend> = Arc::new(GvisorStub);
+        assert!(matches!(
+            choose_backend(proto::IsolationClass::Untrusted, &b),
+            BackendChoice::Use(_)
+        ));
+        // HOSTILE still refused (no Kata).
+        assert!(matches!(
+            choose_backend(proto::IsolationClass::Hostile, &b),
+            BackendChoice::Unavailable(_)
         ));
     }
 

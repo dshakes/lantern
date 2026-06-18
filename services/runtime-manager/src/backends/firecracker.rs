@@ -45,7 +45,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 use crate::backend::{Handle, RuntimeBackend, SnapshotInfo};
-use crate::proto::{RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest, SnapshotRequest};
+use crate::proto::{
+    IsolationClass, RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest, SnapshotRequest,
+};
 
 // ---------------------------------------------------------------------------
 // Firecracker REST API request bodies
@@ -2685,6 +2687,12 @@ impl RuntimeBackend for FirecrackerBackend {
 
     fn name(&self) -> &'static str {
         "firecracker"
+    }
+
+    /// Firecracker is a microVM backend: every isolation class is acceptable
+    /// because workloads always run inside KVM-backed virtual machines.
+    fn satisfies_isolation(&self, _class: IsolationClass) -> bool {
+        true
     }
 
     /// Exec is not supported via the host-side Firecracker REST API.

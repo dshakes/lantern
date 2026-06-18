@@ -22,7 +22,10 @@ use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
 
 use crate::backend::RuntimeBackend;
-use crate::backends::{DockerBackend, FirecrackerBackend, K8sBackend, KataBackend, WasmBackend};
+use crate::backends::{
+    DockerBackend, FirecrackerBackend, K8sBackend, KataBackend, WasmBackend,
+};
+use crate::backends::k8s::RuntimeClassConfig;
 use crate::config::{Config, RuntimeBackend as RuntimeBackendKind};
 use crate::pool::PoolConfig;
 use crate::proto::pb::runtime_harness_server::RuntimeHarnessServer;
@@ -58,7 +61,17 @@ async fn main() -> anyhow::Result<()> {
             &config.docker_socket,
             config.agent_image.clone(),
         )?),
-        RuntimeBackendKind::K8s => Arc::new(K8sBackend::new(config.agent_image.clone()).await?),
+        RuntimeBackendKind::K8s => Arc::new(
+            K8sBackend::new_with_runtime_classes(
+                config.agent_image.clone(),
+                RuntimeClassConfig {
+                    gvisor: config.runtimeclass_gvisor.clone(),
+                    kata: config.runtimeclass_kata.clone(),
+                    wasm: config.runtimeclass_wasm.clone(),
+                },
+            )
+            .await?,
+        ),
         RuntimeBackendKind::Firecracker => Arc::new(FirecrackerBackend::new()),
         RuntimeBackendKind::Kata => Arc::new(KataBackend::from_env(
             &config.docker_socket,

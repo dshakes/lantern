@@ -44,6 +44,19 @@ pub struct Config {
     pub node_advertise_addr: String,
     pub node_region: String,
     pub node_zone: String,
+    /// `runtimeClassName` for gVisor-isolated pods (UNTRUSTED / STANDARD /
+    /// DEVCONTAINER). Set via `LANTERN_RUNTIMECLASS_GVISOR` (e.g. `gvisor`).
+    /// When unset, STANDARD degrades to bare runc; UNTRUSTED and DEVCONTAINER
+    /// (when UNTRUSTED) are refused (fail-closed).
+    pub runtimeclass_gvisor: Option<String>,
+    /// `runtimeClassName` for Kata microVM pods (HOSTILE).
+    /// Set via `LANTERN_RUNTIMECLASS_KATA` (e.g. `kata-qemu`).
+    /// When unset, HOSTILE is refused (fail-closed).
+    pub runtimeclass_kata: Option<String>,
+    /// `runtimeClassName` for Wasm pods. Set via `LANTERN_RUNTIMECLASS_WASM`.
+    /// Optional — when unset the Wasm in-process backend is preferred; when
+    /// set the K8s backend uses this class for WASM isolation.
+    pub runtimeclass_wasm: Option<String>,
 }
 
 impl Config {
@@ -54,7 +67,7 @@ impl Config {
             .map_err(|e| ConfigError::InvalidAddr(e.to_string()))?;
 
         let runtime_backend = RuntimeBackend::from_str(
-            &std::env::var("RUNTIME_BACKEND").unwrap_or_else(|_| "docker".to_string()),
+            &std::env::var("RUNTIME_BACKEND").unwrap_or_else(|_| "k8s".to_string()),
         )?;
 
         let docker_socket =
@@ -91,6 +104,19 @@ impl Config {
         let node_region = std::env::var("NODE_REGION").unwrap_or_else(|_| "local".to_string());
         let node_zone = std::env::var("NODE_ZONE").unwrap_or_else(|_| "local-a".to_string());
 
+        // Filter empty/whitespace values: `LANTERN_RUNTIMECLASS_GVISOR=""` must
+        // not produce `Some("")` — an empty runtimeClassName in K8s silently
+        // falls back to the cluster's default (runc), bypassing the isolation gate.
+        let runtimeclass_gvisor = std::env::var("LANTERN_RUNTIMECLASS_GVISOR")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        let runtimeclass_kata = std::env::var("LANTERN_RUNTIMECLASS_KATA")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        let runtimeclass_wasm = std::env::var("LANTERN_RUNTIMECLASS_WASM")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+
         Ok(Config {
             listen_addr,
             runtime_backend,
@@ -105,6 +131,9 @@ impl Config {
             node_advertise_addr,
             node_region,
             node_zone,
+            runtimeclass_gvisor,
+            runtimeclass_kata,
+            runtimeclass_wasm,
         })
     }
 }
@@ -115,4 +144,61 @@ pub enum ConfigError {
     InvalidAddr(String),
     #[error("invalid RUNTIME_BACKEND: {0} (expected docker, k8s, firecracker, kata, or wasm)")]
     InvalidBackend(String),
+}
+
+#[cfg(test)]
+mod tests {
+    // -----------------------------------------------------------------------
+    // Empty/whitespace env values must not produce Some("") for RuntimeClass
+    // names — an empty runtimeClassName in K8s silently falls back to the
+    // cluster default (runc), bypassing the isolation gate.
+    // -----------------------------------------------------------------------
+
+    /// Helper: apply the same filter logic used in `Config::from_env` to a
+    /// raw env value string. Returns `None` for empty/whitespace strings.
+    fn filter_runtimeclass(raw: &str) -> Option<String> {
+        let s = raw.to_string();
+        Some(s).filter(|v| !v.trim().is_empty())
+    }
+
+    #[test]
+    fn empty_runtimeclass_env_becomes_none() {
+        assert_eq!(filter_runtimeclass(""), None);
+    }
+
+    #[test]
+    fn whitespace_runtimeclass_env_becomes_none() {
+        assert_eq!(filter_runtimeclass("   "), None);
+        assert_eq!(filter_runtimeclass("\t"), None);
+    }
+
+    #[test]
+    fn valid_runtimeclass_env_passes_through() {
+        assert_eq!(filter_runtimeclass("gvisor"), Some("gvisor".to_string()));
+        assert_eq!(
+            filter_runtimeclass("kata-qemu"),
+            Some("kata-qemu".to_string())
+        );
+    }
+
+    /// Regression: an empty gVisor env value must NOT satisfy UNTRUSTED.
+    /// This test connects the filter to the k8s capability check so the full
+    /// chain is covered: empty env → None config → satisfies_isolation = false.
+    #[test]
+    fn empty_gvisor_env_does_not_satisfy_untrusted() {
+        use crate::backends::k8s::{k8s_satisfies_isolation, RuntimeClassConfig};
+        use crate::proto::IsolationClass;
+
+        // Simulate what happens when LANTERN_RUNTIMECLASS_GVISOR="" in env.
+        let gvisor_from_env = filter_runtimeclass(""); // → None
+        let cfg = RuntimeClassConfig {
+            gvisor: gvisor_from_env,
+            kata: None,
+            wasm: None,
+        };
+        assert!(
+            !k8s_satisfies_isolation(&cfg, IsolationClass::Untrusted),
+            "empty LANTERN_RUNTIMECLASS_GVISOR must not satisfy UNTRUSTED"
+        );
+    }
 }
