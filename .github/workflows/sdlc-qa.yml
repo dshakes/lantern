@@ -43,6 +43,10 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      # protoc is required by the Rust runtime-manager's build.rs (prost-build).
+      # Without it `make test` -> `test-rust` fails with "Could not find protoc".
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
       - name: Run test suite
         id: test
         run: |
