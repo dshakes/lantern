@@ -248,7 +248,7 @@ not exhaustive.
 | **Harness heartbeat stream** (`manager_client.rs`) | ✅ | **Closed in this branch** — real bidi `Heartbeat` tonic stream over mTLS; proto round-trip + unit tests. Egress revocations on `HeartbeatAck` now propagate. |
 | **Harness `Report` / manager ingestion** (`report.rs`, `service.rs`) | ❌ | Manager `report` handler is `unimplemented`; harness `forward_one` returns Err honestly. OTLP/log forwarding has nowhere to land yet. |
 | **Control-plane secret relay** (`handlers/runtime_secrets.go`) | ✅ | Token auth (constant-time), fail-closed, VM-binding check, rate-limited, audited. ADR 0008. |
-| **Workflow interpreter** (`internal/workflow/interpreter.go`) | ⚠️ | trigger/ai-step/tool/connector/condition/approval execute; **loop + subagent are no-ops; approval auto-approves**. |
+| **Workflow interpreter** (`internal/workflow/interpreter.go`) | ⚠️ | trigger/ai-step/tool/connector/condition execute; **approval is real** — `rest.go` wires `WaitForApproval` to a `takeover_requests` row that blocks until granted/released/denied/expired (auto-approve only on the nil/test path). **loop + subagent are still no-ops**. |
 | **journal_events / receipts / run_locks** | ✅ | Event-sourced log, HMAC-signed receipts bound to journal hash, distributed locking. **Crash-replay not wired into the run path.** |
 | **OTel traces** | ⚠️ | `trace_id` propagates; **tenant_id/run_id/step_id missing on many spans**; collectors partial. |
 
@@ -450,19 +450,29 @@ gVisor, hostile on Kata; (b) a node without the RuntimeClass **refuses** untrust
 (d) no co-tenancy for hostile. Validate on a real cluster with gVisor + Kata installed.
 
 ### Phase 2 — Governance to clear the Google bar
-**Scope:**
-- Per-agent-instance identity minted at spawn (SPIFFE SVID or OIDC short-lived token);
-  stamp it as `agent_instance_id` on every audit row, secret vend, tool call.
-- RBAC scope enforcement on all `/v1/runtime/*` mutating routes; non-owner Postgres
-  role with RLS validated end-to-end.
-- Durable HITL approval (real `takeover_requests` gate; remove auto-approve from the
-  interpreter).
-- ECDSA/asymmetric receipts, IETF-AAT-aligned schema; `/.well-known/lantern-receipts`
-  publishes the public key for external verification.
+**Status:**
+- ✅ *(done, this branch)* **RBAC scope enforcement** on the runtime routes
+  (`runtime:read/write/admin`, least-privilege, 403 + audit on denial; 27 tests).
+- ✅ *(done, this branch)* **Asymmetric receipts** — Ed25519 signing, public key
+  published at `/.well-known/lantern-receipts`, offline external verification, tamper
+  detection; HMAC back-compat retained (8 tests).
+- ✅ *(already present, verified)* **Durable HITL approval** — `rest.go` wires
+  `WaitForApproval` to a `takeover_requests` row that blocks until
+  granted/released/denied/expired (30-min timeout). Follow-up: swap the 1s poll for
+  Postgres LISTEN/NOTIFY.
+**Remaining:**
+- **`tenant_id` provenance (P0 security):** the runtime-manager K8s backend derives
+  the namespace from `LANTERN_TENANT_ID` in `req.env` rather than authenticated gRPC
+  metadata (violates invariant #7). Forward tenant_id as gRPC metadata
+  control-plane → scheduler → manager and read it there; reject a spec whose body
+  tenant_id disagrees with the authenticated principal.
+- **Per-agent-instance identity:** SPIFFE SVID / OIDC short-lived token minted at
+  spawn; stamp `agent_instance_id` on every audit row, secret vend, and tool call.
+- **Non-owner Postgres role** with RLS validated end-to-end.
 **Gate:** security-auditor review; tests for (a) cross-tenant identity isolation;
-(b) a missing scope → 403 on every mutating route; (c) RLS denies a non-owner read;
-(d) external receipt verification with the published public key; (e) approval node
-blocks until granted.
+(b) ✅ a missing scope → 403 on every mutating route; (c) RLS denies a non-owner read;
+(d) ✅ external receipt verification with the published public key; (e) ✅ approval node
+blocks until granted; (f) a spec with a mismatched body tenant_id is rejected.
 
 ### Phase 3 — Durable-by-default resiliency (Temporal-parity)
 **Scope:**
