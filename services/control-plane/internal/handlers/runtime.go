@@ -759,6 +759,9 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	if !h.requireRuntimeScope(w, claims, ScopeRuntimeWrite) {
+		return
+	}
 	tenantID := claims.TenantID
 	ctx := r.Context()
 
@@ -886,11 +889,16 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 
 // ListVMs handles GET /v1/runtime/vms.
 func (h *RuntimeHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID, err := authCtx(h.auth, r)
+	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
+		return
+	}
+	ctx := r.Context()
+	tenantID := claims.TenantID
 
 	state := r.URL.Query().Get("state")
 	limit := 100
@@ -941,11 +949,16 @@ func (h *RuntimeHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
 
 // GetVM handles GET /v1/runtime/vms/{id}.
 func (h *RuntimeHandler) GetVM(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID, err := authCtx(h.auth, r)
+	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
+		return
+	}
+	ctx := r.Context()
+	tenantID := claims.TenantID
 	vmID := r.PathValue("id")
 	if vmID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vm id required"})
@@ -1008,11 +1021,16 @@ func (h *RuntimeHandler) GetVM(w http.ResponseWriter, r *http.Request) {
 // Stub: opens an SSE channel and emits a single "stub" event. The real
 // implementation proxies to RuntimeManager.Logs over gRPC.
 func (h *RuntimeHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID, err := authCtx(h.auth, r)
+	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
+		return
+	}
+	ctx := r.Context()
+	tenantID := claims.TenantID
 	vmID := r.PathValue("id")
 	if vmID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vm id required"})
@@ -1143,6 +1161,9 @@ func (h *RuntimeHandler) TerminateVM(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	if !h.requireRuntimeScope(w, claims, ScopeRuntimeWrite) {
+		return
+	}
 	tenantID := claims.TenantID
 	ctx := r.Context()
 	vmID := r.PathValue("id")
@@ -1197,6 +1218,9 @@ func (h *RuntimeHandler) ExecVM(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	if !h.requireRuntimeScope(w, claims, ScopeRuntimeAdmin) {
+		return
+	}
 	tenantID := claims.TenantID
 	ctx := r.Context()
 	vmID := r.PathValue("id")
@@ -1247,15 +1271,15 @@ func (h *RuntimeHandler) ExecVM(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Cluster handles GET /v1/runtime/cluster. Owner-only.
+// Cluster handles GET /v1/runtime/cluster. Requires runtime:admin scope
+// (owner/admin role, or a service API key with runtime:admin).
 func (h *RuntimeHandler) Cluster(w http.ResponseWriter, r *http.Request) {
 	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	if claims.Role != "owner" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "owner role required"})
+	if !h.requireRuntimeScope(w, claims, ScopeRuntimeAdmin) {
 		return
 	}
 
@@ -1270,11 +1294,16 @@ func (h *RuntimeHandler) Cluster(w http.ResponseWriter, r *http.Request) {
 
 // GetQuota handles GET /v1/runtime/quota.
 func (h *RuntimeHandler) GetQuota(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID, err := authCtx(h.auth, r)
+	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
+		return
+	}
+	ctx := r.Context()
+	tenantID := claims.TenantID
 
 	var dto quotaDTO
 	var updatedAt time.Time
@@ -1300,15 +1329,15 @@ func (h *RuntimeHandler) GetQuota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dto)
 }
 
-// UpsertQuota handles PUT /v1/runtime/quota. Owner-only.
+// UpsertQuota handles PUT /v1/runtime/quota. Requires runtime:admin scope
+// (owner/admin role, or a service API key with runtime:admin).
 func (h *RuntimeHandler) UpsertQuota(w http.ResponseWriter, r *http.Request) {
 	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	if claims.Role != "owner" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "owner role required"})
+	if !h.requireRuntimeScope(w, claims, ScopeRuntimeAdmin) {
 		return
 	}
 	ctx := r.Context()
@@ -1366,11 +1395,16 @@ func (h *RuntimeHandler) UpsertQuota(w http.ResponseWriter, r *http.Request) {
 
 // ListAudit handles GET /v1/runtime/audit.
 func (h *RuntimeHandler) ListAudit(w http.ResponseWriter, r *http.Request) {
-	ctx, tenantID, err := authCtx(h.auth, r)
+	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
+		return
+	}
+	ctx := r.Context()
+	tenantID := claims.TenantID
 
 	limit := 100
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -1427,6 +1461,102 @@ func (h *RuntimeHandler) ListAudit(w http.ResponseWriter, r *http.Request) {
 		"events":     out,
 		"nextBefore": nextBefore,
 	})
+}
+
+// ---------- RBAC: runtime scopes ----------
+
+// Runtime-specific scope constants. These are intentionally distinct from
+// the coarse "read"/"write"/"admin" global scopes so a service API key can
+// be granted runtime:read without also gaining write access to agents/runs.
+//
+// Implication chain: runtime:admin ⊇ runtime:write ⊇ runtime:read.
+const (
+	// ScopeRuntimeRead allows safe, idempotent reads (ListVMs, GetVM,
+	// StreamLogs, GetQuota, ListAudit, Cluster).
+	ScopeRuntimeRead = "runtime:read"
+
+	// ScopeRuntimeWrite allows state-mutating operations (Schedule,
+	// TerminateVM).
+	ScopeRuntimeWrite = "runtime:write"
+
+	// ScopeRuntimeAdmin allows the most sensitive operations: ExecVM
+	// (interactive shell into a running VM) and UpsertQuota.
+	ScopeRuntimeAdmin = "runtime:admin"
+)
+
+// authorizeRuntimeScope returns true when claims satisfy the required scope.
+//
+// Authorization rules:
+//   - Role "owner" or "admin" → always allowed (human tenant administrators).
+//   - Role "service" (API key) → allowed when Scopes contains the required
+//     scope, or a superseding scope (admin ⊇ write ⊇ read). An empty scopes
+//     slice means "unrestricted key" — all scopes allowed.
+//   - Role "member" → allowed for runtime:read only; denied for write/admin.
+//   - Any other unrecognised role → denied for write/admin (fail-closed).
+func authorizeRuntimeScope(claims *LanternClaims, required string) bool {
+	switch claims.Role {
+	case "owner", "admin":
+		return true
+	case "service":
+		if len(claims.Scopes) == 0 {
+			// Unrestricted API key — all scopes allowed.
+			return true
+		}
+		for _, s := range claims.Scopes {
+			if s == required {
+				return true
+			}
+			// Implication: admin ⊇ write ⊇ read.
+			if s == ScopeRuntimeAdmin {
+				return true // admin implies write and read
+			}
+			if s == ScopeRuntimeWrite && required == ScopeRuntimeRead {
+				return true // write implies read
+			}
+		}
+		return false
+	case "member":
+		// Members may only perform read operations on their tenant's resources.
+		return required == ScopeRuntimeRead
+	default:
+		return required == ScopeRuntimeRead
+	}
+}
+
+// requireRuntimeScope is the handler-side gate: it writes a 403 and returns
+// false when the claims do not satisfy the required scope. Callers do:
+//
+//	if !h.requireRuntimeScope(w, claims, ScopeRuntimeWrite) { return }
+//
+// On denial for write/admin scopes, an audit event is also written so that
+// access-denial patterns are visible in the audit log.
+func (h *RuntimeHandler) requireRuntimeScope(w http.ResponseWriter, claims *LanternClaims, required string) bool {
+	if authorizeRuntimeScope(claims, required) {
+		return true
+	}
+	// Audit write/admin denials so operators can detect scope-escalation
+	// attempts without reading application logs. Guard against a nil pool
+	// (test environments that don't require a DB).
+	if required != ScopeRuntimeRead && h.srv.Pool != nil {
+		principal := claims.Subject
+		if principal == "" {
+			principal = claims.Email
+		}
+		h.auditRuntime(
+			context.Background(),
+			claims.TenantID, "", required+"_denied",
+			map[string]any{
+				"role":           claims.Role,
+				"required_scope": required,
+			},
+			principal,
+		)
+	}
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error":          "forbidden",
+		"required_scope": required,
+	})
+	return false
 }
 
 // ---------- compile-time util ----------
