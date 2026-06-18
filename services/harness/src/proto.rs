@@ -135,6 +135,67 @@ pub struct AuditEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Proto conversions — internal ↔ pb wire types
+// ---------------------------------------------------------------------------
+//
+// These are the only two places we translate between the rich internal types
+// (used throughout the harness subsystems) and the tonic-generated wire
+// types (used only in `manager_client.rs`). Keeping them in one file means
+// they're easy to audit when the proto changes.
+
+impl From<HeartbeatRequest> for pb::HeartbeatRequest {
+    fn from(r: HeartbeatRequest) -> Self {
+        let at_secs = r.at_unix_ms / 1_000;
+        let at_nanos = ((r.at_unix_ms % 1_000) * 1_000_000) as i32;
+        pb::HeartbeatRequest {
+            vm_id: r.vm_id,
+            at: Some(prost_types::Timestamp {
+                seconds: at_secs,
+                nanos: at_nanos,
+            }),
+            usage: Some(pb::ResourceUsage {
+                vcpu_ms_used: r.usage.vcpu_ms_used,
+                memory_bytes: r.usage.memory_bytes,
+                network_bytes_in: r.usage.network_bytes_in,
+                network_bytes_out: r.usage.network_bytes_out,
+                disk_bytes: r.usage.disk_bytes,
+                cost_usd_accumulated: r.usage.cost_usd_accumulated,
+            }),
+            worker_pid: r.worker_pid,
+            restart_count: r.restart_count,
+        }
+    }
+}
+
+impl From<pb::HeartbeatAck> for HeartbeatAck {
+    fn from(a: pb::HeartbeatAck) -> Self {
+        HeartbeatAck {
+            egress_overrides: a
+                .egress_overrides
+                .into_iter()
+                .map(|r| EgressRule {
+                    pattern: r.pattern,
+                    http_methods: r.http_methods,
+                    rate_bps: r.rate_bps,
+                })
+                .collect(),
+            limits_override: a.limits_override.map(|l| ResourceLimits {
+                vcpu: l.vcpu,
+                memory: l.memory,
+                gpu: l.gpu,
+                timeout_secs: l.timeout.map(|d| d.seconds).unwrap_or(0),
+                max_steps: l.max_steps,
+                max_tokens: l.max_tokens,
+                max_cost_usd: l.max_cost_usd,
+                scratch_size: l.scratch_size,
+            }),
+            drain: a.drain,
+            snapshot: a.snapshot,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

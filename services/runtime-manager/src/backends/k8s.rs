@@ -24,8 +24,8 @@ use uuid::Uuid;
 
 use crate::backend::{ExecOutput, Handle, RuntimeBackend, SnapshotInfo, StatsSample};
 use crate::proto::{
-    LogLine, NetworkPolicyClass, RestoreRequest, RuntimeEvent, RuntimeExited, ScheduleRequest,
-    SnapshotRequest,
+    IsolationClass, LogLine, NetworkPolicyClass, RestoreRequest, RuntimeEvent, RuntimeExited,
+    ScheduleRequest, SnapshotRequest,
 };
 
 // ---------------------------------------------------------------------------
@@ -53,6 +53,23 @@ struct ContainerUsage {
     memory: String,
 }
 
+/// RuntimeClass configuration for the K8s backend.
+///
+/// Each field is the Kubernetes `runtimeClassName` string for the corresponding
+/// isolation tier. `None` means the corresponding RuntimeClass is not installed
+/// on this cluster.
+#[derive(Clone, Debug, Default)]
+pub struct RuntimeClassConfig {
+    /// `runtimeClassName` for gVisor (UNTRUSTED, STANDARD, DEVCONTAINER).
+    /// Sourced from `LANTERN_RUNTIMECLASS_GVISOR`.
+    pub gvisor: Option<String>,
+    /// `runtimeClassName` for Kata microVM (HOSTILE).
+    /// Sourced from `LANTERN_RUNTIMECLASS_KATA`.
+    pub kata: Option<String>,
+    /// `runtimeClassName` for Wasm pods. Sourced from `LANTERN_RUNTIMECLASS_WASM`.
+    pub wasm: Option<String>,
+}
+
 /// Kubernetes Job backend for trusted workloads.
 ///
 /// Creates K8s Jobs in tenant-scoped namespaces. Each job runs the agent runner
@@ -61,10 +78,21 @@ struct ContainerUsage {
 pub struct K8sBackend {
     client: Client,
     agent_image: String,
+    /// Hardened RuntimeClass names configured on this cluster.
+    pub(crate) runtime_classes: RuntimeClassConfig,
 }
 
 impl K8sBackend {
     pub async fn new(agent_image: String) -> Result<Self> {
+        Self::new_with_runtime_classes(agent_image, RuntimeClassConfig::default()).await
+    }
+
+    /// Construct with explicit RuntimeClass configuration. Used in tests and
+    /// by the main startup path to inject the names from `Config`.
+    pub async fn new_with_runtime_classes(
+        agent_image: String,
+        runtime_classes: RuntimeClassConfig,
+    ) -> Result<Self> {
         let client = Client::try_default()
             .await
             .context("failed to create K8s client (is KUBECONFIG set?)")?;
@@ -74,17 +102,26 @@ impl K8sBackend {
         Ok(Self {
             client,
             agent_image,
+            runtime_classes,
         })
     }
 
-    /// Derive the tenant namespace from a run_id.
-    /// In production, tenant_id comes from gRPC metadata; for the spike, we
-    /// extract it from the env or default to "default".
-    fn namespace_for(req: &ScheduleRequest) -> String {
-        req.env
-            .get("LANTERN_TENANT_ID")
-            .map(|tid| format!("lantern-t-{tid}"))
-            .unwrap_or_else(|| "lantern-t-default".to_string())
+    /// Derive the tenant namespace from the authenticated `req.tenant_id` field.
+    ///
+    /// This MUST NOT fall back to `req.env["LANTERN_TENANT_ID"]` — the env map
+    /// is caller-supplied and could be used to smuggle a victim tenant's id.
+    /// An empty `tenant_id` indicates a bug upstream (the spawn gate in
+    /// `spawn_to_schedule` rejects empty values before reaching here), so we
+    /// return `Err` rather than silently using a shared "default" namespace.
+    fn namespace_for(req: &ScheduleRequest) -> Result<String> {
+        if req.tenant_id.is_empty() {
+            anyhow::bail!(
+                "BUG: ScheduleRequest.tenant_id is empty — namespace derivation refused \
+                 to avoid cross-tenant namespace escape; the spawn gate should have \
+                 rejected this request before it reached the K8s backend"
+            );
+        }
+        Ok(format!("lantern-t-{}", req.tenant_id))
     }
 
     /// Parse timeout string (e.g., "300s", "5m") to seconds for the active deadline.
@@ -112,8 +149,14 @@ impl K8sBackend {
     /// Build the K8s Job spec for a schedule request. Thin wrapper over the
     /// pure [`build_job`] free function so the live `schedule` path reads
     /// straight-line while the manifest generation stays unit-testable.
-    fn build_job(&self, req: &ScheduleRequest, job_name: &str, namespace: &str) -> Job {
-        build_job(req, &self.agent_image, job_name, namespace)
+    fn build_job(&self, req: &ScheduleRequest, job_name: &str, namespace: &str) -> Result<Job> {
+        build_job(
+            req,
+            &self.agent_image,
+            job_name,
+            namespace,
+            &self.runtime_classes,
+        )
     }
 
     /// Wait for the job's pod to be scheduled and running (or failed).
@@ -146,9 +189,65 @@ impl K8sBackend {
     }
 }
 
+/// Map an `IsolationClass` to the pod `runtimeClassName` per ADR-0009.
+///
+/// Returns `(Option<String>, bool)` where the second element signals that the
+/// caller should emit a `tracing::warn!` when STANDARD/DEVCONTAINER degrade to
+/// runc because gVisor is not configured. The warn flag is NOT set for TRUSTED
+/// (runc is its canonical substrate).
+///
+/// Callers that receive `None` for UNTRUSTED or HOSTILE must refuse the
+/// request (fail-closed) — this function itself does not enforce that; the
+/// enforcement is in [`K8sBackend::satisfies_isolation`].
+fn isolation_to_runtime_class(
+    class: IsolationClass,
+    cfg: &RuntimeClassConfig,
+) -> (Option<String>, bool) {
+    match class {
+        // TRUSTED → bare runc. Deliberate; no warn needed.
+        IsolationClass::Trusted => (None, false),
+
+        // STANDARD → gVisor if available, else runc with a warning.
+        IsolationClass::Standard | IsolationClass::Unspecified => match &cfg.gvisor {
+            Some(name) => (Some(name.clone()), false),
+            None => (None, true), // degraded to runc; caller warns
+        },
+
+        // UNTRUSTED → gVisor required. Caller must refuse when None.
+        IsolationClass::Untrusted => (cfg.gvisor.clone(), false),
+
+        // HOSTILE → Kata required. Caller must refuse when None.
+        IsolationClass::Hostile => (cfg.kata.clone(), false),
+
+        // WASM → use the wasm RuntimeClass if configured, else None.
+        IsolationClass::Wasm => (cfg.wasm.clone(), false),
+
+        // DEVCONTAINER → gVisor if available, else runc with a warning.
+        IsolationClass::Devcontainer => match &cfg.gvisor {
+            Some(name) => (Some(name.clone()), false),
+            None => (None, true),
+        },
+    }
+}
+
 /// Pure K8s Job manifest builder. Takes the agent image explicitly so it needs
 /// no `K8sBackend`/`Client` — fully unit-testable without a live cluster.
-fn build_job(req: &ScheduleRequest, agent_image: &str, job_name: &str, namespace: &str) -> Job {
+///
+/// # Errors
+///
+/// Returns `Err` if `req.isolation_class` is `Untrusted` or `Hostile` and the
+/// required hardened RuntimeClass is not configured in `runtime_classes`. This
+/// is a second line of defense: `K8sBackend::satisfies_isolation` is the primary
+/// gate in `choose_backend`, but `build_job` also refuses so that a future caller
+/// that bypasses the gate (e.g. warm-pool plumbing) cannot accidentally emit a
+/// bare runc pod for a hard isolation class.
+fn build_job(
+    req: &ScheduleRequest,
+    agent_image: &str,
+    job_name: &str,
+    namespace: &str,
+    runtime_classes: &RuntimeClassConfig,
+) -> Result<Job> {
     let mut env_vars: Vec<EnvVar> = vec![
         EnvVar {
             name: "LANTERN_RUN_ID".to_string(),
@@ -224,7 +323,47 @@ fn build_job(req: &ScheduleRequest, agent_image: &str, job_name: &str, namespace
 
     let labels = job_labels(req);
 
-    Job {
+    // Resolve the runtimeClassName from the isolation class. The warn flag
+    // fires when STANDARD/DEVCONTAINER gracefully degrades to runc.
+    let (runtime_class_name, should_warn) =
+        isolation_to_runtime_class(req.isolation_class, runtime_classes);
+
+    // Fail-closed second gate: UNTRUSTED and HOSTILE MUST have a hardened
+    // RuntimeClass. If `isolation_to_runtime_class` returned None for either
+    // of these classes the cluster is misconfigured and we must not emit the
+    // Job — a bare runc pod is never an acceptable substitute.
+    //
+    // Note: `choose_backend` / `satisfies_isolation` is the primary gate and
+    // normally prevents reaching here. This check is defense-in-depth so that
+    // any future code path that calls `build_job` directly (e.g. a warm-pool
+    // integration) cannot silently produce an under-isolated pod.
+    match req.isolation_class {
+        IsolationClass::Untrusted if runtime_class_name.is_none() => {
+            bail!(
+                "UNTRUSTED workload requires the gVisor RuntimeClass but \
+                 LANTERN_RUNTIMECLASS_GVISOR is not configured (or is empty); \
+                 refusing to emit a bare runc pod"
+            );
+        }
+        IsolationClass::Hostile if runtime_class_name.is_none() => {
+            bail!(
+                "HOSTILE workload requires the Kata RuntimeClass but \
+                 LANTERN_RUNTIMECLASS_KATA is not configured (or is empty); \
+                 refusing to emit a bare runc pod"
+            );
+        }
+        _ => {}
+    }
+
+    if should_warn {
+        tracing::warn!(
+            isolation_class = ?req.isolation_class,
+            "LANTERN_RUNTIMECLASS_GVISOR not configured; degrading to runc (bare shared-kernel). \
+             STANDARD workloads tolerate this but gVisor is strongly recommended.",
+        );
+    }
+
+    Ok(Job {
         metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
             name: Some(job_name.to_string()),
             namespace: Some(namespace.to_string()),
@@ -245,13 +384,14 @@ fn build_job(req: &ScheduleRequest, agent_image: &str, job_name: &str, namespace
                     service_account_name: Some("lantern-agent-runner".to_string()),
                     automount_service_account_token: Some(false),
                     security_context: Some(pod_security_context()),
+                    runtime_class_name,
                     ..Default::default()
                 }),
             },
             ..Default::default()
         }),
         ..Default::default()
-    }
+    })
 }
 
 /// Wait for the job's pod to be scheduled and running (or failed).
@@ -293,11 +433,22 @@ async fn wait_for_pod_impl(client: &Client, namespace: &str, job_name: &str) -> 
     bail!("timed out waiting for pod to start for job {job_name}")
 }
 
+/// Pure capability check for the K8s backend — extracted so it can be unit-tested
+/// without constructing a live `K8sBackend` (which requires a valid `kube::Client`).
+pub(crate) fn k8s_satisfies_isolation(cfg: &RuntimeClassConfig, class: IsolationClass) -> bool {
+    match class {
+        IsolationClass::Untrusted => cfg.gvisor.is_some(),
+        IsolationClass::Hostile => cfg.kata.is_some(),
+        // All other classes are acceptable (STANDARD may degrade to runc).
+        _ => true,
+    }
+}
+
 #[async_trait]
 impl RuntimeBackend for K8sBackend {
     async fn schedule(&self, req: &ScheduleRequest) -> Result<Handle> {
         let start = Instant::now();
-        let namespace = Self::namespace_for(req);
+        let namespace = Self::namespace_for(req)?;
         let job_name = format!(
             "lantern-run-{}-{}",
             &req.run_id[..8.min(req.run_id.len())],
@@ -328,7 +479,7 @@ impl RuntimeBackend for K8sBackend {
         }
 
         let jobs: Api<Job> = Api::namespaced(self.client.clone(), &namespace);
-        let job = self.build_job(req, &job_name, &namespace);
+        let job = self.build_job(req, &job_name, &namespace)?;
 
         jobs.create(&PostParams::default(), &job)
             .await
@@ -488,6 +639,18 @@ impl RuntimeBackend for K8sBackend {
 
     fn name(&self) -> &'static str {
         "k8s"
+    }
+
+    /// K8s can satisfy isolation via RuntimeClass tiering.
+    ///
+    /// - TRUSTED / STANDARD / UNSPECIFIED / WASM / DEVCONTAINER: always accepted
+    ///   (STANDARD/DEVCONTAINER may degrade to runc when gVisor is unset, which
+    ///   is allowed — a warning is emitted in `build_job`).
+    /// - UNTRUSTED: only when the gVisor RuntimeClass is configured. Fail-closed
+    ///   otherwise — a shared-kernel pod is NOT an acceptable substitute.
+    /// - HOSTILE: only when the Kata RuntimeClass is configured. Fail-closed.
+    fn satisfies_isolation(&self, class: IsolationClass) -> bool {
+        k8s_satisfies_isolation(&self.runtime_classes, class)
     }
 
     /// Execute a one-shot command in the running pod for this job handle.
@@ -913,6 +1076,7 @@ mod tests {
     fn req_with(network: NetworkPolicyClass, egress: Vec<EgressRule>) -> ScheduleRequest {
         ScheduleRequest {
             run_id: "run-abc12345-def".to_string(),
+            tenant_id: "acme".to_string(),
             bundle_uri: "sha256:deadbeef".to_string(),
             bundle_digest: vec![],
             isolation_class: IsolationClass::Untrusted,
@@ -967,8 +1131,21 @@ mod tests {
     fn build_job_wires_hardened_security_contexts_and_no_token() {
         // The pure `build_job` free fn needs no Client, so we assert on the
         // ACTUAL produced Job (not just the helper outputs).
+        // req_with uses IsolationClass::Untrusted, so we must supply gVisor config
+        // or build_job returns Err (the new fail-closed second gate).
         let req = req_with(NetworkPolicyClass::AllowlistDomain, vec![]);
-        let job = build_job(&req, "ghcr.io/lantern/runner:v1", "job-1", "lantern-t-acme");
+        let job = build_job(
+            &req,
+            "ghcr.io/lantern/runner:v1",
+            "job-1",
+            "lantern-t-acme",
+            &RuntimeClassConfig {
+                gvisor: Some("gvisor".to_string()),
+                kata: None,
+                wasm: None,
+            },
+        )
+        .expect("build_job should succeed when gVisor is configured for UNTRUSTED");
 
         let pod_spec = job
             .spec
@@ -1240,6 +1417,303 @@ mod tests {
         assert!(
             "no-slash-here".split_once('/').is_none(),
             "handle_id without slash must be caught as invalid"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ADR-0009 RuntimeClass mapping — security-focused unit tests
+    // -----------------------------------------------------------------------
+
+    fn make_req(isolation: IsolationClass) -> ScheduleRequest {
+        ScheduleRequest {
+            run_id: "run-test-0001".to_string(),
+            tenant_id: "test-tenant".to_string(),
+            bundle_uri: "sha256:abc".to_string(),
+            bundle_digest: vec![],
+            isolation_class: isolation,
+            limits: crate::proto::ResourceLimits::default(),
+            env: HashMap::new(),
+            secrets: vec![],
+            input: serde_json::Value::Null,
+            command: vec![],
+            args: vec![],
+            image: "python:3.11-slim".to_string(),
+            network_policy: NetworkPolicyClass::None,
+            egress_rules: vec![],
+        }
+    }
+
+    fn pod_runtime_class(job: &Job) -> Option<&str> {
+        job.spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .and_then(|ps| ps.runtime_class_name.as_deref())
+    }
+
+    // TRUSTED → None (runc; no RuntimeClass field set).
+    #[test]
+    fn build_job_trusted_uses_runc() {
+        let req = make_req(IsolationClass::Trusted);
+        let job = build_job(
+            &req,
+            "img",
+            "job-trusted",
+            "ns",
+            &RuntimeClassConfig {
+                gvisor: Some("gvisor".to_string()),
+                kata: Some("kata-qemu".to_string()),
+                wasm: None,
+            },
+        )
+        .expect("TRUSTED should always succeed");
+        assert_eq!(
+            pod_runtime_class(&job),
+            None,
+            "TRUSTED must use runc (no runtimeClassName)"
+        );
+    }
+
+    // UNTRUSTED + gVisor configured → runtimeClassName = "gvisor".
+    #[test]
+    fn build_job_untrusted_uses_gvisor_when_configured() {
+        let req = make_req(IsolationClass::Untrusted);
+        let job = build_job(
+            &req,
+            "img",
+            "job-untrusted",
+            "ns",
+            &RuntimeClassConfig {
+                gvisor: Some("gvisor".to_string()),
+                kata: Some("kata-qemu".to_string()),
+                wasm: None,
+            },
+        )
+        .expect("UNTRUSTED should succeed when gVisor is configured");
+        assert_eq!(
+            pod_runtime_class(&job),
+            Some("gvisor"),
+            "UNTRUSTED must set runtimeClassName=gvisor"
+        );
+    }
+
+    // HOSTILE + Kata configured → runtimeClassName = "kata-qemu".
+    #[test]
+    fn build_job_hostile_uses_kata_when_configured() {
+        let req = make_req(IsolationClass::Hostile);
+        let job = build_job(
+            &req,
+            "img",
+            "job-hostile",
+            "ns",
+            &RuntimeClassConfig {
+                gvisor: Some("gvisor".to_string()),
+                kata: Some("kata-qemu".to_string()),
+                wasm: None,
+            },
+        )
+        .expect("HOSTILE should succeed when Kata is configured");
+        assert_eq!(
+            pod_runtime_class(&job),
+            Some("kata-qemu"),
+            "HOSTILE must set runtimeClassName=kata-qemu"
+        );
+    }
+
+    // STANDARD without gVisor → None (runc degradation, allowed).
+    #[test]
+    fn build_job_standard_degrades_to_runc_without_gvisor() {
+        let req = make_req(IsolationClass::Standard);
+        let job = build_job(
+            &req,
+            "img",
+            "job-standard",
+            "ns",
+            &RuntimeClassConfig::default(), // no gVisor configured
+        )
+        .expect("STANDARD degrades to runc and must still succeed");
+        assert_eq!(
+            pod_runtime_class(&job),
+            None,
+            "STANDARD without gVisor must degrade to runc (allowed)"
+        );
+    }
+
+    // STANDARD with gVisor → runtimeClassName set.
+    #[test]
+    fn build_job_standard_uses_gvisor_when_configured() {
+        let req = make_req(IsolationClass::Standard);
+        let job = build_job(
+            &req,
+            "img",
+            "job-standard-gv",
+            "ns",
+            &RuntimeClassConfig {
+                gvisor: Some("gvisor".to_string()),
+                kata: None,
+                wasm: None,
+            },
+        )
+        .expect("STANDARD with gVisor should succeed");
+        assert_eq!(pod_runtime_class(&job), Some("gvisor"));
+    }
+
+    // -----------------------------------------------------------------------
+    // New: fail-closed second gate — build_job errors for hard classes without
+    // the required RuntimeClass, even if choose_backend was bypassed.
+    // -----------------------------------------------------------------------
+
+    // UNTRUSTED without gVisor → build_job returns Err (not a silent runc pod).
+    #[test]
+    fn build_job_untrusted_without_gvisor_is_err() {
+        let req = make_req(IsolationClass::Untrusted);
+        let result = build_job(
+            &req,
+            "img",
+            "job-untrusted-no-gv",
+            "ns",
+            &RuntimeClassConfig::default(), // gVisor unset
+        );
+        let err = result.expect_err(
+            "UNTRUSTED with no gVisor config must fail — a bare runc pod is never acceptable",
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("UNTRUSTED"),
+            "error message must name the isolation class: {msg}"
+        );
+        assert!(
+            msg.contains("LANTERN_RUNTIMECLASS_GVISOR"),
+            "error message must name the config var: {msg}"
+        );
+    }
+
+    // HOSTILE without Kata → build_job returns Err.
+    #[test]
+    fn build_job_hostile_without_kata_is_err() {
+        let req = make_req(IsolationClass::Hostile);
+        let result = build_job(
+            &req,
+            "img",
+            "job-hostile-no-kata",
+            "ns",
+            &RuntimeClassConfig::default(), // Kata unset
+        );
+        let err = result.expect_err(
+            "HOSTILE with no Kata config must fail — a bare runc pod is never acceptable",
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("HOSTILE"),
+            "error message must name the isolation class: {msg}"
+        );
+        assert!(
+            msg.contains("LANTERN_RUNTIMECLASS_KATA"),
+            "error message must name the config var: {msg}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // satisfies_isolation tests — use `k8s_satisfies_isolation` (the pure
+    // helper) so we don't need to construct a live `kube::Client`.
+    // -----------------------------------------------------------------------
+
+    // UNTRUSTED refused when gVisor not configured (fail-closed — the most
+    // important security assertion in this file).
+    #[test]
+    fn k8s_backend_refuses_untrusted_without_gvisor() {
+        assert!(
+            !k8s_satisfies_isolation(&RuntimeClassConfig::default(), IsolationClass::Untrusted),
+            "UNTRUSTED must be refused when gVisor RuntimeClass is not configured"
+        );
+    }
+
+    // HOSTILE refused when Kata not configured (fail-closed).
+    #[test]
+    fn k8s_backend_refuses_hostile_without_kata() {
+        assert!(
+            !k8s_satisfies_isolation(&RuntimeClassConfig::default(), IsolationClass::Hostile),
+            "HOSTILE must be refused when Kata RuntimeClass is not configured"
+        );
+    }
+
+    // UNTRUSTED accepted when gVisor IS configured.
+    #[test]
+    fn k8s_backend_accepts_untrusted_with_gvisor() {
+        let cfg = RuntimeClassConfig {
+            gvisor: Some("gvisor".to_string()),
+            kata: None,
+            wasm: None,
+        };
+        assert!(
+            k8s_satisfies_isolation(&cfg, IsolationClass::Untrusted),
+            "UNTRUSTED must be accepted when gVisor is configured"
+        );
+    }
+
+    // HOSTILE accepted when Kata IS configured.
+    #[test]
+    fn k8s_backend_accepts_hostile_with_kata() {
+        let cfg = RuntimeClassConfig {
+            gvisor: None,
+            kata: Some("kata-qemu".to_string()),
+            wasm: None,
+        };
+        assert!(
+            k8s_satisfies_isolation(&cfg, IsolationClass::Hostile),
+            "HOSTILE must be accepted when Kata is configured"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // namespace_for: authenticated tenant_id field drives namespace derivation
+    // -----------------------------------------------------------------------
+
+    /// namespace_for derives the K8s namespace from req.tenant_id (authenticated
+    /// field), NOT from req.env["LANTERN_TENANT_ID"] (caller-supplied).
+    #[test]
+    fn namespace_for_uses_authenticated_tenant_id_field() {
+        let mut req = make_req(IsolationClass::Trusted);
+        req.tenant_id = "acme-corp".to_string();
+        // Even if env carries a different value, tenant_id field wins.
+        req.env
+            .insert("LANTERN_TENANT_ID".to_string(), "attacker".to_string());
+
+        let ns = K8sBackend::namespace_for(&req).expect("non-empty tenant_id should succeed");
+        assert_eq!(ns, "lantern-t-acme-corp");
+        assert_ne!(ns, "lantern-t-attacker", "env value must be ignored");
+    }
+
+    /// namespace_for returns Err when tenant_id is empty — the upstream spawn
+    /// gate should have rejected this, but defense-in-depth here too.
+    #[test]
+    fn namespace_for_rejects_empty_tenant_id() {
+        let mut req = make_req(IsolationClass::Trusted);
+        req.tenant_id = String::new();
+        // Even with an env value, empty tenant_id is refused.
+        req.env.insert(
+            "LANTERN_TENANT_ID".to_string(),
+            "should-not-be-used".to_string(),
+        );
+
+        let err = K8sBackend::namespace_for(&req)
+            .expect_err("empty tenant_id must be refused (fail-closed)");
+        assert!(
+            err.to_string().contains("tenant_id is empty"),
+            "error must mention empty tenant_id: {err}"
+        );
+    }
+
+    // STANDARD always accepted on K8s (may degrade to runc without gVisor).
+    #[test]
+    fn k8s_backend_accepts_standard_always() {
+        let cfg = RuntimeClassConfig::default();
+        assert!(
+            k8s_satisfies_isolation(&cfg, IsolationClass::Standard),
+            "STANDARD is always accepted on K8s (may degrade to runc)"
+        );
+        assert!(
+            k8s_satisfies_isolation(&cfg, IsolationClass::Trusted),
+            "TRUSTED is always accepted on K8s"
         );
     }
 }
