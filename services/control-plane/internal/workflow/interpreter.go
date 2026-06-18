@@ -96,6 +96,20 @@ type Deps struct {
 	// / expired). When nil, approval nodes auto-approve so workflows
 	// without a wired-up human-in-the-loop layer still complete.
 	WaitForApproval func(ctx context.Context, runID, stepID, reason string) (ApprovalDisposition, error)
+
+	// RunSubAgent invokes a named agent with the given input and waits for
+	// its output. When nil, subagent nodes emit a skipped result rather
+	// than failing the run — consistent with the WaitForApproval nil
+	// contract. Production wiring (rest.go) is a follow-up; the interpreter
+	// stays decoupled from HTTP here.
+	RunSubAgent func(ctx context.Context, agentName string, input map[string]any) (map[string]any, error)
+
+	// CompletedStep checks whether a node has already been successfully
+	// executed in a prior attempt of this run. If done is true, the
+	// interpreter reuses output rather than re-invoking side-effecting deps
+	// (LLM, connector, subagent), making re-runs idempotent on replay.
+	// When nil (e.g. in tests that don't opt in), each node always executes.
+	CompletedStep func(ctx context.Context, runID, stepID string) (output map[string]any, done bool, err error)
 }
 
 // ApprovalDisposition reports what the human did with an approval step.
@@ -207,7 +221,7 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 			"type": node.Type,
 		})
 
-		stepOutput, stepErr := executeNode(stepCtx, runID, deps, node, vars)
+		stepOutput, stepErr := executeNode(stepCtx, runID, deps, emit, node, vars, out, byID)
 		cancel()
 		res.StepsRan++
 
@@ -258,7 +272,25 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 
 // ---- Per-node execution -----------------------------------------------------
 
-func executeNode(ctx context.Context, runID string, deps Deps, node Node, vars map[string]any) (any, error) {
+// emitFn is a convenience alias for the emit closure passed through execution.
+type emitFn func(kind, stepID string, payload map[string]any)
+
+func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node Node, vars map[string]any, out map[string][]Edge, byID map[string]Node) (any, error) {
+	// Replay idempotency: before touching any side-effecting dep, check
+	// whether this node was already completed in a prior attempt. Pure
+	// structural nodes (trigger, condition, end) are always re-evaluated —
+	// they are cheap and their "output" is just derived state, not a
+	// billable or side-effecting operation.
+	switch node.Type {
+	case "ai-step", "tool", "connector", "subagent", "approval":
+		if deps.CompletedStep != nil {
+			if cached, done, csErr := deps.CompletedStep(ctx, runID, node.ID); csErr == nil && done {
+				return cached, nil
+			}
+			// On error we fall through and re-execute — safe to retry.
+		}
+	}
+
 	switch node.Type {
 	case "trigger":
 		// Trigger is a no-op at runtime — it just marks the entry.
@@ -308,11 +340,7 @@ func executeNode(ctx context.Context, runID string, deps Deps, node Node, vars m
 		return map[string]any{"value": truthy, "rendered": rendered}, nil
 
 	case "loop":
-		// TODO(w11b+): iterate over arrayExpression with the configured
-		// concurrency, fan out the downstream subgraph per element.
-		// Today the loop node passes through with a no-op so the graph
-		// still completes — better than failing the run.
-		return map[string]any{"skipped": "loop not yet implemented"}, nil
+		return executeLoop(ctx, runID, deps, emit, node, vars, out, byID)
 
 	case "approval":
 		// W11a: block on the real human-takeover handshake when wired,
@@ -331,8 +359,19 @@ func executeNode(ctx context.Context, runID string, deps Deps, node Node, vars m
 		return map[string]any{"approved": true, "note": disposition.Reason}, nil
 
 	case "subagent":
-		// TODO: invoke another agent via /v1/runs and wait for it.
-		return map[string]any{"skipped": "subagent not yet implemented"}, nil
+		if deps.RunSubAgent == nil {
+			return map[string]any{"skipped": "no subagent runner wired"}, nil
+		}
+		agentName, _ := node.Data["agentName"].(string)
+		if agentName == "" {
+			return nil, fmt.Errorf("subagent node requires agentName")
+		}
+		inputMapping := parseParams(node.Data["inputMapping"], vars)
+		result, err := deps.RunSubAgent(ctx, agentName, inputMapping)
+		if err != nil {
+			return nil, fmt.Errorf("subagent %q failed: %w", agentName, err)
+		}
+		return result, nil
 
 	default:
 		return nil, fmt.Errorf("unknown node type: %s", node.Type)
@@ -341,6 +380,9 @@ func executeNode(ctx context.Context, runID string, deps Deps, node Node, vars m
 
 // chooseNext picks the outgoing edge to follow after executing a node.
 //   - condition nodes route via edge.Label = "true" / "false".
+//   - loop nodes have a reserved "body" edge that drives the inner subgraph;
+//     after executeLoop returns, the top-level walk follows the first
+//     non-body edge (i.e. the "next" / continuation edge).
 //   - all other nodes take the first outgoing edge (DAG order).
 func chooseNext(node Node, output any, outgoing []Edge) string {
 	if len(outgoing) == 0 {
@@ -370,6 +412,17 @@ func chooseNext(node Node, output any, outgoing []Edge) string {
 			}
 		}
 		return outgoing[0].Target
+	}
+	if node.Type == "loop" {
+		// The "body" edge is consumed by executeLoop internally. The top-level
+		// walk must continue on the first non-body edge (the continuation /
+		// "next" path). If all edges are body edges (malformed graph), fall
+		// through to the first edge so the run still terminates.
+		for _, e := range outgoing {
+			if e.Label == nil || !strings.EqualFold(*e.Label, "body") {
+				return e.Target
+			}
+		}
 	}
 	return outgoing[0].Target
 }
@@ -479,6 +532,207 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// executeLoop handles the "loop" node type. It resolves an array from
+// node.Data["arrayExpression"] (a {{...}} template that must resolve to a JSON
+// array, or a bare JSON array literal), iterates over each element, and
+// executes the body subgraph — the subgraph reachable via the edge labelled
+// "body" — for each element.
+//
+// Loop variables available inside the body:
+//
+//	{{loop.item}}   — the current element (stringified)
+//	{{loop.index}}  — the 0-based iteration index
+//
+// A safety cap (node.Data["maxIterations"], default 1000) prevents runaway
+// loops. Exceeding it returns an error so the run records step_failed.
+//
+// Returns {"iterations": N, "results": [...]}.
+func executeLoop(ctx context.Context, runID string, deps Deps, emit emitFn, node Node, vars map[string]any, out map[string][]Edge, byID map[string]Node) (any, error) {
+	const defaultMaxIterations = 1000
+
+	// Resolve the array to iterate over.
+	exprRaw, _ := node.Data["arrayExpression"].(string)
+	rendered := renderTemplate(exprRaw, vars)
+
+	var items []any
+	if rendered != "" {
+		if err := json.Unmarshal([]byte(rendered), &items); err != nil {
+			// Not a JSON array — treat the single resolved value as a one-element list.
+			items = []any{rendered}
+		}
+	}
+	// Empty or missing expression → zero iterations, clean completion.
+
+	// Safety cap.
+	maxIter := defaultMaxIterations
+	if v, ok := node.Data["maxIterations"].(float64); ok && v > 0 {
+		maxIter = int(v)
+	}
+	if len(items) > maxIter {
+		return nil, fmt.Errorf("loop node %q: array length %d exceeds maxIterations=%d", node.ID, len(items), maxIter)
+	}
+
+	// Find the body-edge target node (edge with label "body").
+	bodyStart := ""
+	for _, e := range out[node.ID] {
+		if e.Label != nil && strings.EqualFold(*e.Label, "body") {
+			bodyStart = e.Target
+			break
+		}
+	}
+
+	results := make([]any, 0, len(items))
+
+	// Soft anomaly threshold: 80% of the hard cap. When exceeded we emit an
+	// anomaly_detected journal event but continue — the hard cap in the
+	// array-length check above is what actually stops execution.
+	softThreshold := int(float64(maxIter) * 0.80)
+	anomalyEmitted := false
+
+	for i, item := range items {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("loop cancelled at iteration %d: %w", i, err)
+		}
+
+		// Emit a single runaway_loop anomaly when we cross the soft threshold.
+		if !anomalyEmitted && i >= softThreshold {
+			anomalyEmitted = true
+			emit("anomaly_detected", node.ID, map[string]any{
+				"kind":     string(KindRunawayLoop),
+				"observed": i + 1,
+				"limit":    maxIter,
+				"message":  fmt.Sprintf("loop node %q: iteration %d approaching maxIterations=%d", node.ID, i+1, maxIter),
+			})
+		}
+
+		// Shallow-copy vars so loop.item/loop.index are per-iteration while
+		// "steps" and "input" remain shared (later body nodes can reference
+		// prior step outputs from earlier in the workflow).
+		iterVars := shallowCopyVars(vars)
+		iterVars["loop"] = map[string]any{
+			"item":  item,
+			"index": i,
+		}
+
+		emit("loop.iteration_started", node.ID, map[string]any{
+			"loopNodeId": node.ID,
+			"index":      i,
+			"item":       item,
+		})
+
+		var iterResult any
+		var iterErr error
+
+		if bodyStart == "" {
+			// No body edge — pass-through with the item as the result.
+			iterResult = map[string]any{"index": i, "item": item}
+		} else {
+			iterResult, iterErr = runSubgraph(ctx, runID, deps, emit, bodyStart, iterVars, out, byID, node.ID)
+		}
+
+		if iterErr != nil {
+			return nil, fmt.Errorf("loop iteration %d failed: %w", i, iterErr)
+		}
+
+		emit("loop.iteration_completed", node.ID, map[string]any{
+			"loopNodeId": node.ID,
+			"index":      i,
+			"result":     truncate(formatOutput(iterResult), 300),
+		})
+
+		results = append(results, iterResult)
+	}
+
+	return map[string]any{
+		"iterations": len(items),
+		"results":    results,
+	}, nil
+}
+
+// runSubgraph walks the body subgraph of a loop node starting from startID.
+// Stops when it reaches a node with no outgoing edge, an "end" node, or when
+// the next node is loopNodeID (the loop boundary — prevents re-entering the
+// loop). Returns the last body node's result.
+//
+// Cap semantics: the body may visit at most maxBodySteps nodes. If after
+// executing the maxBodySteps-th node there is still an outgoing edge (the
+// loop body hasn't ended naturally), the call returns an error rather than
+// silently completing — a maxBodySteps-long body chain must not look
+// identical to a body that actually finished within the cap.
+func runSubgraph(ctx context.Context, runID string, deps Deps, emit emitFn, startID string, vars map[string]any, out map[string][]Edge, byID map[string]Node, loopNodeID string) (any, error) {
+	const maxBodySteps = 50
+
+	current := startID
+	var lastResult any
+	for step := 0; step < maxBodySteps; step++ {
+		if current == loopNodeID {
+			break
+		}
+		node, ok := byID[current]
+		if !ok {
+			return nil, fmt.Errorf("loop body: unknown node %q", current)
+		}
+		if node.Type == "end" {
+			break
+		}
+
+		result, err := executeNode(ctx, runID, deps, emit, node, vars, out, byID)
+		if err != nil {
+			return nil, err
+		}
+		lastResult = result
+
+		// Store in vars so later body nodes can reference earlier body steps.
+		if stepsMap, ok := vars["steps"].(map[string]any); ok {
+			stepsMap[node.ID] = result
+		}
+
+		next := chooseNext(node, result, out[node.ID])
+		if next == "" {
+			break
+		}
+
+		// Off-by-one guard: if we are about to leave the last allowed iteration
+		// but still have a next node, the body exceeds the cap — fail explicitly
+		// so the loop body appears as failed, not as silently completed.
+		if step == maxBodySteps-1 {
+			return nil, fmt.Errorf("loop body exceeded maxBodySteps=%d (possible cycle or oversized body)", maxBodySteps)
+		}
+
+		current = next
+	}
+	return lastResult, nil
+}
+
+// shallowCopyVars makes a per-iteration copy of the vars map with the
+// following isolation semantics:
+//
+//   - "input" is SHARED: body nodes reference the workflow's top-level input.
+//   - "steps" is COPIED (one level deep): each loop iteration gets its own
+//     steps map so that a body node whose ID matches an outer step ID cannot
+//     overwrite the outer step's result, and so that body-node results from
+//     iteration N do not bleed into iteration N+1's namespace. The copy is
+//     pre-populated with all steps visible at the point the loop fires, so
+//     body nodes can still reference prior outer steps via {{steps.<id>}}.
+//   - All other top-level keys (e.g. "loop") are copied by value.
+func shallowCopyVars(vars map[string]any) map[string]any {
+	cp := make(map[string]any, len(vars))
+	for k, v := range vars {
+		cp[k] = v
+	}
+	// Isolate the steps map: copy its current entries into a fresh map so
+	// body-node writes (stepsMap[node.ID] = result inside runSubgraph) don't
+	// mutate the parent's steps map.
+	if parentSteps, ok := vars["steps"].(map[string]any); ok {
+		iterSteps := make(map[string]any, len(parentSteps))
+		for k, v := range parentSteps {
+			iterSteps[k] = v
+		}
+		cp["steps"] = iterSteps
+	}
+	return cp
 }
 
 // lastStep returns the formatted output of the most recently added step,

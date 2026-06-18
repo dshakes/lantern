@@ -1,0 +1,95 @@
+package handlers
+
+// TestTracePropagation_GRPCMetadataCarrier verifies the W3C trace-context
+// propagation contract used by the otelgrpc client handler:
+//
+//  1. With a real TracerProvider + propagator set globally, injecting a span
+//     context into a google.golang.org/grpc/metadata.MD carrier produces a
+//     "traceparent" key whose value extracts back to the same trace ID.
+//
+// This is an infra-free unit test — no live gRPC server required.
+// It exercises the propagation contract; the otelgrpc wiring itself is
+// verified by build + vet (the option is accepted by grpc.NewClient).
+
+import (
+	"context"
+	"testing"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/metadata"
+)
+
+// metadataMDCarrier adapts gRPC metadata.MD to the OTel TextMapCarrier
+// interface. This is the same adapter that otelgrpc uses internally.
+type metadataMDCarrier metadata.MD
+
+func (m metadataMDCarrier) Get(key string) string {
+	vals := metadata.MD(m).Get(key)
+	if len(vals) == 0 {
+		return ""
+	}
+	return vals[0]
+}
+
+func (m metadataMDCarrier) Set(key, value string) {
+	metadata.MD(m).Set(key, value)
+}
+
+func (m metadataMDCarrier) Keys() []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func TestTracePropagation_GRPCMetadataCarrier(t *testing.T) {
+	// Install a real (in-memory) TracerProvider and W3C propagator globally,
+	// then restore the previous state when the test exits.
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	prevTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	prevProp := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+		otel.SetTextMapPropagator(prevProp)
+	})
+
+	// Start a span to get a non-zero trace ID.
+	tracer := otel.Tracer("test.control-plane")
+	ctx, span := tracer.Start(context.Background(), "test-op")
+	defer span.End()
+
+	wantTraceID := span.SpanContext().TraceID()
+	if !wantTraceID.IsValid() {
+		t.Fatal("tracer returned an invalid (zero) trace ID — provider not wired")
+	}
+
+	// Inject: simulate what otelgrpc.NewClientHandler does before the RPC.
+	md := metadata.MD{}
+	otel.GetTextMapPropagator().Inject(ctx, metadataMDCarrier(md))
+
+	tp_val := md.Get("traceparent")
+	if len(tp_val) == 0 {
+		t.Fatal("inject: traceparent header missing from metadata.MD")
+	}
+
+	// Extract: simulate what otelgrpc.NewServerHandler does on receipt.
+	extracted := otel.GetTextMapPropagator().Extract(context.Background(), metadataMDCarrier(md))
+	gotSC := trace.SpanContextFromContext(extracted)
+
+	if !gotSC.IsValid() {
+		t.Fatal("extract: span context is invalid after round-trip")
+	}
+	if gotSC.TraceID() != wantTraceID {
+		t.Errorf("trace ID mismatch: got %s, want %s", gotSC.TraceID(), wantTraceID)
+	}
+}
