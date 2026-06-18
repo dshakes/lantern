@@ -524,6 +524,11 @@ func main() {
 	go sched.Start(ctx)
 	defer sched.Stop()
 
+	// Startup crash-recovery sweep: re-drive any runs whose worker died
+	// mid-execution (lock absent or expired). Non-blocking; runs 2s after
+	// the HTTP server starts so /readyz serves first.
+	handlers.RunRecoverySweepAsync(ctx, restHandler, logger)
+
 	// Gmail + Calendar → unified timeline ingestion (Phase 2c).
 	go handlers.NewMemoryIngestor(pool, logger, identityHandler).Run(ctx)
 

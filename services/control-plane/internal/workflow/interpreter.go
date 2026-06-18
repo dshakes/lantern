@@ -585,9 +585,26 @@ func executeLoop(ctx context.Context, runID string, deps Deps, emit emitFn, node
 
 	results := make([]any, 0, len(items))
 
+	// Soft anomaly threshold: 80% of the hard cap. When exceeded we emit an
+	// anomaly_detected journal event but continue — the hard cap in the
+	// array-length check above is what actually stops execution.
+	softThreshold := int(float64(maxIter) * 0.80)
+	anomalyEmitted := false
+
 	for i, item := range items {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("loop cancelled at iteration %d: %w", i, err)
+		}
+
+		// Emit a single runaway_loop anomaly when we cross the soft threshold.
+		if !anomalyEmitted && i >= softThreshold {
+			anomalyEmitted = true
+			emit("anomaly_detected", node.ID, map[string]any{
+				"kind":     string(KindRunawayLoop),
+				"observed": i + 1,
+				"limit":    maxIter,
+				"message":  fmt.Sprintf("loop node %q: iteration %d approaching maxIterations=%d", node.ID, i+1, maxIter),
+			})
 		}
 
 		// Shallow-copy vars so loop.item/loop.index are per-iteration while

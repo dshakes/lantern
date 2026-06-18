@@ -1137,6 +1137,13 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 		return "", resolvedTemplateID, fmt.Errorf("LLM call failed: %w", llmErr)
 	}
 
+	// Anomaly detection: check cost/token spend against the agent's budget
+	// limits (or sane defaults when no budget is configured). Emit an
+	// anomaly_detected journal event for each breach so the run waterfall
+	// surfaces it. This is informational — the run continues; budget hard-fail
+	// blocking happens earlier at the CheckBudget call site.
+	h.emitRunAnomalies(ctx, runID, tenantID, agentName, tokensIn+tokensOut, costUsd)
+
 	// 4. Mark as succeeded with output.
 	logStep("call_llm", "completed", fmt.Sprintf("Response from %s/%s: %d tokens", provider, model, tokensOut))
 	logStep("save_output", "running", "Saving results")
@@ -1927,6 +1934,77 @@ func (h *RESTHandler) autoCreateVersion(ctx context.Context, agentName string) {
 		zap.String("agent", agentName),
 		zap.String("version_id", versionID),
 	)
+}
+
+// emitRunAnomalies checks the final token/cost totals for this run against
+// the agent's configured budget limits (or safe defaults when no budget
+// exists) and writes an anomaly_detected journal event for each breach.
+// Side-effect-light: one SELECT for the budget, one INSERT per anomaly.
+// Never fatal — detection failures are logged and swallowed.
+func (h *RESTHandler) emitRunAnomalies(ctx context.Context, runID, tenantID, agentName string, totalTokens int64, totalCostUSD float64) {
+	// Build limits from agent_budgets if present; otherwise use defaults.
+	limits := workflow.DefaultAnomalyLimits()
+	var maxCostRaw *float64
+	var maxTokensRaw *int64
+	if err := h.srv.Pool.QueryRow(ctx, `
+		SELECT max_cost_usd_per_run, max_tokens_per_day
+		FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2
+	`, tenantID, agentName).Scan(&maxCostRaw, &maxTokensRaw); err == nil {
+		if maxCostRaw != nil && *maxCostRaw > 0 {
+			limits.MaxCostUSD = *maxCostRaw
+		}
+		if maxTokensRaw != nil && *maxTokensRaw > 0 {
+			limits.MaxTokens = *maxTokensRaw
+		}
+	}
+
+	stats := workflow.RunStats{
+		Tokens:  totalTokens,
+		CostUSD: totalCostUSD,
+	}
+
+	anomalies := workflow.DetectAnomalies(stats, limits)
+	if len(anomalies) == 0 {
+		return
+	}
+
+	// Fetch the current max seq for this run so we can append.
+	var maxSeq int64
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT COALESCE(MAX(seq), 0) FROM journal_events WHERE run_id = $1`, runID,
+	).Scan(&maxSeq)
+
+	for i, a := range anomalies {
+		payload, _ := json.Marshal(map[string]any{
+			"kind":     string(a.Kind),
+			"observed": a.Observed,
+			"limit":    a.Limit,
+			"message":  a.Message,
+		})
+		seq := maxSeq + int64(i) + 1
+		_, err := h.srv.Pool.Exec(ctx, `
+			INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
+			VALUES ($1, $2, 'anomaly_detected', '', 1, $3)
+			ON CONFLICT (run_id, seq) DO NOTHING`,
+			runID, seq, payload,
+		)
+		if err != nil {
+			h.logger().Warn("emitRunAnomalies: journal insert failed",
+				zap.String("run_id", runID),
+				zap.String("kind", string(a.Kind)),
+				zap.Error(err),
+			)
+			continue
+		}
+		h.logger().Warn("run anomaly detected",
+			zap.String("run_id", runID),
+			zap.String("agent", agentName),
+			zap.String("kind", string(a.Kind)),
+			zap.Float64("observed", a.Observed),
+			zap.Float64("limit", a.Limit),
+			zap.String("message", a.Message),
+		)
+	}
 }
 
 // ---------- proto to map converters ----------
