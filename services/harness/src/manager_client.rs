@@ -159,6 +159,7 @@ impl ManagerClient {
         });
 
         // tonic stream task: open the bidi RPC and relay acks back.
+        let contact = self.clone();
         tokio::spawn(async move {
             let req_stream = tokio_stream::wrappers::ReceiverStream::new(wire_rx);
             let mut ack_stream = match client.heartbeat(req_stream).await {
@@ -183,6 +184,9 @@ impl ManagerClient {
             loop {
                 match ack_stream.message().await {
                     Ok(Some(wire_ack)) => {
+                        // Refresh liveness on every ack so /healthz (when it
+                        // lands) reflects ongoing contact, not just stream-open.
+                        contact.note_contact().await;
                         let ack = HeartbeatAck::from(wire_ack);
                         if ack_tx.send(ack).await.is_err() {
                             // heartbeat.rs ack reader exited; close cleanly.

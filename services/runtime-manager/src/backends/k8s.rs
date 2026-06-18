@@ -121,6 +121,23 @@ impl K8sBackend {
                  rejected this request before it reached the K8s backend"
             );
         }
+        // Constrain the shape before interpolating into a namespace name. The
+        // value's origin is already trusted (authenticated control-plane), but a
+        // non-DNS-1123 tenant_id would otherwise produce an opaque late failure
+        // at jobs.create. Reject anything outside [a-z0-9-] / >63 chars early
+        // and clearly. (`lantern-t-` prefix + 63 max keeps the label ≤ 63.)
+        if req.tenant_id.len() > 63
+            || !req
+                .tenant_id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        {
+            anyhow::bail!(
+                "ScheduleRequest.tenant_id {:?} is not a valid DNS-1123 label \
+                 ([a-z0-9-], ≤63 chars); refusing to derive a namespace from it",
+                req.tenant_id
+            );
+        }
         Ok(format!("lantern-t-{}", req.tenant_id))
     }
 

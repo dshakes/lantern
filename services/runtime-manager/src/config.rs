@@ -46,8 +46,8 @@ pub struct Config {
     pub node_zone: String,
     /// `runtimeClassName` for gVisor-isolated pods (UNTRUSTED / STANDARD /
     /// DEVCONTAINER). Set via `LANTERN_RUNTIMECLASS_GVISOR` (e.g. `gvisor`).
-    /// When unset, STANDARD degrades to bare runc; UNTRUSTED and DEVCONTAINER
-    /// (when UNTRUSTED) are refused (fail-closed).
+    /// When unset, STANDARD and DEVCONTAINER degrade to bare runc (allowed);
+    /// UNTRUSTED is refused (fail-closed) — only UNTRUSTED/HOSTILE ever fail closed.
     pub runtimeclass_gvisor: Option<String>,
     /// `runtimeClassName` for Kata microVM pods (HOSTILE).
     /// Set via `LANTERN_RUNTIMECLASS_KATA` (e.g. `kata-qemu`).
@@ -186,7 +186,7 @@ mod tests {
     /// chain is covered: empty env → None config → satisfies_isolation = false.
     #[test]
     fn empty_gvisor_env_does_not_satisfy_untrusted() {
-        use crate::backends::k8s::{RuntimeClassConfig, k8s_satisfies_isolation};
+        use crate::backends::k8s::{k8s_satisfies_isolation, RuntimeClassConfig};
         use crate::proto::IsolationClass;
 
         // Simulate what happens when LANTERN_RUNTIMECLASS_GVISOR="" in env.

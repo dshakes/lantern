@@ -145,8 +145,11 @@ pub struct AuditEvent {
 
 impl From<HeartbeatRequest> for pb::HeartbeatRequest {
     fn from(r: HeartbeatRequest) -> Self {
-        let at_secs = r.at_unix_ms / 1_000;
-        let at_nanos = ((r.at_unix_ms % 1_000) * 1_000_000) as i32;
+        // Use Euclidean div/rem so a negative at_unix_ms (pre-epoch / bug)
+        // still yields nanos in [0, 999_999_999] as the protobuf Timestamp
+        // contract requires — plain `%` would produce negative nanos.
+        let at_secs = r.at_unix_ms.div_euclid(1_000);
+        let at_nanos = (r.at_unix_ms.rem_euclid(1_000) * 1_000_000) as i32;
         pb::HeartbeatRequest {
             vm_id: r.vm_id,
             at: Some(prost_types::Timestamp {
