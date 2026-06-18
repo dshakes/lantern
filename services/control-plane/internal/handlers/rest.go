@@ -706,12 +706,91 @@ func isRunNowInput(input map[string]any, raw string) bool {
 	return true
 }
 
+// subagentDepthKey is a context key that tracks the subagent call depth to
+// prevent infinite recursion when a workflow invokes itself or forms a cycle.
+type subagentDepthKey struct{}
+
+const maxSubagentDepth = 5
+
+// subagentDepth returns the current subagent nesting depth from ctx.
+func subagentDepth(ctx context.Context) int {
+	if v, ok := ctx.Value(subagentDepthKey{}).(int); ok {
+		return v
+	}
+	return 0
+}
+
+// withSubagentDepth returns a context with the depth incremented by one.
+func withSubagentDepth(ctx context.Context) context.Context {
+	return context.WithValue(ctx, subagentDepthKey{}, subagentDepth(ctx)+1)
+}
+
+// executeRunInline processes a run asynchronously (called from a goroutine).
+// It sets up its own background context, delegates to executeRunInlineSync,
+// then handles email/WhatsApp delivery on success.
 func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input map[string]any) {
 	ctx := context.Background()
 	ctx = middleware.InjectTenantID(ctx, tenantID)
 	md := metadata.Pairs("tenant_id", tenantID)
 	ctx = metadata.NewIncomingContext(ctx, md)
 
+	result, resolvedTemplateID, err := h.executeRunInlineSync(ctx, runID, tenantID, agentName, input)
+	if err != nil {
+		// Error already written to runs.error by executeRunInlineSync.
+		return
+	}
+
+	// Delivery side-effects: only for top-level runs, not child subagent runs.
+	// Check if email delivery is configured for this agent's schedule.
+	var deliveryEmail string
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT config->>'deliveryEmail' FROM schedules WHERE tenant_id = $1 AND agent_name = $2 AND enabled = true`,
+		tenantID, agentName,
+	).Scan(&deliveryEmail)
+
+	if deliveryEmail != "" {
+		go func() {
+			if err := h.sendEmailViaGmail(tenantID, deliveryEmail, fmt.Sprintf("Lantern: %s run completed", agentName), result); err != nil {
+				h.logger().Warn("email delivery failed",
+					zap.String("run_id", runID),
+					zap.String("to", deliveryEmail),
+					zap.Error(err),
+				)
+			} else {
+				h.logger().Info("email delivered",
+					zap.String("run_id", runID),
+					zap.String("to", deliveryEmail),
+				)
+			}
+		}()
+	}
+
+	if shouldDeliverToWhatsApp(resolvedTemplateID) && result != "" {
+		go func() {
+			if err := h.deliverWhatsAppSelf(tenantID, result); err != nil {
+				h.logger().Warn("whatsapp delivery failed",
+					zap.String("run_id", runID),
+					zap.String("template", resolvedTemplateID),
+					zap.Error(err),
+				)
+				return
+			}
+			h.logger().Info("whatsapp delivered",
+				zap.String("run_id", runID),
+				zap.String("template", resolvedTemplateID),
+			)
+		}()
+	}
+}
+
+// executeRunInlineSync is the synchronous core of run execution. It updates the
+// runs row directly (marking running/succeeded/failed) and returns (resultText,
+// resolvedTemplateID, error). On failure, the runs row is already marked failed
+// and a non-nil error is returned so the caller can short-circuit delivery.
+// Child subagent runs call this directly with the parent's context so
+// cancellation propagates and depth is tracked.
+func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID, agentName string, input map[string]any) (string, string, error) {
+	var resolvedTemplateID string
 	h.logger().Info("inline executor: starting run", zap.String("run_id", runID), zap.String("agent", agentName))
 
 	// Helper to log execution steps to the run's trigger_meta field (used as steps log)
@@ -736,7 +815,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	)
 	if err != nil {
 		h.logger().Error("inline executor: failed to mark running", zap.Error(err))
-		return
+		return "", "", fmt.Errorf("mark running: %w", err)
 	}
 
 	// 1a. If the agent has a saved workflow graph, hand off to the workflow
@@ -744,7 +823,22 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	// call path below. Workflow execution emits journal_events per node so
 	// the RunWaterfall renders the full graph.
 	if h.runWorkflowIfPresent(ctx, runID, tenantID, agentName, input) {
-		return
+		// Workflow path: read the output back from the DB so the caller
+		// can return it. On workflow failure the DB already has an error row;
+		// read whatever was written for delivery side-effects.
+		var outputJSON []byte
+		_ = h.srv.Pool.QueryRow(ctx,
+			`SELECT COALESCE(output, '{}'::jsonb)::text::bytea FROM runs WHERE id = $1`, runID,
+		).Scan(&outputJSON)
+		var outMap map[string]any
+		if len(outputJSON) > 0 {
+			_ = json.Unmarshal(outputJSON, &outMap)
+		}
+		wfResult := ""
+		if r, ok := outMap["result"].(string); ok {
+			wfResult = r
+		}
+		return wfResult, resolvedTemplateID, nil
 	}
 
 	// 2. Build messages from the agent's stored system_prompt + the input.
@@ -773,7 +867,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	//   1. labels.lantern.template (set by templates.Apply OR back-fill)
 	//   2. agent-name == template-name (covers any agent named after a
 	//      registered template, even with no labels)
-	resolvedTemplateID := ""
+	resolvedTemplateID = ""
 	{
 		var lbl struct {
 			TemplateID string `json:"lantern.template"`
@@ -887,7 +981,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 				`UPDATE runs SET status = 'failed', finished_at = now(), error = $2 WHERE id = $1`,
 				runID, fmt.Sprintf(`{"code":"no_llm","message":"%s"}`, err.Error()),
 			)
-			return
+			return "", resolvedTemplateID, fmt.Errorf("no LLM key: %w", err)
 		}
 	}
 
@@ -1040,8 +1134,15 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 			`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
 			runID, string(errJSON),
 		)
-		return
+		return "", resolvedTemplateID, fmt.Errorf("LLM call failed: %w", llmErr)
 	}
+
+	// Anomaly detection: check cost/token spend against the agent's budget
+	// limits (or sane defaults when no budget is configured). Emit an
+	// anomaly_detected journal event for each breach so the run waterfall
+	// surfaces it. This is informational — the run continues; budget hard-fail
+	// blocking happens earlier at the CheckBudget call site.
+	h.emitRunAnomalies(ctx, runID, tenantID, agentName, tokensIn+tokensOut, costUsd)
 
 	// 4. Mark as succeeded with output.
 	logStep("call_llm", "completed", fmt.Sprintf("Response from %s/%s: %d tokens", provider, model, tokensOut))
@@ -1060,57 +1161,7 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 		zap.Int64("tokens_out", tokensOut),
 	)
 
-	// 5. Check if email delivery is configured for this agent's schedule.
-	var deliveryEmail string
-	_ = h.srv.Pool.QueryRow(ctx,
-		`SELECT config->>'deliveryEmail' FROM schedules WHERE tenant_id = $1 AND agent_name = $2 AND enabled = true`,
-		tenantID, agentName,
-	).Scan(&deliveryEmail)
-
-	if deliveryEmail != "" {
-		go func() {
-			if err := h.sendEmailViaGmail(tenantID, deliveryEmail, fmt.Sprintf("Lantern: %s run completed", agentName), result); err != nil {
-				h.logger().Warn("email delivery failed",
-					zap.String("run_id", runID),
-					zap.String("to", deliveryEmail),
-					zap.Error(err),
-				)
-			} else {
-				h.logger().Info("email delivered",
-					zap.String("run_id", runID),
-					zap.String("to", deliveryEmail),
-				)
-			}
-		}()
-	}
-
-	// 6. WhatsApp delivery — when the template declares "whatsapp" as a
-	// delivery surface (inbox-concierge, morning-brief), push the
-	// agent's output to the user's WhatsApp self-chat via the bridge.
-	// This is what the user expected when the template description
-	// says "texts a 3-bucket summary to your WhatsApp". Fire-and-
-	// forget so a bridge outage doesn't fail the run — the result is
-	// already saved + visible in the dashboard, plus the bridge's
-	// send-self path mirrors to email/telegram as backup channels.
-	if shouldDeliverToWhatsApp(resolvedTemplateID) && result != "" {
-		go func() {
-			logStep("deliver_whatsapp", "running", "Sending summary to your WhatsApp")
-			if err := h.deliverWhatsAppSelf(tenantID, result); err != nil {
-				logStep("deliver_whatsapp", "failed", fmt.Sprintf("WhatsApp delivery failed: %v", err))
-				h.logger().Warn("whatsapp delivery failed",
-					zap.String("run_id", runID),
-					zap.String("template", resolvedTemplateID),
-					zap.Error(err),
-				)
-				return
-			}
-			logStep("deliver_whatsapp", "completed", "Delivered to WhatsApp")
-			h.logger().Info("whatsapp delivered",
-				zap.String("run_id", runID),
-				zap.String("template", resolvedTemplateID),
-			)
-		}()
-	}
+	return result, resolvedTemplateID, nil
 }
 
 // shouldDeliverToWhatsApp returns true if the named template declares
@@ -1371,6 +1422,76 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 				}
 			}
 		},
+		RunSubAgent: func(subCtx context.Context, agentName string, input map[string]any) (map[string]any, error) {
+			// Depth guard: prevent infinite recursion when a workflow invokes
+			// itself or forms a cycle. The limit is enforced via context value
+			// so it survives across the synchronous call stack.
+			depth := subagentDepth(subCtx)
+			if depth >= maxSubagentDepth {
+				return nil, fmt.Errorf("subagent depth limit (%d) exceeded — possible workflow cycle", maxSubagentDepth)
+			}
+			childCtx := withSubagentDepth(subCtx)
+
+			// Insert a child run row for the named agent under the same tenant.
+			// We use a direct INSERT rather than the HTTP CreateRun path to avoid
+			// HTTP plumbing and preserve the parent's context/cancellation.
+			childRunID, err := h.createSubAgentRunRow(childCtx, tenantID, agentName, runID, input)
+			if err != nil {
+				return nil, fmt.Errorf("create subagent run row for %q: %w", agentName, err)
+			}
+
+			// Execute synchronously — caller blocks until the child is done.
+			if _, _, execErr := h.executeRunInlineSync(childCtx, childRunID, tenantID, agentName, input); execErr != nil {
+				return nil, fmt.Errorf("subagent %q (run %s) failed: %w", agentName, childRunID, execErr)
+			}
+
+			// Read back the child run's output from the DB.
+			var outputJSON []byte
+			_ = h.srv.Pool.QueryRow(childCtx,
+				`SELECT COALESCE(output, '{}'::jsonb)::text::bytea FROM runs WHERE id = $1`, childRunID,
+			).Scan(&outputJSON)
+			var out map[string]any
+			if len(outputJSON) > 0 {
+				_ = json.Unmarshal(outputJSON, &out)
+			}
+			if out == nil {
+				out = map[string]any{}
+			}
+			return out, nil
+		},
+		CompletedStep: func(stepCtx context.Context, stepRunID, stepID string) (map[string]any, bool, error) {
+			// Query journal_events for the most recent step_completed event for
+			// this (run_id, step_id) pair. If found, unmarshal the payload and
+			// return done=true so the interpreter reuses the cached output
+			// instead of re-invoking the side-effecting dep.
+			var payloadJSON []byte
+			err := h.srv.Pool.QueryRow(stepCtx, `
+				SELECT payload
+				FROM journal_events
+				WHERE run_id = $1 AND step_id = $2 AND kind = 'step_completed'
+				ORDER BY seq DESC
+				LIMIT 1
+			`, stepRunID, stepID).Scan(&payloadJSON)
+			if err != nil {
+				// No completed record or DB error — fall through to re-execute.
+				return nil, false, nil
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+				return nil, false, nil
+			}
+			// The step_completed payload carries {"output": ..., "name": ..., "type": ...}.
+			// Extract the output field; if absent return the whole payload.
+			if out, ok := payload["output"]; ok {
+				switch v := out.(type) {
+				case map[string]any:
+					return v, true, nil
+				case string:
+					return map[string]any{"result": v}, true, nil
+				}
+			}
+			return payload, true, nil
+		},
 	}
 
 	res, runErr := workflow.Run(ctx, runID, deps, def, input)
@@ -1455,6 +1576,37 @@ func dispatchConnectorInProc(ctx context.Context, pool *pgxpool.Pool, tenantID, 
 	default:
 		return nil, fmt.Errorf("workflow-connector dispatch not yet wired for %s", connectorID)
 	}
+}
+
+// createSubAgentRunRow inserts a child run row for a subagent invocation.
+// It looks up the agent's id + current_version_id and inserts a runs row with
+// trigger_kind='subagent' and parent_run_id set to the calling run.
+// Returns the new child run ID on success.
+func (h *RESTHandler) createSubAgentRunRow(ctx context.Context, tenantID, agentName, parentRunID string, input map[string]any) (string, error) {
+	var agentID, versionID string
+	if err := h.srv.Pool.QueryRow(ctx, `
+		SELECT id::text, COALESCE(current_version_id::text, '')
+		FROM agents
+		WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL
+	`, tenantID, agentName).Scan(&agentID, &versionID); err != nil {
+		return "", fmt.Errorf("resolve agent %q: %w", agentName, err)
+	}
+	if versionID == "" {
+		return "", fmt.Errorf("agent %q has no promoted version", agentName)
+	}
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		return "", fmt.Errorf("marshal input: %w", err)
+	}
+	var childRunID string
+	if err := h.srv.Pool.QueryRow(ctx, `
+		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, trigger_kind, input, parent_run_id)
+		VALUES ($1, $2, $3, 'queued', 'subagent', $4::jsonb, $5)
+		RETURNING id
+	`, tenantID, agentID, versionID, string(inputJSON), parentRunID).Scan(&childRunID); err != nil {
+		return "", fmt.Errorf("insert child run: %w", err)
+	}
+	return childRunID, nil
 }
 
 // ExecuteScheduledRun creates and runs an agent on behalf of the scheduler.
@@ -1782,6 +1934,77 @@ func (h *RESTHandler) autoCreateVersion(ctx context.Context, agentName string) {
 		zap.String("agent", agentName),
 		zap.String("version_id", versionID),
 	)
+}
+
+// emitRunAnomalies checks the final token/cost totals for this run against
+// the agent's configured budget limits (or safe defaults when no budget
+// exists) and writes an anomaly_detected journal event for each breach.
+// Side-effect-light: one SELECT for the budget, one INSERT per anomaly.
+// Never fatal — detection failures are logged and swallowed.
+func (h *RESTHandler) emitRunAnomalies(ctx context.Context, runID, tenantID, agentName string, totalTokens int64, totalCostUSD float64) {
+	// Build limits from agent_budgets if present; otherwise use defaults.
+	limits := workflow.DefaultAnomalyLimits()
+	var maxCostRaw *float64
+	var maxTokensRaw *int64
+	if err := h.srv.Pool.QueryRow(ctx, `
+		SELECT max_cost_usd_per_run, max_tokens_per_day
+		FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2
+	`, tenantID, agentName).Scan(&maxCostRaw, &maxTokensRaw); err == nil {
+		if maxCostRaw != nil && *maxCostRaw > 0 {
+			limits.MaxCostUSD = *maxCostRaw
+		}
+		if maxTokensRaw != nil && *maxTokensRaw > 0 {
+			limits.MaxTokens = *maxTokensRaw
+		}
+	}
+
+	stats := workflow.RunStats{
+		Tokens:  totalTokens,
+		CostUSD: totalCostUSD,
+	}
+
+	anomalies := workflow.DetectAnomalies(stats, limits)
+	if len(anomalies) == 0 {
+		return
+	}
+
+	// Fetch the current max seq for this run so we can append.
+	var maxSeq int64
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT COALESCE(MAX(seq), 0) FROM journal_events WHERE run_id = $1`, runID,
+	).Scan(&maxSeq)
+
+	for i, a := range anomalies {
+		payload, _ := json.Marshal(map[string]any{
+			"kind":     string(a.Kind),
+			"observed": a.Observed,
+			"limit":    a.Limit,
+			"message":  a.Message,
+		})
+		seq := maxSeq + int64(i) + 1
+		_, err := h.srv.Pool.Exec(ctx, `
+			INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
+			VALUES ($1, $2, 'anomaly_detected', '', 1, $3)
+			ON CONFLICT (run_id, seq) DO NOTHING`,
+			runID, seq, payload,
+		)
+		if err != nil {
+			h.logger().Warn("emitRunAnomalies: journal insert failed",
+				zap.String("run_id", runID),
+				zap.String("kind", string(a.Kind)),
+				zap.Error(err),
+			)
+			continue
+		}
+		h.logger().Warn("run anomaly detected",
+			zap.String("run_id", runID),
+			zap.String("agent", agentName),
+			zap.String("kind", string(a.Kind)),
+			zap.Float64("observed", a.Observed),
+			zap.Float64("limit", a.Limit),
+			zap.String("message", a.Message),
+		)
+	}
 }
 
 // ---------- proto to map converters ----------

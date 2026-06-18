@@ -70,6 +70,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -79,6 +80,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
@@ -113,8 +115,9 @@ const (
 // It is intentionally separate from RuntimeHandler so the surface area of
 // credential-touching code is minimal and easy to audit.
 type RuntimeSecretsHandler struct {
-	srv  *server.Server
-	auth *AuthHandler // kept for access to srv; route auth is token-based
+	srv      *server.Server
+	auth     *AuthHandler // kept for access to srv; route auth is token-based
+	identity *agentidentity.Issuer
 
 	// authFailMu guards authFailures.
 	authFailMu sync.Mutex
@@ -128,6 +131,7 @@ func NewRuntimeSecretsHandler(srv *server.Server, auth *AuthHandler) *RuntimeSec
 	return &RuntimeSecretsHandler{
 		srv:          srv,
 		auth:         auth,
+		identity:     agentidentity.New(auth.JWTSecret()),
 		authFailures: make(map[string][]time.Time),
 	}
 }
@@ -482,6 +486,72 @@ func (h *RuntimeSecretsHandler) checkVMBinding(ctx context.Context, vmID, tenant
 	return nil
 }
 
+// ---------- Instance-token verification ----------
+
+// verifyInstanceToken parses and validates a Bearer agent-instance JWT from
+// the Authorization header. Returns (instanceID, nil) on success.
+//
+// Caller behaviour contract (STRICTLY ADDITIVE — backward compatible):
+//   - No Authorization header → returns ("", nil); caller falls through to the
+//     shared-token path unchanged.
+//   - Present but invalid/expired/wrong-typ token → returns ("", non-nil error);
+//     caller must reject the request with 403 (never silently ignore a bad token).
+//   - Valid token whose agent_instance_id does not match the vm_id in the body
+//     or belongs to the wrong tenant → returns ("", non-nil error).
+func (h *RuntimeSecretsHandler) verifyInstanceToken(ctx context.Context, r *http.Request, vmID, tenantID string) (string, error) {
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		return "", nil // no token present — not an error
+	}
+	const prefix = "Bearer "
+	if !strings.HasPrefix(auth, prefix) {
+		return "", errors.New("invalid Authorization header format")
+	}
+	tokenStr := strings.TrimPrefix(auth, prefix)
+	if tokenStr == "" {
+		return "", errors.New("empty Bearer token")
+	}
+
+	claims, err := h.identity.Verify(tokenStr)
+	if err != nil {
+		return "", fmt.Errorf("invalid agent-instance token: %w", err)
+	}
+
+	// Single query: fetch tenant_id, vm_id, and state in one round-trip.
+	// This eliminates the TOCTOU window that existed when these were two
+	// sequential SELECTs (the row could change between them) and halves
+	// the DB load on the hot secret-resolve path.
+	var rowTenantID, rowVmID, rowState string
+	dbErr := h.srv.Pool.QueryRow(ctx, `
+		SELECT tenant_id, vm_id, state
+		FROM runtime_vms
+		WHERE agent_instance_id = $1
+	`, claims.AgentInstanceID).Scan(&rowTenantID, &rowVmID, &rowState)
+	if dbErr != nil {
+		if errors.Is(dbErr, pgx.ErrNoRows) {
+			return "", errors.New("agent_instance_id not found in runtime_vms")
+		}
+		h.logger().Warn("verifyInstanceToken: db error",
+			zap.String("agent_instance_id", claims.AgentInstanceID),
+			zap.Error(dbErr),
+		)
+		return "", errors.New("instance token verification failed")
+	}
+	if rowTenantID != tenantID {
+		return "", errors.New("agent_instance_id belongs to a different tenant")
+	}
+	if rowVmID != vmID {
+		return "", errors.New("agent_instance_id does not match vm_id")
+	}
+	for _, terminal := range terminalVMStates {
+		if rowState == terminal {
+			return "", errors.New("VM is in a terminal state")
+		}
+	}
+
+	return claims.AgentInstanceID, nil
+}
+
 // ---------- Audit helpers ----------
 
 // auditVMBindingDenied writes a runtime_audit_events row for a vm-binding
@@ -513,7 +583,8 @@ func (h *RuntimeSecretsHandler) auditVMBindingDenied(ctx context.Context, tenant
 
 // auditSecretResolve writes a runtime_audit_events row for a resolve call.
 // ref names are recorded; values are never logged.
-func (h *RuntimeSecretsHandler) auditSecretResolve(ctx context.Context, tenantID, vmID string, refNames []string, resolvedCount int) {
+// agentInstanceID is set when the caller presented a valid instance Bearer token.
+func (h *RuntimeSecretsHandler) auditSecretResolve(ctx context.Context, tenantID, vmID, agentInstanceID string, refNames []string, resolvedCount int) {
 	attrs := map[string]any{
 		"ref_names":      refNames,
 		"resolved_count": resolvedCount,
@@ -526,10 +597,14 @@ func (h *RuntimeSecretsHandler) auditSecretResolve(ctx context.Context, tenantID
 	if vmID != "" {
 		vmIDArg = vmID
 	}
+	var instanceArg any
+	if agentInstanceID != "" {
+		instanceArg = agentInstanceID
+	}
 	if _, execErr := h.srv.Pool.Exec(ctx, `
-		INSERT INTO runtime_audit_events (tenant_id, vm_id, action, attrs)
-		VALUES ($1, $2, 'secret_resolve', $3::jsonb)
-	`, tenantID, vmIDArg, attrsJSON); execErr != nil {
+		INSERT INTO runtime_audit_events (tenant_id, vm_id, action, attrs, agent_instance_id)
+		VALUES ($1, $2, 'secret_resolve', $3::jsonb, $4)
+	`, tenantID, vmIDArg, attrsJSON, instanceArg); execErr != nil {
 		// Best-effort: log the failure but never abort the response.
 		h.logger().Warn("audit insert failed for secret_resolve",
 			zap.String("tenant_id", tenantID),
@@ -608,6 +683,35 @@ func (h *RuntimeSecretsHandler) ResolveSecrets(w http.ResponseWriter, r *http.Re
 	}
 
 	ctx := r.Context()
+
+	// --- Optional agent-instance Bearer token verification (ADDITIVE) ---
+	// If the request presents an Authorization: Bearer <token>, verify it as
+	// an agent-instance JWT and confirm the embedded agent_instance_id maps to
+	// the vm_id + tenant_id in the body. On success, the resolved instance id
+	// is attributed in the audit row. The shared-token path below is unchanged
+	// when no Bearer token is present. A present-but-invalid token is rejected
+	// immediately (fail-closed) — we never silently downgrade to shared-token.
+	var resolvedInstanceID string
+	if authHdr := r.Header.Get("Authorization"); authHdr != "" {
+		iid, ierr := h.verifyInstanceToken(ctx, r, req.VmID, req.TenantID)
+		if ierr != nil {
+			ip := remoteIP(r)
+			if h.recordAuthFailure(ip) {
+				h.logger().Warn("secret relay: instance token rate limit exceeded",
+					zap.String("remote_addr", ip),
+				)
+				writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many requests"})
+				return
+			}
+			h.logger().Warn("secret relay: invalid agent-instance token",
+				zap.String("vm_id", req.VmID),
+				zap.Error(ierr),
+			)
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
+		resolvedInstanceID = iid
+	}
 
 	// --- VM binding check ---
 	// Verify that the requested vm_id exists, belongs to tenant_id, and is in a
@@ -688,7 +792,9 @@ func (h *RuntimeSecretsHandler) ResolveSecrets(w http.ResponseWriter, r *http.Re
 	}
 
 	// --- Audit (best-effort, after resolution) ---
-	h.auditSecretResolve(ctx, req.TenantID, req.VmID, refNames, resolvedCount)
+	// resolvedInstanceID is non-empty only when a valid agent-instance Bearer
+	// token was presented; otherwise it's "" (column is nullable).
+	h.auditSecretResolve(ctx, req.TenantID, req.VmID, resolvedInstanceID, refNames, resolvedCount)
 
 	h.logger().Debug("secret relay: resolved",
 		zap.String("tenant_id", req.TenantID),
