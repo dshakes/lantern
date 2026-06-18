@@ -25,6 +25,7 @@ import (
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/cluster"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/dialer"
+	"github.com/dshakes/lantern/services/runtime-scheduler/internal/metrics"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/middleware"
 	"github.com/dshakes/lantern/services/runtime-scheduler/internal/placement"
 )
@@ -40,6 +41,17 @@ type SnapshotPersister interface {
 	PersistSnapshot(ctx context.Context, snapshotID, vmID, tenantID, nodeName string, keepRunning bool, resp *lanternv1.SnapshotResponse)
 }
 
+// Elector is the subset of leader.Elector used by the service.
+// Extracted as an interface so tests can stub it.
+type Elector interface {
+	IsLeader() bool
+}
+
+// alwaysLeader is a sentinel used when no Elector is wired.
+type alwaysLeader struct{}
+
+func (alwaysLeader) IsLeader() bool { return true }
+
 // SchedulerService implements lanternv1.RuntimeSchedulerServer.
 type SchedulerService struct {
 	lanternv1.UnimplementedRuntimeSchedulerServer
@@ -50,6 +62,8 @@ type SchedulerService struct {
 	Logger            *zap.Logger
 	TenantHardCap     int // hard ceiling enforced before placement
 	SnapshotPersister SnapshotPersister
+	Elector           Elector
+	Metrics           *metrics.Registry
 }
 
 // NewSchedulerService constructs the service. Caller must wire all deps.
@@ -66,24 +80,47 @@ func NewSchedulerService(
 		Dialer:        d,
 		Logger:        logger.Named("scheduler_grpc"),
 		TenantHardCap: tenantHardCap,
+		Elector:       alwaysLeader{},
 	}
 }
 
 // Schedule picks a node for the supplied spec, dispatches the spawn to
 // that node's runtime-manager, and returns a VmHandle. The caller listens
 // to /events for state changes.
+//
+// Schedule is a leader-only mutating operation; standbys return Unavailable so
+// the caller can retry against another replica.
 func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.ScheduleRequest) (*lanternv1.VmHandle, error) {
 	ctx, span := tracer.Start(ctx, "RuntimeScheduler.Schedule")
 	defer span.End()
 
+	if !s.Elector.IsLeader() {
+		if s.Metrics != nil {
+			s.Metrics.ScheduleTotal.WithLabelValues("standby").Inc()
+		}
+		return nil, status.Error(codes.Unavailable, "not the leader — retry on another replica")
+	}
+
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
+		if s.Metrics != nil {
+			s.Metrics.ScheduleTotal.WithLabelValues("error").Inc()
+			s.Metrics.ScheduleErrorsTotal.Inc()
+		}
 		return nil, err
 	}
 	if req == nil || req.Spec == nil {
+		if s.Metrics != nil {
+			s.Metrics.ScheduleTotal.WithLabelValues("error").Inc()
+			s.Metrics.ScheduleErrorsTotal.Inc()
+		}
 		return nil, status.Error(codes.InvalidArgument, "spec is required")
 	}
 	if req.Spec.ImageDigest == "" {
+		if s.Metrics != nil {
+			s.Metrics.ScheduleTotal.WithLabelValues("error").Inc()
+			s.Metrics.ScheduleErrorsTotal.Inc()
+		}
 		return nil, status.Error(codes.InvalidArgument, "spec.image_digest is required (tags not allowed)")
 	}
 
@@ -93,6 +130,9 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 	// Quota enforcement (hard cap). Soft cap is encoded in the score.
 	live := s.Store.TenantLiveVMs(tenantID)
 	if s.TenantHardCap > 0 && live >= s.TenantHardCap {
+		if s.Metrics != nil {
+			s.Metrics.ScheduleTotal.WithLabelValues("quota").Inc()
+		}
 		return nil, status.Errorf(codes.ResourceExhausted,
 			"tenant %s is at the concurrent-VM hard cap (%d)", tenantID, s.TenantHardCap)
 	}
@@ -104,6 +144,10 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 			zap.String("image", req.Spec.ImageDigest),
 			zap.Error(err),
 		)
+		if s.Metrics != nil {
+			s.Metrics.ScheduleTotal.WithLabelValues("error").Inc()
+			s.Metrics.ScheduleErrorsTotal.Inc()
+		}
 		return nil, status.Errorf(codes.FailedPrecondition, "placement failed: %v", err)
 	}
 
@@ -123,6 +167,10 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 		attribute.Float64("placement.score", decision.Score),
 	)
 
+	if s.Metrics != nil {
+		s.Metrics.PlacementScore.Observe(decision.Score)
+	}
+
 	vm := &cluster.VM{
 		Handle:      handle,
 		Spec:        req.Spec,
@@ -133,6 +181,11 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 	}
 	s.Store.CreateVM(vm)
 	s.Store.IncrTenantVMs(tenantID, 1)
+
+	if s.Metrics != nil {
+		s.Metrics.ActiveVMs.Inc()
+		s.Metrics.ScheduleTotal.WithLabelValues("ok").Inc()
+	}
 
 	// Emit PENDING then dispatch the spawn.
 	s.emit(tenantID, &lanternv1.StatusEvent{
@@ -226,8 +279,11 @@ func (s *SchedulerService) List(ctx context.Context, req *lanternv1.ListRequest)
 	return resp, nil
 }
 
-// Terminate drains + terminates a VM. Caller-supplied grace is forwarded.
+// Terminate drains + terminates a VM. Leader-only mutating operation.
 func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.TerminateRequest) (*lanternv1.TerminateResponse, error) {
+	if !s.Elector.IsLeader() {
+		return nil, status.Error(codes.Unavailable, "not the leader — retry on another replica")
+	}
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -271,16 +327,18 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 	})
 	s.Store.DeleteVM(req.VmId)
 	s.Store.IncrTenantVMs(tenantID, -1)
+	if s.Metrics != nil {
+		s.Metrics.ActiveVMs.Dec()
+	}
 
 	return &lanternv1.TerminateResponse{Ok: true, Detail: "terminated"}, nil
 }
 
-// Snapshot requests a snapshot of a running VM. Forwards the request to the
-// owning node's runtime-manager via the dialer. The manager may return
-// Unimplemented (W12 in-progress); we fall back to a synthetic ID in that
-// case and log the outcome. Snapshot metadata is persisted via SnapshotPersister
-// when one is wired (non-nil).
+// Snapshot requests a snapshot of a running VM. Leader-only mutating operation.
 func (s *SchedulerService) Snapshot(ctx context.Context, req *lanternv1.SnapshotRequest) (*lanternv1.SnapshotResponse, error) {
+	if !s.Elector.IsLeader() {
+		return nil, status.Error(codes.Unavailable, "not the leader — retry on another replica")
+	}
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return nil, err
