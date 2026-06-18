@@ -301,6 +301,7 @@ mod tests {
     fn make_req(run_id: &str, digest: &[u8], iso: IsolationClass) -> ScheduleRequest {
         ScheduleRequest {
             run_id: run_id.to_string(),
+            tenant_id: "test-tenant".to_string(),
             bundle_uri: String::new(),
             bundle_digest: digest.to_vec(),
             isolation_class: iso,

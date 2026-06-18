@@ -59,7 +59,9 @@ use std::collections::HashMap;
 
 use crate::backend::{ExecOutput, Handle, RuntimeBackend, SnapshotInfo, StatsSample};
 use crate::backends::DockerBackend;
-use crate::proto::{RestoreRequest, RuntimeEvent, ScheduleRequest, SnapshotRequest};
+use crate::proto::{
+    IsolationClass, RestoreRequest, RuntimeEvent, ScheduleRequest, SnapshotRequest,
+};
 
 /// Default name under which Kata Containers registers itself with the Docker
 /// daemon (key in `/etc/docker/daemon.json` → `"runtimes"` map).
@@ -325,6 +327,13 @@ impl RuntimeBackend for KataBackend {
 
     fn name(&self) -> &'static str {
         "kata"
+    }
+
+    /// Kata is a microVM-backed OCI runtime: every isolation class is acceptable
+    /// because workloads run inside KVM-backed virtual machines regardless of
+    /// which Docker runtime shim is used.
+    fn satisfies_isolation(&self, _class: IsolationClass) -> bool {
+        true
     }
 
     /// Exec works identically on Kata containers — the Docker exec API is the

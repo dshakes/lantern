@@ -21,14 +21,13 @@
 // (vsock or host-network) is the boundary. See ADR note in service.rs.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 
 use crate::proto::{
-    self, HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse, pb,
+    self, pb, HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse,
 };
 
 /// Connection state for the manager. The harness MUST tolerate the manager
@@ -90,41 +89,126 @@ impl ManagerClient {
         g.has_ever_connected = true;
     }
 
-    /// Open a long-lived bidirectional Heartbeat stream. The returned
-    /// channels are: send heartbeats in via `tx`, drain HeartbeatAcks via
-    /// `rx`. The actual transport wiring is in `heartbeat.rs`.
+    /// Open the real bidirectional `RuntimeHarness.Heartbeat` gRPC stream.
     ///
-    /// Returns Err if the manager is unreachable so the caller can back off.
+    /// Returns `(tx, rx)` where:
+    ///   - `tx` accepts `HeartbeatRequest` values from `heartbeat.rs` (the
+    ///     sender loop) and forwards them to the manager over the wire.
+    ///   - `rx` delivers `HeartbeatAck` values received from the manager
+    ///     (may carry egress overrides, drain/snapshot signals, etc.).
+    ///
+    /// Uses the same mTLS channel setup as `vend_secret`. Falls back to
+    /// plaintext when the TLS env vars are absent (dev mode).
+    ///
+    /// Returns `Err` when the manager is unreachable so the caller's
+    /// exponential-backoff reconnect loop in `heartbeat.rs` can retry without
+    /// stopping the workload.
     pub async fn open_heartbeat_stream(
         &self,
     ) -> Result<(mpsc::Sender<HeartbeatRequest>, mpsc::Receiver<HeartbeatAck>)> {
-        // TODO: replace with the real tonic RuntimeHarnessClient bidirectional
-        // Heartbeat stream once the manager's heartbeat handler is wired.
-        //
-        // For now we install a loopback pair so the supervisor can keep
-        // running even with no manager. The heartbeat task treats this as a
-        // healthy-but-silent peer: it pushes acks with no policy changes.
-        let _ = tokio::net::TcpStream::connect(&self.manager_addr)
-            .await
-            .map_err(|e| anyhow::anyhow!("manager unreachable: {e}"))?;
+        let tls_config = crate::tls::build_client_tls_config()
+            .with_context(|| "heartbeat: failed to build TLS client config")?;
 
-        let (req_tx, _req_rx) = mpsc::channel::<HeartbeatRequest>(8);
+        let scheme = if tls_config.is_some() {
+            "https"
+        } else {
+            "http"
+        };
+        let endpoint_url = format!("{scheme}://{}", self.manager_addr);
+        let endpoint = tonic::transport::Endpoint::from_shared(endpoint_url.clone())
+            .with_context(|| format!("heartbeat: invalid endpoint URL {endpoint_url}"))?;
+
+        let endpoint = if let Some(tls) = tls_config {
+            endpoint
+                .tls_config(tls)
+                .with_context(|| "heartbeat: failed to apply TLS config to endpoint")?
+        } else {
+            endpoint
+        };
+
+        let mut client = pb::runtime_harness_client::RuntimeHarnessClient::connect(endpoint)
+            .await
+            .with_context(|| {
+                format!(
+                    "heartbeat: could not connect to manager at {}",
+                    self.manager_addr
+                )
+            })?;
+
+        // Outbound channel: heartbeat.rs pushes HeartbeatRequest here; we
+        // forward each one (converted to pb) into the tonic stream.
+        let (req_tx, mut req_rx) = mpsc::channel::<HeartbeatRequest>(8);
+        // Inbound channel: tonic acks are converted and delivered here.
         let (ack_tx, ack_rx) = mpsc::channel::<HeartbeatAck>(8);
 
-        tracing::warn!(
-            vm_id = %self.vm_id,
-            manager_addr = %self.manager_addr,
-            "heartbeat: policy-refresh is STUBBED — egress rule revocations \
-             from the manager will NOT take effect until the real gRPC stream \
-             is wired"
-        );
+        // Bridge the internal req_rx into a tonic ReceiverStream.
+        // We use a separate mpsc to avoid holding req_rx across the await.
+        let (wire_tx, wire_rx) = mpsc::channel::<pb::HeartbeatRequest>(8);
+        let manager_addr = self.manager_addr.clone();
+        let vm_id = self.vm_id.clone();
 
+        // Converter task: internal HeartbeatRequest → pb wire type.
         tokio::spawn(async move {
-            loop {
-                if ack_tx.send(HeartbeatAck::default()).await.is_err() {
+            while let Some(req) = req_rx.recv().await {
+                let wire = pb::HeartbeatRequest::from(req);
+                if wire_tx.send(wire).await.is_err() {
+                    // tonic stream task exited; stop converting.
+                    break;
+                }
+            }
+        });
+
+        // tonic stream task: open the bidi RPC and relay acks back.
+        let contact = self.clone();
+        tokio::spawn(async move {
+            let req_stream = tokio_stream::wrappers::ReceiverStream::new(wire_rx);
+            let mut ack_stream = match client.heartbeat(req_stream).await {
+                Ok(resp) => resp.into_inner(),
+                Err(e) => {
+                    tracing::warn!(
+                        vm_id = %vm_id,
+                        manager_addr = %manager_addr,
+                        error = %e,
+                        "heartbeat: RPC call failed after connect"
+                    );
                     return;
                 }
-                tokio::time::sleep(Duration::from_secs(5)).await;
+            };
+
+            tracing::info!(
+                vm_id = %vm_id,
+                manager_addr = %manager_addr,
+                "heartbeat: bidi stream established"
+            );
+
+            loop {
+                match ack_stream.message().await {
+                    Ok(Some(wire_ack)) => {
+                        // Refresh liveness on every ack so /healthz (when it
+                        // lands) reflects ongoing contact, not just stream-open.
+                        contact.note_contact().await;
+                        let ack = HeartbeatAck::from(wire_ack);
+                        if ack_tx.send(ack).await.is_err() {
+                            // heartbeat.rs ack reader exited; close cleanly.
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::debug!(
+                            vm_id = %vm_id,
+                            "heartbeat: manager closed ack stream (VM draining?)"
+                        );
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            vm_id = %vm_id,
+                            error = %e,
+                            "heartbeat: ack stream error; reconnect will be triggered"
+                        );
+                        break;
+                    }
+                }
             }
         });
 
@@ -294,5 +378,194 @@ mod tests {
             resp.expires_at_unix_ms > proto::now_unix_ms(),
             "stub expiry must be in the future"
         );
+    }
+
+    /// When the manager is unreachable, `open_heartbeat_stream` must return
+    /// `Err` so the backoff reconnect loop in `heartbeat.rs` can retry without
+    /// stopping the workload.
+    #[tokio::test]
+    async fn heartbeat_stream_fails_when_manager_unreachable() {
+        let client = ManagerClient::new(
+            // Port 1 is reserved and will be refused immediately.
+            "127.0.0.1:1".to_string(),
+            "test-vm-hb".to_string(),
+        );
+        let result = client.open_heartbeat_stream().await;
+        assert!(
+            result.is_err(),
+            "expected Err when manager is unreachable, got Ok"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Proto conversion tests (pure, no I/O)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod proto_conversion_tests {
+    use crate::proto::{self, pb, HeartbeatAck, HeartbeatRequest, ResourceUsage};
+
+    /// HeartbeatRequest → pb::HeartbeatRequest round-trip: all fields preserved.
+    #[test]
+    fn heartbeat_request_converts_to_wire() {
+        let at_ms: i64 = 1_700_000_000_123; // arbitrary unix-ms
+        let req = HeartbeatRequest {
+            vm_id: "vm-conv-test".to_string(),
+            at_unix_ms: at_ms,
+            usage: ResourceUsage {
+                vcpu_ms_used: 42,
+                memory_bytes: 128 * 1024 * 1024,
+                network_bytes_in: 1000,
+                network_bytes_out: 2000,
+                disk_bytes: 4096,
+                cost_usd_accumulated: 0.001,
+            },
+            worker_pid: 12345,
+            restart_count: 2,
+        };
+
+        let wire = pb::HeartbeatRequest::from(req);
+
+        assert_eq!(wire.vm_id, "vm-conv-test");
+        assert_eq!(wire.worker_pid, 12345);
+        assert_eq!(wire.restart_count, 2);
+
+        let ts = wire.at.expect("Timestamp must be set");
+        // Timestamp seconds = at_ms / 1000
+        assert_eq!(ts.seconds, at_ms / 1_000);
+        // Timestamp nanos = (at_ms % 1000) * 1_000_000
+        assert_eq!(ts.nanos, ((at_ms % 1_000) * 1_000_000) as i32);
+
+        let usage = wire.usage.expect("ResourceUsage must be set");
+        assert_eq!(usage.vcpu_ms_used, 42);
+        assert_eq!(usage.memory_bytes, 128 * 1024 * 1024);
+        assert_eq!(usage.network_bytes_in, 1000);
+        assert_eq!(usage.network_bytes_out, 2000);
+        assert_eq!(usage.disk_bytes, 4096);
+        assert!((usage.cost_usd_accumulated - 0.001).abs() < f64::EPSILON);
+    }
+
+    /// HeartbeatRequest with at_unix_ms=0 must produce a zero Timestamp, not
+    /// a negative nanos value (the ms % 1000 branch on zero is fine).
+    #[test]
+    fn heartbeat_request_zero_timestamp() {
+        let req = HeartbeatRequest {
+            at_unix_ms: 0,
+            ..Default::default()
+        };
+        let wire = pb::HeartbeatRequest::from(req);
+        let ts = wire.at.expect("Timestamp must be set");
+        assert_eq!(ts.seconds, 0);
+        assert_eq!(ts.nanos, 0);
+    }
+
+    /// pb::HeartbeatAck → HeartbeatAck: drain/snapshot flags + egress rules.
+    #[test]
+    fn heartbeat_ack_converts_from_wire_drain_snapshot() {
+        let wire = pb::HeartbeatAck {
+            egress_overrides: vec![],
+            limits_override: None,
+            drain: true,
+            snapshot: true,
+        };
+        let ack = HeartbeatAck::from(wire);
+        assert!(ack.drain, "drain must be true");
+        assert!(ack.snapshot, "snapshot must be true");
+        assert!(ack.egress_overrides.is_empty());
+        assert!(ack.limits_override.is_none());
+    }
+
+    /// pb::HeartbeatAck with egress overrides: patterns and methods preserved.
+    #[test]
+    fn heartbeat_ack_converts_egress_overrides() {
+        let wire = pb::HeartbeatAck {
+            egress_overrides: vec![
+                pb::EgressRule {
+                    pattern: "*.openai.com".to_string(),
+                    http_methods: vec!["POST".to_string()],
+                    rate_bps: 1_000_000,
+                },
+                pb::EgressRule {
+                    pattern: "10.0.0.0/8".to_string(),
+                    http_methods: vec![],
+                    rate_bps: 0,
+                },
+            ],
+            limits_override: None,
+            drain: false,
+            snapshot: false,
+        };
+        let ack = HeartbeatAck::from(wire);
+        assert_eq!(ack.egress_overrides.len(), 2);
+        assert_eq!(ack.egress_overrides[0].pattern, "*.openai.com");
+        assert_eq!(ack.egress_overrides[0].http_methods, vec!["POST"]);
+        assert_eq!(ack.egress_overrides[0].rate_bps, 1_000_000);
+        assert_eq!(ack.egress_overrides[1].pattern, "10.0.0.0/8");
+        assert!(ack.egress_overrides[1].http_methods.is_empty());
+    }
+
+    /// pb::HeartbeatAck with a limits_override: all ResourceLimits fields
+    /// are preserved, including the timeout_secs conversion.
+    #[test]
+    fn heartbeat_ack_converts_limits_override() {
+        let wire = pb::HeartbeatAck {
+            egress_overrides: vec![],
+            limits_override: Some(pb::ResourceLimits {
+                vcpu: "2000m".to_string(),
+                memory: "1Gi".to_string(),
+                gpu: "".to_string(),
+                timeout: Some(prost_types::Duration {
+                    seconds: 300,
+                    nanos: 0,
+                }),
+                max_steps: 100,
+                max_tokens: 4096,
+                max_cost_usd: 0.50,
+                scratch_size: "512Mi".to_string(),
+            }),
+            drain: false,
+            snapshot: false,
+        };
+        let ack = HeartbeatAck::from(wire);
+        let limits = ack.limits_override.expect("limits_override must be Some");
+        assert_eq!(limits.vcpu, "2000m");
+        assert_eq!(limits.memory, "1Gi");
+        assert_eq!(limits.timeout_secs, 300);
+        assert_eq!(limits.max_steps, 100);
+        assert_eq!(limits.max_tokens, 4096);
+        assert!((limits.max_cost_usd - 0.50).abs() < f64::EPSILON);
+        assert_eq!(limits.scratch_size, "512Mi");
+    }
+
+    /// limits_override with no timeout set maps to timeout_secs = 0.
+    #[test]
+    fn heartbeat_ack_limits_no_timeout_maps_to_zero() {
+        let wire = pb::HeartbeatAck {
+            egress_overrides: vec![],
+            limits_override: Some(pb::ResourceLimits {
+                vcpu: "500m".to_string(),
+                memory: "256Mi".to_string(),
+                gpu: "".to_string(),
+                timeout: None,
+                max_steps: 0,
+                max_tokens: 0,
+                max_cost_usd: 0.0,
+                scratch_size: "".to_string(),
+            }),
+            drain: false,
+            snapshot: false,
+        };
+        let ack = HeartbeatAck::from(wire);
+        let limits = ack.limits_override.unwrap();
+        assert_eq!(limits.timeout_secs, 0, "absent timeout must map to 0");
+    }
+
+    /// now_unix_ms returns a plausible current time (after year 2020).
+    #[test]
+    fn now_unix_ms_is_sane() {
+        let ms = proto::now_unix_ms();
+        // 2020-01-01T00:00:00Z = 1577836800000 ms
+        assert!(ms > 1_577_836_800_000, "timestamp looks wrong: {ms}");
     }
 }

@@ -2,7 +2,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 
-use crate::proto::{RestoreRequest, RuntimeEvent, ScheduleRequest, SnapshotRequest};
+use crate::proto::{
+    IsolationClass, RestoreRequest, RuntimeEvent, ScheduleRequest, SnapshotRequest,
+};
 
 /// A handle to a running sandbox instance.
 #[derive(Clone, Debug)]
@@ -69,6 +71,26 @@ pub trait RuntimeBackend: Send + Sync {
 
     /// Return a human-readable name for this backend.
     fn name(&self) -> &'static str;
+
+    /// Return whether this backend can satisfy the required isolation level.
+    ///
+    /// # Security invariant
+    ///
+    /// The default is **conservative**: `UNTRUSTED` and `HOSTILE` return `false`
+    /// so any backend that does not explicitly opt in cannot accidentally accept
+    /// hostile or untrusted workloads. Only microVM backends (Firecracker, the
+    /// Kata Docker backend) and the K8s backend with the appropriate hardened
+    /// RuntimeClass configured may return `true` for those classes.
+    ///
+    /// Backends that override this method MUST preserve the invariant: never
+    /// return `true` for `UNTRUSTED`/`HOSTILE` unless the workload will run
+    /// inside a hardware-isolated boundary (gVisor or a microVM).
+    fn satisfies_isolation(&self, class: IsolationClass) -> bool {
+        // Conservative default: accept everything except the two classes that
+        // require hardware/kernel isolation. Any backend that can genuinely
+        // satisfy UNTRUSTED or HOSTILE must override this method.
+        !matches!(class, IsolationClass::Untrusted | IsolationClass::Hostile)
+    }
 
     /// Run a one-shot command inside a running sandbox and collect its output.
     ///
