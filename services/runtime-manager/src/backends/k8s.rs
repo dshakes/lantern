@@ -106,14 +106,22 @@ impl K8sBackend {
         })
     }
 
-    /// Derive the tenant namespace from a run_id.
-    /// In production, tenant_id comes from gRPC metadata; for the spike, we
-    /// extract it from the env or default to "default".
-    fn namespace_for(req: &ScheduleRequest) -> String {
-        req.env
-            .get("LANTERN_TENANT_ID")
-            .map(|tid| format!("lantern-t-{tid}"))
-            .unwrap_or_else(|| "lantern-t-default".to_string())
+    /// Derive the tenant namespace from the authenticated `req.tenant_id` field.
+    ///
+    /// This MUST NOT fall back to `req.env["LANTERN_TENANT_ID"]` — the env map
+    /// is caller-supplied and could be used to smuggle a victim tenant's id.
+    /// An empty `tenant_id` indicates a bug upstream (the spawn gate in
+    /// `spawn_to_schedule` rejects empty values before reaching here), so we
+    /// return `Err` rather than silently using a shared "default" namespace.
+    fn namespace_for(req: &ScheduleRequest) -> Result<String> {
+        if req.tenant_id.is_empty() {
+            anyhow::bail!(
+                "BUG: ScheduleRequest.tenant_id is empty — namespace derivation refused \
+                 to avoid cross-tenant namespace escape; the spawn gate should have \
+                 rejected this request before it reached the K8s backend"
+            );
+        }
+        Ok(format!("lantern-t-{}", req.tenant_id))
     }
 
     /// Parse timeout string (e.g., "300s", "5m") to seconds for the active deadline.
@@ -142,7 +150,13 @@ impl K8sBackend {
     /// pure [`build_job`] free function so the live `schedule` path reads
     /// straight-line while the manifest generation stays unit-testable.
     fn build_job(&self, req: &ScheduleRequest, job_name: &str, namespace: &str) -> Result<Job> {
-        build_job(req, &self.agent_image, job_name, namespace, &self.runtime_classes)
+        build_job(
+            req,
+            &self.agent_image,
+            job_name,
+            namespace,
+            &self.runtime_classes,
+        )
     }
 
     /// Wait for the job's pod to be scheduled and running (or failed).
@@ -434,7 +448,7 @@ pub(crate) fn k8s_satisfies_isolation(cfg: &RuntimeClassConfig, class: Isolation
 impl RuntimeBackend for K8sBackend {
     async fn schedule(&self, req: &ScheduleRequest) -> Result<Handle> {
         let start = Instant::now();
-        let namespace = Self::namespace_for(req);
+        let namespace = Self::namespace_for(req)?;
         let job_name = format!(
             "lantern-run-{}-{}",
             &req.run_id[..8.min(req.run_id.len())],
@@ -1062,6 +1076,7 @@ mod tests {
     fn req_with(network: NetworkPolicyClass, egress: Vec<EgressRule>) -> ScheduleRequest {
         ScheduleRequest {
             run_id: "run-abc12345-def".to_string(),
+            tenant_id: "acme".to_string(),
             bundle_uri: "sha256:deadbeef".to_string(),
             bundle_digest: vec![],
             isolation_class: IsolationClass::Untrusted,
@@ -1412,6 +1427,7 @@ mod tests {
     fn make_req(isolation: IsolationClass) -> ScheduleRequest {
         ScheduleRequest {
             run_id: "run-test-0001".to_string(),
+            tenant_id: "test-tenant".to_string(),
             bundle_uri: "sha256:abc".to_string(),
             bundle_digest: vec![],
             isolation_class: isolation,
@@ -1582,8 +1598,9 @@ mod tests {
             "ns",
             &RuntimeClassConfig::default(), // Kata unset
         );
-        let err = result
-            .expect_err("HOSTILE with no Kata config must fail — a bare runc pod is never acceptable");
+        let err = result.expect_err(
+            "HOSTILE with no Kata config must fail — a bare runc pod is never acceptable",
+        );
         let msg = err.to_string();
         assert!(
             msg.contains("HOSTILE"),
@@ -1644,6 +1661,45 @@ mod tests {
         assert!(
             k8s_satisfies_isolation(&cfg, IsolationClass::Hostile),
             "HOSTILE must be accepted when Kata is configured"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // namespace_for: authenticated tenant_id field drives namespace derivation
+    // -----------------------------------------------------------------------
+
+    /// namespace_for derives the K8s namespace from req.tenant_id (authenticated
+    /// field), NOT from req.env["LANTERN_TENANT_ID"] (caller-supplied).
+    #[test]
+    fn namespace_for_uses_authenticated_tenant_id_field() {
+        let mut req = make_req(IsolationClass::Trusted);
+        req.tenant_id = "acme-corp".to_string();
+        // Even if env carries a different value, tenant_id field wins.
+        req.env
+            .insert("LANTERN_TENANT_ID".to_string(), "attacker".to_string());
+
+        let ns = K8sBackend::namespace_for(&req).expect("non-empty tenant_id should succeed");
+        assert_eq!(ns, "lantern-t-acme-corp");
+        assert_ne!(ns, "lantern-t-attacker", "env value must be ignored");
+    }
+
+    /// namespace_for returns Err when tenant_id is empty — the upstream spawn
+    /// gate should have rejected this, but defense-in-depth here too.
+    #[test]
+    fn namespace_for_rejects_empty_tenant_id() {
+        let mut req = make_req(IsolationClass::Trusted);
+        req.tenant_id = String::new();
+        // Even with an env value, empty tenant_id is refused.
+        req.env.insert(
+            "LANTERN_TENANT_ID".to_string(),
+            "should-not-be-used".to_string(),
+        );
+
+        let err = K8sBackend::namespace_for(&req)
+            .expect_err("empty tenant_id must be refused (fail-closed)");
+        assert!(
+            err.to_string().contains("tenant_id is empty"),
+            "error must mention empty tenant_id: {err}"
         );
     }
 

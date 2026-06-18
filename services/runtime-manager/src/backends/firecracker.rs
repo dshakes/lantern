@@ -2744,6 +2744,7 @@ mod tests {
     fn minimal_schedule_req() -> ScheduleRequest {
         ScheduleRequest {
             run_id: "run-001".to_string(),
+            tenant_id: "test-tenant".to_string(),
             bundle_uri: "s3://bucket/bundle.tar.gz".to_string(),
             bundle_digest: vec![],
             isolation_class: IsolationClass::Hostile,
@@ -3392,6 +3393,7 @@ mod tests {
         let req = crate::proto::RestoreRequest {
             snapshot_uri: "fc:///snap".to_string(),
             run_id: "run-1".to_string(),
+            tenant_id: "test-tenant".to_string(),
             input: serde_json::Value::Null,
             env: HashMap::new(),
             secrets: vec![],
@@ -4275,6 +4277,7 @@ mod tests {
         let req = crate::proto::RestoreRequest {
             snapshot_uri: uri.clone(),
             run_id: "run-1".to_string(),
+            tenant_id: "test-tenant".to_string(),
             input: serde_json::Value::Null,
             env: HashMap::new(),
             secrets: vec![],

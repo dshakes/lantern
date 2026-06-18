@@ -186,7 +186,7 @@ mod tests {
     /// chain is covered: empty env → None config → satisfies_isolation = false.
     #[test]
     fn empty_gvisor_env_does_not_satisfy_untrusted() {
-        use crate::backends::k8s::{k8s_satisfies_isolation, RuntimeClassConfig};
+        use crate::backends::k8s::{RuntimeClassConfig, k8s_satisfies_isolation};
         use crate::proto::IsolationClass;
 
         // Simulate what happens when LANTERN_RUNTIMECLASS_GVISOR="" in env.

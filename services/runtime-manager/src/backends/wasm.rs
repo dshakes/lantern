@@ -61,8 +61,8 @@
 //! in a stable public API).  If the instance has already exited, returns
 //! `not supported` consistent with the default.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -72,9 +72,9 @@ use futures::stream::BoxStream;
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 use wasmtime::{Config as WasmConfig, Engine, Linker, Module, Store, StoreLimitsBuilder};
-use wasmtime_wasi::p1::{add_to_linker_async, WasiP1Ctx};
-use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::WasiCtxBuilder;
+use wasmtime_wasi::p1::{WasiP1Ctx, add_to_linker_async};
+use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 
 use crate::backend::{Handle, RuntimeBackend, SnapshotInfo, StatsSample};
 use crate::proto::{
@@ -813,6 +813,7 @@ mod tests {
     fn make_req(image: &str, limits: ResourceLimits) -> ScheduleRequest {
         ScheduleRequest {
             run_id: "test-run-1".to_string(),
+            tenant_id: "test-tenant".to_string(),
             bundle_uri: image.to_string(),
             bundle_digest: vec![],
             isolation_class: crate::proto::IsolationClass::Wasm,

@@ -104,16 +104,12 @@ fn choose_backend(
     } else {
         let name = default_backend.name();
         let hint = match isolation_class {
-            proto::IsolationClass::Untrusted => {
-                "UNTRUSTED requires the gVisor RuntimeClass; \
+            proto::IsolationClass::Untrusted => "UNTRUSTED requires the gVisor RuntimeClass; \
                  set LANTERN_RUNTIMECLASS_GVISOR on a node that has gVisor installed"
-                    .to_string()
-            }
-            proto::IsolationClass::Hostile => {
-                "HOSTILE requires the Kata RuntimeClass; \
+                .to_string(),
+            proto::IsolationClass::Hostile => "HOSTILE requires the Kata RuntimeClass; \
                  set LANTERN_RUNTIMECLASS_KATA on a node that has Kata Containers installed"
-                    .to_string()
-            }
+                .to_string(),
             _ => format!(
                 "isolation_class {:?} is not supported by the '{}' backend",
                 isolation_class, name
@@ -391,12 +387,10 @@ impl RuntimeManagerGrpc {
         // not the pool's stored backend, to preserve the security invariant.
         let handle = backend.schedule(&req).await.map_err(Self::to_status)?;
 
-        // Extract tenant_id from the request env for the registry.
-        let tenant_id = req
-            .env
-            .get("LANTERN_TENANT_ID")
-            .cloned()
-            .unwrap_or_else(|| "default".to_string());
+        // Use the authenticated tenant_id field — never the env map. The env
+        // map is caller-supplied; reading it here would re-introduce the same
+        // namespace-escape the spawn gate above was designed to close.
+        let tenant_id = req.tenant_id.clone();
 
         // Register the handle. `declared_secret_uris` is sourced from the
         // manager's own spawn record (via `req.secrets`) — never from
@@ -625,18 +619,23 @@ impl RuntimeManagerGrpc {
             "restoring from snapshot"
         );
 
+        // Fail closed: an untenanted restore is refused. The caller is
+        // responsible for populating `tenant_id` from the authenticated JWT
+        // before constructing a RestoreRequest.
+        if req.tenant_id.is_empty() {
+            return Err(Status::invalid_argument(
+                "RestoreRequest.tenant_id is required; refusing to restore an untenanted workload",
+            ));
+        }
+
         let handle = self
             .backend
             .restore(&req.snapshot_uri, &req)
             .await
             .map_err(Self::to_status)?;
 
-        // Extract tenant_id.
-        let tenant_id = req
-            .env
-            .get("LANTERN_TENANT_ID")
-            .cloned()
-            .unwrap_or_else(|| "default".to_string());
+        // Use the authenticated tenant_id field — never the env map.
+        let tenant_id = req.tenant_id.clone();
 
         // Register the restored handle. Secrets from a restore use the
         // declared list carried in the RestoreRequest.
@@ -706,16 +705,29 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
         })
         .unwrap_or_default();
 
-    // Build env from caller-supplied env + labels (for backwards-compat) +
-    // tenant injection. Backends look for `LANTERN_TENANT_ID` in env to
-    // populate the handle registry.
+    // Security invariant (multi-tenant isolation, ADR-0007):
+    // `spec.tenant_id` is the authenticated value set by the control-plane
+    // from the JWT. Reject empty values fail-closed so an untenanted workload
+    // can never land in any real namespace.
+    if spec.tenant_id.is_empty() {
+        return Err(Status::invalid_argument(
+            "spec.tenant_id is required; refusing to schedule an untenanted workload",
+        ));
+    }
+
+    // Build env from caller-supplied env + labels (for backwards-compat).
+    // Strip any caller-supplied `LANTERN_TENANT_ID` first — the caller cannot
+    // be trusted to set this correctly and a shadowed value would let an
+    // attacker route the pod into a victim's namespace. Re-inject the
+    // authenticated value so the workload still sees its own tenant id.
     let mut env: std::collections::HashMap<String, String> = spec.env.clone();
     for (k, v) in &spec.labels {
         env.entry(k.clone()).or_insert_with(|| v.clone());
     }
-    if !spec.tenant_id.is_empty() {
-        env.insert("LANTERN_TENANT_ID".to_string(), spec.tenant_id.clone());
-    }
+    // Strip then re-inject — order matters: strip first so a caller-supplied
+    // value can never win even if it was present in the labels too.
+    env.remove("LANTERN_TENANT_ID");
+    env.insert("LANTERN_TENANT_ID".to_string(), spec.tenant_id.clone());
     if !spec.agent_version_id.is_empty() {
         env.insert(
             "LANTERN_AGENT_VERSION_ID".to_string(),
@@ -739,6 +751,7 @@ fn spawn_to_schedule(req: &pb::SpawnRequest) -> Result<proto::ScheduleRequest, S
 
     Ok(proto::ScheduleRequest {
         run_id: spec.run_id.clone(),
+        tenant_id: spec.tenant_id.clone(),
         bundle_uri: spec.image_digest.clone(),
         bundle_digest,
         isolation_class: isolation,
@@ -1721,7 +1734,9 @@ mod tests {
                     "error should name the config env var: {msg}"
                 );
             }
-            BackendChoice::Use(_) => panic!("untrusted must not be allowed on a non-microVM backend"),
+            BackendChoice::Use(_) => {
+                panic!("untrusted must not be allowed on a non-microVM backend")
+            }
         }
     }
 
@@ -1783,20 +1798,41 @@ mod tests {
         struct GvisorStub;
         #[async_trait::async_trait]
         impl RuntimeBackend for GvisorStub {
-            async fn schedule(&self, req: &proto::ScheduleRequest) -> anyhow::Result<crate::backend::Handle> {
-                Ok(crate::backend::Handle { id: req.run_id.clone(), node_name: "n".to_string(), cold_start_ms: 0.0 })
+            async fn schedule(
+                &self,
+                req: &proto::ScheduleRequest,
+            ) -> anyhow::Result<crate::backend::Handle> {
+                Ok(crate::backend::Handle {
+                    id: req.run_id.clone(),
+                    node_name: "n".to_string(),
+                    cold_start_ms: 0.0,
+                })
             }
-            async fn cancel(&self, _: &str, _: &str) -> anyhow::Result<()> { Ok(()) }
-            async fn stream(&self, _: &str) -> anyhow::Result<BoxStream<'static, proto::RuntimeEvent>> {
+            async fn cancel(&self, _: &str, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+            async fn stream(
+                &self,
+                _: &str,
+            ) -> anyhow::Result<BoxStream<'static, proto::RuntimeEvent>> {
                 Ok(Box::pin(futures::stream::empty()))
             }
-            async fn snapshot(&self, _: &proto::SnapshotRequest) -> anyhow::Result<crate::backend::SnapshotInfo> {
+            async fn snapshot(
+                &self,
+                _: &proto::SnapshotRequest,
+            ) -> anyhow::Result<crate::backend::SnapshotInfo> {
                 anyhow::bail!("stub")
             }
-            async fn restore(&self, _: &str, _: &proto::RestoreRequest) -> anyhow::Result<crate::backend::Handle> {
+            async fn restore(
+                &self,
+                _: &str,
+                _: &proto::RestoreRequest,
+            ) -> anyhow::Result<crate::backend::Handle> {
                 anyhow::bail!("stub")
             }
-            fn name(&self) -> &'static str { "k8s" }
+            fn name(&self) -> &'static str {
+                "k8s"
+            }
             fn satisfies_isolation(&self, class: proto::IsolationClass) -> bool {
                 // Simulates K8s with gVisor configured (accepts UNTRUSTED but not HOSTILE).
                 !matches!(class, proto::IsolationClass::Hostile)
@@ -2311,6 +2347,110 @@ mod tests {
             }
             other => panic!("expected harness route, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Multi-tenant namespace isolation (CVE-fix: invariant #7)
+    //
+    // These tests verify the three properties of the fix:
+    //   (A) empty spec.tenant_id is rejected fail-closed, regardless of env.
+    //   (B) caller env["LANTERN_TENANT_ID"] cannot shadow spec.tenant_id.
+    //   (C) the workload env re-receives the authenticated value, not attacker.
+    // -----------------------------------------------------------------------
+
+    fn make_spawn_request(tenant_id: &str, env: HashMap<String, String>) -> pb::SpawnRequest {
+        pb::SpawnRequest {
+            handle: None,
+            spec: Some(pb::AgentSpec {
+                image_digest: "sha256:abc".to_string(),
+                isolation: 1, // TRUSTED
+                limits: None,
+                network: 0,
+                egress_rules: vec![],
+                secrets: vec![],
+                labels: HashMap::new(),
+                preferred_regions: vec![],
+                idempotent: false,
+                restore_snapshot_id: String::new(),
+                tenant_id: tenant_id.to_string(),
+                agent_version_id: String::new(),
+                run_id: "run-test".to_string(),
+                command: vec![],
+                args: vec![],
+                env,
+            }),
+        }
+    }
+
+    /// (A) Empty spec.tenant_id is rejected with INVALID_ARGUMENT regardless
+    /// of what the caller put in env["LANTERN_TENANT_ID"]. An untenanted
+    /// workload must never be scheduled.
+    #[test]
+    fn spawn_to_schedule_rejects_empty_tenant_id() {
+        let mut env = HashMap::new();
+        env.insert("LANTERN_TENANT_ID".to_string(), "victim-tenant".to_string());
+
+        let req = make_spawn_request("", env);
+        let err = spawn_to_schedule(&req).expect_err("empty tenant_id must be rejected");
+        assert_eq!(
+            err.code(),
+            tonic::Code::InvalidArgument,
+            "expected INVALID_ARGUMENT, got {err:?}"
+        );
+        assert!(
+            err.message().contains("tenant_id is required"),
+            "message must say tenant_id is required, got: {}",
+            err.message()
+        );
+    }
+
+    /// (B) Caller env["LANTERN_TENANT_ID"] = "attacker" with spec.tenant_id =
+    /// "legit" → the resulting ScheduleRequest must carry tenant_id = "legit"
+    /// (the authenticated value wins).
+    #[test]
+    fn spawn_to_schedule_caller_env_cannot_shadow_spec_tenant_id() {
+        let mut env = HashMap::new();
+        env.insert("LANTERN_TENANT_ID".to_string(), "attacker".to_string());
+
+        let req = make_spawn_request("legit", env);
+        let sched = spawn_to_schedule(&req).expect("valid tenant_id should succeed");
+
+        assert_eq!(
+            sched.tenant_id, "legit",
+            "ScheduleRequest.tenant_id must be the authenticated value, not caller env"
+        );
+    }
+
+    /// (C) The workload env has LANTERN_TENANT_ID = authenticated value, NOT
+    /// the attacker-supplied value (strip-then-reinject semantics).
+    #[test]
+    fn spawn_to_schedule_workload_env_receives_authenticated_tenant_id() {
+        let mut env = HashMap::new();
+        env.insert("LANTERN_TENANT_ID".to_string(), "attacker".to_string());
+        // Extra env var that must pass through untouched.
+        env.insert("MY_VAR".to_string(), "hello".to_string());
+
+        let req = make_spawn_request("legit", env);
+        let sched = spawn_to_schedule(&req).expect("valid tenant_id should succeed");
+
+        assert_eq!(
+            sched.env.get("LANTERN_TENANT_ID").map(String::as_str),
+            Some("legit"),
+            "workload env must see the authenticated tenant_id, got: {:?}",
+            sched.env.get("LANTERN_TENANT_ID")
+        );
+        // The attacker's value must not appear anywhere in the env.
+        let has_attacker_value = sched.env.values().any(|v| v == "attacker");
+        assert!(
+            !has_attacker_value,
+            "attacker-supplied env value must have been stripped from workload env"
+        );
+        // Unrelated env vars pass through.
+        assert_eq!(
+            sched.env.get("MY_VAR").map(String::as_str),
+            Some("hello"),
+            "unrelated env vars must pass through unchanged"
+        );
     }
 
     /// Non-firecracker backends keep the existing backend exec path, resolved

@@ -22,10 +22,8 @@ use tonic::transport::Server;
 use tracing_subscriber::EnvFilter;
 
 use crate::backend::RuntimeBackend;
-use crate::backends::{
-    DockerBackend, FirecrackerBackend, K8sBackend, KataBackend, WasmBackend,
-};
 use crate::backends::k8s::RuntimeClassConfig;
+use crate::backends::{DockerBackend, FirecrackerBackend, K8sBackend, KataBackend, WasmBackend};
 use crate::config::{Config, RuntimeBackend as RuntimeBackendKind};
 use crate::pool::PoolConfig;
 use crate::proto::pb::runtime_harness_server::RuntimeHarnessServer;
