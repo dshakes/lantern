@@ -23,7 +23,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
@@ -47,6 +49,15 @@ func main() {
 	cfg := loadConfig()
 	logger := mustInitLogger(cfg.LogLevel)
 	defer logger.Sync() //nolint:errcheck
+
+	// Set W3C TraceContext + Baggage propagators globally so the otelgrpc
+	// server handler can extract incoming traceparent headers and continue
+	// the distributed trace. Works with both a real TracerProvider (when a
+	// collector is configured) and the default no-op provider (dev/test).
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
@@ -164,13 +175,15 @@ func main() {
 	}()
 
 	grpcServer := grpc.NewServer(
+		// otelgrpc.NewServerHandler extracts the incoming W3C traceparent header
+		// and starts a server span, continuing the distributed trace from the
+		// control-plane. Safe when tracing is disabled: creates no-op spans.
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.ChainUnaryInterceptor(
 			middleware.UnaryTenantInterceptor(logger),
-			unaryTracingInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
 			middleware.StreamTenantInterceptor(logger),
-			streamTracingInterceptor(),
 		),
 	)
 	lanternv1.RegisterRuntimeSchedulerServer(grpcServer, schedSvc)
@@ -327,46 +340,3 @@ func mustInitLogger(level string) *zap.Logger {
 	}
 	return logger
 }
-
-// ---------------------------------------------------------------------
-// OpenTelemetry interceptors. Same pattern as services/scheduler.
-// otelgrpc would be a dependency-heavy add; this lightweight wrapper
-// gives us the same span-per-RPC behaviour while we wait for the rest
-// of the platform to standardize on otelgrpc.
-// ---------------------------------------------------------------------
-
-func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
-	tracer := otel.Tracer("lantern.runtime-scheduler")
-	return func(
-		ctx context.Context,
-		req any,
-		info *grpc.UnaryServerInfo,
-		handler grpc.UnaryHandler,
-	) (any, error) {
-		ctx, span := tracer.Start(ctx, info.FullMethod)
-		defer span.End()
-		return handler(ctx, req)
-	}
-}
-
-func streamTracingInterceptor() grpc.StreamServerInterceptor {
-	tracer := otel.Tracer("lantern.runtime-scheduler")
-	return func(
-		srv any,
-		ss grpc.ServerStream,
-		info *grpc.StreamServerInfo,
-		handler grpc.StreamHandler,
-	) error {
-		ctx, span := tracer.Start(ss.Context(), info.FullMethod)
-		defer span.End()
-		wrapped := &wrappedStream{ServerStream: ss, ctx: ctx}
-		return handler(srv, wrapped)
-	}
-}
-
-type wrappedStream struct {
-	grpc.ServerStream
-	ctx context.Context
-}
-
-func (w *wrappedStream) Context() context.Context { return w.ctx }

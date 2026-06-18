@@ -37,6 +37,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -138,7 +139,10 @@ type grpcSchedulerClient struct {
 // NewGRPCSchedulerClient dials the scheduler service. Plain insecure for now —
 // scheduler runs inside the cluster, TLS terminates at the edge.
 func NewGRPCSchedulerClient(addr string, logger *zap.Logger) (*grpcSchedulerClient, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("dial scheduler %s: %w", addr, err)
 	}
@@ -193,7 +197,10 @@ func (c *grpcSchedulerClient) managerClient(node string) (lanternv1.RuntimeManag
 	if cl, ok := c.mgrClients[node]; ok {
 		return cl, nil
 	}
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("dial runtime-manager %s: %w", addr, err)
 	}
