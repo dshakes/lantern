@@ -248,7 +248,7 @@ not exhaustive.
 | **Harness heartbeat stream** (`manager_client.rs`) | ✅ | **Closed in this branch** — real bidi `Heartbeat` tonic stream over mTLS; proto round-trip + unit tests. Egress revocations on `HeartbeatAck` now propagate. |
 | **Harness `Report` / manager ingestion** (`report.rs`, `service.rs`) | ❌ | Manager `report` handler is `unimplemented`; harness `forward_one` returns Err honestly. OTLP/log forwarding has nowhere to land yet. |
 | **Control-plane secret relay** (`handlers/runtime_secrets.go`) | ✅ | Token auth (constant-time), fail-closed, VM-binding check, rate-limited, audited. ADR 0008. |
-| **Workflow interpreter** (`internal/workflow/interpreter.go`) | ⚠️ | trigger/ai-step/tool/connector/condition execute; **approval is real** — `rest.go` wires `WaitForApproval` to a `takeover_requests` row that blocks until granted/released/denied/expired (auto-approve only on the nil/test path). **loop + subagent are still no-ops**. |
+| **Workflow interpreter** (`internal/workflow/interpreter.go`) | ✅~ | trigger/ai-step/tool/connector/condition execute; **approval is real** — `rest.go` wires `WaitForApproval` to a `takeover_requests` row that blocks until granted/released/denied/expired. **loop + subagent now execute** (this branch): loop iterates the body subgraph with a max-iteration cap; subagent invokes a `RunSubAgent` dep (production `rest.go` wiring is the only follow-up). |
 | **journal_events / receipts / run_locks** | ✅ | Event-sourced log, HMAC-signed receipts bound to journal hash, distributed locking. **Crash-replay not wired into the run path.** |
 | **OTel traces** | ⚠️ | `trace_id` propagates; **tenant_id/run_id/step_id missing on many spans**; collectors partial. |
 
@@ -477,17 +477,20 @@ gVisor, hostile on Kata; (b) a node without the RuntimeClass **refuses** untrust
   *Follow-up:* manager/harness wiring to actually present the Bearer token on
   `VendSecret`; consider migrating the signature to SPIFFE SVID / Ed25519 for external
   verification, and stamp `agent_instance_id` on tool-call spans.
-- **Non-owner Postgres role** with RLS validated end-to-end.
+- ✅ *(done, this branch)* **Non-owner Postgres role (`lantern_app`) with RLS proven** — cross-tenant reads denied; **validated against real Postgres** (`TestRLSEnforcement_CrossTenant`). Follow-up: cut the app DSN over to `lantern_app` and ensure every `agents`/`runs` read path sets the `app.tenant_id` GUC.
 **Gate:** security-auditor review; tests for (a) cross-tenant identity isolation;
 (b) ✅ a missing scope → 403 on every mutating route; (c) RLS denies a non-owner read;
 (d) ✅ external receipt verification with the published public key; (e) ✅ approval node
 blocks until granted; (f) a spec with a mismatched body tenant_id is rejected.
 
 ### Phase 3 — Durable-by-default resiliency (Temporal-parity)
-**Scope:**
+**Status:**
+- ✅ *(done, this branch)* **Loop + subagent interpreter nodes** execute (loop with
+  max-iteration cap + per-iteration journal events; subagent via a `RunSubAgent` dep).
+**Remaining:**
 - Wire journal-based crash replay into the run executor (resume from last
   `step_completed`, dedup side-effects by idempotency key).
-- Durable loop + subagent nodes in the interpreter.
+- Production `rest.go` wiring of the subagent `RunSubAgent` dep to `POST /v1/runs`.
 - Automatic failure detection + recovery watchdog (close checkpoint≠durable gap).
 - Scheduler HA (etcd leader election) deployed; per-spawn rate limiting.
 **Gate:** chaos/integration tests — kill the executor mid-run and assert exactly-once
