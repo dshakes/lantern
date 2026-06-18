@@ -16,6 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
@@ -245,8 +248,38 @@ func callClaudeCode(ctx context.Context, prompt string) (string, error) {
 
 // callLLMSync makes a synchronous (non-streaming) LLM call and returns the
 // result text along with usage metrics. Used by the inline run executor.
+//
+// A child OTel span is created for every call using the GenAI semantic
+// conventions (gen_ai.system, gen_ai.request.model, gen_ai.operation.name,
+// gen_ai.usage.input_tokens, gen_ai.usage.output_tokens) plus the
+// Lantern-specific lantern.cost_usd attribute. Spans are recorded only when
+// a real TracerProvider is installed; the default no-op provider makes this
+// a zero-cost no-op.
 func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiKey, prompt string) (result string, tokensIn, tokensOut int64, costUsd float64, err error) {
-	_ = ctx // context for future cancellation support
+	tracer := otel.Tracer("lantern.control-plane")
+	spanName := "chat " + model
+	if model == "" {
+		spanName = "chat " + provider
+	}
+	ctx, span := tracer.Start(ctx, spanName)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		} else {
+			span.SetStatus(codes.Ok, "")
+		}
+		// Set usage attributes after the call so we have the real values.
+		span.SetAttributes(
+			attribute.String("gen_ai.system", provider),
+			attribute.String("gen_ai.request.model", model),
+			attribute.String("gen_ai.operation.name", "chat"),
+			attribute.Int64("gen_ai.usage.input_tokens", tokensIn),
+			attribute.Int64("gen_ai.usage.output_tokens", tokensOut),
+			attribute.Float64("lantern.cost_usd", costUsd),
+		)
+		span.End()
+	}()
 
 	// Local Claude Code path. apiKey is ignored — auth is via the user's
 	// `claude` CLI session, not a server-side token. Token + cost are
