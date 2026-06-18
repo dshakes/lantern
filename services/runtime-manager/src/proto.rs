@@ -148,6 +148,11 @@ pub struct EgressRule {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScheduleRequest {
     pub run_id: String,
+    /// Authenticated tenant identity. Set by the gRPC handler from the
+    /// wire-level `AgentSpec.tenant_id` (which the control-plane populates
+    /// from the JWT). This is the authoritative source for tenant namespace
+    /// derivation; it is never taken from the caller-supplied `env` map.
+    pub tenant_id: String,
     pub bundle_uri: String,
     pub bundle_digest: Vec<u8>,
     pub isolation_class: IsolationClass,
@@ -278,6 +283,8 @@ pub struct SnapshotResponse {
 pub struct RestoreRequest {
     pub snapshot_uri: String,
     pub run_id: String,
+    /// Authenticated tenant identity — same invariant as `ScheduleRequest::tenant_id`.
+    pub tenant_id: String,
     pub input: serde_json::Value,
     pub env: std::collections::HashMap<String, String>,
     pub secrets: Vec<SecretRef>,

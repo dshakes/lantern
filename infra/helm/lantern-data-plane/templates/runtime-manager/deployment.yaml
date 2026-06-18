@@ -71,6 +71,28 @@ spec:
             {{- end }}
             - name: FIRECRACKER_ENABLED
               value: {{ .Values.runtimeManager.firecrackerEnabled | quote }}
+            # Default runtime substrate — Kubernetes (ADR 0009). Isolation is a
+            # RuntimeClass tier on the pod, not a separate backend.
+            - name: RUNTIME_BACKEND
+              value: {{ .Values.runtimeManager.backend | default "k8s" | quote }}
+            # Hardened RuntimeClass names for isolation tiering (ADR 0009).
+            # An UNSET/empty value marks that class UNAVAILABLE on this cluster:
+            # UNTRUSTED requires gVisor and HOSTILE requires Kata, and they
+            # FAIL CLOSED (refuse to schedule) rather than downgrade to runc.
+            {{- with .Values.runtimeManager.runtimeClasses }}
+            {{- if .gvisor }}
+            - name: LANTERN_RUNTIMECLASS_GVISOR
+              value: {{ .gvisor | quote }}
+            {{- end }}
+            {{- if .kata }}
+            - name: LANTERN_RUNTIMECLASS_KATA
+              value: {{ .kata | quote }}
+            {{- end }}
+            {{- if .wasm }}
+            - name: LANTERN_RUNTIMECLASS_WASM
+              value: {{ .wasm | quote }}
+            {{- end }}
+            {{- end }}
           {{- if .Values.runtimeManager.firecrackerEnabled }}
           volumeMounts:
             - name: dev-kvm

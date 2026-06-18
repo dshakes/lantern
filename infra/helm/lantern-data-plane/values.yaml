@@ -62,6 +62,27 @@ runtimeManager:
     type: ClusterIP
     port: 50054
 
+  # Default execution substrate. Kubernetes is the default (ADR 0009); isolation
+  # is expressed as a RuntimeClass tier on the pod. Override only for dedicated
+  # microVM nodes (e.g. "firecracker").
+  backend: k8s
+
+  # Hardened RuntimeClasses for the isolation tiers (ADR 0009). Leave a value
+  # EMPTY to mark that class UNAVAILABLE on this cluster — UNTRUSTED/HOSTILE then
+  # FAIL CLOSED (refuse to schedule) rather than silently downgrade to runc.
+  # Install the matching node runtime (gVisor/containerd-runsc, Kata Containers)
+  # BEFORE setting these. Secure default below: empty → only TRUSTED/STANDARD run.
+  runtimeClasses:
+    gvisor: ""      # e.g. "gvisor"     — REQUIRED for UNTRUSTED agents
+    kata: ""        # e.g. "kata-qemu"  — REQUIRED for HOSTILE agents
+    wasm: ""        # optional          — for the WASM isolation class
+
+  # When true, render RuntimeClass objects for the names above (handler = the
+  # name). Only enable once the node runtime handlers are installed; a
+  # RuntimeClass pointing at a missing handler makes pods unschedulable
+  # (fail-safe, but visible). Default false — manage RuntimeClasses out of band.
+  createRuntimeClasses: false
+
   # Firecracker requires bare-metal instances or nested virtualization.
   # Set to false on standard cloud VMs without nested virt support.
   firecrackerEnabled: false

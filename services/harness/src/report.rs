@@ -20,36 +20,52 @@ pub fn channel() -> (mpsc::Sender<HarnessReport>, mpsc::Receiver<HarnessReport>)
 /// report at trace level so end-to-end behaviour is observable on
 /// developer hosts.
 pub async fn run(manager: ManagerClient, mut rx: mpsc::Receiver<HarnessReport>) {
+    // The manager-side Report ingestion RPC is not yet wired (see forward_one),
+    // so reports are dropped today. Warn ONCE — not per power-of-two — and never
+    // claim "manager unreachable", because the manager may be perfectly healthy;
+    // the RPC simply doesn't exist yet.
+    let mut warned = false;
     let mut dropped: u64 = 0;
     while let Some(rep) = rx.recv().await {
-        // TODO: regenerate from runtime.proto — call the streaming Report
-        // RPC on the generated client. For now: per-message log + an
-        // attempt to confirm manager is reachable.
         if let Err(e) = forward_one(&manager, &rep).await {
             dropped = dropped.saturating_add(1);
-            if dropped.is_power_of_two() {
+            if !warned {
+                warned = true;
                 tracing::warn!(
-                    dropped,
                     error = %e,
-                    "report: manager unreachable; dropped reports (logged at trace)"
+                    "report: Report RPC not yet wired on the manager side — \
+                     dropping observability reports (individual drops at trace)"
                 );
             }
-            tracing::trace!(?rep, "dropped report");
+            tracing::trace!(?rep, dropped, "dropped report");
             continue;
         }
         tracing::trace!(?rep, "forwarded report");
     }
 }
 
-async fn forward_one(manager: &ManagerClient, rep: &HarnessReport) -> anyhow::Result<()> {
-    // TODO: regenerate from runtime.proto.
+async fn forward_one(_manager: &ManagerClient, _rep: &HarnessReport) -> anyhow::Result<()> {
+    // TODO(report-rpc): wire the real `RuntimeHarness.Report` client-streaming
+    // RPC once the manager side is ready.
     //
-    // Stub: probe the manager TCP socket. Real impl serializes `rep` and
-    // pushes it down the Report stream. We DO NOT block on the probe
-    // failing — the caller treats any error as a drop and continues.
-    let _ = tokio::net::TcpStream::connect(&manager.manager_addr)
-        .await
-        .map_err(|e| anyhow::anyhow!("manager unreachable: {e}"))?;
-    let _ = rep;
-    Ok(())
+    // Current state: `RuntimeHarnessGrpc::report` in
+    // `services/runtime-manager/src/service.rs` returns
+    // `Status::unimplemented("report: log/trace ingestion pipeline not yet
+    // wired on the manager side")`. Calling the RPC today would surface that
+    // error on every report message and cause spurious reconnect noise.
+    //
+    // When the manager's ingestion pipeline is wired:
+    //   1. Open a `RuntimeHarnessClient::report(req_stream)` channel (same
+    //      mTLS setup as `open_heartbeat_stream`).
+    //   2. Convert each `HarnessReport` variant to `pb::HarnessReport` (a
+    //      oneof over RuntimeLogLine / otlp_traces / prometheus_metrics /
+    //      AuditEvent) and send it down the stream.
+    //   3. On stream error, return Err so the caller's drop-and-warn logic
+    //      fires (same pattern as today).
+    //
+    // The proto conversions for HarnessReport are not yet in proto.rs; add
+    // them alongside the RPC wiring.
+    Err(anyhow::anyhow!(
+        "report: manager-side ingestion not yet implemented; dropping report"
+    ))
 }
