@@ -37,6 +37,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -779,15 +782,31 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	tenantID := claims.TenantID
 	ctx := r.Context()
 
+	// Start a span covering the scheduling work (after auth).
+	tracer := otel.Tracer("lantern.control-plane")
+	ctx, span := tracer.Start(ctx, "runtime.schedule")
+	span.SetAttributes(attribute.String("lantern.tenant_id", tenantID))
+	defer span.End()
+
 	var spec agentSpecDTO
 	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid body")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
 	}
 	if spec.ImageDigest == "" {
+		span.SetStatus(codes.Error, "imageDigest required")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "imageDigest is required"})
 		return
 	}
+	// Stamp known spec attributes immediately so they appear even if we
+	// return early (quota denial, identity failure, etc.).
+	span.SetAttributes(
+		attribute.String("lantern.run_id", spec.RunID),
+		attribute.String("lantern.agent_version_id", spec.AgentVersionID),
+		attribute.String("lantern.isolation_class", spec.Isolation),
+	)
 
 	// Quota enforcement BEFORE we touch the scheduler.
 	qres := h.checkRuntimeQuota(ctx, tenantID, spec)
@@ -795,6 +814,7 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		h.auditRuntime(ctx, tenantID, "", "schedule_denied",
 			map[string]any{"reason": qres.Reason}, claims.Subject, "")
 		if qres.HardFail {
+			span.SetStatus(codes.Error, "quota exceeded: "+qres.Reason)
 			writeJSON(w, http.StatusPaymentRequired, map[string]string{
 				"error":  "quota exceeded",
 				"reason": qres.Reason,
@@ -812,9 +832,12 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	instanceID, instanceToken, err := h.identity.Issue(ctx, tenantID, spec.RunID, spec.AgentVersionID)
 	if err != nil {
 		h.logger().Error("agentidentity.Issue failed", zap.Error(err))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "mint agent identity failed")
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not mint agent identity"})
 		return
 	}
+	span.SetAttributes(attribute.String("lantern.agent_instance_id", instanceID))
 
 	// Tenant id always comes from JWT; never from the body.
 	specMap := map[string]any{
@@ -861,9 +884,12 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	vmID, node, az, err := h.scheduler.Schedule(ctx, specMap)
 	if err != nil {
 		h.logger().Error("scheduler.Schedule failed", zap.Error(err))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "scheduler unavailable")
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "scheduler unavailable"})
 		return
 	}
+	span.SetAttributes(attribute.String("lantern.vm_id", vmID))
 
 	specJSON, _ := json.Marshal(specMap)
 	if len(specJSON) == 0 {
@@ -893,6 +919,8 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, created)
 	if err != nil {
 		h.logger().Error("insert runtime_vms failed", zap.Error(err))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "insert runtime_vms failed")
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
@@ -906,6 +934,7 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 			"agent_instance_id": instanceID,
 		}, claims.Subject, instanceID)
 
+	span.SetStatus(codes.Ok, "")
 	writeJSON(w, http.StatusCreated, scheduleResponse{
 		VmID:      vmID,
 		Node:      node,

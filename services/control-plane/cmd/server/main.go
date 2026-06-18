@@ -29,6 +29,7 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/scheduler"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
+	"github.com/dshakes/lantern/services/control-plane/internal/telemetry"
 )
 
 func main() {
@@ -43,6 +44,22 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+
+	// --- OpenTelemetry ---
+	// No-op when OTEL_EXPORTER_OTLP_ENDPOINT / LANTERN_OTEL_ENABLED=1 are unset,
+	// so the default path is unchanged (no collector required, no spans exported).
+	otelShutdown, err := telemetry.InitTracer(ctx, "lantern.control-plane")
+	if err != nil {
+		logger.Warn("tracing init failed; continuing without traces", zap.Error(err))
+		otelShutdown = func(context.Context) error { return nil }
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := otelShutdown(shutdownCtx); err != nil {
+			logger.Warn("tracing shutdown error", zap.Error(err))
+		}
+	}()
 
 	// --- Postgres ---
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
