@@ -35,8 +35,8 @@ What makes it different from "another agent framework":
 | "Your agent probably costs about…" | **A cost forecast before every run** — `POST /v1/runs/forecast` returns tokens, dollars, and confidence; hard‑fail budgets block overspend with HTTP 402 |
 | "Monitor your evals in prod" | **Eval‑in‑CI + rehearsals** — pin a baseline per branch, fail the build on regression (HTTP 422), replay real production failures against a candidate before flipping traffic |
 | A visual builder that only *saves* a graph | **A workflow engine that *executes* the graph** through the same router + connector + budget pipeline as everything else |
-| "Trust us about what happened" | **Cryptographically verifiable receipts** — HMAC‑signed over the run's journal; anyone can verify at `/proof` |
-| "Deploy to *our* cloud" | **Deploy in *your* cloud** — data plane in your VPC, Firecracker/Kata isolation, outbound‑only mTLS tunnel |
+| "Trust us about what happened" | **Cryptographically verifiable receipts** — Ed25519-signed over the run's journal; externally verifiable offline with just the public key at `/.well-known/lantern-receipts` / `/proof` |
+| "Deploy to *our* cloud" | **Deploy in *your* cloud** — data plane in your VPC, Kubernetes-default substrate with RuntimeClass-tiered isolation, outbound‑only mTLS tunnel |
 
 **100% Apache‑2.0. No feature gates.** Every differentiator here is in this repo; the managed cloud is convenience (one‑click deploy, billing, autoscaling), not a paywall.
 
@@ -57,19 +57,20 @@ elevator version, see [`PITCH.md`](PITCH.md).)
 
 | Module | What it gives you | Maturity |
 |---|---|---|
-| **1 · Agent Runtime** | Run agents in *your* cloud: durable workflow engine, capability‑based multi‑LLM router, isolated execution (scheduler / manager / harness; Docker, Firecracker, Kata, K8s Jobs, Wasm backends), edge gateway. Control plane never touches user code. | Core prod‑ready; Firecracker live‑boot is alpha (**fail‑closed** off‑KVM) |
+| **1 · Agent Runtime** | Run agents in *your* cloud: durable workflow engine, capability‑based multi‑LLM router, **Kubernetes‑default substrate with isolation as a RuntimeClass tier** (runc → gVisor → Kata microVM → Firecracker‑backed Kata); fail‑closed — untrusted/hostile refused unless the hardened RuntimeClass is configured, never silently downgraded to a bare pod. Scheduler / manager / harness; edge gateway. Control plane never touches user code. | Core prod‑ready; RuntimeClass tiering and cluster e2e are Phase 1 (in progress) |
 | **2 · Personal Agent ("Jarvis")** | WhatsApp + iMessage assistant that texts **as you** — owner‑only, learns your real voice from history, agentic macOS actions, cross‑channel memory, urgent‑alerting, privacy guards. | Live |
-| **3 · Trust & Governance** | Policy‑as‑code budgets (hard‑fail 402), eval‑in‑CI + rehearsals, HMAC‑verifiable receipts, guardrails, multi‑tenant RLS, AES‑256‑GCM secrets, fail‑closed‑in‑prod. | Prod‑ready |
+| **3 · Trust & Governance** | Policy‑as‑code budgets (hard‑fail 402), eval‑in‑CI + rehearsals, **Ed25519‑signed verifiable receipts** (externally verifiable offline), **per‑agent‑instance identity** tokens, **RBAC scopes** on runtime routes (least‑privilege, 403 + audit), **RLS‑enforced non‑owner Postgres role**, multi‑tenant authenticated namespace derivation, AES‑256‑GCM secrets, fail‑closed‑in‑prod. | Prod‑ready |
 | **4 · Channels & Reach** | WhatsApp · iMessage · Slack · Telegram · Discord · Voice (Twilio/LiveKit) · Webchat · Email — signature‑verified, naturally paced. | Prod‑ready |
 | **5 · Developer Experience** | TS/Python/Go SDKs, `lantern` CLI, one‑command dev, a visual workflow editor that *executes*, MCP registry, A2A cards, forkable agent marketplace. | Prod‑ready |
 
-> **Alpha honesty:** modules 2–5 are in real use; Module 1's microVM **live boot**
-> (Firecracker) and the live two‑process mTLS handshake are implemented +
-> unit‑tested but need Linux/KVM (the CI runner or the [`infra/lima/`](infra/lima/)
-> nested‑virt guest) — live‑boot CI is not green yet, and jailer wrapping is
-> still open; enumerated in [`SECURITY.md`](SECURITY.md). On hosts without KVM,
-> Hostile/Untrusted workloads **fail closed** rather than downgrade. Nothing
-> pretends to work.
+> **Alpha honesty:** modules 2–5 are in real use. Module 1's real data path
+> (bidirectional mTLS heartbeat stream, `VendSecret`, and RBAC‑scoped runtime routes)
+> is implemented and unit‑tested. The K8s RuntimeClass tiering (gVisor/Kata) and the
+> cluster end‑to‑end integration test (`schedule → place → spawn → mTLS → egress‑deny`)
+> are Phase 1 — not yet green in CI. Firecracker live‑boot still requires Linux/KVM
+> (use [`infra/lima/`](infra/lima/) on Apple Silicon). On any host lacking the required
+> RuntimeClass, Hostile/Untrusted workloads **fail closed** rather than downgrade.
+> Nothing pretends to work.
 
 Every run is durable, budgeted, isolated, and cryptographically verifiable —
 the same path for a backend job or a WhatsApp message:
@@ -77,6 +78,26 @@ the same path for a backend job or a WhatsApp message:
 <p align="center">
   <img src="docs/assets/run-lifecycle.svg" alt="Agent run lifecycle — budget gate, durable steps, capability routing, microVM isolation, signed receipt, eval-in-CI loop" width="100%">
 </p>
+
+```mermaid
+flowchart TB
+  subgraph CP["Control Plane · SaaS"]
+    A[Auth · RBAC scopes] --> B[Quota + Budget gate]
+    B --> C[Identity issuer<br/>per-instance token]
+    C --> D[Scheduler dispatch]
+    R[Receipt signer · Ed25519]
+    AU[(Audit · journal_events)]
+  end
+  subgraph DP["Data Plane · your VPC / K8s"]
+    S[runtime-scheduler<br/>placement] --> M[runtime-manager<br/>RuntimeClass tiering]
+    M --> H[in-VM harness<br/>egress deny · secret vend]
+  end
+  D -->|gRPC · tenant metadata| S
+  H -->|mTLS heartbeat · vend| CP
+  D -.-> AU
+  H -.-> AU
+  AU --> R
+```
 
 ---
 
@@ -240,11 +261,37 @@ SDKs ship for **TypeScript** (primary), **Python**, and **Go**.
 
 **Integrations** · **17 real connector APIs** (Gmail, Google Calendar/Drive/Sheets, Slack, Discord, Telegram, Twilio, GitHub, Linear, Jira, Sentry, Vercel, Notion, HubSpot, Salesforce, Stripe) with real OAuth · **MCP** server registry + per‑agent attachments · **A2A** agent cards (`/.well-known/agent.json`).
 
-**Marketplace** · Publish / fork / star public agents · cross‑tenant invocation with HMAC‑signed settlement.
+**Marketplace** · Publish / fork / star public agents · cross‑tenant invocation with settlement receipts.
 
-**Trust** · Verifiable HMAC receipts over the journal SHA‑256, publicly verifiable at `/proof` · AES‑256‑GCM credential encryption at rest · multi‑tenant by default with Postgres RLS · idempotency keys on every external side‑effect · OTel traces carrying `tenant_id`/`run_id`/`step_id`.
+**Trust** · **Ed25519‑signed verifiable receipts** over the journal SHA‑256 — externally verifiable offline with the public key at `/.well-known/lantern-receipts` / `/proof` (HMAC back‑compat retained) · **per‑agent‑instance identity token** minted at spawn, injected into the workload, stamped on every audit row, verified by the secret relay · **RBAC scopes** on all runtime routes (`runtime:read/write/admin`, least‑privilege, 403 + audit on denial) · **non‑owner Postgres role with RLS** proven to deny cross‑tenant reads · **authenticated tenant namespace derivation** — namespace derives from the authenticated identity, not caller env (fail‑closed) · AES‑256‑GCM credential encryption at rest · idempotency keys on every external side‑effect · OTel traces carrying `tenant_id`/`run_id`/`step_id`.
 
-**Headless microVM runtime** · Schedule untrusted agents into isolated workloads via five backends: **Docker** (laptop default), **Firecracker** and **Kata** (Linux/KVM), **K8s Jobs**, and **Wasm** (in‑process Wasmtime — runs anywhere). Exec, stats, snapshots (local filesystem + S3/MinIO tier), and the control‑plane secret relay (ADR 0008) are wired; the in‑VM Rust harness enforces an egress allowlist with per‑rule rate limits and vends short‑TTL secrets. Per‑tenant quota (HTTP 402 over cap). Hostile/Untrusted workloads are refused on non‑Firecracker/Kata nodes — never silently downgraded. Demos in [`examples/headless-agents/`](examples/headless-agents/).
+```mermaid
+sequenceDiagram
+  participant U as Caller (JWT)
+  participant CP as Control Plane
+  participant DP as Data Plane (agent instance)
+  U->>CP: schedule (RBAC: runtime:write)
+  CP->>CP: quota + budget gate
+  CP->>CP: mint per-instance identity
+  CP->>DP: spawn (authenticated tenant, injected identity)
+  DP->>CP: vend secret (mTLS + instance token)
+  DP-->>CP: audit events (agent_instance_id)
+  CP->>U: Ed25519-signed receipt (verify offline at /proof)
+```
+
+**Headless agent runtime** · Kubernetes‑default substrate; isolation as a **RuntimeClass tier on a pod**: `TRUSTED`→runc, `STANDARD`→gVisor (default), `UNTRUSTED`→gVisor + egress‑deny, `HOSTILE`→Kata microVM (dedicated pool). Fail‑closed: untrusted/hostile are refused unless the hardened RuntimeClass is installed — never silently downgraded to a bare pod. Firecracker retained as the `kata‑fc` tier. In‑VM Rust harness enforces an egress allowlist, vends short‑TTL secrets over mTLS, and streams a bidirectional heartbeat. Exec, stats, snapshots (local filesystem + S3/MinIO tier), and the control‑plane secret relay (ADR 0008) are wired. Per‑tenant quota (HTTP 402 over cap). Demos in [`examples/headless-agents/`](examples/headless-agents/).
+
+```mermaid
+flowchart LR
+  T[TRUSTED] --> runc[runc<br/>shared node]
+  ST[STANDARD] --> gv[gVisor]
+  U[UNTRUSTED] --> gv2[gVisor + egress-deny]
+  HO[HOSTILE] --> kata[Kata microVM<br/>dedicated pool]
+  classDef hard fill:#1f2937,stroke:#10b981,color:#fff;
+  class gv,gv2,kata hard;
+  U -. "no gVisor configured" .-> X[refuse · fail closed]
+  HO -. "no Kata configured" .-> X
+```
 
 Run the headless runtime locally (Docker backend — no Linux/KVM needed):
 
@@ -291,7 +338,7 @@ Lantern is **polyglot on purpose**: Go for the control plane and workflow engine
 2. The workflow engine is the sole mutator of run state; services emit events.
 3. All long operations are durable, idempotent, and replayable as steps.
 4. Streaming is end‑to‑end (runtime → gateway → SDK → dashboard) with no buffering.
-5. Untrusted code runs in a microVM — never a bare pod.
+5. Untrusted code runs in a hardened RuntimeClass (gVisor or Kata microVM) — never a bare pod.
 6. Models are addressed by capability, not vendor name.
 7. Multi‑tenant by default — every row carries `tenant_id`; no cross‑tenant joins.
 8. Every external side‑effect carries an idempotency key `(run_id, step_id, attempt)`.
