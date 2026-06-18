@@ -1061,4 +1061,28 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS people_tenant_name_lower_idx
 		ON people (tenant_id, lower(trim(display_name)))
 		WHERE display_name IS NOT NULL`,
+
+	// ---------------------------------------------------------------
+	// Phase 2 governance: per-agent-instance identity.
+	//
+	// Every scheduled VM is assigned a short-lived, cryptographically-
+	// signed instance identity at schedule time. The token is injected
+	// into the VM's environment (LANTERN_AGENT_INSTANCE_TOKEN) so the
+	// workload can authenticate itself to the secret relay.
+	//
+	// agent_instance_id is nullable on both tables:
+	//   * runtime_vms           — set once at schedule; NULL for rows
+	//                             created before this migration.
+	//   * runtime_audit_events  — set on the 'schedule' event; NULL for
+	//                             all other action types where the
+	//                             instance id is not known to the caller.
+	// ---------------------------------------------------------------
+	`ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS agent_instance_id TEXT`,
+
+	`ALTER TABLE runtime_audit_events ADD COLUMN IF NOT EXISTS agent_instance_id TEXT`,
+
+	// Lookup index for the relay's instance-id → vm_id resolution.
+	`CREATE INDEX IF NOT EXISTS runtime_vms_agent_instance_id_idx
+		ON runtime_vms (agent_instance_id)
+		WHERE agent_instance_id IS NOT NULL`,
 }

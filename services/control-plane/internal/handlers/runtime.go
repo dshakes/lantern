@@ -43,6 +43,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -437,13 +438,18 @@ type RuntimeHandler struct {
 	srv       *server.Server
 	auth      *AuthHandler
 	scheduler SchedulerClient
+	identity  *agentidentity.Issuer
 }
 
 // NewRuntimeHandler constructs a RuntimeHandler. If LANTERN_SCHEDULER_GRPC_ADDR
 // is set the real gRPC client is dialed; otherwise the stub is used so a
 // solo control-plane stays exercisable.
 func NewRuntimeHandler(srv *server.Server, auth *AuthHandler) *RuntimeHandler {
-	h := &RuntimeHandler{srv: srv, auth: auth}
+	h := &RuntimeHandler{
+		srv:      srv,
+		auth:     auth,
+		identity: agentidentity.New(auth.JWTSecret()),
+	}
 	logger := srv.Logger.Named("runtime")
 	if addr := os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR"); addr != "" {
 		c, err := NewGRPCSchedulerClient(addr, logger.Named("scheduler_grpc"))
@@ -719,7 +725,11 @@ func (h *RuntimeHandler) checkRuntimeQuota(ctx context.Context, tenantID string,
 // auditRuntime inserts a single audit row. Best-effort — failures are
 // logged but never abort the caller (we never want auditing to be a
 // load-bearing failure mode).
-func (h *RuntimeHandler) auditRuntime(ctx context.Context, tenantID, vmID, action string, attrs map[string]any, principalID string) {
+//
+// agentInstanceID is the per-VM identity minted at schedule time. Pass empty
+// for actions where the instance id is not known (e.g. quota_update, exec
+// from an operator shell).
+func (h *RuntimeHandler) auditRuntime(ctx context.Context, tenantID, vmID, action string, attrs map[string]any, principalID, agentInstanceID string) {
 	attrsJSON, err := json.Marshal(attrs)
 	if err != nil || len(attrsJSON) == 0 {
 		attrsJSON = []byte("{}")
@@ -734,10 +744,14 @@ func (h *RuntimeHandler) auditRuntime(ctx context.Context, tenantID, vmID, actio
 			principalArg = principalID
 		}
 	}
+	var instanceArg any
+	if agentInstanceID != "" {
+		instanceArg = agentInstanceID
+	}
 	if _, err := h.srv.Pool.Exec(ctx, `
-		INSERT INTO runtime_audit_events (tenant_id, vm_id, action, attrs, principal_id)
-		VALUES ($1, $2, $3, $4::jsonb, $5)
-	`, tenantID, vmIDArg, action, attrsJSON, principalArg); err != nil {
+		INSERT INTO runtime_audit_events (tenant_id, vm_id, action, attrs, principal_id, agent_instance_id)
+		VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+	`, tenantID, vmIDArg, action, attrsJSON, principalArg, instanceArg); err != nil {
 		h.logger().Warn("audit insert failed",
 			zap.String("tenant_id", tenantID),
 			zap.String("action", action),
@@ -779,7 +793,7 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	qres := h.checkRuntimeQuota(ctx, tenantID, spec)
 	if !qres.Allowed {
 		h.auditRuntime(ctx, tenantID, "", "schedule_denied",
-			map[string]any{"reason": qres.Reason}, claims.Subject)
+			map[string]any{"reason": qres.Reason}, claims.Subject, "")
 		if qres.HardFail {
 			writeJSON(w, http.StatusPaymentRequired, map[string]string{
 				"error":  "quota exceeded",
@@ -790,6 +804,16 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		// soft-fail — log + continue
 		h.logger().Warn("quota exceeded but hard_fail=false",
 			zap.String("tenant_id", tenantID), zap.String("reason", qres.Reason))
+	}
+
+	// Mint a short-lived agent-instance identity. Do this BEFORE building
+	// specMap so the token can be injected into the spawn env. Fail closed:
+	// an agent that cannot be identified must not be scheduled.
+	instanceID, instanceToken, err := h.identity.Issue(ctx, tenantID, spec.RunID, spec.AgentVersionID)
+	if err != nil {
+		h.logger().Error("agentidentity.Issue failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not mint agent identity"})
+		return
 	}
 
 	// Tenant id always comes from JWT; never from the body.
@@ -824,13 +848,15 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		}
 		specMap["args"] = args
 	}
-	if len(spec.Env) > 0 {
-		env := make(map[string]any, len(spec.Env))
-		for k, v := range spec.Env {
-			env[k] = v
-		}
-		specMap["env"] = env
+	// Build the spawn env, merging caller-supplied values with the identity
+	// vars. Identity vars take precedence and cannot be overridden by the body.
+	env := make(map[string]any, len(spec.Env)+2)
+	for k, v := range spec.Env {
+		env[k] = v
 	}
+	env["LANTERN_AGENT_INSTANCE_ID"] = instanceID
+	env["LANTERN_AGENT_INSTANCE_TOKEN"] = instanceToken
+	specMap["env"] = env
 
 	vmID, node, az, err := h.scheduler.Schedule(ctx, specMap)
 	if err != nil {
@@ -861,10 +887,10 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	created := time.Now().UTC()
 	_, err = h.srv.Pool.Exec(ctx, `
 		INSERT INTO runtime_vms
-		  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9)
+		  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, agent_instance_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, $10)
 		ON CONFLICT (vm_id) DO NOTHING
-	`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, created)
+	`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, created)
 	if err != nil {
 		h.logger().Error("insert runtime_vms failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -873,11 +899,12 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 
 	h.auditRuntime(ctx, tenantID, vmID, "schedule",
 		map[string]any{
-			"image_digest": spec.ImageDigest,
-			"isolation":    spec.Isolation,
-			"node":         node,
-			"az":           az,
-		}, claims.Subject)
+			"image_digest":      spec.ImageDigest,
+			"isolation":         spec.Isolation,
+			"node":              node,
+			"az":                az,
+			"agent_instance_id": instanceID,
+		}, claims.Subject, instanceID)
 
 	writeJSON(w, http.StatusCreated, scheduleResponse{
 		VmID:      vmID,
@@ -1205,7 +1232,7 @@ func (h *RuntimeHandler) TerminateVM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.auditRuntime(ctx, tenantID, vmID, "terminate",
-		map[string]any{"reason": reason}, claims.Subject)
+		map[string]any{"reason": reason}, claims.Subject, "")
 
 	writeJSON(w, http.StatusOK, map[string]any{"vmId": vmID, "status": "terminated"})
 }
@@ -1262,7 +1289,7 @@ func (h *RuntimeHandler) ExecVM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.auditRuntime(ctx, tenantID, vmID, "exec",
-		map[string]any{"command": body.Command, "exit_code": exit}, claims.Subject)
+		map[string]any{"command": body.Command, "exit_code": exit}, claims.Subject, "")
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"stdout":   stdout,
@@ -1388,7 +1415,7 @@ func (h *RuntimeHandler) UpsertQuota(w http.ResponseWriter, r *http.Request) {
 			"max_egress_gb_per_day":     body.MaxEgressGBPerDay,
 			"max_cost_usd_per_day":      body.MaxCostUsdPerDay,
 			"hard_fail":                 body.HardFail,
-		}, claims.Subject)
+		}, claims.Subject, "")
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
@@ -1549,7 +1576,7 @@ func (h *RuntimeHandler) requireRuntimeScope(w http.ResponseWriter, claims *Lant
 				"role":           claims.Role,
 				"required_scope": required,
 			},
-			principal,
+			principal, "",
 		)
 	}
 	writeJSON(w, http.StatusForbidden, map[string]any{
