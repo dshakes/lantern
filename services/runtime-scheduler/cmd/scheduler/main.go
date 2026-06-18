@@ -121,7 +121,7 @@ func main() {
 	}
 
 	// --- Prometheus metrics ---
-	sched_metrics := metrics.New()
+	schedMetrics := metrics.New()
 
 	weights := scoring.Weights{
 		WarmPool:  cfg.WeightWarmPool,
@@ -142,11 +142,9 @@ func main() {
 	}
 	defer managerDialer.Close()
 
-	// --- Background heartbeat reaper (leader-gated) ---
-	cluster.StartHeartbeatReaper(ctx, clusterStore, cluster.HeartbeatDeadline, 5*time.Second, func(name string) {
-		if !elector.IsLeader() {
-			return // standby: skip mutating drain work
-		}
+	// --- Background heartbeat reaper (leader-gated at the tick, so the
+	// mutating MarkDrainingIfStale never runs on a standby) ---
+	cluster.StartHeartbeatReaper(ctx, clusterStore, cluster.HeartbeatDeadline, 5*time.Second, elector.IsLeader, func(name string) {
 		logger.Warn("node heartbeat expired, marking draining", zap.String("node", name))
 	})
 
@@ -154,7 +152,10 @@ func main() {
 	schedSvc := handlers.NewSchedulerService(clusterStore, pl, managerDialer, logger, cfg.TenantMaxVMs)
 	schedSvc.SnapshotPersister = snapPersister
 	schedSvc.Elector = elector
-	schedSvc.Metrics = sched_metrics
+	schedSvc.Metrics = schedMetrics
+	// Seed the active-VM gauge from current store state so a leader that takes
+	// over after failover reports the real count, not 0.
+	schedMetrics.ActiveVMs.Set(float64(len(clusterStore.ListVMs("", nil))))
 
 	// Keep the is_leader gauge in sync with the elector.
 	go func() {
@@ -166,9 +167,9 @@ func main() {
 				return
 			case <-t.C:
 				if elector.IsLeader() {
-					sched_metrics.IsLeader.Set(1)
+					schedMetrics.IsLeader.Set(1)
 				} else {
-					sched_metrics.IsLeader.Set(0)
+					schedMetrics.IsLeader.Set(0)
 				}
 			}
 		}
@@ -206,7 +207,7 @@ func main() {
 
 	// --- REST gateway ---
 	rest := handlers.NewRESTHandler(schedSvc, clusterStore, []byte(cfg.JWTSecret), logger)
-	rest.Metrics = sched_metrics
+	rest.Metrics = schedMetrics
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -219,7 +220,7 @@ func main() {
 	})
 
 	// /metrics — Prometheus scrape endpoint.
-	mux.Handle("/metrics", promhttp.HandlerFor(sched_metrics.Prometheus(), promhttp.HandlerOpts{}))
+	mux.Handle("/metrics", promhttp.HandlerFor(schedMetrics.Prometheus(), promhttp.HandlerOpts{}))
 
 	mux.HandleFunc("POST /v1/schedule", rest.Schedule)
 	mux.HandleFunc("GET /v1/vms", rest.ListVMs)

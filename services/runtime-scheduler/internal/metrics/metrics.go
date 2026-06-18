@@ -13,7 +13,8 @@ import (
 type Registry struct {
 	reg *prometheus.Registry
 
-	// ScheduleTotal counts Schedule RPCs by result label ("ok" | "error" | "quota").
+	// ScheduleTotal counts Schedule RPCs by result label
+	// ("ok" | "error" | "quota" | "standby").
 	ScheduleTotal *prometheus.CounterVec
 
 	// ScheduleErrorsTotal counts Schedule RPCs that returned an error.
@@ -47,7 +48,7 @@ func New() *Registry {
 
 	m.ScheduleTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "lantern_scheduler_schedule_total",
-		Help: "Total Schedule RPCs, partitioned by result (ok|error|quota).",
+		Help: "Total Schedule RPCs, partitioned by result (ok|error|quota|standby).",
 	}, []string{"result"})
 	reg.MustRegister(m.ScheduleTotal)
 

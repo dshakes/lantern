@@ -106,10 +106,12 @@ func (e *Elector) run(ctx context.Context, connStr string, logger *zap.Logger) {
 		// Hold the lock until the connection dies or ctx is cancelled.
 		e.hold(ctx, conn, logger)
 
-		// After hold() returns the lock is gone (conn closed).
+		// hold() has returned (connection dropped or ctx cancelled); step down
+		// and close the connection, which releases the session advisory lock.
+		// Use a fresh context so Close still runs cleanly when ctx is cancelled.
 		e.isLeader.Store(false)
 		logger.Info("leader: released advisory lock — this replica is now a standby")
-		_ = conn.Close(ctx)
+		_ = conn.Close(context.Background())
 
 		// Brief pause before re-contesting.
 		select {

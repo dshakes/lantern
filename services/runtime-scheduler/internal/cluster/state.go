@@ -362,7 +362,11 @@ func BuildNodeSnapshot(n Node) scoring.NodeSnapshot {
 
 // StartHeartbeatReaper periodically calls MarkDrainingIfStale. Cancel
 // the returned context to stop it.
-func StartHeartbeatReaper(ctx context.Context, store ClusterStore, deadline, tick time.Duration, onDrain func(name string)) {
+//
+// isLeader gates the MUTATING reap: when it returns false (a standby replica)
+// the whole tick body is skipped so MarkDrainingIfStale never flips node state
+// off-leader. A nil isLeader means always-reap (single-node / dev).
+func StartHeartbeatReaper(ctx context.Context, store ClusterStore, deadline, tick time.Duration, isLeader func() bool, onDrain func(name string)) {
 	go func() {
 		t := time.NewTicker(tick)
 		defer t.Stop()
@@ -371,6 +375,9 @@ func StartHeartbeatReaper(ctx context.Context, store ClusterStore, deadline, tic
 			case <-ctx.Done():
 				return
 			case now := <-t.C:
+				if isLeader != nil && !isLeader() {
+					continue // standby: do not mutate node state
+				}
 				flipped := store.MarkDrainingIfStale(now, deadline)
 				if onDrain != nil {
 					for _, name := range flipped {
