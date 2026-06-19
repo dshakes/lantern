@@ -11,6 +11,8 @@ import {
   Hash,
   Loader2,
   CheckCircle2,
+  GitCompare,
+  X,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useRun, useRunEvents } from "@/lib/hooks";
@@ -21,7 +23,7 @@ import { JsonViewer } from "@/components/json-viewer";
 import { RunDetailSkeleton } from "@/components/skeleton";
 import { FeedbackWidget } from "@/components/feedback-widget";
 import { ReceiptCard } from "@/components/receipt-card";
-import { RunWaterfall } from "@/components/run-waterfall";
+import { FlightRecorder } from "@/components/flight-recorder";
 import { ViewCode, snippetsForGetRun, snippetsForCreateRun } from "@/components/view-code";
 import { TakeoverPanel } from "@/components/takeover-panel";
 
@@ -45,6 +47,12 @@ export default function RunDetailPage() {
 
   const [cancelled, setCancelled] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+
+  // Run compare (regression diffing) — entering a second run id stacks its
+  // trace below this one. Held behind a control; off by default (clean).
+  const [compareInput, setCompareInput] = useState("");
+  const [compareId, setCompareId] = useState<string | null>(null);
+  const [comparing, setComparing] = useState(false);
 
   const handleCancel = useCallback(async () => {
     setCancelling(true);
@@ -116,6 +124,49 @@ export default function RunDetailPage() {
               title={`Create a run for ${run.agentName}`}
               snippets={snippetsForCreateRun(run.agentName)}
             />
+            {comparing ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const id = compareInput.trim();
+                  if (id) setCompareId(id);
+                }}
+                className="flex items-center gap-1"
+              >
+                <input
+                  autoFocus
+                  value={compareInput}
+                  onChange={(e) => setCompareInput(e.target.value)}
+                  placeholder="run id to compare…"
+                  className="w-48 rounded-lg border border-zinc-700 bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-lantern-500 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  className="rounded-lg bg-lantern-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-500"
+                >
+                  Load
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setComparing(false);
+                    setCompareId(null);
+                    setCompareInput("");
+                  }}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700 text-zinc-400 transition-colors hover:bg-surface-2"
+                  aria-label="Cancel compare"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </form>
+            ) : (
+              <button
+                onClick={() => setComparing(true)}
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-2"
+              >
+                <GitCompare className="h-4 w-4" /> Compare…
+              </button>
+            )}
             {isRunning && !cancelled && (
               <button
                 onClick={handleCancel}
@@ -147,7 +198,11 @@ export default function RunDetailPage() {
         <div className="flex flex-[2] flex-col overflow-hidden border-r border-zinc-800">
           {events.length > 0 && (
             <div className="border-b border-zinc-800 p-4">
-              <RunWaterfall
+              <div className="mb-1.5 flex items-center gap-2">
+                <span className="font-mono text-[10px] text-zinc-500">{run.id}</span>
+                <StatusBadge status={effectiveStatus} />
+              </div>
+              <FlightRecorder
                 events={events}
                 running={isRunning}
                 totals={{
@@ -156,6 +211,16 @@ export default function RunDetailPage() {
                   tokensOut: run.tokensOut,
                 }}
               />
+              {compareId && (
+                <CompareTrace
+                  runId={compareId}
+                  onClose={() => {
+                    setCompareId(null);
+                    setComparing(false);
+                    setCompareInput("");
+                  }}
+                />
+              )}
             </div>
           )}
           <div className="flex-shrink-0 border-b border-zinc-800/50 bg-surface-1/50 px-6 py-3">
@@ -295,6 +360,61 @@ export default function RunDetailPage() {
             </section>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Compare panel — a second run's flight recorder stacked under the primary
+// trace for regression diffing. Mounted only when a compare id is set, so
+// its event stream opens lazily and tears down on close (clean — no idle
+// second SSE connection when the user isn't comparing).
+function CompareTrace({ runId, onClose }: { runId: string; onClose: () => void }) {
+  const { run, loading, error } = useRun(runId);
+  const { events } = useRunEvents(runId);
+  const isRunning = run?.status === "running" || run?.status === "paused";
+
+  return (
+    <div className="mt-4 rounded-xl border border-zinc-800 bg-surface-1/40">
+      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <GitCompare className="h-3.5 w-3.5 text-zinc-500" />
+          <span className="text-[11px] font-semibold text-zinc-300">Compare</span>
+          <span className="font-mono text-[10px] text-zinc-500">{runId}</span>
+          {run && <StatusBadge status={run.status} />}
+        </div>
+        <button
+          onClick={onClose}
+          className="flex h-6 w-6 items-center justify-center rounded border border-zinc-700 text-zinc-400 transition-colors hover:bg-surface-2"
+          aria-label="Close compare"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="p-4">
+        {loading ? (
+          <div className="flex items-center justify-center py-8 text-xs text-zinc-500">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading {runId}…
+          </div>
+        ) : error || !run ? (
+          <p className="py-6 text-center text-xs text-zinc-500">
+            Run <span className="font-mono text-zinc-400">{runId}</span> not found.
+          </p>
+        ) : events.length === 0 ? (
+          <p className="py-6 text-center text-xs text-zinc-500">
+            No structured spans recorded for this run.
+          </p>
+        ) : (
+          <FlightRecorder
+            events={events}
+            running={isRunning}
+            totals={{
+              costUsd: run.costUsd,
+              tokensIn: run.tokensIn,
+              tokensOut: run.tokensOut,
+            }}
+          />
+        )}
       </div>
     </div>
   );

@@ -5,7 +5,7 @@
 // free from ClusterSummary), and surfaces warm-pool capacity.
 
 import clsx from "clsx";
-import { Boxes, Flame, Snowflake } from "lucide-react";
+import { Boxes, Server, Snowflake } from "lucide-react";
 import type { ClusterSummary, ClusterNode } from "@/lib/runtime-types";
 import { UtilBar } from "./cockpit-ui";
 
@@ -26,10 +26,18 @@ function tone(u: number): "ok" | "accent" | "warn" | "danger" {
   return "ok";
 }
 
-export function CapacityMap({ cluster }: { cluster: ClusterSummary | null }) {
+export function CapacityMap({
+  cluster,
+  nodes,
+  warmPool,
+}: {
+  cluster: ClusterSummary | null;
+  nodes?: number;
+  warmPool?: number;
+}) {
   if (!cluster || cluster.nodes.length === 0) {
     return (
-      <div className="rounded-xl border border-zinc-800 bg-surface-1 p-6 text-center text-[12px] text-zinc-600">
+      <div className="rounded-xl bg-surface-1 p-8 text-center text-[12px] text-zinc-600">
         No cluster capacity reported.
       </div>
     );
@@ -43,40 +51,49 @@ export function CapacityMap({ cluster }: { cluster: ClusterSummary | null }) {
     byRegion.set(n.region, arr);
   }
   const warm = cluster.warm_pool;
+  const nodeCount = nodes ?? cluster.nodes.length;
+  const warmAvail = warmPool ?? warm?.available;
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-surface-1">
-      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2.5">
+    <div className="rounded-xl bg-surface-1">
+      <div className="flex items-center justify-between border-b border-zinc-800/40 px-5 py-3.5">
         <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-          <Boxes className="h-3.5 w-3.5" />
+          <Boxes className="h-3.5 w-3.5 text-zinc-500" />
           Capacity map
         </div>
-        {warm && (
-          <div className="flex items-center gap-1.5 text-[11px]">
-            <Snowflake className="h-3 w-3 text-sky-400" />
-            <span className="text-zinc-500">warm pool</span>
-            <span className="font-mono tabular-nums text-zinc-300">
-              {warm.available}/{warm.target}
+        <div className="flex items-center gap-4 text-[11px]">
+          <span className="flex items-center gap-1.5">
+            <Server className="h-3 w-3 text-zinc-500" />
+            <span className="text-zinc-500">nodes</span>
+            <span className="font-mono tabular-nums text-zinc-300">{nodeCount}</span>
+          </span>
+          {warmAvail != null && (
+            <span className="flex items-center gap-1.5">
+              <Snowflake className="h-3 w-3 text-zinc-500" />
+              <span className="text-zinc-500">warm</span>
+              <span className="font-mono tabular-nums text-zinc-300">
+                {warm?.target != null ? `${warmAvail}/${warm.target}` : warmAvail}
+              </span>
             </span>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      <div className="space-y-4 p-4">
+      <div className="space-y-5 p-5">
         {[...byRegion.entries()].map(([region, nodes]) => (
           <div key={region}>
-            <div className="mb-2 flex items-center gap-2">
+            <div className="mb-2.5 flex items-center gap-2">
               <span className="font-mono text-[11px] text-zinc-300">{region}</span>
               <span className="text-[10px] text-zinc-600">
                 {nodes.length} node{nodes.length === 1 ? "" : "s"}
               </span>
               {warm?.regions?.[region] != null && (
-                <span className="rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-300">
+                <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] text-zinc-400">
                   +{warm.regions[region]} warm
                 </span>
               )}
             </div>
-            <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-2">
               {nodes.map((n) => {
                 const u = nodeUtil(n);
                 const hot = u.cpu >= 0.8 || u.mem >= 0.8;
@@ -84,16 +101,17 @@ export function CapacityMap({ cluster }: { cluster: ClusterSummary | null }) {
                   <div
                     key={n.name}
                     className={clsx(
-                      "rounded-lg border bg-surface-0 px-3 py-2.5",
-                      n.draining ? "border-amber-500/30" : hot ? "border-red-500/20" : "border-zinc-800",
+                      "rounded-lg bg-surface-0 px-3.5 py-3",
+                      n.draining && "ring-1 ring-inset ring-zinc-700/60",
+                      hot && !n.draining && "ring-1 ring-inset ring-red-500/15",
                     )}
                   >
-                    <div className="mb-2 flex items-center justify-between">
+                    <div className="mb-2.5 flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
                         <span className="font-mono text-[11px] text-zinc-200">{n.name}</span>
-                        {hot && <Flame className="h-3 w-3 text-red-400" />}
+                        {hot && <span className="h-1.5 w-1.5 rounded-full bg-red-500/60" title="high utilisation" />}
                         {n.draining && (
-                          <span className="rounded bg-amber-500/10 px-1 py-0.5 text-[9px] uppercase text-amber-300">
+                          <span className="rounded bg-surface-2 px-1 py-0.5 text-[9px] uppercase tracking-wide text-zinc-400">
                             draining
                           </span>
                         )}
