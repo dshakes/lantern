@@ -98,7 +98,7 @@ export default function RunDetailPage() {
   return (
     <div className="flex flex-1 flex-col overflow-auto">
       {/* Header */}
-      <div className="flex-shrink-0 border-b border-zinc-800 bg-surface-1 px-8 py-5">
+      <div className="flex-shrink-0 border-b border-zinc-800/40 bg-surface-1 px-8 py-6">
         <div className="mb-3">
           <button
             onClick={() => router.push("/runs")}
@@ -138,7 +138,7 @@ export default function RunDetailPage() {
                   value={compareInput}
                   onChange={(e) => setCompareInput(e.target.value)}
                   placeholder="run id to compare…"
-                  className="w-48 rounded-lg border border-zinc-700 bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-lantern-500 focus:outline-none"
+                  className="w-48 rounded-lg bg-surface-2 px-2.5 py-1.5 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-lantern-500/40"
                 />
                 <button
                   type="submit"
@@ -153,7 +153,7 @@ export default function RunDetailPage() {
                     setCompareId(null);
                     setCompareInput("");
                   }}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-700 text-zinc-400 transition-colors hover:bg-surface-2"
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-surface-2 hover:text-zinc-300"
                   aria-label="Cancel compare"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -162,16 +162,16 @@ export default function RunDetailPage() {
             ) : (
               <button
                 onClick={() => setComparing(true)}
-                className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-2"
+                className="inline-flex items-center gap-2 rounded-lg bg-surface-2 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3"
               >
-                <GitCompare className="h-4 w-4" /> Compare…
+                <GitCompare className="h-4 w-4 text-zinc-500" /> Compare…
               </button>
             )}
             {isRunning && !cancelled && (
               <button
                 onClick={handleCancel}
                 disabled={cancelling}
-                className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-4 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-red-400/80 transition-colors hover:bg-red-500/10 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {cancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                 Cancel
@@ -195,9 +195,9 @@ export default function RunDetailPage() {
         {/* Left: Trace waterfall + Output. The waterfall sits above the
             final output so the run reads top→bottom as a story: plan
             (spans + sub-events), then result. */}
-        <div className="flex flex-[2] flex-col overflow-hidden border-r border-zinc-800">
+        <div className="flex flex-[2] flex-col overflow-hidden border-r border-zinc-800/40">
           {events.length > 0 && (
-            <div className="border-b border-zinc-800 p-4">
+            <div className="border-b border-zinc-800/40 p-4">
               <div className="mb-1.5 flex items-center gap-2">
                 <span className="font-mono text-[10px] text-zinc-500">{run.id}</span>
                 <StatusBadge status={effectiveStatus} />
@@ -223,12 +223,12 @@ export default function RunDetailPage() {
               )}
             </div>
           )}
-          <div className="flex-shrink-0 border-b border-zinc-800/50 bg-surface-1/50 px-6 py-3">
-            <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">Output</h2>
+          <div className="flex-shrink-0 border-b border-zinc-800/40 bg-surface-1/50 px-6 py-3">
+            <h2 className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Output</h2>
           </div>
           <div className="flex-1 overflow-auto p-6">
             {run.status === "succeeded" && run.output ? (
-              <div className="whitespace-pre-wrap rounded-lg border border-zinc-800 bg-surface-2 p-4 font-mono text-sm leading-relaxed text-zinc-200">
+              <div className="whitespace-pre-wrap rounded-lg bg-surface-2 p-4 font-mono text-sm leading-relaxed text-zinc-200">
                 {typeof run.output === "string"
                   ? run.output
                   : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>)
@@ -268,10 +268,10 @@ export default function RunDetailPage() {
 
         {/* Right: Metadata */}
         <div className="flex w-80 flex-shrink-0 flex-col overflow-auto bg-surface-1/30">
-          <div className="space-y-5 p-5">
+          <div className="space-y-7 p-6">
             {/* Run Info */}
             <section>
-              <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-500">Run Info</h3>
+              <h3 className="mb-3.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">Run Info</h3>
               <dl className="space-y-2.5 text-sm">
                 <InfoRow label="Status"><StatusBadge status={effectiveStatus} /></InfoRow>
                 <InfoRow label="Agent"><span className="text-zinc-300">{run.agentName}</span></InfoRow>
@@ -284,8 +284,8 @@ export default function RunDetailPage() {
 
             {/* Timing */}
             <section>
-              <h3 className="mb-3 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-zinc-500">
-                <Clock className="h-3.5 w-3.5" /> Timing
+              <h3 className="mb-3.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                <Clock className="h-3.5 w-3.5 text-zinc-600" /> Timing
               </h3>
               <dl className="space-y-2.5 text-sm">
                 <InfoRow label="Created">
@@ -311,8 +311,8 @@ export default function RunDetailPage() {
 
             {/* Cost */}
             <section>
-              <h3 className="mb-3 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-zinc-500">
-                <Coins className="h-3.5 w-3.5" /> Cost
+              <h3 className="mb-3.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                <Coins className="h-3.5 w-3.5 text-zinc-600" /> Cost
               </h3>
               <dl className="space-y-2.5 text-sm">
                 <InfoRow label="Tokens in"><span className="font-mono text-xs text-zinc-400">{formatTokens(run.tokensIn)}</span></InfoRow>
@@ -329,7 +329,7 @@ export default function RunDetailPage() {
             {/* Feedback (RLHF loop) — only after run reached a terminal state */}
             {(effectiveStatus === "succeeded" || effectiveStatus === "failed") && (
               <section>
-                <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                <h3 className="mb-3.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
                   Feedback
                 </h3>
                 <FeedbackWidget runId={run.id} />
@@ -339,7 +339,7 @@ export default function RunDetailPage() {
             {/* Verifiable receipt — only for completed runs */}
             {(effectiveStatus === "succeeded" || effectiveStatus === "failed") && (
               <section>
-                <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-zinc-500">
+                <h3 className="mb-3.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
                   Verification
                 </h3>
                 <ReceiptCard runId={run.id} />
@@ -348,8 +348,8 @@ export default function RunDetailPage() {
 
             {/* Input / Output raw data */}
             <section>
-              <h3 className="mb-3 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-zinc-500">
-                <Hash className="h-3.5 w-3.5" /> Data
+              <h3 className="mb-3.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                <Hash className="h-3.5 w-3.5 text-zinc-600" /> Data
               </h3>
               <div className="space-y-2">
                 <JsonViewer data={run.input} label="Input" defaultOpen />
@@ -375,17 +375,17 @@ function CompareTrace({ runId, onClose }: { runId: string; onClose: () => void }
   const isRunning = run?.status === "running" || run?.status === "paused";
 
   return (
-    <div className="mt-4 rounded-xl border border-zinc-800 bg-surface-1/40">
-      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2.5">
+    <div className="mt-4 rounded-xl bg-surface-1/40">
+      <div className="flex items-center justify-between border-b border-zinc-800/40 px-4 py-3">
         <div className="flex items-center gap-2">
           <GitCompare className="h-3.5 w-3.5 text-zinc-500" />
-          <span className="text-[11px] font-semibold text-zinc-300">Compare</span>
+          <span className="text-[11px] font-medium text-zinc-300">Compare</span>
           <span className="font-mono text-[10px] text-zinc-500">{runId}</span>
           {run && <StatusBadge status={run.status} />}
         </div>
         <button
           onClick={onClose}
-          className="flex h-6 w-6 items-center justify-center rounded border border-zinc-700 text-zinc-400 transition-colors hover:bg-surface-2"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-surface-2 hover:text-zinc-300"
           aria-label="Close compare"
         >
           <X className="h-3.5 w-3.5" />

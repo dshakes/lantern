@@ -31,7 +31,6 @@ import {
   ChevronDown,
   ChevronRight,
   Network,
-  Boxes,
   Layers,
   Globe2,
   RefreshCw,
@@ -101,15 +100,13 @@ interface CloudSetup {
   name: string;
   cloud: string;
   icon: string;
-  color: string;
-  bgColor: string;
   blurb: string;
   steps: string[];
 }
 
 const cloudSetups: CloudSetup[] = [
   {
-    name: "AWS", cloud: "aws", icon: "AWS", color: "text-orange-400", bgColor: "bg-orange-500/10",
+    name: "AWS", cloud: "aws", icon: "AWS",
     blurb: "Amazon EKS with Firecracker support",
     steps: [
       "# Install the Lantern data plane on AWS EKS",
@@ -125,7 +122,7 @@ const cloudSetups: CloudSetup[] = [
     ],
   },
   {
-    name: "GCP", cloud: "gcp", icon: "GCP", color: "text-blue-400", bgColor: "bg-blue-500/10",
+    name: "GCP", cloud: "gcp", icon: "GCP",
     blurb: "Google GKE with nested virtualization",
     steps: [
       "# Install the Lantern data plane on GKE",
@@ -141,7 +138,7 @@ const cloudSetups: CloudSetup[] = [
     ],
   },
   {
-    name: "Azure", cloud: "azure", icon: "AZ", color: "text-sky-400", bgColor: "bg-sky-500/10",
+    name: "Azure", cloud: "azure", icon: "AZ",
     blurb: "Azure AKS with dedicated hosts",
     steps: [
       "# Install the Lantern data plane on AKS",
@@ -174,17 +171,20 @@ function planeVmState(status: string): VmState {
   }
 }
 
+// Cloud badges are metadata, not focal points. A single low-saturation neutral
+// chip with just enough of a tint to tell AWS/GCP/Azure apart — no bright fills,
+// no rings. The fleet (not the cloud logo) is the hero.
 const CLOUD_STYLES: Record<string, { label: string; cls: string }> = {
-  aws: { label: "AWS", cls: "bg-orange-500/10 text-orange-300 ring-orange-500/20" },
-  gcp: { label: "GCP", cls: "bg-blue-500/10 text-blue-300 ring-blue-500/20" },
-  azure: { label: "Azure", cls: "bg-sky-500/10 text-sky-300 ring-sky-500/20" },
+  aws: { label: "AWS", cls: "bg-surface-2 text-amber-200/70" },
+  gcp: { label: "GCP", cls: "bg-surface-2 text-sky-200/70" },
+  azure: { label: "Azure", cls: "bg-surface-2 text-indigo-200/70" },
 };
 
 function CloudBadge({ cloud, dense }: { cloud: string; dense?: boolean }) {
-  const s = CLOUD_STYLES[cloud.toLowerCase()] ?? { label: cloud, cls: "bg-zinc-500/10 text-zinc-300 ring-zinc-500/20" };
+  const s = CLOUD_STYLES[cloud.toLowerCase()] ?? { label: cloud, cls: "bg-surface-2 text-zinc-400" };
   return (
     <span className={clsx(
-      "inline-flex items-center rounded font-mono font-medium uppercase ring-1 ring-inset",
+      "inline-flex items-center rounded-md font-mono font-medium uppercase",
       dense ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[11px]",
       s.cls,
     )}>
@@ -193,23 +193,28 @@ function CloudBadge({ cloud, dense }: { cloud: string; dense?: boolean }) {
   );
 }
 
+// Environment is metadata too — a quiet neutral chip. Production gets a faint
+// calm-green dot to distinguish it; everything else reads neutral.
 function EnvBadge({ env }: { env: string }) {
-  const colors: Record<string, string> = {
-    development: "bg-zinc-500/10 text-zinc-400",
-    staging: "bg-amber-500/10 text-amber-300",
-    production: "bg-emerald-500/10 text-emerald-300",
+  const dot: Record<string, string> = {
+    production: "bg-emerald-500/70",
+    staging: "bg-zinc-400",
+    development: "bg-zinc-500",
   };
   return (
-    <span className={clsx("rounded-md px-2 py-0.5 text-[11px] font-medium capitalize", colors[env] ?? "bg-zinc-500/10 text-zinc-400")}>
+    <span className="inline-flex items-center gap-1.5 rounded-md bg-surface-2 px-2 py-0.5 text-[11px] font-medium capitalize text-zinc-400">
+      <span className={clsx("h-1.5 w-1.5 rounded-full", dot[env] ?? "bg-zinc-500")} />
       {env}
     </span>
   );
 }
 
-// Color-coded heartbeat freshness. null → "—".
+// Heartbeat freshness. Quiet by default — only true staleness/offline carries a
+// muted red; fresh reads neutral (we don't paint healthy telemetry green).
 function Heartbeat({ ago, offline }: { ago: number | null; offline?: boolean }) {
   if (ago === null) return <span className="font-mono text-[11px] text-zinc-600">—</span>;
-  const tone = offline || ago > 120 ? "text-red-400" : ago > 30 ? "text-amber-400" : "text-emerald-400";
+  const stale = offline || ago > 120;
+  const tone = stale ? "text-red-400/90" : "text-zinc-400";
   let label: string;
   if (ago < 60) label = `${ago}s ago`;
   else if (ago < 3600) label = `${Math.floor(ago / 60)}m ago`;
@@ -217,21 +222,23 @@ function Heartbeat({ ago, offline }: { ago: number | null; offline?: boolean }) 
   else label = `${Math.floor(ago / 86400)}d ago`;
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span className={clsx("h-1.5 w-1.5 rounded-full", offline || ago > 120 ? "bg-red-400" : ago > 30 ? "bg-amber-400" : "bg-emerald-400 animate-pulse")} />
+      <span className={clsx("h-1.5 w-1.5 rounded-full", stale ? "bg-red-500/70" : "bg-emerald-500/70 animate-pulse")} />
       <span className={clsx("font-mono text-[11px] tabular-nums", tone)}>{label}</span>
     </span>
   );
 }
 
+// mTLS tunnel health — a quiet implicit chip. Down carries a muted red; up reads
+// neutral, not a saturated green pill.
 function TunnelBadge({ tunnel }: { tunnel: "up" | "down" | null }) {
   if (tunnel === null) return <span className="font-mono text-[11px] text-zinc-600">—</span>;
   const up = tunnel === "up";
   return (
     <span className={clsx(
-      "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset",
-      up ? "bg-emerald-500/10 text-emerald-300 ring-emerald-500/20" : "bg-red-500/10 text-red-300 ring-red-500/20",
+      "inline-flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium",
+      up ? "text-zinc-400" : "text-red-400/90",
     )} title="Outbound control → data-plane mTLS tunnel">
-      <Network className="h-2.5 w-2.5" />
+      <Network className={clsx("h-2.5 w-2.5", up ? "text-zinc-500" : "text-red-400/80")} />
       mTLS {up ? "up" : "down"}
     </span>
   );
@@ -448,7 +455,7 @@ export default function DeploymentsPage() {
           {/* Fleet (centerpiece) */}
           <section className="min-w-0">
             <h2 className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-              <Server className="h-3.5 w-3.5" /> Data plane fleet
+              <Server className="h-3.5 w-3.5 text-zinc-500" /> Data plane fleet
             </h2>
             <div className="space-y-2.5">
               {planes.map((p) => (
@@ -477,7 +484,7 @@ export default function DeploymentsPage() {
         <section>
           <button
             onClick={() => setShowOnboard((v) => !v)}
-            className="flex w-full items-center justify-between rounded-xl border border-zinc-800 bg-surface-1 px-5 py-4 text-left transition-colors hover:border-zinc-700"
+            className="flex w-full items-center justify-between rounded-xl bg-surface-1 px-5 py-4 text-left transition-colors hover:bg-surface-2/40"
           >
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-lantern-500/10">
@@ -499,11 +506,11 @@ export default function DeploymentsPage() {
                     key={setup.cloud}
                     onClick={() => setSelectedCloud(selectedCloud?.cloud === setup.cloud ? null : setup)}
                     className={clsx(
-                      "rounded-xl border p-4 text-left transition-all",
-                      selectedCloud?.cloud === setup.cloud ? "border-lantern-500 bg-lantern-500/5" : "border-zinc-800 bg-surface-1 hover:border-zinc-700",
+                      "rounded-xl p-4 text-left transition-all",
+                      selectedCloud?.cloud === setup.cloud ? "bg-lantern-500/10 ring-1 ring-inset ring-lantern-500/30" : "bg-surface-1 hover:bg-surface-2/40",
                     )}
                   >
-                    <div className={clsx("flex h-9 w-9 items-center justify-center rounded-lg text-xs font-bold", setup.bgColor, setup.color)}>
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-2 text-xs font-bold text-zinc-400">
                       {setup.icon}
                     </div>
                     <h4 className="mt-2.5 text-sm font-semibold text-zinc-100">Connect {setup.name}</h4>
@@ -513,20 +520,20 @@ export default function DeploymentsPage() {
               </div>
 
               {selectedCloud && (
-                <div className="mt-4 rounded-xl border border-zinc-800 bg-surface-1 p-5">
+                <div className="mt-4 rounded-xl bg-surface-1 p-5">
                   <div className="mb-3 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Terminal className="h-4 w-4 text-zinc-400" />
+                      <Terminal className="h-4 w-4 text-zinc-500" />
                       <h4 className="text-sm font-semibold text-zinc-100">{selectedCloud.name} installation</h4>
                     </div>
                     <button
                       onClick={() => { navigator.clipboard.writeText(selectedCloud.steps.join("\n")); toast.success("Commands copied"); }}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1 text-xs text-zinc-400 transition-colors hover:bg-surface-3 hover:text-zinc-200"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-surface-2 px-2.5 py-1 text-xs text-zinc-400 transition-colors hover:bg-surface-3 hover:text-zinc-200"
                     >
                       <Copy className="h-3 w-3" /> Copy
                     </button>
                   </div>
-                  <pre className="overflow-x-auto rounded-lg border border-zinc-800 bg-surface-0 p-4 font-mono text-xs leading-relaxed text-zinc-400">
+                  <pre className="overflow-x-auto rounded-lg bg-surface-0 p-4 font-mono text-xs leading-relaxed text-zinc-400">
                     {selectedCloud.steps.join("\n")}
                   </pre>
                   <div className="mt-4 flex items-center gap-3">
@@ -664,28 +671,28 @@ function CommandStrip({
   const agoS = Math.max(0, Math.round((Date.now() - lastUpdated) / 1000));
 
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-zinc-800 bg-surface-0 px-6 py-3 md:px-8">
+    <div className="flex flex-wrap items-center gap-x-10 gap-y-3 border-b border-zinc-800/40 px-6 py-4 md:px-8">
       <div className="flex items-center gap-2">
-        <span className="relative inline-flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+        <span className="relative inline-flex h-1.5 w-1.5">
+          <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-emerald-500/70" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500/80" />
         </span>
-        <span className="text-[11px] font-semibold uppercase tracking-widest text-emerald-300">Live</span>
+        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Live</span>
       </div>
 
-      <Metric icon={<Boxes className="h-3.5 w-3.5" />} label="Data planes" value={stats.total} />
-      <Metric icon={<span className="h-2 w-2 rounded-full bg-emerald-400" />} label="Healthy" value={stats.healthy} tone="emerald" />
-      <Metric icon={<span className="h-2 w-2 rounded-full bg-amber-400" />} label="Degraded" value={stats.degraded} tone="amber" />
-      <Metric icon={<span className="h-2 w-2 rounded-full bg-red-400" />} label="Offline" value={stats.offline} tone="red" />
-      <Metric icon={<Cloud className="h-3.5 w-3.5 text-sky-400" />} label="Clouds" value={stats.clouds} tone="sky" />
-      <Metric icon={<Globe2 className="h-3.5 w-3.5 text-lantern-400" />} label="Regions" value={stats.regions} tone="lantern" />
-      <Metric icon={<Layers className="h-3.5 w-3.5" />} label="Workloads" value={stats.workloads} />
-      <Metric icon={<Server className="h-3.5 w-3.5" />} label="Agents" value={stats.agents} />
+      <Metric label="Data planes" value={stats.total} />
+      <Metric label="Healthy" value={stats.healthy} />
+      <Metric label="Degraded" value={stats.degraded} tone={stats.degraded > 0 ? "warn" : "neutral"} />
+      <Metric label="Offline" value={stats.offline} tone={stats.offline > 0 ? "danger" : "neutral"} />
+      <Metric label="Clouds" value={stats.clouds} />
+      <Metric label="Regions" value={stats.regions} />
+      <Metric label="Workloads" value={stats.workloads} />
+      <Metric label="Agents" value={stats.agents} />
 
       <div className="ml-auto flex items-center gap-3 text-[11px] text-zinc-500">
         {usingDemo && (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 font-medium text-amber-300 ring-1 ring-inset ring-amber-500/20">
-            <AlertTriangle className="h-3 w-3" />
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 font-medium text-zinc-400">
+            <AlertTriangle className="h-3 w-3 text-zinc-500" />
             Demo data planes — none registered
           </span>
         )}
@@ -696,29 +703,20 @@ function CommandStrip({
 }
 
 function Metric({
-  icon,
   label,
   value,
-  tone = "zinc",
+  tone = "neutral",
 }: {
-  icon: React.ReactNode;
   label: string;
   value: number;
-  tone?: "zinc" | "emerald" | "amber" | "red" | "sky" | "lantern";
+  tone?: "neutral" | "warn" | "danger";
 }) {
-  const valueTone: Record<string, string> = {
-    zinc: "text-zinc-100",
-    emerald: "text-emerald-300",
-    amber: value > 0 ? "text-amber-300" : "text-zinc-100",
-    red: value > 0 ? "text-red-300" : "text-zinc-100",
-    sky: "text-sky-300",
-    lantern: "text-lantern-300",
-  };
+  const valueTone =
+    tone === "danger" ? "text-red-400/90" : tone === "warn" ? "text-amber-300/90" : "text-zinc-200";
   return (
-    <div className="flex items-center gap-1.5">
-      {icon}
-      <span className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</span>
-      <span className={clsx("font-mono text-[14px] font-semibold tabular-nums", valueTone[tone])}>{value}</span>
+    <div className="flex items-baseline gap-2.5">
+      <span className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</span>
+      <span className={clsx("font-mono text-[15px] font-medium tabular-nums", valueTone)}>{value}</span>
     </div>
   );
 }
@@ -746,12 +744,12 @@ function PlaneCard({
 
   return (
     <div className={clsx(
-      "overflow-hidden rounded-xl border bg-surface-1 transition-colors",
-      open ? "border-zinc-700" : "border-zinc-800 hover:border-zinc-700",
-      offline && "border-red-500/20",
+      "overflow-hidden rounded-xl bg-surface-1 transition-colors",
+      open && "bg-surface-2/40",
+      offline && "ring-1 ring-inset ring-red-500/15",
     )}>
       {/* Summary row */}
-      <button onClick={onToggle} className="flex w-full items-center gap-4 px-4 py-3.5 text-left">
+      <button onClick={onToggle} className="flex w-full items-center gap-4 px-5 py-4 text-left">
         <span className="text-zinc-600">
           {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </span>
@@ -759,7 +757,7 @@ function PlaneCard({
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <CloudBadge cloud={plane.cloud} />
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <span className="truncate text-sm font-semibold text-zinc-100">{plane.name}</span>
               <StatePill state={planeVmState(plane.status)} />
             </div>
@@ -771,7 +769,7 @@ function PlaneCard({
         </div>
 
         {/* Telemetry cluster (hidden on small screens; expand to see all) */}
-        <div className="hidden items-center gap-5 lg:flex">
+        <div className="hidden items-center gap-6 lg:flex">
           <TunnelBadge tunnel={plane.tunnel} />
           <div className="w-24">
             <Heartbeat ago={plane.heartbeatAgoSec} offline={offline} />
@@ -791,13 +789,13 @@ function PlaneCard({
             <span className="font-mono tabular-nums">{plane.workloadCount ?? "—"}</span>
             <span className="text-zinc-600">wl</span>
           </div>
-          <Sparkline data={plane.capacityHistory ?? []} color={offline ? "#f87171" : "var(--color-accent)"} />
+          <Sparkline data={plane.capacityHistory ?? []} color={offline ? "var(--color-danger)" : "var(--color-accent)"} />
         </div>
       </button>
 
       {/* Expanded detail */}
       {open && (
-        <div className="border-t border-zinc-800 bg-surface-0/40 px-4 py-4">
+        <div className="border-t border-zinc-800/40 px-5 py-4">
           <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
             <Detail label="Region" value={plane.region} mono />
             <Detail label="Cluster" value={plane.clusterName ?? "—"} mono />
@@ -845,7 +843,7 @@ function PlaneCard({
             ) : (
               <div className="space-y-1.5">
                 {deployments.map((d) => (
-                  <div key={d.id} className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-surface-1 px-3 py-2">
+                  <div key={d.id} className="flex items-center gap-3 rounded-lg bg-surface-0 px-3 py-2">
                     <StateDot state={d.status === "live" ? "running" : d.status === "failed" ? "failed" : "spawning"} />
                     <span className="text-xs font-medium text-zinc-200">{d.agentName}</span>
                     <span className="font-mono text-[11px] text-zinc-500">{d.version}</span>
@@ -861,7 +859,7 @@ function PlaneCard({
           <div className="mt-4 flex justify-end">
             <button
               onClick={onRemove}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 py-1 text-[11px] text-zinc-500 transition-colors hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-400"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-surface-2 px-2.5 py-1 text-[11px] text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400/90"
             >
               <Trash2 className="h-3 w-3" /> Disconnect
             </button>
@@ -908,11 +906,11 @@ function RegionMap({ planes }: { planes: PlaneRow[] }) {
   }
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-surface-1">
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-2.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-        <Globe2 className="h-3.5 w-3.5" /> Where agents run
+    <div className="rounded-xl bg-surface-1">
+      <div className="flex items-center gap-2 border-b border-zinc-800/40 px-5 py-3.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+        <Globe2 className="h-3.5 w-3.5 text-zinc-500" /> Where agents run
       </div>
-      <div className="space-y-4 p-4">
+      <div className="space-y-5 p-5">
         {[...byCloud.entries()].map(([cloud, regions]) => (
           <div key={cloud}>
             <div className="mb-2 flex items-center gap-2">
@@ -935,8 +933,9 @@ function RegionMap({ planes }: { planes: PlaneRow[] }) {
                   <div
                     key={region}
                     className={clsx(
-                      "rounded-lg border bg-surface-0 px-3 py-2.5",
-                      worst === "offline" ? "border-red-500/20" : worst === "degraded" ? "border-amber-500/25" : "border-zinc-800",
+                      "rounded-lg bg-surface-0 px-3 py-2.5",
+                      worst === "offline" && "ring-1 ring-inset ring-red-500/15",
+                      worst === "degraded" && "ring-1 ring-inset ring-zinc-700/60",
                     )}
                   >
                     <div className="flex items-center justify-between">
@@ -980,9 +979,9 @@ function DeploymentsSection({ deployments, planes }: { deployments: DeploymentRo
   return (
     <section>
       <h2 className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-        <Layers className="h-3.5 w-3.5" /> Deployments
+        <Layers className="h-3.5 w-3.5 text-zinc-500" /> Deployments
       </h2>
-      <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
+      <div className="overflow-hidden rounded-xl bg-surface-1">
         <table className="data-table">
           <thead>
             <tr><th>Agent</th><th>Version</th><th>Environment</th><th>Data plane</th><th>Status</th><th>Deployed</th></tr>

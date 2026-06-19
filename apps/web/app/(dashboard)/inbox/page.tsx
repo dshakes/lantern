@@ -22,12 +22,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  Activity,
   AlertTriangle,
-  Bot,
   ChevronDown,
   ChevronRight,
-  CircleDollarSign,
   Gauge,
   Inbox as InboxIcon,
   Layers,
@@ -146,22 +143,14 @@ export default function MissionControlPage() {
       <div className="flex-1 px-6 pb-10 pt-6 md:px-8">
         {/* Section switch — fleet is primary, activity feed preserved behind a tab. */}
         <div className="mb-6 flex flex-wrap items-center gap-2">
-          <SectionTab
-            active={section === "fleet"}
-            onClick={() => setSection("fleet")}
-            icon={<Gauge className="h-3.5 w-3.5" />}
-            label="Fleet health"
-          />
-          <SectionTab
-            active={section === "activity"}
-            onClick={() => setSection("activity")}
-            icon={<Layers className="h-3.5 w-3.5" />}
-            label="Activity feed"
-          />
+          <div className="flex items-center rounded-lg bg-surface-2 p-0.5 text-xs" role="group" aria-label="View">
+            <SectionTab active={section === "fleet"} onClick={() => setSection("fleet")} label="Fleet health" />
+            <SectionTab active={section === "activity"} onClick={() => setSection("activity")} label="Activity feed" />
+          </div>
         </div>
 
         {error && (
-          <div className="mb-5 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-[12px] text-red-300">
+          <div className="mb-5 rounded-lg bg-red-500/[0.06] px-3 py-2.5 text-[12px] text-red-300/90">
             Could not refresh activity: {error}
           </div>
         )}
@@ -170,7 +159,7 @@ export default function MissionControlPage() {
           loading ? (
             <FleetSkeleton />
           ) : (
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
+            <div className="grid grid-cols-1 gap-8 xl:grid-cols-[1fr_360px]">
               {/* Primary column — fleet health (the centerpiece). */}
               <div className="min-w-0">
                 <FleetHealth fleet={sortedFleet} runs={runs ?? []} sort={sort} setSort={setSort} />
@@ -213,35 +202,27 @@ function CommandStrip({
   }, []);
   const agoS = Math.max(0, Math.round((Date.now() - lastUpdated) / 1000));
 
+  const live = summary.liveRuns > 0;
+
   return (
-    <div className="flex flex-wrap items-center gap-x-7 gap-y-3 border-b border-zinc-800 bg-surface-0 px-6 py-3 md:px-8">
+    <div className="flex flex-wrap items-center gap-x-12 gap-y-3 border-b border-zinc-800/40 px-6 py-4 md:px-8">
       <div className="flex items-center gap-2">
-        <span className="relative inline-flex h-2 w-2">
-          {summary.liveRuns > 0 && (
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
-          )}
-          <span className={clsx("relative inline-flex h-2 w-2 rounded-full", summary.liveRuns > 0 ? "bg-emerald-400" : "bg-zinc-600")} />
+        <span className="relative inline-flex h-1.5 w-1.5">
+          {live && <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-emerald-500/70" />}
+          <span className={clsx("relative inline-flex h-1.5 w-1.5 rounded-full", live ? "bg-emerald-500/80" : "bg-zinc-600")} />
         </span>
-        <span className={clsx("text-[11px] font-semibold uppercase tracking-widest", summary.liveRuns > 0 ? "text-emerald-300" : "text-zinc-500")}>
-          {summary.liveRuns > 0 ? "Live" : "Idle"}
-        </span>
+        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">{live ? "Live" : "Idle"}</span>
       </div>
 
-      <Metric icon={<Bot className="h-3.5 w-3.5" />} label="Agents" value={String(summary.agentCount)} />
-      <Metric icon={<Activity className="h-3.5 w-3.5 text-emerald-400" />} label="In flight" value={String(summary.liveRuns)} tone="emerald" />
-      <Metric
-        icon={<AlertTriangle className={clsx("h-3.5 w-3.5", summary.alertCount > 0 ? "text-amber-400" : "text-zinc-500")} />}
-        label="Alerts"
-        value={String(summary.alertCount)}
-        tone={summary.alertCount > 0 ? "amber" : "zinc"}
-      />
+      <Metric label="Agents" value={String(summary.agentCount)} />
+      <Metric label="In flight" value={String(summary.liveRuns)} />
+      <Metric label="Alerts" value={String(summary.alertCount)} tone={summary.alertCount > 0 ? "warn" : "neutral"} />
 
-      <div className="flex items-center gap-1.5">
-        <CircleDollarSign className="h-3.5 w-3.5 text-amber-400" />
-        <span className="text-[10px] uppercase tracking-wide text-zinc-500">Spend today</span>
-        <span className="font-mono text-[13px] font-semibold tabular-nums text-amber-300">
+      <div className="flex items-baseline gap-2.5">
+        <span className="text-[11px] uppercase tracking-wide text-zinc-500">Spend today</span>
+        <span className="font-mono text-[15px] font-medium tabular-nums text-zinc-200">
           {usd(summary.costTodayUsd)}
-          <span className="text-[10px] font-normal text-zinc-500">/day</span>
+          <span className="ml-0.5 text-[10px] font-normal text-zinc-500">/day</span>
         </span>
       </div>
 
@@ -253,53 +234,35 @@ function CommandStrip({
 }
 
 function Metric({
-  icon,
   label,
   value,
-  tone = "zinc",
+  tone = "neutral",
 }: {
-  icon: React.ReactNode;
   label: string;
   value: string;
-  tone?: "zinc" | "emerald" | "amber";
+  tone?: "neutral" | "warn";
 }) {
-  const valueTone: Record<string, string> = {
-    zinc: "text-zinc-100",
-    emerald: "text-emerald-300",
-    amber: "text-amber-300",
-  };
   return (
-    <div className="flex items-center gap-1.5">
-      {icon}
-      <span className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</span>
-      <span className={clsx("font-mono text-[14px] font-semibold tabular-nums", valueTone[tone])}>{value}</span>
+    <div className="flex items-baseline gap-2.5">
+      <span className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</span>
+      <span className={clsx("font-mono text-[15px] font-medium tabular-nums", tone === "warn" ? "text-amber-400/90" : "text-zinc-200")}>
+        {value}
+      </span>
     </div>
   );
 }
 
-function SectionTab({
-  active,
-  onClick,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}) {
+function SectionTab({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
       className={clsx(
-        "inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-all duration-150",
-        active
-          ? "border-zinc-700 bg-surface-2 text-zinc-100 shadow-sm"
-          : "border-zinc-800 bg-surface-1 text-zinc-400 hover:border-zinc-700 hover:bg-surface-2 hover:text-zinc-200",
+        "rounded-md px-3 py-1 font-medium transition-colors",
+        active ? "bg-surface-0 text-zinc-100 shadow-sm" : "text-zinc-500 hover:text-zinc-300",
       )}
     >
-      {icon}
-      <span>{label}</span>
+      {label}
     </button>
   );
 }
@@ -321,12 +284,12 @@ function FleetHealth({
 }) {
   if (fleet.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-zinc-700/60 bg-surface-1 p-16 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-3/60 ring-1 ring-zinc-800">
-          <Gauge className="h-5 w-5 text-zinc-400" />
+      <div className="flex flex-col items-center justify-center gap-3 rounded-xl bg-surface-1 p-16 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-2">
+          <Gauge className="h-5 w-5 text-zinc-500" />
         </div>
         <div>
-          <p className="text-sm font-semibold text-zinc-100">No fleet activity yet</p>
+          <p className="text-sm font-medium text-zinc-200">No fleet activity yet</p>
           <p className="mt-1 max-w-sm text-xs text-zinc-500">
             Trigger a run and your agents&apos; health, spend, and trends populate here automatically.
           </p>
@@ -341,16 +304,16 @@ function FleetHealth({
   return (
     <section>
       <div className="mb-3 flex items-center justify-between px-1">
-        <h2 className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+        <h2 className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
           Agent fleet
           <span className="ml-2 tabular-nums text-zinc-600">{fleet.length}</span>
         </h2>
-        <div className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-surface-1 p-0.5">
+        <div className="flex items-center rounded-lg bg-surface-2 p-0.5 text-xs">
           <SortToggle active={sort === "health"} onClick={() => setSort("health")} label="Health" />
           <SortToggle active={sort === "cost"} onClick={() => setSort("cost")} label="Cost" />
         </div>
       </div>
-      <ul className="space-y-2.5">
+      <ul className="space-y-2">
         {fleet.map((a) => (
           <AgentHealthRow key={a.agentName} health={a} runs={runs} />
         ))}
@@ -363,9 +326,10 @@ function SortToggle({ active, onClick, label }: { active: boolean; onClick: () =
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
       className={clsx(
-        "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors duration-150",
-        active ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:text-zinc-300",
+        "rounded-md px-2.5 py-1 font-medium transition-colors",
+        active ? "bg-surface-0 text-zinc-100 shadow-sm" : "text-zinc-500 hover:text-zinc-300",
       )}
     >
       {label}
@@ -373,12 +337,15 @@ function SortToggle({ active, onClick, label }: { active: boolean; onClick: () =
   );
 }
 
-// Health tone by success rate. Null (unjudgeable) reads neutral, never green.
-function healthTone(rate: number | null): { text: string; ring: string; bg: string; dot: string } {
-  if (rate === null) return { text: "text-zinc-400", ring: "ring-zinc-500/20", bg: "bg-zinc-500/10", dot: "bg-zinc-500" };
-  if (rate >= 0.95) return { text: "text-emerald-300", ring: "ring-emerald-500/20", bg: "bg-emerald-500/10", dot: "bg-emerald-400" };
-  if (rate >= 0.8) return { text: "text-amber-300", ring: "ring-amber-500/20", bg: "bg-amber-500/10", dot: "bg-amber-400" };
-  return { text: "text-red-300", ring: "ring-red-500/20", bg: "bg-red-500/10", dot: "bg-red-400" };
+// Health tone by success rate. Calm signal: a small muted dot + neutral text,
+// no saturated pill fill or ring (matches the cockpit's StatePill). Only a
+// real problem (below 0.8) earns a muted red dot; healthy reads calm green;
+// unjudgeable reads neutral grey, never green.
+function healthTone(rate: number | null): { text: string; dot: string } {
+  if (rate === null) return { text: "text-zinc-500", dot: "bg-zinc-500" };
+  if (rate >= 0.95) return { text: "text-zinc-300", dot: "bg-emerald-500/80" };
+  if (rate >= 0.8) return { text: "text-zinc-300", dot: "bg-amber-500/70" };
+  return { text: "text-zinc-300", dot: "bg-red-500/70" };
 }
 
 function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) {
@@ -390,7 +357,9 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
   const hasLatency = health.latencySeries.length >= 2;
   const sparkData = normalizeSeries(hasLatency ? health.latencySeries : health.costSeries);
   const sparkLabel = hasLatency ? "Latency trend" : "Cost trend";
-  const sparkColor = hasLatency ? "var(--color-lantern-400)" : "#f59e0b";
+  // Monochrome sparks: primary trend in the accent, error trend a muted red —
+  // no amber instrument-panel hue.
+  const sparkColor = hasLatency ? "var(--color-accent)" : "rgba(161,161,170,0.7)";
   const errorData = normalizeSeries(health.errorSeries);
   const hasErrorSignal = health.errorSeries.some((v) => v > 0);
 
@@ -405,16 +374,16 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
   );
 
   return (
-    <li className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1 transition-colors duration-150 hover:border-zinc-700">
+    <li className="overflow-hidden rounded-xl bg-surface-1 transition-colors duration-150 hover:bg-surface-2/50">
       <button
         onClick={() => setExpanded((e) => !e)}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-4 px-4 py-3.5 text-left"
+        className="flex w-full items-center gap-4 px-4 py-4 text-left"
       >
         {expanded ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-zinc-500" />
+          <ChevronDown className="h-4 w-4 shrink-0 text-zinc-600" />
         ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-zinc-500" />
+          <ChevronRight className="h-4 w-4 shrink-0 text-zinc-600" />
         )}
 
         <AgentAvatar name={health.agentName} status={health.hasLive ? "running" : "succeeded"} />
@@ -424,10 +393,10 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium text-zinc-100">{health.agentName}</span>
             {health.hasLive && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/20">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-400">
                 <span className="relative inline-flex h-1.5 w-1.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-emerald-500/70" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500/80" />
                 </span>
                 {health.liveRuns} live
               </span>
@@ -439,11 +408,11 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
           </p>
         </div>
 
-        {/* Health pill */}
+        {/* Health — muted dot + neutral text, no saturated pill */}
         <div className="hidden shrink-0 sm:flex">
           <span
             title={health.successRate === null ? "No completed runs to judge yet" : `${health.failedRuns} of ${health.terminalRuns} terminal runs failed`}
-            className={clsx("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-inset", tone.bg, tone.text, tone.ring)}
+            className={clsx("inline-flex items-center gap-1.5 text-[12px] font-medium", tone.text)}
           >
             <span className={clsx("h-1.5 w-1.5 rounded-full", tone.dot)} />
             {pct(health.successRate)} ok
@@ -459,7 +428,7 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
         {/* Error sparkline — only meaningful when there were failures. */}
         <div className="hidden shrink-0 flex-col items-center gap-0.5 lg:flex" title="Error rate (recent runs)">
           {hasErrorSignal ? (
-            <Sparkline data={errorData} color="#f87171" width={48} height={22} />
+            <Sparkline data={errorData} color="rgba(248,113,113,0.7)" width={48} height={22} />
           ) : (
             <span className="flex h-[22px] items-center font-mono text-[11px] text-zinc-600">—</span>
           )}
@@ -468,15 +437,15 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
 
         {/* $/day */}
         <div className="shrink-0 text-right">
-          <div className="font-mono text-[13px] font-semibold tabular-nums text-zinc-100">{usd(health.costTodayUsd)}</div>
+          <div className="font-mono text-[13px] font-medium tabular-nums text-zinc-200">{usd(health.costTodayUsd)}</div>
           <div className="text-[9px] uppercase tracking-wide text-zinc-600">today</div>
         </div>
       </button>
 
       {expanded && (
-        <div className="border-t border-zinc-800 bg-surface-0/40">
+        <div className="bg-surface-0/40">
           <div className="flex items-center justify-between px-4 py-2">
-            <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">Recent runs</span>
+            <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">Recent runs</span>
             <Link
               href={`/agents/${encodeURIComponent(health.agentName)}`}
               className="text-[11px] font-medium text-lantern-400 transition-colors duration-150 hover:text-lantern-300"
@@ -487,7 +456,7 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
           {agentRuns.length === 0 ? (
             <p className="px-4 pb-3 text-[11px] text-zinc-600">No runs.</p>
           ) : (
-            <ul className="divide-y divide-zinc-800 border-t border-zinc-800">
+            <ul className="divide-y divide-zinc-800/40">
               {agentRuns.map((run) => (
                 <CompactRunRow key={run.id} run={run} />
               ))}
@@ -508,37 +477,36 @@ function AlertsPanel({ alerts, fleet, totalCostToday }: { alerts: Alert[]; fleet
   // heuristic only — labelled "soft" so it's never mistaken for a real budget.
   const softBudget = Math.max(DEFAULT_DAILY_BUDGET_USD, fleet.length * DEFAULT_DAILY_BUDGET_USD);
   const budgetPct = Math.min(100, (totalCostToday / softBudget) * 100);
-  const budgetTone = budgetPct >= 90 ? "bg-red-400" : budgetPct >= 70 ? "bg-amber-400" : "bg-lantern-400";
+  // Calm fill: the accent for normal spend, a muted red only at true saturation.
+  const budgetTone = budgetPct >= 90 ? "bg-red-500/70" : budgetPct >= 70 ? "bg-zinc-400" : "bg-lantern-400/80";
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-surface-1">
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-3">
-        <AlertTriangle className={clsx("h-3.5 w-3.5", alerts.length > 0 ? "text-amber-400" : "text-zinc-500")} />
-        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Alerts</span>
-        <span className="ml-auto rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-400">
-          {alerts.length}
-        </span>
+    <div className="rounded-xl bg-surface-1">
+      <div className="flex items-center gap-2 px-4 pb-2 pt-3.5">
+        <AlertTriangle className={clsx("h-3.5 w-3.5", alerts.length > 0 ? "text-amber-400/90" : "text-zinc-500")} />
+        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Alerts</span>
+        <span className="ml-auto text-[11px] font-medium tabular-nums text-zinc-500">{alerts.length}</span>
       </div>
 
-      <div className="px-4 py-3">
+      <div className="px-4 pb-4">
         {alerts.length === 0 ? (
           <p className="text-[11px] text-zinc-500">All clear — no agents breaching error-rate or cost thresholds.</p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="space-y-1.5">
             {alerts.map((a, i) => (
               <li key={`${a.agentName}-${a.kind}-${i}`}>
                 <Link
                   href={`/agents/${encodeURIComponent(a.agentName)}`}
-                  className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/[0.04] px-2.5 py-2 transition-colors duration-150 hover:bg-amber-500/[0.08]"
+                  className="flex items-start gap-2 rounded-lg bg-surface-2/60 px-2.5 py-2 transition-colors duration-150 hover:bg-surface-2"
                 >
                   {a.kind === "cost-spike" ? (
-                    <TrendingUp className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+                    <TrendingUp className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400/90" />
                   ) : (
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400/90" />
                   )}
                   <div className="min-w-0">
-                    <div className="truncate text-[12px] font-medium text-zinc-100">{a.agentName}</div>
-                    <div className="text-[11px] text-amber-200/80">{a.detail}</div>
+                    <div className="truncate text-[12px] font-medium text-zinc-200">{a.agentName}</div>
+                    <div className="text-[11px] text-zinc-500">{a.detail}</div>
                   </div>
                 </Link>
               </li>
@@ -547,14 +515,14 @@ function AlertsPanel({ alerts, fleet, totalCostToday }: { alerts: Alert[]; fleet
         )}
 
         {/* Budget rollup */}
-        <div className="mt-4 border-t border-zinc-800 pt-3">
+        <div className="mt-4 pt-3">
           <div className="mb-1.5 flex items-center justify-between text-[11px]">
             <span className="text-zinc-500">Spend vs soft budget</span>
             <span className="font-mono tabular-nums text-zinc-400">
               {usd(totalCostToday)} <span className="text-zinc-600">/ {usd(softBudget)}</span>
             </span>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
+          <div className="h-1 w-full overflow-hidden rounded-full bg-surface-3">
             <div className={clsx("h-full rounded-full transition-all duration-500", budgetTone)} style={{ width: `${budgetPct}%` }} />
           </div>
           <p className="mt-1.5 text-[10px] text-zinc-600">
@@ -583,20 +551,18 @@ function ActionQueue({
   emptyHint: string;
   icon: React.ReactNode;
 }) {
-  const accent = tone === "warn" ? "text-amber-400" : "text-lantern-400";
+  const accent = tone === "warn" ? "text-amber-400/90" : "text-zinc-500";
   return (
-    <div className="rounded-xl border border-zinc-800 bg-surface-1">
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-3">
+    <div className="rounded-xl bg-surface-1">
+      <div className="flex items-center gap-2 px-4 pb-2 pt-3.5">
         <span className={accent}>{icon}</span>
-        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">{title}</span>
-        <span className="ml-auto rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-zinc-400">
-          {runs.length}
-        </span>
+        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">{title}</span>
+        <span className="ml-auto text-[11px] font-medium tabular-nums text-zinc-500">{runs.length}</span>
       </div>
       {runs.length === 0 ? (
-        <p className="px-4 py-3 text-[11px] text-zinc-500">{emptyHint}</p>
+        <p className="px-4 pb-3.5 text-[11px] text-zinc-500">{emptyHint}</p>
       ) : (
-        <ul className="divide-y divide-zinc-800">
+        <ul className="divide-y divide-zinc-800/40 pb-1">
           {runs.slice(0, 6).map((run) => (
             <CompactRunRow key={run.id} run={run} showAgent />
           ))}
@@ -611,7 +577,7 @@ function CompactRunRow({ run, showAgent }: { run: Run; showAgent?: boolean }) {
   const summary = summarizeInput(run.input);
   return (
     <li>
-      <Link href={`/runs/${run.id}`} className="flex items-center gap-2.5 px-4 py-2.5 transition-colors duration-150 hover:bg-surface-2">
+      <Link href={`/runs/${run.id}`} className="flex items-center gap-2.5 px-4 py-2.5 transition-colors duration-150 hover:bg-surface-2/60">
         <StatusDot />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -639,11 +605,11 @@ function CompactRunRow({ run, showAgent }: { run: Run; showAgent?: boolean }) {
 function ActivityFeed({ runs }: { runs: Run[] }) {
   if (runs.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-zinc-700/60 bg-surface-1 p-16 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-3/60 ring-1 ring-zinc-800">
-          <InboxIcon className="h-5 w-5 text-zinc-400" />
+      <div className="flex flex-col items-center justify-center gap-3 rounded-xl bg-surface-1 p-16 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-2">
+          <InboxIcon className="h-5 w-5 text-zinc-500" />
         </div>
-        <p className="text-sm font-semibold text-zinc-100">No activity yet</p>
+        <p className="text-sm font-medium text-zinc-200">No activity yet</p>
         <p className="max-w-sm text-xs text-zinc-500">Every run across your agents surfaces here, grouped into sessions.</p>
       </div>
     );
@@ -656,12 +622,12 @@ function ActivityFeed({ runs }: { runs: Run[] }) {
         const sessions = groupRunsBySession(g.runs);
         return (
           <section key={g.key}>
-            <h3 className="mb-2 px-1 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+            <h3 className="mb-2 px-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
               {g.label}
               <span className="ml-2 text-zinc-700">·</span>
               <span className="ml-2 tabular-nums text-zinc-600">{g.runs.length}</span>
             </h3>
-            <ul className="divide-y divide-zinc-800 overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
+            <ul className="divide-y divide-zinc-800/40 overflow-hidden rounded-xl bg-surface-1">
               {sessions.map((s, idx) => (
                 <SessionEntry
                   key={s.key}
@@ -697,17 +663,17 @@ function SessionEntry({ group, groupedWithPrev }: { group: SessionGroup; grouped
       <button
         onClick={() => setExpanded((e) => !e)}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors duration-150 hover:bg-surface-2"
+        className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors duration-150 hover:bg-surface-2/60"
       >
-        {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-500" />}
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-lantern-500/10 ring-1 ring-lantern-500/20">
-          <Layers className="h-3.5 w-3.5 text-lantern-400" />
+        {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-600" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-600" />}
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface-2">
+          <Layers className="h-3.5 w-3.5 text-lantern-400/90" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-xs font-medium text-zinc-100">{agg.agentLabel}</span>
             <StatusDot />
-            <span className="rounded-md bg-surface-3 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-400">{agg.count} runs</span>
+            <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-400">{agg.count} runs</span>
           </div>
           <p className="mt-0.5 truncate text-[11px] text-zinc-500">Session · {agg.count} steps</p>
         </div>
@@ -717,7 +683,7 @@ function SessionEntry({ group, groupedWithPrev }: { group: SessionGroup; grouped
         </div>
       </button>
       {expanded && (
-        <ul className="divide-y divide-zinc-800 border-t border-zinc-800 bg-surface-0/40">
+        <ul className="divide-y divide-zinc-800/40 bg-surface-0/40">
           {group.runs.map((run) => (
             <RunRow key={run.id} run={run} groupedWithPrev={false} nested />
           ))}
@@ -735,7 +701,7 @@ function RunRow({ run, groupedWithPrev, nested = false }: { run: Run; groupedWit
     <li>
       <Link
         href={`/runs/${run.id}`}
-        className={clsx("flex items-center gap-3 py-2.5 transition-colors duration-150 hover:bg-surface-2", nested ? "pl-12 pr-4" : "px-4")}
+        className={clsx("flex items-center gap-3 py-2.5 transition-colors duration-150 hover:bg-surface-2/60", nested ? "pl-12 pr-4" : "px-4")}
       >
         <AgentAvatar name={run.agentName} dimmed={groupedWithPrev} status={run.status} />
         <div className="min-w-0 flex-1">
@@ -743,7 +709,7 @@ function RunRow({ run, groupedWithPrev, nested = false }: { run: Run; groupedWit
             <span className={clsx("truncate text-xs font-medium", groupedWithPrev ? "text-zinc-400" : "text-zinc-100")}>{run.agentName}</span>
             <StatusDot />
             {run.labels?.trigger && (
-              <span className="rounded-md bg-surface-3 px-1.5 py-0.5 text-[11px] uppercase tracking-wider text-zinc-500">{String(run.labels.trigger)}</span>
+              <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] uppercase tracking-wide text-zinc-500">{String(run.labels.trigger)}</span>
             )}
           </div>
           {summary ? <p className="mt-0.5 truncate text-[11px] text-zinc-500">{summary}</p> : null}
@@ -854,10 +820,10 @@ function summarizeInput(input: unknown): string | null {
 
 function FleetSkeleton() {
   return (
-    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
-      <ul className="space-y-2.5">
+    <div className="grid grid-cols-1 gap-8 xl:grid-cols-[1fr_360px]">
+      <ul className="space-y-2">
         {Array.from({ length: 5 }).map((_, i) => (
-          <li key={i} className="flex items-center gap-4 rounded-xl border border-zinc-800 bg-surface-1 px-4 py-4">
+          <li key={i} className="flex items-center gap-4 rounded-xl bg-surface-1 px-4 py-4">
             <Skeleton className="h-7 w-7 rounded-lg" />
             <div className="flex-1 space-y-1.5">
               <Skeleton className="h-3 w-40" />
@@ -878,7 +844,7 @@ function FleetSkeleton() {
 
 function ActivitySkeleton() {
   return (
-    <ul className="mx-auto max-w-3xl divide-y divide-zinc-800 overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
+    <ul className="mx-auto max-w-3xl divide-y divide-zinc-800/40 overflow-hidden rounded-xl bg-surface-1">
       {Array.from({ length: 6 }).map((_, i) => (
         <li key={i} className="flex items-center gap-3 px-4 py-3">
           <Skeleton className="h-4 w-4 rounded-full" />
