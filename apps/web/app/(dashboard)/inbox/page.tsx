@@ -24,7 +24,6 @@ import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
-  Bot,
   ChevronDown,
   ChevronRight,
   Gauge,
