@@ -41,6 +41,12 @@ export default function RuntimePage() {
   const [vms, setVms] = useState<VmRow[] | null>(null);
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [usingDemo, setUsingDemo] = useState(false);
+  // Default to the demo fleet so the cockpit shows its full instrumentation
+  // (live sparklines, capacity map, cost) out of the box — local control-planes
+  // report no per-VM telemetry, so the honest live view is sparse. Flip to Live
+  // to see real workloads (metrics render "—" until a harness metrics endpoint
+  // lands; never fabricated).
+  const [demoMode, setDemoMode] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [drawerVm, setDrawerVm] = useState<VmRow | null>(null);
@@ -49,6 +55,13 @@ export default function RuntimePage() {
   const lastErrorRef = useRef<string>("");
 
   const load = useCallback(async () => {
+    if (demoMode) {
+      setVms(DEMO_VMS);
+      setCluster(DEMO_CLUSTER);
+      setUsingDemo(true);
+      setLastUpdated(Date.now());
+      return;
+    }
     try {
       const [vmRes, clRes] = await Promise.all([
         runtimeApi.get<VmRow[] | { items: VmRow[] }>("/v1/runtime/vms"),
@@ -79,7 +92,7 @@ export default function RuntimePage() {
     } finally {
       setLastUpdated(Date.now());
     }
-  }, []);
+  }, [demoMode]);
 
   useEffect(() => {
     load();
@@ -151,6 +164,29 @@ export default function RuntimePage() {
         description="Live fleet of headless agents executing in isolated microVMs across the cluster."
         action={
           <div className="flex items-center gap-2">
+            <div
+              className="flex items-center rounded-lg border border-zinc-800 bg-surface-1 p-0.5 text-xs"
+              role="group"
+              aria-label="Data source"
+            >
+              {(["demo", "live"] as const).map((m) => {
+                const active = (demoMode ? "demo" : "live") === m;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setDemoMode(m === "demo")}
+                    aria-pressed={active}
+                    className={clsx(
+                      "rounded-md px-2.5 py-1 font-medium capitalize transition-colors",
+                      active ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:text-zinc-300",
+                    )}
+                  >
+                    {m}
+                  </button>
+                );
+              })}
+            </div>
             <Button
               variant="ghost"
               size="sm"
