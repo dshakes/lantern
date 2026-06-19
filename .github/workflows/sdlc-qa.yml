@@ -43,10 +43,13 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-      # protoc is required by the Rust runtime-manager's build.rs (prost-build).
-      # Without it `make test` -> `test-rust` fails with "Could not find protoc".
+      # protoc + the well-known-type .proto includes are required by the Rust
+      # runtime-manager's build.rs (prost-build). protobuf-compiler alone gives
+      # protoc but NOT google/protobuf/{timestamp,duration}.proto, so the build
+      # fails with "google/protobuf/timestamp.proto: File not found". libprotobuf-dev
+      # ships those includes under /usr/include/google/protobuf.
       - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
       # Apply the control-plane schema so DB-gated Go tests have their tables.
       # Without this the runtime-secrets / RLS / identity tests fail with
       # 'table "runtime_audit_events" not found'. The server normally migrates
