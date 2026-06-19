@@ -47,6 +47,12 @@ jobs:
       # Without it `make test` -> `test-rust` fails with "Could not find protoc".
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler
+      # Apply the control-plane schema so DB-gated Go tests have their tables.
+      # Without this the runtime-secrets / RLS / identity tests fail with
+      # 'table "runtime_audit_events" not found'. The server normally migrates
+      # on boot; cmd/migrate applies the same schema without booting it.
+      - name: Apply DB migrations
+        run: cd services/control-plane && SEED_DEV=1 go run ./cmd/migrate
       - name: Run test suite
         id: test
         run: |
