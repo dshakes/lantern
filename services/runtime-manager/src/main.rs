@@ -66,6 +66,7 @@ async fn main() -> anyhow::Result<()> {
                     gvisor: config.runtimeclass_gvisor.clone(),
                     kata: config.runtimeclass_kata.clone(),
                     wasm: config.runtimeclass_wasm.clone(),
+                    allow_runc_standard: config.allow_runc_standard,
                 },
             )
             .await?,

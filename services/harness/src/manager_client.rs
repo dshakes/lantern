@@ -23,11 +23,11 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
 use crate::proto::{
-    self, pb, HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse,
+    self, HarnessReport, HeartbeatAck, HeartbeatRequest, VendSecretRequest, VendSecretResponse, pb,
 };
 
 /// Connection state for the manager. The harness MUST tolerate the manager
@@ -404,7 +404,7 @@ mod tests {
 
 #[cfg(test)]
 mod proto_conversion_tests {
-    use crate::proto::{self, pb, HeartbeatAck, HeartbeatRequest, ResourceUsage};
+    use crate::proto::{self, HeartbeatAck, HeartbeatRequest, ResourceUsage, pb};
 
     /// HeartbeatRequest → pb::HeartbeatRequest round-trip: all fields preserved.
     #[test]

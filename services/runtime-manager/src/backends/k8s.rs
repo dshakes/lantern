@@ -68,6 +68,10 @@ pub struct RuntimeClassConfig {
     pub kata: Option<String>,
     /// `runtimeClassName` for Wasm pods. Sourced from `LANTERN_RUNTIMECLASS_WASM`.
     pub wasm: Option<String>,
+    /// When true, STANDARD/UNSPECIFIED/DEVCONTAINER workloads are allowed to
+    /// run on bare runc even when gVisor is not configured.
+    /// Sourced from `LANTERN_ALLOW_RUNC_STANDARD`. Default **false** (fail-closed).
+    pub allow_runc_standard: bool,
 }
 
 /// Kubernetes Job backend for trusted workloads.
@@ -124,17 +128,29 @@ impl K8sBackend {
         // Constrain the shape before interpolating into a namespace name. The
         // value's origin is already trusted (authenticated control-plane), but a
         // non-DNS-1123 tenant_id would otherwise produce an opaque late failure
-        // at jobs.create. Reject anything outside [a-z0-9-] / >63 chars early
-        // and clearly. (`lantern-t-` prefix + 63 max keeps the label ≤ 63.)
-        if req.tenant_id.len() > 63
-            || !req
-                .tenant_id
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        {
+        // at jobs.create. Reject anything outside [a-z0-9-] / >53 chars early
+        // and clearly.
+        //
+        // FIX 7(a): The `lantern-t-` prefix is 10 chars; K8s name limit is 63.
+        //   Max allowed tenant_id length = 63 - 10 = 53.
+        // FIX 7(b): DNS-1123 requires the first and last character to be
+        //   alphanumeric (no leading/trailing dashes).
+        const PREFIX_LEN: usize = "lantern-t-".len(); // 10
+        const MAX_TENANT_ID_LEN: usize = 63 - PREFIX_LEN; // 53
+
+        let id = req.tenant_id.as_bytes();
+        let invalid = req.tenant_id.len() > MAX_TENANT_ID_LEN
+            || !id
+                .iter()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+            || id.first().map(|b| *b == b'-').unwrap_or(false)
+            || id.last().map(|b| *b == b'-').unwrap_or(false);
+
+        if invalid {
             anyhow::bail!(
                 "ScheduleRequest.tenant_id {:?} is not a valid DNS-1123 label \
-                 ([a-z0-9-], ≤63 chars); refusing to derive a namespace from it",
+                 ([a-z0-9][a-z0-9-]*[a-z0-9], ≤{MAX_TENANT_ID_LEN} chars, no leading/trailing \
+                 dash); refusing to derive a namespace from it",
                 req.tenant_id
             );
         }
@@ -210,12 +226,14 @@ impl K8sBackend {
 ///
 /// Returns `(Option<String>, bool)` where the second element signals that the
 /// caller should emit a `tracing::warn!` when STANDARD/DEVCONTAINER degrade to
-/// runc because gVisor is not configured. The warn flag is NOT set for TRUSTED
-/// (runc is its canonical substrate).
+/// runc because gVisor is not configured AND `allow_runc_standard` is set.
+/// The warn flag is NOT set for TRUSTED (runc is its canonical substrate).
 ///
 /// Callers that receive `None` for UNTRUSTED or HOSTILE must refuse the
 /// request (fail-closed) — this function itself does not enforce that; the
-/// enforcement is in [`K8sBackend::satisfies_isolation`].
+/// enforcement is in [`k8s_satisfies_isolation`].  STANDARD/UNSPECIFIED/
+/// DEVCONTAINER with no gVisor and no `allow_runc_standard` are also refused
+/// by [`k8s_satisfies_isolation`]; they should never reach here in that state.
 fn isolation_to_runtime_class(
     class: IsolationClass,
     cfg: &RuntimeClassConfig,
@@ -224,7 +242,9 @@ fn isolation_to_runtime_class(
         // TRUSTED → bare runc. Deliberate; no warn needed.
         IsolationClass::Trusted => (None, false),
 
-        // STANDARD → gVisor if available, else runc with a warning.
+        // STANDARD/UNSPECIFIED → gVisor if available, else runc.
+        // Runc is only reached when `allow_runc_standard` (gate enforced in
+        // `k8s_satisfies_isolation`); caller emits warn in that case.
         IsolationClass::Standard | IsolationClass::Unspecified => match &cfg.gvisor {
             Some(name) => (Some(name.clone()), false),
             None => (None, true), // degraded to runc; caller warns
@@ -237,9 +257,11 @@ fn isolation_to_runtime_class(
         IsolationClass::Hostile => (cfg.kata.clone(), false),
 
         // WASM → use the wasm RuntimeClass if configured, else None.
+        // None is only reachable when `allow_runc_standard` (gate enforced).
         IsolationClass::Wasm => (cfg.wasm.clone(), false),
 
         // DEVCONTAINER → gVisor if available, else runc with a warning.
+        // Runc only reachable when `allow_runc_standard`.
         IsolationClass::Devcontainer => match &cfg.gvisor {
             Some(name) => (Some(name.clone()), false),
             None => (None, true),
@@ -320,9 +342,18 @@ fn build_job(
 
     let active_deadline = K8sBackend::parse_timeout_seconds(&req.limits.timeout);
 
+    // FIX 3: honour req.image when provided and non-digest, mirroring Docker/Kata.
+    // A bare digest (starts with "sha256:") is the bundle digest, not an image
+    // override — fall back to agent_image in that case.
+    let img = if req.image.is_empty() || req.image.starts_with("sha256:") {
+        agent_image
+    } else {
+        req.image.as_str()
+    };
+
     let container = Container {
         name: "agent-runner".to_string(),
-        image: Some(agent_image.to_string()),
+        image: Some(img.to_string()),
         env: Some(env_vars),
         resources: Some(ResourceRequirements {
             requests: Some(resource_requests),
@@ -345,15 +376,9 @@ fn build_job(
     let (runtime_class_name, should_warn) =
         isolation_to_runtime_class(req.isolation_class, runtime_classes);
 
-    // Fail-closed second gate: UNTRUSTED and HOSTILE MUST have a hardened
-    // RuntimeClass. If `isolation_to_runtime_class` returned None for either
-    // of these classes the cluster is misconfigured and we must not emit the
-    // Job — a bare runc pod is never an acceptable substitute.
-    //
-    // Note: `choose_backend` / `satisfies_isolation` is the primary gate and
-    // normally prevents reaching here. This check is defense-in-depth so that
-    // any future code path that calls `build_job` directly (e.g. a warm-pool
-    // integration) cannot silently produce an under-isolated pod.
+    // Fail-closed second gate: defense-in-depth behind `k8s_satisfies_isolation`.
+    // Any future code path that calls `build_job` directly (e.g. warm-pool
+    // plumbing) cannot silently produce an under-isolated pod.
     match req.isolation_class {
         IsolationClass::Untrusted if runtime_class_name.is_none() => {
             bail!(
@@ -369,14 +394,35 @@ fn build_job(
                  refusing to emit a bare runc pod"
             );
         }
+        IsolationClass::Standard | IsolationClass::Unspecified | IsolationClass::Devcontainer
+            if runtime_class_name.is_none() && !runtime_classes.allow_runc_standard =>
+        {
+            bail!(
+                "{:?} workload requires gVisor (LANTERN_RUNTIMECLASS_GVISOR) or the \
+                 LANTERN_ALLOW_RUNC_STANDARD=1 opt-in to run on bare runc; \
+                 refusing to emit an under-isolated pod",
+                req.isolation_class
+            );
+        }
+        IsolationClass::Wasm
+            if runtime_class_name.is_none() && !runtime_classes.allow_runc_standard =>
+        {
+            bail!(
+                "WASM workload requires the Wasm RuntimeClass (LANTERN_RUNTIMECLASS_WASM) \
+                 or the LANTERN_ALLOW_RUNC_STANDARD=1 opt-in; \
+                 refusing to emit a bare runc pod"
+            );
+        }
         _ => {}
     }
 
     if should_warn {
+        // FIX 6: message correctly covers all classes that can reach runc.
         tracing::warn!(
             isolation_class = ?req.isolation_class,
             "LANTERN_RUNTIMECLASS_GVISOR not configured; degrading to runc (bare shared-kernel). \
-             STANDARD workloads tolerate this but gVisor is strongly recommended.",
+             STANDARD/DEVCONTAINER workloads tolerate this (LANTERN_ALLOW_RUNC_STANDARD=1 set) \
+             but gVisor is strongly recommended.",
         );
     }
 
@@ -452,12 +498,23 @@ async fn wait_for_pod_impl(client: &Client, namespace: &str, job_name: &str) -> 
 
 /// Pure capability check for the K8s backend — extracted so it can be unit-tested
 /// without constructing a live `K8sBackend` (which requires a valid `kube::Client`).
+///
+/// Fail-closed by default:
+/// - UNTRUSTED: requires gVisor.
+/// - HOSTILE: requires Kata.
+/// - STANDARD/UNSPECIFIED/DEVCONTAINER: requires gVisor OR `allow_runc_standard`.
+/// - WASM: requires wasm RuntimeClass OR `allow_runc_standard`.
+/// - TRUSTED: always accepted (runc is its canonical substrate).
 pub(crate) fn k8s_satisfies_isolation(cfg: &RuntimeClassConfig, class: IsolationClass) -> bool {
     match class {
         IsolationClass::Untrusted => cfg.gvisor.is_some(),
         IsolationClass::Hostile => cfg.kata.is_some(),
-        // All other classes are acceptable (STANDARD may degrade to runc).
-        _ => true,
+        IsolationClass::Standard | IsolationClass::Unspecified | IsolationClass::Devcontainer => {
+            cfg.gvisor.is_some() || cfg.allow_runc_standard
+        }
+        IsolationClass::Wasm => cfg.wasm.is_some() || cfg.allow_runc_standard,
+        // TRUSTED → bare runc is its canonical substrate; always accepted.
+        IsolationClass::Trusted => true,
     }
 }
 
@@ -482,7 +539,8 @@ impl RuntimeBackend for K8sBackend {
         // Emit the default-deny-egress NetworkPolicy BEFORE the Job so the
         // pod never runs without its egress fence in place (fail-closed).
         // NETWORK_OPEN intentionally emits no policy (trusted/wasm only).
-        if let Some(policy) = build_network_policy(req, &job_name, &namespace) {
+        let policy_created = if let Some(policy) = build_network_policy(req, &job_name, &namespace)
+        {
             let policies: Api<K8sNetworkPolicy> = Api::namespaced(self.client.clone(), &namespace);
             policies
                 .create(&PostParams::default(), &policy)
@@ -493,17 +551,56 @@ impl RuntimeBackend for K8sBackend {
                 namespace = %namespace,
                 "created default-deny-egress NetworkPolicy"
             );
-        }
+            true
+        } else {
+            false
+        };
+
+        // Helper: best-effort delete the egress NetworkPolicy on error paths.
+        // Mirrors the cleanup in `cancel`; ignores NotFound (policy may not
+        // have been created or was already removed).
+        let cleanup_policy = |client: Client, ns: String, jn: String| async move {
+            let policies: Api<K8sNetworkPolicy> = Api::namespaced(client, &ns);
+            if let Err(e) = policies
+                .delete(&network_policy_name(&jn), &DeleteParams::default())
+                .await
+            {
+                tracing::debug!(
+                    error = %e,
+                    job_name = %jn,
+                    "best-effort cleanup: NetworkPolicy already absent or delete failed"
+                );
+            }
+        };
 
         let jobs: Api<Job> = Api::namespaced(self.client.clone(), &namespace);
-        let job = self.build_job(req, &job_name, &namespace)?;
+        let job = match self.build_job(req, &job_name, &namespace) {
+            Ok(j) => j,
+            Err(e) => {
+                if policy_created {
+                    cleanup_policy(self.client.clone(), namespace.clone(), job_name.clone()).await;
+                }
+                return Err(e);
+            }
+        };
 
-        jobs.create(&PostParams::default(), &job)
-            .await
-            .context("failed to create K8s job")?;
+        if let Err(e) = jobs.create(&PostParams::default(), &job).await {
+            if policy_created {
+                cleanup_policy(self.client.clone(), namespace.clone(), job_name.clone()).await;
+            }
+            return Err(e).context("failed to create K8s job");
+        }
 
         // Wait for the pod to start running.
-        let pod_name = self.wait_for_pod(&namespace, &job_name).await?;
+        let pod_name = match self.wait_for_pod(&namespace, &job_name).await {
+            Ok(name) => name,
+            Err(e) => {
+                if policy_created {
+                    cleanup_policy(self.client.clone(), namespace.clone(), job_name.clone()).await;
+                }
+                return Err(e);
+            }
+        };
 
         let cold_start_ms = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -1160,6 +1257,7 @@ mod tests {
                 gvisor: Some("gvisor".to_string()),
                 kata: None,
                 wasm: None,
+                allow_runc_standard: false,
             },
         )
         .expect("build_job should succeed when gVisor is configured for UNTRUSTED");
@@ -1190,10 +1288,9 @@ mod tests {
 
         // Container-level hardening.
         let container = &pod_spec.containers[0];
-        assert_eq!(
-            container.image.as_deref(),
-            Some("ghcr.io/lantern/runner:v1")
-        );
+        // req_with sets req.image = "python:3.11-slim", so FIX 3 picks that over
+        // the agent_image argument.
+        assert_eq!(container.image.as_deref(), Some("python:3.11-slim"));
         let csc = container
             .security_context
             .as_ref()
@@ -1480,6 +1577,7 @@ mod tests {
                 gvisor: Some("gvisor".to_string()),
                 kata: Some("kata-qemu".to_string()),
                 wasm: None,
+                allow_runc_standard: false,
             },
         )
         .expect("TRUSTED should always succeed");
@@ -1503,6 +1601,7 @@ mod tests {
                 gvisor: Some("gvisor".to_string()),
                 kata: Some("kata-qemu".to_string()),
                 wasm: None,
+                allow_runc_standard: false,
             },
         )
         .expect("UNTRUSTED should succeed when gVisor is configured");
@@ -1526,6 +1625,7 @@ mod tests {
                 gvisor: Some("gvisor".to_string()),
                 kata: Some("kata-qemu".to_string()),
                 wasm: None,
+                allow_runc_standard: false,
             },
         )
         .expect("HOSTILE should succeed when Kata is configured");
@@ -1536,22 +1636,47 @@ mod tests {
         );
     }
 
-    // STANDARD without gVisor → None (runc degradation, allowed).
+    // STANDARD without gVisor → fails without allow_runc_standard (new fail-closed default).
     #[test]
-    fn build_job_standard_degrades_to_runc_without_gvisor() {
+    fn build_job_standard_without_gvisor_is_err_without_opt_in() {
+        let req = make_req(IsolationClass::Standard);
+        let result = build_job(
+            &req,
+            "img",
+            "job-standard-no-gv",
+            "ns",
+            &RuntimeClassConfig::default(), // no gVisor, allow_runc_standard=false
+        );
+        let err = result.expect_err(
+            "STANDARD without gVisor and without allow_runc_standard must fail (fail-closed)",
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("LANTERN_ALLOW_RUNC_STANDARD")
+                || msg.contains("LANTERN_RUNTIMECLASS_GVISOR"),
+            "error must name the relevant config vars: {msg}"
+        );
+    }
+
+    // STANDARD without gVisor but WITH allow_runc_standard → runc degradation allowed.
+    #[test]
+    fn build_job_standard_degrades_to_runc_with_opt_in() {
         let req = make_req(IsolationClass::Standard);
         let job = build_job(
             &req,
             "img",
-            "job-standard",
+            "job-standard-runc-opt-in",
             "ns",
-            &RuntimeClassConfig::default(), // no gVisor configured
+            &RuntimeClassConfig {
+                allow_runc_standard: true,
+                ..Default::default()
+            },
         )
-        .expect("STANDARD degrades to runc and must still succeed");
+        .expect("STANDARD with allow_runc_standard must succeed (runc degradation)");
         assert_eq!(
             pod_runtime_class(&job),
             None,
-            "STANDARD without gVisor must degrade to runc (allowed)"
+            "STANDARD with allow_runc_standard degrades to runc (no runtimeClassName)"
         );
     }
 
@@ -1568,6 +1693,7 @@ mod tests {
                 gvisor: Some("gvisor".to_string()),
                 kata: None,
                 wasm: None,
+                allow_runc_standard: false,
             },
         )
         .expect("STANDARD with gVisor should succeed");
@@ -1660,6 +1786,7 @@ mod tests {
             gvisor: Some("gvisor".to_string()),
             kata: None,
             wasm: None,
+            allow_runc_standard: false,
         };
         assert!(
             k8s_satisfies_isolation(&cfg, IsolationClass::Untrusted),
@@ -1674,6 +1801,7 @@ mod tests {
             gvisor: None,
             kata: Some("kata-qemu".to_string()),
             wasm: None,
+            allow_runc_standard: false,
         };
         assert!(
             k8s_satisfies_isolation(&cfg, IsolationClass::Hostile),
@@ -1720,17 +1848,236 @@ mod tests {
         );
     }
 
-    // STANDARD always accepted on K8s (may degrade to runc without gVisor).
+    // STANDARD on empty config (no gVisor, no opt-in) → refused (fail-closed).
     #[test]
-    fn k8s_backend_accepts_standard_always() {
-        let cfg = RuntimeClassConfig::default();
+    fn k8s_backend_refuses_standard_without_gvisor_and_without_opt_in() {
+        let cfg = RuntimeClassConfig::default(); // allow_runc_standard=false
         assert!(
-            k8s_satisfies_isolation(&cfg, IsolationClass::Standard),
-            "STANDARD is always accepted on K8s (may degrade to runc)"
+            !k8s_satisfies_isolation(&cfg, IsolationClass::Standard),
+            "STANDARD must be refused when gVisor is absent and allow_runc_standard is false"
         );
+        assert!(
+            !k8s_satisfies_isolation(&cfg, IsolationClass::Unspecified),
+            "UNSPECIFIED must be refused when gVisor is absent and allow_runc_standard is false"
+        );
+        assert!(
+            !k8s_satisfies_isolation(&cfg, IsolationClass::Devcontainer),
+            "DEVCONTAINER must be refused when gVisor is absent and allow_runc_standard is false"
+        );
+        assert!(
+            !k8s_satisfies_isolation(&cfg, IsolationClass::Wasm),
+            "WASM must be refused when wasm class is absent and allow_runc_standard is false"
+        );
+        // TRUSTED is always fine on runc.
         assert!(
             k8s_satisfies_isolation(&cfg, IsolationClass::Trusted),
-            "TRUSTED is always accepted on K8s"
+            "TRUSTED must always be accepted on K8s"
         );
+    }
+
+    // STANDARD with allow_runc_standard opt-in → accepted.
+    #[test]
+    fn k8s_backend_accepts_standard_with_opt_in() {
+        let cfg = RuntimeClassConfig {
+            allow_runc_standard: true,
+            ..Default::default()
+        };
+        assert!(
+            k8s_satisfies_isolation(&cfg, IsolationClass::Standard),
+            "STANDARD must be accepted when allow_runc_standard=true"
+        );
+        assert!(
+            k8s_satisfies_isolation(&cfg, IsolationClass::Devcontainer),
+            "DEVCONTAINER must be accepted when allow_runc_standard=true"
+        );
+        assert!(
+            k8s_satisfies_isolation(&cfg, IsolationClass::Wasm),
+            "WASM must be accepted when allow_runc_standard=true"
+        );
+    }
+
+    // STANDARD with gVisor configured → accepted (no opt-in needed).
+    #[test]
+    fn k8s_backend_accepts_standard_with_gvisor() {
+        let cfg = RuntimeClassConfig {
+            gvisor: Some("gvisor".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            k8s_satisfies_isolation(&cfg, IsolationClass::Standard),
+            "STANDARD must be accepted when gVisor is configured"
+        );
+    }
+
+    // WASM without wasm class and without opt-in → refused.
+    #[test]
+    fn k8s_backend_refuses_wasm_without_class_and_without_opt_in() {
+        let cfg = RuntimeClassConfig::default();
+        assert!(
+            !k8s_satisfies_isolation(&cfg, IsolationClass::Wasm),
+            "WASM must be refused when wasm class is absent and allow_runc_standard is false"
+        );
+    }
+
+    // WASM with wasm class → accepted.
+    #[test]
+    fn k8s_backend_accepts_wasm_with_class() {
+        let cfg = RuntimeClassConfig {
+            wasm: Some("wasmtime".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            k8s_satisfies_isolation(&cfg, IsolationClass::Wasm),
+            "WASM must be accepted when wasm RuntimeClass is configured"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // FIX 3: build_job honours req.image when non-empty and not a digest.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_job_uses_req_image_when_provided() {
+        let mut req = make_req(IsolationClass::Trusted);
+        req.image = "python:3.11-slim".to_string();
+        let job = build_job(
+            &req,
+            "agent-image:v1",
+            "job-img-override",
+            "ns",
+            &RuntimeClassConfig::default(),
+        )
+        .expect("TRUSTED build_job must succeed");
+        let image = job
+            .spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .and_then(|ps| ps.containers.first())
+            .and_then(|c| c.image.as_deref())
+            .expect("container image must be set");
+        assert_eq!(
+            image, "python:3.11-slim",
+            "req.image must override agent_image"
+        );
+    }
+
+    #[test]
+    fn build_job_falls_back_to_agent_image_when_req_image_empty() {
+        let mut req = make_req(IsolationClass::Trusted);
+        req.image = String::new();
+        let job = build_job(
+            &req,
+            "agent-image:v1",
+            "job-img-fallback",
+            "ns",
+            &RuntimeClassConfig::default(),
+        )
+        .expect("TRUSTED build_job must succeed");
+        let image = job
+            .spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .and_then(|ps| ps.containers.first())
+            .and_then(|c| c.image.as_deref())
+            .expect("container image must be set");
+        assert_eq!(
+            image, "agent-image:v1",
+            "empty req.image must fall back to agent_image"
+        );
+    }
+
+    #[test]
+    fn build_job_falls_back_to_agent_image_for_digest_req_image() {
+        let mut req = make_req(IsolationClass::Trusted);
+        req.image = "sha256:deadbeefdeadbeef".to_string();
+        let job = build_job(
+            &req,
+            "agent-image:v1",
+            "job-img-digest",
+            "ns",
+            &RuntimeClassConfig::default(),
+        )
+        .expect("TRUSTED build_job must succeed");
+        let image = job
+            .spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .and_then(|ps| ps.containers.first())
+            .and_then(|c| c.image.as_deref())
+            .expect("container image must be set");
+        assert_eq!(
+            image, "agent-image:v1",
+            "sha256: prefixed req.image is a bundle digest, not an image override"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // FIX 7: namespace_for length bound and DNS-1123 boundary checks.
+    // -----------------------------------------------------------------------
+
+    // A 54-char tenant_id (prefix 10 + 54 = 64, over K8s 63 limit) is refused.
+    #[test]
+    fn namespace_for_rejects_tenant_id_over_53_chars() {
+        let mut req = make_req(IsolationClass::Trusted);
+        // 54 lowercase letters — 10 + 54 = 64 chars total, exceeds K8s 63 limit.
+        req.tenant_id = "a".repeat(54);
+        let err = K8sBackend::namespace_for(&req)
+            .expect_err("tenant_id >53 chars must be refused (would produce >63-char namespace)");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("DNS-1123"),
+            "error must mention DNS-1123: {msg}"
+        );
+    }
+
+    // A 53-char tenant_id is exactly at the boundary and should be accepted.
+    #[test]
+    fn namespace_for_accepts_tenant_id_at_53_chars() {
+        let mut req = make_req(IsolationClass::Trusted);
+        req.tenant_id = "a".repeat(53);
+        let ns = K8sBackend::namespace_for(&req)
+            .expect("53-char tenant_id must be accepted (10+53=63 chars namespace)");
+        assert_eq!(ns.len(), 63);
+    }
+
+    // A tenant_id with a trailing dash is refused (DNS-1123 boundary).
+    #[test]
+    fn namespace_for_rejects_trailing_dash() {
+        let mut req = make_req(IsolationClass::Trusted);
+        req.tenant_id = "acme-".to_string();
+        let err =
+            K8sBackend::namespace_for(&req).expect_err("trailing dash must be refused (DNS-1123)");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("DNS-1123"),
+            "error must mention DNS-1123: {msg}"
+        );
+    }
+
+    // A tenant_id with a leading dash is refused.
+    #[test]
+    fn namespace_for_rejects_leading_dash() {
+        let mut req = make_req(IsolationClass::Trusted);
+        req.tenant_id = "-acme".to_string();
+        let err =
+            K8sBackend::namespace_for(&req).expect_err("leading dash must be refused (DNS-1123)");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("DNS-1123"),
+            "error must mention DNS-1123: {msg}"
+        );
+    }
+
+    // A normal UUID-style tenant_id passes.
+    #[test]
+    fn namespace_for_accepts_uuid_style_tenant_id() {
+        let mut req = make_req(IsolationClass::Trusted);
+        req.tenant_id = "00000000-0000-0000-0000-000000000001".to_string();
+        // UUIDs use hex + dashes; no uppercase, no trailing/leading dash.
+        // BUT UUID contains uppercase in standard form — use lowercase version.
+        // Standard UUID is lowercase hex, so this passes [a-z0-9-].
+        let ns = K8sBackend::namespace_for(&req)
+            .expect("UUID-style lowercase tenant_id must be accepted");
+        assert_eq!(ns, "lantern-t-00000000-0000-0000-0000-000000000001");
     }
 }
