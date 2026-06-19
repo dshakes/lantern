@@ -1,22 +1,32 @@
 "use client";
 
-// Run waterfall — renders a run's journal_events as a Gantt-style timeline
-// of nested spans (steps). For each step we surface: name, duration,
-// tokens (if it was an LLM call), cost (if computed), status.
+// Run waterfall — renders a run's journal_events as a concurrency-revealing
+// swimlane timeline. Spans (steps) are grouped into labeled horizontal lanes
+// (Reasoning / LLM / Tool / Connector / Other) over a shared time scale, the
+// AgentCore / Anthropic-console model. For each step we surface: name,
+// duration, tokens (if it was an LLM call), cost (if computed), status.
 //
 // Design choices:
 //
-//   - Spans are grouped by stepId. Events with no stepId (or kind="end")
-//     are treated as run-level events and rendered as a thin separator
-//     above the span list.
+//   - Spans are grouped by stepId, then bucketed into lanes via laneFor()
+//     (run-waterfall-lanes.ts) from the step's kind / name / sub-events —
+//     there is no parentSpanId/depth on the wire, so lanes are derived.
+//
+//   - Within a lane, overlapping spans are split into sub-rows by greedy
+//     interval partitioning so concurrent work reads side-by-side rather
+//     than stacked on top of each other. Spans in different lanes at the
+//     same time naturally read as parallel.
 //
 //   - The x-axis is normalized to [first event ts ... last event ts] so
 //     short runs are still legible. For runs longer than 60s the unit
 //     in the header switches from "ms" to "s" automatically.
 //
+//   - Retried steps (duplicate stepId, or an explicit `attempt`) collapse
+//     into one bar with a "retried ×N" badge; prior attempts nest under it.
+//
 //   - Clicking a span expands a nested event list (LLM deltas, tool
-//     calls, logs) for that step. This is the LangSmith/Inngest pattern:
-//     waterfall by default, drill-down on demand.
+//     calls, logs, reasoning text) for that step. Waterfall by default,
+//     drill-down on demand.
 //
 //   - When the run is still streaming, the open span is rendered with
 //     a moving shimmer so the user knows the bar will keep growing.
@@ -33,9 +43,19 @@ import {
   FileText,
   AlertTriangle,
   ListTree,
+  RotateCcw,
 } from "lucide-react";
 import clsx from "clsx";
 import type { StreamEvent } from "@/lib/mock-data";
+import {
+  type Span,
+  type Lane,
+  type LaneId,
+  buildLanes,
+  groupRetries,
+  isReasoning,
+  reasoningText,
+} from "./run-waterfall-lanes";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -55,19 +75,7 @@ interface RunWaterfallProps {
   };
 }
 
-interface Span {
-  id: string;
-  name: string;
-  startMs: number;
-  endMs: number | null; // null = still open
-  status: "running" | "succeeded" | "failed";
-  events: StreamEvent[];
-  // Aggregates rolled up from the event payloads.
-  tokensIn: number;
-  tokensOut: number;
-  costUsd: number;
-  errorMessage?: string;
-}
+// Span is defined in run-waterfall-lanes.ts and imported above.
 
 // ---------------------------------------------------------------------------
 // Span extraction
@@ -210,9 +218,20 @@ function iconFor(kind: StreamEvent["kind"]) {
 // Component
 // ---------------------------------------------------------------------------
 
+// Per-lane bar styling. Lanes keep their bars' status semantics (success /
+// fail / running) but the lane label + reasoning treatment are tinted by lane.
+const LANE_ACCENT: Record<LaneId, string> = {
+  reasoning: "text-violet-400",
+  llm: "text-sky-400",
+  tool: "text-amber-400",
+  connector: "text-emerald-400",
+  other: "text-zinc-400",
+};
+
 export function RunWaterfall({ events, running, totals }: RunWaterfallProps) {
   const { spans, endMs } = useMemo(() => extractSpans(events), [events]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
   // Use a stable scale that includes the currently-open spans extending
   // up to now if the run is still streaming. Without this the rightmost
   // bar would visually jump every time a new event arrives.
@@ -224,6 +243,13 @@ export function RunWaterfall({ events, running, totals }: RunWaterfallProps) {
     return Math.max(openMax + 500, endMs);
   }, [endMs, spans, running]);
 
+  // Collapse retries, then bucket into labeled, non-empty lanes; within each
+  // lane split overlapping spans into sub-rows via greedy partitioning.
+  const lanes = useMemo(
+    () => buildLanes(groupRetries(spans), scaleEnd),
+    [spans, scaleEnd],
+  );
+
   if (spans.length === 0) {
     return (
       <div className="rounded-xl border border-zinc-800 bg-surface-1 p-6 text-center text-[12px] text-zinc-500">
@@ -232,6 +258,18 @@ export function RunWaterfall({ events, running, totals }: RunWaterfallProps) {
     );
   }
 
+  const toggle = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // Lane labels stay pinned (sticky left) while the timeline scrolls
+  // horizontally on narrow widths.
+  const LABEL_W = "w-28";
+
   return (
     <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
       <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2.5">
@@ -239,7 +277,8 @@ export function RunWaterfall({ events, running, totals }: RunWaterfallProps) {
           <ListTree className="h-3.5 w-3.5 text-zinc-500" />
           <h3 className="text-[12px] font-semibold text-zinc-200">Trace</h3>
           <span className="text-[10px] text-zinc-500">
-            {spans.length} span{spans.length === 1 ? "" : "s"} · total {formatMs(scaleEnd)}
+            {spans.length} span{spans.length === 1 ? "" : "s"} · {lanes.length} lane
+            {lanes.length === 1 ? "" : "s"} · total {formatMs(scaleEnd)}
           </span>
         </div>
         {totals && (
@@ -258,61 +297,166 @@ export function RunWaterfall({ events, running, totals }: RunWaterfallProps) {
         )}
       </div>
 
-      <ul className="divide-y divide-zinc-800">
-        {spans.map((span) => (
-          <SpanRow
-            key={span.id}
-            span={span}
-            scaleEnd={scaleEnd}
-            running={running}
-            expanded={expanded.has(span.id)}
-            onToggle={() =>
-              setExpanded((prev) => {
-                const next = new Set(prev);
-                if (next.has(span.id)) next.delete(span.id);
-                else next.add(span.id);
-                return next;
-              })
-            }
-          />
-        ))}
-      </ul>
+      {/* Horizontal scroll on the timeline; lane labels stay pinned left. */}
+      <div className="overflow-x-auto">
+        <div className="min-w-[640px]">
+          <TimeAxis scaleEnd={scaleEnd} labelW={LABEL_W} />
+          <div className="divide-y divide-zinc-800/60">
+            {lanes.map((lane) => (
+              <LaneRow
+                key={lane.meta.id}
+                lane={lane}
+                scaleEnd={scaleEnd}
+                running={running}
+                labelW={LABEL_W}
+                accent={LANE_ACCENT[lane.meta.id]}
+                expanded={expanded}
+                onToggle={toggle}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-function SpanRow({
+// ---------------------------------------------------------------------------
+// Time axis header — shared scale across all lanes.
+// ---------------------------------------------------------------------------
+
+function TimeAxis({ scaleEnd, labelW }: { scaleEnd: number; labelW: string }) {
+  // 5 evenly-spaced ticks across the scale.
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * scaleEnd);
+  return (
+    <div className="flex items-stretch border-b border-zinc-800 bg-surface-0/40 text-[9px] text-zinc-500">
+      <div
+        className={clsx(
+          "sticky left-0 z-10 shrink-0 border-r border-zinc-800 bg-surface-1 px-3 py-1.5",
+          labelW,
+        )}
+      >
+        timeline
+      </div>
+      <div className="relative flex-1 py-1.5">
+        {ticks.map((t, i) => (
+          <span
+            key={i}
+            className={clsx(
+              "absolute top-1.5 tabular-nums",
+              i === ticks.length - 1 ? "-translate-x-full" : "",
+            )}
+            style={{ left: `${(t / scaleEnd) * 100}%` }}
+          >
+            {formatMs(t)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Lane row — label + its sub-rows of bars.
+// ---------------------------------------------------------------------------
+
+function LaneRow({
+  lane,
+  scaleEnd,
+  running,
+  labelW,
+  accent,
+  expanded,
+  onToggle,
+}: {
+  lane: Lane;
+  scaleEnd: number;
+  running?: boolean;
+  labelW: string;
+  accent: string;
+  expanded: Set<string>;
+  onToggle: (id: string) => void;
+}) {
+  const count = lane.rows.reduce((n, r) => n + r.length, 0);
+  return (
+    <div className="flex items-stretch">
+      <div
+        className={clsx(
+          "sticky left-0 z-10 flex shrink-0 flex-col justify-center gap-0.5 border-r border-zinc-800 bg-surface-1 px-3 py-2",
+          labelW,
+        )}
+      >
+        <span className={clsx("text-[10px] font-semibold uppercase tracking-wide", accent)}>
+          {lane.meta.label}
+        </span>
+        <span className="text-[9px] tabular-nums text-zinc-600">
+          {count} span{count === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="flex-1 divide-y divide-zinc-800/40">
+        {lane.rows.map((row, i) => (
+          <div key={i} className="py-0.5">
+            {row.map((span) => (
+              <LaneSpan
+                key={span.id}
+                span={span}
+                scaleEnd={scaleEnd}
+                running={running}
+                laneId={lane.meta.id}
+                expanded={expanded.has(span.id)}
+                onToggle={() => onToggle(span.id)}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// A single span positioned absolutely on the shared lane time scale. The whole
+// row is one accessible toggle button; the bar floats inside the timeline track
+// at [startMs..endMs]. Reasoning spans get the brain icon + violet treatment.
+function LaneSpan({
   span,
   scaleEnd,
   running,
+  laneId,
   expanded,
   onToggle,
 }: {
   span: Span;
   scaleEnd: number;
   running?: boolean;
+  laneId: LaneId;
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const widthPct =
-    ((span.endMs ?? scaleEnd) - span.startMs) / scaleEnd * 100;
-  const leftPct = (span.startMs / scaleEnd) * 100;
-
   const duration = (span.endMs ?? scaleEnd) - span.startMs;
   const open = span.endMs == null && running;
+  const reasoning = laneId === "reasoning" || isReasoning(span);
+  const retryCount = span.retries?.length ?? 0;
 
-  const barColor =
-    span.status === "failed"
+  const widthPct = (((span.endMs ?? scaleEnd) - span.startMs) / scaleEnd) * 100;
+  const leftPct = (span.startMs / scaleEnd) * 100;
+
+  const barColor = reasoning
+    ? "bg-violet-500/25 border-violet-500/50"
+    : span.status === "failed"
       ? "bg-red-500/40 border-red-500/60"
       : span.status === "succeeded"
         ? "bg-emerald-500/30 border-emerald-500/50"
         : "bg-lantern-500/30 border-lantern-500/50";
 
+  const reasonText = expanded && reasoning ? reasoningText(span) : null;
+
   return (
-    <li>
+    <div>
       <button
+        type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-2 px-4 py-2 text-left transition-colors hover:bg-surface-2"
+        aria-expanded={expanded}
+        className="group flex w-full items-center gap-2 px-3 py-1 text-left transition-colors hover:bg-surface-2"
       >
         <span className="shrink-0 text-zinc-500">
           {expanded ? (
@@ -323,7 +467,9 @@ function SpanRow({
         </span>
 
         <span className="shrink-0">
-          {span.status === "running" ? (
+          {reasoning ? (
+            <Brain className="h-3 w-3 text-violet-400" />
+          ) : span.status === "running" ? (
             <Loader2 className="h-3 w-3 animate-spin text-lantern-400" />
           ) : span.status === "failed" ? (
             <XCircle className="h-3 w-3 text-red-400" />
@@ -332,9 +478,34 @@ function SpanRow({
           )}
         </span>
 
-        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-zinc-200">
-          {span.name}
-        </span>
+        {/* Absolutely-positioned timeline track on the shared scale. */}
+        <div className="relative h-4 min-w-0 flex-1 rounded bg-surface-0">
+          <div
+            className={clsx(
+              "absolute top-0 flex h-full items-center gap-1 overflow-hidden rounded border px-1.5",
+              barColor,
+              open && "animate-pulse",
+            )}
+            style={{
+              left: `${leftPct}%`,
+              width: `max(${Math.max(widthPct, 0)}%, 0.5rem)`,
+            }}
+          >
+            <span
+              className={clsx(
+                "truncate text-[10px] font-medium",
+                reasoning ? "text-violet-100" : "text-zinc-100",
+              )}
+            >
+              {span.name}
+            </span>
+            {retryCount > 0 && (
+              <span className="flex shrink-0 items-center gap-0.5 rounded bg-amber-500/20 px-1 text-[9px] font-semibold text-amber-300">
+                <RotateCcw className="h-2.5 w-2.5" />×{retryCount + 1}
+              </span>
+            )}
+          </div>
+        </div>
 
         {/* Numeric badges — only render when non-zero so simple steps stay clean. */}
         <div className="flex shrink-0 items-center gap-2 text-[10px] tabular-nums text-zinc-500">
@@ -346,45 +517,94 @@ function SpanRow({
           {span.costUsd > 0 && (
             <span title="Cost USD">{formatCostUsd(span.costUsd)}</span>
           )}
-          <span className="text-zinc-400">{formatMs(duration)}</span>
-        </div>
-
-        {/* Timeline bar — flex-basis fixed so the timeline area looks the same on every row. */}
-        <div className="ml-2 hidden h-4 w-40 shrink-0 rounded bg-surface-0 sm:block">
-          <div
-            className={clsx(
-              "h-full rounded border",
-              barColor,
-              open && "animate-pulse"
-            )}
-            style={{
-              marginLeft: `${leftPct}%`,
-              width: `${Math.max(widthPct, 1)}%`,
-            }}
-          />
+          <span className="w-12 text-right text-zinc-400">{formatMs(duration)}</span>
         </div>
       </button>
 
       {expanded && (
-        <div className="space-y-1.5 border-t border-zinc-800 bg-surface-0 px-6 py-3">
+        <div className="space-y-1.5 border-y border-zinc-800 bg-surface-0 px-6 py-3">
           {span.errorMessage && (
             <div className="rounded border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-[11px] text-red-300">
               {span.errorMessage}
             </div>
           )}
+
+          {reasonText && (
+            <div className="flex items-start gap-2 rounded border border-violet-500/20 bg-violet-500/5 px-2 py-1.5">
+              <Brain className="mt-0.5 h-3 w-3 shrink-0 text-violet-400" />
+              <p className="min-w-0 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-violet-100/90">
+                {reasonText.length > 600 ? `${reasonText.slice(0, 600)}…` : reasonText}
+              </p>
+            </div>
+          )}
+
+          {/* Prior retry attempts, nested + collapsible. */}
+          {retryCount > 0 && <RetryAttempts attempts={span.retries ?? []} />}
+
           {span.events
-            .filter((e) => e.kind !== "step_started" && e.kind !== "step_completed" && e.kind !== "step_failed")
+            .filter(
+              (e) =>
+                e.kind !== "step_started" &&
+                e.kind !== "step_completed" &&
+                e.kind !== "step_failed",
+            )
             .map((e, idx) => (
               <EventLine key={`${span.id}-${idx}`} event={e} />
             ))}
-          {span.events.length <= 2 && !span.errorMessage && (
+          {span.events.length <= 2 && !span.errorMessage && !reasonText && (
             <p className="text-[11px] text-zinc-500">
               No sub-events recorded for this span.
             </p>
           )}
         </div>
       )}
-    </li>
+    </div>
+  );
+}
+
+// Collapsible list of the prior attempts of a retried step.
+function RetryAttempts({ attempts }: { attempts: Span[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded border border-amber-500/20 bg-amber-500/[0.04]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[10px] font-medium text-amber-300"
+      >
+        {open ? (
+          <ChevronDown className="h-3 w-3" />
+        ) : (
+          <ChevronRight className="h-3 w-3" />
+        )}
+        <RotateCcw className="h-2.5 w-2.5" />
+        {attempts.length} earlier attempt{attempts.length === 1 ? "" : "s"}
+      </button>
+      {open && (
+        <ul className="space-y-1 px-3 pb-2 pt-1">
+          {attempts.map((a, i) => (
+            <li
+              key={`${a.id}-retry-${i}`}
+              className="flex items-center gap-2 text-[10px] text-zinc-400"
+            >
+              {a.status === "failed" ? (
+                <XCircle className="h-3 w-3 shrink-0 text-red-400" />
+              ) : (
+                <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-400" />
+              )}
+              <span className="tabular-nums text-zinc-500">#{i + 1}</span>
+              <span className="min-w-0 flex-1 truncate">
+                {a.errorMessage || a.name}
+              </span>
+              <span className="shrink-0 tabular-nums text-zinc-500">
+                {formatMs((a.endMs ?? a.startMs) - a.startMs)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
