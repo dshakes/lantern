@@ -1063,6 +1063,24 @@ var migrations = []string{
 		WHERE display_name IS NOT NULL`,
 
 	// ---------------------------------------------------------------
+	// Session grouping for runs (UX feature #1).
+	//
+	// session_id is nullable: standalone runs have NULL (their own
+	// visual group in the UI). Interactive session runs carry the
+	// sessions.id; subagent children inherit the root's session_id
+	// (or use the root run id when the root has no session).
+	//
+	// No hard FK to sessions: synthetic groupings (subagent trees that
+	// were never started from an interactive session) use a run id as
+	// the session_id, and a session row may be absent for those.
+	// ---------------------------------------------------------------
+	`ALTER TABLE runs ADD COLUMN IF NOT EXISTS session_id UUID`,
+
+	`CREATE INDEX IF NOT EXISTS runs_tenant_session_created_idx
+		ON runs (tenant_id, session_id, created_at DESC)
+		WHERE session_id IS NOT NULL`,
+
+	// ---------------------------------------------------------------
 	// Phase 2 governance: per-agent-instance identity.
 	//
 	// Every scheduled VM is assigned a short-lived, cryptographically-

@@ -168,8 +168,11 @@ type Run struct {
 	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,16,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	ParentRunId    string                 `protobuf:"bytes,17,opt,name=parent_run_id,json=parentRunId,proto3" json:"parent_run_id,omitempty"`
 	Labels         map[string]string      `protobuf:"bytes,18,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// SessionId groups related runs (interactive session turns, subagent trees).
+	// Nullable: standalone runs have an empty string (NULL in DB).
+	SessionId     string `protobuf:"bytes,19,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Run) Reset() {
@@ -326,6 +329,13 @@ func (x *Run) GetLabels() map[string]string {
 		return x.Labels
 	}
 	return nil
+}
+
+func (x *Run) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
 }
 
 type RunError struct {
@@ -1407,8 +1417,10 @@ type CreateRunRequest struct {
 	Stream         bool                   `protobuf:"varint,5,opt,name=stream,proto3" json:"stream,omitempty"`
 	Labels         map[string]string      `protobuf:"bytes,6,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	IdempotencyKey string                 `protobuf:"bytes,7,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// SessionId, when non-empty, groups this run with others under the same session.
+	SessionId     string `protobuf:"bytes,8,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateRunRequest) Reset() {
@@ -1490,6 +1502,13 @@ func (x *CreateRunRequest) GetIdempotencyKey() string {
 	return ""
 }
 
+func (x *CreateRunRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type GetRunRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1535,11 +1554,13 @@ func (x *GetRunRequest) GetId() string {
 }
 
 type ListRunsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	AgentName     string                 `protobuf:"bytes,1,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
-	StatusFilter  RunStatus              `protobuf:"varint,2,opt,name=status_filter,json=statusFilter,proto3,enum=lantern.v1.RunStatus" json:"status_filter,omitempty"`
-	PageSize      int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
-	PageToken     string                 `protobuf:"bytes,4,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	AgentName    string                 `protobuf:"bytes,1,opt,name=agent_name,json=agentName,proto3" json:"agent_name,omitempty"`
+	StatusFilter RunStatus              `protobuf:"varint,2,opt,name=status_filter,json=statusFilter,proto3,enum=lantern.v1.RunStatus" json:"status_filter,omitempty"`
+	PageSize     int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken    string                 `protobuf:"bytes,4,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	// SessionId, when non-empty, filters results to runs belonging to this session.
+	SessionId     string `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1598,6 +1619,13 @@ func (x *ListRunsRequest) GetPageSize() int32 {
 func (x *ListRunsRequest) GetPageToken() string {
 	if x != nil {
 		return x.PageToken
+	}
+	return ""
+}
+
+func (x *ListRunsRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
 	}
 	return ""
 }

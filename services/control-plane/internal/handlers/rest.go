@@ -386,6 +386,9 @@ func (h *RESTHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	if agentName := r.URL.Query().Get("agent"); agentName != "" {
 		req.AgentName = agentName
 	}
+	if sid := r.URL.Query().Get("sessionId"); sid != "" {
+		req.SessionId = sid
+	}
 
 	resp, err := h.runSvc.ListRuns(ctx, req)
 	if err != nil {
@@ -441,6 +444,8 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		AgentName string         `json:"agentName"`
 		Input     map[string]any `json:"input"`
+		// SessionId is optional; when provided the run is grouped under that session.
+		SessionId string `json:"sessionId,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -468,6 +473,7 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		AgentName:   body.AgentName,
 		Input:       inputStruct,
 		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_API,
+		SessionId:   body.SessionId,
 	})
 	if err != nil {
 		// The most common error is "agent has no promoted version".
@@ -1600,8 +1606,14 @@ func (h *RESTHandler) createSubAgentRunRow(ctx context.Context, tenantID, agentN
 	}
 	var childRunID string
 	if err := h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, trigger_kind, input, parent_run_id)
-		VALUES ($1, $2, $3, 'queued', 'subagent', $4::jsonb, $5)
+		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, trigger_kind, input, parent_run_id, session_id)
+		VALUES (
+			$1, $2, $3, 'queued', 'subagent', $4::jsonb, $5,
+			COALESCE(
+				(SELECT session_id FROM runs WHERE id = $5::uuid),
+				$5::uuid
+			)
+		)
 		RETURNING id
 	`, tenantID, agentID, versionID, string(inputJSON), parentRunID).Scan(&childRunID); err != nil {
 		return "", fmt.Errorf("insert child run: %w", err)
@@ -2064,6 +2076,9 @@ func runToMap(r *lanternv1.Run) map[string]any {
 	}
 	if r.GetParentRunId() != "" {
 		m["parentRunId"] = r.GetParentRunId()
+	}
+	if r.GetSessionId() != "" {
+		m["sessionId"] = r.GetSessionId()
 	}
 	if r.GetError() != nil {
 		m["error"] = map[string]string{
