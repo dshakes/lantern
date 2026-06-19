@@ -57,6 +57,17 @@ pub struct Config {
     /// Optional — when unset the Wasm in-process backend is preferred; when
     /// set the K8s backend uses this class for WASM isolation.
     pub runtimeclass_wasm: Option<String>,
+    /// Allow STANDARD/UNSPECIFIED/DEVCONTAINER workloads to run on bare runc
+    /// (shared-kernel) when gVisor is not configured.
+    ///
+    /// Set `LANTERN_ALLOW_RUNC_STANDARD=1` to opt in.  Default **false**.
+    ///
+    /// When false (the safe default): STANDARD/UNSPECIFIED/DEVCONTAINER require
+    /// either gVisor (preferred) or this flag — a bare runc pod is refused.
+    /// When true: STANDARD/UNSPECIFIED/DEVCONTAINER degrade to runc without
+    /// gVisor, emitting a `tracing::warn!`.  Only enable this flag for local
+    /// development or staging clusters without gVisor installed.
+    pub allow_runc_standard: bool,
 }
 
 impl Config {
@@ -117,6 +128,13 @@ impl Config {
             .ok()
             .filter(|s| !s.trim().is_empty());
 
+        // Explicit developer opt-in: set to "1" or "true" to allow bare runc
+        // for STANDARD/UNSPECIFIED/DEVCONTAINER without gVisor.  Default false.
+        let allow_runc_standard = std::env::var("LANTERN_ALLOW_RUNC_STANDARD")
+            .ok()
+            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+
         Ok(Config {
             listen_addr,
             runtime_backend,
@@ -134,6 +152,7 @@ impl Config {
             runtimeclass_gvisor,
             runtimeclass_kata,
             runtimeclass_wasm,
+            allow_runc_standard,
         })
     }
 }
@@ -186,7 +205,7 @@ mod tests {
     /// chain is covered: empty env → None config → satisfies_isolation = false.
     #[test]
     fn empty_gvisor_env_does_not_satisfy_untrusted() {
-        use crate::backends::k8s::{k8s_satisfies_isolation, RuntimeClassConfig};
+        use crate::backends::k8s::{RuntimeClassConfig, k8s_satisfies_isolation};
         use crate::proto::IsolationClass;
 
         // Simulate what happens when LANTERN_RUNTIMECLASS_GVISOR="" in env.
@@ -195,6 +214,7 @@ mod tests {
             gvisor: gvisor_from_env,
             kata: None,
             wasm: None,
+            allow_runc_standard: false,
         };
         assert!(
             !k8s_satisfies_isolation(&cfg, IsolationClass::Untrusted),
