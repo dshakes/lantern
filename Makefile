@@ -27,6 +27,7 @@ whatsapp-reset: ## Nuclear reset for stuck WhatsApp 'Waiting for this message' l
 
 run-api: ## Run the control-plane API server locally
 	@bash scripts/kill-port.sh 8080 50051
+	if [ -f .env.local ]; then set -a; . ./.env.local; set +a; fi; \
 	cd services/control-plane && \
 	DATABASE_URL="postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable" \
 	REDIS_URL="redis://localhost:6379" \
