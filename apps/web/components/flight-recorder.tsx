@@ -234,13 +234,13 @@ export function FlightRecorder({
   return (
     <div className="space-y-2.5">
       {/* ---- Control strip: scrubber + transport + as-of readout ---- */}
-      <div className="rounded-xl border border-zinc-800 bg-surface-1">
-        <div className="flex items-center gap-3 px-4 py-2.5">
+      <div className="rounded-xl bg-surface-1">
+        <div className="flex items-center gap-3 px-4 py-3">
           {/* Transport */}
           <button
             type="button"
             onClick={togglePlay}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-zinc-700 bg-surface-2 text-zinc-200 transition-colors hover:bg-surface-3"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-surface-2 text-zinc-300 transition-colors hover:bg-surface-3 hover:text-zinc-100"
             aria-label={playing ? "Pause replay" : "Play replay"}
           >
             {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
@@ -263,7 +263,7 @@ export function FlightRecorder({
           {/* As-of readout (or hint when idle) */}
           {engaged && asOf ? (
             <div className="flex shrink-0 items-center gap-3 text-[11px] tabular-nums text-zinc-400">
-              <span className="font-mono text-[10px] text-lantern-300">
+              <span className="font-mono text-[10px] font-medium text-lantern-300">
                 T+{fmtMs(cursorMs!)}
               </span>
               <span title="Cumulative cost as of T" className="text-zinc-300">
@@ -274,14 +274,20 @@ export function FlightRecorder({
               </span>
               <span
                 title="Steps in-flight at T / steps completed by T"
-                className={clsx(asOf.active > 0 ? "text-emerald-300" : "text-zinc-500")}
+                className={clsx(
+                  "inline-flex items-center gap-1.5",
+                  asOf.active > 0 ? "text-zinc-300" : "text-zinc-500",
+                )}
               >
+                {asOf.active > 0 && (
+                  <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500/80" />
+                )}
                 {asOf.active} active · {asOf.done} done
               </span>
               <button
                 type="button"
                 onClick={reset}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-zinc-500 transition-colors hover:bg-surface-2 hover:text-zinc-300"
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-zinc-500 transition-colors hover:bg-surface-2 hover:text-zinc-300"
               >
                 <RotateCcw className="h-3 w-3" /> live
               </button>
@@ -294,8 +300,8 @@ export function FlightRecorder({
         </div>
 
         {/* ---- Signals line — subtle, one row ---- */}
-        <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800/70 px-4 py-2 text-[10px]">
-          <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-600">
+        <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800/40 px-4 py-2.5 text-[10px]">
+          <span className="text-[9px] font-medium uppercase tracking-wide text-zinc-500">
             Signals
           </span>
           {signals.costliest && (
@@ -345,15 +351,15 @@ export function FlightRecorder({
                 else reset();
               }}
               className={clsx(
-                "ml-auto flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset transition-colors",
+                "ml-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-colors",
                 replayOpen
-                  ? "bg-violet-500/15 text-violet-200 ring-violet-500/30"
-                  : "text-violet-300/80 ring-violet-500/20 hover:bg-violet-500/10",
+                  ? "bg-surface-3 text-zinc-200"
+                  : "bg-surface-2 text-zinc-400 hover:bg-surface-3 hover:text-zinc-200",
               )}
             >
-              <Brain className="h-3 w-3" />
+              <Brain className={clsx("h-3 w-3", replayOpen ? "text-lantern-300" : "text-zinc-500")} />
               Replay reasoning
-              <span className="tabular-nums text-violet-300/60">
+              <span className="tabular-nums text-zinc-500">
                 ({reasoningSpans.length})
               </span>
             </button>
@@ -391,10 +397,12 @@ export function FlightRecorder({
 // Signal chip
 // ---------------------------------------------------------------------------
 
+// One muted hue per signal, carried ONLY by the small icon — the chip body
+// stays a neutral surface chip (no bright fills or colored rings). Calm.
 const TONES = {
-  amber: "text-amber-300 ring-amber-500/25 hover:bg-amber-500/10",
-  sky: "text-sky-300 ring-sky-500/25 hover:bg-sky-500/10",
-  rose: "text-rose-300 ring-rose-500/25 hover:bg-rose-500/10",
+  amber: "text-amber-400/70",
+  sky: "text-sky-400/70",
+  rose: "text-rose-400/70",
 } as const;
 
 function SignalChip({
@@ -415,14 +423,11 @@ function SignalChip({
       type="button"
       onClick={onClick}
       title={`${label} — click to jump the cursor here`}
-      className={clsx(
-        "flex max-w-[14rem] items-center gap-1 rounded px-1.5 py-0.5 ring-1 ring-inset transition-colors",
-        TONES[tone],
-      )}
+      className="flex max-w-[14rem] items-center gap-1.5 rounded-md bg-surface-2 px-2 py-0.5 text-zinc-400 transition-colors hover:bg-surface-3 hover:text-zinc-200"
     >
-      {icon}
+      <span className={clsx("shrink-0", TONES[tone])}>{icon}</span>
       <span className="truncate">{label}</span>
-      <span className="shrink-0 font-mono tabular-nums opacity-80">{value}</span>
+      <span className="shrink-0 font-mono tabular-nums text-zinc-500">{value}</span>
     </button>
   );
 }
@@ -447,14 +452,14 @@ function ReasoningReplay({
   const span = spans[idx];
   const text = span ? reasoningText(span) : null;
   return (
-    <div className="border-t border-violet-500/20 bg-violet-500/[0.04] px-4 py-3">
-      <div className="mb-2 flex items-center justify-between">
+    <div className="border-t border-zinc-800/40 bg-surface-0/40 px-4 py-3.5">
+      <div className="mb-2.5 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Brain className="h-3.5 w-3.5 text-violet-400" />
-          <span className="text-[11px] font-semibold text-violet-200">
+          <Brain className="h-3.5 w-3.5 text-lantern-300" />
+          <span className="text-[11px] font-medium text-zinc-200">
             Reasoning replay
           </span>
-          <span className="text-[10px] tabular-nums text-violet-300/60">
+          <span className="text-[10px] tabular-nums text-zinc-500">
             {idx + 1} / {spans.length}
           </span>
         </div>
@@ -463,7 +468,7 @@ function ReasoningReplay({
             type="button"
             onClick={onPrev}
             disabled={idx === 0}
-            className="flex h-6 w-6 items-center justify-center rounded border border-violet-500/20 text-violet-200 transition-colors hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-30"
+            className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-2 text-zinc-300 transition-colors hover:bg-surface-3 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-30"
             aria-label="Previous reasoning block"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
@@ -472,7 +477,7 @@ function ReasoningReplay({
             type="button"
             onClick={onNext}
             disabled={idx >= spans.length - 1}
-            className="flex h-6 w-6 items-center justify-center rounded border border-violet-500/20 text-violet-200 transition-colors hover:bg-violet-500/10 disabled:cursor-not-allowed disabled:opacity-30"
+            className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-2 text-zinc-300 transition-colors hover:bg-surface-3 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-30"
             aria-label="Next reasoning block"
           >
             <ChevronRight className="h-3.5 w-3.5" />
@@ -480,17 +485,17 @@ function ReasoningReplay({
           <button
             type="button"
             onClick={onClose}
-            className="ml-1 flex h-6 w-6 items-center justify-center rounded border border-zinc-700 text-zinc-400 transition-colors hover:bg-surface-2"
+            className="ml-1 flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-surface-2 hover:text-zinc-300"
             aria-label="Close reasoning replay"
           >
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
-      <p className="mb-1.5 truncate text-[10px] font-medium text-violet-300/70">
+      <p className="mb-1.5 truncate text-[10px] font-medium text-zinc-500">
         {span?.name}
       </p>
-      <p className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-[12px] leading-relaxed text-violet-100/90">
+      <p className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-[12px] leading-relaxed text-zinc-300">
         {text ?? "No reasoning text recorded for this block."}
       </p>
     </div>
