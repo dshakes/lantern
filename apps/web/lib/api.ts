@@ -69,6 +69,7 @@ export interface RunFilters {
   agentName?: string;
   status?: RunStatus | "all";
   search?: string;
+  sessionId?: string;
 }
 
 export interface CreateRunInput {
@@ -514,6 +515,7 @@ class LanternAPI {
     if (filters?.status && filters.status !== "all")
       params.set("status", filters.status);
     if (filters?.search) params.set("q", filters.search);
+    if (filters?.sessionId) params.set("sessionId", filters.sessionId);
     const qs = params.toString();
     return await this.request<Run[]>(
       `/v1/runs${qs ? `?${qs}` : ""}`,

@@ -19,19 +19,21 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
-  CheckCircle2,
-  Clock,
+  ChevronDown,
+  ChevronRight,
   Inbox as InboxIcon,
-  Loader2,
-  MessageSquare,
+  Layers,
   Play,
-  XCircle,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import type { Run, RunStatus } from "@/lib/mock-data";
+import {
+  groupRunsBySession,
+  aggregateSession,
+  type SessionGroup,
+} from "@/lib/session-grouping";
 import { PageHeader } from "@/components/page-header";
-import { StatusBadge } from "@/components/status-badge";
 import { Skeleton } from "@/components/skeleton";
 import { AgentAvatar } from "@/components/agent-avatar";
 
@@ -226,40 +228,114 @@ function RunList({ runs, emptyTab }: { runs: Run[]; emptyTab: Tab }) {
   }
 
   // Bucket by relative date for human-scannable section headers. Within
-  // each bucket we further collapse consecutive runs of the same agent
-  // so the eye doesn't bounce across 10 identical rows.
-  const groups = groupByDate(runs);
+  // each bucket we collapse related runs into ONE session entry (subagent
+  // tree / interactive session / loop), refining the old per-agent visual
+  // collapsing into true agent-centric grouping.
+  const dateGroups = groupByDate(runs);
 
   return (
     <div className="space-y-6">
-      {groups.map((g) => (
-        <section key={g.key}>
-          <h3 className="mb-2 px-1 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-            {g.label}
-            <span className="ml-2 text-zinc-700">·</span>
-            <span className="ml-2 tabular-nums text-zinc-600">{g.runs.length}</span>
-          </h3>
-          <ul className="divide-y divide-zinc-800 overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
-            {g.runs.map((run, idx) => (
-              <RunRow
-                key={run.id}
-                run={run}
-                groupedWithPrev={idx > 0 && g.runs[idx - 1].agentName === run.agentName}
-              />
-            ))}
-          </ul>
-        </section>
-      ))}
+      {dateGroups.map((g) => {
+        const sessions = groupRunsBySession(g.runs);
+        return (
+          <section key={g.key}>
+            <h3 className="mb-2 px-1 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+              {g.label}
+              <span className="ml-2 text-zinc-700">·</span>
+              <span className="ml-2 tabular-nums text-zinc-600">{g.runs.length}</span>
+            </h3>
+            <ul className="divide-y divide-zinc-800 overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
+              {sessions.map((s, idx) => (
+                <SessionEntry
+                  key={s.key}
+                  group={s}
+                  groupedWithPrev={
+                    idx > 0 &&
+                    !s.isMulti &&
+                    !sessions[idx - 1].isMulti &&
+                    sessions[idx - 1].runs[0].agentName === s.runs[0].agentName
+                  }
+                />
+              ))}
+            </ul>
+          </section>
+        );
+      })}
     </div>
+  );
+}
+
+// A session entry: a single run row (solo) or a collapsible session header
+// that rolls up its member runs.
+function SessionEntry({
+  group,
+  groupedWithPrev,
+}: {
+  group: SessionGroup;
+  groupedWithPrev: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!group.isMulti) {
+    return <RunRow run={group.runs[0]} groupedWithPrev={groupedWithPrev} />;
+  }
+
+  const agg = aggregateSession(group.runs);
+  const StatusDot = statusDotFor(agg.status);
+
+  return (
+    <li>
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors duration-150 hover:bg-surface-2"
+      >
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+        )}
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-lantern-500/10 ring-1 ring-lantern-500/20">
+          <Layers className="h-3.5 w-3.5 text-lantern-400" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-xs font-medium text-zinc-100">{agg.agentLabel}</span>
+            <StatusDot />
+            <span className="rounded-md bg-surface-3 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-400">
+              {agg.count} runs
+            </span>
+          </div>
+          <p className="mt-0.5 truncate text-[11px] text-zinc-500">Session · {agg.count} steps</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-3 text-[11px] text-zinc-500">
+          {agg.totalCost > 0 && (
+            <span title="Total cost in USD" className="tabular-nums">
+              ${agg.totalCost.toFixed(4)}
+            </span>
+          )}
+          <span className="tabular-nums">{formatRelative(agg.latestAt)}</span>
+        </div>
+      </button>
+      {expanded && (
+        <ul className="divide-y divide-zinc-800 border-t border-zinc-800 bg-surface-0/40">
+          {group.runs.map((run) => (
+            <RunRow key={run.id} run={run} groupedWithPrev={false} nested />
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }
 
 function RunRow({
   run,
   groupedWithPrev,
+  nested = false,
 }: {
   run: Run;
   groupedWithPrev: boolean;
+  nested?: boolean;
 }) {
   const summary = summarizeInput(run.input);
   const StatusDot = statusDotFor(run.status);
@@ -268,7 +344,10 @@ function RunRow({
     <li>
       <Link
         href={`/runs/${run.id}`}
-        className="flex items-center gap-3 px-4 py-2.5 transition-colors duration-150 hover:bg-surface-2"
+        className={clsx(
+          "flex items-center gap-3 py-2.5 transition-colors duration-150 hover:bg-surface-2",
+          nested ? "pl-12 pr-4" : "px-4"
+        )}
       >
         {/* Avatar — colored initials per agent name. When consecutive rows
             share an agent we dim/hide it so a burst from one agent reads

@@ -44,6 +44,10 @@ export interface Run {
   createdAt: Date;
   labels: Record<string, string>;
   triggerMeta?: unknown;
+  // Session-grouping keys. The runs API returns these camelCase and omits
+  // them when empty (standalone run with no parent / not part of a session).
+  sessionId?: string;
+  parentRunId?: string;
 }
 
 export interface StreamEvent {
