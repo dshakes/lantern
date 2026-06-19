@@ -41,7 +41,7 @@ jobs:
             - docs: documentation only
             - core: core library / business logic (default if mixed/unclear)
           claude_args: |
-            --model haiku
+            --model sonnet
             --max-turns 6
             --max-budget-usd 0.30
             --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*)"
