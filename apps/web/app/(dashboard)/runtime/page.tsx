@@ -1,117 +1,85 @@
 "use client";
 
-// Runtime — live view of headless microVMs scheduled by the control-plane.
+// Runtime Command Center — the flagship cockpit for headless microVM
+// workloads scheduled by the control-plane.
 //
-// Backed by /v1/runtime/vms (list) and /v1/runtime/cluster (capacity).
-// Polls every 5s — cheap because the list page reads a single Postgres
-// table indexed on (tenant_id, created_at desc).
+// Backed by /v1/runtime/vms (list) + /v1/runtime/cluster (capacity), polled
+// every 5s. When the list is EMPTY or the API is UNREACHABLE we fall back to
+// a clearly-labeled DEMO FLEET (lib/runtime-demo.ts) so the cockpit always
+// reads populated — mirroring the dashboard's "API offline → local mocks"
+// convention. Real VMs are NEVER decorated with simulated metrics; their
+// CPU/mem sparklines render "—" (see fleet-grid.tsx honesty guard).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   Activity,
-  Box,
   AlertTriangle,
-  Loader2,
-  Shield,
-  TerminalSquare,
-  RefreshCw,
+  Boxes,
+  CircleDollarSign,
+  Cpu,
   Plus,
+  RefreshCw,
+  Server,
+  Snowflake,
 } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
 import clsx from "clsx";
-import { PageHeader, CountBadge } from "@/components/page-header";
+import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/button";
 import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
 import { useToast } from "@/components/toast";
 import { runtimeApi, UnauthorizedError } from "@/lib/runtime-api";
+import type { VmRow, ClusterSummary } from "@/lib/runtime-types";
+import { DEMO_VMS, DEMO_CLUSTER } from "@/lib/runtime-demo";
 import { ScheduleModal } from "./schedule-modal";
-
-// camelCase to match the control-plane vmRow JSON tags. (cluster summary
-// below stays snake_case — that endpoint returns snake_case keys.)
-interface VmRow {
-  vmId: string;
-  state: "pending" | "spawning" | "running" | "draining" | "terminated" | "failed";
-  node: string | null;
-  region?: string | null;
-  az?: string | null;
-  isolationClass: string;
-  createdAt: string;
-  terminatedAt?: string | null;
-  lastHeartbeatAt?: string | null;
-  spec: Record<string, unknown> | null;
-}
-
-interface ClusterSummary {
-  total_vms_running: number;
-  total_vms_pending: number;
-  nodes: Array<{
-    name: string;
-    region: string;
-    availability_zone: string;
-    running_vms: number;
-    free_vcpu_millis: number;
-    free_memory_bytes: number;
-    draining: boolean;
-  }>;
-}
-
-const STATE_STYLES: Record<VmRow["state"], { dot: string; pill: string; label: string }> = {
-  pending:    { dot: "bg-zinc-400 animate-pulse",    pill: "bg-zinc-500/10 text-zinc-300",       label: "Pending" },
-  spawning:   { dot: "bg-lantern-400 animate-pulse", pill: "bg-lantern-500/10 text-lantern-300", label: "Spawning" },
-  running:    { dot: "bg-emerald-400",                pill: "bg-emerald-500/10 text-emerald-300", label: "Running" },
-  draining:   { dot: "bg-amber-400 animate-pulse",   pill: "bg-amber-500/10 text-amber-300",     label: "Draining" },
-  terminated: { dot: "bg-zinc-500",                   pill: "bg-zinc-500/10 text-zinc-400",       label: "Terminated" },
-  failed:     { dot: "bg-red-400",                    pill: "bg-red-500/10 text-red-300",         label: "Failed" },
-};
-
-const ISOLATION_STYLES: Record<string, { label: string; cls: string }> = {
-  trusted:      { label: "Trusted",      cls: "bg-emerald-500/10 text-emerald-300" },
-  standard:     { label: "Standard",     cls: "bg-blue-500/10 text-blue-300" },
-  untrusted:    { label: "Untrusted",    cls: "bg-amber-500/10 text-amber-300" },
-  hostile:      { label: "Hostile",      cls: "bg-red-500/10 text-red-300" },
-  wasm:         { label: "Wasm",         cls: "bg-purple-500/10 text-purple-300" },
-  devcontainer: { label: "Devcontainer", cls: "bg-cyan-500/10 text-cyan-300" },
-};
+import { FleetGrid } from "./fleet-grid";
+import { CapacityMap } from "./capacity-map";
+import { VmDrawer } from "./vm-drawer";
 
 export default function RuntimePage() {
-  const router = useRouter();
   const toast = useToast();
   const [vms, setVms] = useState<VmRow[] | null>(null);
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
-  const [stateFilter, setStateFilter] = useState<"all" | VmRow["state"]>("all");
+  const [usingDemo, setUsingDemo] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [drawerVm, setDrawerVm] = useState<VmRow | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number>(Date.now());
 
-  // Dedup repeated error toasts on the polling loop — without this, a
-  // single bad-state error (e.g. API down) fires once every 5s forever.
   const lastErrorRef = useRef<string>("");
 
   const load = useCallback(async () => {
     try {
       const [vmRes, clRes] = await Promise.all([
-        // The list endpoint returns a BARE array ([{...}]); older drafts
-        // expected {items:[...]}. Accept both so a response-shape change
-        // never silently empties the table again.
         runtimeApi.get<VmRow[] | { items: VmRow[] }>("/v1/runtime/vms"),
         runtimeApi.get<ClusterSummary>("/v1/runtime/cluster").catch(() => null),
       ]);
       const items = Array.isArray(vmRes) ? vmRes : (vmRes.items ?? []);
-      setVms(items);
-      setCluster(clRes ?? null);
+      if (items.length === 0) {
+        // Live API reachable but no workloads — show the demo fleet.
+        setVms(DEMO_VMS);
+        setCluster(DEMO_CLUSTER);
+        setUsingDemo(true);
+      } else {
+        setVms(items);
+        setCluster(clRes ?? null);
+        setUsingDemo(false);
+      }
       lastErrorRef.current = "";
     } catch (err) {
-      // 401 already triggered a redirect-to-login inside runtimeApi —
-      // swallow so we don't toast on the way out.
       if (err instanceof UnauthorizedError) return;
+      // API unreachable — fall back to the demo fleet (don't blank the cockpit).
+      setVms(DEMO_VMS);
+      setCluster(DEMO_CLUSTER);
+      setUsingDemo(true);
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg === lastErrorRef.current) return; // same error as last tick
-      lastErrorRef.current = msg;
-      toast.error("Failed to load runtime view: " + msg);
+      if (msg !== lastErrorRef.current) {
+        lastErrorRef.current = msg;
+      }
+    } finally {
+      setLastUpdated(Date.now());
     }
-  }, [toast]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -119,184 +87,226 @@ export default function RuntimePage() {
     return () => clearInterval(t);
   }, [load]);
 
-  const visible = useMemo(() => {
-    if (!vms) return [];
-    if (stateFilter === "all") return vms;
-    return vms.filter((v) => v.state === stateFilter);
-  }, [vms, stateFilter]);
+  // Keep the open drawer's row fresh as the fleet re-polls.
+  useEffect(() => {
+    if (!drawerVm || !vms) return;
+    const fresh = vms.find((v) => v.vmId === drawerVm.vmId);
+    if (fresh && fresh !== drawerVm) setDrawerVm(fresh);
+  }, [vms, drawerVm]);
 
-  const counts = useMemo(() => {
-    if (!vms) return { running: 0, pending: 0, failed: 0, total: 0 };
-    return vms.reduce(
-      (acc, v) => {
-        acc.total += 1;
-        if (v.state === "running") acc.running += 1;
-        if (v.state === "pending" || v.state === "spawning") acc.pending += 1;
-        if (v.state === "failed") acc.failed += 1;
-        return acc;
-      },
-      { running: 0, pending: 0, failed: 0, total: 0 },
-    );
-  }, [vms]);
+  const stats = useMemo(() => {
+    const list = vms ?? [];
+    const running = list.filter((v) => v.state === "running").length;
+    const warm = list.filter((v) => v.state === "spawning" || v.state === "pending").length;
+    const failed = list.filter((v) => v.state === "failed").length;
+    const draining = list.filter((v) => v.state === "draining").length;
+    const costHr = list
+      .filter((v) => v.state === "running" || v.state === "draining" || v.state === "spawning")
+      .reduce((sum, v) => sum + (v.costHr ?? 0), 0);
+    return {
+      total: list.length,
+      running,
+      warm,
+      failed,
+      draining,
+      costHr,
+      nodes: cluster?.nodes.length ?? 0,
+      warmPool: cluster?.warm_pool?.available ?? 0,
+    };
+  }, [vms, cluster]);
+
+  const terminateMany = useCallback(
+    async (ids: string[]) => {
+      if (usingDemo) {
+        toast.success(`Termination requested for ${ids.length} workload(s) (demo)`);
+        return;
+      }
+      let ok = 0;
+      await Promise.all(
+        ids.map(async (id) => {
+          try {
+            await runtimeApi.del(`/v1/runtime/vms/${id}`);
+            ok++;
+          } catch (err) {
+            if (!(err instanceof UnauthorizedError)) {
+              /* swallow; summarised below */
+            }
+          }
+        }),
+      );
+      toast.success(`Termination requested for ${ok}/${ids.length} workload(s)`);
+      load();
+    },
+    [usingDemo, toast, load],
+  );
 
   if (vms === null) return <PageSkeleton />;
 
+  const hasRealEmpty = !usingDemo && vms.length === 0;
+
   return (
-    <div className="space-y-6 p-8">
+    <div className="flex flex-col">
       <PageHeader
-        title="Runtime"
-        description="Live view of headless agents executing in microVMs across the cluster."
-        badge={<CountBadge count={counts.running} />}
-        secondaryAction={
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<RefreshCw className={clsx("h-3.5 w-3.5", refreshing && "animate-spin")} />}
-            onClick={async () => {
-              setRefreshing(true);
-              await load();
-              setRefreshing(false);
-            }}
-          >
-            Refresh
-          </Button>
-        }
+        title="Runtime Command Center"
+        description="Live fleet of headless agents executing in isolated microVMs across the cluster."
         action={
-          <Button
-            variant="primary"
-            size="sm"
-            icon={<Plus className="h-3.5 w-3.5" />}
-            onClick={() => setScheduleOpen(true)}
-          >
-            Schedule VM
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<RefreshCw className={clsx("h-3.5 w-3.5", refreshing && "animate-spin")} />}
+              onClick={async () => {
+                setRefreshing(true);
+                await load();
+                setRefreshing(false);
+              }}
+            >
+              Refresh
+            </Button>
+            <Button variant="primary" size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setScheduleOpen(true)}>
+              Schedule
+            </Button>
+          </div>
         }
       />
 
-      <ScheduleModal
-        open={scheduleOpen}
-        onClose={() => setScheduleOpen(false)}
-        onScheduled={load}
-      />
+      {/* Command strip — live instrument panel */}
+      <CommandStrip stats={stats} usingDemo={usingDemo} lastUpdated={lastUpdated} />
 
-      {/* Cluster summary cards */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <StatCard icon={<Activity className="h-4 w-4" />}        label="Running"      value={counts.running} accent="emerald" />
-        <StatCard icon={<Loader2 className="h-4 w-4" />}         label="Spawning"     value={counts.pending} accent="lantern" />
-        <StatCard icon={<AlertTriangle className="h-4 w-4" />}   label="Failed (24h)" value={counts.failed}  accent="red" />
-        <StatCard icon={<Box className="h-4 w-4" />}             label="Nodes"        value={cluster?.nodes.length ?? 0} accent="zinc" />
+      <ScheduleModal open={scheduleOpen} onClose={() => setScheduleOpen(false)} onScheduled={load} />
+
+      <div className="space-y-6 p-6 md:p-8">
+        {hasRealEmpty ? (
+          <EmptyState
+            icon={Server}
+            title="No workloads running"
+            description="Schedule a headless agent from here, or use `lantern run <agent.yaml>` / POST /v1/runtime/schedule."
+            actionLabel="Schedule a workload"
+            onAction={() => setScheduleOpen(true)}
+          />
+        ) : (
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
+            <div className="min-w-0">
+              <FleetGrid
+                vms={vms}
+                isDemo={usingDemo}
+                onOpen={(vm) => setDrawerVm(vm)}
+                onTerminateSelected={terminateMany}
+              />
+            </div>
+            <div className="space-y-6">
+              <CapacityMap cluster={cluster} />
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Filter chips */}
-      <div className="flex flex-wrap items-center gap-2">
-        {(["all", "running", "spawning", "pending", "draining", "failed", "terminated"] as const).map((s) => (
-          <button
-            key={s}
-            onClick={() => setStateFilter(s)}
-            className={clsx(
-              "rounded-full border px-3 py-1 text-[12px] font-medium transition-colors",
-              stateFilter === s
-                ? "border-zinc-600 bg-surface-2 text-zinc-100"
-                : "border-zinc-800 bg-surface-1 text-zinc-400 hover:bg-surface-2 hover:text-zinc-200",
-            )}
-          >
-            {s === "all" ? "All" : STATE_STYLES[s as VmRow["state"]].label}
-          </button>
-        ))}
-      </div>
-
-      {/* VM table */}
-      {visible.length === 0 ? (
-        <EmptyState
-          icon={Box}
-          title={stateFilter === "all" ? "No agents have run yet" : `No ${STATE_STYLES[stateFilter as VmRow["state"]].label} VMs`}
-          description={
-            stateFilter === "all"
-              ? "Spawn one from this page, or use `lantern run <agent.yaml>` / POST /v1/runtime/schedule."
-              : "Try a different filter."
-          }
-          actionLabel={stateFilter === "all" ? "Schedule a VM" : undefined}
-          onAction={stateFilter === "all" ? () => setScheduleOpen(true) : undefined}
+      {drawerVm && (
+        <VmDrawer
+          vm={drawerVm}
+          isDemo={usingDemo}
+          onClose={() => setDrawerVm(null)}
+          onTerminated={() => {
+            setDrawerVm(null);
+            load();
+          }}
         />
-      ) : (
-        <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
-          <table className="w-full text-sm">
-            <thead className="border-b border-zinc-800 bg-surface-0 text-[11px] uppercase text-zinc-500">
-              <tr>
-                <th className="px-4 py-2.5 text-left">VM</th>
-                <th className="px-4 py-2.5 text-left">State</th>
-                <th className="px-4 py-2.5 text-left">Isolation</th>
-                <th className="px-4 py-2.5 text-left">Node</th>
-                <th className="px-4 py-2.5 text-left">Age</th>
-                <th className="px-4 py-2.5 text-left">Last heartbeat</th>
-                <th className="px-4 py-2.5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((v) => {
-                const ss = STATE_STYLES[v.state] ?? STATE_STYLES.pending;
-                const is = ISOLATION_STYLES[v.isolationClass] || { label: v.isolationClass, cls: "bg-zinc-500/10 text-zinc-300" };
-                return (
-                  <tr
-                    key={v.vmId}
-                    className="border-b border-zinc-800 last:border-0 hover:bg-surface-2 cursor-pointer"
-                    onClick={() => router.push(`/runtime/${v.vmId}`)}
-                  >
-                    <td className="px-4 py-3 font-mono text-[12px] text-zinc-200">{(v.vmId ?? "").slice(0, 12)}…</td>
-                    <td className="px-4 py-3">
-                      <span className={clsx("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium", ss.pill)}>
-                        <span className={clsx("h-1.5 w-1.5 rounded-full", ss.dot)} />
-                        {ss.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={clsx("inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] font-medium", is.cls)}>
-                        <Shield className="h-3 w-3" />
-                        {is.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-zinc-400">{v.node || "—"}</td>
-                    <td className="px-4 py-3 text-zinc-400">{v.createdAt ? formatDistanceToNow(new Date(v.createdAt), { addSuffix: true }) : "—"}</td>
-                    <td className="px-4 py-3 text-zinc-400">
-                      {v.lastHeartbeatAt ? formatDistanceToNow(new Date(v.lastHeartbeatAt), { addSuffix: true }) : "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        href={`/runtime/${v.vmId}`}
-                        className="inline-flex items-center gap-1.5 rounded border border-zinc-700 bg-surface-2 px-2.5 py-1 text-[11px] text-zinc-300 hover:bg-surface-3"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <TerminalSquare className="h-3 w-3" />
-                        Debug
-                      </Link>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
       )}
     </div>
   );
 }
 
-function StatCard({
-  icon, label, value, accent,
-}: { icon: React.ReactNode; label: string; value: number; accent: "emerald" | "lantern" | "red" | "zinc" }) {
-  const accentMap: Record<string, string> = {
-    emerald: "bg-emerald-500/10 text-emerald-400",
-    lantern: "bg-lantern-500/10 text-lantern-400",
-    red: "bg-red-500/10 text-red-400",
-    zinc: "bg-zinc-500/10 text-zinc-400",
+// ---------------------------------------------------------------------------
+// Command strip — dense, instrument-panel status bar.
+// ---------------------------------------------------------------------------
+
+function CommandStrip({
+  stats,
+  usingDemo,
+  lastUpdated,
+}: {
+  stats: {
+    total: number;
+    running: number;
+    warm: number;
+    failed: number;
+    costHr: number;
+    nodes: number;
+    warmPool: number;
+  };
+  usingDemo: boolean;
+  lastUpdated: number;
+}) {
+  const [, force] = useState(0);
+  // Tick the "updated Ns ago" label.
+  useEffect(() => {
+    const id = setInterval(() => force((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const agoS = Math.max(0, Math.round((Date.now() - lastUpdated) / 1000));
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-zinc-800 bg-surface-0 px-6 py-3 md:px-8">
+      <div className="flex items-center gap-2">
+        <span className="relative inline-flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+        </span>
+        <span className="text-[11px] font-semibold uppercase tracking-widest text-emerald-300">Live</span>
+      </div>
+
+      <Metric icon={<Boxes className="h-3.5 w-3.5" />} label="Workloads" value={stats.total} />
+      <Metric icon={<Activity className="h-3.5 w-3.5 text-emerald-400" />} label="Running" value={stats.running} tone="emerald" />
+      <Metric icon={<Cpu className="h-3.5 w-3.5 text-lantern-400" />} label="Warming" value={stats.warm} tone="lantern" />
+      <Metric icon={<AlertTriangle className="h-3.5 w-3.5 text-red-400" />} label="Failed" value={stats.failed} tone="red" />
+      <Metric icon={<Server className="h-3.5 w-3.5" />} label="Nodes" value={stats.nodes} />
+      <Metric icon={<Snowflake className="h-3.5 w-3.5 text-sky-400" />} label="Warm pool" value={stats.warmPool} tone="sky" />
+
+      <div className="flex items-center gap-1.5">
+        <CircleDollarSign className="h-3.5 w-3.5 text-amber-400" />
+        <span className="text-[10px] uppercase tracking-wide text-zinc-500">Fleet</span>
+        <span className="font-mono text-[13px] font-semibold tabular-nums text-amber-300">
+          ${stats.costHr.toFixed(2)}
+          <span className="text-[10px] font-normal text-zinc-500">/hr</span>
+        </span>
+      </div>
+
+      <div className="ml-auto flex items-center gap-3 text-[11px] text-zinc-500">
+        {usingDemo && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 font-medium text-amber-300 ring-1 ring-inset ring-amber-500/20">
+            <AlertTriangle className="h-3 w-3" />
+            Demo fleet — no live workloads
+          </span>
+        )}
+        <span className="tabular-nums">updated {agoS}s ago</span>
+      </div>
+    </div>
+  );
+}
+
+function Metric({
+  icon,
+  label,
+  value,
+  tone = "zinc",
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: number;
+  tone?: "zinc" | "emerald" | "lantern" | "red" | "sky";
+}) {
+  const valueTone: Record<string, string> = {
+    zinc: "text-zinc-100",
+    emerald: "text-emerald-300",
+    lantern: "text-lantern-300",
+    red: value > 0 ? "text-red-300" : "text-zinc-100",
+    sky: "text-sky-300",
   };
   return (
-    <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
-      <div className="flex items-center gap-2.5">
-        <div className={clsx("flex h-8 w-8 items-center justify-center rounded-lg", accentMap[accent])}>{icon}</div>
-        <div className="text-[11px] uppercase text-zinc-500">{label}</div>
-      </div>
-      <div className="mt-2 text-2xl font-semibold text-zinc-100">{value}</div>
+    <div className="flex items-center gap-1.5">
+      {icon}
+      <span className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</span>
+      <span className={clsx("font-mono text-[14px] font-semibold tabular-nums", valueTone[tone])}>{value}</span>
     </div>
   );
 }

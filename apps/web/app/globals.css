@@ -360,6 +360,15 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
+/* Runtime cockpit drawer (slide-over) */
+.drawer-panel {
+  animation: drawer-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes drawer-in {
+  from { opacity: 0.4; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 /* Tooltip */
 .tooltip {
   position: relative;
