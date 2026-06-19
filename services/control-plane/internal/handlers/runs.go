@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -94,15 +95,24 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 		return nil, status.Errorf(codes.Internal, "failed to marshal labels: %v", err)
 	}
 
+	// session_id: use caller-supplied value when valid UUID, else NULL.
+	var sessionIDArg *string
+	if sid := req.GetSessionId(); sid != "" {
+		// Validate it looks like a UUID to avoid storing garbage.
+		if isValidUUID(sid) {
+			sessionIDArg = &sid
+		}
+	}
+
 	var (
 		runID     string
 		createdAt time.Time
 	)
 	err = tx.QueryRow(ctx, `
-		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, trigger_kind, trigger_meta, input, labels)
-		VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7)
+		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, trigger_kind, trigger_meta, input, labels, session_id)
+		VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8)
 		RETURNING id, created_at
-	`, tenantID, agentID, resolvedVersionID, triggerKind, triggerMetaJSON, inputJSON, labelsJSON,
+	`, tenantID, agentID, resolvedVersionID, triggerKind, triggerMetaJSON, inputJSON, labelsJSON, sessionIDArg,
 	).Scan(&runID, &createdAt)
 	if err != nil {
 		s.logger().Error("insert run failed", zap.Error(err), zap.String("tenant_id", tenantID))
@@ -119,7 +129,7 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 		zap.String("agent_name", req.GetAgentName()),
 	)
 
-	return &lanternv1.Run{
+	run := &lanternv1.Run{
 		Id:             runID,
 		TenantId:       tenantID,
 		AgentId:        agentID,
@@ -130,7 +140,11 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 		Input:          req.GetInput(),
 		Labels:         req.GetLabels(),
 		CreatedAt:      timestamppb.New(createdAt),
-	}, nil
+	}
+	if sessionIDArg != nil {
+		run.SessionId = *sessionIDArg
+	}
+	return run, nil
 }
 
 // GetRun queries a run by ID.
@@ -157,7 +171,7 @@ func (s *RunService) GetRun(ctx context.Context, req *lanternv1.GetRunRequest) (
 	return s.scanRun(ctx, tx, tenantID, `
 		SELECT id, tenant_id, agent_id, agent_version_id, status, trigger_kind,
 		       trigger_meta, input, output, error, cost_usd, tokens_in, tokens_out,
-		       started_at, finished_at, created_at, parent_run_id, labels
+		       started_at, finished_at, created_at, parent_run_id, labels, session_id
 		FROM runs
 		WHERE tenant_id = $1 AND id = $2
 	`, tenantID, req.GetId())
@@ -200,7 +214,7 @@ func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsReques
 	query := `
 		SELECT r.id, r.tenant_id, r.agent_id, r.agent_version_id, r.status, r.trigger_kind,
 		       r.trigger_meta, r.input, r.output, r.error, r.cost_usd, r.tokens_in, r.tokens_out,
-		       r.started_at, r.finished_at, r.created_at, r.parent_run_id, r.labels
+		       r.started_at, r.finished_at, r.created_at, r.parent_run_id, r.labels, r.session_id
 		FROM runs r
 		WHERE r.tenant_id = $1
 	`
@@ -219,6 +233,12 @@ func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsReques
 	if req.GetStatusFilter() != lanternv1.RunStatus_RUN_STATUS_UNSPECIFIED {
 		query += fmt.Sprintf(" AND r.status = $%d", argIdx)
 		args = append(args, runStatusToString(req.GetStatusFilter()))
+		argIdx++
+	}
+
+	if sid := req.GetSessionId(); sid != "" && isValidUUID(sid) {
+		query += fmt.Sprintf(" AND r.session_id = $%d", argIdx)
+		args = append(args, sid)
 		argIdx++
 	}
 
@@ -306,7 +326,7 @@ func (s *RunService) CancelRun(ctx context.Context, req *lanternv1.CancelRunRequ
 	run, err := s.scanRun(ctx, tx, tenantID, `
 		SELECT id, tenant_id, agent_id, agent_version_id, status, trigger_kind,
 		       trigger_meta, input, output, error, cost_usd, tokens_in, tokens_out,
-		       started_at, finished_at, created_at, parent_run_id, labels
+		       started_at, finished_at, created_at, parent_run_id, labels, session_id
 		FROM runs
 		WHERE tenant_id = $1 AND id = $2
 	`, tenantID, req.GetId())
@@ -408,12 +428,13 @@ func (s *RunService) scanRun(ctx context.Context, tx pgx.Tx, tenantID, query str
 		createdAt      time.Time
 		parentRunID    *string
 		labelsJSON     []byte
+		sessionID      *string
 	)
 
 	err := row.Scan(
 		&id, &tid, &agentID, &agentVersionID, &statusStr, &triggerKind,
 		&triggerMeta, &inputJSON, &outputJSON, &errorJSON, &costUSD, &tokensIn, &tokensOut,
-		&startedAt, &finishedAt, &createdAt, &parentRunID, &labelsJSON,
+		&startedAt, &finishedAt, &createdAt, &parentRunID, &labelsJSON, &sessionID,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -424,7 +445,7 @@ func (s *RunService) scanRun(ctx context.Context, tx pgx.Tx, tenantID, query str
 
 	return buildRunProto(id, tid, agentID, agentVersionID, statusStr, triggerKind,
 		triggerMeta, inputJSON, outputJSON, errorJSON, costUSD, tokensIn, tokensOut,
-		startedAt, finishedAt, createdAt, parentRunID, labelsJSON), nil
+		startedAt, finishedAt, createdAt, parentRunID, labelsJSON, sessionID), nil
 }
 
 // scanRunFromRow scans a Run from an already-iterated pgx.Rows.
@@ -448,12 +469,13 @@ func (s *RunService) scanRunFromRow(rows pgx.Rows) (*lanternv1.Run, error) {
 		createdAt      time.Time
 		parentRunID    *string
 		labelsJSON     []byte
+		sessionID      *string
 	)
 
 	err := rows.Scan(
 		&id, &tid, &agentID, &agentVersionID, &statusStr, &triggerKind,
 		&triggerMeta, &inputJSON, &outputJSON, &errorJSON, &costUSD, &tokensIn, &tokensOut,
-		&startedAt, &finishedAt, &createdAt, &parentRunID, &labelsJSON,
+		&startedAt, &finishedAt, &createdAt, &parentRunID, &labelsJSON, &sessionID,
 	)
 	if err != nil {
 		return nil, err
@@ -461,7 +483,7 @@ func (s *RunService) scanRunFromRow(rows pgx.Rows) (*lanternv1.Run, error) {
 
 	return buildRunProto(id, tid, agentID, agentVersionID, statusStr, triggerKind,
 		triggerMeta, inputJSON, outputJSON, errorJSON, costUSD, tokensIn, tokensOut,
-		startedAt, finishedAt, createdAt, parentRunID, labelsJSON), nil
+		startedAt, finishedAt, createdAt, parentRunID, labelsJSON, sessionID), nil
 }
 
 func buildRunProto(
@@ -472,6 +494,7 @@ func buildRunProto(
 	createdAt time.Time,
 	parentRunID *string,
 	labelsJSON []byte,
+	sessionID *string,
 ) *lanternv1.Run {
 	run := &lanternv1.Run{
 		Id:             id,
@@ -494,6 +517,9 @@ func buildRunProto(
 	}
 	if parentRunID != nil {
 		run.ParentRunId = *parentRunID
+	}
+	if sessionID != nil {
+		run.SessionId = *sessionID
 	}
 
 	run.TriggerMeta = jsonToStruct(triggerMeta)
@@ -626,3 +652,10 @@ func triggerKindToString(k lanternv1.TriggerKind) string {
 		return "api"
 	}
 }
+
+// uuidRE matches the canonical 8-4-4-4-12 UUID form (case-insensitive).
+var uuidRE = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// isValidUUID returns true when s is a well-formed UUID string.
+// Used to reject obviously invalid session_id values before they reach Postgres.
+func isValidUUID(s string) bool { return uuidRE.MatchString(s) }
