@@ -11,17 +11,7 @@
 // CPU/mem sparklines render "—" (see fleet-grid.tsx honesty guard).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Activity,
-  AlertTriangle,
-  Boxes,
-  CircleDollarSign,
-  Cpu,
-  Plus,
-  RefreshCw,
-  Server,
-  Snowflake,
-} from "lucide-react";
+import { AlertTriangle, Plus, RefreshCw, Server } from "lucide-react";
 import clsx from "clsx";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/button";
@@ -161,11 +151,11 @@ export default function RuntimePage() {
     <div className="flex flex-col">
       <PageHeader
         title="Runtime Command Center"
-        description="Live fleet of headless agents executing in isolated microVMs across the cluster."
+        description="Headless agents running in isolated microVMs."
         action={
           <div className="flex items-center gap-2">
             <div
-              className="flex items-center rounded-lg border border-zinc-800 bg-surface-1 p-0.5 text-xs"
+              className="flex items-center rounded-lg bg-surface-2 p-0.5 text-xs"
               role="group"
               aria-label="Data source"
             >
@@ -179,7 +169,7 @@ export default function RuntimePage() {
                     aria-pressed={active}
                     className={clsx(
                       "rounded-md px-2.5 py-1 font-medium capitalize transition-colors",
-                      active ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:text-zinc-300",
+                      active ? "bg-surface-0 text-zinc-100 shadow-sm" : "text-zinc-500 hover:text-zinc-300",
                     )}
                   >
                     {m}
@@ -206,12 +196,12 @@ export default function RuntimePage() {
         }
       />
 
-      {/* Command strip — live instrument panel */}
+      {/* Command strip — a quiet stat line, not a glowing toolbar */}
       <CommandStrip stats={stats} usingDemo={usingDemo} lastUpdated={lastUpdated} />
 
       <ScheduleModal open={scheduleOpen} onClose={() => setScheduleOpen(false)} onScheduled={load} />
 
-      <div className="space-y-6 p-6 md:p-8">
+      <div className="space-y-8 p-8 md:p-10">
         {hasRealEmpty ? (
           <EmptyState
             icon={Server}
@@ -221,7 +211,7 @@ export default function RuntimePage() {
             onAction={() => setScheduleOpen(true)}
           />
         ) : (
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
+          <div className="grid grid-cols-1 gap-8 xl:grid-cols-[1fr_360px]">
             <div className="min-w-0">
               <FleetGrid
                 vms={vms}
@@ -231,7 +221,7 @@ export default function RuntimePage() {
               />
             </div>
             <div className="space-y-6">
-              <CapacityMap cluster={cluster} />
+              <CapacityMap cluster={cluster} nodes={stats.nodes} warmPool={stats.warmPool} />
             </div>
           </div>
         )}
@@ -253,7 +243,9 @@ export default function RuntimePage() {
 }
 
 // ---------------------------------------------------------------------------
-// Command strip — dense, instrument-panel status bar.
+// Command strip — a quiet stat line. Neutral type, one calm live dot, no
+// glow. Separation from the header is a faint divider + whitespace, not a
+// heavy rule or a tinted toolbar.
 // ---------------------------------------------------------------------------
 
 function CommandStrip({
@@ -264,11 +256,8 @@ function CommandStrip({
   stats: {
     total: number;
     running: number;
-    warm: number;
     failed: number;
     costHr: number;
-    nodes: number;
-    warmPool: number;
   };
   usingDemo: boolean;
   lastUpdated: number;
@@ -282,35 +271,31 @@ function CommandStrip({
   const agoS = Math.max(0, Math.round((Date.now() - lastUpdated) / 1000));
 
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-zinc-800 bg-surface-0 px-6 py-3 md:px-8">
+    <div className="flex flex-wrap items-center gap-x-12 gap-y-3 border-b border-zinc-800/40 px-8 py-4 md:px-10">
       <div className="flex items-center gap-2">
-        <span className="relative inline-flex h-2 w-2">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+        <span className="relative inline-flex h-1.5 w-1.5">
+          <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-emerald-500/70" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500/80" />
         </span>
-        <span className="text-[11px] font-semibold uppercase tracking-widest text-emerald-300">Live</span>
+        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Live</span>
       </div>
 
-      <Metric icon={<Boxes className="h-3.5 w-3.5" />} label="Workloads" value={stats.total} />
-      <Metric icon={<Activity className="h-3.5 w-3.5 text-emerald-400" />} label="Running" value={stats.running} tone="emerald" />
-      <Metric icon={<Cpu className="h-3.5 w-3.5 text-lantern-400" />} label="Warming" value={stats.warm} tone="lantern" />
-      <Metric icon={<AlertTriangle className="h-3.5 w-3.5 text-red-400" />} label="Failed" value={stats.failed} tone="red" />
-      <Metric icon={<Server className="h-3.5 w-3.5" />} label="Nodes" value={stats.nodes} />
-      <Metric icon={<Snowflake className="h-3.5 w-3.5 text-sky-400" />} label="Warm pool" value={stats.warmPool} tone="sky" />
+      <Metric label="Workloads" value={stats.total} />
+      <Metric label="Running" value={stats.running} />
+      <Metric label="Failed" value={stats.failed} tone={stats.failed > 0 ? "danger" : "neutral"} />
 
-      <div className="flex items-center gap-1.5">
-        <CircleDollarSign className="h-3.5 w-3.5 text-amber-400" />
-        <span className="text-[10px] uppercase tracking-wide text-zinc-500">Fleet</span>
-        <span className="font-mono text-[13px] font-semibold tabular-nums text-amber-300">
+      <div className="flex items-baseline gap-2.5">
+        <span className="text-[11px] uppercase tracking-wide text-zinc-500">Fleet</span>
+        <span className="font-mono text-[15px] font-medium tabular-nums text-zinc-200">
           ${stats.costHr.toFixed(2)}
-          <span className="text-[10px] font-normal text-zinc-500">/hr</span>
+          <span className="ml-0.5 text-[10px] font-normal text-zinc-500">/hr</span>
         </span>
       </div>
 
       <div className="ml-auto flex items-center gap-3 text-[11px] text-zinc-500">
         {usingDemo && (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 font-medium text-amber-300 ring-1 ring-inset ring-amber-500/20">
-            <AlertTriangle className="h-3 w-3" />
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 font-medium text-zinc-400">
+            <AlertTriangle className="h-3 w-3 text-zinc-500" />
             Demo fleet — no live workloads
           </span>
         )}
@@ -321,28 +306,25 @@ function CommandStrip({
 }
 
 function Metric({
-  icon,
   label,
   value,
-  tone = "zinc",
+  tone = "neutral",
 }: {
-  icon: React.ReactNode;
   label: string;
   value: number;
-  tone?: "zinc" | "emerald" | "lantern" | "red" | "sky";
+  tone?: "neutral" | "danger";
 }) {
-  const valueTone: Record<string, string> = {
-    zinc: "text-zinc-100",
-    emerald: "text-emerald-300",
-    lantern: "text-lantern-300",
-    red: value > 0 ? "text-red-300" : "text-zinc-100",
-    sky: "text-sky-300",
-  };
   return (
-    <div className="flex items-center gap-1.5">
-      {icon}
-      <span className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</span>
-      <span className={clsx("font-mono text-[14px] font-semibold tabular-nums", valueTone[tone])}>{value}</span>
+    <div className="flex items-baseline gap-2.5">
+      <span className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</span>
+      <span
+        className={clsx(
+          "font-mono text-[15px] font-medium tabular-nums",
+          tone === "danger" ? "text-red-400/90" : "text-zinc-200",
+        )}
+      >
+        {value}
+      </span>
     </div>
   );
 }
