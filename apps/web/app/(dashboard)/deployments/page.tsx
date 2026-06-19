@@ -24,8 +24,6 @@ import {
   Cloud,
   Server,
   Plus,
-  X,
-  Loader2,
   Copy,
   Terminal,
   Trash2,
@@ -44,6 +42,7 @@ import { api } from "@/lib/api";
 import { PageSkeleton } from "@/components/skeleton";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/button";
+import { Modal, ModalField } from "@/components/modal";
 import { StateDot, StatePill, Sparkline, UtilBar } from "../runtime/cockpit-ui";
 import type { VmState } from "@/lib/runtime-types";
 import {
@@ -352,13 +351,26 @@ export default function DeploymentsPage() {
     try {
       await api.registerDataPlane({ name: addForm.name, cloud: addForm.cloud, region: addForm.region });
       toast.success(`Data plane "${addForm.name}" registered`);
-    } catch {
-      toast.success(`Data plane "${addForm.name}" registered (demo mode)`);
+      setShowAddPlane(false);
+      setAddForm({ name: "", cloud: "aws", region: "us-east-1" });
+      loadData();
+    } catch (e) {
+      if (usingDemo) {
+        // Genuine demo mode (no API / no real planes) — the register is a no-op
+        // we surface as success so the demo command center stays coherent.
+        toast.success(`Data plane "${addForm.name}" registered (demo mode)`);
+        setShowAddPlane(false);
+        setAddForm({ name: "", cloud: "aws", region: "us-east-1" });
+        loadData();
+      } else {
+        // Real registration that actually failed — do NOT claim success.
+        // Keep the modal open so the user can retry.
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error(`Failed to register data plane — ${msg}`);
+      }
+    } finally {
+      setAdding(false);
     }
-    setAdding(false);
-    setShowAddPlane(false);
-    setAddForm({ name: "", cloud: "aws", region: "us-east-1" });
-    loadData();
   };
 
   const handleRemoveDataPlane = async () => {
@@ -366,13 +378,22 @@ export default function DeploymentsPage() {
     setRemoving(true);
     if (removeTarget.demo) {
       toast.success(`"${removeTarget.name}" removed (demo)`);
-    } else {
-      try { await api.removeDataPlane(removeTarget.id); } catch { /* */ }
-      toast.success(`Data plane "${removeTarget.name}" removed`);
+      setRemoving(false);
+      setRemoveTarget(null);
+      loadData();
+      return;
     }
-    setRemoving(false);
-    setRemoveTarget(null);
-    loadData();
+    try {
+      await api.removeDataPlane(removeTarget.id);
+      toast.success(`Data plane "${removeTarget.name}" removed`);
+      setRemoveTarget(null);
+      loadData();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`Failed to remove "${removeTarget.name}" — ${msg}`);
+    } finally {
+      setRemoving(false);
+    }
   };
 
   const stats = useMemo(() => {
@@ -460,7 +481,7 @@ export default function DeploymentsPage() {
           >
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-lantern-500/10">
-                <Cloud className="h-4.5 w-4.5 text-lantern-400" />
+                <Cloud className="h-5 w-5 text-lantern-400" />
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-zinc-100">Connect a data plane</h3>
@@ -522,69 +543,63 @@ export default function DeploymentsPage() {
       </div>
 
       {/* Add Data Plane Modal */}
-      {showAddPlane && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowAddPlane(false)}>
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
-              <h2 className="text-lg font-semibold text-zinc-100">Register data plane</h2>
-              <button onClick={() => setShowAddPlane(false)} className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-4 px-6 py-5">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">Name <span className="text-red-400">*</span></label>
-                <input type="text" value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="lantern-dp-production"
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">Cloud</label>
-                <select value={addForm.cloud} onChange={(e) => setAddForm({ ...addForm, cloud: e.target.value })}
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30">
-                  <option value="aws">AWS</option>
-                  <option value="gcp">GCP</option>
-                  <option value="azure">Azure</option>
-                  <option value="self-hosted">Self-hosted</option>
-                </select>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">Region</label>
-                <input type="text" value={addForm.region} onChange={(e) => setAddForm({ ...addForm, region: e.target.value })} placeholder="us-east-1"
-                  className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-3 border-t border-zinc-800 px-6 py-4">
-              <button onClick={() => setShowAddPlane(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">Cancel</button>
-              <Button variant="primary" size="sm" loading={adding} icon={<Plus className="h-3.5 w-3.5" />} onClick={handleAddDataPlane}>
-                {adding ? "Registering…" : "Register"}
-              </Button>
-            </div>
-          </div>
+      <Modal
+        open={showAddPlane}
+        onClose={() => setShowAddPlane(false)}
+        title="Register data plane"
+        size="sm"
+        footer={
+          <>
+            <button onClick={() => setShowAddPlane(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">Cancel</button>
+            <Button variant="primary" size="sm" loading={adding} icon={<Plus className="h-3.5 w-3.5" />} onClick={handleAddDataPlane}>
+              {adding ? "Registering…" : "Register"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <ModalField label="Name *">
+            <input type="text" value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="lantern-dp-production"
+              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
+          </ModalField>
+          <ModalField label="Cloud">
+            <select value={addForm.cloud} onChange={(e) => setAddForm({ ...addForm, cloud: e.target.value })}
+              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30">
+              <option value="aws">AWS</option>
+              <option value="gcp">GCP</option>
+              <option value="azure">Azure</option>
+              <option value="self-hosted">Self-hosted</option>
+            </select>
+          </ModalField>
+          <ModalField label="Region">
+            <input type="text" value={addForm.region} onChange={(e) => setAddForm({ ...addForm, region: e.target.value })} placeholder="us-east-1"
+              className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30" />
+          </ModalField>
         </div>
-      )}
+      </Modal>
 
       {/* Remove Confirmation Modal */}
-      {removeTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setRemoveTarget(null)}>
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-5">
-              <div className="mb-3 flex items-center gap-3">
-                <AlertTriangle className="h-5 w-5 text-red-400" />
-                <h3 className="text-lg font-semibold text-zinc-100">Remove &quot;{removeTarget.name}&quot;?</h3>
-              </div>
-              <p className="text-sm text-zinc-400">
-                This disconnects the data plane from the control plane. Any agents deployed on it become unreachable. This cannot be undone.
-              </p>
-            </div>
-            <div className="flex items-center justify-end gap-3 border-t border-zinc-800 px-6 py-4">
-              <button onClick={() => setRemoveTarget(null)} disabled={removing} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200 disabled:opacity-50">Cancel</button>
-              <Button variant="danger" size="sm" loading={removing} onClick={handleRemoveDataPlane}>
-                {removing ? "Removing…" : "Remove"}
-              </Button>
-            </div>
-          </div>
+      <Modal
+        open={removeTarget !== null}
+        onClose={() => { if (!removing) setRemoveTarget(null); }}
+        title={removeTarget ? `Remove "${removeTarget.name}"?` : "Remove data plane?"}
+        size="sm"
+        footer={
+          <>
+            <button onClick={() => setRemoveTarget(null)} disabled={removing} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200 disabled:opacity-50">Cancel</button>
+            <Button variant="danger" size="sm" loading={removing} onClick={handleRemoveDataPlane}>
+              {removing ? "Removing…" : "Remove"}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-400" />
+          <p className="text-sm text-zinc-400">
+            This disconnects the data plane from the control plane. Any agents deployed on it become unreachable. This cannot be undone.
+          </p>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }
