@@ -11,6 +11,7 @@
 // CPU/mem sparklines render "—" (see fleet-grid.tsx honesty guard).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Plus, RefreshCw, Server } from "lucide-react";
 import clsx from "clsx";
 import { PageHeader } from "@/components/page-header";
@@ -28,6 +29,7 @@ import { VmDrawer } from "./vm-drawer";
 
 export default function RuntimePage() {
   const toast = useToast();
+  const searchParams = useSearchParams();
   const [vms, setVms] = useState<VmRow[] | null>(null);
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [usingDemo, setUsingDemo] = useState(false);
@@ -89,6 +91,12 @@ export default function RuntimePage() {
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
   }, [load]);
+
+  // Deep link: the ⌘K palette's "Schedule a workload" action lands here with
+  // ?schedule=1 — pop the schedule modal open on arrival.
+  useEffect(() => {
+    if (searchParams.get("schedule") === "1") setScheduleOpen(true);
+  }, [searchParams]);
 
   // Keep the open drawer's row fresh as the fleet re-polls.
   useEffect(() => {
