@@ -40,9 +40,11 @@ import {
   Sparkles,
   CalendarPlus,
   CircleDot,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import type { AskLanternContext } from "@/lib/api";
 import type { Run } from "@/lib/mock-data";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -232,6 +234,19 @@ export function CommandPalette() {
   const loadedRef = useRef(false);
   const [recentIds, setRecentIds] = useState<string[]>([]);
 
+  // ── Ask Lantern agentic state ──
+  // `thinking` shows the calm spinner on the Ask row while the LLM reasons.
+  // `answer` holds an inline answer card (kind=answer) so the operator can
+  // read it without leaving the palette. Both reset whenever the query
+  // changes or the palette reopens.
+  const [thinking, setThinking] = useState(false);
+  const [answer, setAnswer] = useState<{ summary: string; text: string } | null>(
+    null,
+  );
+  // Guards against a stale in-flight LLM response landing after the query
+  // moved on (or the palette closed).
+  const askSeqRef = useRef(0);
+
   useEffect(() => {
     if (!open || loadedRef.current) return;
     loadedRef.current = true;
@@ -279,16 +294,80 @@ export function CommandPalette() {
 
   const close = useCallback(() => setOpen(false), []);
 
+  // ── Compact, REAL fleet summary handed to the LLM (a few hundred tokens,
+  //    not the full DB): agent names + run counts by status from the data
+  //    already loaded into the palette. ──
+  const fleetContext = useMemo<AskLanternContext>(() => {
+    const runCountsByStatus: Record<string, number> = {};
+    for (const run of recentRuns) {
+      const s = run.status || "unknown";
+      runCountsByStatus[s] = (runCountsByStatus[s] ?? 0) + 1;
+    }
+    return { agentNames, runCountsByStatus };
+  }, [agentNames, recentRuns]);
+
+  // ── Agentic Ask: hand the free-form query to the LLM, act on the
+  //    structured action, and fall back to the instant pattern-matcher on
+  //    ANY failure (no key / network / timeout / bad JSON) so it never dead-
+  //    ends. The ~6s timeout lives inside api.askLantern. ──
+  const runAsk = useCallback(
+    async (rawQuery: string) => {
+      const q = rawQuery.trim();
+      if (q.length < 2) return;
+      pushRecent("ask-lantern");
+
+      const fallback = () => {
+        const intent = interpretIntent(q, router, agentNames);
+        intent.run();
+        setOpen(false);
+      };
+
+      const seq = ++askSeqRef.current;
+      setAnswer(null);
+      setThinking(true);
+      try {
+        const action = await api.askLantern(q, fleetContext, { timeoutMs: 6000 });
+        // A newer query (or a close) superseded this request — drop it.
+        if (seq !== askSeqRef.current) return;
+        if (!action) {
+          fallback();
+          return;
+        }
+        if (action.kind === "navigate") {
+          router.push(action.path);
+          setOpen(false);
+          return;
+        }
+        // kind === "answer" — show inline, keep the palette open to read it.
+        setAnswer({ summary: action.summary, text: action.answer });
+      } catch {
+        if (seq === askSeqRef.current) fallback();
+      } finally {
+        if (seq === askSeqRef.current) setThinking(false);
+      }
+    },
+    [pushRecent, router, agentNames, fleetContext],
+  );
+
   const act = useCallback(
     (item: CommandItem) => {
+      // The Ask Lantern row is agentic + async; route it through runAsk
+      // (it manages its own thinking state + palette lifecycle).
+      if (item.id === "ask-lantern") {
+        void runAsk(query);
+        return;
+      }
       pushRecent(item.id);
       item.onSelect();
       setOpen(false);
     },
-    [pushRecent],
+    [pushRecent, runAsk, query],
   );
 
   // ── The agentic "Ask Lantern" item (only when there's a real query) ──
+  //    `meta` previews the INSTANT pattern-match intent so the row always
+  //    reads as actionable before the LLM responds. `onSelect` is the LLM
+  //    path (via act() → runAsk); the pattern-match is the fallback inside it.
   const askItem: CommandItem | null = useMemo(() => {
     const q = query.trim();
     if (q.length < 2) return null;
@@ -296,14 +375,14 @@ export function CommandPalette() {
     return {
       id: "ask-lantern",
       label: `Ask Lantern: “${q}”`,
-      meta: intent.summary,
+      meta: thinking ? "thinking…" : intent.summary,
       section: "Ask Lantern",
-      icon: Sparkles,
+      icon: thinking ? Loader2 : Sparkles,
       agentic: true,
       weight: -100, // always pinned to the very top
-      onSelect: intent.run,
+      onSelect: () => void runAsk(q),
     };
-  }, [query, router, agentNames]);
+  }, [query, router, agentNames, thinking, runAsk]);
 
   // ── Static quick actions + dynamic agents/runs/workloads ──
   const baseItems: CommandItem[] = useMemo(() => {
@@ -448,10 +527,14 @@ export function CommandPalette() {
       restoreFocusRef.current = document.activeElement as HTMLElement | null;
       setQuery("");
       setSelectedIndex(0);
+      setThinking(false);
+      setAnswer(null);
+      askSeqRef.current += 1; // abandon any in-flight ask from a prior open
       document.body.style.overflow = "hidden";
       requestAnimationFrame(() => inputRef.current?.focus());
     } else {
       document.body.style.overflow = "";
+      askSeqRef.current += 1; // drop any response that lands after close
       restoreFocusRef.current?.focus?.();
     }
     return () => {
@@ -530,6 +613,12 @@ export function CommandPalette() {
             onChange={(e) => {
               setQuery(e.target.value);
               setSelectedIndex(0);
+              // A new query supersedes any in-flight ask + clears the answer.
+              if (thinking || answer) {
+                askSeqRef.current += 1;
+                setThinking(false);
+                setAnswer(null);
+              }
             }}
             onKeyDown={onInputKeyDown}
             placeholder="Search or ask Lantern…"
@@ -552,6 +641,24 @@ export function CommandPalette() {
           aria-label="Commands"
           className="max-h-[min(60vh,420px)] overflow-y-auto py-2"
         >
+          {/* Inline Ask Lantern answer (kind=answer) — grounded in the real
+              fleet context we passed; palette stays open so it can be read. */}
+          {answer && (
+            <div className="mx-2 mb-2 rounded-xl border border-lantern-500/25 bg-lantern-500/[0.07] px-3.5 py-3">
+              <div className="flex items-center gap-1.5 pb-1">
+                <Sparkles className="h-3 w-3 text-lantern-400" aria-hidden />
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-lantern-300/90">
+                  Ask Lantern
+                </span>
+              </div>
+              <p className="text-sm leading-relaxed text-zinc-100">
+                {answer.text}
+              </p>
+              {answer.summary && (
+                <p className="mt-1.5 text-[11px] text-zinc-500">{answer.summary}</p>
+              )}
+            </div>
+          )}
           {flat.length === 0 ? (
             <div className="px-4 py-10 text-center">
               <p className="text-sm text-zinc-400">No matches</p>
@@ -606,7 +713,13 @@ export function CommandPalette() {
                             : "bg-surface-2 text-zinc-400 group-hover/item:text-zinc-300",
                         ].join(" ")}
                       >
-                        <Icon className="h-4 w-4" aria-hidden />
+                        <Icon
+                          className={[
+                            "h-4 w-4",
+                            item.agentic && thinking ? "animate-spin" : "",
+                          ].join(" ")}
+                          aria-hidden
+                        />
                       </span>
                       <span className="min-w-0 flex-1 text-left">
                         <span className="block truncate">{item.label}</span>
@@ -618,8 +731,12 @@ export function CommandPalette() {
                       )}
                       {item.agentic ? (
                         <span className="flex shrink-0 items-center gap-1 rounded-md border border-lantern-500/30 bg-lantern-500/10 px-1.5 py-0.5 text-[10px] font-medium text-lantern-300">
-                          <Sparkles className="h-2.5 w-2.5" aria-hidden />
-                          act
+                          {thinking ? (
+                            <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden />
+                          ) : (
+                            <Sparkles className="h-2.5 w-2.5" aria-hidden />
+                          )}
+                          {thinking ? "thinking" : "act"}
                         </span>
                       ) : item.shortcut ? (
                         <kbd className="hidden h-5 min-w-[20px] shrink-0 items-center justify-center rounded border border-zinc-700 bg-surface-2 px-1 text-[10px] font-medium text-zinc-500 sm:inline-flex">

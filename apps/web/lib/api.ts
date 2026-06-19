@@ -208,6 +208,112 @@ export interface SettingsInput {
 }
 
 // ---------------------------------------------------------------------------
+// Ask Lantern — agentic command-interpreter contract
+// ---------------------------------------------------------------------------
+
+/**
+ * Compact, real summary of fleet state passed into `askLantern`. Kept small
+ * (a short list of names + a few counts) so the prompt stays a few hundred
+ * tokens — this is the ONLY ground truth the model gets, never the full DB.
+ */
+export interface AskLanternContext {
+  agentNames: string[];
+  /** Run counts keyed by status, e.g. { running: 2, failed: 1, completed: 40 }. */
+  runCountsByStatus: Record<string, number>;
+  /** Workload / runtime counts, e.g. { workloads: 3, dataPlanes: 1 }. */
+  workloadCounts?: Record<string, number>;
+}
+
+/** Structured action returned by the LLM and consumed by the palette. */
+export type AskLanternAction =
+  | { kind: "navigate"; path: string; summary: string }
+  | { kind: "answer"; answer: string; summary: string };
+
+const ASK_LANTERN_SYSTEM_PROMPT = `You are Lantern's runtime command interpreter inside a dashboard command palette. The operator types a free-form natural-language command; you reason over the provided compact fleet context and return ONE structured action.
+
+Output STRICT JSON ONLY — no markdown, no backticks, no prose around it — matching exactly one of:
+{"kind":"navigate","path":"/runs?status=failed","summary":"one short line describing the action"}
+{"kind":"answer","answer":"short natural-language answer","summary":"one short line describing the action"}
+
+Rules:
+- "navigate" for "take me to X", "show me Y", "filter Z", "schedule …". "path" MUST be a real dashboard route.
+- "answer" for questions you can answer from the fleet context ("how many agents are failing?"). Answer ONLY from the provided context — never invent agents, counts, or facts. If the context doesn't contain the answer, return a "navigate" action to the most relevant page instead.
+- Keep "summary" to one calm line. Keep "answer" to one or two sentences.
+
+Real dashboard routes you may use for "path":
+- /inbox        (Mission Control: runs needing review, live runs)
+- /runs         (all runs; supports ?q=<text>)
+- /runtime      (workloads & capacity; ?schedule=1 opens the schedule modal)
+- /agents       (agent list)  ·  /agents/<name> (one agent)  ·  /agents/create
+- /surfaces     (channels: whatsapp/slack/telegram/webchat)
+- /connectors   (integrations)
+- /deployments  (deployments & data planes)
+- /settings     (providers, API keys, billing)
+- /evaluations  (analytics)`;
+
+/** Render the compact context as a few short lines for the prompt. */
+function formatFleetContext(ctx: AskLanternContext): string {
+  const lines: string[] = [];
+  const names = ctx.agentNames.slice(0, 30);
+  lines.push(
+    names.length
+      ? `Agents (${ctx.agentNames.length}): ${names.join(", ")}${
+          ctx.agentNames.length > names.length ? ", …" : ""
+        }`
+      : "Agents: none",
+  );
+  const runs = Object.entries(ctx.runCountsByStatus);
+  lines.push(
+    runs.length
+      ? `Runs by status: ${runs.map(([s, n]) => `${s}=${n}`).join(", ")}`
+      : "Runs by status: none",
+  );
+  if (ctx.workloadCounts && Object.keys(ctx.workloadCounts).length) {
+    lines.push(
+      `Workloads: ${Object.entries(ctx.workloadCounts)
+        .map(([k, n]) => `${k}=${n}`)
+        .join(", ")}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Defensively parse the model's STRICT-JSON action: strip markdown fences,
+ * grab the first JSON object, validate the discriminated shape. Returns null
+ * on anything malformed so the caller falls back.
+ */
+function parseAskLanternAction(raw: string): AskLanternAction | null {
+  if (!raw) return null;
+  // Strip ```json … ``` fences if the model added them anyway.
+  const fenced = raw.replace(/```(?:json)?/gi, "").trim();
+  const match = fenced.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  let obj: unknown;
+  try {
+    obj = JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+  if (!obj || typeof obj !== "object") return null;
+  const o = obj as Record<string, unknown>;
+  const summary = typeof o.summary === "string" ? o.summary.trim() : "";
+
+  if (o.kind === "navigate") {
+    let path = typeof o.path === "string" ? o.path.trim() : "";
+    // Only allow same-origin in-app routes; reject anything else.
+    if (!path.startsWith("/") || path.startsWith("//")) return null;
+    return { kind: "navigate", path, summary: summary || "Navigating" };
+  }
+  if (o.kind === "answer") {
+    const answer = typeof o.answer === "string" ? o.answer.trim() : "";
+    if (!answer) return null;
+    return { kind: "answer", answer, summary: summary || "Answer" };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Demo user + simulated-data telemetry
 // ---------------------------------------------------------------------------
 
@@ -1084,6 +1190,72 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       headers,
       body: JSON.stringify(params),
     });
+  }
+
+  // ---- Ask Lantern (agentic command interpreter) ----------------------------
+
+  /**
+   * Hand a free-form natural-language command to the LLM (via the same
+   * `/v1/completions` proxy the rest of the dashboard uses) and get back a
+   * STRICT-JSON structured action — either a navigation or a short answer
+   * reasoned over a COMPACT, real fleet summary.
+   *
+   * IMPORTANT: `context` is a small hand-rolled summary of already-loaded
+   * dashboard data (a few hundred tokens of agent names + run/workload
+   * counts), NOT a dump of the database. The model only knows what we put
+   * in this context — so any "answer" is grounded in real numbers we passed,
+   * never fabricated server-side facts.
+   *
+   * Returns `null` on ANY failure (no provider key, network error, timeout,
+   * non-JSON output) so the caller can fall back to the client-side
+   * pattern-matcher and never hit a dead end.
+   */
+  async askLantern(
+    query: string,
+    context: AskLanternContext,
+    opts?: { timeoutMs?: number },
+  ): Promise<AskLanternAction | null> {
+    const timeoutMs = opts?.timeoutMs ?? 6000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      if (!this._token) this.restoreToken();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (this._token) headers["Authorization"] = `Bearer ${this._token}`;
+
+      const res = await fetch(`${this.baseUrl}/v1/completions`, {
+        method: "POST",
+        headers,
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: "auto",
+          temperature: 0,
+          maxTokens: 320,
+          messages: [
+            { role: "system", content: ASK_LANTERN_SYSTEM_PROMPT },
+            {
+              role: "user",
+              content: `Fleet context (compact, real):\n${formatFleetContext(
+                context,
+              )}\n\nCommand: ${query.trim()}`,
+            },
+          ],
+        }),
+      });
+
+      if (!res.ok) return null;
+      const data = await res.json();
+      const content: string = typeof data?.content === "string" ? data.content : "";
+      return parseAskLanternAction(content);
+    } catch {
+      // Aborted (timeout), network failure, or bad JSON — degrade gracefully.
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ---- LLM Provider Settings ------------------------------------------------
