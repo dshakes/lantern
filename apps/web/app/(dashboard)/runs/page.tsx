@@ -10,6 +10,7 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
+  Layers,
   Trash2,
 } from "lucide-react";
 import clsx from "clsx";
@@ -17,7 +18,12 @@ import { useRuns, useAgents } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 import { formatCost, formatDuration } from "@/lib/mock-data";
-import type { RunStatus } from "@/lib/mock-data";
+import type { Run, RunStatus } from "@/lib/mock-data";
+import {
+  groupRunsBySession,
+  aggregateSession,
+  type SessionGroup,
+} from "@/lib/session-grouping";
 import { StatusBadge } from "@/components/status-badge";
 import { ExecutionLog, deduplicateSteps } from "@/components/execution-log";
 import { EmptyState } from "@/components/empty-state";
@@ -57,6 +63,7 @@ export default function RunsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
 
@@ -75,8 +82,12 @@ export default function RunsPage() {
     });
   }, [runs, agentFilter, statusFilter, searchQuery]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / RUNS_PER_PAGE));
-  const pageRuns = filtered.slice(page * RUNS_PER_PAGE, (page + 1) * RUNS_PER_PAGE);
+  // Group the FILTERED runs into sessions, then paginate over groups so a
+  // multi-step session reads as one entry. Solo groups render like a single
+  // row (no extra nesting chrome) — see RunGroup below.
+  const groups = useMemo(() => groupRunsBySession(filtered), [filtered]);
+  const totalPages = Math.max(1, Math.ceil(groups.length / RUNS_PER_PAGE));
+  const pageGroups = groups.slice(page * RUNS_PER_PAGE, (page + 1) * RUNS_PER_PAGE);
 
   if (loading && runs.length === 0) return <PageSkeleton />;
 
@@ -140,7 +151,12 @@ export default function RunsPage() {
           <div className="space-y-1">
             {/* Pagination header */}
             <div className="flex items-center justify-between mb-3">
-              <span className="text-xs text-zinc-500">{filtered.length} run{filtered.length !== 1 ? "s" : ""}</span>
+              <span className="text-xs text-zinc-500">
+                {filtered.length} run{filtered.length !== 1 ? "s" : ""}
+                {groups.length !== filtered.length && (
+                  <span className="text-zinc-600"> · {groups.length} session{groups.length !== 1 ? "s" : ""}</span>
+                )}
+              </span>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-zinc-600">Page {page + 1} of {totalPages}</span>
                 <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:bg-surface-3 disabled:opacity-30">Prev</button>
@@ -148,71 +164,180 @@ export default function RunsPage() {
               </div>
             </div>
 
-            {pageRuns.map((run) => {
-              const expanded = expandedRunId === run.id;
-              const dur = run.startedAt ? formatDuration(new Date(run.finishedAt ?? new Date()).getTime() - new Date(run.startedAt).getTime()) : "--";
-              const confirming = deletingRunId === `confirm_${run.id}`;
-
-              return (
-                <div key={run.id} className="group rounded-lg border border-zinc-800 bg-surface-1 transition-colors duration-150 hover:border-zinc-700">
-                  <div className="flex items-center">
-                    <button onClick={() => setExpandedRunId(expanded ? null : run.id)} className="flex flex-1 items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-surface-2 rounded-l-lg">
-                      {expanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />}
-                      <AgentAvatar name={run.agentName} status={run.status} size="sm" />
-                      <button onClick={(e) => { e.stopPropagation(); router.push(`/agents/${run.agentName}`); }} className="text-xs font-medium text-zinc-200 hover:text-white">{run.agentName}</button>
-                      <StatusBadge status={run.status} />
-                      <span className="font-mono text-[11px] text-zinc-600 hidden sm:inline">{run.id.slice(0, 12)}</span>
-                      <span className="ml-auto text-[11px] text-zinc-400 tabular-nums">{dur}</span>
-                      <span className="font-mono text-[11px] text-zinc-500 tabular-nums">{formatCost(run.costUsd)}</span>
-                      <span className="text-[11px] text-zinc-600 hidden md:inline tabular-nums">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
-                    </button>
-                    {/* Delete */}
-                    <div className={clsx("flex items-center pr-2", confirming ? "opacity-100" : "opacity-0 group-hover:opacity-100 transition-opacity")}>
-                      {confirming ? (
-                        <div className="flex items-center gap-1">
-                          <button onClick={async () => { setDeletingRunId(run.id); try { await api.deleteRun(run.id); toast.success("Deleted"); refresh(); } catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); } finally { setDeletingRunId(null); } }} disabled={deletingRunId === run.id} className="rounded px-2 py-1 text-[10px] font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20">{deletingRunId === run.id ? "..." : "Yes"}</button>
-                          <button onClick={() => setDeletingRunId(null)} className="rounded px-2 py-1 text-[10px] text-zinc-500 hover:text-zinc-300">No</button>
-                        </div>
-                      ) : (
-                        <button onClick={() => setDeletingRunId(`confirm_${run.id}`)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10" title="Delete"><Trash2 className="h-3 w-3" /></button>
-                      )}
-                    </div>
-                  </div>
-
-                  {expanded && (
-                    <div className="border-t border-zinc-800 p-4 space-y-4">
-                      {/* Execution Steps */}
-                      <ExecutionLog
-                        steps={deduplicateSteps(run.triggerMeta)}
-                        isRunDone={run.status === "succeeded" || run.status === "failed" || run.status === "cancelled"}
-                        isRunning={run.status === "running"}
-                      />
-                      {/* Output */}
-                      {run.output ? (
-                        <div>
-                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Result</p>
-                          <div className="max-h-80 overflow-auto rounded-lg border border-emerald-500/10 bg-emerald-500/[0.02] p-4">
-                            <pre className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200 font-sans">
-                              {cleanOutput(typeof run.output === "string" ? run.output : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>) ? String((run.output as Record<string, unknown>).result) : JSON.stringify(run.output, null, 2))}
-                            </pre>
-                          </div>
-                        </div>
-                      ) : run.error ? (
-                        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-                          <p className="text-xs font-medium text-red-400">{run.error.code}</p>
-                          <p className="mt-1 text-xs text-red-300/70">{run.error.message}</p>
-                        </div>
-                      ) : run.status === "running" ? (
-                        <div className="flex items-center gap-2.5 py-3"><div className="h-4 w-4 rounded-full border-2 border-lantern-400 border-t-transparent animate-spin" /><span className="text-sm text-zinc-400">Processing...</span></div>
-                      ) : <p className="text-xs text-zinc-600">No output available.</p>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {pageGroups.map((grp) => (
+              <RunGroup
+                key={grp.key}
+                group={grp}
+                groupExpanded={expandedGroupKey === grp.key}
+                onToggleGroup={() =>
+                  setExpandedGroupKey((k) => (k === grp.key ? null : grp.key))
+                }
+                expandedRunId={expandedRunId}
+                onToggleRun={(id) => setExpandedRunId((r) => (r === id ? null : id))}
+                deletingRunId={deletingRunId}
+                onConfirmDelete={(id) => setDeletingRunId(id)}
+                onDelete={async (id) => {
+                  setDeletingRunId(id);
+                  try {
+                    await api.deleteRun(id);
+                    toast.success("Deleted");
+                    refresh();
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : "Failed");
+                  } finally {
+                    setDeletingRunId(null);
+                  }
+                }}
+                onOpenAgent={(name) => router.push(`/agents/${name}`)}
+              />
+            ))}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Group — a session of related runs, or a single standalone run.
+// A solo group renders exactly like the old single row (no nesting chrome);
+// a multi-run group renders a collapsible header that rolls up the members.
+// ---------------------------------------------------------------------------
+
+interface RunRowHandlers {
+  expandedRunId: string | null;
+  onToggleRun: (id: string) => void;
+  deletingRunId: string | null;
+  onConfirmDelete: (token: string | null) => void;
+  onDelete: (id: string) => void | Promise<void>;
+  onOpenAgent: (name: string) => void;
+}
+
+function RunGroup({
+  group,
+  groupExpanded,
+  onToggleGroup,
+  ...rowHandlers
+}: {
+  group: SessionGroup;
+  groupExpanded: boolean;
+  onToggleGroup: () => void;
+} & RunRowHandlers) {
+  if (!group.isMulti) {
+    return <RunRow run={group.runs[0]} {...rowHandlers} />;
+  }
+
+  const agg = aggregateSession(group.runs);
+
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-surface-1 transition-colors duration-150 hover:border-zinc-700">
+      <button
+        onClick={onToggleGroup}
+        aria-expanded={groupExpanded}
+        className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-left text-sm hover:bg-surface-2"
+      >
+        {groupExpanded ? (
+          <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />
+        )}
+        <Layers className="h-3.5 w-3.5 text-lantern-400 shrink-0" />
+        <span className="text-xs font-medium text-zinc-200">{agg.agentLabel}</span>
+        <StatusBadge status={agg.status} />
+        <span className="rounded-md bg-surface-3 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-zinc-400">
+          {agg.count} runs
+        </span>
+        <span className="ml-auto text-[11px] text-zinc-400 tabular-nums">
+          {agg.durationMs !== null ? formatDuration(agg.durationMs) : "--"}
+        </span>
+        <span className="font-mono text-[11px] text-zinc-500 tabular-nums">{formatCost(agg.totalCost)}</span>
+        <span className="hidden text-[11px] tabular-nums text-zinc-600 md:inline">
+          {format(agg.latestAt, "MMM d, HH:mm")}
+        </span>
+      </button>
+
+      {groupExpanded && (
+        <div className="border-t border-zinc-800 p-2 space-y-1">
+          {group.runs.map((run) => (
+            <RunRow key={run.id} run={run} {...rowHandlers} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Single run row — the exact pre-grouping rendering, extracted so the group
+// expand reuses it and delete/expand/cost stay per row.
+function RunRow({
+  run,
+  expandedRunId,
+  onToggleRun,
+  deletingRunId,
+  onConfirmDelete,
+  onDelete,
+  onOpenAgent,
+}: { run: Run } & RunRowHandlers) {
+  const expanded = expandedRunId === run.id;
+  const dur = run.startedAt
+    ? formatDuration(new Date(run.finishedAt ?? new Date()).getTime() - new Date(run.startedAt).getTime())
+    : "--";
+  const confirming = deletingRunId === `confirm_${run.id}`;
+
+  return (
+    <div className="group rounded-lg border border-zinc-800 bg-surface-1 transition-colors duration-150 hover:border-zinc-700">
+      <div className="flex items-center">
+        <button onClick={() => onToggleRun(run.id)} aria-expanded={expanded} className="flex flex-1 items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-surface-2 rounded-l-lg">
+          {expanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />}
+          <AgentAvatar name={run.agentName} status={run.status} size="sm" />
+          <button onClick={(e) => { e.stopPropagation(); onOpenAgent(run.agentName); }} className="text-xs font-medium text-zinc-200 hover:text-white">{run.agentName}</button>
+          <StatusBadge status={run.status} />
+          <span className="font-mono text-[11px] text-zinc-600 hidden sm:inline">{run.id.slice(0, 12)}</span>
+          <span className="ml-auto text-[11px] text-zinc-400 tabular-nums">{dur}</span>
+          <span className="font-mono text-[11px] text-zinc-500 tabular-nums">{formatCost(run.costUsd)}</span>
+          <span className="text-[11px] text-zinc-600 hidden md:inline tabular-nums">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
+        </button>
+        {/* Delete */}
+        <div className={clsx("flex items-center pr-2", confirming ? "opacity-100" : "opacity-0 group-hover:opacity-100 transition-opacity")}>
+          {confirming ? (
+            <div className="flex items-center gap-1">
+              <button onClick={() => onDelete(run.id)} disabled={deletingRunId === run.id} className="rounded px-2 py-1 text-[10px] font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20">{deletingRunId === run.id ? "..." : "Yes"}</button>
+              <button onClick={() => onConfirmDelete(null)} className="rounded px-2 py-1 text-[10px] text-zinc-500 hover:text-zinc-300">No</button>
+            </div>
+          ) : (
+            <button onClick={() => onConfirmDelete(`confirm_${run.id}`)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10" title="Delete"><Trash2 className="h-3 w-3" /></button>
+          )}
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-zinc-800 p-4 space-y-4">
+          {/* Execution Steps */}
+          <ExecutionLog
+            steps={deduplicateSteps(run.triggerMeta)}
+            isRunDone={run.status === "succeeded" || run.status === "failed" || run.status === "cancelled"}
+            isRunning={run.status === "running"}
+          />
+          {/* Output */}
+          {run.output ? (
+            <div>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Result</p>
+              <div className="max-h-80 overflow-auto rounded-lg border border-emerald-500/10 bg-emerald-500/[0.02] p-4">
+                <pre className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200 font-sans">
+                  {cleanOutput(typeof run.output === "string" ? run.output : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>) ? String((run.output as Record<string, unknown>).result) : JSON.stringify(run.output, null, 2))}
+                </pre>
+              </div>
+            </div>
+          ) : run.error ? (
+            <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+              <p className="text-xs font-medium text-red-400">{run.error.code}</p>
+              <p className="mt-1 text-xs text-red-300/70">{run.error.message}</p>
+            </div>
+          ) : run.status === "running" ? (
+            <div className="flex items-center gap-2.5 py-3"><div className="h-4 w-4 rounded-full border-2 border-lantern-400 border-t-transparent animate-spin" /><span className="text-sm text-zinc-400">Processing...</span></div>
+          ) : <p className="text-xs text-zinc-600">No output available.</p>}
+        </div>
+      )}
     </div>
   );
 }
