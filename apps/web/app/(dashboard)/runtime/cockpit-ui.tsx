@@ -8,28 +8,32 @@ import clsx from "clsx";
 import { Shield } from "lucide-react";
 import type { VmState } from "@/lib/runtime-types";
 
-export const STATE_STYLES: Record<VmState, { dot: string; pill: string; text: string; label: string }> = {
-  pending:    { dot: "bg-zinc-400",     pill: "bg-zinc-500/10 text-zinc-300 ring-zinc-500/20",       text: "text-zinc-300",    label: "Pending" },
-  spawning:   { dot: "bg-lantern-400",  pill: "bg-lantern-500/10 text-lantern-300 ring-lantern-500/20", text: "text-lantern-300", label: "Spawning" },
-  running:    { dot: "bg-emerald-400",  pill: "bg-emerald-500/10 text-emerald-300 ring-emerald-500/20", text: "text-emerald-300", label: "Running" },
-  draining:   { dot: "bg-amber-400",    pill: "bg-amber-500/10 text-amber-300 ring-amber-500/20",     text: "text-amber-300",   label: "Draining" },
-  terminated: { dot: "bg-zinc-500",     pill: "bg-zinc-500/10 text-zinc-400 ring-zinc-500/20",        text: "text-zinc-400",    label: "Terminated" },
-  failed:     { dot: "bg-red-400",      pill: "bg-red-500/10 text-red-300 ring-red-500/20",           text: "text-red-300",     label: "Failed" },
+// Palette discipline: neutral zinc everything + ONE accent (lantern). State
+// reads as a small muted dot + neutral text — no saturated pills. Only two
+// states carry a quiet hue: running (calm green) and failed (muted red);
+// every other state is a neutral grey dot. The data is the hero.
+export const STATE_STYLES: Record<VmState, { dot: string; text: string; label: string }> = {
+  pending:    { dot: "bg-zinc-500",            text: "text-zinc-400", label: "Pending" },
+  spawning:   { dot: "bg-zinc-400",            text: "text-zinc-300", label: "Spawning" },
+  running:    { dot: "bg-emerald-500/80",      text: "text-zinc-200", label: "Running" },
+  draining:   { dot: "bg-zinc-400",            text: "text-zinc-300", label: "Draining" },
+  terminated: { dot: "bg-zinc-600",            text: "text-zinc-500", label: "Terminated" },
+  failed:     { dot: "bg-red-500/70",          text: "text-zinc-300", label: "Failed" },
 };
 
-// Isolation tier → concrete sandbox backend + colour. Maps the control-plane
-// isolation classes to the big-tech runtime vocabulary (gVisor/Kata/runc/FC).
-export const ISOLATION_STYLES: Record<string, { label: string; backend: string; cls: string }> = {
-  trusted:      { label: "runc",        backend: "K8s Job",     cls: "bg-sky-500/10 text-sky-300 ring-sky-500/20" },
-  standard:     { label: "Firecracker", backend: "microVM",     cls: "bg-violet-500/10 text-violet-300 ring-violet-500/20" },
-  untrusted:    { label: "gVisor",      backend: "FC + egress", cls: "bg-amber-500/10 text-amber-300 ring-amber-500/20" },
-  hostile:      { label: "Kata",        backend: "full VM",     cls: "bg-rose-500/10 text-rose-300 ring-rose-500/20" },
-  wasm:         { label: "Wasmtime",    backend: "wasm",        cls: "bg-teal-500/10 text-teal-300 ring-teal-500/20" },
-  devcontainer: { label: "Devcontainer", backend: "pod + PVC",  cls: "bg-cyan-500/10 text-cyan-300 ring-cyan-500/20" },
+// Isolation tier → concrete sandbox backend. Quiet, low-contrast neutral text
+// (no bright colored badges). The tier is metadata, not a focal point.
+export const ISOLATION_STYLES: Record<string, { label: string; backend: string }> = {
+  trusted:      { label: "runc",         backend: "K8s Job" },
+  standard:     { label: "Firecracker",  backend: "microVM" },
+  untrusted:    { label: "gVisor",       backend: "FC + egress" },
+  hostile:      { label: "Kata",         backend: "full VM" },
+  wasm:         { label: "Wasmtime",     backend: "wasm" },
+  devcontainer: { label: "Devcontainer", backend: "pod + PVC" },
 };
 
 export function isolationStyle(cls: string) {
-  return ISOLATION_STYLES[cls] || { label: cls, backend: "", cls: "bg-zinc-500/10 text-zinc-300 ring-zinc-500/20" };
+  return ISOLATION_STYLES[cls] || { label: cls, backend: "" };
 }
 
 const PULSING: VmState[] = ["spawning", "draining", "pending"];
@@ -37,36 +41,32 @@ const PULSING: VmState[] = ["spawning", "draining", "pending"];
 export function StateDot({ state, className }: { state: VmState; className?: string }) {
   const ss = STATE_STYLES[state] ?? STATE_STYLES.pending;
   return (
-    <span className={clsx("relative inline-flex h-2 w-2", className)}>
-      {state === "running" && (
-        <span className={clsx("absolute inline-flex h-full w-full animate-ping rounded-full opacity-60", ss.dot)} />
-      )}
-      <span className={clsx("relative inline-flex h-2 w-2 rounded-full", ss.dot, PULSING.includes(state) && "animate-pulse")} />
+    <span className={clsx("relative inline-flex h-1.5 w-1.5", className)}>
+      <span className={clsx("relative inline-flex h-1.5 w-1.5 rounded-full", ss.dot, PULSING.includes(state) && "animate-pulse")} />
     </span>
   );
 }
 
+// Quiet state label: muted dot + neutral text. No pill fill or ring.
 export function StatePill({ state }: { state: VmState }) {
   const ss = STATE_STYLES[state] ?? STATE_STYLES.pending;
   return (
-    <span className={clsx("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset", ss.pill)}>
+    <span className={clsx("inline-flex items-center gap-1.5 text-[12px] font-medium", ss.text)}>
       <StateDot state={state} />
       {ss.label}
     </span>
   );
 }
 
+// Isolation tier: a very subtle neutral chip — implicit, not a colored badge.
 export function IsolationBadge({ cls, dense }: { cls: string; dense?: boolean }) {
   const is = isolationStyle(cls);
   return (
     <span
       title={`${cls} · ${is.backend}`}
-      className={clsx(
-        "inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] font-medium ring-1 ring-inset",
-        is.cls,
-      )}
+      className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] font-medium text-zinc-400"
     >
-      <Shield className={clsx(dense ? "h-2.5 w-2.5" : "h-3 w-3")} />
+      <Shield className={clsx("text-zinc-500", dense ? "h-2.5 w-2.5" : "h-3 w-3")} />
       {is.label}
     </span>
   );
@@ -96,39 +96,35 @@ export function Sparkline({
   const y = (v: number) => height - v * (height - 2) - 1;
   const pts = data.map((v, i) => `${(i * stepX).toFixed(1)},${y(v).toFixed(1)}`);
   const line = "M" + pts.join(" L");
-  const area = `${line} L${width.toFixed(1)},${height} L0,${height} Z`;
   const last = data[n - 1];
-  const gid = `spark-${color.replace(/[^a-z0-9]/gi, "")}`;
+  // Monochrome + low-ink: a thin stroke and a single endpoint dot, no filled
+  // area gradient. One ink colour per spark — calm, not instrument-panel.
   return (
     <svg width={width} height={height} className="overflow-visible" aria-hidden>
-      <defs>
-        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.28" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={area} fill={`url(#${gid})`} />
       <path
         d={line}
         fill="none"
         stroke={color}
-        strokeWidth="1.4"
+        strokeOpacity="0.85"
+        strokeWidth="1.25"
         strokeLinejoin="round"
         strokeLinecap="round"
         style={{ transition: "d 0.4s ease" }}
       />
-      <circle cx={width} cy={y(last)} r="1.8" fill={color} />
+      <circle cx={width} cy={y(last)} r="1.4" fill={color} />
     </svg>
   );
 }
 
 // Tiny utilisation bar (used in the drawer metrics + capacity map cells).
+// Calm fills: the accent for normal load, a muted red only at true saturation.
+// Low/medium load reads neutral — we don't paint healthy capacity green.
 export function UtilBar({ value, tone = "accent" }: { value: number; tone?: "accent" | "warn" | "danger" | "ok" }) {
   const pct = Math.min(100, Math.max(0, value * 100));
   const fill =
-    tone === "danger" ? "bg-red-400" : tone === "warn" ? "bg-amber-400" : tone === "ok" ? "bg-emerald-400" : "bg-lantern-400";
+    tone === "danger" ? "bg-red-500/70" : tone === "warn" ? "bg-zinc-400" : tone === "ok" ? "bg-zinc-500" : "bg-lantern-400/80";
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
+    <div className="h-1 w-full overflow-hidden rounded-full bg-surface-3">
       <div className={clsx("h-full rounded-full transition-all duration-500", fill)} style={{ width: `${pct}%` }} />
     </div>
   );

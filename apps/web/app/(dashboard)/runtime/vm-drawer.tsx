@@ -97,12 +97,12 @@ export function VmDrawer({
         role="dialog"
         aria-modal="true"
         aria-label={`Workload ${vm.vmId}`}
-        className="drawer-panel relative flex h-full w-full max-w-2xl flex-col border-l border-zinc-800 bg-surface-1 shadow-2xl outline-none"
+        className="drawer-panel relative flex h-full w-full max-w-2xl flex-col bg-surface-1 shadow-2xl outline-none"
       >
         <DrawerHeader vm={vm} isDemo={isDemo} onClose={onClose} />
 
-        {/* Tabs */}
-        <div className="flex items-center gap-0.5 border-b border-zinc-800 px-3">
+        {/* Tabs — quiet underline; faint divider */}
+        <div className="flex items-center gap-0.5 border-b border-zinc-800/40 px-4">
           {TABS.map((t) => {
             const Icon = t.icon;
             return (
@@ -110,7 +110,7 @@ export function VmDrawer({
                 key={t.id}
                 onClick={() => setTab(t.id)}
                 className={clsx(
-                  "flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-[12px] font-medium transition-colors",
+                  "flex items-center gap-1.5 border-b-2 px-3 py-3 text-[12px] font-medium transition-colors",
                   tab === t.id
                     ? "border-lantern-400 text-zinc-100"
                     : "border-transparent text-zinc-500 hover:text-zinc-300",
@@ -123,7 +123,7 @@ export function VmDrawer({
           })}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-6">
           {tab === "logs" && <LogsTab vm={vm} isDemo={isDemo} />}
           {tab === "exec" && <ExecTab vm={vm} isDemo={isDemo} />}
           {tab === "metrics" && <MetricsTab vm={vm} isDemo={isDemo} />}
@@ -139,14 +139,14 @@ export function VmDrawer({
 
 function DrawerHeader({ vm, isDemo, onClose }: { vm: VmRow; isDemo: boolean; onClose: () => void }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-zinc-800 px-5 py-4">
+    <div className="flex items-start justify-between gap-4 border-b border-zinc-800/40 px-6 py-5">
       <div className="min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <h2 className="truncate text-base font-semibold text-zinc-100">{vm.name || "workload"}</h2>
           <StatePill state={vm.state} />
           <IsolationBadge cls={vm.isolationClass} />
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-zinc-500">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-zinc-500">
           <span className="text-zinc-400">{vm.vmId}</span>
           <span>·</span>
           <span>{vm.node || "unscheduled"}</span>
@@ -156,7 +156,7 @@ function DrawerHeader({ vm, isDemo, onClose }: { vm: VmRow; isDemo: boolean; onC
       <div className="flex shrink-0 items-center gap-1.5">
         <Link
           href={`/runtime/${vm.vmId}`}
-          className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 bg-surface-2 px-2.5 py-1 text-[11px] text-zinc-300 hover:bg-surface-3"
+          className="inline-flex items-center gap-1.5 rounded-md bg-surface-2 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:bg-surface-3"
         >
           <ExternalLink className="h-3 w-3" />
           Full page
@@ -214,18 +214,18 @@ function LogsTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
   }, [logs]);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       <div className="flex items-center justify-between text-[11px] text-zinc-500">
         <span className="flex items-center gap-1.5">
-          <span className={clsx("h-1.5 w-1.5 rounded-full", active ? "bg-emerald-400 animate-pulse" : "bg-zinc-600")} />
+          <span className={clsx("h-1.5 w-1.5 rounded-full", active ? "bg-emerald-500/70 animate-pulse" : "bg-zinc-600")} />
           {active ? "streaming" : "stream closed"}
-          {isDemo && <span className="ml-1 rounded bg-amber-500/10 px-1 text-amber-400">simulated</span>}
+          {isDemo && <span className="ml-1 rounded bg-surface-2 px-1.5 py-0.5 text-zinc-400">simulated</span>}
         </span>
         <span className="tabular-nums">{logs.length} lines</span>
       </div>
       <div
         ref={boxRef}
-        className="h-[60vh] overflow-y-auto rounded-lg border border-zinc-800 bg-black p-3 font-mono text-[11px] leading-relaxed text-zinc-300"
+        className="h-[60vh] overflow-y-auto rounded-lg bg-surface-0 p-4 font-mono text-[11px] leading-relaxed text-zinc-300"
       >
         {logs.length === 0 ? (
           <div className="text-zinc-600">Waiting for log lines…</div>
@@ -293,9 +293,9 @@ function ExecTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
       <div className="flex items-center gap-2 text-[11px] text-zinc-500">
         <TerminalSquare className="h-3.5 w-3.5" />
         One-shot exec into the workload
-        {isDemo && <span className="rounded bg-amber-500/10 px-1 text-amber-400">simulated</span>}
+        {isDemo && <span className="rounded bg-surface-2 px-1.5 py-0.5 text-zinc-400">simulated</span>}
       </div>
-      <div className="min-h-[200px] space-y-3 rounded-lg border border-zinc-800 bg-black p-3 font-mono text-[11px] text-zinc-300">
+      <div className="min-h-[200px] space-y-3 rounded-lg bg-surface-0 p-4 font-mono text-[11px] text-zinc-300">
         {history.length === 0 && <div className="text-zinc-600">No commands yet. Try `ls`, `ps`, `cat /etc/hostname`.</div>}
         {history.map((h, i) => (
           <div key={i}>
@@ -314,7 +314,7 @@ function ExecTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
           }}
           disabled={!active && !isDemo}
           placeholder={active || isDemo ? "command…" : "workload not running"}
-          className="flex-1 rounded-lg border border-zinc-700 bg-surface-0 px-3 py-2 font-mono text-[12px] text-zinc-100 placeholder-zinc-600 focus:border-lantern-500 focus:outline-none disabled:opacity-50"
+          className="flex-1 rounded-lg bg-surface-2 px-3 py-2 font-mono text-[12px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-lantern-500/40 disabled:opacity-50"
         />
         <Button variant="secondary" size="sm" loading={running} onClick={run} icon={<CornerDownLeft className="h-3.5 w-3.5" />}>
           Run
@@ -346,10 +346,10 @@ function MetricsTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
 
   if (!isDemo) {
     return (
-      <div className="rounded-lg border border-dashed border-zinc-800 bg-surface-0 p-8 text-center">
-        <Gauge className="mx-auto mb-2 h-5 w-5 text-zinc-600" />
+      <div className="rounded-lg bg-surface-0 p-10 text-center">
+        <Gauge className="mx-auto mb-2.5 h-5 w-5 text-zinc-600" />
         <div className="text-[12px] text-zinc-400">No live metrics for this workload</div>
-        <div className="mt-1 text-[11px] text-zinc-600">
+        <div className="mt-1.5 text-[11px] leading-relaxed text-zinc-600">
           Per-VM CPU/memory/network telemetry needs a metrics endpoint on the harness. Until then real workloads
           render <span className="font-mono text-zinc-500">—</span> (never fabricated).
         </div>
@@ -362,24 +362,24 @@ function MetricsTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
   const cost = vm.costHr ?? 0;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="text-[11px] text-zinc-500">
         Live utilisation
-        <span className="ml-1 rounded bg-amber-500/10 px-1 text-amber-400">simulated</span>
+        <span className="ml-1 rounded bg-surface-2 px-1.5 py-0.5 text-zinc-400">simulated</span>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-4">
         <MetricCard label="CPU" value={`${(cpuNow * 100).toFixed(0)}%`} series={cpu} color="var(--color-accent)" />
-        <MetricCard label="Memory" value={`${(memNow * 100).toFixed(0)}%`} series={mem} color="#34d399" />
+        <MetricCard label="Memory" value={`${(memNow * 100).toFixed(0)}%`} series={mem} color="rgba(161,161,170,0.7)" />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-lg border border-zinc-800 bg-surface-0 p-3">
-          <div className="text-[10px] uppercase text-zinc-500">Cost rate</div>
-          <div className="mt-1 font-mono text-lg tabular-nums text-zinc-100">${cost.toFixed(3)}/hr</div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="rounded-lg bg-surface-0 p-4">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500">Cost rate</div>
+          <div className="mt-1.5 font-mono text-lg tabular-nums text-zinc-100">${cost.toFixed(3)}/hr</div>
           <div className="mt-0.5 text-[10px] text-zinc-600">≈ ${(cost * 24).toFixed(2)}/day</div>
         </div>
-        <div className="rounded-lg border border-zinc-800 bg-surface-0 p-3">
-          <div className="text-[10px] uppercase text-zinc-500">Network</div>
-          <div className="mt-1 font-mono text-lg tabular-nums text-zinc-100">
+        <div className="rounded-lg bg-surface-0 p-4">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500">Network</div>
+          <div className="mt-1.5 font-mono text-lg tabular-nums text-zinc-100">
             {(cpuNow * 18 + 2).toFixed(1)} MB/s
           </div>
           <div className="mt-0.5 text-[10px] text-zinc-600">egress within allowlist</div>
@@ -391,15 +391,15 @@ function MetricsTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
 
 function MetricCard({ label, value, series, color }: { label: string; value: string; series: number[]; color: string }) {
   return (
-    <div className="rounded-lg border border-zinc-800 bg-surface-0 p-3">
+    <div className="rounded-lg bg-surface-0 p-4">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] uppercase text-zinc-500">{label}</span>
+        <span className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</span>
         <span className="font-mono text-[13px] tabular-nums text-zinc-100">{value}</span>
       </div>
-      <div className="mt-2">
+      <div className="mt-2.5">
         <Sparkline data={series} color={color} width={220} height={44} />
       </div>
-      <div className="mt-2">
+      <div className="mt-2.5">
         <UtilBar value={series[series.length - 1] ?? 0} tone={(series[series.length - 1] ?? 0) > 0.8 ? "danger" : "accent"} />
       </div>
     </div>
@@ -432,9 +432,9 @@ function AuditTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
   if (events.length === 0) return <div className="text-[12px] text-zinc-500">No audit events yet.</div>;
 
   return (
-    <ul className="space-y-1.5">
+    <ul className="space-y-2">
       {events.map((e) => (
-        <li key={e.id} className="rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-[11px]">
+        <li key={e.id} className="rounded-lg bg-surface-0 px-3.5 py-2.5 text-[11px]">
           <div className="flex items-center justify-between">
             <span className="font-mono font-medium text-zinc-200">{e.action}</span>
             <span className="text-zinc-500">{formatDistanceToNow(new Date(e.at), { addSuffix: true })}</span>
@@ -487,10 +487,10 @@ function LifecycleTab({ vm, isDemo, onTerminated }: { vm: VmRow; isDemo: boolean
   }, [vm, isDemo, toast, onTerminated]);
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-lg border border-zinc-800 bg-surface-0 p-4">
-        <div className="mb-3 text-[11px] uppercase text-zinc-500">State timeline</div>
-        <ol className="space-y-3">
+    <div className="space-y-6">
+      <div className="rounded-lg bg-surface-0 p-4">
+        <div className="mb-3.5 text-[11px] uppercase tracking-wide text-zinc-500">State timeline</div>
+        <ol className="space-y-3.5">
           {STEPS.map((s, i) => {
             const done = vm.state === "failed" ? i <= curIdx : i < curIdx;
             const cur = i === curIdx;
@@ -499,8 +499,8 @@ function LifecycleTab({ vm, isDemo, onTerminated }: { vm: VmRow; isDemo: boolean
               <li key={s.state} className="flex items-center gap-3">
                 <span
                   className={clsx(
-                    "h-2.5 w-2.5 rounded-full",
-                    failed ? "bg-red-400" : cur ? "bg-emerald-400 animate-pulse" : done ? "bg-zinc-500" : "bg-surface-3",
+                    "h-2 w-2 rounded-full",
+                    failed ? "bg-red-500/70" : cur ? "bg-emerald-500/80 animate-pulse" : done ? "bg-zinc-500" : "bg-surface-3",
                   )}
                 />
                 <span className={clsx("text-[12px]", cur ? "font-medium text-zinc-100" : done ? "text-zinc-400" : "text-zinc-600")}>
@@ -522,8 +522,8 @@ function LifecycleTab({ vm, isDemo, onTerminated }: { vm: VmRow; isDemo: boolean
         <Field label="Region / AZ" value={vm.region ? `${vm.region}${vm.az ? " / " + vm.az : ""}` : "—"} mono />
       </div>
 
-      <div className="rounded-lg border border-zinc-800 bg-surface-0 p-3">
-        <div className="mb-2 text-[11px] uppercase text-zinc-500">Spec</div>
+      <div className="rounded-lg bg-surface-0 p-4">
+        <div className="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">Spec</div>
         <pre className="overflow-x-auto font-mono text-[11px] text-zinc-400">{JSON.stringify(vm.spec ?? {}, null, 2)}</pre>
       </div>
 
@@ -538,8 +538,8 @@ function LifecycleTab({ vm, isDemo, onTerminated }: { vm: VmRow; isDemo: boolean
 
 function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2">
-      <div className="text-[10px] uppercase text-zinc-500">{label}</div>
+    <div className="rounded-lg bg-surface-0 px-3.5 py-2.5">
+      <div className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
       <div className={clsx("mt-0.5 text-zinc-200", mono && "font-mono text-[11px]")}>{value}</div>
     </div>
   );

@@ -73,6 +73,14 @@ interface RunWaterfallProps {
     tokensIn?: number;
     tokensOut?: number;
   };
+  // Flight-recorder time cursor (ms, relative to the run's first event).
+  // When set, spans that start AFTER T dim, spans in-flight at T are
+  // highlighted, and a vertical cursor line is drawn across every lane.
+  // null = no cursor (normal full-trace view).
+  timeCursorMs?: number | null;
+  // Span id to spotlight (e.g. the signal the user clicked, or the
+  // reasoning block being replayed). Ringed + auto-readable.
+  highlightSpanId?: string | null;
 }
 
 // Span is defined in run-waterfall-lanes.ts and imported above.
@@ -85,7 +93,11 @@ interface RunWaterfallProps {
 // on the next step_completed / step_failed with the same stepId. LLM /
 // tool events that fall *inside* an open span attach to it and bump the
 // token/cost aggregates.
-function extractSpans(events: StreamEvent[]): {
+//
+// Exported so the flight-recorder (scrubber + signals + reasoning replay)
+// can derive the same span model and the "as of T" cumulative state from
+// the identical, timestamped span list the waterfall draws.
+export function extractSpans(events: StreamEvent[]): {
   spans: Span[];
   startMs: number;
   endMs: number;
@@ -228,7 +240,13 @@ const LANE_ACCENT: Record<LaneId, string> = {
   other: "text-zinc-400",
 };
 
-export function RunWaterfall({ events, running, totals }: RunWaterfallProps) {
+export function RunWaterfall({
+  events,
+  running,
+  totals,
+  timeCursorMs = null,
+  highlightSpanId = null,
+}: RunWaterfallProps) {
   const { spans, endMs } = useMemo(() => extractSpans(events), [events]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -300,7 +318,7 @@ export function RunWaterfall({ events, running, totals }: RunWaterfallProps) {
       {/* Horizontal scroll on the timeline; lane labels stay pinned left. */}
       <div className="overflow-x-auto">
         <div className="min-w-[640px]">
-          <TimeAxis scaleEnd={scaleEnd} labelW={LABEL_W} />
+          <TimeAxis scaleEnd={scaleEnd} labelW={LABEL_W} cursorMs={timeCursorMs} />
           <div className="divide-y divide-zinc-800/60">
             {lanes.map((lane) => (
               <LaneRow
@@ -312,6 +330,8 @@ export function RunWaterfall({ events, running, totals }: RunWaterfallProps) {
                 accent={LANE_ACCENT[lane.meta.id]}
                 expanded={expanded}
                 onToggle={toggle}
+                cursorMs={timeCursorMs}
+                highlightSpanId={highlightSpanId}
               />
             ))}
           </div>
@@ -325,7 +345,15 @@ export function RunWaterfall({ events, running, totals }: RunWaterfallProps) {
 // Time axis header — shared scale across all lanes.
 // ---------------------------------------------------------------------------
 
-function TimeAxis({ scaleEnd, labelW }: { scaleEnd: number; labelW: string }) {
+function TimeAxis({
+  scaleEnd,
+  labelW,
+  cursorMs = null,
+}: {
+  scaleEnd: number;
+  labelW: string;
+  cursorMs?: number | null;
+}) {
   // 5 evenly-spaced ticks across the scale.
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * scaleEnd);
   return (
@@ -351,6 +379,14 @@ function TimeAxis({ scaleEnd, labelW }: { scaleEnd: number; labelW: string }) {
             {formatMs(t)}
           </span>
         ))}
+        {cursorMs != null && (
+          <span
+            className="absolute -top-0.5 z-20 -translate-x-1/2 rounded bg-lantern-500/90 px-1 py-0.5 text-[8px] font-semibold tabular-nums text-white"
+            style={{ left: `${(Math.min(cursorMs, scaleEnd) / scaleEnd) * 100}%` }}
+          >
+            T {formatMs(cursorMs)}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -368,6 +404,8 @@ function LaneRow({
   accent,
   expanded,
   onToggle,
+  cursorMs = null,
+  highlightSpanId = null,
 }: {
   lane: Lane;
   scaleEnd: number;
@@ -376,6 +414,8 @@ function LaneRow({
   accent: string;
   expanded: Set<string>;
   onToggle: (id: string) => void;
+  cursorMs?: number | null;
+  highlightSpanId?: string | null;
 }) {
   const count = lane.rows.reduce((n, r) => n + r.length, 0);
   return (
@@ -393,7 +433,16 @@ function LaneRow({
           {count} span{count === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="flex-1 divide-y divide-zinc-800/40">
+      <div className="relative flex-1 divide-y divide-zinc-800/40">
+        {/* Flight-recorder cursor — a thin vertical line scoped to the lane's
+            timeline track, so its % maps directly to the shared time scale. */}
+        {cursorMs != null && (
+          <div
+            className="pointer-events-none absolute inset-y-0 z-10 w-px bg-lantern-400/70"
+            style={{ left: `${(Math.min(cursorMs, scaleEnd) / scaleEnd) * 100}%` }}
+            aria-hidden
+          />
+        )}
         {lane.rows.map((row, i) => (
           <div key={i} className="py-0.5">
             {row.map((span) => (
@@ -405,6 +454,8 @@ function LaneRow({
                 laneId={lane.meta.id}
                 expanded={expanded.has(span.id)}
                 onToggle={() => onToggle(span.id)}
+                cursorMs={cursorMs}
+                highlight={highlightSpanId === span.id}
               />
             ))}
           </div>
@@ -424,6 +475,8 @@ function LaneSpan({
   laneId,
   expanded,
   onToggle,
+  cursorMs = null,
+  highlight = false,
 }: {
   span: Span;
   scaleEnd: number;
@@ -431,11 +484,21 @@ function LaneSpan({
   laneId: LaneId;
   expanded: boolean;
   onToggle: () => void;
+  cursorMs?: number | null;
+  highlight?: boolean;
 }) {
   const duration = (span.endMs ?? scaleEnd) - span.startMs;
   const open = span.endMs == null && running;
   const reasoning = laneId === "reasoning" || isReasoning(span);
   const retryCount = span.retries?.length ?? 0;
+
+  // Time-cursor classification (flight recorder). A span is "future" (dimmed)
+  // when it starts strictly after T; "in-flight" (highlighted) when it had
+  // started by T and hadn't finished by T; otherwise "past" (normal).
+  const spanEnd = span.endMs ?? scaleEnd;
+  const future = cursorMs != null && span.startMs > cursorMs;
+  const inFlight =
+    cursorMs != null && span.startMs <= cursorMs && spanEnd > cursorMs;
 
   const widthPct = (((span.endMs ?? scaleEnd) - span.startMs) / scaleEnd) * 100;
   const leftPct = (span.startMs / scaleEnd) * 100;
@@ -456,7 +519,11 @@ function LaneSpan({
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="group flex w-full items-center gap-2 px-3 py-1 text-left transition-colors hover:bg-surface-2"
+        className={clsx(
+          "group flex w-full items-center gap-2 px-3 py-1 text-left transition-all hover:bg-surface-2",
+          future && "opacity-30",
+          highlight && "bg-lantern-500/10",
+        )}
       >
         <span className="shrink-0 text-zinc-500">
           {expanded ? (
@@ -484,7 +551,9 @@ function LaneSpan({
             className={clsx(
               "absolute top-0 flex h-full items-center gap-1 overflow-hidden rounded border px-1.5",
               barColor,
-              open && "animate-pulse",
+              (open || inFlight) && "animate-pulse",
+              inFlight && "ring-1 ring-lantern-300/80",
+              highlight && "ring-2 ring-lantern-400",
             )}
             style={{
               left: `${leftPct}%`,
