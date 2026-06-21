@@ -229,3 +229,157 @@ func runAsAppRole(pool *pgxpool.Pool, ctx context.Context, f func(pgx.Tx) error)
 	}
 	return tx.Commit(ctx)
 }
+
+// TestRLSEnforcement_Runs extends the cross-tenant proof to the 'runs' table.
+// It also proves that the privileged pool (superuser) still bypasses RLS and
+// sees all rows — confirming that recovery-style sweeps remain unaffected.
+func TestRLSEnforcement_Runs(t *testing.T) {
+	superPool := openSuperPool(t)
+	ctx := context.Background()
+
+	if err := db.Migrate(ctx, superPool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	tenantA := uuid.New().String()
+	tenantB := uuid.New().String()
+	seedRLSTenant(t, superPool, tenantA)
+	seedRLSTenant(t, superPool, tenantB)
+
+	// Seed a minimal agent + agent_version to satisfy FK constraints on runs.
+	agentID := uuid.New().String()
+	agentVersionID := uuid.New().String()
+	agentName := "rls-run-proof-" + tenantA[:8]
+	_, err := superPool.Exec(ctx, `
+		INSERT INTO agents (id, tenant_id, name, description, labels)
+		VALUES ($1::uuid, $2::uuid, $3, 'RLS run proof', '{}')
+		ON CONFLICT (tenant_id, name) DO NOTHING
+	`, agentID, tenantA, agentName)
+	if err != nil {
+		t.Fatalf("insert agent for run seed: %v", err)
+	}
+	_, err = superPool.Exec(ctx, `
+		INSERT INTO agent_versions (id, agent_id, version, digest, bundle_uri, manifest)
+		VALUES ($1::uuid, $2::uuid, '1', 'sha256:test', 's3://test', '{}'::jsonb)
+		ON CONFLICT (id) DO NOTHING
+	`, agentVersionID, agentID)
+	if err != nil {
+		t.Fatalf("insert agent_version for run seed: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = superPool.Exec(context.Background(), "DELETE FROM agents WHERE id = $1::uuid", agentID)
+	})
+
+	// Insert a run for tenant A using the privileged pool (bypasses RLS for insert).
+	runID := uuid.New().String()
+	_, err = superPool.Exec(ctx, `
+		INSERT INTO runs (id, tenant_id, agent_id, agent_version_id, status, trigger_kind, input)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'completed', 'manual', '{}'::jsonb)
+		ON CONFLICT (id) DO NOTHING
+	`, runID, tenantA, agentID, agentVersionID)
+	if err != nil {
+		t.Fatalf("insert run as superuser: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = superPool.Exec(context.Background(), "DELETE FROM runs WHERE id = $1::uuid", runID)
+	})
+
+	// -------------------------------------------------------------------------
+	// Step 1 — Tenant A (as lantern_app) sees its own run.
+	// -------------------------------------------------------------------------
+	t.Run("Runs_WithinTenantA_CanRead", func(t *testing.T) {
+		count := queryRunCount(t, superPool, ctx, tenantA, runID)
+		if count != 1 {
+			t.Errorf("tenant A: expected 1 run row, got %d", count)
+		}
+	})
+
+	// -------------------------------------------------------------------------
+	// Step 2 — Tenant B (as lantern_app) CANNOT see tenant A's run.
+	// -------------------------------------------------------------------------
+	t.Run("Runs_CrossTenant_DeniedByRLS", func(t *testing.T) {
+		count := queryRunCount(t, superPool, ctx, tenantB, runID)
+		if count != 0 {
+			t.Errorf("SECURITY VIOLATION: tenant B can see %d run row(s) belonging to tenant A", count)
+		}
+	})
+
+	// -------------------------------------------------------------------------
+	// Step 3 — The PRIVILEGED pool (superuser) bypasses RLS and sees all rows.
+	// This confirms recovery/marketplace sweeps still work after the cutover.
+	// -------------------------------------------------------------------------
+	t.Run("PrivilegedPool_BypassesRLS", func(t *testing.T) {
+		var count int
+		err := superPool.QueryRow(ctx,
+			"SELECT COUNT(*) FROM runs WHERE id = $1::uuid", runID,
+		).Scan(&count)
+		if err != nil {
+			t.Fatalf("privileged pool query: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("privileged pool: expected 1 row (bypass RLS), got %d", count)
+		}
+	})
+
+	// -------------------------------------------------------------------------
+	// Step 4 — WithTenantConn helper: same-tenant read works, cross-tenant read
+	// is empty.
+	// -------------------------------------------------------------------------
+	t.Run("WithTenantConn_SameTenant", func(t *testing.T) {
+		var count int
+		err := db.WithTenantConn(ctx, superPool, tenantA, func(tx pgx.Tx) error {
+			// Inside this tx, lantern_app role + GUC are set.
+			// We mimic the GUC-only enforcement (superuser pool still used here
+			// for convenience; a lantern_app pool would enforce at the DB level).
+			if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
+				return fmt.Errorf("SET LOCAL ROLE: %w", err)
+			}
+			return tx.QueryRow(ctx,
+				"SELECT COUNT(*) FROM runs WHERE id = $1::uuid", runID,
+			).Scan(&count)
+		})
+		if err != nil {
+			t.Fatalf("WithTenantConn (tenant A): %v", err)
+		}
+		if count != 1 {
+			t.Errorf("WithTenantConn same-tenant: expected 1, got %d", count)
+		}
+	})
+
+	t.Run("WithTenantConn_CrossTenant", func(t *testing.T) {
+		var count int
+		err := db.WithTenantConn(ctx, superPool, tenantB, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
+				return fmt.Errorf("SET LOCAL ROLE: %w", err)
+			}
+			return tx.QueryRow(ctx,
+				"SELECT COUNT(*) FROM runs WHERE id = $1::uuid", runID,
+			).Scan(&count)
+		})
+		if err != nil {
+			t.Fatalf("WithTenantConn (tenant B): %v", err)
+		}
+		if count != 0 {
+			t.Errorf("WithTenantConn cross-tenant: expected 0, got %d — RLS not enforced", count)
+		}
+	})
+}
+
+// queryRunCount opens a transaction as lantern_app, sets the tenant GUC, and
+// returns how many runs with the given ID are visible.
+func queryRunCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenantID, runID string) int {
+	t.Helper()
+	var count int
+	err := runAsAppRole(pool, ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+			return fmt.Errorf("set_config: %w", err)
+		}
+		return tx.QueryRow(ctx,
+			"SELECT COUNT(*) FROM runs WHERE id = $1::uuid", runID,
+		).Scan(&count)
+	})
+	if err != nil {
+		t.Fatalf("queryRunCount(tenant=%s): %v", tenantID, err)
+	}
+	return count
+}

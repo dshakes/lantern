@@ -229,6 +229,13 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetAgent handles GET /v1/agents/{name}.
+//
+// TODO(rls-cutover): route this handler (and all ~100 REST agent/run sites that
+// use h.srv.Pool directly) through h.srv.AppPool + db.WithTenantConn so
+// RLS is enforced at the DB level when LANTERN_RLS_ENFORCE=1.  The gRPC read
+// paths (GetRun, ListRun in runs.go) are already wired to AppPool as the
+// representative demonstration; the REST cutover is the tracked follow-up.
+// With LANTERN_RLS_ENFORCE unset, AppPool == Pool — zero behaviour change.
 func (h *RESTHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
