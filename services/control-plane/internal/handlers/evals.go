@@ -199,7 +199,12 @@ func (h *EvalHandler) DeleteSuite(w http.ResponseWriter, r *http.Request) {
 // ---------- runs ----------
 
 type recordRunRequest struct {
-	SuiteID      string           `json:"suiteId"`
+	SuiteID string `json:"suiteId"`
+	// RunID, when set, is the production run this eval is associated with.
+	// The server will append an eval_result journal event for that run so
+	// the score appears in the run-detail waterfall without a separate query.
+	// Optional — omit for CI-only eval runs that are not tied to a live run.
+	RunID        string           `json:"runId,omitempty"`
 	AgentVersion string           `json:"agentVersion,omitempty"`
 	CommitSha    string           `json:"commitSha,omitempty"`
 	Branch       string           `json:"branch,omitempty"`
@@ -270,6 +275,73 @@ func (h *EvalHandler) RecordRun(w http.ResponseWriter, r *http.Request) {
 		h.logger().Error("record eval run failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed: " + err.Error()})
 		return
+	}
+
+	// If the caller provided a run_id, append an eval_result journal event
+	// so the run-detail waterfall can surface the score without a join.
+	//
+	// Security: verify the run belongs to the authenticated tenant before
+	// writing any journal row. journal_events has no tenant_id column —
+	// ownership is enforced through the runs table. Without this check a
+	// caller who knows (or guesses) a run UUID owned by another tenant
+	// could poison that run's journal stream and tamper with its receipt
+	// integrity hash (receipts HMAC-sign the SHA-256 of journal_events).
+	//
+	// Seq collision safety: mirrors emitLLMJournalEvent in durable_replay.go —
+	// INSERT … SELECT MAX(seq)+1 … ON CONFLICT DO NOTHING, retried up to
+	// maxEvalJournalRetries times so a concurrent writer never causes a
+	// silent drop.
+	if body.RunID != "" {
+		const maxEvalJournalRetries = 3
+
+		// Ownership gate: the run must belong to the caller's tenant.
+		var ownCheck int
+		ownerErr := h.srv.Pool.QueryRow(ctx,
+			`SELECT 1 FROM runs WHERE id = $1 AND tenant_id = $2`,
+			body.RunID, tenantID,
+		).Scan(&ownCheck)
+		if ownerErr != nil {
+			// run not found or wrong tenant — skip journal write silently.
+			// We do NOT surface this as an error to the caller: the eval run
+			// itself was recorded successfully; the runId annotation is optional.
+			h.logger().Warn("eval_result journal skipped: run not found or wrong tenant",
+				zap.String("run_id", body.RunID),
+				zap.String("tenant_id", tenantID),
+			)
+		} else {
+			payloadJSON, _ := json.Marshal(map[string]any{
+				"score":       score,
+				"passed":      allPassed,
+				"casesTotal":  total,
+				"casesPassed": passed,
+				"evalRunId":   id,
+				"suiteId":     body.SuiteID,
+				"agentName":   agentName,
+				"source":      "eval_run",
+			})
+			for attempt := 0; attempt < maxEvalJournalRetries; attempt++ {
+				tag, evErr := h.srv.Pool.Exec(ctx, `
+					INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
+					SELECT $1,
+					       COALESCE((SELECT MAX(seq) FROM journal_events WHERE run_id = $1), 0) + 1,
+					       'eval_result', '', 1, $2
+					ON CONFLICT (run_id, seq) DO NOTHING
+				`, body.RunID, payloadJSON)
+				if evErr != nil {
+					h.logger().Warn("eval_result journal event failed",
+						zap.String("run_id", body.RunID),
+						zap.String("eval_run_id", id),
+						zap.Int("attempt", attempt),
+						zap.Error(evErr),
+					)
+					break // DB error — give up rather than spinning
+				}
+				if tag.RowsAffected() > 0 {
+					break // inserted successfully
+				}
+				// RowsAffected == 0: seq collision — retry with fresh MAX
+			}
+		}
 	}
 
 	// Compare against the branch baseline if one is set.

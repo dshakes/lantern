@@ -8,6 +8,7 @@ mod backend;
 mod backends;
 mod config;
 mod handle_registry;
+mod otel;
 mod pool;
 mod proto;
 mod report_forwarder;
@@ -47,6 +48,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .json()
         .init();
+
+    // Initialise OTel pipeline (no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset).
+    // Keep the guard alive for the duration of main so spans are flushed on exit.
+    let _otel_shutdown = otel::init();
 
     tracing::info!(
         listen_addr = %config.listen_addr,

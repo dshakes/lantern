@@ -75,6 +75,13 @@ pub struct ReportPayload {
     /// Discriminator: `"log"`, `"otlp_traces"`, `"prometheus_metrics"`, or
     /// `"audit"`.
     pub kind: String,
+    /// W3C trace id (32 lowercase hex chars) of the active span when this
+    /// report was forwarded. Empty string when no span is active. Allows the
+    /// control-plane journal to correlate a report event back to the
+    /// `runtime.schedule` trace that spawned this VM — analogous to
+    /// `StatusEvent.trace_id` in the proto.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub trace_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub log: Option<LogPayload>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,12 +117,16 @@ pub struct AuditPayload {
 /// `crate::tls::authorize_vm_cert`) before calling this function.  The builder
 /// itself is a pure data transformer and does not perform authentication.
 ///
+/// `trace_id` is the 32-hex-char OTel trace id of the active span in the
+/// `Report` RPC handler; pass an empty string when no span is active.
+///
 /// Returns `None` when the message body is unset / unrecognised (defensive;
 /// the proto `oneof body` should always have exactly one variant set).
 pub fn build_report_request(
     vm_id: &str,
     tenant_id: &str,
     run_id: &str,
+    trace_id: &str,
     report: &pb::HarnessReport,
 ) -> Option<ReportPayload> {
     use pb::harness_report::Body;
@@ -128,6 +139,7 @@ pub fn build_report_request(
             tenant_id: tenant_id.to_string(),
             run_id: run_id.to_string(),
             kind: "log".to_string(),
+            trace_id: trace_id.to_string(),
             log: Some(LogPayload {
                 vm_id: log_line.vm_id.clone(),
                 stream: log_line.stream.clone(),
@@ -142,6 +154,7 @@ pub fn build_report_request(
             tenant_id: tenant_id.to_string(),
             run_id: run_id.to_string(),
             kind: "otlp_traces".to_string(),
+            trace_id: trace_id.to_string(),
             log: None,
             otlp_traces_b64: Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
             prometheus_b64: None,
@@ -152,6 +165,7 @@ pub fn build_report_request(
             tenant_id: tenant_id.to_string(),
             run_id: run_id.to_string(),
             kind: "prometheus_metrics".to_string(),
+            trace_id: trace_id.to_string(),
             log: None,
             otlp_traces_b64: None,
             prometheus_b64: Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
@@ -162,6 +176,7 @@ pub fn build_report_request(
             tenant_id: tenant_id.to_string(),
             run_id: run_id.to_string(),
             kind: "audit".to_string(),
+            trace_id: trace_id.to_string(),
             log: None,
             otlp_traces_b64: None,
             prometheus_b64: None,
@@ -328,7 +343,7 @@ mod tests {
     fn log_payload_carries_registry_identity() {
         let report = log_report("harness-vm-id", "stdout", "hello from agent");
         let payload =
-            build_report_request("registry-vm", "acme", "run-001", &report).expect("Some");
+            build_report_request("registry-vm", "acme", "run-001", "", &report).expect("Some");
 
         assert_eq!(
             payload.vm_id, "registry-vm",
@@ -348,7 +363,7 @@ mod tests {
     #[test]
     fn audit_payload_correct_kind() {
         let report = audit_report("vm-1", "egress");
-        let payload = build_report_request("vm-1", "t1", "r1", &report).expect("Some");
+        let payload = build_report_request("vm-1", "t1", "r1", "", &report).expect("Some");
 
         assert_eq!(payload.kind, "audit");
         let audit = payload.audit.expect("audit field set");
@@ -360,7 +375,7 @@ mod tests {
     fn otlp_payload_is_base64_encoded() {
         let raw = b"fake-otlp-bytes";
         let report = otlp_report(raw.to_vec());
-        let payload = build_report_request("vm-1", "t1", "r1", &report).expect("Some");
+        let payload = build_report_request("vm-1", "t1", "r1", "", &report).expect("Some");
 
         assert_eq!(payload.kind, "otlp_traces");
         let b64 = payload.otlp_traces_b64.expect("otlp field set");
@@ -376,7 +391,7 @@ mod tests {
     fn prometheus_payload_is_base64_encoded() {
         let raw = b"# HELP my_metric\nmy_metric 42\n";
         let report = prom_report(raw.to_vec());
-        let payload = build_report_request("vm-1", "t1", "r1", &report).expect("Some");
+        let payload = build_report_request("vm-1", "t1", "r1", "", &report).expect("Some");
 
         assert_eq!(payload.kind, "prometheus_metrics");
         let b64 = payload.prometheus_b64.expect("prom field set");
@@ -391,8 +406,41 @@ mod tests {
     #[test]
     fn empty_body_returns_none() {
         let report = pb::HarnessReport { body: None };
-        let result = build_report_request("vm-1", "t1", "r1", &report);
+        let result = build_report_request("vm-1", "t1", "r1", "", &report);
         assert!(result.is_none(), "None body must return None");
+    }
+
+    #[test]
+    fn trace_id_propagated_into_payload() {
+        let report = log_report("vm-1", "stdout", "traced msg");
+        let payload = build_report_request(
+            "vm-1",
+            "t1",
+            "r1",
+            "4bf92f3577b34da6a3ce929d0e0e4736",
+            &report,
+        )
+        .expect("Some");
+        assert_eq!(
+            payload.trace_id, "4bf92f3577b34da6a3ce929d0e0e4736",
+            "trace_id must be forwarded into the payload"
+        );
+    }
+
+    #[test]
+    fn empty_trace_id_is_omitted_from_serialization() {
+        let report = log_report("vm-1", "stdout", "untraced msg");
+        let payload = build_report_request("vm-1", "t1", "r1", "", &report).expect("Some");
+        assert!(
+            payload.trace_id.is_empty(),
+            "empty trace_id must remain empty"
+        );
+        // Verify serde omits the field when empty.
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(
+            !json.contains("trace_id"),
+            "empty trace_id must be omitted from JSON serialization: {json}"
+        );
     }
 
     // --- forward_config reads from env ---

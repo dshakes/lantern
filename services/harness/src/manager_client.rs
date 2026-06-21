@@ -177,7 +177,14 @@ impl ManagerClient {
         let contact = self.clone();
         tokio::spawn(async move {
             let req_stream = tokio_stream::wrappers::ReceiverStream::new(wire_rx);
-            let mut ack_stream = match client.heartbeat(req_stream).await {
+            // Inject the spawn trace context so the Heartbeat RPC is a child
+            // of the manager's Spawn span in the distributed trace.
+            let mut hb_request = tonic::Request::new(req_stream);
+            crate::otel::inject_into_metadata(
+                &opentelemetry::Context::current(),
+                hb_request.metadata_mut(),
+            );
+            let mut ack_stream = match client.heartbeat(hb_request).await {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     tracing::warn!(
@@ -321,6 +328,14 @@ impl ManagerClient {
         // X-Lantern-Runtime-Token. Absent (older deployments / dev) → no
         // metadata attached; behavior is identical to before. Never logged.
         let mut tonic_req = tonic::Request::new(wire_req);
+
+        // Inject the spawn trace context so VendSecret is a child span of the
+        // manager's Spawn span — keeps the secret-vend in the same trace.
+        crate::otel::inject_into_metadata(
+            &opentelemetry::Context::current(),
+            tonic_req.metadata_mut(),
+        );
+
         if let Some(token) = &self.agent_instance_token {
             let bearer = format!("Bearer {token}");
             // MetadataValue::try_from fails only if the string contains

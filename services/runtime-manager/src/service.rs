@@ -4,12 +4,14 @@ use std::time::Instant;
 
 use anyhow::Result;
 use dashmap::DashMap;
+use opentelemetry::trace::{TraceContextExt as _, Tracer};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 use crate::backend::RuntimeBackend;
 use crate::handle_registry::{HandleInfo, HandleRegistry};
+use crate::otel;
 use crate::pool::{PoolConfig, WarmPool};
 use crate::proto;
 use crate::proto::pb;
@@ -782,7 +784,34 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         &self,
         request: Request<pb::SpawnRequest>,
     ) -> Result<Response<pb::SpawnResponse>, Status> {
+        // Extract the incoming W3C traceparent so this spawn becomes a child
+        // span of the scheduler's (Go) span — one distributed trace per spawn.
+        let parent_cx = otel::extract_from_metadata(request.metadata());
+        let tracer = opentelemetry::global::tracer("lantern.runtime-manager");
+        let span = tracer
+            .start_with_context("RuntimeManager.Spawn", &parent_cx);
+        let spawn_cx = parent_cx.with_span(span);
+
         let req = request.into_inner();
+
+        // Attach correlation attributes to the span.
+        if let Some(spec) = &req.spec {
+            let s = spawn_cx.span();
+            if !spec.tenant_id.is_empty() {
+                s.set_attribute(opentelemetry::KeyValue::new(
+                    "tenant_id",
+                    spec.tenant_id.clone(),
+                ));
+            }
+            if !spec.run_id.is_empty() {
+                s.set_attribute(opentelemetry::KeyValue::new("run_id", spec.run_id.clone()));
+            }
+            s.set_attribute(opentelemetry::KeyValue::new(
+                "isolation_class",
+                spec.isolation.to_string(),
+            ));
+        }
+
         let pre_handle = req.handle.clone();
         let from_snapshot = req
             .spec
@@ -790,7 +819,22 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             .map(|s| !s.restore_snapshot_id.is_empty())
             .unwrap_or(false);
 
-        let internal = spawn_to_schedule(&req)?;
+        let mut internal = spawn_to_schedule(&req)?;
+
+        // Inject the W3C traceparent into the workload's env so the in-VM
+        // harness can continue the same distributed trace.  LANTERN_TRACE_PARENT
+        // is the out-of-band channel for process-env propagation; the harness
+        // reads it and uses it as its root parent context.
+        let trace_id = otel::trace_id_from_context(&spawn_cx);
+        if !trace_id.is_empty() {
+            // Reconstruct a minimal traceparent header value from the context.
+            let mut tp_meta = tonic::metadata::MetadataMap::new();
+            otel::inject_into_metadata(&spawn_cx, &mut tp_meta);
+            if let Some(val) = tp_meta.get("traceparent").and_then(|v| v.to_str().ok()) {
+                internal.env.insert("LANTERN_TRACE_PARENT".to_string(), val.to_string());
+            }
+        }
+
         let resp = self.schedule(Request::new(internal)).await?.into_inner();
 
         let cold_start_ms = resp.cold_start_ms;
@@ -1628,6 +1672,11 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         &self,
         request: Request<tonic::Streaming<pb::HarnessReport>>,
     ) -> Result<Response<pb::HarnessAck>, Status> {
+        // Extract W3C trace context from the incoming Report RPC metadata so
+        // the forwarded payload carries the same trace id as the harness's span.
+        let report_cx = otel::extract_from_metadata(request.metadata());
+        let report_trace_id = otel::trace_id_from_context(&report_cx);
+
         // Extract the peer cert BEFORE consuming the request — the cert is
         // per-connection and is gone after `into_inner()`.
         let peer_cert_der = crate::tls::extract_peer_cert_der(&request);
@@ -1701,6 +1750,7 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
                         effective_vm_id,
                         &tenant_id,
                         &run_id,
+                        &report_trace_id,
                         &report,
                     ) {
                         None => {
