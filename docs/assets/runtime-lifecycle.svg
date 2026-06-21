@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Lantern agent runtime lifecycle — schedule to terminate, one correlated chain">
+  <defs>
+    <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#7c8aa5"/>
+    </marker>
+    <marker id="sm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#34d399"/>
+    </marker>
+    <style>
+      .t   { fill:#e2e8f0; }
+      .sub { fill:#94a3b8; font-size:11px; }
+      .h   { fill:#f8fafc; font-weight:700; }
+      .band{ fill:#cbd5e1; font-size:12px; font-weight:700; letter-spacing:.14em; }
+      .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .lane{ fill:#cbd5e1; font-size:11px; font-weight:700; }
+      .msg { fill:#cbd5e1; font-size:10.5px; }
+      .note{ fill:#94a3b8; font-size:9.5px; }
+      .num { fill:#0b1120; font-size:11px; font-weight:700; }
+      .grn { fill:#34d399; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="900" rx="16" fill="#0b1120"/>
+  <rect x="0" y="0" width="1280" height="900" rx="16" fill="none" stroke="#1e293b"/>
+
+  <text x="32" y="44" class="h" font-size="22">Runtime Lifecycle — one correlated chain per spawn</text>
+  <text x="32" y="64" class="sub" font-size="12.5">schedule → place → spawn → identity → vend → egress → report → terminate · every step shares ( tenant_id · run_id · step_id · agent_instance_id · trace_id )</text>
+
+  <!-- lane headers -->
+  <g transform="translate(0,92)">
+    <g transform="translate(70,0)"><rect x="0" y="0" width="170" height="34" rx="8" fill="#11182a" stroke="#334155"/><text x="85" y="22" class="lane" text-anchor="middle">control-plane</text></g>
+    <g transform="translate(330,0)"><rect x="0" y="0" width="170" height="34" rx="8" fill="#101a26" stroke="#2f5168"/><text x="85" y="22" class="lane" text-anchor="middle">scheduler</text></g>
+    <g transform="translate(590,0)"><rect x="0" y="0" width="170" height="34" rx="8" fill="#101a26" stroke="#2f5168"/><text x="85" y="22" class="lane" text-anchor="middle">manager</text></g>
+    <g transform="translate(850,0)"><rect x="0" y="0" width="170" height="34" rx="8" fill="#0e1726" stroke="#3a2c5e"/><text x="85" y="22" class="lane" text-anchor="middle">harness (in-VM)</text></g>
+    <g transform="translate(1110,0)"><rect x="0" y="0" width="138" height="34" rx="8" fill="#11182a" stroke="#334155"/><text x="69" y="22" class="lane" text-anchor="middle">durable spine</text></g>
+  </g>
+
+  <!-- lifelines -->
+  <g stroke="#27324a" stroke-dasharray="3 5">
+    <line x1="155"  y1="130" x2="155"  y2="846"/>
+    <line x1="415"  y1="130" x2="415"  y2="846"/>
+    <line x1="675"  y1="130" x2="675"  y2="846"/>
+    <line x1="935"  y1="130" x2="935"  y2="846"/>
+    <line x1="1179" y1="130" x2="1179" y2="846"/>
+  </g>
+
+  <!-- step helper: numbered messages -->
+  <!-- 1 schedule -->
+  <g transform="translate(0,158)">
+    <line x1="155" y1="0" x2="409" y2="0" stroke="#7c8aa5" stroke-width="1.6" marker-end="url(#s)"/>
+    <circle cx="155" cy="0" r="10" fill="#38bdf8"/><text x="155" y="4" class="num" text-anchor="middle">1</text>
+    <text x="170" y="-8" class="msg">Schedule(AgentSpec) · gRPC, tenant_id in metadata</text>
+    <text x="170" y="14" class="note mono">quota + budget gate · 402 if over cap · authenticated tenant (not caller env)</text>
+  </g>
+  <!-- 1b mint identity (self loop CP) -->
+  <g transform="translate(0,202)">
+    <path d="M155 -6 h70 a8 8 0 0 1 8 8 v6 a8 8 0 0 1 -8 8 h-70" fill="none" stroke="#a5b4fc" stroke-width="1.4" marker-end="url(#s)"/>
+    <text x="240" y="0" class="msg">mint per-instance identity</text>
+    <text x="240" y="18" class="note mono">HS256 agent-instance JWT · injected as LANTERN_AGENT_INSTANCE_TOKEN</text>
+  </g>
+  <!-- 2 place -->
+  <g transform="translate(0,250)">
+    <line x1="415" y1="0" x2="415" y2="0"/>
+    <circle cx="415" cy="0" r="10" fill="#34d399"/><text x="415" y="4" class="num" text-anchor="middle">2</text>
+    <path d="M415 -6 h70 a8 8 0 0 1 8 8 v6 a8 8 0 0 1 -8 8 h-70" fill="none" stroke="#7c8aa5" stroke-width="1.4" marker-end="url(#s)"/>
+    <text x="500" y="0" class="msg">place: warm-pool · region · fair-share · cost · health</text>
+    <text x="500" y="18" class="note">per-tenant hard cap · Postgres write-through</text>
+  </g>
+  <!-- 3 spawn -->
+  <g transform="translate(0,300)">
+    <line x1="415" y1="0" x2="669" y2="0" stroke="#7c8aa5" stroke-width="1.6" marker-end="url(#s)"/>
+    <circle cx="415" cy="0" r="10" fill="#34d399"/><text x="415" y="4" class="num" text-anchor="middle">3</text>
+    <text x="430" y="-8" class="msg">Spawn → GRPCDialer (real, pooled)</text>
+    <text x="430" y="14" class="note">isolation gate · RuntimeClass tier · node-affinity + toleration</text>
+  </g>
+  <!-- 4 K8s Job -> pod boot -->
+  <g transform="translate(0,344)">
+    <line x1="675" y1="0" x2="929" y2="0" stroke="#7c8aa5" stroke-width="1.6" marker-end="url(#s)"/>
+    <circle cx="675" cy="0" r="10" fill="#f59e0b"/><text x="675" y="4" class="num" text-anchor="middle">4</text>
+    <text x="690" y="-8" class="msg">create hardened K8s Job → Pod · harness boots PID 1</text>
+    <text x="690" y="14" class="note">NetworkPolicy applied BEFORE pod runs (never unfenced)</text>
+  </g>
+  <!-- 5 mTLS heartbeat -->
+  <g transform="translate(0,394)">
+    <line x1="935" y1="0" x2="681" y2="0" stroke="#34d399" stroke-width="1.6" marker-end="url(#sm)"/>
+    <circle cx="935" cy="0" r="10" fill="#8b5cf6"/><text x="935" y="4" class="num" text-anchor="middle">5</text>
+    <text x="681" y="-8" class="msg grn">⇄ mTLS handshake · per-VM cert (CN/SAN = vm_id) · bidi Heartbeat</text>
+    <text x="681" y="14" class="note">manager records last-seen · backoff reset on first ack</text>
+  </g>
+  <!-- 6 vend secret (bearer) -->
+  <g transform="translate(0,444)">
+    <line x1="935" y1="0" x2="681" y2="0" stroke="#34d399" stroke-width="1.6" marker-end="url(#sm)"/>
+    <circle cx="935" cy="0" r="10" fill="#8b5cf6"/><text x="935" y="4" class="num" text-anchor="middle">6</text>
+    <text x="681" y="-8" class="msg">VendSecret · authorization: Bearer &lt;instance-token&gt;</text>
+    <text x="681" y="14" class="note mono">manager forwards Bearer → relay verifies vm+tenant · fail-closed · short-TTL</text>
+  </g>
+  <!-- 6b relay roundtrip -->
+  <g transform="translate(0,488)">
+    <line x1="675" y1="0" x2="161" y2="0" stroke="#7c8aa5" stroke-width="1.4" marker-end="url(#s)"/>
+    <text x="180" y="-8" class="note mono">POST /v1/runtime/secrets/resolve · X-Lantern-Runtime-Token + Bearer · audited</text>
+  </g>
+  <!-- 7 egress deny -->
+  <g transform="translate(0,530)">
+    <circle cx="935" cy="0" r="10" fill="#8b5cf6"/><text x="935" y="4" class="num" text-anchor="middle">7</text>
+    <path d="M935 -6 h70 a8 8 0 0 1 8 8 v6 a8 8 0 0 1 -8 8 h-70" fill="none" stroke="#f87171" stroke-width="1.4" marker-end="url(#s)"/>
+    <text x="1020" y="0" class="msg">egress: deny-default proxy</text>
+    <text x="700" y="20" class="note">blocks 169.254.169.254 + RFC1918 · token-bucket · audit-on-deny · revocations land via HeartbeatAck</text>
+  </g>
+  <!-- 8 report -->
+  <g transform="translate(0,576)">
+    <line x1="935" y1="0" x2="681" y2="0" stroke="#34d399" stroke-width="1.6" marker-end="url(#sm)"/>
+    <circle cx="935" cy="0" r="10" fill="#8b5cf6"/><text x="935" y="4" class="num" text-anchor="middle">8</text>
+    <text x="681" y="-8" class="msg">Report stream · logs · OTLP traces · audit</text>
+    <text x="681" y="14" class="note mono">vm_id derived from peer cert (not harness-asserted) — no cross-tenant forgery</text>
+  </g>
+  <!-- 8b manager -> CP report -->
+  <g transform="translate(0,620)">
+    <line x1="675" y1="0" x2="161" y2="0" stroke="#7c8aa5" stroke-width="1.4" marker-end="url(#s)"/>
+    <text x="180" y="-8" class="note mono">manager → POST /v1/runtime/report · VM↔tenant bound · audit→runtime_audit_events · logs→runtime_vm_logs</text>
+  </g>
+  <!-- 9 journal + receipt -->
+  <g transform="translate(0,662)">
+    <line x1="155" y1="0" x2="1173" y2="0" stroke="#7c8aa5" stroke-width="1.4" marker-end="url(#s)"/>
+    <circle cx="155" cy="0" r="10" fill="#38bdf8"/><text x="155" y="4" class="num" text-anchor="middle">9</text>
+    <text x="170" y="-8" class="msg">append step events → journal_events (event source, idempotent, replayable)</text>
+  </g>
+  <!-- 10 terminate -->
+  <g transform="translate(0,710)">
+    <line x1="155" y1="0" x2="669" y2="0" stroke="#7c8aa5" stroke-width="1.6" marker-end="url(#s)"/>
+    <circle cx="155" cy="0" r="10" fill="#38bdf8"/><text x="155" y="4" class="num" text-anchor="middle">10</text>
+    <text x="170" y="-8" class="msg">Terminate(grace) → drain → sanitized teardown</text>
+    <text x="170" y="14" class="note">final logs/audit still accepted within terminal-grace window (LANTERN_RUNTIME_TERMINAL_GRACE)</text>
+  </g>
+  <!-- 11 receipt -->
+  <g transform="translate(0,756)">
+    <line x1="155" y1="0" x2="1173" y2="0" stroke="#7c8aa5" stroke-width="1.4" marker-end="url(#s)"/>
+    <circle cx="155" cy="0" r="10" fill="#38bdf8"/><text x="155" y="4" class="num" text-anchor="middle">11</text>
+    <text x="170" y="-8" class="msg">sign run_receipt — Ed25519 over the journal hash</text>
+    <text x="170" y="14" class="note">externally verifiable at /.well-known/lantern-receipts · tamper-evident</text>
+  </g>
+
+  <!-- resilience footer -->
+  <g transform="translate(32,802)">
+    <rect x="0" y="0" width="1216" height="74" rx="10" fill="#0d1830" stroke="#2a3c63"/>
+    <text x="16" y="24" class="h" font-size="11.5">Durable-by-default</text>
+    <text x="16" y="44" class="note" font-size="10.5">Crash mid-run → replay from last <tspan class="mono" fill="#cbd5e1">step_completed</tspan> · side-effects deduped by idempotency key derived from ( run_id · step_id · attempt ) · no re-spent tokens, no double side-effect.</text>
+    <text x="16" y="62" class="note" font-size="10.5">Scheduler HA via Postgres advisory-lock leader election · per-tenant spawn caps · the workflow engine is the only thing that mutates run state (invariant #2).</text>
+  </g>
+</svg>

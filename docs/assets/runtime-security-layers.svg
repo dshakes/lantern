@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Lantern runtime defense-in-depth — governance, security, and the trust boundaries">
+  <defs>
+    <style>
+      .t   { fill:#e2e8f0; }
+      .sub { fill:#94a3b8; font-size:11px; }
+      .h   { fill:#f8fafc; font-weight:700; }
+      .band{ fill:#cbd5e1; font-size:12px; font-weight:700; letter-spacing:.14em; }
+      .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .item{ fill:#cbd5e1; font-size:10.5px; }
+      .grn { fill:#34d399; }
+      .red { fill:#f87171; }
+      .amb { fill:#fbbf24; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="900" rx="16" fill="#0b1120"/>
+  <rect x="0" y="0" width="1280" height="900" rx="16" fill="none" stroke="#1e293b"/>
+
+  <text x="32" y="44" class="h" font-size="22">Runtime Defense-in-Depth — zero-compromise governance &amp; security</text>
+  <text x="32" y="64" class="sub" font-size="12.5">five non-negotiables · every control verified in source on master · the differentiator: a tamper-evident, externally-verifiable, data-plane audit substrate inside the customer's VPC</text>
+
+  <!-- concentric defense rings (left) -->
+  <text x="32" y="100" class="band">CONCENTRIC ISOLATION</text>
+  <g transform="translate(40,116)">
+    <rect x="0" y="0" width="372" height="372" rx="14" fill="#0e1726" stroke="#3a2c5e"/>
+    <text x="186" y="26" class="t" font-size="11.5" font-weight="700" text-anchor="middle">customer VPC / data plane</text>
+
+    <rect x="28" y="42" width="316" height="300" rx="12" fill="#101a26" stroke="#2f5168"/>
+    <text x="186" y="64" class="sub" font-size="10.5" text-anchor="middle">K8s namespace · lantern-t-&lt;tenant&gt; · PSA restricted</text>
+
+    <rect x="56" y="82" width="260" height="240" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="186" y="104" class="sub" font-size="10.5" text-anchor="middle">NetworkPolicy · deny-default ingress+egress</text>
+
+    <rect x="86" y="122" width="200" height="180" rx="10" fill="#161226" stroke="#5b4a86"/>
+    <text x="186" y="144" class="sub" font-size="10.5" text-anchor="middle">RuntimeClass sandbox</text>
+    <text x="186" y="160" class="sub" font-size="9.5" text-anchor="middle">gVisor / Kata microVM</text>
+
+    <rect x="114" y="178" width="144" height="108" rx="9" fill="#1a1330" stroke="#7c5cc4"/>
+    <text x="186" y="200" class="t" font-size="10.5" font-weight="700" text-anchor="middle">workload</text>
+    <text x="186" y="218" class="sub" font-size="9" text-anchor="middle">non-root · RO rootfs</text>
+    <text x="186" y="232" class="sub" font-size="9" text-anchor="middle">cap-drop ALL · seccomp</text>
+    <text x="186" y="250" class="sub" font-size="9" text-anchor="middle">no SA token</text>
+    <text x="186" y="268" class="sub" font-size="9" text-anchor="middle">guest egress allowlist</text>
+  </g>
+
+  <!-- five non-negotiables (right) -->
+  <text x="436" y="100" class="band">THE FIVE NON-NEGOTIABLES</text>
+  <g transform="translate(436,116)">
+    <!-- governance -->
+    <rect x="0" y="0" width="406" height="118" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="14" y="24" class="t" font-size="11.5" font-weight="700">1 · Governance</text>
+    <g class="item" transform="translate(14,38)">
+      <text x="0" y="10"><tspan class="grn">▪</tspan> per-instance identity = subject of every audit row, secret vend, tool call</text>
+      <text x="0" y="28"><tspan class="grn">▪</tspan> RBAC scopes on every mutating /v1/runtime/* route (403 + audit)</text>
+      <text x="0" y="46"><tspan class="grn">▪</tspan> Ed25519 receipts · externally verifiable · EU-AI-Act event logging</text>
+      <text x="0" y="64"><tspan class="grn">▪</tspan> tenant_id from authenticated source, never caller env (invariant #7)</text>
+    </g>
+
+    <!-- security -->
+    <rect x="0" y="130" width="406" height="118" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="14" y="154" class="t" font-size="11.5" font-weight="700">2 · Security</text>
+    <g class="item" transform="translate(14,168)">
+      <text x="0" y="10"><tspan class="grn">▪</tspan> untrusted/hostile never on a bare pod (fail-closed gate)</text>
+      <text x="0" y="28"><tspan class="grn">▪</tspan> mTLS everywhere on the data plane · per-VM cert binding</text>
+      <text x="0" y="46"><tspan class="grn">▪</tspan> deny-default egress at host (Cilium) + guest (nftables)</text>
+      <text x="0" y="64"><tspan class="grn">▪</tspan> secrets short-TTL, tenant-bound, never logged</text>
+    </g>
+
+    <!-- scalability -->
+    <rect x="0" y="260" width="406" height="70" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="14" y="284" class="t" font-size="11.5" font-weight="700">3 · Scalability</text>
+    <g class="item" transform="translate(14,298)">
+      <text x="0" y="10"><tspan class="grn">▪</tspan> real dispatch + warm pools + per-tenant spawn caps</text>
+      <text x="0" y="26"><tspan class="amb">▪</tspan> sub-second cold start (snapshot-restore) · target frontier</text>
+    </g>
+
+    <!-- resiliency -->
+    <rect x="0" y="342" width="406" height="42" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="14" y="366" class="t" font-size="11.5" font-weight="700">4 · Resiliency / Availability <tspan class="item" font-weight="400">— journal replay · dedup · scheduler HA</tspan></text>
+  </g>
+
+  <!-- observability strip -->
+  <g transform="translate(436,506)">
+    <rect x="0" y="0" width="406" height="48" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="14" y="20" class="t" font-size="11.5" font-weight="700">5 · Observability</text>
+    <text x="14" y="38" class="item">OTel GenAI semconv on every span · loop/cost/eval signals · flight-recorder UX</text>
+  </g>
+
+  <!-- trust boundary callouts (far right) -->
+  <text x="868" y="100" class="band">TRUST BOUNDARIES</text>
+  <g transform="translate(868,116)">
+    <rect x="0" y="0" width="380" height="124" rx="10" fill="#0d1830" stroke="#2a3c63"/>
+    <text x="14" y="24" class="t" font-size="11.5" font-weight="700">What is untrusted input</text>
+    <g class="item" transform="translate(14,38)">
+      <text x="0" y="10">▪ the harness (a hostile agent may lie) →</text>
+      <text x="14" y="26" class="sub" font-size="10">vm_id bound to mTLS peer cert, not body</text>
+      <text x="0" y="44">▪ caller-supplied env →</text>
+      <text x="14" y="60" class="sub" font-size="10">tenant from authenticated ScheduleRequest</text>
+      <text x="0" y="78">▪ X-Forwarded-For →</text>
+      <text x="14" y="94" class="sub" font-size="10">limiter trusts TCP peer unless proxy CIDR set</text>
+    </g>
+
+    <rect x="0" y="136" width="380" height="100" rx="10" fill="#0d1830" stroke="#2a3c63"/>
+    <text x="14" y="160" class="t" font-size="11.5" font-weight="700">Fail-closed by default</text>
+    <g class="item" transform="translate(14,174)">
+      <text x="0" y="10"><tspan class="grn">▪</tspan> secret relay 403 when token unset</text>
+      <text x="0" y="28"><tspan class="grn">▪</tspan> isolation gate refuses, never downgrades</text>
+      <text x="0" y="46"><tspan class="grn">▪</tspan> image verify blocks unsigned at admission</text>
+      <text x="0" y="64"><tspan class="grn">▪</tspan> egress proxy deny-all until allowlisted</text>
+    </g>
+  </g>
+
+  <!-- review layers that found real bugs -->
+  <text x="32" y="540" class="band">THREE REVIEW LAYERS — each caught what the others could not (all fixed + re-gated)</text>
+  <g transform="translate(32,552)">
+    <rect x="0" y="0" width="386" height="120" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="14" y="24" class="t" font-size="11.5" font-weight="700">Unit + integration gates</text>
+    <text x="14" y="46" class="item">proves the code compiles &amp; passes in isolation</text>
+    <text x="14" y="68" class="sub" font-size="10.5">cargo test (manager 293, harness 103) · clippy -D warnings</text>
+    <text x="14" y="86" class="sub" font-size="10.5">go build/vet/test · helm lint + render · cluster-e2e (kind+Calico)</text>
+    <text x="14" y="106" class="grn" font-size="10.5">delegator re-runs every gate — a subagent "verified" is a claim</text>
+
+    <rect x="402" y="0" width="386" height="120" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="416" y="24" class="t" font-size="11.5" font-weight="700">Security-auditor (trust boundaries)</text>
+    <text x="416" y="46" class="item">caught a cross-tenant audit-forgery hole:</text>
+    <text x="416" y="66" class="red" font-size="10.5">H1 · report vm_id not bound to mTLS peer cert</text>
+    <text x="416" y="86" class="item">→ fixed: per-frame cert authorize, drop on mismatch</text>
+    <text x="416" y="106" class="sub" font-size="10.5">+ XFF limiter · log retention · egress-proxy default</text>
+
+    <rect x="804" y="0" width="412" height="120" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="818" y="24" class="t" font-size="11.5" font-weight="700">Codex cross-audit (cross-service contracts)</text>
+    <text x="818" y="46" class="item">caught 4 integration bugs unit tests can't see:</text>
+    <text x="818" y="66" class="amb" font-size="10.5">▪ node-affinity without matching toleration (Pending forever)</text>
+    <text x="818" y="84" class="amb" font-size="10.5">▪ preflight matched .handler, not metadata.name</text>
+    <text x="818" y="100" class="amb" font-size="10.5">▪ OTLP frames had no identity → 403 · ▪ terminal logs dropped</text>
+    <text x="818" y="114" class="grn" font-size="9.5">all four fixed + re-gated</text>
+  </g>
+
+  <!-- compliance footer -->
+  <g transform="translate(32,692)">
+    <rect x="0" y="0" width="1216" height="180" rx="12" fill="#0d1830" stroke="#2a3c63"/>
+    <text x="16" y="28" class="h" font-size="12.5">Standards &amp; the forcing functions this architecture is built against</text>
+    <g class="item" transform="translate(16,44)" font-size="10.5">
+      <text x="0" y="14">▪ <tspan class="t" font-weight="700">OWASP Agentic Top-10 (2026)</tspan> — goal hijack, tool misuse, memory poisoning, rogue agents · principles: Least-Agency + Strong Observability</text>
+      <text x="0" y="36">▪ <tspan class="t" font-weight="700">EU AI Act high-risk gate (Aug 2 2026)</tspan> — automatic event logging, Article 14 human oversight, Article 50 content marking → durable journal + receipts</text>
+      <text x="0" y="58">▪ <tspan class="t" font-weight="700">IETF Agent Audit Trail</tspan> — hash-chained records (agent_id · session_id · action_type · trust_level · prev_hash) → journal_events + Ed25519 receipts</text>
+      <text x="0" y="80">▪ <tspan class="t" font-weight="700">Workload identity</tspan> — SPIFFE/SPIRE, WIMSE/AIMS direction · today: per-instance JWT bound to vm+tenant (SPIFFE SVID is the noted migration)</text>
+      <text x="0" y="102">▪ <tspan class="t" font-weight="700">OTel GenAI semconv</tspan> — invoke_agent / execute_tool / gen_ai.usage.*_tokens / gen_ai.evaluation.result on every span</text>
+      <text x="0" y="124">▪ <tspan class="t" font-weight="700">Prompt injection is unsolved at the model layer</tspan> → defense moved to the runtime: deny-default egress, secret short-TTL, output/audit boundary</text>
+    </g>
+  </g>
+</svg>
