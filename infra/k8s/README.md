@@ -14,6 +14,10 @@ enforces:
 - **no service-account token** in the pod (`automountServiceAccountToken: false`)
 - a pod requesting **runAsRoot / privileged / privilege escalation is rejected**
   at admission (Pod Security Admission `restricted` on the tenant namespace)
+- **[fail-closed]** an UNTRUSTED pod that requests a sandbox `runtimeClassName`
+  (gVisor / Kata) which is **not installed** must **not** silently fall back to
+  runc — it stays unschedulable / is refused (the core ADR-0009 invariant). This
+  is asserted in CI *without* gVisor: we prove the refusal, not sandbox execution.
 
 ## How to run
 
@@ -53,7 +57,8 @@ the policy, not broken networking.
 | `manifests/10-networkpolicy.yaml` | per-run default-deny ingress+egress fence; allow DNS + runtime manager only |
 | `manifests/20-job.yaml` | sample workload Job mirroring `build_job()` in `k8s.rs` (busybox+sleep so probes can exec) |
 | `manifests/90-escalation-probe.yaml` | negative probe — root/privileged pod that admission must reject |
-| `validate.sh` | the harness (style-matched to `scripts/dev-doctor.sh`) |
+| `manifests/91-untrusted-missing-runtimeclass.yaml` | fail-closed probe — UNTRUSTED pod requesting `runtimeClassName: gvisor` (not installed) that must stay unschedulable, never run on runc |
+| `validate.sh` | the harness (style-matched to `scripts/dev-doctor.sh`); `--ci` skips cluster create/teardown when the caller (CI) owns the cluster |
 
 ## Manifest vs. `k8s.rs` gaps (documented, intentionally not fixed here)
 

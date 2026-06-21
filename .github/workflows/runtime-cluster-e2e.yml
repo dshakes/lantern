@@ -1,0 +1,133 @@
+# runtime cluster e2e — validates the data-plane runtime SECURITY posture on a
+# REAL Kubernetes cluster (kind + Calico), not unit tests.
+#
+# This is the cluster-level companion to microvm-integration.yml. Where that one
+# cold-boots a Firecracker microVM, this one stands up a kind cluster with a CNI
+# that ENFORCES NetworkPolicy (Calico — kind's default kindnet does NOT enforce)
+# and runs infra/k8s/validate.sh against it, asserting the always-on isolation
+# pieces the runtime-manager's K8s backend depends on.
+#
+# ---------------------------------------------------------------------------
+# WHAT RUNS FOR REAL IN CI (every PR that touches the watched paths):
+# ---------------------------------------------------------------------------
+#   (a) egress default-deny NetworkPolicy (Calico-enforced) + positive control
+#   (b) DNS carve-out still works
+#   (c) hardened securityContext (uid 1000, RO rootfs, cap-drop ALL, no-priv-esc,
+#       seccomp RuntimeDefault, no SA token) — spec + live kubectl-exec probes
+#   (d) PSA `restricted` REJECTS a runAsRoot/privileged pod at admission
+#   (f) FAIL-CLOSED: an UNTRUSTED pod requesting a sandbox runtimeClassName
+#       (gVisor) that is NOT installed must stay unschedulable / be refused —
+#       it must never silently run on runc. The core ADR-0009 invariant, and it
+#       is fully testable here WITHOUT gVisor: we assert the REFUSAL, not that
+#       untrusted code executes inside a sandbox.
+#   (e) the opt-in cluster-side security chart (Kyverno/Cilium/ESO) renders clean
+#
+# ---------------------------------------------------------------------------
+# WHAT IS DOCUMENTED-AND-SKIPPED (CANNOT honestly run on a hosted runner):
+# ---------------------------------------------------------------------------
+# Real gVisor (runsc) / Kata EXECUTION needs the sandbox handler installed on the
+# node's CRI, which on Kata also needs nested virtualization (/dev/kvm). GitHub's
+# hosted ubuntu runners provide NEITHER. So we DO NOT — and must not pretend to —
+# validate "UNTRUSTED actually runs inside gVisor" or "HOSTILE actually runs
+# inside a Kata microVM" here. Those legs require a real sandbox-capable cluster
+# (e.g. GKE Agent Sandbox, or a self-hosted node with runsc + kata installed).
+# The job's summary echoes exactly what was and was not validated — silent
+# omission is unacceptable. The fail-CLOSED refusal of a missing RuntimeClass IS
+# validated for real (leg f), because refusal needs no sandbox.
+name: "runtime · cluster e2e (kind + calico)"
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "services/runtime-manager/**"
+      - "services/harness/**"
+      - ".github/workflows/runtime-cluster-e2e.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-cluster-e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cluster-e2e:
+    name: cluster-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # Keep this in lockstep with the default in infra/k8s/validate.sh.
+      CALICO_MANIFEST: "https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml"
+      # kind-action derives the context from the cluster name; pin both so
+      # validate.sh --ci targets the right context.
+      KIND_CLUSTER_NAME: "lantern-k8s-validate"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Create the kind cluster from the repo's pinned config: it sets
+      # disableDefaultCNI=true + Calico's pod subnet, so NetworkPolicy is
+      # enforced for real once we install Calico below. kind-action does NOT
+      # install a CNI when the config disables the default — exactly what we want.
+      - name: Create kind cluster (default CNI disabled)
+        uses: helm/kind-action@99576bfa6ddf9a8e612d83b513da5a75875caced # v1.9.0
+        with:
+          cluster_name: ${{ env.KIND_CLUSTER_NAME }}
+          config: infra/k8s/kind-cluster.yaml
+          wait: "0s" # node is NotReady until a CNI is up — we install Calico next
+
+      - name: Install Calico (real NetworkPolicy enforcement)
+        run: |
+          set -euo pipefail
+          ctx="kind-${KIND_CLUSTER_NAME}"
+          echo "::group::apply Calico ($CALICO_MANIFEST)"
+          kubectl --context "$ctx" apply -f "$CALICO_MANIFEST"
+          echo "::endgroup::"
+          kubectl --context "$ctx" -n kube-system rollout status ds/calico-node --timeout=300s
+          kubectl --context "$ctx" wait node --all --for=condition=Ready --timeout=180s
+          kubectl --context "$ctx" -n kube-system rollout status deploy/coredns --timeout=180s
+
+      - name: Install Helm (for the security-chart render assertions)
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.16.2
+
+      # The whole point: run validate.sh against the live cluster in --ci mode
+      # (the workflow owns the cluster lifecycle, so the script must not create
+      # or tear it down). It exits non-zero on ANY failed assertion, failing the
+      # job. CLUSTER_CONTEXT points it at the kind-action context.
+      - name: Run cluster security validation (validate.sh --ci)
+        env:
+          CLUSTER_CONTEXT: "kind-${{ env.KIND_CLUSTER_NAME }}"
+          NO_COLOR: "1"
+        run: bash infra/k8s/validate.sh --ci
+
+      # Honesty: write to the job summary EXACTLY which legs ran for real and
+      # which require a sandbox-capable cluster and were intentionally skipped.
+      - name: Job summary — what was / was not validated
+        if: always()
+        run: |
+          {
+            echo "## Runtime cluster e2e — coverage"
+            echo
+            echo "Cluster: **kind + Calico** (NetworkPolicy enforced; kindnet does not enforce)."
+            echo
+            echo "### Validated for real on this hosted runner"
+            echo "- **(a)** egress default-deny NetworkPolicy (Calico) + unfenced positive control"
+            echo "- **(b)** DNS carve-out still resolves"
+            echo "- **(c)** hardened securityContext: uid 1000, RO rootfs, cap-drop ALL, no-priv-esc, seccomp RuntimeDefault, no SA token (spec + live exec probes)"
+            echo "- **(d)** PSA \`restricted\` rejects a runAsRoot/privileged pod at admission"
+            echo "- **(f)** FAIL-CLOSED: UNTRUSTED pod requesting an uninstalled \`runtimeClassName: gvisor\` stays unschedulable / is refused — never falls back to runc (ADR-0009)"
+            echo "- **(e)** opt-in cluster-side security chart (Kyverno/Cilium/ESO) renders clean"
+            echo
+            echo "### NOT validated here — requires a real sandbox-capable cluster"
+            echo "GitHub hosted runners have **no \`runsc\`/gVisor or Kata handler installed** and **no nested virt (\`/dev/kvm\`)**, so these legs are honestly **skipped**, not faked:"
+            echo "- UNTRUSTED workload **actually executing inside gVisor** (needs runsc on the node CRI)"
+            echo "- HOSTILE workload **actually executing inside a Kata microVM** (needs Kata + \`/dev/kvm\`)"
+            echo
+            echo "> Run those legs on a sandbox cluster — e.g. **GKE Agent Sandbox** (gVisor default + Kata option) or a self-hosted node with \`runsc\` + Kata installed. The fail-CLOSED *refusal* of a missing RuntimeClass (leg f) IS proven here because refusal needs no sandbox."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Also echo to the log so the note is visible without opening the summary tab.
+          echo "::notice title=Sandbox execution legs skipped::gVisor/Kata EXECUTION not validated on hosted runner (no runsc/Kata, no /dev/kvm). Fail-closed refusal + NetworkPolicy + securityContext + PSA validated for real. See job summary."

@@ -1501,6 +1501,21 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         // `tls::build_server_tls_config`, so the cert is always present there.
         let peer_cert_der = crate::tls::extract_peer_cert_der(&request);
 
+        // Extract the agent-instance Bearer token from gRPC metadata BEFORE
+        // consuming the request with `into_inner()` (metadata is lost after
+        // that call). The harness attaches this as
+        //   authorization: Bearer <LANTERN_AGENT_INSTANCE_TOKEN>
+        // when the env var is present. We forward it to the relay so the
+        // control-plane can perform a secondary identity check. Absent →
+        // `None` (unchanged shared-token-only path). Never logged.
+        let agent_bearer: Option<String> = request
+            .metadata()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+
         let req = request.into_inner();
 
         if self.mtls_enabled
@@ -1537,9 +1552,11 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         }
 
         // Step 3: resolve the plaintext value.
+        // Forward the agent-instance Bearer (if present) so the relay can
+        // pass it to the control-plane for secondary identity verification.
         let value = self
             .secret_resolver
-            .resolve(&req.secret_uri)
+            .resolve(&req.secret_uri, agent_bearer.as_deref())
             .await
             .map_err(|e| {
                 tracing::error!(
