@@ -130,4 +130,73 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           # Also echo to the log so the note is visible without opening the summary tab.
-          echo "::notice title=Sandbox execution legs skipped::gVisor/Kata EXECUTION not validated on hosted runner (no runsc/Kata, no /dev/kvm). Fail-closed refusal + NetworkPolicy + securityContext + PSA validated for real. See job summary."
+          echo "::notice title=Sandbox execution legs skipped::gVisor/Kata EXECUTION not validated on hosted runner (no runsc/Kata, no /dev/kvm). Fail-closed refusal + NetworkPolicy + securityContext + PSA validated for real. See job summary. Run the execution legs via workflow_dispatch with a CLUSTER_E2E_KUBECONFIG_B64 secret."
+
+  # ---------------------------------------------------------------------------
+  # Execution legs (g/h/i): untrusted-runs-on-gVisor, hostile-in-Kata-microVM,
+  # hostile-node-is-dedicated. These need a REAL sandbox-capable cluster (runsc +
+  # Kata), which GitHub-hosted runners cannot provide. So this job runs ONLY on
+  # manual workflow_dispatch AND only when a kubeconfig secret is present —
+  # otherwise it no-ops with an honest notice (never a fake green, never a hard
+  # fail for the common "no cluster configured" case).
+  #
+  # To enable: run infra/k8s/gke-agent-sandbox-setup.sh, base64 the kubeconfig,
+  # store it as the repo secret CLUSTER_E2E_KUBECONFIG_B64, then dispatch this
+  # workflow. validate.sh --ci --execution exits non-zero on any failed leg.
+  # ---------------------------------------------------------------------------
+  cluster-e2e-execution:
+    name: cluster-e2e-execution (real gVisor/Kata)
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Gate on the secret WITHOUT referencing it in a job-level if (not allowed):
+      # set an output, and skip the real steps when it's absent.
+      - name: Check for cluster kubeconfig secret
+        id: gate
+        env:
+          KUBECONFIG_B64: ${{ secrets.CLUSTER_E2E_KUBECONFIG_B64 }}
+        run: |
+          if [ -n "$KUBECONFIG_B64" ]; then
+            echo "have_cluster=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_cluster=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Execution legs skipped::No CLUSTER_E2E_KUBECONFIG_B64 secret set — provision a gVisor/Kata cluster (infra/k8s/gke-agent-sandbox-setup.sh) and store its base64 kubeconfig to run the execution legs."
+            {
+              echo "## Execution legs (g/h/i) — skipped"
+              echo "No \`CLUSTER_E2E_KUBECONFIG_B64\` secret is configured, so the real gVisor/Kata execution legs did not run."
+              echo "Set up a cluster with \`infra/k8s/gke-agent-sandbox-setup.sh\` and store its base64 kubeconfig as that secret to enable them."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Install kubectl
+        if: ${{ steps.gate.outputs.have_cluster == 'true' }}
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
+
+      - name: Write kubeconfig + run execution legs
+        if: ${{ steps.gate.outputs.have_cluster == 'true' }}
+        env:
+          KUBECONFIG_B64: ${{ secrets.CLUSTER_E2E_KUBECONFIG_B64 }}
+          NO_COLOR: "1"
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "$KUBECONFIG_B64" | base64 -d > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+          export KUBECONFIG="$HOME/.kube/config"
+          # The cluster context is whatever the provided kubeconfig's current-context is.
+          ctx="$(kubectl config current-context)"
+          echo "Using cluster context: $ctx"
+          CLUSTER_CONTEXT="$ctx" bash infra/k8s/validate.sh --ci --execution
+
+      - name: Execution-legs summary
+        if: ${{ always() && steps.gate.outputs.have_cluster == 'true' }}
+        run: |
+          {
+            echo "## Execution legs (g/h/i) — ran against a real cluster"
+            echo "- **(g)** UNTRUSTED workload runs INSIDE gVisor (runsc), proven via /proc/version or a gvisor-labelled node"
+            echo "- **(h)** HOSTILE workload runs INSIDE a Kata microVM, proven by guest kernel != host kernel"
+            echo "- **(i)** the HOSTILE node is dedicated — no cross-tenant co-tenancy"
+            echo
+            echo "See the job log for per-assertion PASS/FAIL."
+          } >> "$GITHUB_STEP_SUMMARY"

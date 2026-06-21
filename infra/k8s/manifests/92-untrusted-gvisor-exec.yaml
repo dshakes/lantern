@@ -1,0 +1,57 @@
+# Execution leg (g): an UNTRUSTED workload that must run INSIDE gVisor.
+#
+# Unlike 91-untrusted-missing-runtimeclass.yaml (which asserts the fail-closed
+# REFUSAL when the sandbox is absent), this manifest is applied only by
+# `validate.sh --execution` against a cluster where the `gvisor` RuntimeClass +
+# its `runsc` handler ARE installed on a gvisor-labelled node pool. The probe
+# reads /proc/version (gVisor stamps "gVisor" there) and then idles briefly so
+# the validator can exec into it.
+#
+# Mirrors the hardened pod spec the runtime-manager emits in build_job()
+# (services/runtime-manager/src/backends/k8s.rs): non-root, RO rootfs,
+# cap-drop ALL, seccomp RuntimeDefault, no SA token, and node affinity onto the
+# gvisor-labelled pool.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: untrusted-gvisor-exec
+  namespace: lantern-t-validate
+  labels:
+    lantern.dev/run-id: run-validate-gvisor
+    lantern.dev/isolation: untrusted
+spec:
+  runtimeClassName: gvisor
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: lantern.dev/runtimeclass
+                operator: In
+                values: ["gvisor"]
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: probe
+      image: busybox:1.36
+      command: ["/bin/sh", "-c"]
+      # Print the sandbox kernel marker, then idle so the validator can exec.
+      args:
+        - |
+          echo "[gvisor-probe] /proc/version:"; cat /proc/version || true
+          sleep 120
+      resources:
+        requests: { cpu: "50m", memory: "32Mi" }
+        limits: { cpu: "100m", memory: "64Mi" }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
