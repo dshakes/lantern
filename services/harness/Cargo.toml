@@ -18,6 +18,14 @@ prost = "0.13"
 prost-types = "0.13"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# OpenTelemetry — W3C trace-context propagation so the in-VM harness joins
+# the distributed trace started by the control-plane at spawn time.
+# No OTLP exporter here: the harness forwards raw OTLP bytes via the Report
+# stream, so the OTel pipeline for workload spans is in the workload itself.
+# We only need the propagation API to read LANTERN_TRACE_PARENT and inject
+# traceparent into outgoing gRPC calls to the manager.
+opentelemetry = { version = "0.27", features = ["trace"] }
+opentelemetry_sdk = { version = "0.27" }
 # "term" pulls in nix::pty (openpty + Winsize) for interactive `vm exec -t`.
 nix = { version = "0.29", features = ["signal", "process", "term"] }
 libc = "0.2"

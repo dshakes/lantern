@@ -99,6 +99,10 @@ type completionResponse struct {
 	CostUsd      float64 `json:"costUsd"`
 	Provider     string  `json:"provider"`
 	FinishReason string  `json:"finishReason"`
+	// Extended FinOps fields — zero when not reported by the provider.
+	ReasoningTokens  int64 `json:"reasoningTokens,omitempty"`
+	CacheReadTokens  int64 `json:"cacheReadTokens,omitempty"`
+	CacheWriteTokens int64 `json:"cacheWriteTokens,omitempty"`
 }
 
 // ---------- Provider key resolution ----------
@@ -246,6 +250,25 @@ func callClaudeCode(ctx context.Context, prompt string) (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 
+// LLMUsageDetail carries extended per-call token counts that go beyond the
+// basic input/output split. Fields are zero when not reported by the provider.
+//
+// OpenAI o-series:   ReasoningTokens from completion_tokens_details.reasoning_tokens.
+// OpenAI (any):      CacheReadTokens from prompt_tokens_details.cached_tokens.
+// Anthropic:         CacheReadTokens from cache_read_input_tokens;
+//
+//	CacheWriteTokens from cache_creation_input_tokens.
+//
+// Cost note: cache-read tokens are billed at a fraction of normal input tokens
+// (~0.1× for Anthropic, ~0.5× for OpenAI). estimateCost uses only the base
+// input/output counts so it slightly over-estimates on cache-heavy calls.
+// Recording the token counts here allows future FinOps tooling to correct that.
+type LLMUsageDetail struct {
+	ReasoningTokens  int64 // output tokens that are "thinking" tokens (o-series)
+	CacheReadTokens  int64 // input tokens served from the provider's prompt cache
+	CacheWriteTokens int64 // input tokens written into the prompt cache (Anthropic)
+}
+
 // callLLMSync makes a synchronous (non-streaming) LLM call and returns the
 // result text along with usage metrics. Used by the inline run executor.
 //
@@ -255,13 +278,38 @@ func callClaudeCode(ctx context.Context, prompt string) (string, error) {
 // Lantern-specific lantern.cost_usd attribute. Spans are recorded only when
 // a real TracerProvider is installed; the default no-op provider makes this
 // a zero-cost no-op.
+//
+// Extended cache/reasoning counts are set as additional span attributes:
+//
+//	gen_ai.usage.reasoning_tokens
+//	lantern.usage.cache_read_tokens
+//	lantern.usage.cache_write_tokens
 func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiKey, prompt string) (result string, tokensIn, tokensOut int64, costUsd float64, err error) {
+	_, _, _, _, _ = h.callLLMSyncDetailed(ctx, provider, model, apiKey, prompt,
+		func(r string, ti, to int64, c float64, d LLMUsageDetail, e error) {
+			result, tokensIn, tokensOut, costUsd, err = r, ti, to, c, e
+		},
+	)
+	return
+}
+
+// callLLMSyncDetailed is the full-detail variant of callLLMSync. It invokes
+// the provided callback with the result + extended usage detail so callers
+// that care about reasoning/cache tokens can consume them without an extra
+// round trip. callLLMSync wraps this for backward-compat.
+func (h *LlmProxyHandler) callLLMSyncDetailed(
+	ctx context.Context,
+	provider, model, apiKey, prompt string,
+	cb func(result string, tokensIn, tokensOut int64, costUsd float64, detail LLMUsageDetail, err error),
+) (result string, tokensIn, tokensOut int64, costUsd float64, err error) {
 	tracer := otel.Tracer("lantern.control-plane")
 	spanName := "chat " + model
 	if model == "" {
 		spanName = "chat " + provider
 	}
 	ctx, span := tracer.Start(ctx, spanName)
+
+	var detail LLMUsageDetail
 	defer func() {
 		if err != nil {
 			span.RecordError(err)
@@ -269,7 +317,7 @@ func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiK
 		} else {
 			span.SetStatus(codes.Ok, "")
 		}
-		// Set usage attributes after the call so we have the real values.
+		// Core GenAI semconv attributes.
 		span.SetAttributes(
 			attribute.String("gen_ai.system", provider),
 			attribute.String("gen_ai.request.model", model),
@@ -278,7 +326,16 @@ func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiK
 			attribute.Int64("gen_ai.usage.output_tokens", tokensOut),
 			attribute.Float64("lantern.cost_usd", costUsd),
 		)
+		// Extended FinOps attributes (zero when not applicable).
+		span.SetAttributes(
+			attribute.Int64("gen_ai.usage.reasoning_tokens", detail.ReasoningTokens),
+			attribute.Int64("lantern.usage.cache_read_tokens", detail.CacheReadTokens),
+			attribute.Int64("lantern.usage.cache_write_tokens", detail.CacheWriteTokens),
+		)
 		span.End()
+		if cb != nil {
+			cb(result, tokensIn, tokensOut, costUsd, detail, err)
+		}
 	}()
 
 	// Local Claude Code path. apiKey is ignored — auth is via the user's
@@ -286,8 +343,10 @@ func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiK
 	// not reported by the CLI so we return zeros (caller can still log
 	// the model name as 'claude-code/local' for visibility).
 	if provider == "claude-code" {
-		text, err := callClaudeCode(ctx, prompt)
-		return text, 0, 0, 0, err
+		var callErr error
+		result, callErr = callClaudeCode(ctx, prompt)
+		err = callErr
+		return
 	}
 
 	switch provider {
@@ -307,7 +366,8 @@ func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiK
 
 		resp, httpErr := http.DefaultClient.Do(req)
 		if httpErr != nil {
-			return "", 0, 0, 0, httpErr
+			err = httpErr
+			return
 		}
 		defer resp.Body.Close()
 
@@ -320,18 +380,37 @@ func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiK
 			Usage struct {
 				PromptTokens     int64 `json:"prompt_tokens"`
 				CompletionTokens int64 `json:"completion_tokens"`
+				// o-series extended breakdown.
+				CompletionTokensDetails *struct {
+					ReasoningTokens int64 `json:"reasoning_tokens"`
+				} `json:"completion_tokens_details,omitempty"`
+				// Prompt caching.
+				PromptTokensDetails *struct {
+					CachedTokens int64 `json:"cached_tokens"`
+				} `json:"prompt_tokens_details,omitempty"`
 			} `json:"usage"`
 		}
 		if decErr := json.NewDecoder(resp.Body).Decode(&oaiResp); decErr != nil {
-			return "", 0, 0, 0, decErr
+			err = decErr
+			return
 		}
 		if len(oaiResp.Choices) == 0 {
-			return "", 0, 0, 0, fmt.Errorf("no choices in response")
+			err = fmt.Errorf("no choices in response")
+			return
 		}
 		tin := oaiResp.Usage.PromptTokens
 		tout := oaiResp.Usage.CompletionTokens
-		cost := float64(tin)*2.5/1_000_000 + float64(tout)*10.0/1_000_000
-		return oaiResp.Choices[0].Message.Content, tin, tout, cost, nil
+		if oaiResp.Usage.CompletionTokensDetails != nil {
+			detail.ReasoningTokens = oaiResp.Usage.CompletionTokensDetails.ReasoningTokens
+		}
+		if oaiResp.Usage.PromptTokensDetails != nil {
+			detail.CacheReadTokens = oaiResp.Usage.PromptTokensDetails.CachedTokens
+		}
+		result = oaiResp.Choices[0].Message.Content
+		tokensIn = tin
+		tokensOut = tout
+		costUsd = float64(tin)*2.5/1_000_000 + float64(tout)*10.0/1_000_000
+		return
 
 	case "anthropic":
 		reqBody := map[string]any{
@@ -350,7 +429,8 @@ func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiK
 
 		resp, httpErr := http.DefaultClient.Do(req)
 		if httpErr != nil {
-			return "", 0, 0, 0, httpErr
+			err = httpErr
+			return
 		}
 		defer resp.Body.Close()
 
@@ -359,23 +439,33 @@ func (h *LlmProxyHandler) callLLMSync(ctx context.Context, provider, model, apiK
 				Text string `json:"text"`
 			} `json:"content"`
 			Usage struct {
-				InputTokens  int64 `json:"input_tokens"`
-				OutputTokens int64 `json:"output_tokens"`
+				InputTokens              int64 `json:"input_tokens"`
+				OutputTokens             int64 `json:"output_tokens"`
+				CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		}
 		if decErr := json.NewDecoder(resp.Body).Decode(&antResp); decErr != nil {
-			return "", 0, 0, 0, decErr
+			err = decErr
+			return
 		}
 		if len(antResp.Content) == 0 {
-			return "", 0, 0, 0, fmt.Errorf("no content in response")
+			err = fmt.Errorf("no content in response")
+			return
 		}
 		tin := antResp.Usage.InputTokens
 		tout := antResp.Usage.OutputTokens
-		cost := float64(tin)*3.0/1_000_000 + float64(tout)*15.0/1_000_000
-		return antResp.Content[0].Text, tin, tout, cost, nil
+		detail.CacheReadTokens = antResp.Usage.CacheReadInputTokens
+		detail.CacheWriteTokens = antResp.Usage.CacheCreationInputTokens
+		result = antResp.Content[0].Text
+		tokensIn = tin
+		tokensOut = tout
+		costUsd = float64(tin)*3.0/1_000_000 + float64(tout)*15.0/1_000_000
+		return
 
 	default:
-		return "", 0, 0, 0, fmt.Errorf("unsupported provider: %s", provider)
+		err = fmt.Errorf("unsupported provider: %s", provider)
+		return
 	}
 }
 
@@ -1260,6 +1350,14 @@ func (h *LlmProxyHandler) handleOpenAISyncResponse(w http.ResponseWriter, resp *
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
+			// o-series extended breakdown.
+			CompletionTokensDetails *struct {
+				ReasoningTokens int64 `json:"reasoning_tokens"`
+			} `json:"completion_tokens_details,omitempty"`
+			// Prompt caching.
+			PromptTokensDetails *struct {
+				CachedTokens int64 `json:"cached_tokens"`
+			} `json:"prompt_tokens_details,omitempty"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -1276,7 +1374,7 @@ func (h *LlmProxyHandler) handleOpenAISyncResponse(w http.ResponseWriter, resp *
 
 	costUsd := estimateCost("openai", model, result.Usage.PromptTokens, result.Usage.CompletionTokens)
 
-	writeJSON(w, http.StatusOK, completionResponse{
+	cr := completionResponse{
 		Model:        model,
 		Content:      content,
 		TokensIn:     result.Usage.PromptTokens,
@@ -1284,7 +1382,14 @@ func (h *LlmProxyHandler) handleOpenAISyncResponse(w http.ResponseWriter, resp *
 		CostUsd:      costUsd,
 		Provider:     "openai",
 		FinishReason: finishReason,
-	})
+	}
+	if result.Usage.CompletionTokensDetails != nil {
+		cr.ReasoningTokens = result.Usage.CompletionTokensDetails.ReasoningTokens
+	}
+	if result.Usage.PromptTokensDetails != nil {
+		cr.CacheReadTokens = result.Usage.PromptTokensDetails.CachedTokens
+	}
+	writeJSON(w, http.StatusOK, cr)
 }
 
 func (h *LlmProxyHandler) streamOpenAIResponse(w http.ResponseWriter, resp *http.Response, model string) {
@@ -1436,8 +1541,10 @@ func (h *LlmProxyHandler) handleAnthropicSyncResponse(w http.ResponseWriter, res
 		} `json:"content"`
 		StopReason string `json:"stop_reason"`
 		Usage      struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
+			InputTokens              int   `json:"input_tokens"`
+			OutputTokens             int   `json:"output_tokens"`
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -1455,13 +1562,15 @@ func (h *LlmProxyHandler) handleAnthropicSyncResponse(w http.ResponseWriter, res
 	costUsd := estimateCost("anthropic", model, result.Usage.InputTokens, result.Usage.OutputTokens)
 
 	writeJSON(w, http.StatusOK, completionResponse{
-		Model:        model,
-		Content:      content,
-		TokensIn:     result.Usage.InputTokens,
-		TokensOut:    result.Usage.OutputTokens,
-		CostUsd:      costUsd,
-		Provider:     "anthropic",
-		FinishReason: result.StopReason,
+		Model:            model,
+		Content:          content,
+		TokensIn:         result.Usage.InputTokens,
+		TokensOut:        result.Usage.OutputTokens,
+		CostUsd:          costUsd,
+		Provider:         "anthropic",
+		FinishReason:     result.StopReason,
+		CacheReadTokens:  result.Usage.CacheReadInputTokens,
+		CacheWriteTokens: result.Usage.CacheCreationInputTokens,
 	})
 }
 

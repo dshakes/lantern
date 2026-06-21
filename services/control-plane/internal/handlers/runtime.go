@@ -442,6 +442,12 @@ func newID() string {
 
 // ---------- Handler ----------
 
+// vmMetricsStore is the minimal interface the RuntimeHandler needs to read
+// the latest prometheus payload per VM. RuntimeReportHandler implements it.
+type vmMetricsStore interface {
+	LatestVMMetrics(tenantID string) []*vmMetricsEntry
+}
+
 // RuntimeHandler implements the REST surface for headless agent runtime
 // governance. Mounted under /v1/runtime/* in cmd/server/main.go.
 type RuntimeHandler struct {
@@ -450,10 +456,15 @@ type RuntimeHandler struct {
 	scheduler    SchedulerClient
 	identity     *agentidentity.Issuer
 	spawnLimiter *SpawnRateLimiter // per-tenant spawn-storm guard (nil = disabled)
+	metricsStore vmMetricsStore    // optional; nil when report handler not wired
 }
 
 // SetSpawnLimiter wires the per-tenant spawn rate limiter (phase 3). nil-safe.
 func (h *RuntimeHandler) SetSpawnLimiter(l *SpawnRateLimiter) { h.spawnLimiter = l }
+
+// SetMetricsStore wires the prometheus-metrics in-memory store from
+// RuntimeReportHandler so LiveMetrics can surface per-VM counters. nil-safe.
+func (h *RuntimeHandler) SetMetricsStore(s vmMetricsStore) { h.metricsStore = s }
 
 // NewRuntimeHandler constructs a RuntimeHandler. If LANTERN_SCHEDULER_GRPC_ADDR
 // is set the real gRPC client is dialed; otherwise the stub is used so a
@@ -1535,6 +1546,113 @@ func (h *RuntimeHandler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"events":     out,
 		"nextBefore": nextBefore,
+	})
+}
+
+// ---------- Live metrics ----------
+
+// vmMetricsDTO is the per-VM payload returned by GET /v1/runtime/metrics.
+// It combines the shadow row from runtime_vms with the most-recent prometheus
+// text forwarded from the harness (when available).
+type vmMetricsDTO struct {
+	VmID           string     `json:"vmId"`
+	State          string     `json:"state"`
+	Node           *string    `json:"node,omitempty"`
+	Az             *string    `json:"az,omitempty"`
+	IsolationClass *string    `json:"isolationClass,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	TerminatedAt   *time.Time `json:"terminatedAt,omitempty"`
+	// LastAuditAction is the most recent audit event action for this VM.
+	// Gives a quick "what happened last" without fetching the full event list.
+	LastAuditAction *string    `json:"lastAuditAction,omitempty"`
+	LastAuditAt     *time.Time `json:"lastAuditAt,omitempty"`
+	// PromMetrics is the raw Prometheus exposition text last forwarded by
+	// the harness via POST /v1/runtime/report (kind=prometheus_metrics).
+	// Empty when no metrics have been received or the VM has terminated.
+	PromMetrics    string     `json:"promMetrics,omitempty"`
+	PromReceivedAt *time.Time `json:"promReceivedAt,omitempty"`
+}
+
+// LiveMetrics handles GET /v1/runtime/metrics.
+// Returns per-VM live stats for the caller's tenant, combining:
+//   - runtime_vms shadow rows (state, placement, isolation)
+//   - most-recent runtime_audit_events action per VM
+//   - latest prometheus metrics forwarded by the harness
+//
+// Requires runtime:read scope.
+func (h *RuntimeHandler) LiveMetrics(w http.ResponseWriter, r *http.Request) {
+	claims, err := h.auth.validateRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
+		return
+	}
+	ctx := r.Context()
+	tenantID := claims.TenantID
+
+	// Fetch all VMs for the tenant, most-recently-created first.
+	rows, err := h.srv.Pool.Query(ctx, `
+		SELECT v.vm_id, v.state, v.node, v.az, v.isolation_class,
+		       v.created_at, v.terminated_at,
+		       a.action, a.at
+		FROM runtime_vms v
+		LEFT JOIN LATERAL (
+			SELECT action, at
+			FROM runtime_audit_events
+			WHERE tenant_id = $1 AND vm_id = v.vm_id
+			ORDER BY at DESC
+			LIMIT 1
+		) a ON true
+		WHERE v.tenant_id = $1
+		ORDER BY v.created_at DESC
+		LIMIT 200
+	`, tenantID)
+	if err != nil {
+		h.logger().Error("live metrics: query failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
+	defer rows.Close()
+
+	out := make([]vmMetricsDTO, 0)
+	for rows.Next() {
+		var dto vmMetricsDTO
+		var auditAction *string
+		var auditAt *time.Time
+		if err := rows.Scan(
+			&dto.VmID, &dto.State, &dto.Node, &dto.Az, &dto.IsolationClass,
+			&dto.CreatedAt, &dto.TerminatedAt,
+			&auditAction, &auditAt,
+		); err != nil {
+			continue
+		}
+		dto.LastAuditAction = auditAction
+		dto.LastAuditAt = auditAt
+		out = append(out, dto)
+	}
+	rows.Close()
+
+	// Overlay the latest prometheus metrics from the in-memory store.
+	if h.metricsStore != nil {
+		latest := h.metricsStore.LatestVMMetrics(tenantID)
+		byVM := make(map[string]*vmMetricsEntry, len(latest))
+		for _, e := range latest {
+			byVM[e.VmID] = e
+		}
+		for i := range out {
+			if e, ok := byVM[out[i].VmID]; ok {
+				out[i].PromMetrics = e.PromText
+				t := e.ReceivedAt
+				out[i].PromReceivedAt = &t
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tenantId": tenantID,
+		"vms":      out,
 	})
 }
 

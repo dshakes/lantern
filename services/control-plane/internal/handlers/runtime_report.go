@@ -47,6 +47,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -131,6 +132,17 @@ type reportAudit struct {
 
 // ---------- Handler ----------
 
+// vmMetricsEntry holds the most-recently received prometheus metrics payload
+// for a single VM. The payload is the raw base64-decoded Prometheus exposition
+// text forwarded from the harness. Fields are written once per kind=prometheus_metrics
+// report call; concurrent reads come from LiveMetrics.
+type vmMetricsEntry struct {
+	TenantID   string
+	VmID       string
+	PromText   string // raw Prometheus exposition text (decoded from PromB64)
+	ReceivedAt time.Time
+}
+
 // RuntimeReportHandler exposes POST /v1/runtime/report.
 // It is a distinct type from RuntimeHandler (which owns /v1/runtime/vms/*
 // and /v1/runtime/schedule) so that the surface area of the inbound
@@ -142,14 +154,40 @@ type RuntimeReportHandler struct {
 	authFailMu sync.Mutex
 	// authFailures tracks per-IP auth failure timestamps for rate-limiting.
 	authFailures map[string][]time.Time
+
+	// metricsMu guards metricsLatest.
+	metricsMu sync.RWMutex
+	// metricsLatest holds the most-recently received prometheus payload per
+	// vm_id (keyed "tenantID/vmID" for O(1) lookup and clean eviction).
+	// Entries are evicted periodically by sweepTerminatedVMMetrics, which
+	// runs inside RunLogRetentionJanitor alongside the log-row sweep.
+	metricsLatest map[string]*vmMetricsEntry
 }
 
 // NewRuntimeReportHandler constructs a RuntimeReportHandler.
 func NewRuntimeReportHandler(srv *server.Server) *RuntimeReportHandler {
 	return &RuntimeReportHandler{
-		srv:          srv,
-		authFailures: make(map[string][]time.Time),
+		srv:           srv,
+		authFailures:  make(map[string][]time.Time),
+		metricsLatest: make(map[string]*vmMetricsEntry),
 	}
+}
+
+// LatestVMMetrics returns a snapshot of the most-recently received prometheus
+// payload for VMs belonging to tenantID. The returned slice is a copy —
+// callers may mutate it freely.
+func (h *RuntimeReportHandler) LatestVMMetrics(tenantID string) []*vmMetricsEntry {
+	h.metricsMu.RLock()
+	defer h.metricsMu.RUnlock()
+	out := make([]*vmMetricsEntry, 0)
+	prefix := tenantID + "/"
+	for k, e := range h.metricsLatest {
+		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
+			cp := *e
+			out = append(out, &cp)
+		}
+	}
+	return out
 }
 
 func (h *RuntimeReportHandler) logger() *zap.Logger {
@@ -455,17 +493,41 @@ func (h *RuntimeReportHandler) Report(w http.ResponseWriter, r *http.Request) {
 		)
 
 	case reportKindProm:
-		// TODO(report-prometheus): scrape / push the base64-decoded Prometheus
-		// exposition text to a Prometheus remote-write endpoint or a push-
-		// gateway. For now we record receipt with a debug log.
-		h.logger().Debug("runtime report: prometheus_metrics received (not yet forwarded)",
+		// Decode and store the latest prometheus exposition text for this VM.
+		// The LiveMetrics endpoint reads these for the cockpit view.
+		// Full remote-write forwarding is a TODO(report-prometheus).
+		decoded := decodePromPayload(req.PromB64)
+		key := req.TenantID + "/" + req.VmID
+		h.metricsMu.Lock()
+		h.metricsLatest[key] = &vmMetricsEntry{
+			TenantID:   req.TenantID,
+			VmID:       req.VmID,
+			PromText:   decoded,
+			ReceivedAt: time.Now().UTC(),
+		}
+		h.metricsMu.Unlock()
+		h.logger().Debug("runtime report: prometheus_metrics stored",
 			zap.String("vm_id", req.VmID),
 			zap.String("tenant_id", req.TenantID),
-			zap.Int("payload_b64_len", len(req.PromB64)),
+			zap.Int("text_len", len(decoded)),
 		)
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+}
+
+// decodePromPayload tries base64-standard decoding of s. If decoding fails
+// (e.g. the harness sent raw exposition text directly), the raw string is
+// returned as-is. Empty input returns "".
+func decodePromPayload(s string) string {
+	if s == "" {
+		return ""
+	}
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return s // treat as raw text
+	}
+	return string(b)
 }
 
 // ---------- Log-retention janitor ----------
@@ -497,6 +559,64 @@ func logRetentionDays() int {
 		return defaultLogRetentionDays
 	}
 	return n
+}
+
+// sweepTerminatedVMMetrics removes entries from metricsLatest whose VM is in a
+// terminal state (terminated/failed) in runtime_vms, or whose vm_id no longer
+// exists in that table at all. This prevents the map from growing without
+// bound as VMs come and go. Called from RunLogRetentionJanitor.
+//
+// If the pool is nil (unit-test environments) the method is a no-op.
+// Returns the number of entries evicted.
+func (h *RuntimeReportHandler) sweepTerminatedVMMetrics(ctx context.Context) int {
+	if h.srv.Pool == nil {
+		return 0
+	}
+
+	// Snapshot the current vm_ids under a read lock; release before the DB call
+	// so we don't hold the lock across I/O.
+	h.metricsMu.RLock()
+	vmIDs := make([]string, 0, len(h.metricsLatest))
+	for _, e := range h.metricsLatest {
+		vmIDs = append(vmIDs, e.VmID)
+	}
+	h.metricsMu.RUnlock()
+
+	if len(vmIDs) == 0 {
+		return 0
+	}
+
+	// Ask the DB which of these vm_ids are in a non-terminal (live) state.
+	// Any vm_id NOT in the result set is either terminal or absent → evict.
+	rows, err := h.srv.Pool.Query(ctx, `
+		SELECT vm_id FROM runtime_vms
+		WHERE vm_id = ANY($1)
+		  AND state NOT IN ('terminated', 'failed')
+	`, vmIDs)
+	if err != nil {
+		h.logger().Warn("sweepTerminatedVMMetrics: db query failed", zap.Error(err))
+		return 0
+	}
+	liveVMs := make(map[string]struct{}, len(vmIDs))
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			liveVMs[id] = struct{}{}
+		}
+	}
+	rows.Close()
+
+	// Evict under write lock.
+	h.metricsMu.Lock()
+	evicted := 0
+	for k, e := range h.metricsLatest {
+		if _, live := liveVMs[e.VmID]; !live {
+			delete(h.metricsLatest, k)
+			evicted++
+		}
+	}
+	h.metricsMu.Unlock()
+	return evicted
 }
 
 // sweepOldLogs deletes runtime_vm_logs rows older than the configured window.
@@ -537,8 +657,9 @@ func (h *RuntimeReportHandler) RunLogRetentionJanitor(ctx context.Context) {
 			return
 		case <-ticker.C:
 			sweepCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+
+			// Sweep old log rows.
 			n, err := h.sweepOldLogs(sweepCtx)
-			cancel()
 			if err != nil {
 				log.Warn("runtime_vm_logs sweep failed", zap.Error(err))
 			} else if n > 0 {
@@ -547,6 +668,16 @@ func (h *RuntimeReportHandler) RunLogRetentionJanitor(ctx context.Context) {
 					zap.Int("retention_days", logRetentionDays()),
 				)
 			}
+
+			// Evict in-memory prometheus metrics for terminated/absent VMs.
+			evicted := h.sweepTerminatedVMMetrics(sweepCtx)
+			if evicted > 0 {
+				log.Info("prometheus metrics store: evicted terminal-VM entries",
+					zap.Int("evicted", evicted),
+				)
+			}
+
+			cancel()
 		}
 	}
 }

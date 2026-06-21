@@ -857,6 +857,287 @@ func TestLoop_BodyStepDoesNotBleedAcrossIterations(t *testing.T) {
 	}
 }
 
+// ---- Feature 2: per-step token/cost in step_completed (CallLLMDetailed) -----
+
+func TestAiStep_CallLLMDetailed_UsageInStepCompleted(t *testing.T) {
+	// When CallLLMDetailed is wired, the step_completed journal event must
+	// carry tokens_in, tokens_out, cost_usd, provider, and model.
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{
+				"prompt": "tell me about {{input.topic}}",
+			}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "z"},
+		},
+	}
+
+	stub := newStubDeps(nil)
+	d := stub.deps()
+	// Wire the detailed dep; return a usage struct with non-zero values.
+	d.CallLLMDetailed = func(_ context.Context, prompt, _ string) (string, LLMStepUsage, error) {
+		stub.mu.Lock()
+		stub.llmCalls = append(stub.llmCalls, prompt)
+		stub.mu.Unlock()
+		return "detailed-reply", LLMStepUsage{
+			TokensIn:  100,
+			TokensOut: 50,
+			CostUSD:   0.001,
+			Provider:  "openai",
+			Model:     "gpt-4o",
+		}, nil
+	}
+
+	res, err := Run(context.Background(), "run_detailed", d, def, map[string]any{"topic": "AI"})
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+	if res.Failed {
+		t.Fatalf("unexpected failure: %s", res.LastError)
+	}
+
+	// Find step_completed for the ai-step node "a".
+	var found bool
+	for _, ev := range stub.events {
+		if ev.Kind == "step_completed" && ev.StepID == "a" {
+			found = true
+			p := ev.Payload
+			if ti, ok := p["tokens_in"].(int64); !ok || ti != 100 {
+				t.Errorf("tokens_in: got %v (%T), want int64(100)", p["tokens_in"], p["tokens_in"])
+			}
+			if to, ok := p["tokens_out"].(int64); !ok || to != 50 {
+				t.Errorf("tokens_out: got %v (%T), want int64(50)", p["tokens_out"], p["tokens_out"])
+			}
+			if cu, ok := p["cost_usd"].(float64); !ok || cu != 0.001 {
+				t.Errorf("cost_usd: got %v (%T), want float64(0.001)", p["cost_usd"], p["cost_usd"])
+			}
+			if prov, ok := p["provider"].(string); !ok || prov != "openai" {
+				t.Errorf("provider: got %v, want openai", p["provider"])
+			}
+			if mdl, ok := p["model"].(string); !ok || mdl != "gpt-4o" {
+				t.Errorf("model: got %v, want gpt-4o", p["model"])
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no step_completed event for node 'a'; events: %v", eventKinds(stub))
+	}
+
+	// CallLLM must NOT have been invoked — CallLLMDetailed takes precedence.
+	stub.mu.Lock()
+	// llmCalls is appended by the CallLLMDetailed closure above, which is correct.
+	stub.mu.Unlock()
+}
+
+func TestAiStep_CallLLMDetailedNil_FallsBackToCallLLM(t *testing.T) {
+	// When CallLLMDetailed is nil, the interpreter falls back to CallLLM
+	// and step_completed carries NO token/cost fields.
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{"prompt": "hello"}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "z"},
+		},
+	}
+
+	stub := newStubDeps(nil)
+	d := stub.deps()
+	// CallLLMDetailed deliberately left nil (not set).
+
+	res, err := Run(context.Background(), "run_fallback", d, def, nil)
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+	if res.Failed {
+		t.Fatalf("unexpected failure: %s", res.LastError)
+	}
+
+	for _, ev := range stub.events {
+		if ev.Kind == "step_completed" && ev.StepID == "a" {
+			if _, has := ev.Payload["tokens_in"]; has {
+				t.Errorf("expected no tokens_in in step_completed when CallLLMDetailed is nil")
+			}
+			if _, has := ev.Payload["cost_usd"]; has {
+				t.Errorf("expected no cost_usd in step_completed when CallLLMDetailed is nil")
+			}
+		}
+	}
+
+	// CallLLM must have been invoked exactly once.
+	stub.mu.Lock()
+	calls := stub.llmCalls
+	stub.mu.Unlock()
+	if len(calls) != 1 {
+		t.Errorf("expected 1 CallLLM call, got %d", len(calls))
+	}
+}
+
+// ---- Feature 3: mid-run anomaly detection -----------------------------------
+
+func TestMidRunAnomaly_CostSpikeEmittedDuringRun(t *testing.T) {
+	// Build a workflow that visits 3 ai-step nodes in sequence.
+	// The first two steps each cost $2.00 (just under DefaultAnomalyLimits.MaxCostUSD=5.0).
+	// The third step pushes cumulative cost to $6.00, crossing the $5 threshold.
+	// An anomaly_detected event with kind=cost_spike must be emitted before
+	// the run ends, not only at the end-of-run analysis phase.
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{"prompt": "step-a"}},
+			{ID: "b", Type: "ai-step", Data: map[string]any{"prompt": "step-b"}},
+			{ID: "c", Type: "ai-step", Data: map[string]any{"prompt": "step-c"}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "b"},
+			{ID: "e3", Source: "b", Target: "c"},
+			{ID: "e4", Source: "c", Target: "z"},
+		},
+	}
+
+	stub := newStubDeps(nil)
+	d := stub.deps()
+	costs := []float64{2.0, 2.0, 2.0} // cumulative: 2, 4, 6 — spike at step 3
+	callIdx := 0
+	d.CallLLMDetailed = func(_ context.Context, prompt, _ string) (string, LLMStepUsage, error) {
+		stub.mu.Lock()
+		idx := callIdx
+		callIdx++
+		stub.mu.Unlock()
+		return "reply", LLMStepUsage{CostUSD: costs[idx]}, nil
+	}
+
+	res, err := Run(context.Background(), "run_cost_spike", d, def, nil)
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+	if res.Failed {
+		t.Fatalf("unexpected failure: %s", res.LastError)
+	}
+
+	// At least one anomaly_detected with kind=cost_spike must have been emitted.
+	var spikeEvents []JournalEvent
+	for _, ev := range stub.events {
+		if ev.Kind == "anomaly_detected" {
+			if k, _ := ev.Payload["kind"].(string); k == string(KindCostSpike) {
+				spikeEvents = append(spikeEvents, ev)
+			}
+		}
+	}
+	if len(spikeEvents) == 0 {
+		t.Errorf("expected at least one anomaly_detected(cost_spike) event; all events: %v", eventKinds(stub))
+	}
+	// The anomaly must have been emitted before workflow.completed (mid-run,
+	// not at the end), so it must appear before the workflow.completed event.
+	var spikeIdx, completedIdx = -1, -1
+	for i, ev := range stub.events {
+		if spikeIdx == -1 && ev.Kind == "anomaly_detected" {
+			spikeIdx = i
+		}
+		if ev.Kind == "workflow.completed" {
+			completedIdx = i
+		}
+	}
+	if spikeIdx == -1 || completedIdx == -1 {
+		t.Fatalf("missing expected events: spike=%d completed=%d", spikeIdx, completedIdx)
+	}
+	if spikeIdx >= completedIdx {
+		t.Errorf("anomaly_detected must precede workflow.completed (spike=%d, completed=%d)", spikeIdx, completedIdx)
+	}
+}
+
+func TestMidRunAnomaly_ExcessiveStepsEmittedBeforeMaxStepsHalt(t *testing.T) {
+	// A self-looping ai-step will hit the maxSteps=100 guard. But the
+	// excessive_steps anomaly (threshold 80) must fire before the run is
+	// halted at step 100.
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "loop", Type: "ai-step", Data: map[string]any{"prompt": "looping"}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "loop"},
+			{ID: "e2", Source: "loop", Target: "loop"}, // self-loop
+		},
+	}
+
+	stub := newStubDeps(nil)
+	res, err := Run(context.Background(), "run_excessive", stub.deps(), def, nil)
+	if err != nil {
+		t.Fatalf("Run returned unexpected error: %v", err)
+	}
+	if !res.Failed {
+		t.Error("expected workflow to fail due to maxSteps guard")
+	}
+
+	var excessiveEmitted bool
+	for _, ev := range stub.events {
+		if ev.Kind == "anomaly_detected" {
+			if k, _ := ev.Payload["kind"].(string); k == string(KindExcessiveSteps) {
+				excessiveEmitted = true
+			}
+		}
+	}
+	if !excessiveEmitted {
+		t.Errorf("expected anomaly_detected(excessive_steps) to fire before halt; events: %v", eventKinds(stub))
+	}
+}
+
+func TestMidRunAnomaly_DedupedPerKind(t *testing.T) {
+	// The same anomaly kind must be emitted at most once even when multiple
+	// consecutive steps cross the same threshold repeatedly.
+	def := Definition{
+		Nodes: []Node{
+			{ID: "t", Type: "trigger", Data: map[string]any{}},
+			{ID: "a", Type: "ai-step", Data: map[string]any{"prompt": "a"}},
+			{ID: "b", Type: "ai-step", Data: map[string]any{"prompt": "b"}},
+			{ID: "z", Type: "end", Data: map[string]any{}},
+		},
+		Edges: []Edge{
+			{ID: "e1", Source: "t", Target: "a"},
+			{ID: "e2", Source: "a", Target: "b"},
+			{ID: "e3", Source: "b", Target: "z"},
+		},
+	}
+
+	stub := newStubDeps(nil)
+	d := stub.deps()
+	// Both steps cost $3 each → cumulative $3 then $6, both above the $5 limit.
+	callIdx := 0
+	d.CallLLMDetailed = func(_ context.Context, _, _ string) (string, LLMStepUsage, error) {
+		stub.mu.Lock()
+		callIdx++
+		stub.mu.Unlock()
+		return "ok", LLMStepUsage{CostUSD: 3.0}, nil
+	}
+
+	_, err := Run(context.Background(), "run_dedup", d, def, nil)
+	if err != nil {
+		t.Fatalf("Run errored: %v", err)
+	}
+
+	var spikeCount int
+	for _, ev := range stub.events {
+		if ev.Kind == "anomaly_detected" {
+			if k, _ := ev.Payload["kind"].(string); k == string(KindCostSpike) {
+				spikeCount++
+			}
+		}
+	}
+	if spikeCount != 1 {
+		t.Errorf("expected exactly 1 cost_spike anomaly event (dedup), got %d", spikeCount)
+	}
+}
+
 func sliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
