@@ -63,6 +63,21 @@ import (
 )
 
 const (
+	// envTerminalGrace is the env var controlling how long after a VM reaches a
+	// terminal state (terminated/failed) the control-plane still accepts kind=log
+	// and kind=audit reports from it. Final harness logs and shutdown audit events
+	// legitimately arrive after the runtime-manager has already flipped the state.
+	//
+	// Default: 10 minutes. Parse as time.Duration (e.g. "10m", "5m30s").
+	// Set to "0" to disable the grace window entirely (strict: terminal → reject).
+	envTerminalGrace = "LANTERN_RUNTIME_TERMINAL_GRACE"
+
+	// defaultTerminalGrace is used when LANTERN_RUNTIME_TERMINAL_GRACE is absent
+	// or unparseable.
+	defaultTerminalGrace = 10 * time.Minute
+)
+
+const (
 	// reportBodyLimit caps the request body at 1 MiB to prevent DoS via
 	// unbounded body reads. OTLP trace batches can be moderately large.
 	reportBodyLimit = 1 << 20 // 1 MiB
@@ -171,24 +186,58 @@ func (h *RuntimeReportHandler) recordReportAuthFailure(ip string) bool {
 type vmBindingRow struct {
 	tenantID        string
 	state           string
-	agentInstanceID string // may be empty
+	agentInstanceID string     // may be empty
+	terminatedAt    *time.Time // non-nil when the VM has reached a terminal state
+}
+
+// terminalGrace reads LANTERN_RUNTIME_TERMINAL_GRACE and returns the configured
+// grace duration. Invalid or absent values fall back to defaultTerminalGrace.
+// A value of "0" disables the grace window entirely.
+func terminalGrace() time.Duration {
+	raw := os.Getenv(envTerminalGrace)
+	if raw == "" {
+		return defaultTerminalGrace
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return defaultTerminalGrace
+	}
+	return d
+}
+
+// isTerminalState reports whether state is one of the terminal VM states.
+func isTerminalState(state string) bool {
+	for _, s := range terminalVMStates {
+		if state == s {
+			return true
+		}
+	}
+	return false
 }
 
 // checkReportVMBinding verifies that vm_id exists in runtime_vms, belongs to
-// the claimed tenant_id, and is in a non-terminal state.
+// the claimed tenant_id, and is either non-terminal or within the grace window
+// for the supplied kind.
+//
+// Grace window behaviour: for kind=log and kind=audit only, a VM that entered a
+// terminal state within LANTERN_RUNTIME_TERMINAL_GRACE (default 10 min) of now
+// is still accepted. This allows final harness logs and shutdown audit events to
+// land after the runtime-manager has flipped the row to "terminated" / "failed".
+// All other kinds (otlp_traces, prometheus_metrics) and wrong-tenant / unknown-vm
+// cases are always rejected regardless of grace.
 //
 // It also returns the agent_instance_id stored on the row so callers can stamp
 // it onto audit events without a second query.
 //
 // Returns (row, nil) on success; (row{}, vmBindingDenied) on any mismatch.
 // Errors always return the same sentinel — no oracle about which condition fired.
-func (h *RuntimeReportHandler) checkReportVMBinding(ctx context.Context, vmID, tenantID string) (vmBindingRow, error) {
+func (h *RuntimeReportHandler) checkReportVMBinding(ctx context.Context, vmID, tenantID string, kind reportKind) (vmBindingRow, error) {
 	var row vmBindingRow
 	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT tenant_id, state, COALESCE(agent_instance_id, '')
+		SELECT tenant_id, state, COALESCE(agent_instance_id, ''), terminated_at
 		FROM runtime_vms
 		WHERE vm_id = $1
-	`, vmID).Scan(&row.tenantID, &row.state, &row.agentInstanceID)
+	`, vmID).Scan(&row.tenantID, &row.state, &row.agentInstanceID, &row.terminatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return vmBindingRow{}, vmBindingDenied
@@ -199,14 +248,25 @@ func (h *RuntimeReportHandler) checkReportVMBinding(ctx context.Context, vmID, t
 		)
 		return vmBindingRow{}, vmBindingDenied
 	}
+
+	// Tenant mismatch is always a hard reject — no grace applies.
 	if row.tenantID != tenantID {
 		return vmBindingRow{}, vmBindingDenied
 	}
-	for _, terminal := range terminalVMStates {
-		if row.state == terminal {
-			return vmBindingRow{}, vmBindingDenied
+
+	if isTerminalState(row.state) {
+		// For log and audit kinds, check whether we're still inside the grace window.
+		if kind == reportKindLog || kind == reportKindAudit {
+			grace := terminalGrace()
+			if grace > 0 && row.terminatedAt != nil && time.Since(*row.terminatedAt) <= grace {
+				// Within grace — allow the report through.
+				return row, nil
+			}
 		}
+		// Terminal and either: wrong kind, grace disabled, terminatedAt nil, or expired.
+		return vmBindingRow{}, vmBindingDenied
 	}
+
 	return row, nil
 }
 
@@ -317,7 +377,7 @@ func (h *RuntimeReportHandler) Report(w http.ResponseWriter, r *http.Request) {
 	// Count binding failures against the per-IP rate limiter so that an
 	// attacker probing for valid (vm_id, tenant_id) pairs gets throttled at
 	// the same rate as token brute-forcers.
-	vmRow, bindErr := h.checkReportVMBinding(ctx, req.VmID, req.TenantID)
+	vmRow, bindErr := h.checkReportVMBinding(ctx, req.VmID, req.TenantID, req.Kind)
 	if bindErr != nil {
 		ip := remoteIP(r)
 		if h.recordReportAuthFailure(ip) {

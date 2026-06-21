@@ -1605,18 +1605,25 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
     // `report` is client-streaming: harness sends a stream of HarnessReport,
     // manager responds with a single HarnessAck once the stream closes.
     //
-    // Security model
-    // --------------
-    // The vm_id embedded in each HarnessReport frame (Log.vm_id / Audit.vm_id)
-    // is harness-asserted and UNTRUSTED until cert-bound.  When mTLS is enabled
-    // the connection's client certificate CN/SAN MUST match the vm_id claimed in
-    // every frame — mirrors the identical check in `vend_secret` and `heartbeat`.
-    // Frames that fail cert binding are dropped with a WARN; the stream stays
-    // alive (same semantics as heartbeat).
+    // Security model + identity resolution
+    // -------------------------------------
+    // When mTLS is enabled, the peer certificate's CN/SAN is the single source
+    // of truth for the connection's vm_id.  This has two consequences:
     //
-    // Forwarding failures NEVER surface to the harness as an error (that would
-    // cause a reconnect/replay loop).  Audit drops are surfaced as
-    // `tracing::error!` so they appear in the manager's own log trail.
+    // (A) Log/Audit frames that embed a vm_id in their body must match the cert.
+    //     A mismatch (vm-A cert + Audit{vm_id:"vm-B"}) drops the frame (WARN).
+    //
+    // (B) OTLP/Prometheus frames carry no embedded vm_id.  Without the cert
+    //     they would forward with empty identity, causing a 403 from the
+    //     control-plane's VM-binding check.  The cert-derived vm_id fixes this:
+    //     OTLP/Prom frames are enriched with the cert's vm_id before forwarding.
+    //
+    // When mTLS is disabled (dev mode), we fall back to the frame-body vm_id
+    // as before.
+    //
+    // Forwarding failures NEVER surface to the harness as an error.  Audit
+    // drops are surfaced as `tracing::error!` so they appear in the manager's
+    // log trail (never silently dropped).
     async fn report(
         &self,
         request: Request<tonic::Streaming<pb::HarnessReport>>,
@@ -1625,6 +1632,17 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
         // per-connection and is gone after `into_inner()`.
         let peer_cert_der = crate::tls::extract_peer_cert_der(&request);
         let mtls_enabled = self.mtls_enabled;
+
+        // Derive the authoritative vm_id from the cert (single source of truth
+        // when mTLS is enabled).  None when mTLS is disabled or the cert is
+        // absent / unparseable.
+        let cert_vm_id: Option<String> = if mtls_enabled {
+            peer_cert_der
+                .as_deref()
+                .and_then(crate::tls::vm_id_from_cert_der)
+        } else {
+            None
+        };
 
         let mut stream = request.into_inner();
 
@@ -1646,36 +1664,41 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
                     // Extract the harness-asserted vm_id from the frame body.
                     // For Log and Audit variants this is embedded in the body;
                     // OTLP/Prometheus batches carry no vm_id (empty string).
-                    let (msg_vm_id, tenant_id, run_id) =
+                    let (body_vm_id, _tenant_id, _run_id) =
                         extract_identity_from_report(&report, &registry);
 
-                    // SECURITY: cert-bind the claimed vm_id before acting on
-                    // any frame.  A hostile harness in vm-A that sends
-                    // Audit{vm_id:"vm-B"} to forge vm-B's audit trail is
-                    // stopped here: the connection cert CN/SAN must match
-                    // the asserted vm_id.  Mirrors `vend_secret` / `heartbeat`.
-                    //
-                    // OTLP/Prometheus frames have an empty msg_vm_id; we still
-                    // run the check (it will fail if mTLS cert is for a
-                    // different vm — defensive) unless the msg_vm_id is empty,
-                    // in which case we skip the cert check (no claimed identity
-                    // to bind) and allow the frame through using the
-                    // connection's cert-bound identity if any.
-                    if mtls_enabled
-                        && !msg_vm_id.is_empty()
-                        && crate::tls::authorize_vm_cert(&msg_vm_id, peer_cert_der.as_deref())
-                            .is_err()
-                    {
-                        tracing::warn!(
-                            vm_id = %msg_vm_id,
-                            "report: cert/vm_id mismatch — dropping frame"
-                        );
-                        // Drop this frame; keep the stream alive.
-                        continue;
-                    }
+                    // Determine the authoritative vm_id for this frame:
+                    // - mTLS enabled + cert parsed → cert_vm_id is authoritative
+                    //   (covers OTLP/Prom which have empty body_vm_id).
+                    // - mTLS disabled / no cert    → fall back to body_vm_id
+                    //   (dev mode, same as before).
+                    let effective_vm_id: &str = match &cert_vm_id {
+                        Some(cid) => {
+                            // SECURITY: when the frame also asserts a vm_id
+                            // (Log / Audit), it must match the cert.  Mismatch
+                            // = forge attempt → drop and warn.
+                            if !body_vm_id.is_empty() && body_vm_id != *cid {
+                                tracing::warn!(
+                                    cert_vm_id = %cid,
+                                    frame_vm_id = %body_vm_id,
+                                    "report: frame vm_id disagrees with peer cert — dropping frame"
+                                );
+                                continue;
+                            }
+                            cid.as_str()
+                        }
+                        None => body_vm_id.as_str(),
+                    };
+
+                    // Registry lookup using the authoritative vm_id.
+                    let (tenant_id, run_id) = if let Some(info) = registry.get(effective_vm_id) {
+                        (info.tenant_id.clone(), info.run_id.clone())
+                    } else {
+                        (String::new(), String::new())
+                    };
 
                     match report_forwarder::build_report_request(
-                        &msg_vm_id,
+                        effective_vm_id,
                         &tenant_id,
                         &run_id,
                         &report,
@@ -2879,21 +2902,50 @@ mod tests {
         );
     }
 
-    /// Frames with an empty `msg_vm_id` (OTLP/Prometheus batches) skip the
-    /// per-frame cert check (`!msg_vm_id.is_empty()` guard) regardless of mTLS
-    /// state.  This matches the handler's conditional:
-    ///   `if mtls_enabled && !msg_vm_id.is_empty()`.
+    /// OTLP/Prometheus frames carry no embedded vm_id (body_vm_id is "").
+    /// When mTLS is enabled the handler derives the authoritative vm_id from
+    /// the peer cert (`vm_id_from_cert_der`); the frame's empty body_vm_id does
+    /// NOT trigger a mismatch drop (the check is `!body_vm_id.is_empty()`).
+    /// This test verifies that `vm_id_from_cert_der` correctly extracts the
+    /// vm_id so the OTLP frame inherits it.
     #[test]
-    fn report_frame_empty_vm_id_skips_cert_check() {
-        // The guard condition is pure boolean — testable without any TLS state.
-        let mtls_enabled = true;
-        let msg_vm_id = "";
+    fn report_otlp_frame_inherits_cert_vm_id() {
+        use rustls_pemfile::certs;
+        use std::io::{BufReader, Cursor};
 
-        // The handler would NOT call authorize_vm_cert when msg_vm_id is empty.
-        let would_check = mtls_enabled && !msg_vm_id.is_empty();
+        // Issue a cert bound to "vm-otlp-test".
+        let vm_id = "vm-otlp-test";
+        let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("rcgen CA");
+        let ca_cert_pem = ca.cert.pem();
+        let ca_key_pem = ca.key_pair.serialize_pem();
+        let issued =
+            crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
+        let der: Vec<u8> = certs(&mut BufReader::new(Cursor::new(issued.cert_pem.as_bytes())))
+            .next()
+            .unwrap()
+            .unwrap()
+            .to_vec();
+
+        // `vm_id_from_cert_der` must extract the vm_id that was embedded as
+        // CN/SAN by `generate_vm_client_cert`.  This is what the handler calls
+        // to derive `cert_vm_id`, which is then used as the effective vm_id
+        // for all frames including OTLP/Prometheus (which have empty body_vm_id).
+        let extracted = crate::tls::vm_id_from_cert_der(&der);
+        assert_eq!(
+            extracted.as_deref(),
+            Some(vm_id),
+            "vm_id_from_cert_der must return the CN/SAN embedded by generate_vm_client_cert"
+        );
+
+        // An OTLP frame has an empty body_vm_id; the drop-gate condition is
+        // `!body_vm_id.is_empty() && body_vm_id != cert_vm_id` — with empty
+        // body_vm_id the gate is skipped and the cert_vm_id is used directly.
+        let body_vm_id = "";
+        let cert_vm_id = vm_id;
+        let would_drop = !body_vm_id.is_empty() && body_vm_id != cert_vm_id;
         assert!(
-            !would_check,
-            "empty msg_vm_id must bypass the per-frame cert check (OTLP/Prometheus frames)"
+            !would_drop,
+            "OTLP frame with empty body_vm_id must NOT be dropped — cert_vm_id is used instead"
         );
     }
 }

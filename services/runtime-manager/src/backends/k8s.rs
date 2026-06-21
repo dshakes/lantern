@@ -9,7 +9,7 @@ use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{
     Affinity, Capabilities, Container, ContainerPort, EnvVar, NodeAffinity, NodeSelector,
     NodeSelectorRequirement, NodeSelectorTerm, Pod, PodSecurityContext, PodSpec, PodTemplateSpec,
-    ResourceRequirements, SeccompProfile, SecurityContext,
+    ResourceRequirements, SeccompProfile, SecurityContext, Toleration,
 };
 use k8s_openapi::api::networking::v1::{
     IPBlock, NetworkPolicy as K8sNetworkPolicy, NetworkPolicyEgressRule, NetworkPolicyPeer,
@@ -439,6 +439,11 @@ fn build_job(
         );
     }
 
+    // Compute node affinity + NoSchedule tolerations once; both are derived
+    // from the same isolation class + config and must be consistent.
+    let (node_affinity, node_tolerations) =
+        node_affinity_and_tolerations(req.isolation_class, runtime_classes);
+
     Ok(Job {
         metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
             name: Some(job_name.to_string()),
@@ -471,11 +476,25 @@ fn build_job(
                     // ClusterFirst ensures DNS works correctly even with the
                     // default-deny egress NetworkPolicy (port 53 is allowed).
                     dns_policy: Some("ClusterFirst".to_string()),
-                    // Node affinity for hardened isolation classes: prevent a
-                    // pod that requires gVisor/Kata from scheduling onto a node
-                    // that merely references the RuntimeClass by name but does
-                    // not actually have the handler installed.
-                    affinity: node_affinity_for_isolation(req.isolation_class, runtime_classes),
+                    // Node affinity + tolerations for hardened isolation classes.
+                    //
+                    // Affinity: prevent a pod that requires gVisor/Kata from
+                    // scheduling onto a node that merely references the
+                    // RuntimeClass by name but does not have the handler
+                    // installed.
+                    //
+                    // Tolerations: operators are expected to taint the gVisor
+                    // and Kata nodes (`lantern.dev/runtimeclass=<v>:NoSchedule`)
+                    // so that only jobs that explicitly want those runtimes land
+                    // there.  We must emit a matching toleration, otherwise
+                    // UNTRUSTED/HOSTILE Jobs stay Pending forever because the
+                    // taint is present but no toleration is set.
+                    affinity: node_affinity,
+                    tolerations: if node_tolerations.is_empty() {
+                        None
+                    } else {
+                        Some(node_tolerations)
+                    },
                     ..Default::default()
                 }),
             },
@@ -1055,33 +1074,48 @@ fn pod_security_context() -> PodSecurityContext {
 /// The label key is `lantern.dev/runtimeclass`; the value comes from
 /// [`RuntimeClassConfig::node_label_gvisor`] / [`RuntimeClassConfig::node_label_kata`]
 /// (defaults: `"gvisor"` / `"kata"`).
-fn node_affinity_for_isolation(
+/// Compute the node affinity and matching NoSchedule tolerations for a pod
+/// based on its isolation class.
+///
+/// Returns `(Option<Affinity>, Vec<Toleration>)`.  Both are derived from the
+/// same label key+value so they are always consistent: if the affinity is
+/// `Some`, the toleration vec is non-empty; if `None`, the vec is empty.
+///
+/// # Why tolerations are required
+///
+/// Operators taint gVisor/Kata nodes with
+/// `lantern.dev/runtimeclass=<value>:NoSchedule` so that only explicitly
+/// requested workloads land there.  Without a matching toleration the
+/// UNTRUSTED/HOSTILE Job would stay `Pending` forever — the affinity picks the
+/// right node but the taint blocks scheduling.
+fn node_affinity_and_tolerations(
     class: IsolationClass,
     cfg: &RuntimeClassConfig,
-) -> Option<Affinity> {
+) -> (Option<Affinity>, Vec<Toleration>) {
     const NODE_LABEL_KEY: &str = "lantern.dev/runtimeclass";
 
     let label_value: &str = match class {
         IsolationClass::Untrusted => {
-            // Use configured value or fall back to "gvisor". We only emit the
-            // affinity when the gVisor RuntimeClass is actually configured
-            // (otherwise the fail-closed gate in build_job already refused the
-            // request before we reach here).
-            cfg.gvisor.as_deref()?; // bail if gVisor not configured
-            cfg.node_label_gvisor
-                .as_deref()
-                .unwrap_or("gvisor")
+            // We only emit the affinity/toleration when the gVisor RuntimeClass
+            // is actually configured (otherwise the fail-closed gate in
+            // build_job already refused the request before we reach here).
+            match cfg.gvisor.as_deref() {
+                Some(_) => {}
+                None => return (None, vec![]),
+            }
+            cfg.node_label_gvisor.as_deref().unwrap_or("gvisor")
         }
         IsolationClass::Hostile => {
-            cfg.kata.as_deref()?; // bail if Kata not configured
-            cfg.node_label_kata
-                .as_deref()
-                .unwrap_or("kata")
+            match cfg.kata.as_deref() {
+                Some(_) => {}
+                None => return (None, vec![]),
+            }
+            cfg.node_label_kata.as_deref().unwrap_or("kata")
         }
         // TRUSTED / STANDARD / UNSPECIFIED / WASM / DEVCONTAINER: no node
-        // affinity requirement by default.  Operators may add custom affinity
-        // via admission webhooks or OPA if needed; that is out of scope here.
-        _ => return None,
+        // affinity or toleration.  Operators may add custom affinity via
+        // admission webhooks or OPA if needed; that is out of scope here.
+        _ => return (None, vec![]),
     };
 
     let requirement = NodeSelectorRequirement {
@@ -1096,14 +1130,26 @@ fn node_affinity_for_isolation(
     let node_selector = NodeSelector {
         node_selector_terms: vec![term],
     };
-    Some(Affinity {
+    let affinity = Affinity {
         node_affinity: Some(NodeAffinity {
             required_during_scheduling_ignored_during_execution: Some(node_selector),
             preferred_during_scheduling_ignored_during_execution: None,
         }),
         pod_affinity: None,
         pod_anti_affinity: None,
-    })
+    };
+
+    // Emit a toleration that matches the expected node taint.
+    // Operators taint: `lantern.dev/runtimeclass=<label_value>:NoSchedule`.
+    let toleration = Toleration {
+        key: Some(NODE_LABEL_KEY.to_string()),
+        operator: Some("Equal".to_string()),
+        value: Some(label_value.to_string()),
+        effect: Some("NoSchedule".to_string()),
+        toleration_seconds: None,
+    };
+
+    (Some(affinity), vec![toleration])
 }
 
 /// True when `pattern` is a CIDR block (vs. a domain). Only CIDR patterns can
@@ -1728,6 +1774,61 @@ mod tests {
         );
     }
 
+    /// Extract the first `Toleration` from a Job's pod spec (test helper).
+    fn first_toleration(job: &Job) -> Option<&Toleration> {
+        job.spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .and_then(|ps| ps.tolerations.as_ref())
+            .and_then(|ts| ts.first())
+    }
+
+    #[test]
+    fn build_job_untrusted_gets_gvisor_affinity_and_toleration() {
+        let req = make_req(IsolationClass::Untrusted);
+        let job = build_job(
+            &req,
+            "img",
+            "job-untrusted-toleration",
+            "ns",
+            &RuntimeClassConfig {
+                gvisor: Some("gvisor".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("should succeed with gVisor configured");
+
+        // Affinity must be set (covered by existing tests; belt-and-suspenders here).
+        assert_eq!(
+            affinity_label_value(&job).as_deref(),
+            Some("gvisor"),
+            "UNTRUSTED must have gVisor node affinity"
+        );
+
+        // Toleration must also be present and match the taint operators would set.
+        let t = first_toleration(&job).expect("UNTRUSTED pod must have a toleration");
+        assert_eq!(
+            t.key.as_deref(),
+            Some("lantern.dev/runtimeclass"),
+            "toleration key must match the affinity label key"
+        );
+        assert_eq!(
+            t.operator.as_deref(),
+            Some("Equal"),
+            "toleration operator must be Equal"
+        );
+        assert_eq!(
+            t.value.as_deref(),
+            Some("gvisor"),
+            "toleration value must match the affinity label value (gvisor)"
+        );
+        assert_eq!(
+            t.effect.as_deref(),
+            Some("NoSchedule"),
+            "toleration effect must be NoSchedule"
+        );
+    }
+
     #[test]
     fn build_job_trusted_has_no_node_affinity() {
         let req = make_req(IsolationClass::Trusted);
@@ -1752,6 +1853,10 @@ mod tests {
         assert!(
             pod_spec.affinity.is_none(),
             "TRUSTED must not have node affinity constraints"
+        );
+        assert!(
+            pod_spec.tolerations.is_none(),
+            "TRUSTED must not have NoSchedule tolerations"
         );
     }
 
@@ -1778,6 +1883,10 @@ mod tests {
         assert!(
             pod_spec.affinity.is_none(),
             "STANDARD must not have mandatory node affinity constraints"
+        );
+        assert!(
+            pod_spec.tolerations.is_none(),
+            "STANDARD must not have NoSchedule tolerations"
         );
     }
 

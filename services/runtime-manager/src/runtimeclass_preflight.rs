@@ -141,12 +141,22 @@ pub async fn check_and_resolve(
     use kube::api::{Api, ListParams};
 
     let api: Api<RuntimeClass> = Api::all(client.clone());
+    // Index by metadata.name — this is what a pod's `runtimeClassName` field
+    // references, and therefore what `LANTERN_RUNTIMECLASS_*` env vars must
+    // match.  The `handler` field is the *node-level* runtime binary name
+    // (e.g. `runsc` for gVisor) and is NOT what operators configure in
+    // LANTERN_RUNTIMECLASS_*.  We also include the handler in the set for
+    // operators who (incorrectly but understandably) configure the handler
+    // name — belt-and-suspenders so neither interpretation false-clears.
     let present: HashSet<String> = match api.list(&ListParams::default()).await {
         Ok(list) => list
             .items
             .into_iter()
-            .map(|rc| rc.handler.clone())
-            // Also index by metadata.name since operators may configure either.
+            .flat_map(|rc| {
+                let name = rc.metadata.name.clone().into_iter();
+                let handler = std::iter::once(rc.handler.clone());
+                name.chain(handler)
+            })
             .collect(),
         Err(e) => {
             tracing::warn!(
@@ -161,10 +171,6 @@ pub async fn check_and_resolve(
         }
     };
 
-    // Also collect metadata.name values so either the handler or the object
-    // name can be configured.  Re-list is cheap (we just did it), but the
-    // `handler` field is what K8s actually uses for scheduling; we checked
-    // that above. We'll also index by name for flexibility.
     tracing::info!(
         present_classes = ?present,
         "RuntimeClass preflight: found classes in cluster"
@@ -265,6 +271,46 @@ mod tests {
         assert!(resolved.gvisor.is_none(), "not configured → not enabled");
         assert!(resolved.kata.is_none(), "not configured → not enabled");
         assert!(resolved.allow_runc_standard, "flag passed through");
+    }
+
+    /// The authoritative match for `LANTERN_RUNTIMECLASS_*` is the RuntimeClass
+    /// object's `metadata.name` (what a pod's `runtimeClassName` references).
+    /// The `handler` field is different (e.g. `metadata.name=gvisor`,
+    /// `handler=runsc`).  A cluster with that object must be treated as having
+    /// gVisor available when `LANTERN_RUNTIMECLASS_GVISOR=gvisor` is set —
+    /// NOT cleared because "runsc" is not in the configured names.
+    #[test]
+    fn name_vs_handler_divergence_uses_metadata_name() {
+        // Cluster has a RuntimeClass with name="gvisor" but handler="runsc".
+        // The `present` set must contain "gvisor" (the name), so the configured
+        // class "gvisor" is treated as PRESENT, not wrongly cleared.
+        //
+        // In check_and_resolve this is built from flat_map(name ∪ handler);
+        // here we test resolve_available_classes directly by passing the set
+        // that check_and_resolve would build.
+        let cluster_names_and_handlers: HashSet<String> =
+            ["gvisor".to_string(), "runsc".to_string()]
+                .into_iter()
+                .collect();
+
+        let cfg = RuntimeClassConfig {
+            gvisor: Some("gvisor".to_string()),
+            kata: Some("kata-qemu".to_string()),
+            ..Default::default()
+        };
+
+        // "gvisor" is in the set (via metadata.name) → capability kept.
+        // "kata-qemu" is NOT in the set → capability cleared.
+        let resolved = resolve_available_classes(&cfg, &cluster_names_and_handlers);
+        assert_eq!(
+            resolved.gvisor,
+            Some("gvisor".to_string()),
+            "gVisor: metadata.name='gvisor' is present — must NOT be cleared (handler='runsc' is irrelevant to config)"
+        );
+        assert!(
+            resolved.kata.is_none(),
+            "kata-qemu: not in cluster set → capability disabled"
+        );
     }
 
     #[test]

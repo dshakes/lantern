@@ -348,7 +348,10 @@ func TestReport_UnknownVMID_Returns403(t *testing.T) {
 	}
 }
 
-// Terminal VM → 403.
+// Terminal VM beyond grace window → 403.
+//
+// The VM's terminated_at is set to 1 hour ago — well beyond the default 10-min
+// grace window — so even kind=audit/log must be rejected.
 func TestReport_TerminalVM_Returns403(t *testing.T) {
 	pool := openTestPool(t)
 	migrateReportTables(t, pool)
@@ -358,10 +361,10 @@ func TestReport_TerminalVM_Returns403(t *testing.T) {
 	vmID := "vm-terminal-" + tenantID[:8]
 	t.Cleanup(func() { cleanupReportTenant(t, pool, tenantID) })
 
-	// Insert as already terminated.
+	// Insert as already terminated 1 hour ago — beyond the 10-min default grace.
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO runtime_vms (vm_id, tenant_id, state, spec, created_at, terminated_at)
-		VALUES ($1, $2, 'terminated', '{}', now(), now())
+		VALUES ($1, $2, 'terminated', '{}', now() - interval '2 hours', now() - interval '1 hour')
 		ON CONFLICT (vm_id) DO NOTHING
 	`, vmID, tenantID)
 	if err != nil {
@@ -378,7 +381,175 @@ func TestReport_TerminalVM_Returns403(t *testing.T) {
 		"audit":     map[string]any{"vm_id": vmID, "action": "probe"},
 	})
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for terminal VM, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("expected 403 for terminal VM beyond grace, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Terminal-VM grace window tests (LANTERN_RUNTIME_TERMINAL_GRACE)
+// ---------------------------------------------------------------------------
+
+// (a) kind=log for a VM terminated 1 minute ago → accepted + row persisted.
+func TestReport_TerminalVM_WithinGrace_LogAccepted(t *testing.T) {
+	pool := openTestPool(t)
+	migrateReportTables(t, pool)
+
+	tenantID := uniqueTenantID("rpt-grace-log")
+	seedTestTenant(t, pool, tenantID)
+	vmID := "vm-grace-log-" + tenantID[:8]
+	t.Cleanup(func() { cleanupReportTenant(t, pool, tenantID) })
+
+	// VM terminated 1 minute ago — inside the 10-min default grace window.
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO runtime_vms (vm_id, tenant_id, state, spec, created_at, terminated_at)
+		VALUES ($1, $2, 'terminated', '{}', now() - interval '5 minutes', now() - interval '1 minute')
+		ON CONFLICT (vm_id) DO NOTHING
+	`, vmID, tenantID)
+	if err != nil {
+		t.Fatalf("seed terminated vm: %v", err)
+	}
+
+	setReportToken(t, testRuntimeSecretToken)
+	h := newTestReportHandlerWithPool(t, pool)
+
+	const wantText = "final shutdown log"
+	w := doReport(h, testRuntimeSecretToken, map[string]any{
+		"vm_id":     vmID,
+		"tenant_id": tenantID,
+		"kind":      "log",
+		"log": map[string]any{
+			"vm_id":  vmID,
+			"stream": "stdout",
+			"text":   wantText,
+		},
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for log within grace, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the log row landed in runtime_vm_logs.
+	var text string
+	err = pool.QueryRow(context.Background(), `
+		SELECT text FROM runtime_vm_logs
+		WHERE vm_id = $1 AND tenant_id = $2
+		ORDER BY at DESC LIMIT 1
+	`, vmID, tenantID).Scan(&text)
+	if err != nil {
+		t.Fatalf("log row not found after grace-window accept: %v", err)
+	}
+	if text != wantText {
+		t.Errorf("expected text=%q, got %q", wantText, text)
+	}
+}
+
+// (b) Same VM (terminated 1 min ago) but with an explicit 0-duration grace
+// window configured → 403 (grace disabled).
+func TestReport_TerminalVM_GraceDisabled_Returns403(t *testing.T) {
+	pool := openTestPool(t)
+	migrateReportTables(t, pool)
+
+	tenantID := uniqueTenantID("rpt-grace-off")
+	seedTestTenant(t, pool, tenantID)
+	vmID := "vm-grace-off-" + tenantID[:8]
+	t.Cleanup(func() { cleanupReportTenant(t, pool, tenantID) })
+
+	// VM terminated 1 minute ago — would normally be inside default grace.
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO runtime_vms (vm_id, tenant_id, state, spec, created_at, terminated_at)
+		VALUES ($1, $2, 'terminated', '{}', now() - interval '5 minutes', now() - interval '1 minute')
+		ON CONFLICT (vm_id) DO NOTHING
+	`, vmID, tenantID)
+	if err != nil {
+		t.Fatalf("seed terminated vm: %v", err)
+	}
+
+	// Disable the grace window via env.
+	t.Setenv(envTerminalGrace, "0")
+
+	setReportToken(t, testRuntimeSecretToken)
+	h := newTestReportHandlerWithPool(t, pool)
+
+	w := doReport(h, testRuntimeSecretToken, map[string]any{
+		"vm_id":     vmID,
+		"tenant_id": tenantID,
+		"kind":      "log",
+		"log": map[string]any{
+			"vm_id":  vmID,
+			"stream": "stdout",
+			"text":   "should be rejected",
+		},
+	})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when grace disabled, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// (c) Wrong tenant for a recently-terminated VM → 403 regardless of grace.
+func TestReport_TerminalVM_WrongTenantStillDenied(t *testing.T) {
+	pool := openTestPool(t)
+	migrateReportTables(t, pool)
+
+	tenantA := uniqueTenantID("rpt-grace-ta")
+	tenantB := uniqueTenantID("rpt-grace-tb")
+	seedTestTenant(t, pool, tenantA)
+	seedTestTenant(t, pool, tenantB)
+	vmID := "vm-grace-wt-" + tenantA[:8]
+	t.Cleanup(func() {
+		cleanupReportTenant(t, pool, tenantA)
+		cleanupReportTenant(t, pool, tenantB)
+	})
+
+	// VM belongs to tenantA, terminated 1 min ago (inside default grace).
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO runtime_vms (vm_id, tenant_id, state, spec, created_at, terminated_at)
+		VALUES ($1, $2, 'terminated', '{}', now() - interval '5 minutes', now() - interval '1 minute')
+		ON CONFLICT (vm_id) DO NOTHING
+	`, vmID, tenantA)
+	if err != nil {
+		t.Fatalf("seed terminated vm: %v", err)
+	}
+
+	setReportToken(t, testRuntimeSecretToken)
+	h := newTestReportHandlerWithPool(t, pool)
+
+	// TenantB tries to report for this VM — must be rejected.
+	w := doReport(h, testRuntimeSecretToken, map[string]any{
+		"vm_id":     vmID,
+		"tenant_id": tenantB,
+		"kind":      "log",
+		"log": map[string]any{
+			"vm_id":  vmID,
+			"stream": "stdout",
+			"text":   "cross-tenant probe",
+		},
+	})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for wrong tenant even within grace, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// (d) Non-terminal VM is unaffected — still accepted as before.
+func TestReport_NonTerminalVM_UnchangedBehaviour(t *testing.T) {
+	pool := openTestPool(t)
+	migrateReportTables(t, pool)
+
+	tenantID := uniqueTenantID("rpt-grace-run")
+	seedTestTenant(t, pool, tenantID)
+	vmID := "vm-grace-run-" + tenantID[:8]
+	seedVMForReport(t, pool, vmID, tenantID) // state=running, terminated_at=NULL
+	t.Cleanup(func() { cleanupReportTenant(t, pool, tenantID) })
+
+	setReportToken(t, testRuntimeSecretToken)
+	h := newTestReportHandlerWithPool(t, pool)
+
+	w := doReport(h, testRuntimeSecretToken, map[string]any{
+		"vm_id":     vmID,
+		"tenant_id": tenantID,
+		"kind":      "audit",
+		"audit":     map[string]any{"vm_id": vmID, "action": "heartbeat"},
+	})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 for non-terminal VM, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
