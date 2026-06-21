@@ -279,15 +279,21 @@ func TestRecoverySweep_ExpiredLockIsPickedUp(t *testing.T) {
 	}
 	t.Logf("run %s with expired lock: final status %s", runID, finalStatus)
 
-	// The lock row must now point to the recovery worker (not the dead one).
+	// After recovery the lock row must NOT still be owned by the dead worker.
+	// The recovery sweep acquires the lock, deletes it before re-driving, then
+	// executeRunInlineSync acquires a fresh lease and releases it on completion.
+	// So the lock row is either absent (run terminal) or owned by workerID() if
+	// somehow still in flight.  Either is acceptable; "dead-worker" is not.
 	var newWorker string
-	if err := pool.QueryRow(ctx, `SELECT worker_id FROM run_locks WHERE run_id = $1`, runID).Scan(&newWorker); err != nil {
-		t.Fatalf("read lock worker: %v", err)
-	}
-	if newWorker == "dead-worker" {
+	err := pool.QueryRow(ctx, `SELECT worker_id FROM run_locks WHERE run_id = $1`, runID).Scan(&newWorker)
+	if err == nil && newWorker == "dead-worker" {
 		t.Error("lock still owned by dead-worker — sweep did not update it")
 	}
-	t.Logf("lock now owned by: %s", newWorker)
+	if err == nil {
+		t.Logf("lock now owned by: %s", newWorker)
+	} else {
+		t.Logf("lock row absent (run reached terminal state and lease was released)")
+	}
 }
 
 // TestMarkRunFailed_ReturnsError verifies that markRunFailed returns nil on

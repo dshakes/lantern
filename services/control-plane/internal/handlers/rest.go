@@ -72,12 +72,17 @@ func resolveGmailToken(ctx context.Context, pool interface {
 
 // RESTHandler wraps the gRPC service handlers to expose them over HTTP/JSON.
 type RESTHandler struct {
-	srv      *server.Server
-	auth     *AuthHandler
-	agentSvc *AgentService
-	runSvc   *RunService
-	llmProxy *LlmProxyHandler
+	srv          *server.Server
+	auth         *AuthHandler
+	agentSvc     *AgentService
+	runSvc       *RunService
+	llmProxy     *LlmProxyHandler
+	spawnLimiter *SpawnRateLimiter // per-tenant spawn-storm guard (nil = disabled)
 }
+
+// SetSpawnLimiter wires the per-tenant spawn rate limiter (phase 3). nil-safe:
+// when unset, CreateRun does not rate-limit.
+func (h *RESTHandler) SetSpawnLimiter(l *SpawnRateLimiter) { h.spawnLimiter = l }
 
 // NewRESTHandler creates a new RESTHandler.
 func NewRESTHandler(srv *server.Server, auth *AuthHandler, agentSvc *AgentService, runSvc *RunService) *RESTHandler {
@@ -441,6 +446,15 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-tenant spawn-storm guard (phase 3): a burst of run creations from one
+	// tenant is throttled to protect shared capacity. 429 carries no work side-effect.
+	if h.spawnLimiter != nil {
+		if tenant, ok := middleware.TenantIDFromContext(ctx); ok && !h.spawnLimiter.Allow(tenant) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limited: too many runs, slow down"})
+			return
+		}
+	}
+
 	var body struct {
 		AgentName string         `json:"agentName"`
 		Input     map[string]any `json:"input"`
@@ -755,7 +769,19 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	).Scan(&deliveryEmail)
 
 	if deliveryEmail != "" {
+		// Side-effect dedup: skip the email if a prior attempt already sent it.
+		emailIdemKey := idempotencyKey(runID, "email_delivery", 1)
 		go func() {
+			claimed, claimErr := claimSideEffect(ctx, h.srv.Pool, emailIdemKey, runID, tenantID, "email_delivery")
+			if claimErr != nil {
+				h.logger().Warn("email delivery: side-effect claim error",
+					zap.String("run_id", runID), zap.Error(claimErr))
+				// Proceed on claim error rather than silently dropping the email.
+			} else if !claimed {
+				h.logger().Info("email delivery: already delivered (idempotent skip)",
+					zap.String("run_id", runID))
+				return
+			}
 			if err := h.sendEmailViaGmail(tenantID, deliveryEmail, fmt.Sprintf("Lantern: %s run completed", agentName), result); err != nil {
 				h.logger().Warn("email delivery failed",
 					zap.String("run_id", runID),
@@ -772,7 +798,20 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	}
 
 	if shouldDeliverToWhatsApp(resolvedTemplateID) && result != "" {
+		// Side-effect dedup: compute an idempotency key for this delivery so
+		// a crash-replay doesn't double-send the WhatsApp message.
+		idemKey := idempotencyKey(runID, "whatsapp_self", 1)
 		go func() {
+			claimed, claimErr := claimSideEffect(ctx, h.srv.Pool, idemKey, runID, tenantID, "whatsapp_self")
+			if claimErr != nil {
+				h.logger().Warn("whatsapp delivery: side-effect claim error",
+					zap.String("run_id", runID), zap.Error(claimErr))
+				// Proceed on claim error rather than silently dropping the message.
+			} else if !claimed {
+				h.logger().Info("whatsapp delivery: already delivered (idempotent skip)",
+					zap.String("run_id", runID))
+				return
+			}
 			if err := h.deliverWhatsAppSelf(tenantID, result); err != nil {
 				h.logger().Warn("whatsapp delivery failed",
 					zap.String("run_id", runID),
@@ -813,7 +852,26 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 		)
 	}
 
-	// 1. Mark as running.
+	// 1. Acquire a run lease to prevent concurrent double-execution.
+	// Two replicas that both try to execute the same run will race on the
+	// run_locks UPSERT; only one wins (rows_affected > 0) and proceeds.
+	// The loser aborts silently — the winner will complete or fail the run,
+	// and the recovery sweep will re-drive if the winner crashes.
+	leaseAcquired, releaseLease, leaseErr := acquireRunLease(ctx, h.srv.Pool, runID, h.logger())
+	if leaseErr != nil {
+		h.logger().Error("inline executor: lease acquisition error — aborting to avoid double-execute",
+			zap.String("run_id", runID), zap.Error(leaseErr))
+		return "", "", fmt.Errorf("acquire run lease: %w", leaseErr)
+	}
+	if !leaseAcquired {
+		h.logger().Info("inline executor: lease held by another worker — aborting",
+			zap.String("run_id", runID))
+		// Return success-shaped zero values; the run is already being executed.
+		return "", "", nil
+	}
+	defer releaseLease()
+
+	// 1b. Mark as running.
 	logStep("initialize", "running", "Starting agent execution")
 	_, err := h.srv.Pool.Exec(ctx,
 		`UPDATE runs SET status = 'running', started_at = now() WHERE id = $1`,
@@ -963,8 +1021,35 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	//  gmail__list_messages explicitly. No more ad-hoc input-flag
 	//  inspection inside executeRunInline.)
 
-	// 3. Call the LLM. Use the tenant-aware resolver so auto-routing picks
-	// from providers configured in Settings, not just the process env.
+	// 3. Call the LLM — with idempotent replay gate.
+	//
+	// BEFORE making the LLM call, check whether journal_events already has a
+	// step_completed for llmStepID (i.e. a prior attempt finished the call
+	// and then crashed before writing runs.status).  If so, reconstruct the
+	// result from the cached payload and skip the call entirely.  This is
+	// the "no re-spent tokens" guarantee on crash-replay.
+	if cached, hit, _ := checkCachedLLMStep(ctx, h.srv.Pool, runID); hit {
+		h.logger().Info("inline executor: replaying from cached LLM step — skipping LLM call",
+			zap.String("run_id", runID))
+		logStep("call_llm", "completed", fmt.Sprintf("replay from cache (%s/%s, %d tokens)",
+			cached.Provider, cached.Model, cached.TokensOut))
+		logStep("save_output", "running", "Saving results (replay)")
+		outputJSON, _ := json.Marshal(map[string]string{"result": cached.Result})
+		_, _ = h.srv.Pool.Exec(ctx,
+			`UPDATE runs SET status = 'succeeded', finished_at = now(), output = $2::jsonb, tokens_in = $3, tokens_out = $4, cost_usd = $5 WHERE id = $1`,
+			runID, string(outputJSON), cached.TokensIn, cached.TokensOut, cached.CostUSD,
+		)
+		logStep("complete", "completed", fmt.Sprintf("Run finished (replay): %d tokens, $%.4f",
+			cached.TokensIn+cached.TokensOut, cached.CostUSD))
+		return cached.Result, resolvedTemplateID, nil
+	}
+
+	// Emit step_started so the run waterfall shows the LLM step in flight.
+	emitLLMJournalEvent(ctx, h.srv.Pool, runID, "step_started", map[string]any{
+		"name": llmStepID,
+		"type": "llm",
+	})
+
 	logStep("call_llm", "running", "Sending to AI model for processing")
 	provider, model := h.llmProxy.resolveModelForTenant(ctx, tenantID, "auto")
 	apiKey, err := h.llmProxy.resolveProviderKey(ctx, tenantID, provider)
@@ -983,6 +1068,10 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 			}
 		} else {
 			h.logger().Warn("inline executor: no LLM key, marking failed", zap.Error(err))
+			emitLLMJournalEvent(ctx, h.srv.Pool, runID, "step_failed", map[string]any{
+				"name":  llmStepID,
+				"error": err.Error(),
+			})
 			_, _ = h.srv.Pool.Exec(ctx,
 				`UPDATE runs SET status = 'failed', finished_at = now(), error = $2 WHERE id = $1`,
 				runID, fmt.Sprintf(`{"code":"no_llm","message":"%s"}`, err.Error()),
@@ -1135,6 +1224,11 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 
 	if llmErr != nil {
 		h.logger().Error("inline executor: LLM call failed", zap.Error(llmErr))
+		// Persist step_failed so replay knows this attempt did not produce output.
+		emitLLMJournalEvent(ctx, h.srv.Pool, runID, "step_failed", map[string]any{
+			"name":  llmStepID,
+			"error": llmErr.Error(),
+		})
 		errJSON, _ := json.Marshal(map[string]string{"code": "llm_error", "message": llmErr.Error()})
 		_, _ = h.srv.Pool.Exec(ctx,
 			`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
@@ -1142,6 +1236,18 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 		)
 		return "", resolvedTemplateID, fmt.Errorf("LLM call failed: %w", llmErr)
 	}
+
+	// Persist step_completed with the full output payload.  This is the
+	// journal record that a crash-replay will find and reuse to skip the LLM
+	// call on the next attempt (idempotency invariant #3 / #8).
+	emitLLMJournalEvent(ctx, h.srv.Pool, runID, "step_completed", llmStepPayload{
+		Result:    result,
+		TokensIn:  tokensIn,
+		TokensOut: tokensOut,
+		CostUSD:   costUsd,
+		Provider:  provider,
+		Model:     model,
+	})
 
 	// Anomaly detection: check cost/token spend against the agent's budget
 	// limits (or sane defaults when no budget is configured). Emit an
