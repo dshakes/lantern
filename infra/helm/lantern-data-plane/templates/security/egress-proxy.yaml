@@ -1,0 +1,117 @@
+{{- /*
+Credential-injecting egress proxy (gated egress.proxy.enabled, default false).
+
+An authenticating FORWARD PROXY that is the single controlled break in the agent
+egress fence (see cilium-egress.yaml + the runtime-manager's per-pod
+NetworkPolicy). Agent pods have NO direct internet; their only path out is this
+proxy, which:
+
+  - terminates the agent's outbound connection,
+  - applies its own destination allowlist + auth,
+  - injects upstream credentials the agent never sees (the trust boundary —
+    a compromised agent pod cannot exfiltrate raw secrets, only use the proxy's
+    mediated, audited path).
+
+This ships a MINIMAL, real proxy: a well-known forward-proxy image (default
+ubuntu/squid) wired from a ConfigMap. The credential-injection itself (rewriting
+Proxy-Authorization / adding upstream auth headers) is proxy-config-specific and
+left to the operator's squid.conf or a sidecar; the COMPOSITION (Cilium funnels
+agents here; this is the only broad-egress workload) is what this chart
+guarantees.
+
+SHIPPED DEFAULT IS DENY-ALL — the default squid.conf permits NOTHING outbound.
+It does NOT allow RFC1918 ("localnet"): pod and Service IPs live in those ranges,
+so an "allow localnet" default would let a compromised agent routed through the
+proxy reach ANY in-cluster Service or another tenant's pods (internal SSRF /
+lateral movement) — the opposite of the deny-by-default intent. Cloud metadata
+(169.254.169.254) is denied as well. To permit any egress the operator MUST
+supply an explicit destination allowlist via egress.proxy.config (a full
+squid.conf with dstdomain/dst ACLs + an `http_access allow` for them, ending in
+`http_access deny all`).
+
+NOTE: this Deployment runs in the data-plane's own (release) namespace, NOT in a
+tenant namespace — it is shared platform infra. Cilium's agent-egress policy
+references it by label app.kubernetes.io/name=lantern-egress-proxy.
+*/ -}}
+{{- if .Values.egress.proxy.enabled }}
+{{- $port := .Values.egress.proxy.port | default 3128 }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-egress-proxy-config
+  labels:
+    {{- include "lantern-dp.labels" . | nindent 4 }}
+    app.kubernetes.io/name: lantern-egress-proxy
+data:
+  squid.conf: |-
+{{ .Values.egress.proxy.config | default (printf "http_port %d\n# DEFAULT = DENY ALL. Nothing is permitted outbound — not even RFC1918,\n# because pod/Service IPs live there (internal SSRF / lateral-movement risk).\n# Cloud metadata is denied too. The operator MUST override egress.proxy.config\n# with an explicit destination allowlist to permit any egress, e.g.:\n#   acl allowed_dst dstdomain .api.openai.com .githubusercontent.com\n#   http_access deny to_localhost\n#   http_access deny to_linklocal   # 169.254.0.0/16 incl. cloud metadata\n#   http_access allow allowed_dst\n# Keep the trailing deny-all below as the final rule.\nacl to_linklocal dst 169.254.0.0/16\nhttp_access deny to_linklocal\nhttp_access deny all\n" (int $port)) | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-egress-proxy
+  labels:
+    {{- include "lantern-dp.labels" . | nindent 4 }}
+    app.kubernetes.io/name: lantern-egress-proxy
+    app.kubernetes.io/component: egress-proxy
+spec:
+  replicas: {{ .Values.egress.proxy.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lantern-egress-proxy
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "lantern-dp.labels" . | nindent 8 }}
+        app.kubernetes.io/name: lantern-egress-proxy
+        app.kubernetes.io/component: egress-proxy
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: proxy
+          image: {{ .Values.egress.proxy.image | default "ubuntu/squid:6.6-24.04_beta" | quote }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          ports:
+            - name: proxy
+              containerPort: {{ $port }}
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: config
+              mountPath: /etc/squid/conf.d/lantern.conf
+              subPath: squid.conf
+              readOnly: true
+          resources:
+            {{- toYaml (.Values.egress.proxy.resources | default (dict "requests" (dict "cpu" "100m" "memory" "128Mi") "limits" (dict "cpu" "500m" "memory" "256Mi"))) | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "lantern-dp.fullname" . }}-egress-proxy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-egress-proxy
+  labels:
+    {{- include "lantern-dp.labels" . | nindent 4 }}
+    app.kubernetes.io/name: lantern-egress-proxy
+    app.kubernetes.io/component: egress-proxy
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: lantern-egress-proxy
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: proxy
+      port: {{ $port }}
+      targetPort: proxy
+      protocol: TCP
+{{- end }}

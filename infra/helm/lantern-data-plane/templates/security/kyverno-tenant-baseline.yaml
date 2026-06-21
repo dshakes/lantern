@@ -1,0 +1,156 @@
+{{- /*
+Kyverno tenant-namespace baseline (gated policies.enabled, default false).
+
+The control-plane creates tenant namespaces (lantern-t-<tenant_id>) at RUNTIME,
+so we cannot ship them as static manifests. Instead we install Kyverno policies
+that fire on namespace CREATE and lock the namespace down BEFORE any agent pod
+lands in it:
+
+  - mutate:   stamp Pod Security Admission labels (enforce/warn/audit=restricted)
+  - generate: a default-deny-all NetworkPolicy, a ResourceQuota, and a LimitRange
+
+REQUIRES: Kyverno installed in the cluster (https://kyverno.io). These are
+Kyverno CRDs (kind: ClusterPolicy, apiVersion: kyverno.io/v1); `helm template`
+renders them but `kubectl apply` will fail unless the Kyverno CRDs are present.
+Manage Kyverno itself out of band (its own chart) — this chart only ships the
+Lantern policy set.
+
+Generate rules use synchronize=true so the generated objects are reconciled if
+an operator edits/deletes them, and the namespace label-selector restricts the
+blast radius to Lantern tenant namespaces only (never kube-system, never the
+data-plane's own namespace).
+*/ -}}
+{{- if .Values.policies.enabled }}
+{{- $ns := .Values.policies.namespaceSelector | default "lantern-t-*" }}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-tenant-psa-labels
+  labels:
+    {{- include "lantern-dp.labels" . | nindent 4 }}
+    lantern.dev/policy: tenant-baseline
+  annotations:
+    policies.kyverno.io/title: Lantern tenant PSA labels
+    policies.kyverno.io/category: Lantern Multi-Tenancy
+    policies.kyverno.io/description: >-
+      Stamp Pod Security Admission restricted labels onto every Lantern tenant
+      namespace on creation, so agent pods are admission-gated even though the
+      control-plane creates the namespace at runtime.
+spec:
+  # mutateExistingOnPolicyUpdate so namespaces created BEFORE this policy was
+  # installed also get the labels when the policy is (re)applied.
+  mutateExistingOnPolicyUpdate: true
+  rules:
+    - name: add-psa-restricted-labels
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              names:
+                - "{{ $ns }}"
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              pod-security.kubernetes.io/enforce: restricted
+              pod-security.kubernetes.io/warn: restricted
+              pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-tenant-baseline
+  labels:
+    {{- include "lantern-dp.labels" . | nindent 4 }}
+    lantern.dev/policy: tenant-baseline
+  annotations:
+    policies.kyverno.io/title: Lantern tenant namespace baseline
+    policies.kyverno.io/category: Lantern Multi-Tenancy
+    policies.kyverno.io/description: >-
+      Generate a default-deny-all NetworkPolicy, a ResourceQuota, and a
+      LimitRange into every Lantern tenant namespace on creation.
+spec:
+  generateExisting: {{ .Values.policies.generateExisting | default false }}
+  rules:
+    - name: default-deny-all-netpol
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              names:
+                - "{{ $ns }}"
+      generate:
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: lantern-default-deny-all
+        namespace: "{{ `{{request.object.metadata.name}}` }}"
+        data:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: lantern-data-plane
+              lantern.dev/policy: default-deny-all
+          spec:
+            # Empty podSelector => applies to EVERY pod in the namespace.
+            podSelector: {}
+            policyTypes:
+              - Ingress
+              - Egress
+            # No ingress/egress rules => deny all. The runtime-manager's
+            # per-pod NetworkPolicy (build_network_policy in k8s.rs) layers an
+            # ADDITIVE allow (DNS + manager) on top of this baseline deny.
+    - name: tenant-resource-quota
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              names:
+                - "{{ $ns }}"
+      generate:
+        synchronize: true
+        apiVersion: v1
+        kind: ResourceQuota
+        name: lantern-tenant-quota
+        namespace: "{{ `{{request.object.metadata.name}}` }}"
+        data:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: lantern-data-plane
+          spec:
+            hard:
+              requests.cpu: {{ .Values.policies.resourceQuota.requestsCpu | quote }}
+              requests.memory: {{ .Values.policies.resourceQuota.requestsMemory | quote }}
+              limits.cpu: {{ .Values.policies.resourceQuota.limitsCpu | quote }}
+              limits.memory: {{ .Values.policies.resourceQuota.limitsMemory | quote }}
+              pods: {{ .Values.policies.resourceQuota.pods | quote }}
+    - name: tenant-limit-range
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+              names:
+                - "{{ $ns }}"
+      generate:
+        synchronize: true
+        apiVersion: v1
+        kind: LimitRange
+        name: lantern-tenant-limits
+        namespace: "{{ `{{request.object.metadata.name}}` }}"
+        data:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: lantern-data-plane
+          spec:
+            limits:
+              - type: Container
+                default:
+                  cpu: {{ .Values.policies.limitRange.defaultCpu | quote }}
+                  memory: {{ .Values.policies.limitRange.defaultMemory | quote }}
+                defaultRequest:
+                  cpu: {{ .Values.policies.limitRange.defaultRequestCpu | quote }}
+                  memory: {{ .Values.policies.limitRange.defaultRequestMemory | quote }}
+{{- end }}

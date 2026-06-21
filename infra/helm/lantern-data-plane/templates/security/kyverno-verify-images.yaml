@@ -1,0 +1,73 @@
+{{- /*
+Kyverno image-signature verification (gated imageVerification.enabled, default
+false). Requires a valid cosign signature on Lantern images before any matching
+pod is admitted. Fails CLOSED: an unsigned/unverifiable image is BLOCKED.
+
+Two modes, selected by imageVerification.mode:
+  - keyless (DEFAULT): Sigstore keyless — the signature chains to a Fulcio cert
+    whose OIDC identity is the GitHub Actions workflow that signed it (subject
+    regexp = the repo's sign-images.yml workflow, issuer = GitHub's OIDC). This
+    is what .github/workflows/sign-images.yml produces. No long-lived keys.
+  - key: a static cosign public key pinned in imageVerification.publicKey.
+
+REQUIRES: Kyverno installed (kind: ClusterPolicy, apiVersion kyverno.io/v1) AND
+Kyverno's image-verification webhook enabled. `helm template` renders this;
+`kubectl apply` needs the Kyverno CRDs present.
+
+The imageReferences glob defaults to this chart's own registry/repository so we
+never demand signatures on third-party images (e.g. the egress proxy, postgres).
+*/ -}}
+{{- if .Values.imageVerification.enabled }}
+{{- $glob := .Values.imageVerification.imageReferences | default (printf "%s/%s/*" .Values.global.image.registry .Values.global.image.repository) }}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-verify-images
+  labels:
+    {{- include "lantern-dp.labels" . | nindent 4 }}
+    lantern.dev/policy: image-verification
+  annotations:
+    policies.kyverno.io/title: Lantern image signature verification
+    policies.kyverno.io/category: Lantern Supply Chain
+    policies.kyverno.io/description: >-
+      Require a valid cosign signature on Lantern images before admission.
+      Fails closed — unsigned images are blocked.
+spec:
+  validationFailureAction: {{ .Values.imageVerification.failureAction | default "Enforce" | quote }}
+  background: false
+  webhookTimeoutSeconds: 30
+  failurePolicy: Fail
+  rules:
+    - name: verify-lantern-image-signatures
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - "{{ $glob }}"
+          mutateDigest: true
+          verifyDigest: true
+          required: true
+          attestors:
+            - count: 1
+              entries:
+                {{- if eq (.Values.imageVerification.mode | default "keyless") "keyless" }}
+                # Keyless: trust the GitHub Actions OIDC identity that signed
+                # the image. subject == the sign-images.yml workflow identity,
+                # issuer == GitHub's OIDC token issuer.
+                - keyless:
+                    subject: {{ .Values.imageVerification.keyless.subject | quote }}
+                    issuer: {{ .Values.imageVerification.keyless.issuer | quote }}
+                    {{- with .Values.imageVerification.keyless.rekorURL }}
+                    rekor:
+                      url: {{ . | quote }}
+                    {{- end }}
+                {{- else }}
+                # Static public key mode.
+                - keys:
+                    publicKeys: |-
+                      {{- .Values.imageVerification.publicKey | nindent 22 }}
+                {{- end }}
+{{- end }}

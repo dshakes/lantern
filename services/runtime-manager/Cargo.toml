@@ -52,6 +52,7 @@ wasmtime = { version = "45.0.1", features = ["wat", "async", "cranelift"] }
 wasmtime-wasi = "45.0.1"
 sha2 = "0.10"
 bytes = "1"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

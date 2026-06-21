@@ -1,0 +1,83 @@
+# sign-images — cosign KEYLESS signing of the published Lantern runtime images.
+#
+# Signs images with Sigstore keyless signing (Fulcio short-lived cert + Rekor
+# transparency log) using the GitHub Actions OIDC token. NO long-lived keys,
+# NO secrets: the signature's identity IS this workflow
+#   (https://github.com/<owner>/<repo>/.github/workflows/sign-images.yml@<ref>)
+# which is exactly what the cluster-side Kyverno verifyImages policy
+# (infra/helm/lantern-data-plane, imageVerification.keyless.subject) trusts.
+#
+# Two ways in:
+#   - workflow_call: invoke from your existing image-publish workflow AFTER the
+#     push step, passing the pushed image refs (digest-pinned).
+#   - workflow_dispatch: sign a ref by hand (e.g. backfilling a release).
+#
+# Action SHAs are pinned (see the existing workflows in this directory, e.g.
+# sdlc-qa.yml / microvm-integration.yml).
+name: "sign-images (cosign keyless)"
+
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: >-
+          Space- or newline-separated list of image references to sign. Prefer
+          DIGEST-pinned refs (name@sha256:...) — cosign signs the digest.
+        required: true
+        type: string
+      registry:
+        description: "Registry to cosign-login against (OIDC push token)."
+        required: false
+        default: "ghcr.io"
+        type: string
+  workflow_dispatch:
+    inputs:
+      images:
+        description: "Image ref(s) to sign (space/newline separated, digest-pinned)."
+        required: true
+        type: string
+      registry:
+        description: "Registry to log in to."
+        required: false
+        default: "ghcr.io"
+        type: string
+
+# id-token: write is what makes keyless signing work — it lets cosign mint the
+# OIDC token Fulcio exchanges for a short-lived signing cert.
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+concurrency:
+  group: sign-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: sign
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+      - name: Log in to the registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign images (keyless)
+        env:
+          # Keyless: cosign uses the ambient GitHub OIDC token (no key material).
+          COSIGN_YES: "true"
+          IMAGES: ${{ inputs.images }}
+        run: |
+          set -euo pipefail
+          # Normalize whitespace/newlines into one image per line.
+          printf '%s\n' "$IMAGES" | tr ' ' '\n' | grep -v '^[[:space:]]*$' | while read -r img; do
+            echo "::group::cosign sign $img"
+            cosign sign --recursive "$img"
+            echo "::endgroup::"
+          done

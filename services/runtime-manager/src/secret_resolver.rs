@@ -43,11 +43,23 @@ use serde::{Deserialize, Serialize};
 ///
 /// Implementations MUST:
 /// - Return `Err` when the URI is unknown rather than a default/empty value.
-/// - Never log the resolved value.
+/// - Never log the resolved value or the `agent_bearer` token.
 /// - Be cheaply cloneable (use `Arc` internally if necessary).
+///
+/// `agent_bearer` is the raw token string from the harness's `authorization`
+/// gRPC metadata (i.e. the part after `"Bearer "`). When `Some`, the relay
+/// implementation forwards it to the control-plane as
+/// `Authorization: Bearer <token>` alongside the shared
+/// `X-Lantern-Runtime-Token`. Non-relay implementations ignore it silently.
+/// `None` means no token was presented — the existing shared-token path
+/// applies (backward-compatible).
 #[async_trait]
 pub trait SecretResolver: Send + Sync + 'static {
-    async fn resolve(&self, secret_uri: &str) -> Result<String, SecretResolverError>;
+    async fn resolve(
+        &self,
+        secret_uri: &str,
+        agent_bearer: Option<&str>,
+    ) -> Result<String, SecretResolverError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,7 +105,11 @@ impl EnvSecretResolver {
 
 #[async_trait]
 impl SecretResolver for EnvSecretResolver {
-    async fn resolve(&self, secret_uri: &str) -> Result<String, SecretResolverError> {
+    async fn resolve(
+        &self,
+        secret_uri: &str,
+        _agent_bearer: Option<&str>,
+    ) -> Result<String, SecretResolverError> {
         let key = Self::env_key(secret_uri);
         std::env::var(&key).map_err(|_| SecretResolverError::NotFound {
             uri: secret_uri.to_string(),
@@ -122,7 +138,11 @@ impl HashMapSecretResolver {
 
 #[async_trait]
 impl SecretResolver for HashMapSecretResolver {
-    async fn resolve(&self, secret_uri: &str) -> Result<String, SecretResolverError> {
+    async fn resolve(
+        &self,
+        secret_uri: &str,
+        _agent_bearer: Option<&str>,
+    ) -> Result<String, SecretResolverError> {
         self.inner
             .get(secret_uri)
             .cloned()
@@ -350,18 +370,30 @@ impl SecretResolver for RelaySecretResolver {
     /// fail-closed: a per-ref `"error"` from the control-plane surfaces as
     /// `SecretResolverError::NotFound`.
     ///
+    /// `agent_bearer` — when `Some`, forwarded to the control-plane as
+    /// `Authorization: Bearer <token>` in addition to the shared
+    /// `X-Lantern-Runtime-Token`.  The control-plane relay verifies it as an
+    /// agent-instance JWT and attributes the resolved secret to that instance
+    /// in its audit log.  `None` → shared-token-only path (unchanged).
+    /// The value is NEVER logged.
+    ///
     /// # Retry policy
     ///
     /// One retry on connect-level errors only (network not yet up at manager
     /// boot).  No retry on HTTP 4xx/5xx responses — those are definitive.
-    async fn resolve(&self, secret_uri: &str) -> Result<String, SecretResolverError> {
+    async fn resolve(
+        &self,
+        secret_uri: &str,
+        agent_bearer: Option<&str>,
+    ) -> Result<String, SecretResolverError> {
         let refs = vec![secret_uri.to_string()];
 
-        // Log ref name only — never the token or a resolved value.
+        // Log ref name only — never the token, bearer, or a resolved value.
         tracing::debug!(
             ref_name = secret_uri,
             tenant_id = %self.tenant_id,
             vm_id = %self.vm_id,
+            has_agent_bearer = agent_bearer.is_some(),
             "relay: resolving secret ref (value NOT logged)"
         );
 
@@ -371,12 +403,20 @@ impl SecretResolver for RelaySecretResolver {
             refs: &refs,
         };
 
+        // Build the base request with the shared service token.
+        // When the harness forwarded an agent-instance Bearer, attach it too
+        // so the control-plane relay can perform the secondary identity check.
+        // Never log the bearer value.
         let make_request = || {
-            self.client
+            let mut rb = self
+                .client
                 .post(self.resolve_url())
                 .header("X-Lantern-Runtime-Token", &self.token)
-                .header("Content-Type", "application/json")
-                .json(&body)
+                .header("Content-Type", "application/json");
+            if let Some(tok) = agent_bearer {
+                rb = rb.header("Authorization", format!("Bearer {tok}"));
+            }
+            rb.json(&body)
         };
 
         // Single retry on connection error (manager boot race).
@@ -525,7 +565,7 @@ mod tests {
         );
         let r = HashMapSecretResolver::new(m);
         let val = r
-            .resolve("lantern.secret://tenant/t1/key/OPENAI")
+            .resolve("lantern.secret://tenant/t1/key/OPENAI", None)
             .await
             .unwrap();
         assert_eq!(val, "sk-test-1234");
@@ -534,7 +574,9 @@ mod tests {
     #[tokio::test]
     async fn hashmap_resolver_missing_returns_not_found() {
         let r = HashMapSecretResolver::new(HashMap::new());
-        let err = r.resolve("lantern.secret://tenant/t1/key/MISSING").await;
+        let err = r
+            .resolve("lantern.secret://tenant/t1/key/MISSING", None)
+            .await;
         assert!(matches!(err, Err(SecretResolverError::NotFound { .. })));
     }
 
@@ -552,7 +594,9 @@ mod tests {
     async fn env_resolver_missing_returns_not_found() {
         let r = EnvSecretResolver;
         // Use a URI whose encoded key definitely doesn't exist.
-        let err = r.resolve("lantern.secret://tenant/no-such-key/test").await;
+        let err = r
+            .resolve("lantern.secret://tenant/no-such-key/test", None)
+            .await;
         assert!(matches!(err, Err(SecretResolverError::NotFound { .. })));
     }
 
@@ -621,7 +665,7 @@ mod tests {
 
         let resolver = relay_for(addr, "valid-token");
         let val = resolver
-            .resolve("lantern.secret/llm/openai")
+            .resolve("lantern.secret/llm/openai", None)
             .await
             .expect("should resolve");
 
@@ -640,7 +684,7 @@ mod tests {
 
         let resolver = relay_for(addr, "valid-token");
         let err = resolver
-            .resolve("lantern.secret/llm/missing")
+            .resolve("lantern.secret/llm/missing", None)
             .await
             .expect_err("not-found ref should produce an error");
 
@@ -666,7 +710,7 @@ mod tests {
 
         let resolver = relay_for(addr, "wrong-token");
         let err = resolver
-            .resolve("lantern.secret/llm/openai")
+            .resolve("lantern.secret/llm/openai", None)
             .await
             .expect_err("403 should be an error");
 
@@ -678,6 +722,68 @@ mod tests {
         assert!(
             !format!("{err}").contains("wrong-token"),
             "token must not appear in error: {err}"
+        );
+    }
+
+    // --- agent_bearer forwarded as Authorization header ---
+
+    /// When `agent_bearer` is `Some`, the relay must include
+    /// `Authorization: Bearer <token>` in the outbound HTTP request.
+    #[tokio::test]
+    async fn relay_agent_bearer_forwarded_in_request() {
+        let (addr, listener) = bind_mock().await;
+
+        let body = r#"{"resolved":[{"ref":"lantern.secret/llm/openai","value":"v"}]}"#;
+        // serve_one returns the raw request bytes for inspection.
+        let server = tokio::spawn(serve_one(listener, 200, body));
+
+        let resolver = relay_for(addr, "svc-token");
+        let _ = resolver
+            .resolve("lantern.secret/llm/openai", Some("instance-bearer-jwt"))
+            .await
+            .expect("should resolve");
+
+        let request_bytes = server.await.unwrap();
+        let request_str = String::from_utf8_lossy(&request_bytes);
+
+        // The Authorization header must be present and carry the bearer token.
+        // reqwest lowercases header names in HTTP/1.1 wire output.
+        let lower = request_str.to_lowercase();
+        assert!(
+            lower.contains("authorization: bearer instance-bearer-jwt"),
+            "request must contain authorization header with bearer token, got:\n{request_str}"
+        );
+        // The shared service token must still be present too.
+        assert!(
+            lower.contains("x-lantern-runtime-token: svc-token"),
+            "request must still carry x-lantern-runtime-token, got:\n{request_str}"
+        );
+    }
+
+    /// When `agent_bearer` is `None`, the relay must NOT include an
+    /// `Authorization` header (backward-compat: shared-token-only path).
+    #[tokio::test]
+    async fn relay_no_agent_bearer_omits_authorization_header() {
+        let (addr, listener) = bind_mock().await;
+
+        let body = r#"{"resolved":[{"ref":"lantern.secret/llm/openai","value":"v"}]}"#;
+        let server = tokio::spawn(serve_one(listener, 200, body));
+
+        let resolver = relay_for(addr, "svc-token");
+        let _ = resolver
+            .resolve("lantern.secret/llm/openai", None)
+            .await
+            .expect("should resolve");
+
+        let request_bytes = server.await.unwrap();
+        let request_str = String::from_utf8_lossy(&request_bytes);
+
+        // No Authorization header must be present when bearer is None.
+        // Check case-insensitively (HTTP/1.1 headers are case-insensitive).
+        let lower = request_str.to_lowercase();
+        assert!(
+            !lower.contains("authorization:"),
+            "request must NOT contain Authorization header when bearer is absent, got:\n{request_str}"
         );
     }
 
@@ -777,7 +883,7 @@ mod tests {
         let resolver =
             RelaySecretResolver::new_unchecked(format!("http://{addr}"), "test-token", "t1", "vm1");
         let val = resolver
-            .resolve("lantern.secret/llm/openai")
+            .resolve("lantern.secret/llm/openai", None)
             .await
             .expect("resolve should succeed over http with insecure bypass");
         assert_eq!(val, "relay-val");

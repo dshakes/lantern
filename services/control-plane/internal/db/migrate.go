@@ -1234,4 +1234,49 @@ var migrations = []string{
 	//    Idempotent: ALTER DEFAULT PRIVILEGES is a no-op if the privilege is
 	//    already recorded.
 	`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO lantern_app`,
+
+	// ---------------------------------------------------------------
+	// runtime_vm_logs — persisted harness log lines.
+	//
+	// The existing GET /v1/runtime/vms/{id}/logs SSE handler proxies
+	// live from the runtime-manager when the gRPC client is wired, and
+	// emits a stub frame otherwise. Neither path survives a VM exit or a
+	// manager restart — clients that reconnect after the fact see nothing.
+	//
+	// POST /v1/runtime/report with kind=log writes here so logs are
+	// durable. The StreamLogs handler already reads from the gRPC stream
+	// for live VMs; this table supplements it: clients can query historical
+	// lines via GET /v1/runtime/vms/{id}/logs?historical=1 (future work),
+	// or the SSE path can be extended to replay persisted lines before
+	// tailing the live stream.
+	//
+	// Columns:
+	//   seq        — BIGSERIAL ordering within the table (insertion order).
+	//   vm_id      — matches runtime_vms.vm_id (no hard FK: a log line
+	//                may arrive after the VM row is terminated).
+	//   tenant_id  — denormalised for efficient per-tenant queries; the
+	//                report handler verifies tenant ownership before write.
+	//   stream     — "stdout" | "stderr" (harness convention).
+	//   text       — raw log line text (no size limit enforced here; the
+	//                HTTP body cap on /v1/runtime/report is the defence).
+	//   at         — wall-clock timestamp set at insert time (server-side).
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS runtime_vm_logs (
+		seq       BIGSERIAL PRIMARY KEY,
+		vm_id     TEXT      NOT NULL,
+		tenant_id UUID      NOT NULL,
+		stream    TEXT      NOT NULL DEFAULT 'stdout',
+		text      TEXT      NOT NULL,
+		at        TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS runtime_vm_logs_vm_at_idx
+		ON runtime_vm_logs (vm_id, at)`,
+
+	`CREATE INDEX IF NOT EXISTS runtime_vm_logs_tenant_at_idx
+		ON runtime_vm_logs (tenant_id, at DESC)`,
+
+	// Grant the application role access to the new table and its sequence.
+	`GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE runtime_vm_logs TO lantern_app`,
+	`GRANT USAGE, SELECT ON SEQUENCE runtime_vm_logs_seq_seq TO lantern_app`,
 }

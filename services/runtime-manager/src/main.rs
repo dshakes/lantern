@@ -10,6 +10,8 @@ mod config;
 mod handle_registry;
 mod pool;
 mod proto;
+mod report_forwarder;
+mod runtimeclass_preflight;
 mod scheduler_heartbeat;
 mod secret_resolver;
 mod service;
@@ -59,18 +61,35 @@ async fn main() -> anyhow::Result<()> {
             &config.docker_socket,
             config.agent_image.clone(),
         )?),
-        RuntimeBackendKind::K8s => Arc::new(
-            K8sBackend::new_with_runtime_classes(
-                config.agent_image.clone(),
-                RuntimeClassConfig {
-                    gvisor: config.runtimeclass_gvisor.clone(),
-                    kata: config.runtimeclass_kata.clone(),
-                    wasm: config.runtimeclass_wasm.clone(),
-                    allow_runc_standard: config.allow_runc_standard,
-                },
+        RuntimeBackendKind::K8s => {
+            // Build the initial config from env vars.
+            let raw_rc_cfg = RuntimeClassConfig {
+                gvisor: config.runtimeclass_gvisor.clone(),
+                kata: config.runtimeclass_kata.clone(),
+                wasm: config.runtimeclass_wasm.clone(),
+                allow_runc_standard: config.allow_runc_standard,
+                node_label_gvisor: std::env::var("LANTERN_NODE_LABEL_GVISOR")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty()),
+                node_label_kata: std::env::var("LANTERN_NODE_LABEL_KATA")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty()),
+            };
+
+            // RuntimeClass preflight: verify hardened RuntimeClass objects
+            // actually exist in the cluster at boot.  Non-fatal — absent classes
+            // are cleared from the config (fail-closed) rather than crashing.
+            // We need a temporary kube client for the preflight; the backend
+            // creates its own client internally after this check.
+            let preflight_client = kube::Client::try_default().await.ok();
+            let rc_cfg = runtimeclass_preflight::check_and_resolve(
+                raw_rc_cfg,
+                preflight_client.as_ref(),
             )
-            .await?,
-        ),
+            .await;
+
+            Arc::new(K8sBackend::new_with_runtime_classes(config.agent_image.clone(), rc_cfg).await?)
+        }
         RuntimeBackendKind::Firecracker => Arc::new(FirecrackerBackend::new()),
         RuntimeBackendKind::Kata => Arc::new(KataBackend::from_env(
             &config.docker_socket,

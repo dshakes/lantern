@@ -499,6 +499,13 @@ func main() {
 	// LANTERN_RUNTIME_SECRET_TOKEN is unset (see ADR 0008).
 	runtimeSecretsHandler := handlers.NewRuntimeSecretsHandler(srv, authHandler)
 	httpMux.HandleFunc("POST /v1/runtime/secrets/resolve", runtimeSecretsHandler.ResolveSecrets)
+	// Report ingestion — runtime-manager forwards harness telemetry here.
+	// Auth: same shared token as the secret relay (fail-closed when unset).
+	runtimeReportHandler := handlers.NewRuntimeReportHandler(srv)
+	httpMux.HandleFunc("POST /v1/runtime/report", runtimeReportHandler.Report)
+	// runtime_vm_logs retention: delete rows older than LANTERN_RUNTIME_LOG_RETENTION_DAYS
+	// (default 14) once per hour. Stops cleanly when ctx is cancelled.
+	go runtimeReportHandler.RunLogRetentionJanitor(ctx)
 
 	httpServer := &http.Server{
 		Addr:              ":8080",

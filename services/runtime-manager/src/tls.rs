@@ -239,6 +239,43 @@ pub fn verify_client_cert_vm_id(vm_id: &str, cert_der: &[u8]) -> Result<(), Stri
     ))
 }
 
+/// Extract the vm_id embedded as the CN or first DNS SAN from a DER-encoded
+/// client certificate.
+///
+/// Returns `Some(vm_id)` on success, `None` when the cert cannot be parsed or
+/// carries no usable identity.  Never panics.
+///
+/// This is the inverse of [`verify_client_cert_vm_id`]: instead of checking a
+/// *known* vm_id, it *reads* the identity from the cert.  Used by the `report`
+/// RPC handler to derive the authoritative vm_id from the mTLS peer cert so
+/// that OTLP/Prometheus frames (which carry no embedded vm_id) can still be
+/// forwarded with the correct identity.
+pub fn vm_id_from_cert_der(cert_der: &[u8]) -> Option<String> {
+    let (_, cert) = x509_parser::parse_x509_certificate(cert_der).ok()?;
+
+    // DNS SANs first (RFC 5280 preferred).
+    if let Ok(Some(san_ext)) = cert.subject_alternative_name() {
+        for name in &san_ext.value.general_names {
+            if let x509_parser::extensions::GeneralName::DNSName(dns) = name
+                && !dns.is_empty()
+            {
+                return Some((*dns).to_string());
+            }
+        }
+    }
+
+    // Fall back to CN.
+    for attr in cert.subject().iter_common_name() {
+        if let Ok(cn) = attr.as_str()
+            && !cn.is_empty()
+        {
+            return Some(cn.to_string());
+        }
+    }
+
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Per-VM client-cert issuance (rcgen, signed by the manager CA)
 // ---------------------------------------------------------------------------

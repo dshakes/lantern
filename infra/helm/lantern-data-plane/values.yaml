@@ -188,6 +188,148 @@ secrets:
   minioPassword: "lanternsecret"
 
 # ---------------------------------------------------------------------------
+# RuntimeClasses (top-level) — gVisor/Kata isolation tiers (ADR 0009)
+# ---------------------------------------------------------------------------
+# The RuntimeClass *names* live under runtimeManager.runtimeClasses (above);
+# this toggle controls whether the chart RENDERS RuntimeClass objects for them.
+# `create: true` is honored alongside the legacy
+# runtimeManager.createRuntimeClasses flag. Only enable once the node runtime
+# handlers (gVisor/runsc, Kata) are installed AND the nodes are labelled
+# `lantern.dev/runtimeclass=gvisor|kata` (+ tainted) so untrusted/hostile pods
+# land only on hardened nodes. See README.md. Default false.
+runtimeClasses:
+  create: false
+
+# ---------------------------------------------------------------------------
+# Tenant-namespace baseline policies (Kyverno) — OPT-IN, default OFF
+# ---------------------------------------------------------------------------
+# Requires Kyverno installed in the cluster. On creation of any namespace
+# matching namespaceSelector, Kyverno stamps PSA restricted labels and
+# generates a default-deny NetworkPolicy + ResourceQuota + LimitRange — so every
+# tenant namespace is locked down even though the control-plane creates them at
+# runtime. See README.md "Tenant baseline (Kyverno)".
+policies:
+  enabled: false
+  # Glob the generate/mutate rules match against. Tenant namespaces only.
+  namespaceSelector: "lantern-t-*"
+  # Apply the generated objects to namespaces that ALREADY exist when the policy
+  # is installed (Kyverno generateExisting). Default false = future namespaces.
+  generateExisting: false
+  # ResourceQuota caps generated into each tenant namespace.
+  resourceQuota:
+    requestsCpu: "8"
+    requestsMemory: "16Gi"
+    limitsCpu: "16"
+    limitsMemory: "32Gi"
+    pods: "50"
+  # LimitRange defaults applied to containers with no explicit limits.
+  limitRange:
+    defaultCpu: "500m"
+    defaultMemory: "512Mi"
+    defaultRequestCpu: "100m"
+    defaultRequestMemory: "128Mi"
+
+# ---------------------------------------------------------------------------
+# Image-signature verification (Kyverno verifyImages + cosign) — OPT-IN, OFF
+# ---------------------------------------------------------------------------
+# Requires Kyverno (with the image-verification webhook). Blocks any Lantern
+# image without a valid cosign signature. Fails CLOSED. Default keyless mode
+# trusts the GitHub Actions OIDC identity that .github/workflows/sign-images.yml
+# uses to sign. See README.md "Image verification (cosign)".
+imageVerification:
+  enabled: false
+  # Audit | Enforce. Enforce = block unsigned (recommended once signing is live).
+  failureAction: "Enforce"
+  # keyless (default, Sigstore/Fulcio/Rekor) | key (static publicKey below).
+  mode: "keyless"
+  # Image glob to require signatures on. Defaults to this chart's own
+  # registry/repository so third-party images aren't forced to be signed.
+  imageReferences: ""
+  keyless:
+    # The GitHub Actions workflow OIDC identity that signs the images. Update
+    # the org/repo to match your fork before enabling Enforce.
+    subject: "https://github.com/dshakes/lantern/.github/workflows/sign-images.yml@refs/heads/main"
+    issuer: "https://token.actions.githubusercontent.com"
+    rekorURL: "https://rekor.sigstore.dev"
+  # Static cosign public key (PEM). Only used when mode: "key".
+  publicKey: ""
+
+# ---------------------------------------------------------------------------
+# Host-level egress (Cilium) + credential-injecting egress proxy — OPT-IN, OFF
+# ---------------------------------------------------------------------------
+# A defense-in-depth layer ON TOP OF the runtime-manager's per-pod
+# NetworkPolicy. Requires Cilium CNI for the policy; the proxy is portable.
+# See README.md "Host-level egress (Cilium + proxy)" for the trust model.
+egress:
+  cilium:
+    enabled: false
+    # cluster (CiliumClusterwideNetworkPolicy, covers all lantern-t-* ns) |
+    # namespaced (CiliumNetworkPolicy in `namespace`).
+    scope: "cluster"
+    namespace: "lantern-system"
+    # Namespace housing the runtime-manager/control-plane (allowed :50054).
+    systemNamespace: "lantern-system"
+    # Pods this default-deny-egress policy applies to. The runtime-manager
+    # stamps agent workload pods; match its label here.
+    podSelector:
+      lantern.dev/agent: "true"
+    # Extra verbatim Cilium egress entries appended to the allow list.
+    extraEgress: []
+  proxy:
+    enabled: false
+    namespace: "lantern-system"
+    # Well-known forward-proxy image (swap as needed). The credential-injection
+    # logic itself lives in `config` (squid.conf) — see README.md.
+    image: "ubuntu/squid:6.6-24.04_beta"
+    replicas: 1
+    port: 3128
+    # squid.conf contents. Default is DENY-ALL (permits nothing — NOT even
+    # RFC1918/localnet, since pod & Service IPs are RFC1918 and allowing them
+    # enables internal SSRF / lateral movement; cloud metadata is denied too).
+    # The proxy is inert until you supply a full squid.conf here with an explicit
+    # destination allowlist (dstdomain/dst ACLs + http_access allow, ending in
+    # http_access deny all) plus your upstream credential injection.
+    config: ""
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# External Secrets Operator (ESO) — OPT-IN, OFF (operator/platform secrets only)
+# ---------------------------------------------------------------------------
+# NOT the agent secret path (that is the in-VM mTLS vend — refs never hit env).
+# ESO syncs OPERATOR-managed platform secrets from Vault/AWS/GCP. Requires ESO
+# installed. See README.md "External Secrets (ESO)".
+externalSecrets:
+  enabled: false
+  # vault (default) | aws | gcp
+  provider: "vault"
+  # true => ClusterSecretStore (cluster-scoped); false => namespaced SecretStore.
+  clusterScope: false
+  refreshInterval: "1h"
+  vault:
+    server: "https://vault.example.com:8200"
+    path: "secret"
+    version: "v2"
+    authMountPath: "kubernetes"
+    role: "lantern-data-plane"
+  aws:
+    region: "us-east-1"
+  gcp:
+    projectID: ""
+    clusterLocation: ""
+    clusterName: ""
+  # Example ExternalSecret mapping (adapt to your backend layout).
+  example:
+    targetSecretName: ""
+    postgresPasswordRef: "lantern/data-plane"
+    postgresPasswordProperty: "postgres-password"
+
+# ---------------------------------------------------------------------------
 # Service account
 # ---------------------------------------------------------------------------
 serviceAccount:
