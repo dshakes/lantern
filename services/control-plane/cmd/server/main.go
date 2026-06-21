@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
 	"github.com/dshakes/lantern/services/control-plane/internal/db"
 	"github.com/dshakes/lantern/services/control-plane/internal/handlers"
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
@@ -100,9 +101,52 @@ func main() {
 	}
 	logger.Info("connected to redis")
 
+	// --- RLS app pool (dual-pool, flag-gated, default no-op) ---
+	//
+	// When LANTERN_RLS_ENFORCE=1 AND LANTERN_APP_DB_PASSWORD is set, create a
+	// second pool that connects as 'lantern_app' (non-superuser, subject to RLS
+	// policies on 'agents' and 'runs'). Otherwise appPool aliases the privileged
+	// pool — zero behaviour change with no env vars set.
+	//
+	// The privileged pool (pool) remains the sole connection for:
+	//   - migrations (Migrate() must run as the schema owner)
+	//   - recovery sweeps (findOrphanedRuns — must bypass RLS)
+	//   - marketplace cross-tenant queries
+	//   - janitor goroutines
+	//
+	// Operator cutover steps (when ready to enforce RLS on all handler paths):
+	//   1. CREATE ROLE lantern_app LOGIN (done by Migrate).
+	//   2. ALTER ROLE lantern_app PASSWORD '<strong>';
+	//   3. Set LANTERN_APP_DB_PASSWORD=<strong> + LANTERN_RLS_ENFORCE=1.
+	//   4. Route remaining handler paths through srv.AppPool + db.WithTenantConn.
+	//      Add // TODO(rls-cutover) comments on each site still using Pool directly.
+	appPool := pool // alias — superuser path, RLS bypassed
+	if os.Getenv("LANTERN_RLS_ENFORCE") == "1" {
+		appPwd := os.Getenv("LANTERN_APP_DB_PASSWORD")
+		if appPwd != "" {
+			appCfg, cfgErr := buildAppPoolConfig(cfg.DatabaseURL, appPwd)
+			if cfgErr != nil {
+				logger.Fatal("failed to build lantern_app pool config", zap.Error(cfgErr))
+			}
+			p, err := pgxpool.NewWithConfig(ctx, appCfg)
+			if err != nil {
+				logger.Fatal("failed to create lantern_app pool", zap.Error(err))
+			}
+			if err := p.Ping(ctx); err != nil {
+				logger.Fatal("failed to ping lantern_app pool", zap.Error(err))
+			}
+			appPool = p
+			defer p.Close()
+			logger.Info("RLS enforcement active — AppPool connects as lantern_app")
+		} else {
+			logger.Warn("LANTERN_RLS_ENFORCE=1 but LANTERN_APP_DB_PASSWORD is unset — AppPool aliased to privileged pool; RLS not enforced at runtime")
+		}
+	}
+
 	// --- Server struct ---
 	srv := &server.Server{
 		Pool:     pool,
+		AppPool:  appPool,
 		Redis:    rdb,
 		Logger:   logger,
 		S3Bucket: cfg.S3Bucket,
@@ -472,6 +516,27 @@ func main() {
 	httpMux.HandleFunc("POST /v1/runs/receipts/verify", receiptHandler.VerifyReceipt)
 	httpMux.HandleFunc("GET /.well-known/lantern-receipts", receiptHandler.WellKnown)
 
+	// Agent-instance identity public-key discovery. No auth (public endpoint).
+	// Ed25519 mode: returns {algorithm, publicKey, keyFingerprint}.
+	// HS256 mode (default): returns {algorithm:"HS256"} only — no secret emitted.
+	httpMux.HandleFunc("GET /.well-known/lantern-agent-identity", handlers.AgentIdentityWellKnown)
+
+	// Log the active agent-identity signing mode once at startup.
+	{
+		alg, fp := agentidentity.StartupInfo()
+		if fp != "" {
+			logger.Info("agent-identity: Ed25519 signing active",
+				zap.String("algorithm", alg),
+				zap.String("pubKeyFingerprint", fp),
+			)
+		} else {
+			logger.Warn("agent-identity: Ed25519 key not configured — using HS256 fallback",
+				zap.String("algorithm", alg),
+				zap.String("env", "LANTERN_AGENT_IDENTITY_ED25519_SEED"),
+			)
+		}
+	}
+
 	// RLHF feedback loop — per-run thumbs + preferred-output capture.
 	httpMux.HandleFunc("POST /v1/runs/{id}/feedback", feedbackHandler.SubmitFeedback)
 	httpMux.HandleFunc("GET /v1/runs/{id}/feedback", feedbackHandler.ListFeedback)
@@ -738,4 +803,21 @@ type wrappedStream struct {
 
 func (w *wrappedStream) Context() context.Context {
 	return w.ctx
+}
+
+// buildAppPoolConfig returns a *pgxpool.Config for the 'lantern_app' non-superuser
+// role by parsing DATABASE_URL and mutating ONLY the user and password on the
+// parsed config — no string re-serialization. This preserves every other DSN
+// parameter (sslmode incl. verify-full, search_path, connect_timeout, multi-host,
+// application_name, …) exactly as the privileged pool has them, and is immune to
+// URL-reserved characters in the password (no manual percent-encoding needed).
+// The password is never logged; the config is used in-process only.
+func buildAppPoolConfig(databaseURL, appPassword string) (*pgxpool.Config, error) {
+	cfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse DATABASE_URL for app pool: %w", err)
+	}
+	cfg.ConnConfig.User = "lantern_app"
+	cfg.ConnConfig.Password = appPassword
+	return cfg, nil
 }
