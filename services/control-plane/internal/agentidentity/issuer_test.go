@@ -2,6 +2,8 @@ package agentidentity
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -235,5 +237,209 @@ func TestIssue_EmptyRunAndVersion(t *testing.T) {
 	}
 	if claims.AgentVersionID != "" {
 		t.Errorf("AgentVersionID should be empty, got %q", claims.AgentVersionID)
+	}
+}
+
+// ---------- Ed25519 tests ----------
+
+// testEd25519Seed is a deterministic 32-byte seed for tests.
+// Never use in production.
+var testEd25519Seed = strings.Repeat("A", 32) // 32 bytes of 'A'
+
+// testEd25519SeedB64 is the base64-std encoding of testEd25519Seed.
+var testEd25519SeedB64 = base64.StdEncoding.EncodeToString([]byte(testEd25519Seed))
+
+// newEd25519Issuer returns an Issuer with the Ed25519 key loaded from a fixed
+// test seed. It resets the package-level once so multiple tests can run in
+// sequence.
+func newEd25519Issuer(t *testing.T) *Issuer {
+	t.Helper()
+	resetAgentEd25519OnceForTest()
+	t.Setenv(envIdentityEd25519Seed, testEd25519SeedB64)
+	t.Cleanup(resetAgentEd25519OnceForTest)
+	return New([]byte(testSecret))
+}
+
+// TestEd25519_RoundTrip verifies that an Ed25519-signed token round-trips
+// through Verify and preserves all claims.
+func TestEd25519_RoundTrip(t *testing.T) {
+	iss := newEd25519Issuer(t)
+
+	instanceID, tok, err := iss.Issue(context.Background(), "tenant-ed", "run-ed", "ver-ed")
+	if err != nil {
+		t.Fatalf("Issue (Ed25519): %v", err)
+	}
+	if !strings.HasPrefix(instanceID, "ai-") {
+		t.Errorf("instanceID must start with 'ai-', got %q", instanceID)
+	}
+
+	// Verify with the same issuer (same Ed25519 key).
+	claims, err := iss.Verify(tok)
+	if err != nil {
+		t.Fatalf("Verify (Ed25519): %v", err)
+	}
+	if claims.AgentInstanceID != instanceID {
+		t.Errorf("AgentInstanceID: got %q, want %q", claims.AgentInstanceID, instanceID)
+	}
+	if claims.TenantID != "tenant-ed" {
+		t.Errorf("TenantID: got %q, want %q", claims.TenantID, "tenant-ed")
+	}
+	if claims.Typ != TokenTyp {
+		t.Errorf("Typ: got %q, want %q", claims.Typ, TokenTyp)
+	}
+
+	// Confirm the token header contains "EdDSA".
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		t.Fatalf("unexpected JWT structure: %d parts", len(parts))
+	}
+	headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		t.Fatalf("decode header: %v", err)
+	}
+	if !strings.Contains(string(headerJSON), "EdDSA") {
+		t.Errorf("expected EdDSA in JWT header, got: %s", headerJSON)
+	}
+}
+
+// TestHS256_BackCompat verifies that when LANTERN_AGENT_IDENTITY_ED25519_SEED
+// is unset, Issue() still signs with HS256 and Verify() still works.
+func TestHS256_BackCompat(t *testing.T) {
+	// Ensure Ed25519 seed env var is unset.
+	resetAgentEd25519OnceForTest()
+	t.Setenv(envIdentityEd25519Seed, "")
+	t.Cleanup(resetAgentEd25519OnceForTest)
+
+	iss := New([]byte(testSecret))
+
+	instanceID, tok, err := iss.Issue(context.Background(), "tenant-hs", "run-hs", "ver-hs")
+	if err != nil {
+		t.Fatalf("Issue (HS256 back-compat): %v", err)
+	}
+
+	claims, err := iss.Verify(tok)
+	if err != nil {
+		t.Fatalf("Verify (HS256 back-compat): %v", err)
+	}
+	if claims.AgentInstanceID != instanceID {
+		t.Errorf("AgentInstanceID mismatch")
+	}
+
+	// Confirm the token header contains "HS256".
+	parts := strings.Split(tok, ".")
+	headerJSON, _ := base64.RawURLEncoding.DecodeString(parts[0])
+	if !strings.Contains(string(headerJSON), "HS256") {
+		t.Errorf("expected HS256 in JWT header, got: %s", headerJSON)
+	}
+}
+
+// TestAlgSubstitution_Ed25519TokenRejectedByHS256Issuer verifies that an
+// Ed25519-signed token is rejected when presented to an issuer that only has
+// an HS256 secret (no Ed25519 seed configured).
+func TestAlgSubstitution_Ed25519TokenRejectedByHS256Issuer(t *testing.T) {
+	// Issue an Ed25519 token.
+	ed25519Iss := newEd25519Issuer(t)
+	_, tok, err := ed25519Iss.Issue(context.Background(), "tenant", "run", "ver")
+	if err != nil {
+		t.Fatalf("Issue (Ed25519): %v", err)
+	}
+
+	// Now create an HS256-only issuer (no Ed25519 seed) and try to verify.
+	resetAgentEd25519OnceForTest()
+	t.Setenv(envIdentityEd25519Seed, "")
+	hs256Iss := New([]byte(testSecret))
+
+	_, err = hs256Iss.Verify(tok)
+	if err == nil {
+		t.Error("expected Ed25519 token to be REJECTED by HS256-only issuer, but Verify returned nil")
+	}
+}
+
+// TestAlgSubstitution_HS256TokenRejectedByEd25519Issuer verifies that an
+// HS256 token is rejected when presented to an issuer that is configured for
+// Ed25519 (no cross-algorithm confusion).
+func TestAlgSubstitution_HS256TokenRejectedByEd25519Issuer(t *testing.T) {
+	// Issue an HS256 token (no Ed25519 seed).
+	resetAgentEd25519OnceForTest()
+	t.Setenv(envIdentityEd25519Seed, "")
+	hs256Iss := New([]byte(testSecret))
+	_, tok, err := hs256Iss.Issue(context.Background(), "tenant", "run", "ver")
+	if err != nil {
+		t.Fatalf("Issue (HS256): %v", err)
+	}
+
+	// Now configure an Ed25519 issuer and try to verify the HS256 token.
+	ed25519Iss := newEd25519Issuer(t)
+	_, err = ed25519Iss.Verify(tok)
+	if err == nil {
+		t.Error("expected HS256 token to be REJECTED by Ed25519 issuer, but Verify returned nil")
+	}
+}
+
+// TestEd25519_TamperedSignature verifies that a tampered Ed25519 token is rejected.
+func TestEd25519_TamperedSignature(t *testing.T) {
+	iss := newEd25519Issuer(t)
+	_, tok, err := iss.Issue(context.Background(), "tenant", "run", "ver")
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 JWT parts, got %d", len(parts))
+	}
+	// Corrupt the signature section.
+	tampered := strings.Join([]string{parts[0], parts[1], strings.Repeat("A", len(parts[2]))}, ".")
+	_, err = iss.Verify(tampered)
+	if err == nil {
+		t.Error("expected error for tampered Ed25519 token, got nil")
+	}
+}
+
+// TestAgentIdentityPublicKey verifies that AgentIdentityPublicKey returns the
+// expected public key when the seed is configured.
+func TestAgentIdentityPublicKey(t *testing.T) {
+	resetAgentEd25519OnceForTest()
+	t.Setenv(envIdentityEd25519Seed, testEd25519SeedB64)
+	t.Cleanup(resetAgentEd25519OnceForTest)
+
+	pub := AgentIdentityPublicKey()
+	if pub == nil {
+		t.Fatal("expected non-nil public key when seed is configured")
+	}
+	if len(pub) != ed25519.PublicKeySize {
+		t.Errorf("public key size: got %d, want %d", len(pub), ed25519.PublicKeySize)
+	}
+
+	// Verify it matches what we'd derive from the seed.
+	priv := ed25519.NewKeyFromSeed([]byte(testEd25519Seed))
+	expectedPub := priv.Public().(ed25519.PublicKey)
+	if string(pub) != string(expectedPub) {
+		t.Error("AgentIdentityPublicKey does not match key derived from seed")
+	}
+
+	fp := AgentIdentityKeyFingerprint()
+	if fp == "" {
+		t.Error("expected non-empty fingerprint when seed is configured")
+	}
+	if len(fp) != 16 { // 8 bytes hex = 16 chars
+		t.Errorf("fingerprint length: got %d, want 16", len(fp))
+	}
+}
+
+// TestAgentIdentityPublicKey_NoSeed verifies that AgentIdentityPublicKey
+// returns nil when no seed is configured (HS256 mode).
+func TestAgentIdentityPublicKey_NoSeed(t *testing.T) {
+	resetAgentEd25519OnceForTest()
+	t.Setenv(envIdentityEd25519Seed, "")
+	t.Cleanup(resetAgentEd25519OnceForTest)
+
+	pub := AgentIdentityPublicKey()
+	if pub != nil {
+		t.Errorf("expected nil public key when no seed is configured, got %v", pub)
+	}
+	fp := AgentIdentityKeyFingerprint()
+	if fp != "" {
+		t.Errorf("expected empty fingerprint when no seed configured, got %q", fp)
 	}
 }
