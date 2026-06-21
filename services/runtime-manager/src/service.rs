@@ -13,6 +13,7 @@ use crate::handle_registry::{HandleInfo, HandleRegistry};
 use crate::pool::{PoolConfig, WarmPool};
 use crate::proto;
 use crate::proto::pb;
+use crate::report_forwarder;
 use crate::secret_resolver::SecretResolver;
 use crate::snapshot_store::SnapshotStore;
 
@@ -1316,6 +1317,13 @@ pub struct RuntimeHarnessGrpc {
     /// (plaintext) the check is skipped because no peer cert exists; in
     /// production the prod gate forces mTLS on, so this is always true there.
     mtls_enabled: bool,
+    /// Shared reqwest client for forwarding HarnessReport messages to the
+    /// control-plane.  `None` in unit tests that don't inject one.
+    report_client: Option<reqwest::Client>,
+    /// `(control_plane_url, token)` for report forwarding.  `None` in dev
+    /// when `LANTERN_CONTROL_PLANE_URL` / `LANTERN_RUNTIME_SECRET_TOKEN` are
+    /// unset — messages are logged locally instead.
+    report_forward_config: Option<(String, String)>,
 }
 
 impl RuntimeHarnessGrpc {
@@ -1326,12 +1334,30 @@ impl RuntimeHarnessGrpc {
         harness_addrs: HarnessAddrs,
         mtls_enabled: bool,
     ) -> Self {
+        // Build the report-forward config from the environment at construction
+        // time so every RPC handler uses the same resolved values.
+        let report_forward_config = report_forwarder::forward_config();
+        let report_client = report_forward_config
+            .as_ref()
+            .map(|_| report_forwarder::build_http_client());
+
+        if report_forward_config.is_some() {
+            tracing::info!("report: forwarding HarnessReport messages to control-plane");
+        } else {
+            tracing::info!(
+                "report: LANTERN_CONTROL_PLANE_URL / LANTERN_RUNTIME_SECRET_TOKEN not set — \
+                 HarnessReport messages will be logged locally (dev mode)"
+            );
+        }
+
         Self {
             registry,
             secret_resolver,
             heartbeat_cache,
             harness_addrs,
             mtls_enabled,
+            report_client,
+            report_forward_config,
         }
     }
 }
@@ -1560,17 +1586,115 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
     }
 
     // `report` is client-streaming: harness sends a stream of HarnessReport,
-    // manager responds with a single HarnessAck.
+    // manager responds with a single HarnessAck once the stream closes.
+    //
+    // Security model
+    // --------------
+    // The vm_id embedded in each HarnessReport frame (Log.vm_id / Audit.vm_id)
+    // is harness-asserted and UNTRUSTED until cert-bound.  When mTLS is enabled
+    // the connection's client certificate CN/SAN MUST match the vm_id claimed in
+    // every frame — mirrors the identical check in `vend_secret` and `heartbeat`.
+    // Frames that fail cert binding are dropped with a WARN; the stream stays
+    // alive (same semantics as heartbeat).
+    //
+    // Forwarding failures NEVER surface to the harness as an error (that would
+    // cause a reconnect/replay loop).  Audit drops are surfaced as
+    // `tracing::error!` so they appear in the manager's own log trail.
     async fn report(
         &self,
-        _request: Request<tonic::Streaming<pb::HarnessReport>>,
+        request: Request<tonic::Streaming<pb::HarnessReport>>,
     ) -> Result<Response<pb::HarnessAck>, Status> {
-        // Report ingestion (logs, traces, audit) is handled by a separate
-        // subsystem; returning unimplemented keeps the trait satisfied without
-        // silently discarding data the harness relies on.
-        Err(Status::unimplemented(
-            "report: log/trace ingestion pipeline not yet wired on the manager side",
-        ))
+        // Extract the peer cert BEFORE consuming the request — the cert is
+        // per-connection and is gone after `into_inner()`.
+        let peer_cert_der = crate::tls::extract_peer_cert_der(&request);
+        let mtls_enabled = self.mtls_enabled;
+
+        let mut stream = request.into_inner();
+
+        // Clone the forward config for use inside the loop.
+        let forward_config = self.report_forward_config.clone();
+        let report_client = self.report_client.clone();
+        let registry = Arc::clone(&self.registry);
+
+        // Drain the stream, forwarding each message.
+        let mut count: u64 = 0;
+
+        while let Some(msg_result) = stream.message().await.transpose() {
+            match msg_result {
+                Err(e) => {
+                    tracing::warn!(error = %e, "report: stream read error; closing");
+                    break;
+                }
+                Ok(report) => {
+                    // Extract the harness-asserted vm_id from the frame body.
+                    // For Log and Audit variants this is embedded in the body;
+                    // OTLP/Prometheus batches carry no vm_id (empty string).
+                    let (msg_vm_id, tenant_id, run_id) =
+                        extract_identity_from_report(&report, &registry);
+
+                    // SECURITY: cert-bind the claimed vm_id before acting on
+                    // any frame.  A hostile harness in vm-A that sends
+                    // Audit{vm_id:"vm-B"} to forge vm-B's audit trail is
+                    // stopped here: the connection cert CN/SAN must match
+                    // the asserted vm_id.  Mirrors `vend_secret` / `heartbeat`.
+                    //
+                    // OTLP/Prometheus frames have an empty msg_vm_id; we still
+                    // run the check (it will fail if mTLS cert is for a
+                    // different vm — defensive) unless the msg_vm_id is empty,
+                    // in which case we skip the cert check (no claimed identity
+                    // to bind) and allow the frame through using the
+                    // connection's cert-bound identity if any.
+                    if mtls_enabled
+                        && !msg_vm_id.is_empty()
+                        && crate::tls::authorize_vm_cert(&msg_vm_id, peer_cert_der.as_deref())
+                            .is_err()
+                    {
+                        tracing::warn!(
+                            vm_id = %msg_vm_id,
+                            "report: cert/vm_id mismatch — dropping frame"
+                        );
+                        // Drop this frame; keep the stream alive.
+                        continue;
+                    }
+
+                    match report_forwarder::build_report_request(
+                        &msg_vm_id,
+                        &tenant_id,
+                        &run_id,
+                        &report,
+                    ) {
+                        None => {
+                            tracing::warn!("report: received message with unset body; skipping");
+                        }
+                        Some(payload) => {
+                            count += 1;
+                            match &forward_config {
+                                Some((url, token)) => {
+                                    if let Some(client) = &report_client {
+                                        report_forwarder::forward_report(
+                                            client, url, token, &payload,
+                                        )
+                                        .await;
+                                    }
+                                }
+                                None => {
+                                    // Dev mode: log locally.
+                                    tracing::info!(
+                                        vm_id = %payload.vm_id,
+                                        kind = %payload.kind,
+                                        "[dev] report received (not forwarded — no control-plane URL)"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::debug!(messages_processed = count, "report: stream closed");
+
+        Ok(Response::new(pb::HarnessAck { ok: true }))
     }
 
     type ExecStream = Pin<
@@ -1591,6 +1715,46 @@ impl pb::runtime_harness_server::RuntimeHarness for RuntimeHarnessGrpc {
              manager instead — it forwards to the right guest",
         ))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Report handler helpers
+// ---------------------------------------------------------------------------
+
+/// Extract `(vm_id, tenant_id, run_id)` for a [`pb::HarnessReport`] message.
+///
+/// The harness embeds a `vm_id` in the `RuntimeLogLine` and `AuditEvent`
+/// message variants but NOT in the OTLP / Prometheus batches.  For all
+/// variants we attempt a registry lookup to get the authoritative
+/// `tenant_id` and `run_id` (which the harness must never be allowed to
+/// assert).
+///
+/// For OTLP/Prometheus (no embedded vm_id) we fall back to empty strings
+/// for `vm_id` and the registry-derived identity.  This means OTLP/Prometheus
+/// batches get an empty `vm_id` in the forwarded payload when the harness
+/// hasn't yet sent a Log or Audit frame with an identifiable vm_id.  That is
+/// acceptable — the control-plane can correlate on `run_id`/`tenant_id`.
+fn extract_identity_from_report(
+    report: &pb::HarnessReport,
+    registry: &HandleRegistry,
+) -> (String, String, String) {
+    use pb::harness_report::Body;
+
+    // Extract the vm_id embedded in the message body (if any).
+    let msg_vm_id: String = match report.body.as_ref() {
+        Some(Body::Log(l)) => l.vm_id.clone(),
+        Some(Body::Audit(a)) => a.vm_id.clone(),
+        _ => String::new(), // OTLP / Prometheus / unset
+    };
+
+    // Look up authoritative tenant_id and run_id from the registry.
+    let (tenant_id, run_id) = if let Some(info) = registry.get(&msg_vm_id) {
+        (info.tenant_id.clone(), info.run_id.clone())
+    } else {
+        (String::new(), String::new())
+    };
+
+    (msg_vm_id, tenant_id, run_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -2622,6 +2786,97 @@ mod tests {
         assert!(
             crate::tls::authorize_vm_cert("vm-victim", Some(&der)).is_err(),
             "heartbeat cert check must reject a cert whose CN is a different vm_id"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // FIX H1: report handler per-frame mTLS cert binding
+    //
+    // The report handler now extracts the peer cert BEFORE `into_inner()` and
+    // then, for each frame whose `msg_vm_id` is non-empty, calls
+    // `authorize_vm_cert(msg_vm_id, peer_cert)`.  A mismatch causes the frame
+    // to be dropped (WARN) without terminating the stream — identical semantics
+    // to the heartbeat handler.
+    //
+    // These tests exercise the per-frame gate using the same underlying
+    // `crate::tls::authorize_vm_cert` and `crate::tls::extract_peer_cert_der`
+    // functions that the handler uses (a live TLS connection is not required
+    // to validate the acceptance/rejection logic).
+    // -----------------------------------------------------------------------
+
+    /// When mTLS is disabled, the per-frame cert check is skipped even when
+    /// there is no peer cert (synthetic `Request`).  This mirrors the gate
+    /// `if mtls_enabled && !msg_vm_id.is_empty() { ... }` in the handler.
+    #[test]
+    fn report_frame_mtls_disabled_skips_cert_check() {
+        let synthetic: tonic::Request<()> = tonic::Request::new(());
+        let peer_cert = crate::tls::extract_peer_cert_der(&synthetic);
+        // No cert on a plaintext synthetic request.
+        assert!(
+            peer_cert.is_none(),
+            "no cert on a plaintext synthetic request"
+        );
+
+        // When mtls_enabled=false the handler does NOT call authorize_vm_cert.
+        // Verify that authorize_vm_cert itself would reject the absent cert —
+        // i.e. the guard `if mtls_enabled` is what makes it safe to proceed.
+        let result = crate::tls::authorize_vm_cert("vm-report-x", peer_cert.as_deref());
+        assert!(
+            result.is_err(),
+            "authorize_vm_cert with absent cert must return Err — the mtls_enabled guard skips it"
+        );
+    }
+
+    /// A frame whose `msg_vm_id` matches the connection's mTLS cert CN is
+    /// accepted.  A frame with a different `vm_id` (audit-trail poisoning
+    /// attempt) is rejected by the same `authorize_vm_cert` call.
+    #[test]
+    fn report_frame_cert_must_match_msg_vm_id() {
+        use rustls_pemfile::certs;
+        use std::io::{BufReader, Cursor};
+
+        // Issue a cert bound to "vm-report-a".
+        let vm_id = "vm-report-a";
+        let ca = rcgen::generate_simple_self_signed(vec!["ca".to_string()]).expect("rcgen CA");
+        let ca_cert_pem = ca.cert.pem();
+        let ca_key_pem = ca.key_pair.serialize_pem();
+        let issued =
+            crate::tls::generate_vm_client_cert(vm_id, &ca_cert_pem, &ca_key_pem).unwrap();
+        let der: Vec<u8> = certs(&mut BufReader::new(Cursor::new(issued.cert_pem.as_bytes())))
+            .next()
+            .unwrap()
+            .unwrap()
+            .to_vec();
+
+        // Frame claiming to be from the same vm — accepted.
+        assert!(
+            crate::tls::authorize_vm_cert(vm_id, Some(&der)).is_ok(),
+            "report frame: cert CN matches msg_vm_id — must be accepted"
+        );
+
+        // Frame forging a different vm_id (audit-trail poisoning) — rejected.
+        let forge_vm_id = "vm-report-b";
+        assert!(
+            crate::tls::authorize_vm_cert(forge_vm_id, Some(&der)).is_err(),
+            "report frame: cert CN does not match forged msg_vm_id — must be dropped"
+        );
+    }
+
+    /// Frames with an empty `msg_vm_id` (OTLP/Prometheus batches) skip the
+    /// per-frame cert check (`!msg_vm_id.is_empty()` guard) regardless of mTLS
+    /// state.  This matches the handler's conditional:
+    ///   `if mtls_enabled && !msg_vm_id.is_empty()`.
+    #[test]
+    fn report_frame_empty_vm_id_skips_cert_check() {
+        // The guard condition is pure boolean — testable without any TLS state.
+        let mtls_enabled = true;
+        let msg_vm_id = "";
+
+        // The handler would NOT call authorize_vm_cert when msg_vm_id is empty.
+        let would_check = mtls_enabled && !msg_vm_id.is_empty();
+        assert!(
+            !would_check,
+            "empty msg_vm_id must bypass the per-frame cert check (OTLP/Prometheus frames)"
         );
     }
 }

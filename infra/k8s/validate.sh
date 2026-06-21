@@ -272,6 +272,68 @@ assert_escalation_rejected() {
   fi
 }
 
+# ---- Cluster-side security artifacts (Kyverno / Cilium / ESO / cosign) --------
+#
+# The chart in infra/helm/lantern-data-plane ships OPT-IN cluster-side hardening:
+# Kyverno tenant-baseline + verifyImages policies, Cilium egress policy + proxy,
+# and ESO SecretStore/ExternalSecret. Those need their OPERATORS installed
+# (Kyverno, Cilium CNI, External Secrets Operator) to apply against a live
+# cluster — this harness's kind cluster runs Calico, not those operators, so we
+# do NOT apply them here (kubectl apply would fail on missing CRDs, which would
+# be a false negative).
+#
+# What we CAN validate operator-free: that the chart renders the policy set with
+# no templating errors and the expected kinds are present. This catches the
+# common breakage (a bad value reference, a dropped `{{request...}}` Kyverno
+# variable) without a live Kyverno/Cilium.
+assert_security_chart_renders() {
+  section "(e) Cluster-side security chart renders (Kyverno/Cilium/ESO, operator-free)"
+  local chart="$SCRIPT_DIR/../helm/lantern-data-plane"
+  if ! command -v helm >/dev/null 2>&1; then
+    step "helm not found — skipping chart render assertions (install: brew install helm)"
+    return
+  fi
+  local out
+  if ! out=$(helm template "$chart" \
+      --set policies.enabled=true \
+      --set imageVerification.enabled=true \
+      --set egress.cilium.enabled=true \
+      --set egress.proxy.enabled=true \
+      --set externalSecrets.enabled=true \
+      --set runtimeClasses.create=true 2>&1); then
+    fail "security chart renders (all toggles on)" "helm template failed" \
+      "Run: helm template $chart --set policies.enabled=true … and read the error"
+    return
+  fi
+  pass "security chart renders (all toggles on)" "helm template clean"
+
+  local k
+  for k in ClusterPolicy CiliumClusterwideNetworkPolicy SecretStore ExternalSecret; do
+    if grep -q "^kind: $k" <<<"$out"; then
+      pass "renders $k" "present when toggle enabled"
+    else
+      fail "renders $k" "expected kind '$k' absent from all-on render"
+    fi
+  done
+
+  # The Kyverno generate rules MUST keep the literal {{request.object...}}
+  # variable (Helm must not have eaten it) or namespace-scoped generation breaks.
+  if grep -q 'request.object.metadata.name' <<<"$out"; then
+    pass "Kyverno generate variable preserved" "{{request.object.metadata.name}} intact"
+  else
+    fail "Kyverno generate variable preserved" "literal Kyverno variable missing from render"
+  fi
+
+  # Default values (everything OFF) must render NONE of these — safe default.
+  local def
+  def=$(helm template "$chart" 2>/dev/null)
+  if grep -qE '^kind: (ClusterPolicy|CiliumClusterwideNetworkPolicy|SecretStore|ExternalSecret)$' <<<"$def"; then
+    fail "security artifacts off by default" "a policy kind rendered with default values"
+  else
+    pass "security artifacts off by default" "default render is clean (opt-in honored)"
+  fi
+}
+
 # ---- Main ---------------------------------------------------------------------
 
 main() {
@@ -286,6 +348,7 @@ main() {
   assert_dns
   assert_security_context
   assert_escalation_rejected
+  assert_security_chart_renders
 
   section "Summary"
   if [[ $FAILS -eq 0 ]]; then

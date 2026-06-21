@@ -1,0 +1,94 @@
+{{- /*
+Host-level egress enforcement via Cilium (gated egress.cilium.enabled, default
+false).
+
+WHY (defense in depth): the runtime-manager already emits a per-pod
+NetworkPolicy that default-denies egress and allows only DNS + the manager. That
+is enforced by whatever CNI the cluster runs. This Cilium layer adds a
+SECOND, host/eBPF-level default-deny for agent pods that is independent of the
+per-pod policy and harder to bypass, and (when egress.proxy is on) funnels all
+allowed outbound through an authenticating forward proxy so credentials are
+injected at the proxy and never handed to agent code.
+
+TRUST MODEL:
+  - Agent pods are UNTRUSTED. They get DNS + the in-cluster manager/control-plane
+    + the egress proxy ONLY. No direct internet.
+  - The egress proxy is the single controlled break in the fence: it terminates
+    agent connections, applies its own allowlist/auth, and is the only workload
+    permitted broad egress. Compromising an agent pod does not yield raw
+    credentials — those live at the proxy.
+
+Targets pods labelled lantern.dev/agent=true (the runtime-manager stamps agent
+workload pods; adjust egress.cilium.podSelector to match your label). Scope is
+clusterwide by default so it covers every lantern-t-* namespace; flip
+egress.cilium.scope to "namespaced" to emit a per-namespace CiliumNetworkPolicy
+instead (set egress.cilium.namespace).
+
+REQUIRES: Cilium CNI installed with policy enforcement. These are Cilium CRDs;
+`helm template` renders them, `kubectl apply` needs the Cilium CRDs present.
+*/ -}}
+{{- if .Values.egress.cilium.enabled }}
+{{- $podSel := .Values.egress.cilium.podSelector | default (dict "lantern.dev/agent" "true") }}
+{{- if eq (.Values.egress.cilium.scope | default "cluster") "cluster" }}
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-agent-egress
+  labels:
+    {{- include "lantern-dp.labels" . | nindent 4 }}
+    lantern.dev/policy: agent-egress
+{{- else }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "lantern-dp.fullname" . }}-agent-egress
+  namespace: {{ .Values.egress.cilium.namespace | default "lantern-system" | quote }}
+  labels:
+    {{- include "lantern-dp.labels" . | nindent 4 }}
+    lantern.dev/policy: agent-egress
+{{- end }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- toYaml $podSel | nindent 6 }}
+  # Default-deny egress: only the rules below are permitted; everything else
+  # (including direct internet) is dropped by eBPF at the node.
+  egress:
+    # 1. DNS to kube-dns (so allowlisted hostnames resolve). The toFQDNs/L7 DNS
+    #    proxy can be layered on later; this is the L3/L4 allow.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # 2. The runtime-manager / control-plane channel (heartbeats, logs, mTLS
+    #    secret vend) — gRPC :50054 to the lantern-system namespace.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Values.egress.cilium.systemNamespace | default "lantern-system" | quote }}
+      toPorts:
+        - ports:
+            - port: "50054"
+              protocol: TCP
+    {{- if .Values.egress.proxy.enabled }}
+    # 3. The credential-injecting egress proxy — the ONLY controlled break in
+    #    the fence. Agent outbound to the wider internet must traverse this.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Values.egress.proxy.namespace | default "lantern-system" | quote }}
+            app.kubernetes.io/name: lantern-egress-proxy
+      toPorts:
+        - ports:
+            - port: {{ .Values.egress.proxy.port | default 3128 | quote }}
+              protocol: TCP
+    {{- end }}
+    {{- with .Values.egress.cilium.extraEgress }}
+    # Operator-supplied extra egress rules (verbatim Cilium egress entries).
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

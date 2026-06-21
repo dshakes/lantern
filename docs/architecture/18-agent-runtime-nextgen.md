@@ -239,14 +239,14 @@ not exhaustive.
 | **Scheduler placement** (`runtime-scheduler/internal/scoring`) | ✅ | 5-factor score (warm-pool/region/fair-share/cost/health), per-tenant hard cap, Postgres write-through. |
 | **Scheduler → Manager dispatch** (`internal/dialer/manager.go`) | ✅ | Real connection-pooled `GRPCDialer`, selected on `LANTERN_DEFAULT_MANAGER_ADDR`. `LogOnlyDialer` is a dev fallback only. |
 | **Manager: Firecracker** (`backends/firecracker.rs`) | ⚠️ | Cold-boot KVM validated; warm snapshots via mmap; TAP+seccomp. Jailer snapshot-restore untested. |
-| **Manager: K8s Job** (`backends/k8s.rs`) | ✅~ | Full kube client, Job+Pod, resource limits, seccomp, NetworkPolicy. **No RuntimeClass tiering yet** (needed for ADR 0009). |
+| **Manager: K8s Job** (`backends/k8s.rs`) | ✅ | Full kube client, Job+Pod, resource limits, seccomp `RuntimeDefault`, hardened `securityContext` (non-root, RO rootfs, cap-drop-ALL, no priv-esc, no SA token). **RuntimeClass tiering done** (runc/gVisor/Kata per ADR 0009) with a fail-closed second gate in `build_job`. Per-workload NetworkPolicy now **ingress+egress default-deny** with a DNS carve-out; explicit `hostNetwork/PID/IPC:false`; **node-affinity** pins untrusted→gVisor / hostile→Kata-labelled nodes; **RuntimeClass preflight** at boot disables a hardened capability (fail-closed) if its class is absent. |
 | **Manager: Kata / Wasmtime / Docker** | ⚠️ | Kata lifecycle exists, no IT; Wasmtime WASIp1 + epoch timeouts solid; Docker dev-only. |
 | **Control-plane → Scheduler** (`handlers/runtime.go`) | ✅ | Real `grpcSchedulerClient`, selected on `LANTERN_SCHEDULER_GRPC_ADDR`. `stubSchedulerClient` is the unset fallback. |
 | **Harness: boot + egress** (`harness/src/egress.rs`) | ✅ | HTTP CONNECT proxy + nftables + token-bucket + audit-on-deny + deny private/link-local (169.254/RFC1918). |
 | **Harness ↔ Manager mTLS** (`manager_client.rs`, `tls.rs`) | ✅ | TLS channel from injected per-VM cert/key/CA; https when present, http dev fallback. |
 | **Harness `VendSecret`** (`manager_client.rs`) | ✅ | Calls the real `RuntimeHarness.VendSecret` RPC; stub is opt-in (`LANTERN_ALLOW_SECRET_STUB=1`). |
 | **Harness heartbeat stream** (`manager_client.rs`) | ✅ | **Closed in this branch** — real bidi `Heartbeat` tonic stream over mTLS; proto round-trip + unit tests. Egress revocations on `HeartbeatAck` now propagate. |
-| **Harness `Report` / manager ingestion** (`report.rs`, `service.rs`) | ❌ | Manager `report` handler is `unimplemented`; harness `forward_one` returns Err honestly. OTLP/log forwarding has nowhere to land yet. |
+| **Harness `Report` / manager ingestion** (`report.rs`, `service.rs`) | ✅ | Manager `report` handler implemented — drains the harness stream, **cert-binds the reported `vm_id` to the mTLS peer** (no cross-tenant forgery), and forwards logs/OTLP/audit to the control-plane `POST /v1/runtime/report` (shared-token, fail-closed, VM-tenant binding). Audit lands in `runtime_audit_events`, logs in `runtime_vm_logs` (retention-swept). |
 | **Control-plane secret relay** (`handlers/runtime_secrets.go`) | ✅ | Token auth (constant-time), fail-closed, VM-binding check, rate-limited, audited. ADR 0008. |
 | **Workflow interpreter** (`internal/workflow/interpreter.go`) | ✅~ | trigger/ai-step/tool/connector/condition execute; **approval is real** — `rest.go` wires `WaitForApproval` to a `takeover_requests` row that blocks until granted/released/denied/expired. **loop + subagent now execute** (this branch): loop iterates the body subgraph with a max-iteration cap; subagent invokes a `RunSubAgent` dep (production `rest.go` wiring is the only follow-up). |
 | **journal_events / receipts / run_locks** | ✅ | Event-sourced log, HMAC-signed receipts bound to journal hash, distributed locking. **Crash-replay not wired into the run path.** |
@@ -437,17 +437,32 @@ gate on returned work. *(Cluster e2e is the open item; cargo/go unit + clippy ga
 green now.)*
 
 ### Phase 1 — Kubernetes-default substrate + isolation tiering (ADR 0009)
-**Scope:**
-- K8s backend sets `runtimeClassName` per IsolationClass (runc/gVisor/Kata).
-- Extend `choose_backend` so a K8s node satisfies untrusted/hostile **only** when it
-  advertises the hardened RuntimeClass; otherwise fail closed.
-- Flip the default backend/config to `k8s`; provision gVisor + Kata RuntimeClasses in
-  the data-plane install (Helm/Kustomize).
-- Host-level egress: default-deny NetworkPolicy + credential-injecting egress proxy.
-**Gate:** security-auditor sign-off + integration tests proving (a) untrusted lands on
-gVisor, hostile on Kata; (b) a node without the RuntimeClass **refuses** untrusted
-(fail-closed assertion); (c) default-deny egress blocks `169.254.169.254` + RFC1918;
-(d) no co-tenancy for hostile. Validate on a real cluster with gVisor + Kata installed.
+**Status:**
+- ✅ *(done)* K8s is the **default backend** (`config.rs`), sets `runtimeClassName` per
+  IsolationClass (runc/gVisor/Kata); `choose_backend` + a second `build_job` gate
+  refuse untrusted/hostile unless the hardened RuntimeClass is configured (fail-closed).
+- ✅ *(done, hardening branch)* Per-workload NetworkPolicy now **ingress+egress
+  default-deny** + DNS carve-out; explicit `hostNetwork/PID/IPC:false`; **node-affinity**
+  so untrusted/hostile land only on gVisor/Kata-labelled nodes; **RuntimeClass preflight**
+  disables a hardened capability (fail-closed) when its class is absent at boot.
+- ✅ *(done, hardening branch)* Data-plane install: Helm provisions gVisor/Kata
+  `RuntimeClass`es (opt-in) + a Kyverno tenant-baseline (PSA `restricted` + default-deny
+  NetworkPolicy + ResourceQuota/LimitRange generated per `lantern-t-*` namespace) +
+  **cosign image-signature verification** (keyless GitHub-OIDC, fail-closed) + Cilium
+  host-level default-deny egress + a (deny-by-default) credential-injecting egress proxy
+  + External Secrets Operator — all opt-in via values, lint/template clean.
+- ✅ *(done, hardening branch)* **Security-auditor sign-off** on the diff:
+  PASS — the one ship-blocking finding (report-RPC vm_id not cert-bound) and three
+  mediums (XFF-spoofable limiter, log-table retention, egress-proxy default) were fixed
+  in the same pass; tenant-isolation, fail-closed isolation, and auth all verified sound.
+**Remaining:**
+- **Cluster e2e** with gVisor + Kata actually installed: prove (a) untrusted lands on
+  gVisor, hostile on Kata; (b) a node without the class **refuses** untrusted; (c)
+  default-deny egress blocks `169.254.169.254` + RFC1918; (d) no co-tenancy for hostile.
+  (`infra/k8s/validate.sh` asserts the always-on pieces today; the gVisor/Kata leg needs
+  a cluster with those operators.)
+**Gate:** ✅ security-auditor sign-off (done) + the cluster e2e assertions above (open —
+needs a gVisor+Kata cluster in CI).
 
 ### Phase 2 — Governance to clear the Google bar
 **Status:**
