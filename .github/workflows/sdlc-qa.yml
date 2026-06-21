@@ -56,6 +56,11 @@ jobs:
       # on boot; cmd/migrate applies the same schema without booting it.
       - name: Apply DB migrations
         run: cd services/control-plane && SEED_DEV=1 go run ./cmd/migrate
+      # `make test` -> `test-ts` runs `npx vitest run` in packages/sdk-ts, which needs
+      # vitest (a devDependency) installed. Without `npm ci` first, npx tries to fetch
+      # vitest on the fly and fails to resolve `vitest/config`, breaking test-ts.
+      - name: Install SDK-TS deps (test-ts runs vitest)
+        run: cd packages/sdk-ts && npm ci
       - name: Run test suite
         id: test
         run: |
