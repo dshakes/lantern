@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,10 +44,6 @@ const (
 	// recoveryLockTTL is the duration of the fresh lock acquired for a
 	// re-driven run. Long enough for a typical run (5 min) with headroom.
 	recoveryLockTTL = 10 * time.Minute
-
-	// workerID is stamped on the run_locks row acquired by this sweep so logs
-	// can identify which replica picked up which run.
-	workerIDPrefix = "recovery-sweep"
 )
 
 // orphanedRun holds the minimal fields we need to re-drive a run.
@@ -76,13 +73,16 @@ func (h *RESTHandler) RecoverOrphanedRuns(ctx context.Context) (recovered, skipp
 	}
 	log.Info("recovery sweep: found orphaned runs", zap.Int("count", len(orphans)))
 
-	workerID := fmt.Sprintf("%s-%d", workerIDPrefix, time.Now().UnixNano())
+	// Use the stable per-process workerID (hostname-pid) so that the lock
+	// row we insert is identifiable in logs and can be deleted precisely
+	// before handing off to executeRunInlineSync.
+	wid := workerID()
 
 	for _, run := range orphans {
 		if ctx.Err() != nil {
 			break
 		}
-		acquired, lockErr := acquireRecoveryLock(ctx, h.srv.Pool, run.runID, workerID)
+		acquired, lockErr := acquireRecoveryLock(ctx, h.srv.Pool, run.runID, wid)
 		if lockErr != nil {
 			log.Warn("recovery sweep: lock error",
 				zap.String("run_id", run.runID),
@@ -105,6 +105,19 @@ func (h *RESTHandler) RecoverOrphanedRuns(ctx context.Context) (recovered, skipp
 			zap.String("tenant_id", run.tenantID),
 			zap.String("agent", run.agentName),
 		)
+
+		// Release the recovery lock BEFORE calling redriveRun.
+		// redriveRun → executeRunInlineSync → acquireRunLease will
+		// INSERT a fresh lease row.  If we held the recovery lock
+		// during that call, acquireRunLease would see a live row with
+		// wid = workerID() and (because the UPSERT only steals expired
+		// locks) return false → self-deadlock: run never executes.
+		// Deleting here is safe: the run is already out of findOrphanedRuns
+		// because its status is 'running'/'queued' and we are the only
+		// process that won the lock for it this sweep.
+		_, _ = h.srv.Pool.Exec(ctx, `
+			DELETE FROM run_locks WHERE run_id = $1 AND worker_id = $2
+		`, run.runID, wid)
 
 		if driveErr := h.redriveRun(ctx, run); driveErr != nil {
 			log.Warn("recovery sweep: re-drive failed — marking run failed",
@@ -240,8 +253,22 @@ func (h *RESTHandler) redriveRun(ctx context.Context, run orphanedRun) error {
 	return err
 }
 
+// recoveryInterval returns the configured sweep interval from the
+// LANTERN_RECOVERY_INTERVAL env var (default 30s).
+func recoveryInterval() time.Duration {
+	if v := os.Getenv("LANTERN_RECOVERY_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
+}
+
 // RunRecoverySweepAsync launches the recovery sweep in a goroutine and
 // logs the outcome. This is the main.go hook — non-blocking.
+//
+// Deprecated: prefer RunRecoveryLoop which repeats on a ticker. Kept for
+// back-compat; callers in main.go are updated to use the loop.
 func RunRecoverySweepAsync(ctx context.Context, h *RESTHandler, log *zap.Logger) {
 	if h == nil || h.srv == nil || h.srv.Pool == nil {
 		return
@@ -259,5 +286,45 @@ func RunRecoverySweepAsync(ctx context.Context, h *RESTHandler, log *zap.Logger)
 			zap.Int("recovered", recovered),
 			zap.Int("skipped", skipped),
 		)
+	}()
+}
+
+// RunRecoveryLoop runs RecoverOrphanedRuns on a periodic ticker until ctx is
+// cancelled. The first sweep fires after a 2s startup delay (same as the old
+// one-shot), then every interval thereafter.
+//
+// Replace the RunRecoverySweepAsync call in main.go with this for continuous
+// watchdog behaviour.
+func RunRecoveryLoop(ctx context.Context, h *RESTHandler, log *zap.Logger, interval time.Duration) {
+	if h == nil || h.srv == nil || h.srv.Pool == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = recoveryInterval()
+	}
+	go func() {
+		// Initial startup delay.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			recovered, skipped := h.RecoverOrphanedRuns(ctx)
+			log.Info("recovery sweep",
+				zap.Int("recovered", recovered),
+				zap.Int("skipped", skipped),
+			)
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
 	}()
 }
