@@ -338,6 +338,8 @@ vs incumbents · **P2** = "2-years-ahead" frontier.
 
 ## 5. Target architecture — the "Agent Execution Kernel"
 
+![Agent Execution Kernel — control-plane, HA scheduler, per-node K8s-default manager with a fail-closed isolation gate, and an in-VM harness, over a durable journal + Ed25519 receipt spine](../assets/runtime-architecture.svg)
+
 The thesis: **one event fabric, six concerns.** A single spawn produces one
 correlated chain — `schedule → place → boot → identity → run steps → vend secrets →
 egress → emit spans → mutate memory → sign receipt` — where every link shares the
@@ -384,9 +386,20 @@ and externally verifiable.
 5. **Observability:** OTel GenAI on every span; loop/cost/eval signals first-class;
    flight-recorder UX.
 
+The lifecycle — the one correlated chain, end to end:
+
+![Runtime lifecycle sequence — schedule, mint identity, place, hardened K8s Job, mTLS heartbeat, VendSecret with Bearer, deny-default egress, cert-bound report, journal append, terminate with grace window, Ed25519 receipt](../assets/runtime-lifecycle.svg)
+
+Defense-in-depth across the five non-negotiables, with the trust boundaries made explicit:
+
+![Runtime defense-in-depth — concentric isolation, the five non-negotiables, trust boundaries, the three review layers, and the standards the architecture is built against](../assets/runtime-security-layers.svg)
+
 ---
 
 ## 6. Kubernetes as the default substrate (ADR 0009 summary)
+
+![Isolation matrix — RuntimeClass per IsolationClass, the fail-closed double gate, per-pod securityContext hardening, and opt-in cluster-side Kyverno / cosign / Cilium / ESO](../assets/runtime-isolation-tiers.svg)
+
 
 **Decision:** Kubernetes becomes the **default runtime substrate**; isolation is a
 **RuntimeClass tier on a pod**, not a separate backend. This unifies the backends,
