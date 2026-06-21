@@ -90,7 +90,37 @@ flowchart TB
 | **4 · Channels & Reach** | WhatsApp · iMessage · Slack · Telegram · Discord · Voice (Twilio/LiveKit) · Webchat · Email — signature-verified, naturally paced. | Prod-ready |
 | **5 · Developer Experience** | TS/Python/Go SDKs, `lantern` CLI, one-command dev, visual workflow editor that *executes*, MCP registry, A2A cards, forkable agent marketplace. | Prod-ready |
 
-> **Alpha honesty:** modules 2–5 are in real use. Module 1's real data path (bidirectional mTLS heartbeat stream, `VendSecret`, and RBAC-scoped runtime routes) is implemented and unit-tested. The K8s RuntimeClass tiering (gVisor/Kata) and the cluster end-to-end integration test (`schedule → place → spawn → mTLS → egress-deny`) are Phase 1 — not yet green in CI. Firecracker live-boot still requires Linux/KVM (use [`infra/lima/`](infra/lima/) on Apple Silicon). On any host lacking the required RuntimeClass, Hostile/Untrusted workloads **fail closed** rather than downgrade. Nothing pretends to work.
+> **Alpha honesty:** modules 2–5 are in real use. Module 1's real data path (bidirectional mTLS heartbeat stream, `VendSecret` with per-instance Bearer, cert-bound telemetry `Report` ingestion, and RBAC-scoped runtime routes) is implemented and unit-tested. K8s RuntimeClass tiering (gVisor/Kata), node-affinity + tolerations, and the boot-time RuntimeClass preflight are landed; the cluster e2e (`runtime-cluster-e2e`, kind + Calico) runs the NetworkPolicy, hardened-securityContext, PSA-restricted, and **fail-closed RuntimeClass-refusal** legs for real in CI. The gVisor/Kata *execution* legs need a cluster with those runtimes installed (GitHub runners can't nest-virtualize) and are documented-and-skipped, not faked. Firecracker live-boot still requires Linux/KVM (use [`infra/lima/`](infra/lima/) on Apple Silicon). On any host lacking the required RuntimeClass, Hostile/Untrusted workloads **fail closed** rather than downgrade. Nothing pretends to work.
+
+---
+
+## Agent runtime — the execution kernel
+
+The runtime is the load-bearing core: a vendor-operated, multi-tenant, **durable** agent runtime that executes inside *your* VPC, with a tamper-evident, externally-verifiable, data-plane audit substrate. Kubernetes is the default substrate ([ADR&#160;0009](docs/adr/0009-kubernetes-default-runtime-substrate.md)); isolation is a RuntimeClass tier on a pod, not a separate backend.
+
+<p align="center">
+  <img src="docs/assets/runtime-architecture.svg" alt="Agent Execution Kernel — control-plane (identity, secret relay, report ingestion, receipts, OTel) → HA scheduler → per-node manager (K8s-default, fail-closed isolation gate, hardened pods) → in-VM harness (mTLS, egress deny-default, cert-bound report), over a durable journal + Ed25519 receipt spine" width="100%">
+</p>
+
+Every spawn produces **one correlated chain** — `schedule → place → spawn → identity → vend → egress → report → terminate` — where each link shares `(tenant_id · run_id · step_id · agent_instance_id · trace_id)` and is replayable and externally verifiable.
+
+<p align="center">
+  <img src="docs/assets/runtime-lifecycle.svg" alt="Runtime lifecycle sequence — schedule with quota gate, mint per-instance identity, 5-factor placement, hardened K8s Job, mTLS heartbeat, VendSecret with Bearer, deny-default egress, cert-bound report ingestion, journal append, terminate with grace window, Ed25519 receipt" width="100%">
+</p>
+
+Isolation is **fail-closed**: untrusted/hostile workloads are refused unless the hardened RuntimeClass is present — double-gated in `choose_backend()` and again in `build_job()`, never downgraded to a bare pod.
+
+<p align="center">
+  <img src="docs/assets/runtime-isolation-tiers.svg" alt="Isolation matrix — TRUSTED→runc, STANDARD/UNTRUSTED→gVisor, HOSTILE→Kata microVM (no co-tenancy), WASM, DEVCONTAINER; the fail-closed double gate; per-pod securityContext hardening; and opt-in cluster-side Kyverno baseline, cosign image verification, Cilium egress, and External Secrets Operator" width="100%">
+</p>
+
+Defense-in-depth across governance, security, scalability, resiliency, and observability — with the trust boundaries made explicit (the harness, caller env, and `X-Forwarded-For` are all treated as untrusted input).
+
+<p align="center">
+  <img src="docs/assets/runtime-security-layers.svg" alt="Runtime defense-in-depth — concentric isolation rings, the five non-negotiables, explicit trust boundaries, the three review layers that each caught real bugs, and the standards (OWASP Agentic Top-10, EU AI Act, IETF Agent Audit Trail, OTel GenAI semconv) the architecture is built against" width="100%">
+</p>
+
+Full strategy, gap analysis vs. AgentCore / Vertex / Anthropic / OpenAI / Temporal, and the phased roadmap: [`docs/architecture/18-agent-runtime-nextgen.md`](docs/architecture/18-agent-runtime-nextgen.md).
 
 ---
 
