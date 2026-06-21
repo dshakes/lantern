@@ -834,7 +834,7 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 // and a non-nil error is returned so the caller can short-circuit delivery.
 // Child subagent runs call this directly with the parent's context so
 // cancellation propagates and depth is tracked.
-func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID, agentName string, input map[string]any) (string, string, error) {
+func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID, agentName string, input map[string]any) (outResult string, outTemplate string, outErr error) {
 	var resolvedTemplateID string
 	h.logger().Info("inline executor: starting run", zap.String("run_id", runID), zap.String("agent", agentName))
 
@@ -870,6 +870,49 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 		return "", "", nil
 	}
 	defer releaseLease()
+
+	// 1c. Deferred safety net: if this function returns with an error and the
+	// run is still in a non-terminal state (e.g. we panicked or hit an early
+	// return before the per-path status update), force it to 'failed' so the
+	// row is never abandoned in 'running'/'queued'. The lease-not-acquired path
+	// (leaseAcquired==false) returns nil error, so it is correctly excluded.
+	var safetyNetFired bool
+	defer func() {
+		if safetyNetFired {
+			return
+		}
+		// Only fire on an ERROR return. A success return that legitimately left
+		// the row non-terminal (e.g. the workflow path manages its own status, or
+		// an async terminal write) must never be clobbered to 'failed'. The
+		// lease-not-acquired path returned before this defer was registered, so it
+		// is excluded structurally. This guards the one case that matters: an error
+		// return that forgot (or failed) to mark the run terminal — never abandon a
+		// run in 'running'/'queued'.
+		if outErr == nil {
+			return
+		}
+		// We query the current status and only write if still non-terminal.
+		var currentStatus string
+		_ = h.srv.Pool.QueryRow(
+			context.Background(), // detached — ctx may already be cancelled
+			`SELECT status FROM runs WHERE id = $1`,
+			runID,
+		).Scan(&currentStatus)
+		if currentStatus == "running" || currentStatus == "queued" {
+			safetyErrJSON, _ := json.Marshal(map[string]string{
+				"code":    "executor_abort",
+				"message": "run executor exited without completing the run",
+			})
+			if _, dbErr := h.srv.Pool.Exec(
+				context.Background(),
+				`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
+				runID, string(safetyErrJSON),
+			); dbErr != nil {
+				h.logger().Error("inline executor safety net: failed to mark run failed",
+					zap.String("run_id", runID), zap.Error(dbErr))
+			}
+		}
+	}()
 
 	// 1b. Mark as running.
 	logStep("initialize", "running", "Starting agent execution")
@@ -1072,10 +1115,15 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 				"name":  llmStepID,
 				"error": err.Error(),
 			})
-			_, _ = h.srv.Pool.Exec(ctx,
-				`UPDATE runs SET status = 'failed', finished_at = now(), error = $2 WHERE id = $1`,
-				runID, fmt.Sprintf(`{"code":"no_llm","message":"%s"}`, err.Error()),
-			)
+			noLLMJSON, _ := json.Marshal(map[string]string{"code": "no_llm", "message": err.Error()})
+			if _, updateErr := h.srv.Pool.Exec(ctx,
+				`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
+				runID, string(noLLMJSON),
+			); updateErr != nil {
+				h.logger().Error("inline executor: failed to mark run failed (no LLM key)",
+					zap.String("run_id", runID), zap.Error(updateErr))
+			}
+			safetyNetFired = true // explicit UPDATE done; deferred net should not double-write
 			return "", resolvedTemplateID, fmt.Errorf("no LLM key: %w", err)
 		}
 	}
