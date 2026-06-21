@@ -61,6 +61,12 @@ jobs:
       # vitest on the fly and fails to resolve `vitest/config`, breaking test-ts.
       - name: Install SDK-TS deps (test-ts runs vitest)
         run: cd packages/sdk-ts && npm ci
+      # `make test` -> `test-python` runs pytest in packages/sdk-python, but pytest is a
+      # dev extra (pyproject [project.optional-dependencies].dev). Without installing the
+      # package's dev deps, pytest is absent and test-python fails with "No module named
+      # pytest". Install the package with its dev extra so pytest + pytest-asyncio exist.
+      - name: Install SDK-Python deps (test-python runs pytest)
+        run: cd packages/sdk-python && python3 -m pip install --quiet '.[dev]'
       - name: Run test suite
         id: test
         run: |
