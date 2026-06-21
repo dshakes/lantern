@@ -71,6 +71,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -203,16 +204,94 @@ func (e *authError) Error() string { return e.msg }
 
 // ---------- Auth-failure rate limiter ----------
 
-// remoteIP extracts the best-effort client IP from the request, respecting
-// X-Forwarded-For (first element). Mirrors the pattern used in auth.go.
-func remoteIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if ip := strings.TrimSpace(parts[0]); ip != "" {
-			return ip
+// envTrustedProxies is the environment variable that holds a comma-separated
+// list of trusted-proxy CIDRs. Only when the immediate TCP peer (r.RemoteAddr)
+// falls within one of these CIDRs will X-Forwarded-For be trusted. Default
+// empty = never trust XFF (safe default for direct-connect deployments).
+//
+// Example: LANTERN_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+const envTrustedProxies = "LANTERN_TRUSTED_PROXIES"
+
+// parseTrustedProxies parses a comma-separated CIDR string and returns the
+// resulting []*net.IPNet. Malformed individual entries are silently skipped
+// (fail-safe: untrusted rather than crash).
+//
+// This is called on every remoteIP invocation. remoteIP is only called on
+// auth failures — a cold path — so the per-call parse cost is negligible
+// compared to a DB round-trip, and it keeps the env var hot-reloadable
+// without a process restart (important when operators add a new proxy CIDR).
+func parseTrustedProxies(raw string) []*net.IPNet {
+	if raw == "" {
+		return nil
+	}
+	var out []*net.IPNet
+	for _, cidrStr := range strings.Split(raw, ",") {
+		cidrStr = strings.TrimSpace(cidrStr)
+		if cidrStr == "" {
+			continue
+		}
+		_, ipNet, err := net.ParseCIDR(cidrStr)
+		if err != nil {
+			continue // skip malformed; don't trust it
+		}
+		out = append(out, ipNet)
+	}
+	return out
+}
+
+// isTrustedProxy reports whether the TCP peer address (host:port or bare IP)
+// falls within any of the configured trusted-proxy CIDRs.
+func isTrustedProxy(hostPort string, proxies []*net.IPNet) bool {
+	if len(proxies) == 0 {
+		return false
+	}
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		host = hostPort // bare IP (e.g. in tests)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range proxies {
+		if cidr.Contains(ip) {
+			return true
 		}
 	}
-	return r.RemoteAddr
+	return false
+}
+
+// remoteIP returns the best rate-limiter key for the request.
+//
+// Security design: the rate limiter must be keyed on an address the attacker
+// cannot trivially rotate. r.RemoteAddr is the TCP peer — unforgeable by the
+// HTTP client because it is set by the OS from the accepted socket. Trusting
+// X-Forwarded-For unconditionally would let any client rotate its "IP" by
+// changing that header on every attempt, defeating the limiter entirely.
+//
+// We honor X-Forwarded-For ONLY when the immediate TCP peer is within a
+// configured trusted-proxy CIDR (LANTERN_TRUSTED_PROXIES, default empty).
+// In that case the first (leftmost) XFF element is the original client IP
+// that the trusted proxy inserted and which the attacker cannot forge past
+// the proxy. When no trusted proxies are configured (the default), we always
+// use RemoteAddr, which is always the safe fallback.
+func remoteIP(r *http.Request) string {
+	proxies := parseTrustedProxies(os.Getenv(envTrustedProxies))
+	if isTrustedProxy(r.RemoteAddr, proxies) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			// The leftmost entry is the original client IP as set by the
+			// first trusted proxy in the chain.
+			if ip := strings.TrimSpace(strings.SplitN(xff, ",", 2)[0]); ip != "" {
+				return ip
+			}
+		}
+	}
+	// Default: use the TCP peer address. Strip port so only the host is the key.
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr // bare IP or unparseable: use as-is
+	}
+	return host
 }
 
 // recordAuthFailure records an auth failure for the given IP and returns true

@@ -7,6 +7,7 @@ package handlers
 //   H1 — getReceiptSecret: unified constant in dev, env var in both envs
 //   C2 — devSeedStatements separate from migrations (tested structurally)
 //   M1 — CORSMiddleware: allowlist reflected; public paths keep *; unknown blocked
+//   M1 — remoteIP: XFF ignored when no trusted proxies; honored from trusted peer
 //   isProd — env parsing cases
 
 import (
@@ -291,5 +292,155 @@ func TestCORSMiddleware_MultipleAllowedOrigins(t *testing.T) {
 		if acao != origin {
 			t.Errorf("origin %q: expected ACAO=%q, got %q", origin, origin, acao)
 		}
+	}
+}
+
+// ---------- remoteIP: trusted-proxy-aware rate-limiter key (M1 fix) ----------
+
+// newXFFRequest builds a request with the given RemoteAddr and
+// X-Forwarded-For header, without going through httptest.NewRequest so we
+// can set RemoteAddr directly (httptest sets it to 192.0.2.1:1234).
+func newXFFRequest(remoteAddr, xff string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/v1/runtime/report", nil)
+	req.RemoteAddr = remoteAddr
+	if xff != "" {
+		req.Header.Set("X-Forwarded-For", xff)
+	}
+	return req
+}
+
+// TestRemoteIP_NoTrustedProxies_XFFIgnored verifies that when
+// LANTERN_TRUSTED_PROXIES is empty (the default), X-Forwarded-For is
+// completely ignored and RemoteAddr (host portion) is always used as the key.
+// This is the critical invariant that prevents an attacker from rotating their
+// "IP" on every request by changing the XFF header.
+func TestRemoteIP_NoTrustedProxies_XFFIgnored(t *testing.T) {
+	t.Setenv(envTrustedProxies, "") // no trusted proxies
+
+	cases := []struct {
+		name       string
+		remoteAddr string
+		xff        string
+		wantIP     string
+	}{
+		{
+			name:       "no xff header",
+			remoteAddr: "10.0.0.5:54321",
+			xff:        "",
+			wantIP:     "10.0.0.5",
+		},
+		{
+			name:       "xff present but ignored — attacker cannot rotate",
+			remoteAddr: "203.0.113.7:12345",
+			xff:        "1.2.3.4, 5.6.7.8",
+			wantIP:     "203.0.113.7", // RemoteAddr wins; XFF discarded
+		},
+		{
+			name:       "xff present from loopback peer — still ignored",
+			remoteAddr: "127.0.0.1:9999",
+			xff:        "evil-client-ip",
+			wantIP:     "127.0.0.1",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newXFFRequest(tc.remoteAddr, tc.xff)
+			got := remoteIP(r)
+			if got != tc.wantIP {
+				t.Errorf("remoteIP: got %q, want %q (remoteAddr=%q, xff=%q)",
+					got, tc.wantIP, tc.remoteAddr, tc.xff)
+			}
+		})
+	}
+}
+
+// TestRemoteIP_TrustedProxy_XFFHonored verifies that when the immediate TCP
+// peer falls within a configured trusted-proxy CIDR, the leftmost
+// X-Forwarded-For element is used as the rate-limiter key (it is the original
+// client IP as inserted by the trusted proxy, which the client cannot forge
+// past the proxy boundary).
+func TestRemoteIP_TrustedProxy_XFFHonored(t *testing.T) {
+	// Configure the ingress load-balancer subnet as trusted.
+	t.Setenv(envTrustedProxies, "10.0.0.0/8,172.16.0.0/12")
+
+	cases := []struct {
+		name       string
+		remoteAddr string // TCP peer — must be in a trusted CIDR
+		xff        string
+		wantIP     string
+	}{
+		{
+			name:       "single xff entry",
+			remoteAddr: "10.0.1.2:443", // trusted proxy
+			xff:        "203.0.113.99", // original client
+			wantIP:     "203.0.113.99",
+		},
+		{
+			name:       "multiple xff entries — leftmost wins",
+			remoteAddr: "172.16.0.5:8080", // trusted proxy
+			xff:        "198.51.100.7, 10.0.0.1",
+			wantIP:     "198.51.100.7", // leftmost = original client
+		},
+		{
+			name:       "xff with whitespace trimmed",
+			remoteAddr: "10.100.0.1:1234",
+			xff:        "  203.0.113.11  ",
+			wantIP:     "203.0.113.11",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newXFFRequest(tc.remoteAddr, tc.xff)
+			got := remoteIP(r)
+			if got != tc.wantIP {
+				t.Errorf("remoteIP: got %q, want %q (remoteAddr=%q, xff=%q)",
+					got, tc.wantIP, tc.remoteAddr, tc.xff)
+			}
+		})
+	}
+}
+
+// TestRemoteIP_TrustedProxyCIDR_UntrustedPeerXFFIgnored verifies that even
+// when trusted proxies ARE configured, a request from a peer NOT in a trusted
+// CIDR still uses RemoteAddr (the attacker cannot forge XFF to bypass the
+// limiter).
+func TestRemoteIP_TrustedProxyCIDR_UntrustedPeerXFFIgnored(t *testing.T) {
+	t.Setenv(envTrustedProxies, "10.0.0.0/8") // only 10.x.x.x is trusted
+
+	r := newXFFRequest(
+		"203.0.113.55:9999", // NOT in 10/8 — untrusted
+		"1.2.3.4",           // attacker claims this is their IP via XFF
+	)
+	got := remoteIP(r)
+	if got != "203.0.113.55" {
+		t.Errorf("untrusted peer: expected RemoteAddr host 203.0.113.55, got %q", got)
+	}
+}
+
+// TestRemoteIP_MalformedCIDR_FallsBackToRemoteAddr verifies that a malformed
+// CIDR in LANTERN_TRUSTED_PROXIES doesn't crash and safely falls back.
+func TestRemoteIP_MalformedCIDR_FallsBackToRemoteAddr(t *testing.T) {
+	t.Setenv(envTrustedProxies, "not-a-cidr,10.0.0.0/8")
+
+	// The 10/8 entry is valid and the peer is in it — XFF should be used
+	// (the good entry is honored; the bad one is silently skipped).
+	r := newXFFRequest("10.0.0.3:1234", "203.0.113.77")
+	got := remoteIP(r)
+	if got != "203.0.113.77" {
+		t.Errorf("partial malformed CIDR: expected XFF client 203.0.113.77, got %q", got)
+	}
+}
+
+// TestRemoteIP_AllMalformedCIDRs_FallsBackToRemoteAddr verifies that all-bad
+// CIDR config falls back to RemoteAddr (never panics, never trusts XFF).
+func TestRemoteIP_AllMalformedCIDRs_FallsBackToRemoteAddr(t *testing.T) {
+	t.Setenv(envTrustedProxies, "bad1,bad2,bad3")
+
+	r := newXFFRequest("203.0.113.9:5555", "1.2.3.4")
+	got := remoteIP(r)
+	if got != "203.0.113.9" {
+		t.Errorf("all-bad CIDRs: expected RemoteAddr host 203.0.113.9, got %q", got)
 	}
 }

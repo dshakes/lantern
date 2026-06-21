@@ -4,9 +4,18 @@
 # "K8s Job isolation validated end-to-end" beta gate in docs/LAUNCH-CHECKLIST.md).
 #
 # Usage:   make k8s-validate          (or: bash infra/k8s/validate.sh)
+#          bash infra/k8s/validate.sh --ci   (CI owns the cluster lifecycle)
 # Exits:   0 if every assertion passes, 1 if any fails.
 # Env:     KEEP_CLUSTER=1     skip teardown (debugging)
 #          CALICO_MANIFEST=…  override the pinned Calico manifest URL
+#          CLUSTER_CONTEXT=…  override the kube-context (CI sets it to the
+#                             kind-action context; default kind-$CLUSTER_NAME)
+#
+# Flags:   --ci   Do NOT create or tear down the kind cluster — assume the caller
+#                 (the runtime-cluster-e2e GitHub workflow) already created a
+#                 kind+Calico cluster and selected its context. Skips check_tools'
+#                 docker probe and the create/teardown lifecycle; runs every
+#                 assertion against the existing cluster.
 #
 # What it proves, with live probes (not unit tests):
 #   (a) the fenced workload pod CANNOT reach the internet (egress default-deny)
@@ -14,6 +23,10 @@
 #   (c) the running pod's securityContext really carries seccomp
 #       RuntimeDefault + cap drop ALL + non-root + no-priv-esc + RO rootfs
 #   (d) a pod requesting runAsRoot/privilege-escalation is REJECTED
+#   (e) [fail-closed] an UNTRUSTED pod requesting a sandbox runtimeClassName
+#       (gVisor/Kata) that is NOT installed must NOT silently run on runc — it
+#       stays unschedulable / is refused. The core ADR-0009 invariant; testable
+#       in CI without gVisor (we assert the REFUSAL, not sandbox execution)
 #
 # kind's default CNI (kindnet) does NOT enforce NetworkPolicy — the cluster is
 # created with disableDefaultCNI and Calico is installed so (a) is real, and a
@@ -24,8 +37,18 @@ set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLUSTER_NAME="lantern-k8s-validate" # must match kind-cluster.yaml `name:`
-KCTX="kind-${CLUSTER_NAME}"
+# In --ci mode the workflow owns the cluster + context; honor an override.
+KCTX="${CLUSTER_CONTEXT:-kind-${CLUSTER_NAME}}"
 NS="lantern-t-validate"
+
+# CI mode: the GitHub workflow already created the kind+Calico cluster, so this
+# script must NOT create or tear it down — only run the assertions.
+CI_MODE=0
+for arg in "$@"; do
+  case "$arg" in
+    --ci) CI_MODE=1 ;;
+  esac
+done
 RUN_LABEL="lantern.dev/run-id=run-validate-00000001"
 CALICO_MANIFEST="${CALICO_MANIFEST:-https://raw.githubusercontent.com/projectcalico/calico/v3.28.2/manifests/calico.yaml}"
 
@@ -108,6 +131,14 @@ check_tools() {
     die "kubectl not found — install with: brew install kubectl"
   fi
   pass "kubectl" "$(kubectl version --client -o yaml 2>/dev/null | sed -nE 's/^ *gitVersion: (.*)/\1/p' | head -1)"
+  if [[ "$CI_MODE" -eq 1 ]]; then
+    # CI owns the cluster; we only need a reachable kube-context here.
+    if ! kc cluster-info >/dev/null 2>&1; then
+      die "--ci: no reachable cluster at context '$KCTX' — the workflow must create kind first (set CLUSTER_CONTEXT to override)"
+    fi
+    pass "cluster reachable" "context $KCTX (CI-managed cluster)"
+    return
+  fi
   if ! docker info >/dev/null 2>&1; then
     die "docker daemon not running — start Docker Desktop (kind nodes run in Docker)"
   fi
@@ -272,20 +303,142 @@ assert_escalation_rejected() {
   fi
 }
 
+# assert_runtimeclass_failclosed — the core ADR-0009 invariant.
+#
+# Schedule an UNTRUSTED pod that requests `runtimeClassName: gvisor`. gVisor is
+# NOT installed on a stock kind node. The pod MUST NOT silently run on the
+# default runc runtime — it must be refused at admission (no RuntimeClass object)
+# or stay unschedulable/Pending forever (RuntimeClass exists, handler missing).
+# "No sandbox available → workload does not run" is fail-CLOSED; a Running pod
+# here would be the exact untrusted-on-shared-kernel escape ADR-0009 forbids.
+#
+# Testable in CI WITHOUT gVisor: we assert the REFUSAL, never sandbox execution.
+assert_runtimeclass_failclosed() {
+  section "(f) Fail-closed: UNTRUSTED pod w/ missing sandbox RuntimeClass must NOT run on runc (ADR-0009)"
+  local manifest="$SCRIPT_DIR/manifests/91-untrusted-missing-runtimeclass.yaml"
+  local pod="untrusted-missing-runtimeclass"
+  local out rc
+
+  kc -n "$NS" delete pod "$pod" --ignore-not-found >/dev/null 2>&1
+
+  out=$(kc apply -f "$manifest" 2>&1)
+  rc=$?
+
+  if [[ $rc -ne 0 ]]; then
+    # Refused at admission — the RuntimeClass 'gvisor' does not exist, so the
+    # API server rejects the reference outright. Fail-closed. Best outcome.
+    if [[ "$out" == *"RuntimeClass"* || "$out" == *"runtimeClassName"* || "$out" == *"not found"* ]]; then
+      pass "missing-RuntimeClass pod REFUSED at admission" "API server rejected runtimeClassName=gvisor (no runc fallback)"
+    else
+      pass "missing-RuntimeClass pod REFUSED" "apply rejected: ${out:0:100}"
+    fi
+    return
+  fi
+
+  # Admitted (a RuntimeClass object named 'gvisor' exists, e.g. the chart created
+  # it). It must then stay Pending/unschedulable because the runsc handler is
+  # absent on the node — it must NEVER reach Running on runc. Watch for ~30s.
+  local phase="" deadline=$((SECONDS + 30))
+  while [[ $SECONDS -lt $deadline ]]; do
+    phase=$(kc -n "$NS" get pod "$pod" -o jsonpath='{.status.phase}' 2>/dev/null)
+    [[ "$phase" == "Running" || "$phase" == "Succeeded" || "$phase" == "Failed" ]] && break
+    sleep 2
+  done
+
+  if [[ "$phase" == "Running" || "$phase" == "Succeeded" ]]; then
+    fail "missing-RuntimeClass pod must NOT run" "pod reached phase '$phase' — it ran WITHOUT the gVisor sandbox" \
+      "FAIL-OPEN: untrusted code fell back to runc on a shared kernel. RuntimeClass enforcement is broken — ADR-0009 invariant violated."
+  else
+    local reason
+    reason=$(kc -n "$NS" get pod "$pod" -o jsonpath='{.status.conditions[?(@.type=="PodScheduled")].reason}' 2>/dev/null)
+    pass "missing-RuntimeClass pod stays unschedulable" "phase='${phase:-Pending}' reason='${reason:-Unschedulable}' — never ran on runc (fail-closed)"
+  fi
+  kc -n "$NS" delete pod "$pod" --ignore-not-found >/dev/null 2>&1
+}
+
+# ---- Cluster-side security artifacts (Kyverno / Cilium / ESO / cosign) --------
+#
+# The chart in infra/helm/lantern-data-plane ships OPT-IN cluster-side hardening:
+# Kyverno tenant-baseline + verifyImages policies, Cilium egress policy + proxy,
+# and ESO SecretStore/ExternalSecret. Those need their OPERATORS installed
+# (Kyverno, Cilium CNI, External Secrets Operator) to apply against a live
+# cluster — this harness's kind cluster runs Calico, not those operators, so we
+# do NOT apply them here (kubectl apply would fail on missing CRDs, which would
+# be a false negative).
+#
+# What we CAN validate operator-free: that the chart renders the policy set with
+# no templating errors and the expected kinds are present. This catches the
+# common breakage (a bad value reference, a dropped `{{request...}}` Kyverno
+# variable) without a live Kyverno/Cilium.
+assert_security_chart_renders() {
+  section "(e) Cluster-side security chart renders (Kyverno/Cilium/ESO, operator-free)"
+  local chart="$SCRIPT_DIR/../helm/lantern-data-plane"
+  if ! command -v helm >/dev/null 2>&1; then
+    step "helm not found — skipping chart render assertions (install: brew install helm)"
+    return
+  fi
+  local out
+  if ! out=$(helm template "$chart" \
+      --set policies.enabled=true \
+      --set imageVerification.enabled=true \
+      --set egress.cilium.enabled=true \
+      --set egress.proxy.enabled=true \
+      --set externalSecrets.enabled=true \
+      --set runtimeClasses.create=true 2>&1); then
+    fail "security chart renders (all toggles on)" "helm template failed" \
+      "Run: helm template $chart --set policies.enabled=true … and read the error"
+    return
+  fi
+  pass "security chart renders (all toggles on)" "helm template clean"
+
+  local k
+  for k in ClusterPolicy CiliumClusterwideNetworkPolicy SecretStore ExternalSecret; do
+    if grep -q "^kind: $k" <<<"$out"; then
+      pass "renders $k" "present when toggle enabled"
+    else
+      fail "renders $k" "expected kind '$k' absent from all-on render"
+    fi
+  done
+
+  # The Kyverno generate rules MUST keep the literal {{request.object...}}
+  # variable (Helm must not have eaten it) or namespace-scoped generation breaks.
+  if grep -q 'request.object.metadata.name' <<<"$out"; then
+    pass "Kyverno generate variable preserved" "{{request.object.metadata.name}} intact"
+  else
+    fail "Kyverno generate variable preserved" "literal Kyverno variable missing from render"
+  fi
+
+  # Default values (everything OFF) must render NONE of these — safe default.
+  local def
+  def=$(helm template "$chart" 2>/dev/null)
+  if grep -qE '^kind: (ClusterPolicy|CiliumClusterwideNetworkPolicy|SecretStore|ExternalSecret)$' <<<"$def"; then
+    fail "security artifacts off by default" "a policy kind rendered with default values"
+  else
+    pass "security artifacts off by default" "default render is clean (opt-in honored)"
+  fi
+}
+
 # ---- Main ---------------------------------------------------------------------
 
 main() {
   printf "${BLD}Lantern K8s isolation validation${RST} ${DIM}— $(date '+%H:%M:%S')${RST}\n"
 
   check_tools
-  trap teardown EXIT
-  create_cluster
+  if [[ "$CI_MODE" -eq 1 ]]; then
+    section "Cluster"
+    pass "cluster lifecycle" "managed by CI workflow (--ci) — skipping create/teardown"
+  else
+    trap teardown EXIT
+    create_cluster
+  fi
   deploy_workload
 
   assert_egress
   assert_dns
   assert_security_context
   assert_escalation_rejected
+  assert_runtimeclass_failclosed
+  assert_security_chart_renders
 
   section "Summary"
   if [[ $FAILS -eq 0 ]]; then

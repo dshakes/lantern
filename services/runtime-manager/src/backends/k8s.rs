@@ -7,13 +7,17 @@ use futures::stream::BoxStream;
 use futures::{AsyncBufReadExt, StreamExt, TryStreamExt};
 use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{
-    Capabilities, Container, ContainerPort, EnvVar, Pod, PodSecurityContext, PodSpec,
-    PodTemplateSpec, ResourceRequirements, SeccompProfile, SecurityContext,
+    Affinity, Capabilities, Container, ContainerPort, EnvVar, NodeAffinity, NodeSelector,
+    NodeSelectorRequirement, NodeSelectorTerm, Pod, PodSecurityContext, PodSpec, PodTemplateSpec,
+    ResourceRequirements, SeccompProfile, SecurityContext, Toleration,
 };
 use k8s_openapi::api::networking::v1::{
     IPBlock, NetworkPolicy as K8sNetworkPolicy, NetworkPolicyEgressRule, NetworkPolicyPeer,
     NetworkPolicyPort, NetworkPolicySpec,
 };
+// Used in unit tests to assert on the empty-ingress-rule slice type.
+#[cfg(test)]
+use k8s_openapi::api::networking::v1::NetworkPolicyIngressRule;
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{LabelSelector, ObjectMeta};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
@@ -72,6 +76,15 @@ pub struct RuntimeClassConfig {
     /// run on bare runc even when gVisor is not configured.
     /// Sourced from `LANTERN_ALLOW_RUNC_STANDARD`. Default **false** (fail-closed).
     pub allow_runc_standard: bool,
+    /// Node label value required for UNTRUSTED pods (`lantern.dev/runtimeclass: <value>`).
+    /// Prevents an UNTRUSTED pod from scheduling onto a node that lacks gVisor even when
+    /// the RuntimeClass object exists in the API but the node handler is absent.
+    /// Sourced from `LANTERN_NODE_LABEL_GVISOR`. Default: `"gvisor"`.
+    pub node_label_gvisor: Option<String>,
+    /// Node label value required for HOSTILE pods (`lantern.dev/runtimeclass: <value>`).
+    /// Same defense-in-depth as `node_label_gvisor` but for Kata.
+    /// Sourced from `LANTERN_NODE_LABEL_KATA`. Default: `"kata"`.
+    pub node_label_kata: Option<String>,
 }
 
 /// Kubernetes Job backend for trusted workloads.
@@ -426,6 +439,11 @@ fn build_job(
         );
     }
 
+    // Compute node affinity + NoSchedule tolerations once; both are derived
+    // from the same isolation class + config and must be consistent.
+    let (node_affinity, node_tolerations) =
+        node_affinity_and_tolerations(req.isolation_class, runtime_classes);
+
     Ok(Job {
         metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
             name: Some(job_name.to_string()),
@@ -448,6 +466,35 @@ fn build_job(
                     automount_service_account_token: Some(false),
                     security_context: Some(pod_security_context()),
                     runtime_class_name,
+                    // Explicit host-namespace denial: defence-in-depth against
+                    // mis-configured admission webhooks that might forget to
+                    // enforce these.  K8s defaults are already false but being
+                    // explicit makes the intent auditable in the manifest.
+                    host_network: Some(false),
+                    host_pid: Some(false),
+                    host_ipc: Some(false),
+                    // ClusterFirst ensures DNS works correctly even with the
+                    // default-deny egress NetworkPolicy (port 53 is allowed).
+                    dns_policy: Some("ClusterFirst".to_string()),
+                    // Node affinity + tolerations for hardened isolation classes.
+                    //
+                    // Affinity: prevent a pod that requires gVisor/Kata from
+                    // scheduling onto a node that merely references the
+                    // RuntimeClass by name but does not have the handler
+                    // installed.
+                    //
+                    // Tolerations: operators are expected to taint the gVisor
+                    // and Kata nodes (`lantern.dev/runtimeclass=<v>:NoSchedule`)
+                    // so that only jobs that explicitly want those runtimes land
+                    // there.  We must emit a matching toleration, otherwise
+                    // UNTRUSTED/HOSTILE Jobs stay Pending forever because the
+                    // taint is present but no toleration is set.
+                    affinity: node_affinity,
+                    tolerations: if node_tolerations.is_empty() {
+                        None
+                    } else {
+                        Some(node_tolerations)
+                    },
                     ..Default::default()
                 }),
             },
@@ -1001,6 +1048,110 @@ fn pod_security_context() -> PodSecurityContext {
     }
 }
 
+/// Build a `requiredDuringSchedulingIgnoredDuringExecution` node affinity that
+/// restricts an UNTRUSTED or HOSTILE pod to nodes bearing the label
+/// `lantern.dev/runtimeclass=<value>`.
+///
+/// This is a second line of defence behind the RuntimeClass mechanism: it
+/// prevents the scheduler from placing the pod on a node that holds the
+/// RuntimeClass object in the API but does NOT actually have the handler
+/// installed — which would cause the pod to fail at kubelet-pull time rather
+/// than at scheduling time.
+///
+/// Returns `None` for TRUSTED / STANDARD / WASM / DEVCONTAINER / UNSPECIFIED
+/// unless a label value is explicitly configured for those tiers (none are by
+/// default).
+///
+/// # Node label convention
+///
+/// Cluster operators must label their hardened nodes with:
+///
+/// ```text
+/// kubectl label node <node> lantern.dev/runtimeclass=gvisor
+/// kubectl label node <node> lantern.dev/runtimeclass=kata
+/// ```
+///
+/// The label key is `lantern.dev/runtimeclass`; the value comes from
+/// [`RuntimeClassConfig::node_label_gvisor`] / [`RuntimeClassConfig::node_label_kata`]
+/// (defaults: `"gvisor"` / `"kata"`).
+/// Compute the node affinity and matching NoSchedule tolerations for a pod
+/// based on its isolation class.
+///
+/// Returns `(Option<Affinity>, Vec<Toleration>)`.  Both are derived from the
+/// same label key+value so they are always consistent: if the affinity is
+/// `Some`, the toleration vec is non-empty; if `None`, the vec is empty.
+///
+/// # Why tolerations are required
+///
+/// Operators taint gVisor/Kata nodes with
+/// `lantern.dev/runtimeclass=<value>:NoSchedule` so that only explicitly
+/// requested workloads land there.  Without a matching toleration the
+/// UNTRUSTED/HOSTILE Job would stay `Pending` forever — the affinity picks the
+/// right node but the taint blocks scheduling.
+fn node_affinity_and_tolerations(
+    class: IsolationClass,
+    cfg: &RuntimeClassConfig,
+) -> (Option<Affinity>, Vec<Toleration>) {
+    const NODE_LABEL_KEY: &str = "lantern.dev/runtimeclass";
+
+    let label_value: &str = match class {
+        IsolationClass::Untrusted => {
+            // We only emit the affinity/toleration when the gVisor RuntimeClass
+            // is actually configured (otherwise the fail-closed gate in
+            // build_job already refused the request before we reach here).
+            match cfg.gvisor.as_deref() {
+                Some(_) => {}
+                None => return (None, vec![]),
+            }
+            cfg.node_label_gvisor.as_deref().unwrap_or("gvisor")
+        }
+        IsolationClass::Hostile => {
+            match cfg.kata.as_deref() {
+                Some(_) => {}
+                None => return (None, vec![]),
+            }
+            cfg.node_label_kata.as_deref().unwrap_or("kata")
+        }
+        // TRUSTED / STANDARD / UNSPECIFIED / WASM / DEVCONTAINER: no node
+        // affinity or toleration.  Operators may add custom affinity via
+        // admission webhooks or OPA if needed; that is out of scope here.
+        _ => return (None, vec![]),
+    };
+
+    let requirement = NodeSelectorRequirement {
+        key: NODE_LABEL_KEY.to_string(),
+        operator: "In".to_string(),
+        values: Some(vec![label_value.to_string()]),
+    };
+    let term = NodeSelectorTerm {
+        match_expressions: Some(vec![requirement]),
+        match_fields: None,
+    };
+    let node_selector = NodeSelector {
+        node_selector_terms: vec![term],
+    };
+    let affinity = Affinity {
+        node_affinity: Some(NodeAffinity {
+            required_during_scheduling_ignored_during_execution: Some(node_selector),
+            preferred_during_scheduling_ignored_during_execution: None,
+        }),
+        pod_affinity: None,
+        pod_anti_affinity: None,
+    };
+
+    // Emit a toleration that matches the expected node taint.
+    // Operators taint: `lantern.dev/runtimeclass=<label_value>:NoSchedule`.
+    let toleration = Toleration {
+        key: Some(NODE_LABEL_KEY.to_string()),
+        operator: Some("Equal".to_string()),
+        value: Some(label_value.to_string()),
+        effect: Some("NoSchedule".to_string()),
+        toleration_seconds: None,
+    };
+
+    (Some(affinity), vec![toleration])
+}
+
 /// True when `pattern` is a CIDR block (vs. a domain). Only CIDR patterns can
 /// be expressed as NetworkPolicy `ipBlock` peers; domains are enforced in-VM by
 /// the harness against the same allowlist.
@@ -1098,9 +1249,16 @@ fn build_network_policy(
                 match_labels: Some(selector_labels),
                 match_expressions: None,
             },
-            policy_types: Some(vec!["Egress".to_string()]),
+            // Both Ingress AND Egress in policyTypes with an empty ingress rule
+            // list → default-deny ALL inbound traffic to the pod.  The existing
+            // egress allow-rules (DNS carve-out + CIDR allowlist) are unchanged.
+            // Rationale: agent pods must never be reachable from inside the
+            // cluster; lateral movement from a compromised pod is blocked here.
+            policy_types: Some(vec!["Ingress".to_string(), "Egress".to_string()]),
             egress: Some(egress),
-            ingress: None,
+            // Explicit empty list → deny-all ingress (K8s spec §4.3.1).
+            // `None` would mean "not selected by this policy" (no-op for ingress).
+            ingress: Some(vec![]),
         }),
     })
 }
@@ -1258,6 +1416,7 @@ mod tests {
                 kata: None,
                 wasm: None,
                 allow_runc_standard: false,
+                ..Default::default()
             },
         )
         .expect("build_job should succeed when gVisor is configured for UNTRUSTED");
@@ -1334,9 +1493,17 @@ mod tests {
         assert_eq!(meta.namespace.as_deref(), Some("lantern-t-acme"));
 
         let spec = np.spec.expect("spec");
-        // Egress-only default-deny.
-        assert_eq!(spec.policy_types, Some(vec!["Egress".to_string()]));
-        assert!(spec.ingress.is_none());
+        // Both Ingress and Egress selected → default-deny all inbound.
+        assert_eq!(
+            spec.policy_types,
+            Some(vec!["Ingress".to_string(), "Egress".to_string()])
+        );
+        // Empty ingress rule list = deny-all inbound (K8s spec §4.3.1).
+        assert_eq!(
+            spec.ingress.as_deref(),
+            Some(&[] as &[NetworkPolicyIngressRule]),
+            "empty ingress list must be present to deny all inbound traffic"
+        );
 
         // Pod selector targets exactly this run's pod.
         assert_eq!(
@@ -1417,6 +1584,309 @@ mod tests {
             egress_rules.len(),
             1,
             "unspecified => DNS-only, no CIDR allow"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 1: ingress default-deny is present in every non-Open NetworkPolicy
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn network_policy_denies_all_ingress() {
+        // Any non-Open policy must carry Ingress in policyTypes AND an empty
+        // ingress rule list — the two together are what K8s interprets as
+        // "deny all inbound" (K8s spec §4.3.1).
+        for (class, label) in [
+            (NetworkPolicyClass::None, "None"),
+            (NetworkPolicyClass::AllowlistDomain, "AllowlistDomain"),
+            (NetworkPolicyClass::TenantVpc, "TenantVpc"),
+            (NetworkPolicyClass::Unspecified, "Unspecified"),
+        ] {
+            let req = req_with(class, vec![]);
+            let np = build_network_policy(&req, "job-ingress-test", "ns")
+                .unwrap_or_else(|| panic!("{label} must emit a policy"));
+            let spec = np.spec.expect("spec");
+
+            let types = spec.policy_types.as_deref().unwrap_or_default();
+            assert!(
+                types.contains(&"Ingress".to_string()),
+                "{label}: Ingress must be in policyTypes (found: {types:?})"
+            );
+            let ingress_rules = spec.ingress.as_deref().unwrap_or(&[]);
+            assert!(
+                ingress_rules.is_empty(),
+                "{label}: ingress rule list must be empty for deny-all (found {n} rules)",
+                n = ingress_rules.len()
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 2: host-namespace fields are explicitly set to false + dnsPolicy
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_job_sets_host_namespace_fields_and_dns_policy() {
+        let req = make_req(IsolationClass::Trusted);
+        let job = build_job(
+            &req,
+            "img",
+            "job-host-ns",
+            "ns",
+            &RuntimeClassConfig::default(),
+        )
+        .expect("TRUSTED build_job must succeed");
+
+        let pod_spec = job
+            .spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .expect("pod spec");
+
+        assert_eq!(
+            pod_spec.host_network,
+            Some(false),
+            "hostNetwork must be explicitly false"
+        );
+        assert_eq!(
+            pod_spec.host_pid,
+            Some(false),
+            "hostPID must be explicitly false"
+        );
+        assert_eq!(
+            pod_spec.host_ipc,
+            Some(false),
+            "hostIPC must be explicitly false"
+        );
+        assert_eq!(
+            pod_spec.dns_policy.as_deref(),
+            Some("ClusterFirst"),
+            "dnsPolicy must be ClusterFirst"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 3: node affinity for hardened isolation classes
+    // -----------------------------------------------------------------------
+
+    fn affinity_label_value(job: &Job) -> Option<String> {
+        job.spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .and_then(|ps| ps.affinity.as_ref())
+            .and_then(|a| a.node_affinity.as_ref())
+            .and_then(|na| na.required_during_scheduling_ignored_during_execution.as_ref())
+            .and_then(|ns| ns.node_selector_terms.first())
+            .and_then(|t| t.match_expressions.as_ref())
+            .and_then(|exprs| exprs.first())
+            .and_then(|req| req.values.as_ref())
+            .and_then(|vals| vals.first())
+            .cloned()
+    }
+
+    fn affinity_label_key(job: &Job) -> Option<String> {
+        job.spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .and_then(|ps| ps.affinity.as_ref())
+            .and_then(|a| a.node_affinity.as_ref())
+            .and_then(|na| na.required_during_scheduling_ignored_during_execution.as_ref())
+            .and_then(|ns| ns.node_selector_terms.first())
+            .and_then(|t| t.match_expressions.as_ref())
+            .and_then(|exprs| exprs.first())
+            .map(|req| req.key.clone())
+    }
+
+    #[test]
+    fn build_job_untrusted_gets_gvisor_node_affinity() {
+        let req = make_req(IsolationClass::Untrusted);
+        let job = build_job(
+            &req,
+            "img",
+            "job-untrusted-affinity",
+            "ns",
+            &RuntimeClassConfig {
+                gvisor: Some("gvisor".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("should succeed with gVisor configured");
+
+        assert_eq!(
+            affinity_label_key(&job).as_deref(),
+            Some("lantern.dev/runtimeclass"),
+            "node affinity key must be lantern.dev/runtimeclass"
+        );
+        assert_eq!(
+            affinity_label_value(&job).as_deref(),
+            Some("gvisor"),
+            "UNTRUSTED must require gvisor node label"
+        );
+    }
+
+    #[test]
+    fn build_job_hostile_gets_kata_node_affinity() {
+        let req = make_req(IsolationClass::Hostile);
+        let job = build_job(
+            &req,
+            "img",
+            "job-hostile-affinity",
+            "ns",
+            &RuntimeClassConfig {
+                kata: Some("kata-qemu".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("should succeed with Kata configured");
+
+        assert_eq!(
+            affinity_label_key(&job).as_deref(),
+            Some("lantern.dev/runtimeclass"),
+            "node affinity key must be lantern.dev/runtimeclass"
+        );
+        assert_eq!(
+            affinity_label_value(&job).as_deref(),
+            Some("kata"),
+            "HOSTILE must require kata node label"
+        );
+    }
+
+    #[test]
+    fn build_job_untrusted_respects_custom_node_label() {
+        let req = make_req(IsolationClass::Untrusted);
+        let job = build_job(
+            &req,
+            "img",
+            "job-untrusted-custom-label",
+            "ns",
+            &RuntimeClassConfig {
+                gvisor: Some("gvisor".to_string()),
+                node_label_gvisor: Some("gvisor-v2".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("should succeed with gVisor configured");
+
+        assert_eq!(
+            affinity_label_value(&job).as_deref(),
+            Some("gvisor-v2"),
+            "custom node_label_gvisor must be used"
+        );
+    }
+
+    /// Extract the first `Toleration` from a Job's pod spec (test helper).
+    fn first_toleration(job: &Job) -> Option<&Toleration> {
+        job.spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .and_then(|ps| ps.tolerations.as_ref())
+            .and_then(|ts| ts.first())
+    }
+
+    #[test]
+    fn build_job_untrusted_gets_gvisor_affinity_and_toleration() {
+        let req = make_req(IsolationClass::Untrusted);
+        let job = build_job(
+            &req,
+            "img",
+            "job-untrusted-toleration",
+            "ns",
+            &RuntimeClassConfig {
+                gvisor: Some("gvisor".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("should succeed with gVisor configured");
+
+        // Affinity must be set (covered by existing tests; belt-and-suspenders here).
+        assert_eq!(
+            affinity_label_value(&job).as_deref(),
+            Some("gvisor"),
+            "UNTRUSTED must have gVisor node affinity"
+        );
+
+        // Toleration must also be present and match the taint operators would set.
+        let t = first_toleration(&job).expect("UNTRUSTED pod must have a toleration");
+        assert_eq!(
+            t.key.as_deref(),
+            Some("lantern.dev/runtimeclass"),
+            "toleration key must match the affinity label key"
+        );
+        assert_eq!(
+            t.operator.as_deref(),
+            Some("Equal"),
+            "toleration operator must be Equal"
+        );
+        assert_eq!(
+            t.value.as_deref(),
+            Some("gvisor"),
+            "toleration value must match the affinity label value (gvisor)"
+        );
+        assert_eq!(
+            t.effect.as_deref(),
+            Some("NoSchedule"),
+            "toleration effect must be NoSchedule"
+        );
+    }
+
+    #[test]
+    fn build_job_trusted_has_no_node_affinity() {
+        let req = make_req(IsolationClass::Trusted);
+        let job = build_job(
+            &req,
+            "img",
+            "job-trusted-no-affinity",
+            "ns",
+            &RuntimeClassConfig {
+                gvisor: Some("gvisor".to_string()),
+                kata: Some("kata-qemu".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("TRUSTED build_job must succeed");
+
+        let pod_spec = job
+            .spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .expect("pod spec");
+        assert!(
+            pod_spec.affinity.is_none(),
+            "TRUSTED must not have node affinity constraints"
+        );
+        assert!(
+            pod_spec.tolerations.is_none(),
+            "TRUSTED must not have NoSchedule tolerations"
+        );
+    }
+
+    #[test]
+    fn build_job_standard_has_no_node_affinity() {
+        let req = make_req(IsolationClass::Standard);
+        let job = build_job(
+            &req,
+            "img",
+            "job-standard-no-affinity",
+            "ns",
+            &RuntimeClassConfig {
+                gvisor: Some("gvisor".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("STANDARD with gVisor must succeed");
+
+        let pod_spec = job
+            .spec
+            .as_ref()
+            .and_then(|s| s.template.spec.as_ref())
+            .expect("pod spec");
+        assert!(
+            pod_spec.affinity.is_none(),
+            "STANDARD must not have mandatory node affinity constraints"
+        );
+        assert!(
+            pod_spec.tolerations.is_none(),
+            "STANDARD must not have NoSchedule tolerations"
         );
     }
 
@@ -1578,6 +2048,7 @@ mod tests {
                 kata: Some("kata-qemu".to_string()),
                 wasm: None,
                 allow_runc_standard: false,
+                ..Default::default()
             },
         )
         .expect("TRUSTED should always succeed");
@@ -1602,6 +2073,7 @@ mod tests {
                 kata: Some("kata-qemu".to_string()),
                 wasm: None,
                 allow_runc_standard: false,
+                ..Default::default()
             },
         )
         .expect("UNTRUSTED should succeed when gVisor is configured");
@@ -1626,6 +2098,7 @@ mod tests {
                 kata: Some("kata-qemu".to_string()),
                 wasm: None,
                 allow_runc_standard: false,
+                ..Default::default()
             },
         )
         .expect("HOSTILE should succeed when Kata is configured");
@@ -1694,6 +2167,7 @@ mod tests {
                 kata: None,
                 wasm: None,
                 allow_runc_standard: false,
+                ..Default::default()
             },
         )
         .expect("STANDARD with gVisor should succeed");
@@ -1787,6 +2261,7 @@ mod tests {
             kata: None,
             wasm: None,
             allow_runc_standard: false,
+            ..Default::default()
         };
         assert!(
             k8s_satisfies_isolation(&cfg, IsolationClass::Untrusted),
@@ -1802,6 +2277,7 @@ mod tests {
             kata: Some("kata-qemu".to_string()),
             wasm: None,
             allow_runc_standard: false,
+            ..Default::default()
         };
         assert!(
             k8s_satisfies_isolation(&cfg, IsolationClass::Hostile),

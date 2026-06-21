@@ -10,8 +10,19 @@ not run), but operationally visible. Manage these out of band if your platform
 
 The handler name is assumed equal to the RuntimeClass name. Override by editing
 this template if your CRI registers the handler under a different key.
+
+NODE LABELS + TAINTS (operator prerequisite): untrusted/hostile pods must land
+ONLY on nodes with the matching sandbox runtime installed. Label those nodes
+  lantern.dev/runtimeclass=gvisor    (gVisor/runsc nodes)
+  lantern.dev/runtimeclass=kata      (Kata Containers nodes)
+and taint them (e.g. lantern.dev/runtimeclass=gvisor:NoSchedule) so only pods
+the runtime-manager schedules with the matching nodeSelector/toleration use
+them. See README.md "Node labels & RuntimeClasses".
+
+Gating: top-level runtimeClasses.create (preferred) OR the legacy
+runtimeManager.createRuntimeClasses both enable rendering.
 */ -}}
-{{- if .Values.runtimeManager.createRuntimeClasses }}
+{{- if or (and .Values.runtimeClasses .Values.runtimeClasses.create) .Values.runtimeManager.createRuntimeClasses }}
 {{- with .Values.runtimeManager.runtimeClasses }}
 {{- if .gvisor }}
 ---

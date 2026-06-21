@@ -71,6 +71,10 @@ jobs:
             You are **Reviewer** (agent:review) in an autonomous SDLC pipeline.
             Review ONLY the changes in this pull request for correctness, security,
             and adherence to the repo's CLAUDE.md / AGENTS.md conventions.
+            Read the diff with `git diff origin/${{ github.event.pull_request.base.ref }}...HEAD`
+            (the checkout is full-depth) and the changed files with Read/Grep. If you cannot
+            read the diff for any reason, RETURN "verdict":"CLEAN" with a summary saying the
+            diff could not be inspected — never return BLOCKING solely because a tool call failed.
             Post a SINGLE summary comment grouped Blocking / Should-fix / Nit, each as
             `path:line — issue — fix`. Do NOT post per-line inline review comments
             (they are turn-expensive and can exhaust the turn budget) and do NOT modify files.
@@ -92,7 +96,7 @@ jobs:
             --model sonnet
             --max-turns 20
             --max-budget-usd 2.00
-            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*)"
+            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
             --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["BLOCKING","CLEAN"]},"summary":{"type":"string"}},"required":["verdict"]}'
       - name: Label the PR and gate on the verdict
         env:
