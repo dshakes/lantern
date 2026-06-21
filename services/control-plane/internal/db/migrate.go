@@ -1279,4 +1279,31 @@ var migrations = []string{
 	// Grant the application role access to the new table and its sequence.
 	`GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE runtime_vm_logs TO lantern_app`,
 	`GRANT USAGE, SELECT ON SEQUENCE runtime_vm_logs_seq_seq TO lantern_app`,
+
+	// ---------------------------------------------------------------
+	// Side-effect receipts — exactly-once delivery dedup.
+	//
+	// Before any external side-effect (bridge delivery, email, etc.)
+	// the executor INSERTs a row here ON CONFLICT DO NOTHING.  If the
+	// insert is a no-op (0 rows affected) the effect was already
+	// delivered on a prior attempt and the current attempt skips it.
+	//
+	// idem_key is hex(sha256("runID|stepID|attempt")) — deterministic
+	// and collision-resistant.  kind is a human label for observability
+	// ("bridge_deliver", "whatsapp_self", …).
+	// ---------------------------------------------------------------
+	`CREATE TABLE IF NOT EXISTS side_effect_receipts (
+		idem_key   TEXT        PRIMARY KEY,
+		run_id     UUID        NOT NULL,
+		tenant_id  UUID        NOT NULL,
+		kind       TEXT        NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS side_effect_receipts_run_idx
+		ON side_effect_receipts (run_id)`,
+
+	// DELETE is required by the janitor (RunSideEffectReceiptsJanitor) which
+	// periodically removes rows older than LANTERN_SIDE_EFFECT_RETENTION_DAYS.
+	`GRANT SELECT, INSERT, DELETE ON TABLE side_effect_receipts TO lantern_app`,
 }

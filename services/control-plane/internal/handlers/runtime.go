@@ -445,11 +445,15 @@ func newID() string {
 // RuntimeHandler implements the REST surface for headless agent runtime
 // governance. Mounted under /v1/runtime/* in cmd/server/main.go.
 type RuntimeHandler struct {
-	srv       *server.Server
-	auth      *AuthHandler
-	scheduler SchedulerClient
-	identity  *agentidentity.Issuer
+	srv          *server.Server
+	auth         *AuthHandler
+	scheduler    SchedulerClient
+	identity     *agentidentity.Issuer
+	spawnLimiter *SpawnRateLimiter // per-tenant spawn-storm guard (nil = disabled)
 }
+
+// SetSpawnLimiter wires the per-tenant spawn rate limiter (phase 3). nil-safe.
+func (h *RuntimeHandler) SetSpawnLimiter(l *SpawnRateLimiter) { h.spawnLimiter = l }
 
 // NewRuntimeHandler constructs a RuntimeHandler. If LANTERN_SCHEDULER_GRPC_ADDR
 // is set the real gRPC client is dialed; otherwise the stub is used so a
@@ -787,6 +791,14 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := claims.TenantID
+
+	// Per-tenant spawn-storm guard (phase 3): throttle a burst of schedule calls
+	// before any placement/quota work. 429, no VM created.
+	if h.spawnLimiter != nil && !h.spawnLimiter.Allow(tenantID) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limited: too many schedule requests, slow down"})
+		return
+	}
+
 	ctx := r.Context()
 
 	// Start a span covering the scheduling work (after auth).

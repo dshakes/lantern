@@ -12,6 +12,7 @@ package leader
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +27,9 @@ const lockKey int64 = 0x4C6E_5363_6865_6400 // "LnSched\0" in hex
 // Elector holds leader state. Create it with Campaign; observe with IsLeader.
 type Elector struct {
 	isLeader atomic.Bool
+
+	mu       sync.Mutex    // protects resignCh
+	resignCh chan struct{} // closed by Resign to force an immediate step-down
 }
 
 // IsLeader reports whether this instance currently holds the advisory lock.
@@ -36,9 +40,38 @@ func (e *Elector) IsLeader() bool {
 // AlwaysLeader returns an Elector that is permanently the leader. Used when
 // DATABASE_URL is unset (single-node dev).
 func AlwaysLeader() *Elector {
-	e := &Elector{}
+	e := &Elector{resignCh: make(chan struct{})}
 	e.isLeader.Store(true)
 	return e
+}
+
+// Resign immediately steps this instance down and releases the Postgres
+// advisory lock by closing the underlying connection. The Campaign goroutine
+// remains running: it will re-enter the contention loop after retryInterval,
+// so the Elector may re-acquire leadership if no other replica picks it up.
+//
+// This is primarily useful for tests and orderly hand-off (e.g. before a
+// rolling restart). The semantics are equivalent to the session connection
+// being severed (Postgres auto-releases session locks on disconnect).
+//
+// Calling Resign on an Elector that is not currently the leader is a no-op.
+// Calling Resign more than once is safe.
+func (e *Elector) Resign() {
+	// Closing resignCh signals hold() to return, which causes run() to close
+	// the connection (releasing the advisory lock), flip isLeader to false,
+	// and re-enter the contention loop. We replace resignCh so the Elector
+	// can acquire leadership again after the retry interval.
+	e.mu.Lock()
+	old := e.resignCh
+	e.resignCh = make(chan struct{})
+	e.mu.Unlock()
+
+	select {
+	case <-old:
+		// already resigned / channel already closed — no-op
+	default:
+		close(old)
+	}
 }
 
 // Campaign acquires a Postgres session-level advisory lock on lockKey using a
@@ -53,7 +86,7 @@ func AlwaysLeader() *Elector {
 // Campaign returns when ctx is cancelled. The caller should treat the returned
 // error as informational only.
 func Campaign(ctx context.Context, connStr string, logger *zap.Logger) (*Elector, error) {
-	e := &Elector{}
+	e := &Elector{resignCh: make(chan struct{})}
 	go e.run(ctx, connStr, logger)
 	return e, nil
 }
@@ -132,14 +165,23 @@ func tryAcquire(ctx context.Context, conn *pgx.Conn) (bool, error) {
 	return ok, nil
 }
 
-// hold keeps the connection alive by pinging until ctx is cancelled or the
-// connection breaks.
+// hold keeps the connection alive by pinging until ctx is cancelled, the
+// connection breaks, or Resign() is called.
 func (e *Elector) hold(ctx context.Context, conn *pgx.Conn, logger *zap.Logger) {
+	// Snapshot the current resign channel under the lock so we're not racing
+	// with a concurrent Resign() call that swaps the pointer.
+	e.mu.Lock()
+	resignCh := e.resignCh
+	e.mu.Unlock()
+
 	ticker := time.NewTicker(probeInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-resignCh:
+			logger.Info("leader: Resign called — stepping down voluntarily")
 			return
 		case <-ticker.C:
 			if err := conn.Ping(ctx); err != nil {

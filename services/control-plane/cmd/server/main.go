@@ -507,6 +507,10 @@ func main() {
 	// (default 14) once per hour. Stops cleanly when ctx is cancelled.
 	go runtimeReportHandler.RunLogRetentionJanitor(ctx)
 
+	// side_effect_receipts retention: delete rows older than
+	// LANTERN_SIDE_EFFECT_RETENTION_DAYS (default 30) once per hour.
+	go handlers.RunSideEffectReceiptsJanitor(ctx, pool, logger)
+
 	httpServer := &http.Server{
 		Addr:              ":8080",
 		Handler:           handlers.CORSMiddleware(httpMux),
@@ -531,10 +535,18 @@ func main() {
 	go sched.Start(ctx)
 	defer sched.Stop()
 
-	// Startup crash-recovery sweep: re-drive any runs whose worker died
-	// mid-execution (lock absent or expired). Non-blocking; runs 2s after
-	// the HTTP server starts so /readyz serves first.
-	handlers.RunRecoverySweepAsync(ctx, restHandler, logger)
+	// Periodic crash-recovery watchdog: re-drives orphaned runs every
+	// LANTERN_RECOVERY_INTERVAL (default 30s). Non-blocking; first sweep
+	// fires 2s after the HTTP server starts so /readyz serves first.
+	handlers.RunRecoveryLoop(ctx, restHandler, logger, 0)
+
+	// Per-tenant spawn rate limiter (Phase-3 resiliency): throttles a burst of
+	// run-creations / runtime-schedules per tenant, returning HTTP 429 before any
+	// work side-effect. Wired into CreateRun and runtime Schedule below.
+	spawnLimiter := handlers.NewSpawnRateLimiter()
+	defer spawnLimiter.Stop()
+	restHandler.SetSpawnLimiter(spawnLimiter)
+	runtimeHandler.SetSpawnLimiter(spawnLimiter)
 
 	// Gmail + Calendar → unified timeline ingestion (Phase 2c).
 	go handlers.NewMemoryIngestor(pool, logger, identityHandler).Run(ctx)
