@@ -68,6 +68,17 @@ type Definition struct {
 
 // ---- Side-effect interface --------------------------------------------------
 
+// LLMStepUsage carries token/cost details returned by an ai-step LLM call.
+// Fields are zero when the dep does not report them (e.g. the basic CallLLM
+// shim used in unit tests).
+type LLMStepUsage struct {
+	TokensIn  int64
+	TokensOut int64
+	CostUSD   float64
+	Provider  string
+	Model     string
+}
+
 // Deps gives the interpreter the four real-world operations it needs.
 // Concrete implementations wrap the existing control-plane handlers so
 // the workflow uses the same LLM router, connector executor, and journal
@@ -76,6 +87,13 @@ type Deps struct {
 	// CallLLM runs a single LLM turn with the agent's tenant-scoped
 	// provider keys. It must return the final text reply or an error.
 	CallLLM func(ctx context.Context, prompt string, capability string) (string, error)
+
+	// CallLLMDetailed is an optional richer variant of CallLLM that also
+	// returns per-call token/cost metrics. When non-nil the interpreter
+	// uses it for ai-step nodes and includes the metrics in the
+	// step_completed journal payload. When nil the interpreter falls back
+	// to CallLLM with zero-valued usage (existing behaviour unchanged).
+	CallLLMDetailed func(ctx context.Context, prompt, capability string) (string, LLMStepUsage, error)
 
 	// CallConnector dispatches to /v1/connectors/{id}/execute equivalent
 	// for the given connector + action + params. Returns the parsed
@@ -189,6 +207,33 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 		})
 	}
 
+	// Cumulative stats for mid-run anomaly detection (Feature 3).
+	// Anomaly thresholds mirror DefaultAnomalyLimits; they are checked
+	// after every step so we emit anomaly_detected as soon as any limit
+	// is crossed, not only after the run ends.
+	limits := DefaultAnomalyLimits()
+	var cumulativeStats RunStats
+	// Track per-node visit counts to detect step-repeat loops in the main
+	// walk (separate from the loop node's own runaway check).
+	stepVisits := make(map[string]int)
+	// Anomaly dedup: emit each anomaly kind at most once per run to avoid
+	// flooding the journal.
+	emittedAnomalyKinds := make(map[AnomalyKind]bool)
+
+	emitAnomalies := func(stepID string, stats RunStats) {
+		for _, a := range DetectAnomalies(stats, limits) {
+			if !emittedAnomalyKinds[a.Kind] {
+				emittedAnomalyKinds[a.Kind] = true
+				emit("anomaly_detected", stepID, map[string]any{
+					"kind":     string(a.Kind),
+					"observed": a.Observed,
+					"limit":    a.Limit,
+					"message":  a.Message,
+				})
+			}
+		}
+	}
+
 	res := Result{}
 	current := trigger.ID
 	emit("workflow.started", "", map[string]any{
@@ -221,9 +266,24 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 			"type": node.Type,
 		})
 
-		stepOutput, stepErr := executeNode(stepCtx, runID, deps, emit, node, vars, out, byID)
+		// Per-step LLM usage; populated by executeNode for ai-step nodes.
+		var stepUsage LLMStepUsage
+		stepOutput, stepErr := executeNode(stepCtx, runID, deps, emit, node, vars, out, byID, &stepUsage)
 		cancel()
 		res.StepsRan++
+
+		// Accumulate stats and check anomalies immediately after each step.
+		cumulativeStats.Steps++
+		stepVisits[node.ID]++
+		if stepVisits[node.ID] > 1 {
+			// Each additional visit to the same node counts as an extra iteration
+			// for the runaway-loop detector so that self-loops in the main walk
+			// are caught without waiting for maxSteps to fire.
+			cumulativeStats.Iterations += stepVisits[node.ID] - 1
+		}
+		cumulativeStats.CostUSD += stepUsage.CostUSD
+		cumulativeStats.Tokens += stepUsage.TokensIn + stepUsage.TokensOut
+		emitAnomalies(node.ID, cumulativeStats)
 
 		if stepErr != nil {
 			emit("step_failed", node.ID, map[string]any{
@@ -241,11 +301,25 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 			stepsMap[node.ID] = stepOutput
 		}
 
-		emit("step_completed", node.ID, map[string]any{
+		// Build step_completed payload. For ai-step nodes we include token/cost
+		// metrics so the run waterfall can display per-step FinOps data.
+		completedPayload := map[string]any{
 			"name":   labelOf(node),
 			"type":   node.Type,
 			"output": truncate(formatOutput(stepOutput), 600),
-		})
+		}
+		if node.Type == "ai-step" && (stepUsage.TokensIn > 0 || stepUsage.TokensOut > 0 || stepUsage.CostUSD > 0) {
+			completedPayload["tokens_in"] = stepUsage.TokensIn
+			completedPayload["tokens_out"] = stepUsage.TokensOut
+			completedPayload["cost_usd"] = stepUsage.CostUSD
+			if stepUsage.Provider != "" {
+				completedPayload["provider"] = stepUsage.Provider
+			}
+			if stepUsage.Model != "" {
+				completedPayload["model"] = stepUsage.Model
+			}
+		}
+		emit("step_completed", node.ID, completedPayload)
 
 		// Decide the next node based on the step type.
 		next := chooseNext(node, stepOutput, out[node.ID])
@@ -275,7 +349,11 @@ func Run(ctx context.Context, runID string, deps Deps, def Definition, input map
 // emitFn is a convenience alias for the emit closure passed through execution.
 type emitFn func(kind, stepID string, payload map[string]any)
 
-func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node Node, vars map[string]any, out map[string][]Edge, byID map[string]Node) (any, error) {
+// executeNode executes a single workflow node and returns its output.
+// usageOut is an optional pointer filled with LLM token/cost metrics when the
+// node is an ai-step and CallLLMDetailed is wired; it is left at zero otherwise.
+// Callers pass nil when they don't care about usage (e.g. runSubgraph).
+func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node Node, vars map[string]any, out map[string][]Edge, byID map[string]Node, usageOut *LLMStepUsage) (any, error) {
 	// Replay idempotency: before touching any side-effecting dep, check
 	// whether this node was already completed in a prior attempt. Pure
 	// structural nodes (trigger, condition, end) are always re-evaluated —
@@ -306,6 +384,16 @@ func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node
 			capability = "auto"
 		}
 		rendered := renderTemplate(prompt, vars)
+		if deps.CallLLMDetailed != nil {
+			reply, usage, err := deps.CallLLMDetailed(ctx, rendered, capability)
+			if err != nil {
+				return nil, fmt.Errorf("ai-step LLM call failed: %w", err)
+			}
+			if usageOut != nil {
+				*usageOut = usage
+			}
+			return reply, nil
+		}
 		reply, err := deps.CallLLM(ctx, rendered, capability)
 		if err != nil {
 			return nil, fmt.Errorf("ai-step LLM call failed: %w", err)
@@ -678,7 +766,7 @@ func runSubgraph(ctx context.Context, runID string, deps Deps, emit emitFn, star
 			break
 		}
 
-		result, err := executeNode(ctx, runID, deps, emit, node, vars, out, byID)
+		result, err := executeNode(ctx, runID, deps, emit, node, vars, out, byID, nil)
 		if err != nil {
 			return nil, err
 		}

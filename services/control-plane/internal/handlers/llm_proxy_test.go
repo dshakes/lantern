@@ -13,8 +13,17 @@ package handlers
 // and the user sees a confusing 400.
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
+
+	"go.uber.org/zap"
+
+	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
 // ---------------------------------------------------------------------------
@@ -558,6 +567,143 @@ func TestComplexityRoutingEnabled_DefaultOn(t *testing.T) {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Feature 1: extended FinOps fields in completionResponse
+// handleOpenAISyncResponse / handleAnthropicSyncResponse
+// ---------------------------------------------------------------------------
+
+// newTestLlmProxyHandler builds a minimal LlmProxyHandler for unit tests.
+// The pool and most fields are nil; only the logger is set because the
+// response-parse helpers don't touch the DB.
+func newTestLlmProxyHandler() *LlmProxyHandler {
+	logger, _ := zap.NewDevelopment()
+	srv := &server.Server{Logger: logger}
+	return &LlmProxyHandler{srv: srv}
+}
+
+// stubHTTPResponse builds an *http.Response with the given JSON body.
+func stubHTTPResponse(body any) *http.Response {
+	b, _ := json.Marshal(body)
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(b)),
+	}
+}
+
+func TestHandleOpenAISyncResponse_ReasoningAndCacheTokens(t *testing.T) {
+	h := newTestLlmProxyHandler()
+
+	payload := map[string]any{
+		"choices": []any{
+			map[string]any{
+				"message":       map[string]any{"content": "hello"},
+				"finish_reason": "stop",
+			},
+		},
+		"usage": map[string]any{
+			"prompt_tokens":     500,
+			"completion_tokens": 200,
+			"completion_tokens_details": map[string]any{
+				"reasoning_tokens": int64(150),
+			},
+			"prompt_tokens_details": map[string]any{
+				"cached_tokens": int64(100),
+			},
+		},
+	}
+
+	w := httptest.NewRecorder()
+	h.handleOpenAISyncResponse(w, stubHTTPResponse(payload), "gpt-4o")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var cr completionResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &cr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cr.ReasoningTokens != 150 {
+		t.Errorf("ReasoningTokens: got %d, want 150", cr.ReasoningTokens)
+	}
+	if cr.CacheReadTokens != 100 {
+		t.Errorf("CacheReadTokens: got %d, want 100", cr.CacheReadTokens)
+	}
+	if cr.CacheWriteTokens != 0 {
+		t.Errorf("CacheWriteTokens: got %d, want 0 (OpenAI doesn't set this)", cr.CacheWriteTokens)
+	}
+	if cr.TokensIn != 500 || cr.TokensOut != 200 {
+		t.Errorf("base tokens: in=%d out=%d", cr.TokensIn, cr.TokensOut)
+	}
+}
+
+func TestHandleOpenAISyncResponse_NilDetailsFieldsOmitted(t *testing.T) {
+	// Confirm that when neither details field is present, the extended
+	// fields stay zero — they must not appear in JSON (omitempty).
+	h := newTestLlmProxyHandler()
+	payload := map[string]any{
+		"choices": []any{
+			map[string]any{"message": map[string]any{"content": "ok"}, "finish_reason": "stop"},
+		},
+		"usage": map[string]any{"prompt_tokens": 10, "completion_tokens": 5},
+	}
+	w := httptest.NewRecorder()
+	h.handleOpenAISyncResponse(w, stubHTTPResponse(payload), "gpt-4o-mini")
+
+	var cr completionResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &cr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cr.ReasoningTokens != 0 || cr.CacheReadTokens != 0 {
+		t.Errorf("expected zero extended fields, got reasoning=%d cache_read=%d",
+			cr.ReasoningTokens, cr.CacheReadTokens)
+	}
+	// Fields with omitempty must not appear in the raw JSON.
+	raw := w.Body.String()
+	for _, key := range []string{"reasoningTokens", "cacheReadTokens", "cacheWriteTokens"} {
+		if containsStr(raw, key) {
+			t.Errorf("unexpected key %q in response JSON: %s", key, raw)
+		}
+	}
+}
+
+func TestHandleAnthropicSyncResponse_CacheTokens(t *testing.T) {
+	h := newTestLlmProxyHandler()
+
+	payload := map[string]any{
+		"content":     []any{map[string]any{"type": "text", "text": "world"}},
+		"stop_reason": "end_turn",
+		"usage": map[string]any{
+			"input_tokens":                300,
+			"output_tokens":               100,
+			"cache_read_input_tokens":     int64(200),
+			"cache_creation_input_tokens": int64(50),
+		},
+	}
+
+	w := httptest.NewRecorder()
+	h.handleAnthropicSyncResponse(w, stubHTTPResponse(payload), "claude-sonnet-4-20250514")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var cr completionResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &cr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cr.CacheReadTokens != 200 {
+		t.Errorf("CacheReadTokens: got %d, want 200", cr.CacheReadTokens)
+	}
+	if cr.CacheWriteTokens != 50 {
+		t.Errorf("CacheWriteTokens: got %d, want 50", cr.CacheWriteTokens)
+	}
+	if cr.ReasoningTokens != 0 {
+		t.Errorf("ReasoningTokens: got %d, want 0 (Anthropic doesn't set this)", cr.ReasoningTokens)
+	}
+	if cr.Content != "world" {
+		t.Errorf("Content: got %q, want %q", cr.Content, "world")
+	}
+}
 
 func containsStr(s, sub string) bool {
 	return len(sub) > 0 && len(s) >= len(sub) &&

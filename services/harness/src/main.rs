@@ -87,6 +87,10 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
+    // Set the W3C propagator globally and parse LANTERN_TRACE_PARENT so every
+    // outgoing gRPC call to the manager carries the spawn trace's traceparent.
+    let _spawn_cx = otel::init_propagator();
+
     let env = parse_env()?;
     tracing::info!(
         vm_id = %env.vm_id,

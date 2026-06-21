@@ -494,6 +494,7 @@ func main() {
 	httpMux.HandleFunc("GET /v1/runtime/quota", runtimeHandler.GetQuota)
 	httpMux.HandleFunc("PUT /v1/runtime/quota", runtimeHandler.UpsertQuota)
 	httpMux.HandleFunc("GET /v1/runtime/audit", runtimeHandler.ListAudit)
+	httpMux.HandleFunc("GET /v1/runtime/metrics", runtimeHandler.LiveMetrics)
 	// Secret relay — service-to-service endpoint for the runtime-manager to
 	// resolve lantern.secret/... refs. Fail-closed when
 	// LANTERN_RUNTIME_SECRET_TOKEN is unset (see ADR 0008).
@@ -503,6 +504,8 @@ func main() {
 	// Auth: same shared token as the secret relay (fail-closed when unset).
 	runtimeReportHandler := handlers.NewRuntimeReportHandler(srv)
 	httpMux.HandleFunc("POST /v1/runtime/report", runtimeReportHandler.Report)
+	// Wire the prometheus metrics store so LiveMetrics can surface per-VM counters.
+	runtimeHandler.SetMetricsStore(runtimeReportHandler)
 	// runtime_vm_logs retention: delete rows older than LANTERN_RUNTIME_LOG_RETENTION_DAYS
 	// (default 14) once per hour. Stops cleanly when ctx is cancelled.
 	go runtimeReportHandler.RunLogRetentionJanitor(ctx)

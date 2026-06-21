@@ -165,6 +165,13 @@ type llmStepPayload struct {
 	CostUSD   float64 `json:"cost_usd"`
 	Provider  string  `json:"provider"`
 	Model     string  `json:"model"`
+	// Extended FinOps fields — zero when not reported by the provider.
+	// OpenAI o-series: ReasoningTokens from completion_tokens_details.reasoning_tokens.
+	// OpenAI / Anthropic: CacheReadTokens from prompt caching breakdown.
+	// Anthropic: CacheWriteTokens from cache_creation_input_tokens.
+	ReasoningTokens  int64 `json:"reasoning_tokens,omitempty"`
+	CacheReadTokens  int64 `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64 `json:"cache_write_tokens,omitempty"`
 }
 
 // checkCachedLLMStep returns (payload, true, nil) when journal_events already
