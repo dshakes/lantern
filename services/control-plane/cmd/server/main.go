@@ -245,6 +245,7 @@ func main() {
 	gmailHandler := handlers.NewGmailHandler(srv, authHandler)
 	sessionHandler := handlers.NewSessionHandler(srv, authHandler, llmProxyHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
+	restHandler.SetDataPlaneRouter(dpSvc)    // routes runs to a connected data plane when one is live
 
 	// Futuristic surface: cost forecasting, policy budgets, marketplace,
 	// MCP registry, eval-in-CI, A/B experiments.
