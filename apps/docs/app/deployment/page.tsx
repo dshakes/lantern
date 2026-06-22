@@ -57,18 +57,105 @@ export default function DeploymentPage() {
           below)
         </li>
         <li>
-          Register your data plane in the Lantern dashboard under{" "}
-          <strong>Settings &gt; Data Plane</strong>
+          Register your data plane via <code>POST /v1/data-planes</code> (or
+          the dashboard under <strong>Settings &gt; Data Planes</strong>). This
+          mints a one-time 32-byte bootstrap token returned in the response —
+          store it; it is not recoverable after the response is closed.
         </li>
         <li>
-          The data plane establishes a gRPC tunnel to the control plane using
-          mutual TLS
+          The data plane agent dials <strong>out</strong> to the control plane
+          at <code>:50051</code> (gRPC) — no inbound ports are needed in your
+          VPC. It sends the bootstrap token in a{" "}
+          <code>Register</code> RPC, which returns a short-lived session JWT (
+          <code>typ=dataplane-session</code>, 1 h TTL). The agent rotates it
+          with <code>RefreshToken</code> before expiry.
         </li>
         <li>
-          Agent runs execute in your VPC; the control plane orchestrates
-          remotely
+          Once registered, the data plane opens a persistent{" "}
+          <code>RunStream</code> bidirectional RPC. The control plane pushes run
+          assignments down this stream; the agent reports acceptance, status
+          updates, and completion back up. Agent runs execute inside your VPC;
+          only run metadata crosses the boundary.
         </li>
       </ol>
+
+      <h4>Tunnel RPCs at a glance</h4>
+      <p>
+        All RPCs are defined in{" "}
+        <code>packages/proto/lantern/v1/dataplane.proto</code> and served on
+        the control plane&apos;s existing <code>:50051</code> gRPC listener.
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table>
+          <thead>
+            <tr>
+              <th>RPC</th>
+              <th>Direction</th>
+              <th>Auth</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Register</code></td>
+              <td>agent → CP</td>
+              <td>bootstrap token (one-time)</td>
+              <td>Exchange bootstrap token for a session JWT; record hostname / region / cloud</td>
+            </tr>
+            <tr>
+              <td><code>Heartbeat</code></td>
+              <td>agent → CP</td>
+              <td>plane_id + session JWT</td>
+              <td>Liveness probe (every 30 s); learns of drain orders</td>
+            </tr>
+            <tr>
+              <td><code>ReportMetrics</code></td>
+              <td>agent → CP</td>
+              <td>plane_id + session JWT</td>
+              <td>CPU / memory / active-run pressure (every 60 s)</td>
+            </tr>
+            <tr>
+              <td><code>RefreshToken</code></td>
+              <td>agent → CP</td>
+              <td>current session JWT</td>
+              <td>Rotate the session JWT before the 1 h expiry</td>
+            </tr>
+            <tr>
+              <td><code>RunStream</code> (bidi)</td>
+              <td>agent ↔ CP</td>
+              <td>DpHello first frame (session JWT)</td>
+              <td>CP pushes run assignments; agent reports accepted / status / completed</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="callout callout-info">
+        <strong>Per-tenant connection cap:</strong> up to{" "}
+        <code>LANTERN_DP_MAX_STREAMS_PER_TENANT</code> concurrent{" "}
+        <code>RunStream</code> connections are allowed per tenant (default 10).
+        Excess connections are rejected with gRPC <code>RESOURCE_EXHAUSTED</code>.
+      </div>
+
+      <h4>Run routing</h4>
+      <p>
+        When <code>POST /v1/runs</code> is called:
+      </p>
+      <ul>
+        <li>
+          If the tenant has at least one data plane with an active{" "}
+          <code>RunStream</code> connected, the run is dispatched to that plane.
+          The run&apos;s <code>data_plane_id</code> column is pinned at dispatch
+          time; the plane reports completion back over the stream.
+        </li>
+        <li>
+          If <strong>no</strong> data plane is connected (or delivery fails
+          because the assignment channel is full), the run falls back to inline
+          execution inside the control plane — the managed-cloud model. The pin
+          is rolled back so the inline path&apos;s writes are not blocked by a
+          stale plane scope.
+        </li>
+      </ul>
 
       <h3>3. Fully self-hosted</h3>
       <p>
@@ -241,6 +328,53 @@ make dev-infra`}</code>
         <li>Jaeger</li>
         <li>Any OTel-compatible backend</li>
       </ul>
+      <p>
+        Production alert rules, Grafana dashboards, and operator runbooks are
+        in{" "}
+        <a href="https://github.com/dshakes/lantern/blob/master/infra/monitoring/prometheus/alerts.yml">
+          <code>infra/monitoring/prometheus/</code>
+        </a>{" "}
+        and{" "}
+        <a href="https://github.com/dshakes/lantern/blob/master/docs/runbooks/README.md">
+          <code>docs/runbooks/</code>
+        </a>
+        . See <a href="/runtime/observability">Observability</a> for details.
+      </p>
+
+      <h2 id="migrations">Database migrations</h2>
+      <p>
+        The control plane manages its own Postgres schema via{" "}
+        <strong>golang-migrate</strong> (
+        <a href="https://github.com/dshakes/lantern/blob/master/docs/adr/0010-versioned-db-migrations.md">
+          ADR 0010
+        </a>
+        ). Migrations are embedded SQL files shipped inside the binary — no
+        files to mount in the container.
+      </p>
+      <ul>
+        <li>
+          <strong>Fresh databases</strong> — migration <code>0001</code> creates
+          the full schema on first boot.
+        </li>
+        <li>
+          <strong>Existing databases</strong> — <code>0001</code> is fully{" "}
+          <code>IF NOT EXISTS</code>; running it against a database already
+          created by the previous startup runner records version 1 in the{" "}
+          <code>schema_migrations</code> ledger and makes no DDL changes.
+          No manual step or downtime required on upgrade.
+        </li>
+        <li>
+          <strong>New changes</strong> — added as sequentially numbered pairs (
+          <code>0002_*.up.sql</code> / <code>0002_*.down.sql</code>). Down
+          migrations are required for every change after the baseline.
+        </li>
+      </ul>
+      <div className="callout callout-info">
+        <strong>Only the control plane runs migrations.</strong> Other services
+        read and write tables but never apply schema changes. The{" "}
+        <code>schema_migrations</code> ledger is visible to any Postgres client
+        and is the authoritative record of schema version.
+      </div>
     </>
   );
 }
