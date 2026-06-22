@@ -296,24 +296,29 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Divider */}
-        <div className="my-4 flex items-center gap-3">
-          <div className="h-px flex-1 bg-zinc-800/60" />
-          <span className="text-[11px] text-zinc-600">or</span>
-          <div className="h-px flex-1 bg-zinc-800/60" />
-        </div>
+        {/* Demo mode — only when explicitly enabled at build time. Off by
+            default so production never advertises a client-minted demo login. */}
+        {process.env.NEXT_PUBLIC_DEMO_MODE === "1" && (
+          <>
+            {/* Divider */}
+            <div className="my-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-zinc-800/60" />
+              <span className="text-[11px] text-zinc-600">or</span>
+              <div className="h-px flex-1 bg-zinc-800/60" />
+            </div>
 
-        {/* Demo mode */}
-        <button
-          onClick={handleDemo}
-          disabled={demoLoading}
-          className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-800/80 py-2.5 text-sm text-zinc-400 transition-all hover:bg-surface-1 hover:text-zinc-200 disabled:opacity-50 active:scale-[0.98]"
-        >
-          {demoLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Try the demo"}
-        </button>
-        <p className="mt-2 text-center text-[11px] text-zinc-600">
-          No account needed — explore with sample data
-        </p>
+            <button
+              onClick={handleDemo}
+              disabled={demoLoading}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-800/80 py-2.5 text-sm text-zinc-400 transition-all hover:bg-surface-1 hover:text-zinc-200 disabled:opacity-50 active:scale-[0.98]"
+            >
+              {demoLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Try the demo"}
+            </button>
+            <p className="mt-2 text-center text-[11px] text-zinc-600">
+              No account needed — explore with sample data
+            </p>
+          </>
+        )}
 
         {/* Dev hint -- only visible in development */}
         {process.env.NODE_ENV === "development" && (

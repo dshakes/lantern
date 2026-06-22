@@ -473,6 +473,26 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Budget pre-check: enforce hard-fail limits before dispatching the run
+	// so a blocked agent never consumes compute or LLM tokens.  Estimated
+	// per-run cost is 0 at dispatch time (actual cost is unknown until the
+	// run completes); CheckBudget still catches exceeded daily-run-count and
+	// daily-cost limits from prior runs.  Mirrors the pattern in voice.go
+	// and marketplace_invoke.go.
+	if tenantID, ok := middleware.TenantIDFromContext(ctx); ok {
+		if bc := CheckBudget(ctx, h.srv.Pool, tenantID, body.AgentName, 0); !bc.Allowed && bc.HardFail {
+			h.logger().Warn("run blocked by budget",
+				zap.String("agent", body.AgentName),
+				zap.String("reason", bc.Reason),
+			)
+			writeJSON(w, http.StatusPaymentRequired, map[string]any{
+				"error":  "agent budget limit reached: " + bc.Reason,
+				"reason": bc.Reason,
+			})
+			return
+		}
+	}
+
 	inputStruct, _ := structpb.NewStruct(body.Input)
 
 	// Ensure the agent exists — auto-create if not found.
@@ -1322,6 +1342,19 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 
 	logStep("complete", "completed", fmt.Sprintf("Run finished: %d tokens, $%.4f", tokensIn+tokensOut, costUsd))
 
+	// Record actual usage in the daily rollup so CheckBudget gates future
+	// runs correctly.  Called once here — only the single-LLM-call path
+	// reaches this point; the workflow path returns earlier via
+	// runWorkflowIfPresent and the crash-replay path returns from the
+	// checkCachedLLMStep branch, both without recording (workflow nodes
+	// may record individually; the replay cost was already recorded on
+	// the original run).  So there is exactly one RecordUsage per
+	// successful inline run.
+	if recErr := RecordUsage(ctx, h.srv.Pool, tenantID, agentName, tokensIn, tokensOut, costUsd, map[string]int{}); recErr != nil {
+		h.logger().Warn("inline executor: RecordUsage failed",
+			zap.String("run_id", runID), zap.Error(recErr))
+	}
+
 	h.logger().Info("inline executor: run completed",
 		zap.String("run_id", runID),
 		zap.Int64("tokens_in", tokensIn),
@@ -1792,6 +1825,18 @@ func (h *RESTHandler) ExecuteScheduledRun(tenantID, agentName string, input map[
 
 	if input == nil {
 		input = map[string]any{}
+	}
+
+	// Budget pre-check: honour hard-fail limits for scheduled runs so an
+	// over-budget agent does not fire every cron tick unattended.
+	budgetResult := CheckBudget(ctx, h.srv.Pool, tenantID, agentName, 0)
+	if !budgetResult.Allowed && budgetResult.HardFail {
+		h.logger().Warn("scheduler: run blocked by budget",
+			zap.String("tenant_id", tenantID),
+			zap.String("agent", agentName),
+			zap.String("reason", budgetResult.Reason),
+		)
+		return
 	}
 
 	inputStruct, _ := structpb.NewStruct(input)

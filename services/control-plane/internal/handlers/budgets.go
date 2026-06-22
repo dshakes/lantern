@@ -332,10 +332,10 @@ func RecordUsage(ctx context.Context, pool *pgxpool.Pool, tenantID, agentName st
 		  tokens_in    = agent_usage_daily.tokens_in + EXCLUDED.tokens_in,
 		  tokens_out   = agent_usage_daily.tokens_out + EXCLUDED.tokens_out,
 		  cost_usd     = agent_usage_daily.cost_usd + EXCLUDED.cost_usd,
-		  tool_counts  = (
+		  tool_counts  = COALESCE((
 		    SELECT jsonb_object_agg(k, COALESCE((agent_usage_daily.tool_counts->>k)::int, 0) + COALESCE((EXCLUDED.tool_counts->>k)::int, 0))
 		    FROM jsonb_object_keys(agent_usage_daily.tool_counts || EXCLUDED.tool_counts) k
-		  )
+		  ), '{}'::jsonb)
 	`, tenantID, agentName, today, tokensIn, tokensOut, costUsd, toolCallsJSON)
 	return err
 }

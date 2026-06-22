@@ -414,13 +414,19 @@ class LanternAPI {
   setToken(token: string | null) {
     this._token = token;
     if (typeof window !== "undefined") {
+      // This cookie is set from JS so it can't be HttpOnly here — it exists
+      // only to feed the middleware's /auth/me check. Add Secure over HTTPS
+      // (so it's never sent in cleartext) and keep SameSite=Lax (CSRF
+      // hardening). Moving to a true HttpOnly cookie requires a server route
+      // to set it on login — tracked as a follow-up (see file header note).
+      const secure = window.location.protocol === "https:" ? "; Secure" : "";
       if (token) {
         localStorage.setItem("lantern_token", token);
-        document.cookie = `lantern_token=${token}; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax`;
+        document.cookie = `lantern_token=${token}; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax${secure}`;
       } else {
         localStorage.removeItem("lantern_token");
         document.cookie =
-          "lantern_token=; path=/; max-age=0; SameSite=Lax";
+          `lantern_token=; path=/; max-age=0; SameSite=Lax${secure}`;
       }
     }
   }
@@ -528,8 +534,15 @@ class LanternAPI {
       return data;
     } catch (err) {
       notifySimulated("login", err);
-      // Demo mode fallback
-      if (email === "demo@lantern.dev" || password === "demo") {
+      // Demo-mode fallback: only ever mint a local demo token when demo mode
+      // is explicitly enabled at build time (NEXT_PUBLIC_DEMO_MODE=1). Off by
+      // default so an unreachable control-plane can't be used to slip past
+      // auth with a client-minted token. Even when on, the middleware rejects
+      // demo tokens at /auth/me, so they never reach real tenant data.
+      if (
+        process.env.NEXT_PUBLIC_DEMO_MODE === "1" &&
+        (email === "demo@lantern.dev" || password === "demo")
+      ) {
         const demoToken = "demo_token_" + Date.now();
         this.setToken(demoToken);
         return { token: demoToken, user: DEMO_USER };

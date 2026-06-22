@@ -278,6 +278,35 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		"status": "Processing your message...",
 	})
 
+	// Budget pre-check: block the LLM call when the agent has a hard-fail
+	// budget that is already exhausted.  Soft-fail budgets (HardFail=false)
+	// are logged but not blocked — spend is still visible in the daily
+	// rollup written by RecordUsage below.
+	budgetResult := CheckBudget(ctx, h.llmProxy.srv.Pool, tenantID, agentName, 0)
+	if !budgetResult.Allowed {
+		if budgetResult.HardFail {
+			h.logger().Warn("session: LLM call blocked by budget",
+				zap.String("session_id", sessionID),
+				zap.String("tenant_id", tenantID),
+				zap.String("agent", agentName),
+				zap.String("reason", budgetResult.Reason),
+			)
+			const errContent = "sorry — this agent has reached its usage limit for today"
+			h.appendAssistantMessageWithTools(ctx, sessionID, errContent, nil)
+			h.publishEvent(sessionID, "agent.message", map[string]string{
+				"content":   errContent,
+				"sessionId": sessionID,
+			})
+			h.publishEvent(sessionID, "session.status_idle", map[string]string{})
+			return
+		}
+		h.logger().Warn("session: budget soft-limit exceeded (continuing)",
+			zap.String("tenant_id", tenantID),
+			zap.String("agent", agentName),
+			zap.String("reason", budgetResult.Reason),
+		)
+	}
+
 	// Resolve system prompt: turn-level hint > stored agent prompt > default.
 	//
 	// Persona floor for bridge agent names: when no systemHint AND no stored
@@ -474,7 +503,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// contact, dashboard chat), so the local claude-code CLI must never
 	// appear in the provider chain.
 	const userFacing = true
-	result, _, _, _, _, _, llmErr := h.llmProxy.callLLMWithFailover(
+	result, _, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.llmProxy.callLLMWithFailover(
 		ctx, tenantID,
 		promptMessages, tools, dispatch, onToolCall, onAttempt, 5, userFacing,
 	)
@@ -488,6 +517,20 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		})
 		h.publishEvent(sessionID, "session.status_idle", map[string]string{})
 		return
+	}
+
+	// Record usage for budget rollup.  estimateCost is a pure function already
+	// imported in this package (via llm_proxy.go) so no new dependency is
+	// introduced.  We never double-count: the pre-check (above) uses
+	// estCost=0 so it reads the current daily total; the write below is the
+	// only RecordUsage call for this session turn.
+	costUsd := estimateCost(usedProvider, usedModel, int(tokensIn), int(tokensOut))
+	if recErr := RecordUsage(ctx, h.llmProxy.srv.Pool, tenantID, agentName, tokensIn, tokensOut, costUsd, nil); recErr != nil {
+		h.logger().Warn("session: RecordUsage failed",
+			zap.String("tenant_id", tenantID),
+			zap.String("agent", agentName),
+			zap.Error(recErr),
+		)
 	}
 
 	// Append assistant message (with any persisted tool calls) and publish.
