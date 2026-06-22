@@ -185,11 +185,17 @@ func main() {
 	lanternv1.RegisterAgentServiceServer(grpcServer, agentSvc)
 	lanternv1.RegisterRunServiceServer(grpcServer, runSvc)
 
+	// DataPlaneService — authenticated tunnel for customer-VPC data-plane agents.
+	// Registered on the same :50051 gRPC listener; agents dial out to it.
+	dpSvc := handlers.NewDataPlaneService(srv, []byte(handlers.GetJWTSecret()))
+	lanternv1.RegisterDataPlaneServiceServer(grpcServer, dpSvc)
+
 	// Health check.
 	healthSvc := health.NewServer()
 	healthpb.RegisterHealthServer(grpcServer, healthSvc)
 	healthSvc.SetServingStatus("lantern.v1.AgentService", healthpb.HealthCheckResponse_SERVING)
 	healthSvc.SetServingStatus("lantern.v1.RunService", healthpb.HealthCheckResponse_SERVING)
+	healthSvc.SetServingStatus("lantern.v1.DataPlaneService", healthpb.HealthCheckResponse_SERVING)
 
 	// Reflection for grpcurl / grpcui.
 	reflection.Register(grpcServer)
@@ -653,6 +659,7 @@ func main() {
 	// Graceful shutdown: stop accepting, drain in-flight.
 	healthSvc.SetServingStatus("lantern.v1.AgentService", healthpb.HealthCheckResponse_NOT_SERVING)
 	healthSvc.SetServingStatus("lantern.v1.RunService", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthSvc.SetServingStatus("lantern.v1.DataPlaneService", healthpb.HealthCheckResponse_NOT_SERVING)
 
 	grpcServer.GracefulStop()
 	logger.Info("gRPC server stopped")

@@ -1306,4 +1306,26 @@ var migrations = []string{
 	// DELETE is required by the janitor (RunSideEffectReceiptsJanitor) which
 	// periodically removes rows older than LANTERN_SIDE_EFFECT_RETENTION_DAYS.
 	`GRANT SELECT, INSERT, DELETE ON TABLE side_effect_receipts TO lantern_app`,
+
+	// ---------------------------------------------------------------
+	// data_planes — reg_token_hash column (idempotent ADD COLUMN).
+	//
+	// The bootstrap registration token hash is stored here so the
+	// DataPlaneService.Register gRPC handler can validate an incoming
+	// agent_token without keeping plaintext material.  SHA-256 hex of
+	// the token; compared constant-time at registration time.
+	// ---------------------------------------------------------------
+	`ALTER TABLE data_planes ADD COLUMN IF NOT EXISTS reg_token_hash TEXT`,
+
+	// ---------------------------------------------------------------
+	// runs — data_plane_id column (idempotent ADD COLUMN).
+	//
+	// Records which data-plane executed (or is executing) a run.
+	// updateRunStatus and finalizeRun scope writes to this column so
+	// that a rogue data-plane cannot forge results for runs assigned
+	// to a different plane. NULL until the scheduler wires the column
+	// into AssignRun — writes targeting NULL rows are safe (0 rows
+	// updated) until then.
+	// ---------------------------------------------------------------
+	`ALTER TABLE runs ADD COLUMN IF NOT EXISTS data_plane_id TEXT`,
 }

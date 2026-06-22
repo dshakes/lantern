@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -11,6 +14,21 @@ import (
 
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
+
+// generateRegToken produces a 32-byte cryptographically-random registration
+// token (hex-encoded, 64 chars) and its SHA-256 hash (also hex-encoded).
+// The plaintext token is returned to the caller ONCE at data-plane creation
+// time; only the hash is persisted to data_planes.reg_token_hash.
+func generateRegToken() (token, hash string, err error) {
+	b := make([]byte, 32)
+	if _, err = rand.Read(b); err != nil {
+		return "", "", err
+	}
+	token = hex.EncodeToString(b)
+	h := sha256.Sum256([]byte(token))
+	hash = hex.EncodeToString(h[:])
+	return token, hash, nil
+}
 
 // DeploymentHandler provides REST endpoints for managing deployments and
 // data planes.
@@ -257,19 +275,28 @@ func (h *DeploymentHandler) RegisterDataPlane(w http.ResponseWriter, r *http.Req
 
 	configJSON, _ := json.Marshal(body.Config)
 
+	// Generate a one-time bootstrap token (plaintext returned once, hash stored).
+	regToken, regTokenHash, err := generateRegToken()
+	if err != nil {
+		h.logger().Error("generate reg token failed", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate registration token"})
+		return
+	}
+
 	var id string
 	var createdAt time.Time
 	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO data_planes (tenant_id, name, cloud, region, cluster_name, status, config, last_heartbeat)
-		VALUES ($1, $2, $3, $4, $5, 'provisioning', $6::jsonb, now())
+		INSERT INTO data_planes (tenant_id, name, cloud, region, cluster_name, status, config, last_heartbeat, reg_token_hash)
+		VALUES ($1, $2, $3, $4, $5, 'provisioning', $6::jsonb, now(), $7)
 		RETURNING id, created_at
-	`, tenantID, body.Name, body.Cloud, body.Region, body.ClusterName, string(configJSON)).Scan(&id, &createdAt)
+	`, tenantID, body.Name, body.Cloud, body.Region, body.ClusterName, string(configJSON), regTokenHash).Scan(&id, &createdAt)
 	if err != nil {
 		h.logger().Error("register data plane failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to register data plane"})
 		return
 	}
 
+	// agentToken is returned ONCE in the response and never stored in plaintext.
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":            id,
 		"tenantId":      tenantID,
@@ -282,6 +309,7 @@ func (h *DeploymentHandler) RegisterDataPlane(w http.ResponseWriter, r *http.Req
 		"lastHeartbeat": time.Now().UTC(),
 		"config":        body.Config,
 		"createdAt":     createdAt,
+		"agentToken":    regToken, // plaintext; show ONCE
 	})
 }
 
