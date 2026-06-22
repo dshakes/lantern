@@ -1,0 +1,893 @@
+CREATE TABLE IF NOT EXISTS tenants (
+	id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	slug          TEXT NOT NULL UNIQUE,
+	name          TEXT NOT NULL,
+	tier          TEXT NOT NULL CHECK (tier IN ('personal','team','enterprise')),
+	created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+	settings      JSONB NOT NULL DEFAULT '{}'::jsonb,
+	k8s_namespace TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS users (
+	id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	email         TEXT NOT NULL,
+	display_name  TEXT,
+	auth_provider TEXT NOT NULL,
+	auth_subject  TEXT NOT NULL,
+	created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+	last_seen_at  TIMESTAMPTZ,
+	UNIQUE (auth_provider, auth_subject),
+	UNIQUE (tenant_id, email)
+);
+
+CREATE TABLE IF NOT EXISTS agents (
+	id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id          UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	name               TEXT NOT NULL,
+	description        TEXT,
+	current_version_id UUID,
+	created_by         UUID REFERENCES users(id),
+	created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+	archived_at        TIMESTAMPTZ,
+	labels             JSONB NOT NULL DEFAULT '{}'::jsonb,
+	UNIQUE (tenant_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS agent_versions (
+	id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	agent_id    UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+	version     TEXT NOT NULL,
+	digest      BYTEA NOT NULL,
+	bundle_uri  TEXT NOT NULL,
+	manifest    JSONB NOT NULL,
+	signature   BYTEA,
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+	promoted_at TIMESTAMPTZ,
+	yanked_at   TIMESTAMPTZ,
+	UNIQUE (agent_id, version),
+	UNIQUE (agent_id, digest)
+);
+
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint WHERE conname = 'fk_current_version'
+	) THEN
+		ALTER TABLE agents
+			ADD CONSTRAINT fk_current_version
+			FOREIGN KEY (current_version_id) REFERENCES agent_versions(id) ON DELETE SET NULL;
+	END IF;
+END$$;
+
+CREATE TABLE IF NOT EXISTS runs (
+	id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id        UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_id         UUID NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
+	agent_version_id UUID NOT NULL REFERENCES agent_versions(id) ON DELETE RESTRICT,
+	status           TEXT NOT NULL,
+	trigger_kind     TEXT NOT NULL,
+	trigger_meta     JSONB NOT NULL DEFAULT '{}'::jsonb,
+	input            JSONB NOT NULL,
+	output           JSONB,
+	error            JSONB,
+	cost_usd         NUMERIC(12,6) NOT NULL DEFAULT 0,
+	tokens_in        BIGINT NOT NULL DEFAULT 0,
+	tokens_out       BIGINT NOT NULL DEFAULT 0,
+	started_at       TIMESTAMPTZ,
+	finished_at      TIMESTAMPTZ,
+	created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+	parent_run_id    UUID REFERENCES runs(id),
+	labels           JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS runs_tenant_status_created_idx
+	ON runs (tenant_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS runs_agent_created_idx
+	ON runs (agent_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS journal_events (
+	run_id     UUID NOT NULL,
+	seq        BIGINT NOT NULL,
+	kind       TEXT NOT NULL,
+	step_id    TEXT,
+	attempt    INT NOT NULL DEFAULT 1,
+	payload    BYTEA NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	PRIMARY KEY (run_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS journal_events_run_kind_idx
+	ON journal_events (run_id, kind, seq);
+
+CREATE TABLE IF NOT EXISTS run_locks (
+	run_id      UUID PRIMARY KEY,
+	worker_id   TEXT NOT NULL,
+	acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	expires_at  TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS agent_versions_digest_idx
+	ON agent_versions (digest);
+
+ALTER TABLE agents ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE agents FORCE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_policies
+		WHERE tablename = 'agents' AND policyname = 'tenant_isolation_agents'
+	) THEN
+		CREATE POLICY tenant_isolation_agents ON agents
+			USING (tenant_id::text = current_setting('app.tenant_id', true));
+	END IF;
+END$$;
+
+ALTER TABLE runs ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE runs FORCE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_policies
+		WHERE tablename = 'runs' AND policyname = 'tenant_isolation_runs'
+	) THEN
+		CREATE POLICY tenant_isolation_runs ON runs
+			USING (tenant_id::text = current_setting('app.tenant_id', true));
+	END IF;
+END$$;
+
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_name = 'users' AND column_name = 'password_hash'
+	) THEN
+		ALTER TABLE users ADD COLUMN password_hash TEXT;
+	END IF;
+END$$;
+
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_name = 'users' AND column_name = 'role'
+	) THEN
+		ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member';
+	END IF;
+END$$;
+
+CREATE TABLE IF NOT EXISTS connector_installs (
+	id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+	tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	connector_id TEXT NOT NULL,
+	display_name TEXT NOT NULL,
+	status TEXT NOT NULL DEFAULT 'pending',
+	config JSONB NOT NULL DEFAULT '{}'::jsonb,
+	oauth_token_encrypted JSONB,
+	scopes TEXT[],
+	installed_by TEXT,
+	installed_at TIMESTAMPTZ DEFAULT now(),
+	updated_at TIMESTAMPTZ DEFAULT now(),
+	UNIQUE(tenant_id, connector_id)
+);
+
+CREATE TABLE IF NOT EXISTS surface_configs (
+	id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+	tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	surface_id TEXT NOT NULL,
+	display_name TEXT NOT NULL,
+	status TEXT NOT NULL DEFAULT 'disconnected',
+	config JSONB NOT NULL DEFAULT '{}'::jsonb,
+	webhook_url TEXT,
+	connected_at TIMESTAMPTZ,
+	updated_at TIMESTAMPTZ DEFAULT now(),
+	UNIQUE(tenant_id, surface_id)
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+	id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+	tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	key_hash TEXT NOT NULL,
+	key_prefix TEXT NOT NULL,
+	scopes TEXT[] NOT NULL DEFAULT '{}',
+	expires_at TIMESTAMPTZ,
+	last_used_at TIMESTAMPTZ,
+	revoked_at TIMESTAMPTZ,
+	created_by TEXT,
+	created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS deployments (
+	id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+	tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_name TEXT NOT NULL,
+	version TEXT NOT NULL,
+	environment TEXT NOT NULL DEFAULT 'development',
+	status TEXT NOT NULL DEFAULT 'deploying',
+	deployed_by TEXT,
+	message TEXT,
+	logs JSONB DEFAULT '[]'::jsonb,
+	created_at TIMESTAMPTZ DEFAULT now(),
+	finished_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS data_planes (
+	id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+	tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	cloud TEXT NOT NULL,
+	region TEXT NOT NULL,
+	cluster_name TEXT,
+	status TEXT NOT NULL DEFAULT 'provisioning',
+	agent_count INTEGER DEFAULT 0,
+	last_heartbeat TIMESTAMPTZ,
+	config JSONB DEFAULT '{}'::jsonb,
+	created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS llm_provider_configs (
+	id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+	tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	provider TEXT NOT NULL,
+	api_key_encrypted TEXT NOT NULL,
+	status TEXT DEFAULT 'active',
+	created_at TIMESTAMPTZ DEFAULT now(),
+	updated_at TIMESTAMPTZ DEFAULT now(),
+	UNIQUE(tenant_id, provider)
+);
+
+CREATE TABLE IF NOT EXISTS schedules (
+	id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+	tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_name TEXT NOT NULL,
+	cron_expr TEXT NOT NULL,
+	input_template JSONB DEFAULT '{}'::jsonb,
+	config JSONB DEFAULT '{}'::jsonb,
+	enabled BOOLEAN NOT NULL DEFAULT true,
+	next_fire_at TIMESTAMPTZ,
+	last_fired_at TIMESTAMPTZ,
+	created_at TIMESTAMPTZ DEFAULT now(),
+	updated_at TIMESTAMPTZ DEFAULT now(),
+	UNIQUE(tenant_id, agent_name)
+);
+
+CREATE INDEX IF NOT EXISTS schedules_due_idx
+	ON schedules (enabled, next_fire_at)
+	WHERE enabled = true;
+
+CREATE TABLE IF NOT EXISTS sessions (
+	id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id  UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_name TEXT NOT NULL,
+	status     TEXT NOT NULL DEFAULT 'active',
+	messages   JSONB NOT NULL DEFAULT '[]'::jsonb,
+	created_at TIMESTAMPTZ DEFAULT now(),
+	updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS sessions_tenant_agent_idx
+	ON sessions (tenant_id, agent_name, updated_at DESC);
+
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_name = 'agents' AND column_name = 'workflow'
+	) THEN
+		ALTER TABLE agents ADD COLUMN workflow JSONB;
+	END IF;
+END$$;
+
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_name = 'agents' AND column_name = 'system_prompt'
+	) THEN
+		ALTER TABLE agents ADD COLUMN system_prompt TEXT;
+	END IF;
+END$$;
+
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_name = 'agents' AND column_name = 'avatar_url'
+	) THEN
+		ALTER TABLE agents ADD COLUMN avatar_url TEXT;
+	END IF;
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_name = 'agents' AND column_name = 'style_prompt'
+	) THEN
+		ALTER TABLE agents ADD COLUMN style_prompt TEXT;
+	END IF;
+END$$;
+
+CREATE TABLE IF NOT EXISTS agent_budgets (
+	id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id                UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_name               TEXT NOT NULL,
+	max_cost_usd_per_day     NUMERIC(12,4),
+	max_cost_usd_per_run     NUMERIC(12,4),
+	max_tokens_per_day       BIGINT,
+	max_runs_per_day         INTEGER,
+	tool_limits              JSONB NOT NULL DEFAULT '{}'::jsonb,
+	hard_fail                BOOLEAN NOT NULL DEFAULT true,
+	notify_at_pct            INTEGER NOT NULL DEFAULT 80 CHECK (notify_at_pct BETWEEN 1 AND 100),
+	created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+	UNIQUE (tenant_id, agent_name)
+);
+
+CREATE INDEX IF NOT EXISTS agent_budgets_tenant_idx
+	ON agent_budgets (tenant_id, agent_name);
+
+CREATE TABLE IF NOT EXISTS cost_forecasts (
+	id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id           UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_name          TEXT NOT NULL,
+	run_id              UUID,
+	estimated_tokens_in BIGINT NOT NULL,
+	estimated_tokens_out BIGINT NOT NULL,
+	estimated_cost_usd  NUMERIC(12,4) NOT NULL,
+	actual_cost_usd     NUMERIC(12,4),
+	confidence          NUMERIC(4,2) NOT NULL,
+	reasoning           JSONB NOT NULL DEFAULT '{}'::jsonb,
+	blocked_by_budget   BOOLEAN NOT NULL DEFAULT false,
+	created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS cost_forecasts_agent_idx
+	ON cost_forecasts (tenant_id, agent_name, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS marketplace_agents (
+	id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	slug                 TEXT NOT NULL UNIQUE,
+	source_tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	source_agent_id      UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+	name                 TEXT NOT NULL,
+	description          TEXT NOT NULL,
+	category             TEXT NOT NULL DEFAULT 'general',
+	tags                 TEXT[] NOT NULL DEFAULT '{}',
+	manifest             JSONB NOT NULL,
+	card                 JSONB NOT NULL,
+	readme               TEXT,
+	forks_count          INTEGER NOT NULL DEFAULT 0,
+	stars_count          INTEGER NOT NULL DEFAULT 0,
+	published_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+	unpublished_at       TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS marketplace_agents_category_idx
+	ON marketplace_agents (category) WHERE unpublished_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS marketplace_stars (
+	tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	marketplace_id  UUID NOT NULL REFERENCES marketplace_agents(id) ON DELETE CASCADE,
+	starred_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+	PRIMARY KEY (tenant_id, marketplace_id)
+);
+
+CREATE TABLE IF NOT EXISTS mcp_servers (
+	id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	slug         TEXT NOT NULL UNIQUE,
+	name         TEXT NOT NULL,
+	description  TEXT NOT NULL,
+	category     TEXT NOT NULL DEFAULT 'general',
+	transport    TEXT NOT NULL DEFAULT 'stdio',
+	url          TEXT,
+	command      TEXT,
+	auth_type    TEXT NOT NULL DEFAULT 'none',
+	manifest     JSONB NOT NULL DEFAULT '{}'::jsonb,
+	tags         TEXT[] NOT NULL DEFAULT '{}',
+	official     BOOLEAN NOT NULL DEFAULT false,
+	installs_count INTEGER NOT NULL DEFAULT 0,
+	created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS agent_mcp_attachments (
+	tenant_id      UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_name     TEXT NOT NULL,
+	mcp_server_id  UUID NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+	config         JSONB NOT NULL DEFAULT '{}'::jsonb,
+	attached_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+	PRIMARY KEY (tenant_id, agent_name, mcp_server_id)
+);
+
+INSERT INTO mcp_servers (slug, name, description, category, transport, command, auth_type, official, tags) VALUES
+	('filesystem', 'Filesystem', 'Read and write files with scoped paths. First-party.', 'core', 'stdio', 'npx -y @modelcontextprotocol/server-filesystem', 'none', true, ARRAY['files','io']),
+	('github', 'GitHub', 'Query issues, PRs, code, and create comments.', 'devtools', 'stdio', 'npx -y @modelcontextprotocol/server-github', 'bearer', true, ARRAY['git','code','reviews']),
+	('postgres', 'Postgres', 'Read-only Postgres queries over schema and tables.', 'data', 'stdio', 'npx -y @modelcontextprotocol/server-postgres', 'connection-string', true, ARRAY['sql','database']),
+	('slack', 'Slack', 'Search channels, post messages, read threads.', 'communication', 'stdio', 'npx -y @modelcontextprotocol/server-slack', 'bearer', true, ARRAY['chat','team']),
+	('brave-search', 'Brave Search', 'Web search over Brave''s API.', 'research', 'stdio', 'npx -y @modelcontextprotocol/server-brave-search', 'api-key', true, ARRAY['web','search']),
+	('puppeteer', 'Puppeteer', 'Headless Chrome browsing, screenshots, scraping.', 'automation', 'stdio', 'npx -y @modelcontextprotocol/server-puppeteer', 'none', true, ARRAY['browser','web']),
+	('memory', 'Memory', 'Persistent knowledge graph across agent runs.', 'core', 'stdio', 'npx -y @modelcontextprotocol/server-memory', 'none', true, ARRAY['memory','kv']),
+	('sqlite', 'SQLite', 'Embedded SQLite database access.', 'data', 'stdio', 'npx -y @modelcontextprotocol/server-sqlite', 'none', true, ARRAY['sql','embedded'])
+ON CONFLICT (slug) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS eval_suites (
+	id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_name   TEXT NOT NULL,
+	name         TEXT NOT NULL,
+	description  TEXT,
+	cases        JSONB NOT NULL,
+	created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+	UNIQUE (tenant_id, agent_name, name)
+);
+
+CREATE TABLE IF NOT EXISTS eval_runs (
+	id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id        UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	suite_id         UUID NOT NULL REFERENCES eval_suites(id) ON DELETE CASCADE,
+	agent_name       TEXT NOT NULL,
+	agent_version    TEXT,
+	commit_sha       TEXT,
+	branch           TEXT,
+	passed           BOOLEAN NOT NULL,
+	score            NUMERIC(5,4) NOT NULL,
+	cases_total      INTEGER NOT NULL,
+	cases_passed     INTEGER NOT NULL,
+	cases_result     JSONB NOT NULL DEFAULT '[]'::jsonb,
+	duration_ms      BIGINT NOT NULL DEFAULT 0,
+	total_cost_usd   NUMERIC(12,4) NOT NULL DEFAULT 0,
+	created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS eval_runs_suite_idx
+	ON eval_runs (suite_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS eval_runs_branch_idx
+	ON eval_runs (tenant_id, agent_name, branch, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS eval_baselines (
+	tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_name    TEXT NOT NULL,
+	branch        TEXT NOT NULL,
+	eval_run_id   UUID NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
+	set_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+	set_by        TEXT,
+	PRIMARY KEY (tenant_id, agent_name, branch)
+);
+
+CREATE TABLE IF NOT EXISTS agent_experiments (
+	id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id             UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_name            TEXT NOT NULL,
+	name                  TEXT NOT NULL,
+	variant_a_version     TEXT NOT NULL,
+	variant_b_version     TEXT NOT NULL,
+	traffic_split_b       INTEGER NOT NULL CHECK (traffic_split_b BETWEEN 0 AND 100),
+	eval_suite_id         UUID REFERENCES eval_suites(id) ON DELETE SET NULL,
+	auto_promote          BOOLEAN NOT NULL DEFAULT false,
+	min_runs_to_promote   INTEGER NOT NULL DEFAULT 100,
+	status                TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','paused','concluded')),
+	winner                TEXT CHECK (winner IS NULL OR winner IN ('a','b','tie')),
+	a_runs                INTEGER NOT NULL DEFAULT 0,
+	b_runs                INTEGER NOT NULL DEFAULT 0,
+	a_score               NUMERIC(5,4),
+	b_score               NUMERIC(5,4),
+	started_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+	concluded_at          TIMESTAMPTZ,
+	UNIQUE (tenant_id, agent_name, name)
+);
+
+CREATE INDEX IF NOT EXISTS agent_experiments_active_idx
+	ON agent_experiments (tenant_id, agent_name)
+	WHERE status = 'running';
+
+CREATE TABLE IF NOT EXISTS agent_usage_daily (
+	tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_name    TEXT NOT NULL,
+	usage_date    DATE NOT NULL,
+	runs_count    INTEGER NOT NULL DEFAULT 0,
+	tokens_in     BIGINT NOT NULL DEFAULT 0,
+	tokens_out    BIGINT NOT NULL DEFAULT 0,
+	cost_usd      NUMERIC(12,4) NOT NULL DEFAULT 0,
+	tool_counts   JSONB NOT NULL DEFAULT '{}'::jsonb,
+	PRIMARY KEY (tenant_id, agent_name, usage_date)
+);
+
+CREATE TABLE IF NOT EXISTS run_receipts (
+	tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	run_id      UUID NOT NULL PRIMARY KEY,
+	signature   TEXT NOT NULL,
+	payload     JSONB NOT NULL,
+	issued_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS run_receipts_tenant_idx
+	ON run_receipts (tenant_id, issued_at DESC);
+
+CREATE TABLE IF NOT EXISTS run_feedback (
+	id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	run_id            UUID NOT NULL,
+	agent_name        TEXT,
+	score             INTEGER NOT NULL CHECK (score BETWEEN 1 AND 5),
+	comment           TEXT,
+	preferred_output  TEXT,
+	source            TEXT NOT NULL DEFAULT 'dashboard',
+	created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS run_feedback_run_idx
+	ON run_feedback (run_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS run_feedback_agent_idx
+	ON run_feedback (tenant_id, agent_name, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS marketplace_invocations (
+	id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	buyer_tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	seller_tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	marketplace_slug TEXT NOT NULL,
+	agent_name      TEXT NOT NULL,
+	input           JSONB NOT NULL DEFAULT '{}'::jsonb,
+	output          JSONB,
+	status          TEXT NOT NULL DEFAULT 'pending',
+	cost_usd        DOUBLE PRECISION NOT NULL DEFAULT 0,
+	signature       TEXT,
+	receipt         JSONB,
+	error_message   TEXT,
+	created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+	completed_at    TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS marketplace_invocations_buyer_idx
+	ON marketplace_invocations (buyer_tenant_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS marketplace_invocations_seller_idx
+	ON marketplace_invocations (seller_tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS takeover_requests (
+	id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	run_id          UUID NOT NULL,
+	tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	step_id         TEXT,
+	reason          TEXT,
+	status          TEXT NOT NULL DEFAULT 'pending',
+	sdp_offer       TEXT,
+	sdp_answer      TEXT,
+	ice_candidates  JSONB DEFAULT '[]'::jsonb,
+	notes           TEXT,
+	expires_at      TIMESTAMPTZ,
+	created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+	granted_at      TIMESTAMPTZ,
+	released_at     TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS takeover_requests_run_idx
+	ON takeover_requests (run_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS takeover_requests_tenant_open_idx
+	ON takeover_requests (tenant_id, status)
+	WHERE status = 'pending' OR status = 'granted';
+
+CREATE TABLE IF NOT EXISTS voice_numbers (
+	id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_name      TEXT NOT NULL,
+	provider        TEXT NOT NULL,
+	phone_number    TEXT NOT NULL,
+	display_name    TEXT,
+	provider_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+	voice_id        TEXT,
+	greeting        TEXT,
+	status          TEXT NOT NULL DEFAULT 'inactive',
+	last_error      TEXT,
+	created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+	UNIQUE (tenant_id, phone_number)
+);
+
+CREATE INDEX IF NOT EXISTS voice_numbers_tenant_idx
+	ON voice_numbers (tenant_id);
+
+CREATE TABLE IF NOT EXISTS voice_calls (
+	id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	voice_number_id UUID NOT NULL REFERENCES voice_numbers(id) ON DELETE CASCADE,
+	agent_name      TEXT NOT NULL,
+	direction       TEXT NOT NULL DEFAULT 'inbound',
+	from_number     TEXT,
+	to_number       TEXT,
+	provider_call_id TEXT,
+	session_id      TEXT,
+	status          TEXT NOT NULL DEFAULT 'ringing',
+	duration_ms     BIGINT,
+	transcript      JSONB DEFAULT '[]'::jsonb,
+	cost_usd        DOUBLE PRECISION NOT NULL DEFAULT 0,
+	started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+	ended_at        TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS voice_calls_tenant_started_idx
+	ON voice_calls (tenant_id, started_at DESC);
+
+ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS phone_number TEXT;
+
+ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS display_handle TEXT;
+
+ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS bridge_state TEXT;
+
+ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS bridge_version TEXT;
+
+ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
+
+ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS last_connection_event_at TIMESTAMPTZ;
+
+ALTER TABLE surface_configs ADD COLUMN IF NOT EXISTS last_error TEXT;
+
+CREATE TABLE IF NOT EXISTS whatsapp_contact_facts (
+	id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	jid             TEXT NOT NULL,
+	content         TEXT NOT NULL,
+	source          TEXT NOT NULL DEFAULT 'manual',
+	created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS whatsapp_contact_facts_tenant_jid_idx
+	ON whatsapp_contact_facts (tenant_id, jid, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS whatsapp_vip_contacts (
+	tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	jid             TEXT NOT NULL,
+	display_name    TEXT,
+	added_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+	PRIMARY KEY (tenant_id, jid)
+);
+
+CREATE TABLE IF NOT EXISTS whatsapp_pending_drafts (
+	id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	jid             TEXT NOT NULL,
+	display_name    TEXT,
+	inbound_text    TEXT NOT NULL,
+	draft_text      TEXT NOT NULL,
+	status          TEXT NOT NULL DEFAULT 'pending',
+	final_text      TEXT,
+	created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+	acted_at        TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS whatsapp_pending_drafts_tenant_status_idx
+	ON whatsapp_pending_drafts (tenant_id, status, created_at DESC);
+
+ALTER TABLE whatsapp_pending_drafts ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'whatsapp';
+
+CREATE TABLE IF NOT EXISTS runtime_quotas (
+	tenant_id                   UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+	max_concurrent_vms          INTEGER NOT NULL DEFAULT 20,
+	max_compute_hours_per_day   NUMERIC(10,2) NOT NULL DEFAULT 10.0,
+	max_egress_gb_per_day       INTEGER NOT NULL DEFAULT 5,
+	max_cost_usd_per_day        NUMERIC(12,4) NOT NULL DEFAULT 5.0,
+	hard_fail                   BOOLEAN NOT NULL DEFAULT true,
+	updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS runtime_audit_events (
+	id            BIGSERIAL PRIMARY KEY,
+	tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	vm_id         TEXT,
+	action        TEXT NOT NULL,
+	attrs         JSONB NOT NULL DEFAULT '{}'::jsonb,
+	principal_id  UUID,
+	at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS runtime_audit_events_tenant_at_idx
+	ON runtime_audit_events (tenant_id, at DESC);
+
+CREATE INDEX IF NOT EXISTS runtime_audit_events_vm_idx
+	ON runtime_audit_events (vm_id, at DESC);
+
+CREATE TABLE IF NOT EXISTS runtime_vms (
+	vm_id              TEXT PRIMARY KEY,
+	tenant_id          UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	agent_version_id   UUID,
+	run_id             UUID,
+	node               TEXT,
+	az                 TEXT,
+	region             TEXT,
+	isolation_class    TEXT,
+	state              TEXT NOT NULL DEFAULT 'pending',
+	spec               JSONB NOT NULL DEFAULT '{}'::jsonb,
+	last_heartbeat_at  TIMESTAMPTZ,
+	created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+	terminated_at      TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS runtime_vms_tenant_state_idx
+	ON runtime_vms (tenant_id, state);
+
+CREATE INDEX IF NOT EXISTS runtime_vms_tenant_created_idx
+	ON runtime_vms (tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS people (
+	id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	display_name TEXT,
+	relationship TEXT,
+	is_owner     BOOLEAN NOT NULL DEFAULT false,
+	notes        TEXT,
+	created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS people_tenant_idx ON people (tenant_id);
+
+CREATE TABLE IF NOT EXISTS person_handles (
+	id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	person_id   UUID NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+	channel     TEXT NOT NULL,
+	handle      TEXT NOT NULL,
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+	UNIQUE (tenant_id, channel, handle)
+);
+
+CREATE INDEX IF NOT EXISTS person_handles_person_idx ON person_handles (person_id);
+
+CREATE INDEX IF NOT EXISTS person_handles_tenant_handle_idx
+	ON person_handles (tenant_id, handle);
+
+CREATE TABLE IF NOT EXISTS memory_events (
+	id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+	person_id   UUID REFERENCES people(id) ON DELETE CASCADE,
+	channel     TEXT NOT NULL,
+	kind        TEXT NOT NULL,
+	direction   TEXT,
+	content     TEXT NOT NULL,
+	occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	metadata    JSONB NOT NULL DEFAULT '{}'::jsonb,
+	created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS memory_events_person_time_idx
+	ON memory_events (tenant_id, person_id, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS memory_events_tenant_time_idx
+	ON memory_events (tenant_id, occurred_at DESC);
+
+ALTER TABLE whatsapp_contact_facts ADD COLUMN IF NOT EXISTS person_id UUID REFERENCES people(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS whatsapp_contact_facts_person_idx
+	ON whatsapp_contact_facts (tenant_id, person_id, updated_at DESC);
+
+CREATE EXTENSION IF NOT EXISTS vector;
+
+ALTER TABLE memory_events ADD COLUMN IF NOT EXISTS embedding vector(1536);
+
+ALTER TABLE memory_events ADD COLUMN IF NOT EXISTS external_id TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS memory_events_external_idx
+	ON memory_events (tenant_id, kind, external_id)
+	WHERE external_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS memory_events_embedding_idx
+	ON memory_events USING hnsw (embedding vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS people_tenant_name_lower_idx
+	ON people (tenant_id, lower(trim(display_name)))
+	WHERE display_name IS NOT NULL;
+
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS session_id UUID;
+
+CREATE INDEX IF NOT EXISTS runs_tenant_session_created_idx
+	ON runs (tenant_id, session_id, created_at DESC)
+	WHERE session_id IS NOT NULL;
+
+ALTER TABLE runtime_vms ADD COLUMN IF NOT EXISTS agent_instance_id TEXT;
+
+ALTER TABLE runtime_audit_events ADD COLUMN IF NOT EXISTS agent_instance_id TEXT;
+
+CREATE INDEX IF NOT EXISTS runtime_vms_agent_instance_id_idx
+	ON runtime_vms (agent_instance_id)
+	WHERE agent_instance_id IS NOT NULL;
+
+DO $$
+BEGIN
+	IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lantern_app') THEN
+		CREATE ROLE lantern_app LOGIN;
+	END IF;
+END$$;
+
+GRANT USAGE ON SCHEMA public TO lantern_app;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE agents TO lantern_app;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE runs TO lantern_app;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+	tenants,
+	users,
+	agent_versions,
+	journal_events,
+	run_locks,
+	sessions,
+	connector_installs,
+	surface_configs,
+	api_keys,
+	deployments,
+	data_planes,
+	llm_provider_configs,
+	schedules,
+	agent_budgets,
+	agent_usage_daily,
+	cost_forecasts,
+	marketplace_agents,
+	marketplace_stars,
+	marketplace_invocations,
+	mcp_servers,
+	agent_mcp_attachments,
+	eval_suites,
+	eval_runs,
+	eval_baselines,
+	agent_experiments,
+	run_receipts,
+	run_feedback,
+	takeover_requests,
+	voice_numbers,
+	voice_calls,
+	whatsapp_contact_facts,
+	whatsapp_vip_contacts,
+	whatsapp_pending_drafts,
+	runtime_quotas,
+	runtime_vms,
+	runtime_audit_events,
+	people,
+	person_handles,
+	memory_events
+TO lantern_app;
+
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO lantern_app;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO lantern_app;
+
+CREATE TABLE IF NOT EXISTS runtime_vm_logs (
+	seq       BIGSERIAL PRIMARY KEY,
+	vm_id     TEXT      NOT NULL,
+	tenant_id UUID      NOT NULL,
+	stream    TEXT      NOT NULL DEFAULT 'stdout',
+	text      TEXT      NOT NULL,
+	at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS runtime_vm_logs_vm_at_idx
+	ON runtime_vm_logs (vm_id, at);
+
+CREATE INDEX IF NOT EXISTS runtime_vm_logs_tenant_at_idx
+	ON runtime_vm_logs (tenant_id, at DESC);
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE runtime_vm_logs TO lantern_app;
+
+GRANT USAGE, SELECT ON SEQUENCE runtime_vm_logs_seq_seq TO lantern_app;
+
+CREATE TABLE IF NOT EXISTS side_effect_receipts (
+	idem_key   TEXT        PRIMARY KEY,
+	run_id     UUID        NOT NULL,
+	tenant_id  UUID        NOT NULL,
+	kind       TEXT        NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS side_effect_receipts_run_idx
+	ON side_effect_receipts (run_id);
+
+GRANT SELECT, INSERT, DELETE ON TABLE side_effect_receipts TO lantern_app;
+
+ALTER TABLE data_planes ADD COLUMN IF NOT EXISTS reg_token_hash TEXT;
+
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS data_plane_id TEXT;
