@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"strings"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -72,10 +73,11 @@ func StreamTenantInterceptor(logger *zap.Logger) grpc.StreamServerInterceptor {
 }
 
 // extractTenant pulls "tenant_id" from gRPC metadata. Health-check endpoints
-// are exempt from the requirement.
+// and the DataPlaneService are exempt from the requirement (DataPlaneService
+// authenticates via bootstrap token + session JWT, not caller-supplied metadata).
 func extractTenant(ctx context.Context, logger *zap.Logger, method string) (context.Context, error) {
-	// Allow health checks through without a tenant.
-	if isHealthCheck(method) {
+	// Allow health checks and DataPlaneService through without tenant metadata.
+	if isHealthCheck(method) || isDataPlaneService(method) {
 		return ctx, nil
 	}
 
@@ -107,6 +109,15 @@ func isHealthCheck(method string) bool {
 		method == "/grpc.health.v1.Health/Watch" ||
 		method == "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo" ||
 		method == "/grpc.reflection.v1.ServerReflection/ServerReflectionInfo"
+}
+
+// isDataPlaneService reports whether method belongs to the DataPlaneService.
+// DataPlaneService authenticates via bootstrap token + session JWT, so it must
+// NOT require a caller-controlled "tenant_id" metadata header — that would be a
+// spoofable trust source. The service enforces tenant isolation internally via
+// JWT claims.
+func isDataPlaneService(method string) bool {
+	return strings.HasPrefix(method, "/lantern.v1.DataPlaneService/")
 }
 
 // tenantStream wraps a grpc.ServerStream to override Context().

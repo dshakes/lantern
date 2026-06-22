@@ -1,0 +1,300 @@
+// Data-plane v1 — the tunnel between a customer-VPC data plane and the
+// Lantern control-plane.
+//
+// In the control-plane / data-plane split, the data plane (an agent process
+// running inside the customer's VPC — EKS/GKE/AKS or bare host) does NOT
+// accept inbound connections from the control-plane. Instead the agent dials
+// OUT to the control-plane and holds a long-lived gRPC connection. Over that
+// connection it:
+//
+//   * Register     — announces itself on startup, exchanges a bootstrap token
+//                    for a short-lived session token.
+//   * Heartbeat    — proves liveness; learns of config changes + drain orders.
+//   * ReportMetrics— streams resource pressure for scheduling + dashboards.
+//   * RefreshToken — rotates the session token before it expires.
+//   * RunStream    — bidi: the control-plane PUSHES run assignments down the
+//                    tunnel; the agent reports acceptance + status + results.
+//
+// This is the inverse direction from runtime.proto's RuntimeManager (which the
+// control-plane dials). Here the control-plane is the SERVER and the in-VPC
+// agent is the CLIENT — that is what lets the data plane stay firewalled with
+// no inbound ports.
+//
+// All RPCs are tenant-scoped. Register authenticates with a bootstrap
+// `agent_token`; every subsequent RPC carries the `plane_id` + `session_token`
+// it returned. The control-plane gates registration via RBAC + per-tenant
+// data-plane quotas.
+//
+// Naming: every message + enum type is prefixed `Dp` and enum values `DP_` so
+// they don't collide in the shared `lanternv1` Go package — the same rule
+// runtime.proto follows (LogLine -> RuntimeLogLine). Generic names like
+// HeartbeatRequest / HeartbeatAck / RunStatus already exist in runtime.proto
+// and runs.proto, so the prefix is mandatory here, not cosmetic.
+//
+// Versioning: this proto is v1. Backwards-compatible additions only; breaking
+// changes ship as dataplane/v2.proto with a deprecation window.
+
+syntax = "proto3";
+
+package lantern.v1;
+
+option go_package = "github.com/dshakes/lantern/gen/go/lantern/v1;lanternv1";
+
+import "google/protobuf/timestamp.proto";
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+// Lifecycle status of a single run as it executes on the data plane. Mirrors
+// the run states the control-plane persists to the `runs` table. Values are
+// `DP_`-prefixed to avoid colliding with runs.proto's RunStatus values in the
+// shared package.
+enum DpRunStatus {
+  DP_RUN_STATUS_UNSPECIFIED = 0;
+  DP_RUN_STATUS_ACCEPTED    = 1;   // agent has the assignment, not yet started
+  DP_RUN_STATUS_RUNNING     = 2;   // executing
+  DP_RUN_STATUS_SUCCEEDED   = 3;   // completed, output available
+  DP_RUN_STATUS_FAILED      = 4;   // execution error; detail carries the reason
+  DP_RUN_STATUS_CANCELLED   = 5;   // cancelled by the control-plane or operator
+  DP_RUN_STATUS_TIMED_OUT   = 6;   // exceeded its deadline
+}
+
+// ============================================================================
+// Data-plane tunnel service
+// ============================================================================
+
+service DataPlaneService {
+  // Announce a data plane on startup. The agent presents a bootstrap
+  // `agent_token`; the control-plane validates it, registers (or re-registers)
+  // the plane against the `data_planes` table, and returns a `plane_id` plus a
+  // short-lived `session_token` used to authenticate every subsequent RPC.
+  rpc Register (DpRegisterRequest) returns (DpRegisterResponse);
+
+  // Liveness probe. The agent sends this on the cadence the control-plane
+  // returned (`heartbeat_interval_seconds`). The ack reports whether the
+  // agent's config is stale and whether the control-plane is asking the plane
+  // to drain (stop accepting new runs ahead of a shutdown or rebalance).
+  rpc Heartbeat (DpHeartbeatRequest) returns (DpHeartbeatAck);
+
+  // Resource-pressure report for scheduling decisions + dashboards. Sent on
+  // the `metrics_interval_seconds` cadence from Register.
+  rpc ReportMetrics (DpMetricsReport) returns (DpMetricsAck);
+
+  // Rotate the session token before it expires. The agent presents its current
+  // (still-valid) token and receives a fresh one with a new expiry.
+  rpc RefreshToken (DpRefreshTokenRequest) returns (DpRefreshTokenResponse);
+
+  // Bidirectional run dispatch. The control-plane PUSHES run assignments and
+  // cancellations down the server stream; the agent reports acceptance,
+  // incremental status, and completion up the client stream. The agent MUST
+  // send a Hello frame first to authenticate the stream — the control-plane
+  // rejects any other first frame.
+  rpc RunStream (stream DpRunStreamClientMsg) returns (stream DpRunStreamServerMsg);
+}
+
+// ============================================================================
+// Register
+// ============================================================================
+
+message DpRegisterRequest {
+  // Owning tenant. Must match the tenant the bootstrap token was minted for.
+  string tenant_id      = 1;
+  // Bootstrap credential issued when the data plane was provisioned. Exchanged
+  // here for a short-lived session token; never reused on later RPCs.
+  string agent_token    = 2;
+  // Build version of the agent binary, e.g. "1.4.2".
+  string agent_version  = 3;
+  // Host the agent runs on (pod name or machine hostname).
+  string hostname       = 4;
+  // Operating system, e.g. "linux".
+  string os             = 5;
+  // CPU architecture, e.g. "amd64", "arm64".
+  string arch           = 6;
+  // Kubernetes cluster name the plane belongs to (empty for bare-host planes).
+  string cluster_name   = 7;
+  // Deployment region, e.g. "us-west-2".
+  string region         = 8;
+  // Cloud provider, e.g. "aws", "gcp", "azure".
+  string cloud          = 9;
+}
+
+message DpRegisterResponse {
+  // Stable identity for this data plane; echoed on every subsequent RPC.
+  string plane_id                  = 1;
+  // Short-lived bearer token authenticating Heartbeat / ReportMetrics /
+  // RefreshToken / RunStream. Rotate via RefreshToken before it expires.
+  string session_token             = 2;
+  // Cadence (seconds) at which the agent should send Heartbeat.
+  int32  heartbeat_interval_seconds = 3;
+  // Cadence (seconds) at which the agent should send ReportMetrics.
+  int32  metrics_interval_seconds  = 4;
+}
+
+// ============================================================================
+// Heartbeat
+// ============================================================================
+
+message DpHeartbeatRequest {
+  // Identity from DpRegisterResponse.
+  string plane_id      = 1;
+  // Current session token.
+  string session_token = 2;
+  // Number of runs currently executing on this plane.
+  int32  active_runs   = 3;
+  // Number of runs accepted but not yet started.
+  int32  queue_depth   = 4;
+}
+
+message DpHeartbeatAck {
+  // True if the control-plane accepted the heartbeat.
+  bool   ok             = 1;
+  // Monotonic config generation. If it differs from what the agent last
+  // applied, the agent should re-fetch its configuration.
+  int32  config_version = 2;
+  // True if the control-plane is asking this plane to drain — stop accepting
+  // new run assignments and finish in-flight work ahead of shutdown/rebalance.
+  bool   draining       = 3;
+}
+
+// ============================================================================
+// ReportMetrics
+// ============================================================================
+
+message DpMetricsReport {
+  // Identity from DpRegisterResponse.
+  string plane_id      = 1;
+  // Current session token.
+  string session_token = 2;
+  // CPU utilization across the plane, 0..100.
+  double cpu_pct       = 3;
+  // Memory utilization across the plane, 0..100.
+  double mem_pct       = 4;
+  // Number of runs currently executing.
+  int32  active_runs   = 5;
+  // Number of runs accepted but not yet started.
+  int32  queue_depth   = 6;
+  // When the sample was taken.
+  google.protobuf.Timestamp ts = 7;
+}
+
+message DpMetricsAck {
+  // True if the control-plane accepted the report.
+  bool ok = 1;
+}
+
+// ============================================================================
+// RefreshToken
+// ============================================================================
+
+message DpRefreshTokenRequest {
+  // Identity from DpRegisterResponse.
+  string plane_id      = 1;
+  // The current (still-valid) session token being rotated.
+  string session_token = 2;
+}
+
+message DpRefreshTokenResponse {
+  // The freshly minted session token; replaces the old one immediately.
+  string session_token   = 1;
+  // Unix epoch seconds at which the new token expires. The agent should
+  // refresh again before this time.
+  int64  expires_at_unix = 2;
+}
+
+// ============================================================================
+// RunStream — bidi run dispatch
+// ============================================================================
+
+// Control-plane -> agent. One assignment, cancellation, or keepalive per frame.
+message DpRunStreamServerMsg {
+  oneof msg {
+    DpRunAssignment assignment = 1;
+    DpCancelRun     cancel     = 2;
+    DpPing          ping       = 3;
+  }
+}
+
+// Agent -> control-plane. The first frame MUST be a Hello.
+message DpRunStreamClientMsg {
+  oneof msg {
+    DpHello           hello     = 1;
+    DpRunAccepted     accepted  = 2;
+    DpRunStatusUpdate status    = 3;
+    DpRunCompleted    completed = 4;
+    DpPong            pong      = 5;
+  }
+}
+
+// First client frame — authenticates the bidi stream.
+message DpHello {
+  // Identity from DpRegisterResponse.
+  string plane_id      = 1;
+  // Current session token.
+  string session_token = 2;
+}
+
+// A run the control-plane is dispatching to this plane for execution.
+message DpRunAssignment {
+  // Run identity (UUID); used as the correlation key for all later frames.
+  string run_id           = 1;
+  // Immutable agent version bundle to execute.
+  string agent_version_id = 2;
+  // Owning tenant.
+  string tenant_id        = 3;
+  // Run input, JSON-encoded. Kept as a string so the wire contract is stable
+  // regardless of the input schema.
+  string input_json       = 4;
+  // Run configuration (limits, model routing, env), JSON-encoded.
+  string config_json      = 5;
+  // Unix epoch seconds after which the run should be abandoned as timed out.
+  int64  deadline_unix    = 6;
+}
+
+// Control-plane asks the agent to cancel an in-flight run.
+message DpCancelRun {
+  // Run to cancel.
+  string run_id = 1;
+}
+
+// Liveness keepalive from the control-plane; the agent replies with Pong.
+message DpPing {}
+
+// Agent confirms it has accepted an assignment and will execute it.
+message DpRunAccepted {
+  // Run being acknowledged.
+  string run_id = 1;
+}
+
+// Incremental status while a run executes.
+message DpRunStatusUpdate {
+  // Run being updated.
+  string run_id   = 1;
+  // Current lifecycle status.
+  DpRunStatus status = 2;
+  // Human-readable detail (progress note or error context).
+  string detail   = 3;
+  // When this update was produced.
+  google.protobuf.Timestamp ts = 4;
+}
+
+// Terminal frame for a run — carries the result back to the control-plane.
+message DpRunCompleted {
+  // Run that finished.
+  string run_id       = 1;
+  // Terminal status (SUCCEEDED / FAILED / CANCELLED / TIMED_OUT).
+  DpRunStatus status  = 2;
+  // Run output, JSON-encoded (empty on failure).
+  string output_json  = 3;
+  // Total cost of the run in USD.
+  double cost_usd     = 4;
+  // Prompt tokens consumed.
+  int64  tokens_in    = 5;
+  // Completion tokens produced.
+  int64  tokens_out   = 6;
+  // Wall-clock execution time in milliseconds.
+  int64  duration_ms  = 7;
+}
+
+// Agent's reply to a server Ping.
+message DpPong {}
