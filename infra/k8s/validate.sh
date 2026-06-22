@@ -385,6 +385,12 @@ assert_security_chart_renders() {
     step "helm not found — skipping chart render assertions (install: brew install helm)"
     return
   fi
+  # The chart declares Bitnami subchart dependencies (postgresql/redis/minio); `helm
+  # template` hard-fails on declared-but-missing deps, so fetch them first. Requires the
+  # Bitnami repo to be reachable (it is in CI). Chart.lock pins the exact versions.
+  if ! helm dependency build "$chart" >/dev/null 2>&1; then
+    step "helm dependency build failed (Bitnami repo unreachable?) — the render below may fail"
+  fi
   local out
   if ! out=$(helm template "$chart" \
       --set policies.enabled=true \
