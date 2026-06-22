@@ -1,0 +1,66 @@
+# Lantern — postgres_exporter custom queries
+#
+# These turn REAL control-plane tables into Prometheus gauges so we can alert on
+# data-plane connectivity and cron health WITHOUT waiting for in-app
+# instrumentation. They read only documented columns (see CLAUDE.md schema):
+#   * data_planes.last_heartbeat, cloud, region, status
+#   * schedules.next_fire_at, enabled
+#
+# Deploy: mount this as the postgres_exporter `--extend.query-path` file (or the
+# `queries.yaml` key on the prometheus-postgres-exporter Helm chart). Point the
+# exporter at the SAME Postgres the control-plane uses (read-only role is fine —
+# both queries are pure SELECTs). The exporter MUST be scraped under the job
+# name `lantern-postgres-exporter` to match infra/monitoring/prometheus/alerts.yml.
+#
+# Standard metrics (pg_stat_database_numbackends, pg_settings_max_connections,
+# pg_up) come from the exporter's built-ins and need nothing here.
+
+lantern_data_plane:
+  # One row per registered data plane, with seconds since its last heartbeat.
+  # Drives DataPlaneHeartbeatStale. Heartbeat cadence is ~30s, so > 120s = stale.
+  query: |
+    SELECT
+      id::text                                              AS data_plane_id,
+      coalesce(cloud, 'unknown')                            AS cloud,
+      coalesce(region, 'unknown')                           AS region,
+      coalesce(status, 'unknown')                           AS status,
+      EXTRACT(EPOCH FROM (now() - last_heartbeat))::float8  AS seconds_since_heartbeat
+    FROM data_planes
+  master: true
+  metrics:
+    - data_plane_id:
+        usage: "LABEL"
+        description: "Data plane id (data_planes.id)"
+    - cloud:
+        usage: "LABEL"
+        description: "Cloud provider"
+    - region:
+        usage: "LABEL"
+        description: "Region"
+    - status:
+        usage: "LABEL"
+        description: "Registered status"
+    - seconds_since_heartbeat:
+        usage: "GAUGE"
+        description: "Seconds since data_planes.last_heartbeat for this plane"
+
+lantern_schedules:
+  # Count of enabled schedules whose next_fire_at is overdue beyond a 60s grace.
+  # Drives CronScheduleOverdue. Healthy ticker keeps this at 0.
+  query: |
+    SELECT
+      count(*) FILTER (
+        WHERE enabled
+          AND next_fire_at IS NOT NULL
+          AND next_fire_at < now() - interval '60 seconds'
+      )::float8 AS overdue,
+      count(*) FILTER (WHERE enabled)::float8 AS enabled_total
+    FROM schedules
+  master: true
+  metrics:
+    - overdue:
+        usage: "GAUGE"
+        description: "Enabled schedules whose next_fire_at is >60s in the past"
+    - enabled_total:
+        usage: "GAUGE"
+        description: "Total enabled schedules"

@@ -1,0 +1,357 @@
+# Lantern — production Prometheus alert rules
+#
+# Format: a PrometheusRule-style document (`groups:`). Drop into a
+# kube-prometheus-stack `PrometheusRule` CR (wrap with the `spec:` envelope) or
+# load directly via Prometheus `rule_files:`. Both consume the same `groups:`.
+#
+# ---------------------------------------------------------------------------
+# REALITY CHECK — read before trusting a green board.
+# ---------------------------------------------------------------------------
+# As of GA prep, the ONLY service emitting Prometheus metrics is the
+# runtime-scheduler, on :8085/metrics (see
+# services/runtime-scheduler/internal/metrics/metrics.go). Those six metrics
+# plus the Go/process collectors are REAL and alerted below in the
+# `lantern-scheduler` group.
+#
+# Everything else the SLO list asks for — control-plane 5xx, run-failure rate,
+# budget 402 surge, data-plane heartbeat, DB pool saturation, gateway /
+# model-router p99 latency, cron firing — has NO in-app Prometheus metric yet.
+# For those we fall back to signals that ARE real today:
+#   * `up` / blackbox probes against the documented health endpoints
+#     (/healthz, /readyz on :8080) — liveness, not error rate.
+#   * postgres_exporter custom queries over real tables (data_planes,
+#     schedules, pg_stat_activity) — see infra/monitoring/prometheus/
+#     postgres-exporter-queries.yaml.
+#
+# Alerts that depend on a metric NOT yet emitted are placed in the
+# `lantern-TODO-needs-instrumentation` group, commented out, each with the
+# exact metric name to add and the file that should emit it. Do NOT uncomment
+# them until the metric ships — a rule referencing a non-existent series is a
+# silent always-green, the worst kind of alert. Each maps to a runbook under
+# docs/runbooks/.
+# ---------------------------------------------------------------------------
+
+groups:
+  # =========================================================================
+  # REAL — runtime-scheduler (:8085/metrics). Backed by metrics.go.
+  # =========================================================================
+  - name: lantern-scheduler
+    rules:
+      - alert: SchedulerDown
+        expr: up{job="lantern-runtime-scheduler"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: runtime-scheduler
+        annotations:
+          summary: "runtime-scheduler {{ $labels.instance }} is not scrapable"
+          description: >
+            Prometheus cannot scrape the runtime-scheduler /metrics endpoint
+            (:8085) for 2m. No agent microVMs can be placed while it is down.
+          runbook: "docs/runbooks/scheduler-not-firing.md"
+
+      - alert: SchedulerNoLeader
+        # IsLeader is 1 on exactly one replica when healthy. Sum across replicas
+        # == 0 means leader election produced no leader → nothing is scheduling.
+        expr: sum(lantern_scheduler_is_leader) == 0
+        for: 3m
+        labels:
+          severity: critical
+          service: runtime-scheduler
+        annotations:
+          summary: "No runtime-scheduler replica holds the leader lock"
+          description: >
+            sum(lantern_scheduler_is_leader) has been 0 for 3m. Leader election
+            (Postgres advisory lock) is not producing a leader, so Schedule RPCs
+            are served by standby replicas only and placement stalls.
+          runbook: "docs/runbooks/scheduler-not-firing.md"
+
+      - alert: SchedulerScheduleErrorRateHigh
+        # Real counter. Error fraction of Schedule RPCs over 10m.
+        expr: |
+          (
+            sum(rate(lantern_scheduler_schedule_errors_total[10m]))
+            /
+            clamp_min(sum(rate(lantern_scheduler_schedule_total[10m])), 0.001)
+          ) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+          service: runtime-scheduler
+        annotations:
+          summary: "runtime-scheduler Schedule error rate >10% (10m)"
+          description: >
+            More than 10% of Schedule RPCs are erroring over the last 10m
+            ({{ $value | humanizePercentage }}). Placement is failing — check
+            node health, warm-pool capacity, and the scheduler logs.
+          runbook: "docs/runbooks/scheduler-not-firing.md"
+
+      - alert: SchedulerQuotaRejectionSurge
+        # result="quota" is a real label value on lantern_scheduler_schedule_total.
+        # A surge means tenants are hitting the per-tenant microVM cap (HTTP 402
+        # on /v1/runtime/schedule). Mirrors the budget-402 SLO for the runtime.
+        expr: sum(rate(lantern_scheduler_schedule_total{result="quota"}[15m])) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+          service: runtime-scheduler
+        annotations:
+          summary: "Surge in runtime quota rejections (402)"
+          description: >
+            runtime-scheduler is rejecting Schedule RPCs for quota
+            ({{ $value | humanize }}/s over 15m). Tenants are hitting their
+            max-concurrent-VM cap. Confirm intended vs. a stuck-VM leak.
+          runbook: "docs/runbooks/budget-402-surge.md"
+
+      - alert: SchedulerNoRegisteredNodes
+        expr: max(lantern_scheduler_nodes) == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: runtime-scheduler
+        annotations:
+          summary: "Scheduler sees zero registered nodes"
+          description: >
+            lantern_scheduler_nodes == 0 for 5m. No runtime-manager nodes are
+            registered/healthy, so nothing can be placed. Check node heartbeats
+            and the runtime-manager DaemonSet/pods.
+          runbook: "docs/runbooks/data-plane-disconnected.md"
+
+  # =========================================================================
+  # REAL (liveness only) — health-endpoint / blackbox probes.
+  # These use `up` and the documented /readyz endpoints. They catch a service
+  # being DOWN, not its error rate. Error-rate alerts need the metrics in the
+  # TODO group below.
+  # =========================================================================
+  - name: lantern-liveness
+    rules:
+      - alert: ControlPlaneDown
+        # `up` for the control-plane scrape job. If you have no /metrics on the
+        # control-plane yet (you don't — see TODO group), point this job at a
+        # blackbox-exporter probe of http://<cp>:8080/readyz instead and alert on
+        # probe_success == 0. Keep ONE of the two, not both.
+        expr: up{job="lantern-control-plane"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: control-plane
+        annotations:
+          summary: "control-plane {{ $labels.instance }} is down"
+          description: >
+            The control-plane scrape/probe target has been down for 2m. The REST
+            API (:8080), gRPC (:50051), auth, runs, sessions, and the dashboard
+            backend are all unavailable. This is a full-platform outage.
+          runbook: "docs/runbooks/control-plane-5xx.md"
+
+      - alert: ControlPlaneNotReady
+        # blackbox probe of /readyz. Requires a blackbox-exporter job named
+        # "lantern-control-plane-readyz". probe_success==0 means /readyz is
+        # failing (DB/Redis dependency down) even if the process is up.
+        expr: probe_success{job="lantern-control-plane-readyz"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          service: control-plane
+        annotations:
+          summary: "control-plane /readyz failing"
+          description: >
+            /readyz on the control-plane has reported not-ready for 3m. The
+            process is up but a hard dependency (Postgres or Redis) is
+            unreachable. New work will fail.
+          runbook: "docs/runbooks/db-saturation.md"
+
+      - alert: GatewayDown
+        expr: up{job="lantern-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: gateway
+        annotations:
+          summary: "gateway {{ $labels.instance }} is down"
+          description: >
+            The gateway (:8443, TLS ingress for the SDK/API hot path) probe has
+            been down for 2m. Token streaming and API ingress are interrupted.
+          runbook: "docs/runbooks/gateway-latency.md"
+
+      - alert: ModelRouterDown
+        expr: up{job="lantern-model-router"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: model-router
+        annotations:
+          summary: "model-router {{ $labels.instance }} is down"
+          description: >
+            The model-router (:50053) probe has been down for 2m. Every LLM call
+            routes through it — completions and agent runs will fail.
+          runbook: "docs/runbooks/gateway-latency.md"
+
+  # =========================================================================
+  # REAL — Postgres, via postgres_exporter custom queries.
+  # Requires postgres_exporter scraping the control-plane DB with the queries in
+  # infra/monitoring/prometheus/postgres-exporter-queries.yaml. These read REAL
+  # tables (pg_stat_activity, data_planes, schedules), so they are accurate the
+  # moment the exporter is deployed — no app code change needed.
+  # =========================================================================
+  - name: lantern-postgres
+    rules:
+      - alert: PostgresExporterDown
+        expr: up{job="lantern-postgres-exporter"} == 0
+        for: 3m
+        labels:
+          severity: warning
+          service: postgres
+        annotations:
+          summary: "postgres_exporter is down — DB blind spot"
+          description: >
+            postgres_exporter has not been scrapable for 3m. All DB-derived
+            alerts below (connection saturation, data-plane heartbeat, cron
+            firing) are blind until it returns.
+          runbook: "docs/runbooks/db-saturation.md"
+
+      - alert: PostgresConnectionSaturation
+        # pg_stat_database_numbackends is a STANDARD postgres_exporter metric
+        # (no custom query needed). Compare live backends to max_connections.
+        expr: |
+          sum(pg_stat_database_numbackends{job="lantern-postgres-exporter"})
+          /
+          max(pg_settings_max_connections{job="lantern-postgres-exporter"})
+          > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          service: postgres
+        annotations:
+          summary: "Postgres connection pool >85% saturated"
+          description: >
+            Live backends are above 85% of max_connections for 5m
+            ({{ $value | humanizePercentage }}). New control-plane / worker
+            connections will start to be refused. Check for a connection leak or
+            an undersized pool (LANTERN_PG_MAX_CONNS) / max_connections.
+          runbook: "docs/runbooks/db-saturation.md"
+
+      - alert: DataPlaneHeartbeatStale
+        # CUSTOM query metric: lantern_data_plane_seconds_since_heartbeat, a gauge
+        # per data_planes row = EXTRACT(EPOCH FROM now()-last_heartbeat). Defined
+        # in postgres-exporter-queries.yaml. Heartbeat cadence is ~30s.
+        expr: lantern_data_plane_seconds_since_heartbeat{job="lantern-postgres-exporter"} > 120
+        for: 2m
+        labels:
+          severity: critical
+          service: data-plane
+        annotations:
+          summary: "Data plane {{ $labels.data_plane_id }} heartbeat stale (>120s)"
+          description: >
+            data_planes.last_heartbeat for {{ $labels.data_plane_id }}
+            ({{ $labels.cloud }}/{{ $labels.region }}) is older than 120s
+            ({{ $value | humanizeDuration }}). The data-plane tunnel / RunStream
+            is likely disconnected; runs routed to that plane will stall.
+          runbook: "docs/runbooks/data-plane-disconnected.md"
+
+      - alert: CronScheduleOverdue
+        # CUSTOM query metric: lantern_schedules_overdue, a gauge counting enabled
+        # schedules whose next_fire_at is in the past by > grace. If the cron
+        # ticker is firing, this stays ~0. A rising value = ticker stalled / lost
+        # its lock. Defined in postgres-exporter-queries.yaml.
+        expr: lantern_schedules_overdue{job="lantern-postgres-exporter"} > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: scheduler
+        annotations:
+          summary: "{{ $value }} cron schedule(s) overdue — ticker may be stalled"
+          description: >
+            One or more enabled schedules have next_fire_at more than the grace
+            window in the past for 5m. The cron ticker is not firing — check the
+            scheduler's distributed lock and pod health.
+          runbook: "docs/runbooks/scheduler-not-firing.md"
+
+  # =========================================================================
+  # TODO — NEEDS IN-APP INSTRUMENTATION before these can be enabled.
+  # The rules below reference metrics that are NOT emitted today. They are kept
+  # as a COMMENT block (not a real group with an empty `rules:` list, which
+  # `promtool check rules` rejects). Ship the metric (file noted), confirm the
+  # series exists in Prometheus, add the rule into a real group above, THEN
+  # enable it. Tracked against the operational-backbone epic.
+  #
+  # group name when enabled: lantern-instrumented-slos
+  # =========================================================================
+  #
+      # --- control-plane HTTP 5xx rate ---------------------------------------
+      # NEEDS: a request-counting middleware on the control-plane HTTP mux
+      #   emitting `lantern_http_requests_total{method,route,status}` (counter).
+      #   Suggested home: services/control-plane/internal/server (HTTP mux setup)
+      #   + a /metrics handler via promhttp. No metric exists today.
+      # - alert: ControlPlane5xxRateHigh
+      #   expr: |
+      #     (
+      #       sum(rate(lantern_http_requests_total{job="lantern-control-plane",status=~"5.."}[5m]))
+      #       /
+      #       clamp_min(sum(rate(lantern_http_requests_total{job="lantern-control-plane"}[5m])), 0.001)
+      #     ) > 0.05
+      #   for: 5m
+      #   labels: { severity: critical, service: control-plane }
+      #   annotations:
+      #     summary: "control-plane 5xx rate >5% (5m)"
+      #     runbook: "docs/runbooks/control-plane-5xx.md"
+
+      # --- run failure-rate spike --------------------------------------------
+      # NEEDS: `lantern_runs_completed_total{status}` (counter, status =
+      #   succeeded|failed|cancelled), emitted where the run terminal status is
+      #   written — workflow-engine (journal KindRunFailed/KindRunCompleted) or
+      #   the control-plane inline run executor. No metric exists today.
+      # - alert: RunFailureRateHigh
+      #   expr: |
+      #     (
+      #       sum(rate(lantern_runs_completed_total{status="failed"}[10m]))
+      #       /
+      #       clamp_min(sum(rate(lantern_runs_completed_total[10m])), 0.001)
+      #     ) > 0.20
+      #   for: 10m
+      #   labels: { severity: critical, service: control-plane }
+      #   annotations:
+      #     summary: "Run failure rate >20% (10m)"
+      #     runbook: "docs/runbooks/run-failure-spike.md"
+
+      # --- budget hard-fail 402 surge (API runs/completions) -----------------
+      # NEEDS: `lantern_budget_denied_total{reason}` (counter) incremented on
+      #   every 402 from the budget enforcer in
+      #   services/control-plane/internal/handlers (POST /v1/runs, /v1/completions,
+      #   voice). The runtime-side 402 IS covered today via the scheduler
+      #   `result="quota"` alert above; this covers the API-budget 402 path.
+      # - alert: BudgetDenied402Surge
+      #   expr: sum(rate(lantern_budget_denied_total[15m])) > 0.2
+      #   for: 15m
+      #   labels: { severity: warning, service: control-plane }
+      #   annotations:
+      #     summary: "Surge in budget 402 denials (API runs/completions)"
+      #     runbook: "docs/runbooks/budget-402-surge.md"
+
+      # --- gateway / model-router p99 latency --------------------------------
+      # NEEDS: a Prometheus histogram on the Rust hot path, e.g.
+      #   `lantern_gateway_request_duration_seconds_bucket` and
+      #   `lantern_model_router_request_duration_seconds_bucket`, exported via a
+      #   /metrics endpoint on each Rust service. Today gateway/model-router emit
+      #   OTel TRACES only (services/{gateway,model-router}/src/otel.rs) — no
+      #   scrapeable histogram. Until then, latency SLOs live in the tracing
+      #   backend (Tempo/Jaeger), not Prometheus.
+      # - alert: GatewayP99LatencyHigh
+      #   expr: |
+      #     histogram_quantile(0.99,
+      #       sum(rate(lantern_gateway_request_duration_seconds_bucket[5m])) by (le)
+      #     ) > 2
+      #   for: 10m
+      #   labels: { severity: warning, service: gateway }
+      #   annotations:
+      #     summary: "gateway p99 latency >2s (5m window)"
+      #     runbook: "docs/runbooks/gateway-latency.md"
+      # - alert: ModelRouterP99LatencyHigh
+      #   expr: |
+      #     histogram_quantile(0.99,
+      #       sum(rate(lantern_model_router_request_duration_seconds_bucket[5m])) by (le)
+      #     ) > 5
+      #   for: 10m
+      #   labels: { severity: warning, service: model-router }
+      #   annotations:
+      #     summary: "model-router p99 latency >5s (5m window)"
+      #     runbook: "docs/runbooks/gateway-latency.md"
