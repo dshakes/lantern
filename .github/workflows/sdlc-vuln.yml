@@ -1,0 +1,71 @@
+# Vuln-scan — runs the dependency vulnerability audit on every PR push and FAILS the
+# check when a known-vulnerable dependency is found, so it can be a required status
+# check (the supply-chain half of the merge gate). Mirrors `make audit`:
+#   - govulncheck   (Go    — services/control-plane)
+#   - cargo audit   (Rust  — gateway / model-router / runtime-manager)
+#   - npm audit     (Node  — packages/sdk-ts)
+# One gating job; per-language steps so a failure points at the offending ecosystem.
+# Comments on failure (a green check covers the passing case), like sdlc-qa does.
+#
+# NOTE: this is a NEW workflow. The existing `sdlc-audit.yml` is the Codex cross-audit
+# (an LLM second-opinion reviewer) — unrelated to dependency vuln scanning — so this
+# file is named `sdlc-vuln.yml` to avoid clobbering it.
+#
+# Action SHAs are pinned (same convention as sdlc-qa.yml / sign-images.yml). The ubuntu
+# runner already ships Go, Rust (cargo), and Node, so we only install the two scanner
+# binaries the runner lacks (govulncheck, cargo-audit).
+name: "sdlc · vuln (dep audit)"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: sdlc-vuln-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  vuln:
+    name: vuln              # stable check name — referenced by branch-protection required checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # govulncheck is not preinstalled; install it with the runner's Go toolchain.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      # cargo-audit is not preinstalled; install it with the runner's cargo.
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Make `go install` / `cargo install` bin dirs available to `make audit`.
+      - name: Export tool paths
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Run dependency audit (make audit)
+        id: audit
+        run: |
+          set -uo pipefail
+          log="$RUNNER_TEMP/vuln.log"; rc=0
+          make audit >"$log" 2>&1 || rc=$?
+          echo "rc=$rc"   >> "$GITHUB_OUTPUT"
+          echo "log=$log" >> "$GITHUB_OUTPUT"
+          tail -80 "$log"
+          exit "$rc"
+
+      - name: Comment on failure
+        if: ${{ always() && steps.audit.outputs.rc != '0' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          LOG: ${{ steps.audit.outputs.log }}
+        run: |
+          { printf '### 🛡️ Vuln scan — ❌ vulnerable dependency found\n\n```\n'; tail -80 "$LOG" 2>/dev/null; printf '\n```\n'; } \
+            | gh pr comment "$PR" --body-file -

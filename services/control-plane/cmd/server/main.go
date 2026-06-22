@@ -300,6 +300,7 @@ func main() {
 	httpMux.HandleFunc("GET /v1/runs", restHandler.ListRuns)
 	httpMux.HandleFunc("POST /v1/runs", restHandler.CreateRun)
 	httpMux.HandleFunc("GET /v1/runs/{id}", restHandler.GetRun)
+	httpMux.HandleFunc("GET /v1/runs/{id}/events", restHandler.GetRunEvents)
 	httpMux.HandleFunc("POST /v1/runs/{id}/cancel", restHandler.CancelRun)
 	httpMux.HandleFunc("DELETE /v1/runs/{id}", restHandler.DeleteRun)
 
