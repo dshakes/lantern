@@ -190,7 +190,9 @@ mod tests {
 
         // Extract back out.
         let extracted_cx = propagator.extract(&HeaderExtractor(&headers));
-        let sc = extracted_cx.span().span_context();
+        // .span() yields a temporary SpanRef; clone the SpanContext out so the
+        // binding doesn't borrow a dropped temporary (E0716).
+        let sc = extracted_cx.span().span_context().clone();
 
         assert!(sc.is_valid(), "extracted span context must be valid");
         assert_eq!(sc.trace_id(), trace_id, "trace id must round-trip");
@@ -203,7 +205,7 @@ mod tests {
         let propagator = TraceContextPropagator::new();
         let headers = HeaderMap::new();
         let cx = propagator.extract(&HeaderExtractor(&headers));
-        let sc = cx.span().span_context();
+        let sc = cx.span().span_context().clone();
         assert!(
             !sc.is_valid(),
             "empty headers must produce an invalid span context (fresh root trace)"
