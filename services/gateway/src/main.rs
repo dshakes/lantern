@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod grpc;
 mod middleware;
+mod otel;
 mod routes;
 mod sse;
 mod state;
@@ -12,23 +13,35 @@ use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 use crate::auth::AuthLayer;
 use crate::config::Config;
 use crate::middleware::rate_limit::RateLimitConfig;
-use crate::middleware::RateLimitLayer;
+use crate::middleware::{OtelSpanLayer, RateLimitLayer};
 use crate::state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
-        )
-        .json()
+    // Initialise OTel pipeline (no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset).
+    // Keep the guard alive for the duration of main so spans are flushed on exit.
+    let _otel_shutdown = otel::init();
+
+    // Build the tracing subscriber.  When OTel is active, a tracing-opentelemetry
+    // layer bridges every tracing span into the OTLP exporter.  The JSON fmt
+    // layer is always present for structured log output.
+    let otel_layer = tracing_opentelemetry::layer();
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer().json())
+        .with(otel_layer)
         .init();
 
     tracing::info!(
@@ -56,6 +69,9 @@ async fn main() -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .layer(AuthLayer::new(jwt_secret))
+        // OtelSpanLayer runs after auth so Claims are available; records
+        // tenant_id on the TraceLayer span and extracts upstream W3C context.
+        .layer(OtelSpanLayer)
         .layer(RateLimitLayer::new(
             app_state.redis.clone(),
             RateLimitConfig::default(),

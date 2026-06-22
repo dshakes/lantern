@@ -14,6 +14,12 @@ tokio-stream = "0.1"
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# OpenTelemetry — env-gated, no-op by default when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+# Versions pinned to match runtime-manager (opentelemetry 0.27 / tracing-opentelemetry 0.28).
+opentelemetry = { version = "0.27", features = ["trace"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", features = ["trace", "grpc-tonic"] }
+tracing-opentelemetry = "0.28"
 redis = { version = "0.27", features = ["tokio-comp"] }
 thiserror = "2"
 anyhow = "1"

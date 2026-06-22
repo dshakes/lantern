@@ -14,6 +14,12 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# OpenTelemetry — env-gated, no-op by default when OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+# HTTP transport so the exporter URL convention matches the Go control-plane.
+opentelemetry = { version = "0.27", features = ["trace"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace"] }
+opentelemetry-otlp = { version = "0.27", features = ["trace", "http-proto", "reqwest-client", "reqwest-rustls"] }
+tracing-opentelemetry = "0.28"
 jsonwebtoken = "9"
 redis = { version = "0.27", features = ["tokio-comp"] }
 tonic = { version = "0.12", features = ["tls"] }

@@ -33,6 +33,11 @@ impl ModelService for ModelServiceImpl {
             tenant_id,
             run_id,
             step_id,
+            model_used,
+            tokens_in,
+            tokens_out,
+            cost_usd,
+            escalated,
         )
     )]
     async fn complete(
@@ -53,6 +58,14 @@ impl ModelService for ModelServiceImpl {
 
         let resp = self.router.complete(&req).await.map_err(tonic::Status::from)?;
 
+        // Record routing outcome on the span so it appears in traces.
+        let span = tracing::Span::current();
+        span.record("model_used", resp.model_used.as_str());
+        span.record("tokens_in", resp.tokens_in);
+        span.record("tokens_out", resp.tokens_out);
+        span.record("cost_usd", resp.cost_usd);
+        span.record("escalated", resp.escalated);
+
         // Store in cache (fire-and-forget).
         if let Some(ref cache) = self.cache {
             let cache = cache.clone();
@@ -72,6 +85,7 @@ impl ModelService for ModelServiceImpl {
             tenant_id,
             run_id,
             step_id,
+            model_used,
         )
     )]
     async fn complete_stream(
@@ -83,11 +97,13 @@ impl ModelService for ModelServiceImpl {
         tracing::Span::current().record("run_id", req.run_id.as_str());
         tracing::Span::current().record("step_id", req.step_id.as_str());
 
-        let (_model_used, _tier, mut provider_stream) = self
+        let (model_used, _tier, mut provider_stream) = self
             .router
             .complete_stream(&req)
             .await
             .map_err(tonic::Status::from)?;
+
+        tracing::Span::current().record("model_used", model_used.as_str());
 
         // Bridge the provider stream into a tokio mpsc channel so we get a
         // ReceiverStream that satisfies the tonic streaming response type.
