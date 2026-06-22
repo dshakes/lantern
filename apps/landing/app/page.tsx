@@ -53,6 +53,7 @@ function Nav() {
         </Link>
         <nav className="hidden md:flex items-center gap-1 text-sm text-[#9898a8]">
           <a href="#pillars" className="nav-pill px-3 py-1.5 rounded-md">Product</a>
+          <Link href="/runtime" className="nav-pill px-3 py-1.5 rounded-md">Runtime</Link>
           <a href="#stack" className="nav-pill px-3 py-1.5 rounded-md">Stack</a>
           <a href="#compare" className="nav-pill px-3 py-1.5 rounded-md">vs alternatives</a>
           <a href="https://github.com/dshakes/lantern" className="nav-pill px-3 py-1.5 rounded-md">GitHub</a>
