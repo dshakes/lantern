@@ -84,13 +84,19 @@ flowchart TB
 
 | Module | What it gives you | Maturity |
 |---|---|---|
-| **1 · Agent Runtime** | Durable workflow engine, capability-based multi-LLM router, Kubernetes-default substrate with isolation as a RuntimeClass tier (runc → gVisor → Kata microVM → Firecracker-backed Kata). Fail-closed: untrusted/hostile refused unless the hardened RuntimeClass is configured — never silently downgraded to a bare pod. | Core prod-ready; RuntimeClass tiering and cluster e2e are Phase 1 (in progress) |
+| **1 · Agent Runtime** | Durable workflow engine, capability-based multi-LLM router, Kubernetes-default substrate with isolation as a RuntimeClass tier (runc → gVisor → Kata microVM → Firecracker-backed Kata). Fail-closed: untrusted/hostile refused unless the hardened RuntimeClass is configured — never silently downgraded to a bare pod. Durable crash-replay (exactly-once, no re-spent tokens). One trace per spawn (W3C across CP → scheduler → manager → harness). Ed25519 per-instance identity + scheduler HA + per-tenant spawn rate limiting. | Phases 0–4 landed; Phase 5/6 (frontier UX, confidential compute) on roadmap |
 | **2 · Personal Agent ("Jarvis")** | WhatsApp + iMessage assistant that texts *as you* — owner-only, learns your real voice from history, agentic macOS actions, cross-channel memory, urgent-alerting, privacy guards. | Live |
 | **3 · Trust & Governance** | Policy-as-code budgets (hard-fail 402), eval-in-CI + rehearsals, Ed25519-signed verifiable receipts, per-agent-instance identity tokens, RBAC scopes on runtime routes, RLS-enforced non-owner Postgres role, AES-256-GCM secrets. | Prod-ready |
 | **4 · Channels & Reach** | WhatsApp · iMessage · Slack · Telegram · Discord · Voice (Twilio/LiveKit) · Webchat · Email — signature-verified, naturally paced. | Prod-ready |
 | **5 · Developer Experience** | TS/Python/Go SDKs, `lantern` CLI, one-command dev, visual workflow editor that *executes*, MCP registry, A2A cards, forkable agent marketplace. | Prod-ready |
 
-> **Alpha honesty:** modules 2–5 are in real use. Module 1's real data path (bidirectional mTLS heartbeat stream, `VendSecret` with per-instance Bearer, cert-bound telemetry `Report` ingestion, and RBAC-scoped runtime routes) is implemented and unit-tested. K8s RuntimeClass tiering (gVisor/Kata), node-affinity + tolerations, and the boot-time RuntimeClass preflight are landed; the cluster e2e (`runtime-cluster-e2e`, kind + Calico) runs the NetworkPolicy, hardened-securityContext, PSA-restricted, and **fail-closed RuntimeClass-refusal** legs for real in CI. The gVisor/Kata *execution* legs need a cluster with those runtimes installed (GitHub runners can't nest-virtualize) and are documented-and-skipped, not faked. Firecracker live-boot still requires Linux/KVM (use [`infra/lima/`](infra/lima/) on Apple Silicon). On any host lacking the required RuntimeClass, Hostile/Untrusted workloads **fail closed** rather than downgrade. Nothing pretends to work.
+> **Status (as of 2026-06-21):** modules 2–5 are in real use. Module 1 is substantially complete:
+> - ✅ **K8s-default substrate + RuntimeClass tiering** — `STANDARD` runs on gVisor, `HOSTILE` on Kata, fail-closed double gate in `choose_backend` + `build_job` (never downgrades to a bare pod). Node-affinity, per-workload default-deny NetworkPolicy, PSA-restricted, cosign image verification, and the boot-time RuntimeClass preflight are all landed (#36).
+> - ✅ **Durable crash-replay** — journal-backed exactly-once execution: no re-spent tokens on crash, side-effect dedup via `side_effect_receipts`, run lease + recovery watchdog (#38).
+> - ✅ **One-trace-per-spawn observability** — W3C `traceparent` propagates CP → scheduler → manager → harness; GenAI semconv spans carry reasoning and cache tokens; real-time loop/retry anomaly events mid-run; `GET /v1/runtime/metrics` for the cockpit Live mode (#39).
+> - ✅ **Ed25519 per-instance identity** — minted at spawn, presented as Bearer on `VendSecret`, externally verifiable at `/.well-known/lantern-agent-identity`; flag-gated RLS `lantern_app` role (#40).
+> - ✅ **Cluster-e2e execution legs** — gVisor leg validates `runsc` in CI; Kata legs (guest kernel ≠ host kernel, dedicated-pool no-co-tenancy) ship wired + documented and skip without an operator-provided kubeconfig (GitHub-hosted runners cannot nest-virtualize — not faked) (#41).
+> - ⚠️ **Still open:** live Kata execution and RLS flag-flip need operator-run cluster validation; Phase 5/6 (flight-recorder UX, confidential compute) remain on the roadmap. Nothing pretends to be done that isn't.
 
 ---
 
@@ -121,6 +127,68 @@ Defense-in-depth across governance, security, scalability, resiliency, and obser
 </p>
 
 Full strategy, gap analysis vs. AgentCore / Vertex / Anthropic / OpenAI / Temporal, and the phased roadmap: [`docs/architecture/18-agent-runtime-nextgen.md`](docs/architecture/18-agent-runtime-nextgen.md).
+
+---
+
+## Headless agent runtime in 60 seconds
+
+Write an `agent.yaml`, pick an isolation class, run it:
+
+```yaml
+# my-agent.yaml
+apiVersion: lantern.dev/v1
+kind: AgentSpec
+metadata:
+  name: hello
+spec:
+  image_digest: lantern/demos/hello@sha256:0000...0001
+  isolation: standard          # gVisor; the default for most agents
+  limits:
+    vcpu: "250m"
+    memory: "128Mi"
+    timeout: 60s
+  secrets:
+    - env_name: OPENAI_API_KEY
+      secret_uri: lantern.secret://tenant/my-tenant/key/openai
+  egress_rules:
+    - host: api.openai.com     # harness denies everything else
+  idempotent: true
+```
+
+```bash
+lantern run my-agent.yaml --input '{"task": "summarize the news"}'
+# → vm_id: vm_01abc...
+lantern logs --vm vm_01abc -f
+# → [harness] booted in 340ms  [workload] summarizing…  [workload] done
+```
+
+The run is **journaled and crash-replayable**: if the process dies mid-step,
+the recovery watchdog restarts it and the journal returns cached step results —
+no re-spent tokens, no double API calls. When it finishes:
+
+```bash
+curl -X POST http://localhost:8080/v1/runs/<run_id>/receipt \
+  -H "Authorization: Bearer $LANTERN_API_TOKEN"
+# → Ed25519-signed receipt, verifiable offline at /.well-known/lantern-receipts
+```
+
+Full walkthrough: [`docs/guides/headless-agent-quickstart.md`](docs/guides/headless-agent-quickstart.md).
+Four end-to-end demo agents: [`examples/headless-agents/`](examples/headless-agents/).
+
+---
+
+## Documentation map
+
+| Resource | Where |
+|---|---|
+| **User guides** (quickstart, isolation, durable execution, observability, identity, receipts) | [`docs/guides/`](docs/guides/) |
+| **Architecture docs** (all 18 components + ADRs) | [`docs/architecture/`](docs/architecture/) · [`docs/adr/`](docs/adr/) |
+| **Runtime strategy + gap analysis** | [`docs/architecture/18-agent-runtime-nextgen.md`](docs/architecture/18-agent-runtime-nextgen.md) |
+| **Demo agents** | [`examples/headless-agents/`](examples/headless-agents/) |
+| **Manual runtime test walkthrough** | [`examples/headless-agents/MANUAL-TEST.md`](examples/headless-agents/MANUAL-TEST.md) |
+| **Docs site** (full reference, served at `:3002` in dev) | `apps/docs/` · `make dashboard-dev` |
+| **Personal assistant setup** | [`docs/personal/BOT-SETUP.md`](docs/personal/BOT-SETUP.md) |
+| **Repo conventions + invariants** | [`CLAUDE.md`](CLAUDE.md) |
 
 ---
 
@@ -278,11 +346,11 @@ SDKs: **TypeScript** (primary), **Python**, **Go**.
 
 **Trust**
 - Ed25519-signed verifiable receipts over the journal SHA-256, verifiable offline at `/.well-known/lantern-receipts`
-- Per-agent-instance identity token minted at spawn, injected into the workload, stamped on every audit row
+- Per-agent-instance Ed25519 identity minted at spawn, presented as Bearer on `VendSecret`, externally verifiable at `/.well-known/lantern-agent-identity`; stamped on every audit row
 - RBAC scopes on all runtime routes (`runtime:read/write/admin`, 403 + audit on denial)
-- Non-owner Postgres role with RLS proven to deny cross-tenant reads
+- Non-owner Postgres role (`lantern_app`) with RLS proven to deny cross-tenant reads; flag-gated (`LANTERN_RLS_ENFORCE`) for staged rollout
 - AES-256-GCM credential encryption at rest · idempotency keys on every external side-effect
-- OTel traces carrying `tenant_id` / `run_id` / `step_id`
+- OTel traces carrying `tenant_id` / `run_id` / `step_id` / `agent_instance_id` · W3C `traceparent` propagated CP → scheduler → manager → harness (one trace per spawn)
 
 ```mermaid
 sequenceDiagram
@@ -298,7 +366,7 @@ sequenceDiagram
   CP->>U: Ed25519-signed receipt (verify offline at /proof)
 ```
 
-**Headless agent runtime** · Kubernetes-default substrate; isolation as a RuntimeClass tier:
+**Headless agent runtime** · Kubernetes-default substrate; isolation as a RuntimeClass tier; durable crash-replay; one trace per spawn:
 
 ```mermaid
 flowchart LR
@@ -312,7 +380,7 @@ flowchart LR
   HO -. "no Kata configured" .-> X
 ```
 
-In-VM Rust harness enforces an egress allowlist, vends short-TTL secrets over mTLS, and streams a bidirectional heartbeat. Per-tenant quota (HTTP 402 over cap). Demos in [`examples/headless-agents/`](examples/headless-agents/).
+In-VM Rust harness enforces an egress allowlist, vends short-TTL secrets over mTLS, and streams a bidirectional heartbeat. Per-tenant quota (HTTP 402 over cap). Scheduler HA via Postgres advisory-lock leader election. Per-tenant spawn rate limiting (token bucket, 429 before work side-effects). Demos in [`examples/headless-agents/`](examples/headless-agents/). User guides in [`docs/guides/`](docs/guides/).
 
 <details>
 <summary>Run the headless runtime locally</summary>
