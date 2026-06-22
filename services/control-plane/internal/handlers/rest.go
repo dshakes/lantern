@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	"github.com/dshakes/lantern/services/control-plane/internal/db"
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
@@ -201,15 +202,22 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Optional extension columns (not on the proto Agent message) are
 	// persisted with a follow-up UPDATE so the proto path stays untouched.
+	// db.WithTenantConn sets app.tenant_id (transaction-local) before running
+	// the UPDATE so that, under LANTERN_RLS_ENFORCE=1, the RLS policy evaluates
+	// the GUC and allows the write.  WHERE tenant_id = $4 remains the primary
+	// correctness guard; RLS is defence-in-depth.
 	if body.AvatarURL != nil || body.StylePrompt != nil || body.SystemPrompt != nil {
 		tenantID, _ := middleware.TenantIDFromContext(ctx)
-		_, uerr := h.srv.Pool.Exec(ctx, `
-			UPDATE agents SET
-				avatar_url   = COALESCE($1, avatar_url),
-				style_prompt = COALESCE($2, style_prompt),
-				system_prompt = COALESCE($3, system_prompt)
-			WHERE tenant_id = $4 AND name = $5
-		`, body.AvatarURL, body.StylePrompt, body.SystemPrompt, tenantID, body.Name)
+		uerr := db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `
+				UPDATE agents SET
+					avatar_url   = COALESCE($1, avatar_url),
+					style_prompt = COALESCE($2, style_prompt),
+					system_prompt = COALESCE($3, system_prompt)
+				WHERE tenant_id = $4 AND name = $5
+			`, body.AvatarURL, body.StylePrompt, body.SystemPrompt, tenantID, body.Name)
+			return err
+		})
 		if uerr != nil {
 			h.logger().Warn("CreateAgent extension fields failed", zap.Error(uerr))
 		}
@@ -229,13 +237,6 @@ func (h *RESTHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetAgent handles GET /v1/agents/{name}.
-//
-// TODO(rls-cutover): route this handler (and all ~100 REST agent/run sites that
-// use h.srv.Pool directly) through h.srv.AppPool + db.WithTenantConn so
-// RLS is enforced at the DB level when LANTERN_RLS_ENFORCE=1.  The gRPC read
-// paths (GetRun, ListRun in runs.go) are already wired to AppPool as the
-// representative demonstration; the REST cutover is the tracked follow-up.
-// With LANTERN_RLS_ENFORCE unset, AppPool == Pool — zero behaviour change.
 func (h *RESTHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -267,25 +268,30 @@ func (h *RESTHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// Extension columns not present on the proto Agent (system_prompt,
 	// avatar_url, style_prompt) — pulled directly so the dashboard can
 	// round-trip them through the create/edit forms.
+	// db.WithTenantConn sets app.tenant_id before the SELECT so that, under
+	// LANTERN_RLS_ENFORCE=1, the RLS policy allows the read (GUC matches the
+	// tenant_id of the row). Without the GUC the policy matches nothing →
+	// returns empty even for the row's own owner.
 	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	var (
 		avatarURL    *string
 		stylePrompt  *string
 		systemPrompt *string
 	)
-	if err := h.srv.Pool.QueryRow(ctx, `
-		SELECT avatar_url, style_prompt, system_prompt
-		FROM agents WHERE tenant_id = $1 AND name = $2
-	`, tenantID, name).Scan(&avatarURL, &stylePrompt, &systemPrompt); err == nil {
-		if avatarURL != nil {
-			out["avatarUrl"] = *avatarURL
-		}
-		if stylePrompt != nil {
-			out["stylePrompt"] = *stylePrompt
-		}
-		if systemPrompt != nil {
-			out["systemPrompt"] = *systemPrompt
-		}
+	_ = db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT avatar_url, style_prompt, system_prompt
+			FROM agents WHERE tenant_id = $1 AND name = $2
+		`, tenantID, name).Scan(&avatarURL, &stylePrompt, &systemPrompt)
+	})
+	if avatarURL != nil {
+		out["avatarUrl"] = *avatarURL
+	}
+	if stylePrompt != nil {
+		out["stylePrompt"] = *stylePrompt
+	}
+	if systemPrompt != nil {
+		out["systemPrompt"] = *systemPrompt
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -357,19 +363,29 @@ func (h *RESTHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		UPDATE agents SET
-			system_prompt = COALESCE($1, system_prompt),
-			avatar_url    = COALESCE($2, avatar_url),
-			style_prompt  = COALESCE($3, style_prompt)
-		WHERE name = $4 AND tenant_id = $5
-	`, body.SystemPrompt, body.AvatarURL, body.StylePrompt, name, tenantID)
+	// db.WithTenantConn sets app.tenant_id before the UPDATE so that, under
+	// LANTERN_RLS_ENFORCE=1, the RLS policy allows the write. Without the GUC
+	// set, the policy matches nothing → RowsAffected()==0 → false HTTP 404 for
+	// the agent's own owner. WHERE tenant_id = $5 is the primary correctness
+	// guard; RLS is defence-in-depth.
+	var rowsAffected int64
+	err = db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
+		tag, execErr := tx.Exec(ctx, `
+			UPDATE agents SET
+				system_prompt = COALESCE($1, system_prompt),
+				avatar_url    = COALESCE($2, avatar_url),
+				style_prompt  = COALESCE($3, style_prompt)
+			WHERE name = $4 AND tenant_id = $5
+		`, body.SystemPrompt, body.AvatarURL, body.StylePrompt, name, tenantID)
+		rowsAffected = tag.RowsAffected()
+		return execErr
+	})
 	if err != nil {
 		h.logger().Error("UpdateAgent failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
 	}
@@ -413,17 +429,24 @@ func (h *RESTHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	runs := make([]map[string]any, 0)
 	if resp != nil {
 		for _, run := range resp.GetRuns() {
 			m := runToMap(run)
-			// Enrich: execution steps + agent name
+			// Enrich: execution steps + agent name.
+			// db.WithTenantConn sets app.tenant_id so that, under
+			// LANTERN_RLS_ENFORCE=1, the RLS policy allows the read.
+			// Without the GUC the policy matches nothing → empty enrichment
+			// even for the tenant's own runs.
 			var rawSteps []byte
 			var agentName string
-			_ = h.srv.Pool.QueryRow(ctx,
-				`SELECT r.trigger_meta, COALESCE(a.name, '') FROM runs r LEFT JOIN agents a ON a.id = r.agent_id WHERE r.id = $1`,
-				run.GetId(),
-			).Scan(&rawSteps, &agentName)
+			_ = db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
+				return tx.QueryRow(ctx,
+					`SELECT r.trigger_meta, COALESCE(a.name, '') FROM runs r LEFT JOIN agents a ON a.id = r.agent_id WHERE r.id = $1`,
+					run.GetId(),
+				).Scan(&rawSteps, &agentName)
+			})
 			if len(rawSteps) > 0 && rawSteps[0] == '[' {
 				var steps []any
 				if json.Unmarshal(rawSteps, &steps) == nil {
@@ -574,12 +597,19 @@ func (h *RESTHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := runToMap(run)
-	// Enrich: execution steps + agent name
+	// Enrich: execution steps + agent name.
+	// db.WithTenantConn sets app.tenant_id before the SELECT so that, under
+	// LANTERN_RLS_ENFORCE=1, the RLS policy allows the read. Without the GUC,
+	// the policy matches nothing → enrichment silently empty even for the
+	// tenant's own run.
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	var rawSteps []byte
 	var agentName string
-	_ = h.srv.Pool.QueryRow(ctx,
-		`SELECT r.trigger_meta, COALESCE(a.name, '') FROM runs r LEFT JOIN agents a ON a.id = r.agent_id WHERE r.id = $1`, id,
-	).Scan(&rawSteps, &agentName)
+	_ = db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT r.trigger_meta, COALESCE(a.name, '') FROM runs r LEFT JOIN agents a ON a.id = r.agent_id WHERE r.id = $1`, id,
+		).Scan(&rawSteps, &agentName)
+	})
 	if len(rawSteps) > 0 && rawSteps[0] == '[' {
 		var steps []any
 		if json.Unmarshal(rawSteps, &steps) == nil {
@@ -648,7 +678,14 @@ func (h *RESTHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = h.srv.Pool.Exec(ctx, `DELETE FROM runs WHERE id = $1`, id)
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	// db.WithTenantConn sets app.tenant_id so that RLS allows the DELETE under
+	// enforcement. WHERE tenant_id = $2 is the primary correctness guard
+	// (multi-tenant invariant #7); RLS is defence-in-depth.
+	err = db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
+		_, execErr := tx.Exec(ctx, `DELETE FROM runs WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+		return execErr
+	})
 	if err != nil {
 		h.logger().Error("DeleteRun failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -2017,16 +2054,24 @@ func (h *RESTHandler) SaveWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		UPDATE agents SET workflow = $1::jsonb
-		WHERE tenant_id = $2 AND name = $3 AND archived_at IS NULL
-	`, string(body), tenantID, name)
+	// db.WithTenantConn sets app.tenant_id so that, under LANTERN_RLS_ENFORCE=1,
+	// the RLS policy allows the UPDATE. Without the GUC the policy matches
+	// nothing → RowsAffected()==0 → false HTTP 404 for the agent's own owner.
+	var rowsAffected int64
+	err = db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
+		tag, execErr := tx.Exec(ctx, `
+			UPDATE agents SET workflow = $1::jsonb
+			WHERE tenant_id = $2 AND name = $3 AND archived_at IS NULL
+		`, string(body), tenantID, name)
+		rowsAffected = tag.RowsAffected()
+		return execErr
+	})
 	if err != nil {
 		h.logger().Error("save workflow failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save workflow"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
 	}
@@ -2056,11 +2101,16 @@ func (h *RESTHandler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	tenantID, _ := middleware.TenantIDFromContext(ctx)
 
-	var workflow []byte
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT workflow FROM agents
-		WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL
-	`, tenantID, name).Scan(&workflow)
+	// db.WithTenantConn sets app.tenant_id so that, under LANTERN_RLS_ENFORCE=1,
+	// the RLS policy allows the SELECT. Without the GUC the policy matches
+	// nothing → pgx.ErrNoRows → false HTTP 404 for the agent's own owner.
+	var wfBytes []byte
+	err = db.WithTenantConn(ctx, h.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT workflow FROM agents
+			WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL
+		`, tenantID, name).Scan(&wfBytes)
+	})
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
@@ -2070,8 +2120,7 @@ func (h *RESTHandler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get workflow"})
 		return
 	}
-
-	if workflow == nil {
+	if wfBytes == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no workflow saved"})
 		return
 	}
@@ -2079,7 +2128,7 @@ func (h *RESTHandler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 	// Return the raw JSON directly.
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(workflow) //nolint:errcheck
+	w.Write(wfBytes) //nolint:errcheck
 }
 
 // autoCreateVersion creates a default agent version and promotes it.
