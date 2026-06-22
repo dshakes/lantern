@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -79,11 +80,31 @@ type RESTHandler struct {
 	runSvc       *RunService
 	llmProxy     *LlmProxyHandler
 	spawnLimiter *SpawnRateLimiter // per-tenant spawn-storm guard (nil = disabled)
+
+	// inFlightRuns tracks goroutines started by executeRunInline so the
+	// shutdown path can wait for them to finish (DrainInFlightRuns).
+	inFlightRuns sync.WaitGroup
 }
 
 // SetSpawnLimiter wires the per-tenant spawn rate limiter (phase 3). nil-safe:
 // when unset, CreateRun does not rate-limit.
 func (h *RESTHandler) SetSpawnLimiter(l *SpawnRateLimiter) { h.spawnLimiter = l }
+
+// DrainInFlightRuns waits for all in-flight inline-run goroutines to finish,
+// up to timeout. Any goroutines still running after timeout are abandoned —
+// the durable-replay recovery loop will re-drive them on next startup.
+// Call this after the HTTP server stops accepting new connections.
+func (h *RESTHandler) DrainInFlightRuns(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		h.inFlightRuns.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
+}
 
 // NewRESTHandler creates a new RESTHandler.
 func NewRESTHandler(srv *server.Server, auth *AuthHandler, agentSvc *AgentService, runSvc *RunService) *RESTHandler {
@@ -562,7 +583,11 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 	// transitions from queued → running → succeeded without needing the
 	// separate workflow-engine service.
 	if h.llmProxy != nil {
-		go h.executeRunInline(run.GetId(), run.GetTenantId(), body.AgentName, body.Input)
+		h.inFlightRuns.Add(1)
+		go func() {
+			defer h.inFlightRuns.Done()
+			h.executeRunInline(run.GetId(), run.GetTenantId(), body.AgentName, body.Input)
+		}()
 	}
 
 	writeJSON(w, http.StatusCreated, runToMap(run))
@@ -1911,7 +1936,11 @@ func (h *RESTHandler) ExecuteScheduledRun(tenantID, agentName string, input map[
 
 	// Execute inline (this already handles email delivery at the end).
 	if h.llmProxy != nil {
-		go h.executeRunInline(run.GetId(), run.GetTenantId(), agentName, input)
+		h.inFlightRuns.Add(1)
+		go func() {
+			defer h.inFlightRuns.Done()
+			h.executeRunInline(run.GetId(), run.GetTenantId(), agentName, input)
+		}()
 	}
 }
 

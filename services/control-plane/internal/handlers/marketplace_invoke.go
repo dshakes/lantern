@@ -300,8 +300,13 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	// Kick off the actual LLM execution on the seller tenant. The REST
 	// handler owns the workflow-interpreter routing too, so saved
 	// workflows on the seller agent run end-to-end transparently.
+	// Tracked by inFlightRuns so SIGTERM drain waits for it to finish.
 	runID := run.GetId()
-	go h.rest.executeRunInline(runID, sellerTenant, agentName, body.Input)
+	h.rest.inFlightRuns.Add(1)
+	go func() {
+		defer h.rest.inFlightRuns.Done()
+		h.rest.executeRunInline(runID, sellerTenant, agentName, body.Input)
+	}()
 
 	// 4. Wait briefly for the seller's run to complete. The interpreter
 	// runs in-process so for v1 we poll up to 60s.

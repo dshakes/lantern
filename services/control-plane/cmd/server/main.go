@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -63,7 +64,11 @@ func main() {
 	}()
 
 	// --- Postgres ---
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pgCfg, err := parsePgxPoolConfig(cfg.DatabaseURL)
+	if err != nil {
+		logger.Fatal("failed to parse DATABASE_URL", zap.Error(err))
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, pgCfg)
 	if err != nil {
 		logger.Fatal("failed to create pgx pool", zap.Error(err))
 	}
@@ -93,6 +98,7 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to parse REDIS_URL", zap.Error(err))
 	}
+	redisOpts.PoolSize = envIntMain("LANTERN_REDIS_POOL_SIZE", 20)
 	rdb := redis.NewClient(redisOpts)
 	defer rdb.Close() //nolint:errcheck
 
@@ -128,6 +134,7 @@ func main() {
 			if cfgErr != nil {
 				logger.Fatal("failed to build lantern_app pool config", zap.Error(cfgErr))
 			}
+			applyPgxPoolTuning(appCfg)
 			p, err := pgxpool.NewWithConfig(ctx, appCfg)
 			if err != nil {
 				logger.Fatal("failed to create lantern_app pool", zap.Error(err))
@@ -546,6 +553,10 @@ func main() {
 	// Rehearsals — replay past failures against a candidate agent version.
 	httpMux.HandleFunc("POST /v1/runs/rehearse", rehearseHandler.Rehearse)
 
+	// GDPR right-to-erasure: owner deletes their own tenant + all its data.
+	gdprHandler := handlers.NewGDPRHandler(srv, authHandler)
+	httpMux.HandleFunc("DELETE /v1/tenants/{id}", gdprHandler.DeleteTenant)
+
 	// Headless-agent runtime governance — REST surface in front of the
 	// Firecracker-backed RuntimeScheduler at :50055. Quota-gated,
 	// tenant-scoped, audit-logged.
@@ -580,6 +591,10 @@ func main() {
 	// LANTERN_SIDE_EFFECT_RETENTION_DAYS (default 30) once per hour.
 	go handlers.RunSideEffectReceiptsJanitor(ctx, pool, logger)
 
+	// High-growth table retention: journal_events (90d), runtime_audit_events
+	// (365d), agent_usage_daily (400d). Env-configurable; see retention_janitor.go.
+	go handlers.RunRetentionJanitor(ctx, pool, logger)
+
 	httpServer := &http.Server{
 		Addr:              ":8080",
 		Handler:           handlers.CORSMiddleware(httpMux),
@@ -611,8 +626,10 @@ func main() {
 
 	// Per-tenant spawn rate limiter (Phase-3 resiliency): throttles a burst of
 	// run-creations / runtime-schedules per tenant, returning HTTP 429 before any
-	// work side-effect. Wired into CreateRun and runtime Schedule below.
+	// work side-effect. Redis-backed when available (distributed); falls back to
+	// per-replica in-memory token-bucket on Redis unavailability.
 	spawnLimiter := handlers.NewSpawnRateLimiter()
+	spawnLimiter.SetRedis(rdb)
 	defer spawnLimiter.Stop()
 	restHandler.SetSpawnLimiter(spawnLimiter)
 	runtimeHandler.SetSpawnLimiter(spawnLimiter)
@@ -647,6 +664,13 @@ func main() {
 		logger.Error("HTTP server shutdown error", zap.Error(err))
 	}
 	logger.Info("HTTP server stopped")
+
+	// Drain in-flight inline runs (SIGTERM graceful drain).
+	// The durable-replay recovery loop covers any runs that exceed the timeout.
+	drainTimeout := envDurationMain("LANTERN_DRAIN_TIMEOUT", 30*time.Second)
+	logger.Info("draining in-flight runs", zap.Duration("timeout", drainTimeout))
+	restHandler.DrainInFlightRuns(drainTimeout)
+	logger.Info("in-flight runs drained")
 
 	logger.Info("control-plane shut down cleanly")
 }
@@ -848,6 +872,54 @@ type wrappedStream struct {
 
 func (w *wrappedStream) Context() context.Context {
 	return w.ctx
+}
+
+// parsePgxPoolConfig parses DATABASE_URL into a *pgxpool.Config and applies
+// the env-driven tunables (LANTERN_PG_MAX_CONNS, LANTERN_PG_MAX_CONN_LIFETIME,
+// LANTERN_PG_MAX_CONN_IDLE_TIME). Sane defaults:
+//
+//	LANTERN_PG_MAX_CONNS           default 20
+//	LANTERN_PG_MAX_CONN_LIFETIME   default 1h
+//	LANTERN_PG_MAX_CONN_IDLE_TIME  default 30m
+func parsePgxPoolConfig(databaseURL string) (*pgxpool.Config, error) {
+	cfg, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse DATABASE_URL: %w", err)
+	}
+	applyPgxPoolTuning(cfg)
+	return cfg, nil
+}
+
+// applyPgxPoolTuning writes the env-driven tunables onto an already-parsed
+// *pgxpool.Config. Called for both the privileged pool and the AppPool so
+// both benefit from the same env configuration.
+func applyPgxPoolTuning(cfg *pgxpool.Config) {
+	cfg.MaxConns = int32(envIntMain("LANTERN_PG_MAX_CONNS", 20))
+	cfg.MaxConnLifetime = envDurationMain("LANTERN_PG_MAX_CONN_LIFETIME", time.Hour)
+	cfg.MaxConnIdleTime = envDurationMain("LANTERN_PG_MAX_CONN_IDLE_TIME", 30*time.Minute)
+}
+
+// envIntMain reads an integer env var, falling back to fallback when absent or
+// non-positive. Named with the Main suffix to avoid collision with the
+// envIntOrDefault helper in spawn_ratelimit.go (different package).
+func envIntMain(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return fallback
+}
+
+// envDurationMain reads a time.Duration env var (e.g. "1h30m"), falling back
+// to fallback when absent or unparseable.
+func envDurationMain(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return fallback
 }
 
 // buildAppPoolConfig returns a *pgxpool.Config for the 'lantern_app' non-superuser
