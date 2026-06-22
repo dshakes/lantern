@@ -2,6 +2,8 @@ module github.com/dshakes/lantern/packages/cli
 
 go 1.25.0
 
+toolchain go1.26.4
+
 require (
 	github.com/dshakes/lantern/gen/go v0.0.0
 	github.com/spf13/cobra v1.8.1
