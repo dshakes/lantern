@@ -665,7 +665,7 @@ export class IMessageSession {
       sessionsFile: join(this.stateDir, "agent_sessions.json"),
     });
     this.media = new MediaHandler(this.logger, () => this.ownerProfileStore.nativity());
-    this.personal = new PersonalClient(this.logger);
+    this.personal = new PersonalClient(this.logger, this.tenantId);
     this.calendar = new CalendarLookup(this.logger);
     this.docs = new PersonalDocs(defaultPersonalDocsConfig(this.stateDir), this.logger);
     this.macActions = new MacActions(this.logger);
@@ -5716,7 +5716,9 @@ export class IMessageSession {
 
     // 2. WhatsApp loopback — secondary channel.
     const waUrl = process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100";
-    const tenantId = process.env.LANTERN_DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
+    // Address the owner's session on the peer bridge by THIS session's tenant,
+    // not a process-wide default (keeps cross-bridge loopback correct per-tenant).
+    const tenantId = this.tenantId;
     void (async () => {
       try {
         const ctrl = new AbortController();

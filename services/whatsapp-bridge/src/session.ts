@@ -1463,7 +1463,7 @@ export class WhatsAppSession {
     });
     this.attention = new AttentionClassifier(this.logger);
     this.media = new MediaHandler(this.logger, () => this.ownerProfileStore.nativity());
-    this.personal = new PersonalClient(this.logger);
+    this.personal = new PersonalClient(this.logger, this.tenantId);
     this.calendar = new CalendarLookup(this.logger);
     this.ownerProfileStore = new OwnerProfileStore(this.logger);
     this.dislikeMemory = new DislikeMemory({ logger: this.logger });
@@ -6263,7 +6263,9 @@ export class WhatsAppSession {
     // to the iMessage bridge on localhost:3200. Owner gets the same
     // alert on their Mac's iMessage.app.
     const imUrl = process.env.LANTERN_IMESSAGE_BRIDGE_URL || "http://127.0.0.1:3200";
-    const tenantId = process.env.LANTERN_DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
+    // Address the owner's session on the peer bridge by THIS session's tenant,
+    // not a process-wide default (keeps cross-bridge loopback correct per-tenant).
+    const tenantId = this.tenantId;
     void (async () => {
       try {
         const ctrl = new AbortController();
