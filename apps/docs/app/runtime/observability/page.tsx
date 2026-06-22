@@ -61,14 +61,21 @@ export default function RuntimeObservabilityPage() {
 
       <h2 id="metrics">Metrics endpoint</h2>
       <p>
-        Aggregate runtime counters (spawns, states, durations, cost rollups) are
-        exposed for scraping:
+        Per-VM live stats for the caller&apos;s tenant are returned as a JSON
+        array by:
       </p>
       <pre><code>{`GET /v1/runtime/metrics`}</code></pre>
       <p>
-        Per-instance detail and recent audit events are at{" "}
-        <code>GET /v1/runtime/vms/&#123;id&#125;</code>, and the live log stream
-        is <code>GET /v1/runtime/vms/&#123;id&#125;/logs</code> (SSE). The{" "}
+        Each element is a <code>vmMetricsDTO</code> object with fields:{" "}
+        <code>vmId</code>, <code>state</code>, <code>node</code>,{" "}
+        <code>az</code>, <code>isolationClass</code>, <code>createdAt</code>,{" "}
+        <code>terminatedAt</code>, <code>lastAuditAction</code>,{" "}
+        <code>lastAuditAt</code>, <code>promMetrics</code> (raw Prometheus
+        exposition text forwarded by the harness, empty until received), and{" "}
+        <code>promReceivedAt</code>. Per-instance detail and recent audit events
+        are at <code>GET /v1/runtime/vms/&#123;id&#125;</code>, and the live log
+        stream is <code>GET /v1/runtime/vms/&#123;id&#125;/logs</code> (SSE).
+        The{" "}
         <a href="http://localhost:3001/runtime" target="_blank" rel="noopener noreferrer">dashboard runtime page</a>{" "}
         renders all three.
       </p>

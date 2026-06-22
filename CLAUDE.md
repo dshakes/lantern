@@ -215,7 +215,7 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `eval_runs`             | One execution of a suite                                                                                                                                                                         | `tenant_id`, `suite_id`, `agent_version`, `commit_sha`, `branch`, `passed`, `score`, `cases_result` (JSONB)                  |
 | `eval_baselines`        | Branch pinned baseline                                                                                                                                                                           | `tenant_id`, `agent_name`, `branch`, `eval_run_id`                                                                           |
 | `agent_experiments`     | A/B traffic splits with auto-promotion                                                                                                                                                           | `tenant_id`, `agent_name`, `variant_a_version`, `variant_b_version`, `traffic_split_b`, `auto_promote`, `a_score`, `b_score` |
-| `run_receipts`          | HMAC-signed verifiable execution receipts                                                                                                                                                        | `run_id` (PK), `tenant_id`, `signature`, `payload` (JSONB), `issued_at`                                                      |
+| `run_receipts`          | Ed25519-signed verifiable execution receipts (HMAC-SHA256 legacy/dev fallback)                                                                                                                  | `run_id` (PK), `tenant_id`, `signature`, `payload` (JSONB), `issued_at`                                                      |
 | `run_feedback`          | Per-run RLHF reactions                                                                                                                                                                           | `run_id`, `tenant_id`, `score` (1-5), `comment`, `preferred_output`, `source`                                                |
 
 Row-Level Security is enabled on `agents` and `runs` with tenant isolation policies.
@@ -379,10 +379,7 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 
 ### Verifiable receipts
 
-Tamper-evident HMAC-SHA256-signed proof of execution. Every receipt includes
-the SHA-256 of the run's `journal_events` stream so any post-hoc tampering
-invalidates the signature. Self-hosted deployments expose the signing key
-fingerprint via `/.well-known/lantern-receipts` for external verifiers.
+Tamper-evident Ed25519-signed proof of execution (HMAC-SHA256 legacy/dev fallback when `LANTERN_RECEIPT_ED25519_SEED` is unset). Every receipt includes the SHA-256 of the run's `journal_events` stream so any post-hoc tampering invalidates the signature. Self-hosted deployments expose the signing algorithm and key fingerprint via `/.well-known/lantern-receipts` for external verifiers.
 
 | Method | Path                            | Description                                          |
 | ------ | ------------------------------- | ---------------------------------------------------- |

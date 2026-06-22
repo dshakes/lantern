@@ -10,16 +10,41 @@ The receipt signs over the **SHA-256 hash of the run's `journal_events` stream**
 (in sequence order). Any post-hoc tampering with the journal — adding, removing, or
 modifying an event — changes the hash and invalidates the signature.
 
-The receipt payload includes:
+### Receipt payload fields
 
-- `run_id`
-- `tenant_id`
-- `issued_at`
-- `journal_hash` — SHA-256 of the ordered journal events
-- `signature` — Ed25519 signature over the payload
+The signed payload (`receiptPayload`) contains these fields, all of which appear in the
+canonical JSON that is signed:
+
+| Field | Type | Notes |
+|---|---|---|
+| `agentName` | string | Always present |
+| `agentVersion` | string | Omitted when blank |
+| `costUsd` | number | Accumulated cost for the run |
+| `issuedAt` | RFC3339 | When the receipt was issued |
+| `journalHash` | string | SHA-256 of the ordered `journal_events` rows |
+| `model` | string | Omitted when blank |
+| `provider` | string | Omitted when blank |
+| `runId` | string | Always present |
+| `status` | string | `succeeded` or `failed` |
+| `tenantId` | string | Always present |
+| `tokensIn` | integer | Prompt tokens consumed |
+| `tokensOut` | integer | Completion tokens produced |
+| `version` | integer | Schema version (currently `1`) |
 
 The public key is published at `/.well-known/lantern-receipts` so any external
 party can verify without contacting Lantern.
+
+### Canonical JSON
+
+The bytes that are signed are produced by `canonicalJSON(payload)`:
+
+1. Marshal the `receiptPayload` struct to JSON.
+2. Unmarshal the result into a `map[string]any` to discard struct-level ordering.
+3. Re-marshal the map — Go's `encoding/json` sorts map keys alphabetically.
+
+The result is compact JSON (no whitespace) with keys in alphabetical order. To
+reproduce offline, apply the same three-step round-trip to the `payload` object
+from the receipt response.
 
 ## Issuing a receipt
 
@@ -86,21 +111,29 @@ public receipt verifier at `/proof`.
 ### Verify entirely offline
 
 ```bash
-# 1. Recompute the journal hash
-curl http://localhost:8080/v1/runs/<run_id>/events \
-  -H "Authorization: Bearer $LANTERN_API_TOKEN" \
-  | sha256sum
+# 1. Fetch the signed receipt
+RECEIPT=$(curl -s -X POST http://localhost:8080/v1/runs/<run_id>/receipt \
+  -H "Authorization: Bearer $LANTERN_API_TOKEN")
 
-# 2. Verify the Ed25519 signature (openssl example)
-echo -n '<canonical payload bytes>' | \
-  openssl pkeyutl -verify \
-    -pubin -inkey public.pem \
-    -sigfile sig.bin \
-    -pkeyopt digest:sha256
+# 2. Extract and base64-decode the signature
+echo "$RECEIPT" | jq -r '.signature' | base64 -d > sig.bin
+
+# 3. Reproduce canonical JSON of the payload
+#    Sort the payload keys alphabetically, marshal without whitespace.
+#    Example using jq (which sorts keys by default):
+echo "$RECEIPT" | jq -c '.payload | to_entries | sort_by(.key) | from_entries' > canonical.json
+
+# 4. Verify Ed25519 (openssl ≥ 3.x)
+openssl pkeyutl -verify \
+  -pubin -inkey public.pem \
+  -rawin -in canonical.json \
+  -sigfile sig.bin
 ```
 
-The canonical payload bytes are the JSON-encoded receipt fields (excluding
-`signature`) sorted by key, serialized without whitespace.
+The canonical payload bytes are the alphabetically-sorted, compact-JSON
+representation of the `payload` object — produced by Go's three-step
+`canonicalJSON`: `json.Marshal` → `json.Unmarshal` into `map[string]any` →
+`json.Marshal` (Go sorts map keys alphabetically on marshal).
 
 ## Tamper evidence
 

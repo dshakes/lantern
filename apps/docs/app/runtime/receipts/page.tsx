@@ -20,6 +20,34 @@ export default function RuntimeReceiptsPage() {
         drift from reality.
       </p>
 
+      <h2 id="payload">Payload fields</h2>
+      <p>
+        The <strong>Ed25519</strong> signature covers the canonical JSON of a{" "}
+        <code>receiptPayload</code> struct with these fields (alphabetically
+        sorted keys, compact JSON, no whitespace):
+      </p>
+      <ul>
+        <li><code>agentName</code> — always present</li>
+        <li><code>agentVersion</code> — omitted when blank</li>
+        <li><code>costUsd</code> — accumulated cost for the run</li>
+        <li><code>issuedAt</code> — RFC3339 timestamp</li>
+        <li><code>journalHash</code> — SHA-256 of the ordered <code>journal_events</code> rows</li>
+        <li><code>model</code> — omitted when blank</li>
+        <li><code>provider</code> — omitted when blank</li>
+        <li><code>runId</code> — always present</li>
+        <li><code>status</code> — <code>succeeded</code> or <code>failed</code></li>
+        <li><code>tenantId</code> — always present</li>
+        <li><code>tokensIn</code> / <code>tokensOut</code> — prompt and completion token counts</li>
+        <li><code>version</code> — schema version (currently <code>1</code>)</li>
+      </ul>
+      <p>
+        The canonical JSON is produced by a three-step round-trip: marshal the
+        struct, unmarshal into <code>{"map[string]any"}</code>, re-marshal (Go
+        sorts map keys alphabetically on re-marshal). The result is compact JSON
+        with keys in alphabetical order — reproducible offline with any JSON
+        library that sorts keys.
+      </p>
+
       <h2 id="issue">Issuing a receipt</h2>
       <p>Issue and persist a signed receipt for a completed run:</p>
       <pre><code>{`POST /v1/runs/{id}/receipt`}</code></pre>
