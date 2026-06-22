@@ -452,7 +452,10 @@ wss.on("connection", (ws, req) => {
 // bridge is immediately useful without manual /start POSTs. Set
 // LANTERN_IMESSAGE_AUTOSTART=0 to disable (e.g. for a multi-tenant
 // prod host that expects explicit /start per tenant).
-const DEFAULT_TENANT = process.env.LANTERN_DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
+const DEFAULT_TENANT =
+  process.env.LANTERN_TENANT_ID ||
+  process.env.LANTERN_DEFAULT_TENANT_ID ||
+  "00000000-0000-0000-0000-000000000001";
 const AUTOSTART = (process.env.LANTERN_IMESSAGE_AUTOSTART ?? "1") !== "0";
 
 server.listen(PORT, BIND, async () => {

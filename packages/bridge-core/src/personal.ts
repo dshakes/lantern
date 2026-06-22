@@ -56,6 +56,11 @@ export function parseRememberCommand(text: string): string | null {
 
 export class PersonalClient {
   private logger: Logger;
+  // The tenant this bridge serves. Used to address the owner's session on the
+  // PEER bridge (the cross-channel /session/<tenant>/send-self ping). Comes from
+  // the constructing session's tenantId so a multi-tenant deployment addresses
+  // the right session instead of a process-wide default.
+  private tenantId: string;
   // Cache VIP list for 30s — checked on every inbound; don't hammer
   // the control-plane.
   private vipCache: { jids: Set<string>; fetchedAt: number } = { jids: new Set(), fetchedAt: 0 };
@@ -66,8 +71,13 @@ export class PersonalClient {
   private factsCache: Map<string, { facts: Fact[]; fetchedAt: number }> = new Map();
   private static readonly FACTS_TTL_MS = 60_000;
 
-  constructor(logger: Logger) {
+  constructor(logger: Logger, tenantId?: string) {
     this.logger = logger.child({ component: "personal" });
+    this.tenantId =
+      tenantId ||
+      process.env.LANTERN_TENANT_ID ||
+      process.env.LANTERN_DEFAULT_TENANT_ID ||
+      "00000000-0000-0000-0000-000000000001";
   }
 
   // Returns the set of VIP JIDs for this tenant.
@@ -434,7 +444,7 @@ export class PersonalClient {
     const otherBridgeUrl = otherChannel === "whatsapp"
       ? (process.env.LANTERN_BRIDGE_URL || "http://localhost:3100")
       : (process.env.LANTERN_IMESSAGE_BRIDGE_URL || "http://localhost:3200");
-    const tenantId = process.env.LANTERN_DEFAULT_TENANT_ID || "00000000-0000-0000-0000-000000000001";
+    const tenantId = this.tenantId;
     const crossText = [
       `📨 VIP draft from ${senderLabel} (on ${channelLabel})`,
       ``,
