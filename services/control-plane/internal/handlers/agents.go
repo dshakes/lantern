@@ -42,6 +42,10 @@ func setRLSTenantID(ctx context.Context, tx pgx.Tx, tenantID string) error {
 }
 
 // CreateAgent inserts a new agent row and returns the Agent proto.
+//
+// Uses TenantPool() — the RLS-enforcing pool when LANTERN_RLS_ENFORCE=1 (lantern_app
+// role, subject to the tenant_isolation_agents policy); otherwise Pool (no change).
+// The WHERE tenant_id = $1 clause is the primary correctness guard; RLS is defence-in-depth.
 func (s *AgentService) CreateAgent(ctx context.Context, req *lanternv1.CreateAgentRequest) (*lanternv1.Agent, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
@@ -57,7 +61,9 @@ func (s *AgentService) CreateAgent(ctx context.Context, req *lanternv1.CreateAge
 		return nil, status.Errorf(codes.Internal, "failed to marshal labels: %v", err)
 	}
 
-	tx, err := s.srv.Pool.Begin(ctx)
+	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// LANTERN_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
+	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to begin transaction: %v", err)
 	}
@@ -106,6 +112,9 @@ func (s *AgentService) CreateAgent(ctx context.Context, req *lanternv1.CreateAge
 }
 
 // GetAgent queries an agent by (tenant_id, name).
+//
+// Uses TenantPool() — the RLS-enforcing pool when LANTERN_RLS_ENFORCE=1;
+// otherwise Pool (zero behaviour change).
 func (s *AgentService) GetAgent(ctx context.Context, req *lanternv1.GetAgentRequest) (*lanternv1.Agent, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
@@ -116,7 +125,9 @@ func (s *AgentService) GetAgent(ctx context.Context, req *lanternv1.GetAgentRequ
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
 
-	tx, err := s.srv.Pool.Begin(ctx)
+	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// LANTERN_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
+	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to begin transaction: %v", err)
 	}
@@ -179,6 +190,9 @@ func (s *AgentService) GetAgent(ctx context.Context, req *lanternv1.GetAgentRequ
 }
 
 // ListAgents returns a paginated list of agents, optionally filtered by labels.
+//
+// Uses TenantPool() — the RLS-enforcing pool when LANTERN_RLS_ENFORCE=1;
+// otherwise Pool (zero behaviour change).
 func (s *AgentService) ListAgents(ctx context.Context, req *lanternv1.ListAgentsRequest) (*lanternv1.ListAgentsResponse, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
@@ -190,7 +204,9 @@ func (s *AgentService) ListAgents(ctx context.Context, req *lanternv1.ListAgents
 		pageSize = req.GetPageSize()
 	}
 
-	tx, err := s.srv.Pool.Begin(ctx)
+	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// LANTERN_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
+	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to begin transaction: %v", err)
 	}
@@ -313,6 +329,9 @@ func (s *AgentService) ListAgents(ctx context.Context, req *lanternv1.ListAgents
 }
 
 // DeleteAgent soft-deletes an agent by setting archived_at.
+//
+// Uses TenantPool() — the RLS-enforcing pool when LANTERN_RLS_ENFORCE=1;
+// otherwise Pool (zero behaviour change).
 func (s *AgentService) DeleteAgent(ctx context.Context, req *lanternv1.DeleteAgentRequest) (*lanternv1.DeleteAgentResponse, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
@@ -323,7 +342,9 @@ func (s *AgentService) DeleteAgent(ctx context.Context, req *lanternv1.DeleteAge
 		return nil, status.Error(codes.InvalidArgument, "name is required")
 	}
 
-	tx, err := s.srv.Pool.Begin(ctx)
+	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// LANTERN_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
+	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to begin transaction: %v", err)
 	}
