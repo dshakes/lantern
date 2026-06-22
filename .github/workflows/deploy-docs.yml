@@ -1,0 +1,56 @@
+# Build the docs site (apps/docs) as a static export and deploy to GitHub Pages.
+# The site is pure static prose (next.config: output "export"), so this produces
+# plain HTML served from Pages — no server, free hosting.
+name: "deploy docs (github pages)"
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "apps/docs/**"
+      - ".github/workflows/deploy-docs.yml"
+  workflow_dispatch: {}
+
+# Pages deploy needs these; least-privilege otherwise.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One in-flight deploy at a time; don't cancel a running deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "20"
+      - name: Install deps
+        run: cd apps/docs && npm ci
+      - name: Build static export
+        env:
+          # Repo is github.com/dshakes/lantern → Pages at /lantern. Unset for a custom domain.
+          PAGES_BASE_PATH: /lantern
+        run: cd apps/docs && npm run build
+      - name: Disable Jekyll (serve _next/* dirs)
+        run: touch apps/docs/out/.nojekyll
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
+        with:
+          path: apps/docs/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
