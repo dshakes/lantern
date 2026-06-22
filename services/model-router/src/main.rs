@@ -1,6 +1,7 @@
 mod cache;
 mod config;
 mod error;
+mod otel;
 mod proto;
 mod provider;
 mod providers;
@@ -10,6 +11,8 @@ mod service;
 use std::sync::Arc;
 
 use tracing::info;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 use crate::cache::PromptCache;
@@ -24,15 +27,26 @@ use crate::service::ModelServiceImpl;
 async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
 
-    // Initialize tracing with JSON output for structured logging.
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(&config.log_level)),
+    // Initialise OTel pipeline (no-op when OTEL_EXPORTER_OTLP_ENDPOINT is unset).
+    // Keep the guard alive for the duration of main so spans are flushed on exit.
+    let _otel_shutdown = otel::init();
+
+    // Build the tracing subscriber.  The tracing-opentelemetry layer bridges
+    // every tracing span into the OTLP exporter when OTel is active.  The JSON
+    // fmt layer is always present for structured log output.
+    let otel_layer = tracing_opentelemetry::layer();
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(&config.log_level));
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_target(true)
+                .with_thread_ids(true),
         )
-        .json()
-        .with_target(true)
-        .with_thread_ids(true)
+        .with(otel_layer)
         .init();
 
     info!(
