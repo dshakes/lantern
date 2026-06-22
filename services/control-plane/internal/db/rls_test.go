@@ -383,3 +383,346 @@ func queryRunCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenant
 	}
 	return count
 }
+
+// ---------------------------------------------------------------------------
+// TestRLSEnforcement_CutoverPaths proves that the handlers that were cut over
+// to TenantPool() + setRLSTenantID still work correctly under RLS enforcement:
+//
+//  (a) same-tenant reads STILL WORK — the GUC is set, so the tenant sees its
+//      own data (the critical regression test: not returning zero rows).
+//  (b) cross-tenant reads are DENIED — tenant B cannot see tenant A's rows.
+//  (c) the PRIVILEGED pool (recovery / system paths) still bypasses RLS and
+//      sees all rows — system sweeps unaffected.
+//  (d) WithTenantConn helper: same-tenant write + read round-trips correctly.
+//
+// This mirrors exactly what happens in handlers/agents.go CreateAgent /
+// GetAgent / ListAgents / DeleteAgent and handlers/runs.go CreateRun /
+// CancelRun / GetRun / ListRuns after the TenantPool() cutover, because those
+// handlers call setRLSTenantID (set_config) inside a transaction on TenantPool
+// (which becomes lantern_app when LANTERN_RLS_ENFORCE=1).
+// ---------------------------------------------------------------------------
+
+// TestRLSEnforcement_CutoverPaths_Agents is the same-tenant-still-works proof
+// for the agents table, exercising the pattern used by agents.go after cutover.
+func TestRLSEnforcement_CutoverPaths_Agents(t *testing.T) {
+	superPool := openSuperPool(t)
+	ctx := context.Background()
+
+	if err := db.Migrate(ctx, superPool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	tenantA := uuid.New().String()
+	tenantB := uuid.New().String()
+	seedRLSTenant(t, superPool, tenantA)
+	seedRLSTenant(t, superPool, tenantB)
+
+	agentName := "cutover-agent-" + tenantA[:8]
+
+	// Insert via lantern_app role (simulating TenantPool when enforcement is on).
+	err := runAsAppRole(superPool, ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantA); err != nil {
+			return fmt.Errorf("set_config tenantA: %w", err)
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO agents (tenant_id, name, description, labels)
+			VALUES ($1::uuid, $2, 'cutover proof', '{}')
+			ON CONFLICT (tenant_id, name) DO NOTHING
+		`, tenantA, agentName)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("insert agent via lantern_app: %v", err)
+	}
+
+	// (a) Same-tenant read still works — the GUC is set correctly.
+	t.Run("SameTenant_ReadsOwnRow", func(t *testing.T) {
+		count := queryAgentCount(t, superPool, ctx, tenantA, agentName)
+		if count != 1 {
+			t.Errorf("same-tenant: expected 1 visible row, got %d — GUC set but row invisible (regression: path returns 0 rows)", count)
+		}
+	})
+
+	// (b) Cross-tenant read is denied by RLS.
+	t.Run("CrossTenant_Denied", func(t *testing.T) {
+		count := queryAgentCount(t, superPool, ctx, tenantB, agentName)
+		if count != 0 {
+			t.Errorf("SECURITY VIOLATION: tenant B sees %d row(s) belonging to tenant A — RLS not enforced on agents after cutover", count)
+		}
+	})
+
+	// (c) Privileged pool bypasses RLS — recovery / system paths unaffected.
+	t.Run("PrivilegedPool_BypassesRLS", func(t *testing.T) {
+		var count int
+		if err := superPool.QueryRow(ctx,
+			"SELECT COUNT(*) FROM agents WHERE name = $1", agentName,
+		).Scan(&count); err != nil {
+			t.Fatalf("privileged pool query: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("privileged pool: expected 1 row (bypass RLS), got %d — system paths may be broken", count)
+		}
+	})
+
+	// (d) WithTenantConn write + read round-trip.
+	t.Run("WithTenantConn_WriteReadRoundTrip", func(t *testing.T) {
+		name2 := "cutover-agent2-" + tenantA[:8]
+		t.Cleanup(func() {
+			_, _ = superPool.Exec(context.Background(), "DELETE FROM agents WHERE name = $1 AND tenant_id = $2::uuid", name2, tenantA)
+		})
+		// Write.
+		err := db.WithTenantConn(ctx, superPool, tenantA, func(tx pgx.Tx) error {
+			// Drop to lantern_app to prove RLS is active (same as TenantPool).
+			if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
+				return fmt.Errorf("SET LOCAL ROLE: %w", err)
+			}
+			_, err := tx.Exec(ctx, `
+				INSERT INTO agents (tenant_id, name, description, labels)
+				VALUES ($1::uuid, $2, 'withtenant proof', '{}')
+				ON CONFLICT (tenant_id, name) DO NOTHING
+			`, tenantA, name2)
+			return err
+		})
+		if err != nil {
+			t.Fatalf("WithTenantConn write: %v", err)
+		}
+		// Read back — same-tenant still sees it.
+		count := queryAgentCount(t, superPool, ctx, tenantA, name2)
+		if count != 1 {
+			t.Errorf("WithTenantConn round-trip: expected 1, got %d — write succeeded but read returned 0 (GUC regression)", count)
+		}
+		// Cross-tenant cannot see it.
+		count = queryAgentCount(t, superPool, ctx, tenantB, name2)
+		if count != 0 {
+			t.Errorf("SECURITY VIOLATION: cross-tenant sees WithTenantConn-written row: got %d", count)
+		}
+	})
+}
+
+// TestRLSEnforcement_CutoverPaths_Runs is the same-tenant-still-works proof
+// for the runs table, exercising the pattern used by runs.go after cutover.
+func TestRLSEnforcement_CutoverPaths_Runs(t *testing.T) {
+	superPool := openSuperPool(t)
+	ctx := context.Background()
+
+	if err := db.Migrate(ctx, superPool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	tenantA := uuid.New().String()
+	tenantB := uuid.New().String()
+	seedRLSTenant(t, superPool, tenantA)
+	seedRLSTenant(t, superPool, tenantB)
+
+	// Seed agent + version for FK.
+	agentID := uuid.New().String()
+	agentVersionID := uuid.New().String()
+	agentName := "cutover-run-agent-" + tenantA[:8]
+	_, err := superPool.Exec(ctx, `
+		INSERT INTO agents (id, tenant_id, name, description, labels)
+		VALUES ($1::uuid, $2::uuid, $3, 'cutover run proof', '{}')
+		ON CONFLICT (tenant_id, name) DO NOTHING
+	`, agentID, tenantA, agentName)
+	if err != nil {
+		t.Fatalf("insert agent: %v", err)
+	}
+	_, err = superPool.Exec(ctx, `
+		INSERT INTO agent_versions (id, agent_id, version, digest, bundle_uri, manifest)
+		VALUES ($1::uuid, $2::uuid, '1', 'sha256:cutover', 's3://test', '{}'::jsonb)
+		ON CONFLICT (id) DO NOTHING
+	`, agentVersionID, agentID)
+	if err != nil {
+		t.Fatalf("insert agent_version: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = superPool.Exec(context.Background(), "DELETE FROM agents WHERE id = $1::uuid", agentID)
+	})
+
+	// CreateRun-style insert via lantern_app (TenantPool() pattern).
+	runID := uuid.New().String()
+	err = runAsAppRole(superPool, ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantA); err != nil {
+			return fmt.Errorf("set_config: %w", err)
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO runs (id, tenant_id, agent_id, agent_version_id, status, trigger_kind, input)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'queued', 'api', '{}'::jsonb)
+			ON CONFLICT (id) DO NOTHING
+		`, runID, tenantA, agentID, agentVersionID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("insert run via lantern_app: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = superPool.Exec(context.Background(), "DELETE FROM runs WHERE id = $1::uuid", runID)
+	})
+
+	// (a) Same-tenant can read its own run (the critical regression test).
+	t.Run("SameTenant_ReadsOwnRun", func(t *testing.T) {
+		count := queryRunCount(t, superPool, ctx, tenantA, runID)
+		if count != 1 {
+			t.Errorf("same-tenant: expected 1 visible row, got %d — GUC set but run invisible (regression: path returns 0 rows after cutover)", count)
+		}
+	})
+
+	// (b) Cross-tenant read denied.
+	t.Run("CrossTenant_Denied", func(t *testing.T) {
+		count := queryRunCount(t, superPool, ctx, tenantB, runID)
+		if count != 0 {
+			t.Errorf("SECURITY VIOLATION: tenant B sees %d run(s) belonging to tenant A — RLS not enforced on runs after cutover", count)
+		}
+	})
+
+	// (c) Privileged pool bypasses RLS (recovery sweeps unaffected).
+	t.Run("PrivilegedPool_BypassesRLS", func(t *testing.T) {
+		var count int
+		if err := superPool.QueryRow(ctx,
+			"SELECT COUNT(*) FROM runs WHERE id = $1::uuid", runID,
+		).Scan(&count); err != nil {
+			t.Fatalf("privileged pool query: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("privileged pool: expected 1 row (bypass RLS), got %d — recovery sweeps may be broken", count)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestRLSEnforcement_WithTenantConn_HandlerPattern is the handler-path test
+// the security review required.
+//
+// It exercises db.WithTenantConn EXACTLY as the fixed REST handlers use it
+// (rest.go UpdateAgent, GetAgent ext-cols, DeleteRun, SaveWorkflow, GetWorkflow,
+// ListRuns/GetRun enrichment) and proves:
+//
+//	(a) same-tenant read RETURNS THE ROW (not zero) when the GUC is set via
+//	    WithTenantConn — this is the critical regression the bare TenantPool()
+//	    call without GUC would fail on under enforcement.
+//	(b) cross-tenant read via WithTenantConn returns ZERO ROWS (RLS denies).
+//	(c) a bare TenantPool() call WITHOUT WithTenantConn (the broken pre-fix
+//	    pattern) returns ZERO ROWS even for the same tenant — proving the GUC
+//	    is required and was the root cause.
+//
+// The test uses SET LOCAL ROLE lantern_app to simulate LANTERN_RLS_ENFORCE=1
+// (the TenantPool connecting as the non-superuser role) without needing a
+// separate DSN.
+// ---------------------------------------------------------------------------
+func TestRLSEnforcement_WithTenantConn_HandlerPattern(t *testing.T) {
+	superPool := openSuperPool(t)
+	ctx := context.Background()
+
+	if err := db.Migrate(ctx, superPool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	tenantA := uuid.New().String()
+	tenantB := uuid.New().String()
+	seedRLSTenant(t, superPool, tenantA)
+	seedRLSTenant(t, superPool, tenantB)
+
+	agentName := "handler-pattern-" + tenantA[:8]
+
+	// Seed the agent row using the superuser pool (bypasses RLS for setup).
+	_, err := superPool.Exec(ctx, `
+		INSERT INTO agents (tenant_id, name, description, labels)
+		VALUES ($1::uuid, $2, 'handler pattern test', '{}')
+		ON CONFLICT (tenant_id, name) DO NOTHING
+	`, tenantA, agentName)
+	if err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = superPool.Exec(context.Background(),
+			"DELETE FROM agents WHERE name = $1 AND tenant_id = $2::uuid", agentName, tenantA)
+	})
+
+	// appRolePool simulates TenantPool() under LANTERN_RLS_ENFORCE=1 by using
+	// SET LOCAL ROLE inside each WithTenantConn transaction. In production the
+	// pool itself connects as lantern_app; here we use superPool + SET LOCAL ROLE
+	// to achieve the same effect without needing a separate DSN in CI.
+	//
+	// withEnforcement wraps WithTenantConn and drops to lantern_app inside the
+	// closure — identical to what TenantPool() + WithTenantConn does at runtime.
+	withEnforcement := func(tenantID string, fn func(pgx.Tx) error) error {
+		return db.WithTenantConn(ctx, superPool, tenantID, func(tx pgx.Tx) error {
+			// Drop to the non-superuser role so the RLS policies are evaluated.
+			if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
+				return fmt.Errorf("SET LOCAL ROLE: %w", err)
+			}
+			return fn(tx)
+		})
+	}
+
+	// -------------------------------------------------------------------------
+	// (a) CRITICAL: same-tenant read via WithTenantConn returns the row.
+	//     This is the regression that the bare TenantPool().QueryRow() call
+	//     (without GUC) would fail: it returns 0 rows even for the owner.
+	// -------------------------------------------------------------------------
+	t.Run("SameTenant_WithTenantConn_ReturnsRow", func(t *testing.T) {
+		var count int
+		err := withEnforcement(tenantA, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx,
+				"SELECT COUNT(*) FROM agents WHERE tenant_id = $1::uuid AND name = $2",
+				tenantA, agentName,
+			).Scan(&count)
+		})
+		if err != nil {
+			t.Fatalf("WithTenantConn same-tenant query: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("REGRESSION: same-tenant WithTenantConn returned %d rows, want 1 — GUC not being set or RLS not enforced correctly", count)
+		}
+	})
+
+	// -------------------------------------------------------------------------
+	// (b) Cross-tenant read via WithTenantConn returns ZERO ROWS (RLS denies).
+	// -------------------------------------------------------------------------
+	t.Run("CrossTenant_WithTenantConn_Denied", func(t *testing.T) {
+		var count int
+		err := withEnforcement(tenantB, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx,
+				"SELECT COUNT(*) FROM agents WHERE name = $1",
+				agentName,
+			).Scan(&count)
+		})
+		if err != nil {
+			t.Fatalf("WithTenantConn cross-tenant query: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("SECURITY VIOLATION: cross-tenant WithTenantConn returned %d rows, want 0 — RLS not enforced", count)
+		}
+	})
+
+	// -------------------------------------------------------------------------
+	// (c) Bare pool call WITHOUT WithTenantConn (the pre-fix broken pattern)
+	//     returns ZERO ROWS even for the same tenant — proving the GUC is what
+	//     makes the difference, and why the fix (WithTenantConn) is necessary.
+	// -------------------------------------------------------------------------
+	t.Run("BarePoolWithoutGUC_ReturnsZero_ProvesFix_Necessary", func(t *testing.T) {
+		// Simulate the broken pre-fix pattern: lantern_app role but NO set_config.
+		tx, err := superPool.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin tx: %v", err)
+		}
+		defer tx.Rollback(ctx) //nolint:errcheck
+
+		if _, err := tx.Exec(ctx, "SET LOCAL ROLE lantern_app"); err != nil {
+			t.Fatalf("SET LOCAL ROLE: %v", err)
+		}
+		// GUC deliberately NOT set — this is the pre-fix bug.
+
+		var count int
+		if err := tx.QueryRow(ctx,
+			"SELECT COUNT(*) FROM agents WHERE tenant_id = $1::uuid AND name = $2",
+			tenantA, agentName,
+		).Scan(&count); err != nil {
+			t.Fatalf("bare pool query: %v", err)
+		}
+		// The RLS policy evaluates current_setting('app.tenant_id', true) which
+		// returns '' → matches nothing → 0 rows even for the row's own owner.
+		if count != 0 {
+			t.Errorf("expected 0 rows without GUC (proves the fix is necessary), got %d — RLS policy may not be active on this DB", count)
+		}
+	})
+}

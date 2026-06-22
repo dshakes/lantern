@@ -37,6 +37,11 @@ func (s *RunService) logger() *zap.Logger {
 
 // CreateRun validates the request, inserts a run row with status=queued, and
 // returns the Run proto. Workflow engine dispatch is not implemented yet.
+//
+// Uses TenantPool() — the RLS-enforcing pool when LANTERN_RLS_ENFORCE=1
+// (lantern_app role, subject to the tenant_isolation_runs policy); otherwise
+// Pool (zero behaviour change). The WHERE tenant_id = $1 clause remains the
+// primary correctness guard; RLS is defence-in-depth.
 func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequest) (*lanternv1.Run, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
@@ -47,7 +52,9 @@ func (s *RunService) CreateRun(ctx context.Context, req *lanternv1.CreateRunRequ
 		return nil, status.Error(codes.InvalidArgument, "agent_name is required")
 	}
 
-	tx, err := s.srv.Pool.Begin(ctx)
+	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// LANTERN_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
+	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to begin transaction: %v", err)
 	}
@@ -301,6 +308,9 @@ func (s *RunService) ListRuns(ctx context.Context, req *lanternv1.ListRunsReques
 }
 
 // CancelRun sets a run's status to cancelled.
+//
+// Uses TenantPool() — the RLS-enforcing pool when LANTERN_RLS_ENFORCE=1;
+// otherwise Pool (zero behaviour change).
 func (s *RunService) CancelRun(ctx context.Context, req *lanternv1.CancelRunRequest) (*lanternv1.Run, error) {
 	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
@@ -311,7 +321,9 @@ func (s *RunService) CancelRun(ctx context.Context, req *lanternv1.CancelRunRequ
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
 
-	tx, err := s.srv.Pool.Begin(ctx)
+	// TenantPool: routes to lantern_app (non-superuser, RLS-enforced) when
+	// LANTERN_RLS_ENFORCE=1, otherwise aliases to Pool (zero behaviour change).
+	tx, err := s.srv.TenantPool().Begin(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to begin transaction: %v", err)
 	}

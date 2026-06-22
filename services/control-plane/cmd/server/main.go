@@ -650,6 +650,37 @@ func main() {
 	logger.Info("control-plane shut down cleanly")
 }
 
+// rlsGuardDecision evaluates whether the RLS enforcement env vars are correctly
+// configured for a production environment.
+//
+// It returns (fatal bool, message string). When fatal is true, main.go should
+// call logger.Fatal with message; the caller decides — this keeps the function
+// pure and testable without triggering os.Exit in tests.
+//
+// Rules:
+//   - prod (LANTERN_ENV=prod/production/staging): FATAL when either
+//     LANTERN_RLS_ENFORCE != "1" or LANTERN_APP_DB_PASSWORD is empty.
+//     A prod server that does not connect as lantern_app could silently leak
+//     data across tenants if a WHERE clause is forgotten.
+//   - dev (LANTERN_ENV unset): optional; returns fatal=false with a warn
+//     message so the caller can log a WARN and continue.
+func rlsGuardDecision(isProd bool, rlsEnforce, appPwd string) (fatal bool, message string) {
+	if isProd {
+		if rlsEnforce != "1" {
+			return true, "LANTERN_RLS_ENFORCE is not set to '1' — production refuses to start without RLS enforcement; set LANTERN_RLS_ENFORCE=1 and LANTERN_APP_DB_PASSWORD"
+		}
+		if appPwd == "" {
+			return true, "LANTERN_APP_DB_PASSWORD is unset — production refuses to start without the lantern_app role password; set LANTERN_APP_DB_PASSWORD to enable RLS enforcement"
+		}
+		return false, ""
+	}
+	// Dev: advisory only.
+	if rlsEnforce != "1" || appPwd == "" {
+		return false, "LANTERN_RLS_ENFORCE is unset or LANTERN_APP_DB_PASSWORD is missing — RLS not enforced at runtime (acceptable in dev; required in production)"
+	}
+	return false, ""
+}
+
 // runStartupGuards enforces fail-closed security checks before the server
 // starts accepting traffic.
 //
@@ -692,6 +723,19 @@ func runStartupGuards(logger *zap.Logger) {
 	}
 	if !prod && !encEnabled {
 		logger.Warn("LANTERN_CREDENTIAL_KEY is unset — connector credentials stored in plaintext (acceptable in dev, required in production)")
+	}
+
+	// G1 — RLS enforcement (multi-tenant isolation, invariant #7)
+	// Production must connect as the non-superuser 'lantern_app' role so that
+	// Postgres enforces the tenant_isolation_{agents,runs} RLS policies even if
+	// a handler forgets a WHERE clause.  Dev is advisory-only so `make dev`
+	// works without any DB role management.
+	rlsFatal, rlsMsg := rlsGuardDecision(prod, os.Getenv("LANTERN_RLS_ENFORCE"), os.Getenv("LANTERN_APP_DB_PASSWORD"))
+	if rlsFatal {
+		logger.Fatal(rlsMsg)
+	}
+	if rlsMsg != "" {
+		logger.Warn(rlsMsg)
 	}
 }
 
