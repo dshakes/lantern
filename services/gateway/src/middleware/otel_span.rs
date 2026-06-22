@@ -1,14 +1,24 @@
-// Middleware that enriches the current tracing span with tenant and request
-// identifiers extracted from authenticated requests.
+// Middleware that opens a per-request tracing span carrying the tenant identifier
+// and parented to any inbound W3C TraceContext, so gateway requests join the
+// caller's distributed trace instead of starting a fresh root every time.
 //
-// This runs after the `AuthLayer` has inserted `Claims` into the request
-// extensions, so `tenant_id` is available.  It also extracts W3C TraceContext
-// from inbound HTTP headers so upstream trace ids are honoured rather than
-// starting a fresh root span for every gateway request.
+// It runs after `AuthLayer` has inserted `Claims` into the request extensions,
+// so `tenant_id` is available. Two things this layer must get right (an earlier
+// version got both wrong):
+//
+//   1. The span DECLARES `tenant_id` up front (`field::Empty`). `Span::record`
+//      silently drops a field that wasn't declared at span creation, so
+//      recording onto `TraceLayer`'s default span (which declares nothing) was
+//      a no-op. We own the span here, with the field declared, then record it.
+//   2. The inbound context is attached via `set_parent`, not merely extracted.
+//      Extracting and dropping the context (as before) never propagated the
+//      upstream trace id. `set_parent` makes this span a child of the remote
+//      span; with no `traceparent` header the extracted context is empty and
+//      the span is a normal root.
 //
 // Placement in the stack:
-//   SetRequestIdLayer → PropagateRequestIdLayer → TraceLayer (opens span)
-//     → CorsLayer → AuthLayer (inserts Claims) → OtelSpanLayer (enriches span)
+//   SetRequestIdLayer → PropagateRequestIdLayer → TraceLayer
+//     → CorsLayer → AuthLayer (inserts Claims) → OtelSpanLayer (opens span)
 //       → RateLimitLayer → handler
 
 use axum::body::Body;
@@ -18,7 +28,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tower::{Layer, Service};
-use tracing::Span;
+use tracing::Instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::auth::Claims;
 use crate::otel;
@@ -53,19 +64,22 @@ where
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        // Extract W3C TraceContext from inbound headers so this gateway request
-        // becomes a child of any upstream span (e.g. a caller that injected
-        // `traceparent`).  This is always a no-op when no header is present.
-        let _parent_cx = otel::extract_from_headers(req.headers());
+        // Open the request span with tenant_id declared so it can be recorded
+        // below (see the module doc for why recording onto TraceLayer's span
+        // didn't work).
+        let span = tracing::info_span!("gateway.request", tenant_id = tracing::field::Empty);
 
-        // If auth has already run (non-health-check path), record tenant_id on
-        // the current span opened by TraceLayer.
+        // Honour an inbound W3C `traceparent`: make this span a child of the
+        // upstream context. Empty context (no header) → a normal root span.
+        let parent_cx = otel::extract_from_headers(req.headers());
+        span.set_parent(parent_cx);
+
+        // Auth runs before this layer, so Claims (and tenant_id) are present on
+        // non-public routes.
         if let Some(claims) = req.extensions().get::<Claims>() {
-            let span = Span::current();
             span.record("tenant_id", claims.tenant_id.as_str());
         }
 
-        let future = self.inner.call(req);
-        Box::pin(future)
+        Box::pin(self.inner.call(req).instrument(span))
     }
 }
