@@ -1,9 +1,10 @@
 # 18 — Agent Runtime: Next-Generation Strategy & Gap Analysis
 
-- **Status:** Proposal (for review)
-- **Date:** 2026-06-18
+- **Status:** Phases 0–4 + governance **landed on `master`** (PRs #36 hardening, #38 durable
+  replay, #39 observability, #40 governance, #41 cluster-e2e). Phase 5/6 (frontier UX/interop,
+  memory + confidential compute) remain open. See §7 for per-phase detail.
+- **Date:** 2026-06-18 (status refreshed 2026-06-21)
 - **Owner:** Runtime team
-- **Branch:** `feat/agent-runtime-nextgen`
 - **Related:** [ADR 0009 — Kubernetes as default runtime substrate](../adr/0009-kubernetes-default-runtime-substrate.md), [04-runtime-isolation](04-runtime-isolation.md), [04b-microvm-productionization](04b-microvm-productionization.md), [05-workflow-engine](05-workflow-engine.md), [17-deployment-model](17-deployment-model.md)
 
 > This is a strategy + gap-analysis document, not a spec. It establishes **where the
@@ -194,10 +195,10 @@ analyst material. Treat funding figures / exact version tags as directional.
 | Capability | **AWS AgentCore** | **Google Agent Engine** | **Anthropic** | **OpenAI** | **Temporal** | **Lantern (today)** |
 |---|---|---|---|---|---|---|
 | What it *is* | Managed agent runtime (7+ composable services) | Managed serverless agent runtime | Framework (Agent SDK) + **Managed Agents (beta)** | LLM+tools+SDK; durability lib (Apr 2026) | Durable-execution engine | **Full-stack runtime + control/data plane** |
-| Per-session isolation | ✅ microVM, sanitized teardown | ✅ serverless + code-exec sandbox (no-net, 300s) | Hosted code sandbox (5GiB/1CPU/no-net); managed via Bedrock | BYO sandbox (E2B/Modal/…) | N/A (you host workers) | ✅ 6 classes; dispatch + mTLS heartbeat real; **no RuntimeClass tiering / cluster e2e yet** |
+| Per-session isolation | ✅ microVM, sanitized teardown | ✅ serverless + code-exec sandbox (no-net, 300s) | Hosted code sandbox (5GiB/1CPU/no-net); managed via Bedrock | BYO sandbox (E2B/Modal/…) | N/A (you host workers) | ✅ **RuntimeClass tiering (runc→gVisor→Kata), fail-closed gate, cluster-e2e legs (fail-closed green in CI; execution legs operator-run)** |
 | Max session | 8h | quota-limited | long/resumable (beta) | provider-dependent | days–years (durable timers) | design supports long; replay partial |
 | Durable execution | Memory persists; runtime ephemeral | Sessions GA; runtime ephemeral | server-side event log (beta) | snapshot/rehydrate (BYO compute) | ✅ **best-in-class** replay | journal_events ✅; **replay partial** |
-| Per-agent identity | IAM + workload identity | ✅ **SPIFFE + X.509-bound tokens** | Workload Identity Federation | OpenAI-cloud centric | namespaces (Cloud RBAC) | tenant_id everywhere; **no per-instance agent identity** |
+| Per-agent identity | IAM + workload identity | ✅ **SPIFFE + X.509-bound tokens** | Workload Identity Federation | OpenAI-cloud centric | namespaces (Cloud RBAC) | ✅ **per-instance Ed25519 identity, externally verifiable** (`/.well-known/lantern-agent-identity`); presented as Bearer on `VendSecret` |
 | Egress control | VPC | VPC-SC + PSC + Agent Gateway | product permissioning | — | your workers | ✅ **harness allowlist + nftables (designed)** |
 | Signed receipts/audit | CloudWatch GenAI audit | Access Transparency | RSP/ASL | dev tracing | Cloud audit = control-plane only | ✅ **HMAC receipts + journal hash** |
 | Interop | MCP + A2A | **owns A2A**; MCP | **owns MCP**; A2A | MCP (adopted) | — | MCP + A2A cards ✅ |
@@ -468,14 +469,19 @@ green now.)*
   PASS — the one ship-blocking finding (report-RPC vm_id not cert-bound) and three
   mediums (XFF-spoofable limiter, log-table retention, egress-proxy default) were fixed
   in the same pass; tenant-isolation, fail-closed isolation, and auth all verified sound.
+- ✅ *(done, PR #41)* **Cluster-e2e execution legs** (`infra/k8s/validate.sh --execution` +
+  `92/93-*-exec.yaml` + `gke-agent-sandbox-setup.sh` + a `workflow_dispatch` job gated on
+  `CLUSTER_E2E_KUBECONFIG_B64`): (g) untrusted **runs inside** gVisor (proven via
+  `/proc/version`/gvisor node), (h) hostile **runs in a Kata microVM** (guest kernel ≠ host
+  kernel), (i) the hostile node is **dedicated** (no cross-tenant co-tenancy). The always-on
+  legs (a–f: egress deny incl. `169.254.169.254`+RFC1918, securityContext, PSA, fail-closed
+  RuntimeClass refusal) run for real on kind+Calico in CI.
 **Remaining:**
-- **Cluster e2e** with gVisor + Kata actually installed: prove (a) untrusted lands on
-  gVisor, hostile on Kata; (b) a node without the class **refuses** untrusted; (c)
-  default-deny egress blocks `169.254.169.254` + RFC1918; (d) no co-tenancy for hostile.
-  (`infra/k8s/validate.sh` asserts the always-on pieces today; the gVisor/Kata leg needs
-  a cluster with those operators.)
-**Gate:** ✅ security-auditor sign-off (done) + the cluster e2e assertions above (open —
-needs a gVisor+Kata cluster in CI).
+- The **live** g/h/i run needs an operator-provided gVisor+Kata cluster — GitHub-hosted
+  runners can't (no `runsc`/`/dev/kvm`), so that job ships wired + documented and **skips
+  (never fakes green)** until a kubeconfig secret is supplied.
+**Gate:** ✅ security-auditor sign-off + ✅ the fail-closed/NetworkPolicy/securityContext/PSA
+legs green in CI + the execution legs runnable against a real cluster (operator step).
 
 ### Phase 2 — Governance to clear the Google bar
 **Status:**
@@ -502,10 +508,18 @@ needs a gVisor+Kata cluster in CI).
   (`LANTERN_AGENT_INSTANCE_{ID,TOKEN}`), persisted on `runtime_vms`, stamped on
   `runtime_audit_events`, and verified by the secret relay when presented as a Bearer
   token (cross-checked to vm_id+tenant+non-terminal; additive/backward-compatible).
-  *Follow-up:* manager/harness wiring to actually present the Bearer token on
-  `VendSecret`; consider migrating the signature to SPIFFE SVID / Ed25519 for external
-  verification, and stamp `agent_instance_id` on tool-call spans.
-- ✅ *(done, this branch)* **Non-owner Postgres role (`lantern_app`) with RLS proven** — cross-tenant reads denied; **validated against real Postgres** (`TestRLSEnforcement_CrossTenant`). Follow-up: cut the app DSN over to `lantern_app` and ensure every `agents`/`runs` read path sets the `app.tenant_id` GUC.
+  ✅ *(done, PR #36)* manager/harness now **present the Bearer on `VendSecret`** (harness
+  reads `LANTERN_AGENT_INSTANCE_TOKEN` → `authorization` metadata → manager forwards to the
+  relay). ✅ *(done, PR #40)* the identity signature can now be **Ed25519** (externally
+  verifiable, public key at `/.well-known/lantern-agent-identity`), additive over HS256 —
+  the alg-confusion surface is defended (a published public key can't be used as an HMAC
+  secret). *Follow-up:* stamp `agent_instance_id` on tool-call spans; SPIFFE SVID issuance.
+- ✅ *(done, PR #40)* **Non-owner Postgres role (`lantern_app`) RLS cutover machinery** —
+  dual-pool (`AppPool`) + `db.WithTenantConn` (tx-local `app.tenant_id` GUC) + gRPC
+  RunService cut over as the representative path; cross-tenant denial proven against real
+  Postgres. **Flag-gated OFF** (`LANTERN_RLS_ENFORCE`) so the live app is untouched. Follow-up:
+  the per-handler REST cutover (mechanical, `TODO(rls-cutover)`-marked) + flip the flag after
+  staging validation.
 **Gate:** security-auditor review; tests for (a) cross-tenant identity isolation;
 (b) ✅ a missing scope → 403 on every mutating route; (c) RLS denies a non-owner read;
 (d) ✅ external receipt verification with the published public key; (e) ✅ approval node
@@ -515,16 +529,23 @@ blocks until granted; (f) a spec with a mismatched body tenant_id is rejected.
 **Status:**
 - ✅ *(done, this branch)* **Loop + subagent interpreter nodes** execute (loop with
   max-iteration cap + per-iteration journal events; subagent via a `RunSubAgent` dep).
+- ✅ *(done, PR #38)* **Journal-based crash replay wired into the run executor** — the
+  plain-LLM path checks `journal_events` for a cached `step_completed` and reuses it on
+  replay (no LLM re-call → **no re-spent tokens**); a **run lease** (`run_locks`, worker-id,
+  heartbeat-renewed) prevents concurrent double-execution; external sends dedup via
+  `side_effect_receipts` (idempotency key from `(run_id,step_id,attempt)`) → **no double
+  side-effect**; a periodic **recovery watchdog** re-drives orphans.
+- ✅ *(done, PR #38)* **Scheduler HA** proven (Postgres advisory-lock leader election +
+  `Resign()` failover test) and **per-tenant spawn rate limiting** (token bucket, 429 before
+  any work side-effect) wired into CreateRun + runtime Schedule.
 **Remaining:**
-- Wire journal-based crash replay into the run executor (resume from last
-  `step_completed`, dedup side-effects by idempotency key).
 - Production `rest.go` wiring of the subagent `RunSubAgent` dep to `POST /v1/runs`.
-- Automatic failure detection + recovery watchdog (close checkpoint≠durable gap).
-- Scheduler HA (etcd leader election) deployed; per-spawn rate limiting.
-**Gate:** chaos/integration tests — kill the executor mid-run and assert exactly-once
-completion + no double side-effect + no re-spent tokens; kill the scheduler leader and
-assert failover < N s; spawn-storm test asserts the rate limit holds. Publish measured
-SLOs.
+- Publish measured SLOs.
+**Gate:** ✅ chaos/integration tests — the DB-backed crash-replay suite (exactly-once /
+no-respend / no-double-side-effect / no-concurrent-exec, with teeth checks + a self-deadlock
+regression) + leader-failover test, all green on a fresh DB under `-race`. *(The security
+audit caught — and we fixed — a self-deadlock that would have left plain-LLM runs unrecovered
+and an abandoned-run-in-'running' JSON bug; both regression-tested.)*
 
 ### Phase 4 — Observability + cost (FinOps for agents)
 **Status:**
@@ -534,14 +555,22 @@ SLOs.
   output_tokens`, `lantern.cost_usd`) and a `runtime.schedule` span carrying
   `tenant_id/run_id/agent_version_id/agent_instance_id/isolation_class/vm_id`. Tested
   with an in-memory span recorder.
+- ✅ *(done, PR #39)* **W3C trace context across the spawn chain** — control-plane already
+  injected via otelgrpc; the Rust manager+harness now **extract** `traceparent` on inbound
+  gRPC and **inject** downstream (manager→harness via the VM env + Heartbeat/VendSecret),
+  populating `trace_id` on the report payload → **one trace per spawn**. OTel is env-gated
+  no-op by default. (Forged `traceparent` is non-trust-bearing — confirmed by audit.)
+- ✅ *(done, PR #39)* **Real-time loop/retry anomaly detection** (emit `anomaly_detected`
+  mid-run, deduped per kind, not just at run end); **per-step token+cost incl. reasoning
+  (OpenAI o-series) + cache_read/creation (Anthropic) tokens** in the journal + GenAI span;
+  **`eval_result`** journal events (tenant-ownership-gated after the audit caught a
+  cross-tenant poisoning hole); **`GET /v1/runtime/metrics`** populates the cockpit Live mode.
 **Remaining:**
-- Propagate spans across scheduler/manager/harness (W3C context) + scheduler/
-  control-plane runtime metrics.
-- Loop/retry anomaly detection as a first-class incident class; per-step token+cost
-  (reasoning + cache tokens) in the journal; inline `gen_ai.evaluation.result`.
-**Gate:** trace-completeness test (every step emits a conformant span with required
-attrs); a synthetic looping agent fires the loop-detection signal; cost attribution
-reconciles to the model-router meter within tolerance.
+- Forward the harness OTLP/Prometheus stream to a collector for the full FinOps dashboard
+  (the ingestion endpoint + per-VM metrics store exist; collector wiring is the last mile).
+**Gate:** ✅ per-step token/cost present in the journal; ✅ a synthetic looping agent fires
+the mid-run loop signal; ✅ trace-context round-trip proven across a hop; fresh-DB `-race`
+green incl. the cross-tenant + eviction regressions.
 
 ### Phase 5 — Frontier UX + interop (2-years-ahead)
 **Scope:**
