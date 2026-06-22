@@ -80,32 +80,54 @@ Anomaly kinds: `loop_detected` (same step started more than N times in a window)
 
 ## `GET /v1/runtime/metrics`
 
-Returns per-VM and per-tenant runtime metrics for the dashboard's Live cockpit mode:
+Returns a JSON array of per-VM objects for the caller's tenant, combining
+the `runtime_vms` shadow row with the most-recent audit event and any
+Prometheus text the in-VM harness has forwarded. Used by the dashboard's
+Live cockpit mode.
 
 ```bash
 curl http://localhost:8080/v1/runtime/metrics \
   -H "Authorization: Bearer $LANTERN_API_TOKEN"
 ```
 
-Response shape (abridged):
+Response — an array of `vmMetricsDTO` objects:
 
 ```json
-{
-  "active_vms": 3,
-  "scheduled_today": 47,
-  "quota_used_pct": 62,
-  "vms": [
-    {
-      "vm_id": "vm_01abc",
-      "state": "running",
-      "isolation_class": "standard",
-      "cpu_pct": 12.4,
-      "mem_mib": 38,
-      "elapsed_secs": 14
-    }
-  ]
-}
+[
+  {
+    "vmId": "vm_01abc",
+    "state": "running",
+    "node": "node-1",
+    "az": "us-east-1a",
+    "isolationClass": "standard",
+    "createdAt": "2026-06-21T10:00:00Z",
+    "terminatedAt": null,
+    "lastAuditAction": "spawn",
+    "lastAuditAt": "2026-06-21T10:00:01Z",
+    "promMetrics": "# raw Prometheus exposition text from harness\n...",
+    "promReceivedAt": "2026-06-21T10:00:15Z"
+  }
+]
 ```
+
+Field notes:
+
+| Field | Type | Description |
+|---|---|---|
+| `vmId` | string | VM identifier |
+| `state` | string | `scheduled`, `running`, `terminated`, `failed` |
+| `node` | string? | Scheduler placement node (omitted if unassigned) |
+| `az` | string? | Availability zone (omitted if unknown) |
+| `isolationClass` | string? | `trusted`, `standard`, `untrusted`, `hostile`, `wasm`, `devcontainer` |
+| `createdAt` | RFC3339 | When the VM row was created |
+| `terminatedAt` | RFC3339? | Set when the VM stops; omitted while running |
+| `lastAuditAction` | string? | Most-recent audit event action for a quick status read |
+| `lastAuditAt` | RFC3339? | Timestamp of that audit event |
+| `promMetrics` | string? | Raw Prometheus exposition text last forwarded by the harness; empty until received or after termination |
+| `promReceivedAt` | RFC3339? | When `promMetrics` was last updated |
+
+Per-instance detail (spec, full audit log) is at `GET /v1/runtime/vms/{id}`.
+Aggregate quota usage is at `GET /v1/runtime/quota`.
 
 ## Querying a run by trace
 
@@ -137,8 +159,8 @@ token, cert-bound, fail-closed). Logs land in `runtime_vm_logs` with retention
 sweeping and are immediately available via:
 
 ```bash
-lantern logs --vm=<vm_id> -f
-# or
+lantern vm logs <vm_id>
+# or via REST
 curl -N http://localhost:8080/v1/runtime/vms/<vm_id>/logs \
   -H "Authorization: Bearer $LANTERN_API_TOKEN"
 ```
