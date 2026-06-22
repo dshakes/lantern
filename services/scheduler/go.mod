@@ -2,6 +2,8 @@ module github.com/dshakes/lantern/services/scheduler
 
 go 1.23
 
+toolchain go1.26.4
+
 require (
 	github.com/jackc/pgx/v5 v5.7.4
 	github.com/redis/go-redis/v9 v9.7.3

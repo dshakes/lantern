@@ -2,6 +2,8 @@ module github.com/dshakes/lantern/services/data-plane-agent
 
 go 1.23
 
+toolchain go1.26.4
+
 require (
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.1
 	go.opentelemetry.io/otel v1.35.0

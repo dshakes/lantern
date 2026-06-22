@@ -2,6 +2,8 @@ module github.com/dshakes/lantern/services/billing
 
 go 1.23
 
+toolchain go1.26.4
+
 require (
 	github.com/jackc/pgx/v5 v5.7.4
 	go.opentelemetry.io/otel v1.35.0
