@@ -205,7 +205,7 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(m.manifest, '{}'::jsonb)
 		FROM marketplace_agents m
 		LEFT JOIN agents a ON a.id = m.source_agent_id
-		WHERE m.slug = $1
+		WHERE m.slug = $1 AND m.unpublished_at IS NULL
 	`, slug).Scan(&sellerTenant, &agentName, &manifestRaw)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "marketplace agent not found"})
