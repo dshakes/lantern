@@ -1,0 +1,129 @@
+{{- if .Values.backup.enabled }}
+# Opt-in logical backup for the IN-CLUSTER Postgres: pg_dump on a schedule, gzipped,
+# uploaded to S3 (or MinIO), with retention pruning. NOT a substitute for managed-Postgres
+# PITR — for prod use externalDatabase + a managed instance. Restore: docs/runbooks/db-restore.md.
+#
+# Two-step pod: an initContainer dumps the DB to a shared emptyDir (so the dump never
+# touches a PVC), then the main container uploads it and prunes old dumps.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "lantern-cp.fullname" . }}-pg-backup
+  labels:
+    {{- include "lantern-cp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pg-backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "lantern-cp.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: pg-backup
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+          volumes:
+            - name: dump
+              emptyDir: {}
+          initContainers:
+            # 1) pg_dump → /dump/lantern-<ts>.sql.gz
+            - name: pg-dump
+              image: {{ .Values.backup.image | quote }}
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: PGHOST
+                  value: {{ if .Values.externalDatabase.enabled }}{{ .Values.externalDatabase.host | quote }}{{ else }}"{{ include "lantern-cp.fullname" . }}-postgresql"{{ end }}
+                - name: PGPORT
+                  value: {{ if .Values.externalDatabase.enabled }}{{ .Values.externalDatabase.port | quote }}{{ else }}"5432"{{ end }}
+                - name: PGDATABASE
+                  value: {{ if .Values.externalDatabase.enabled }}{{ .Values.externalDatabase.database | quote }}{{ else }}{{ .Values.postgresql.auth.database | quote }}{{ end }}
+                - name: PGUSER
+                  value: {{ if .Values.externalDatabase.enabled }}{{ .Values.externalDatabase.user | quote }}{{ else }}{{ .Values.postgresql.auth.username | quote }}{{ end }}
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ if .Values.externalDatabase.enabled }}{{ .Values.externalDatabase.existingSecret | quote }}{{ else }}"{{ include "lantern-cp.fullname" . }}-secrets"{{ end }}
+                      key: {{ if .Values.externalDatabase.enabled }}{{ .Values.externalDatabase.existingSecretPasswordKey | quote }}{{ else }}"postgresPassword"{{ end }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+                  out="/dump/lantern-${ts}.sql.gz"
+                  echo "[pg-backup] dumping ${PGDATABASE} on ${PGHOST}:${PGPORT} → ${out}"
+                  pg_dump --no-owner --no-privileges --clean --if-exists | gzip -9 > "${out}"
+                  echo "[pg-backup] dump complete: $(ls -lh "${out}" | awk '{print $5}')"
+                  echo "${ts}" > /dump/.ts
+              volumeMounts:
+                - name: dump
+                  mountPath: /dump
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+          containers:
+            # 2) upload to S3 + prune dumps older than retentionDays
+            - name: s3-upload
+              image: "amazon/aws-cli:2.15.17"
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: AWS_DEFAULT_REGION
+                  value: {{ .Values.backup.s3Region | quote }}
+                - name: AWS_ACCESS_KEY_ID
+                  value: {{ .Values.minio.auth.rootUser | quote }}
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{ include "lantern-cp.fullname" . }}-secrets"
+                      key: "minioPassword"
+                - name: S3_BUCKET
+                  value: {{ .Values.backup.s3Bucket | quote }}
+                - name: S3_ENDPOINT
+                  value: {{ .Values.backup.s3Endpoint | quote }}
+                - name: RETENTION_DAYS
+                  value: {{ .Values.backup.retentionDays | quote }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  ts="$(cat /dump/.ts)"
+                  f="/dump/lantern-${ts}.sql.gz"
+                  ep=""
+                  [ -n "${S3_ENDPOINT}" ] && ep="--endpoint-url ${S3_ENDPOINT}"
+                  echo "[pg-backup] uploading ${f} → s3://${S3_BUCKET}/postgres/lantern-${ts}.sql.gz"
+                  aws ${ep} s3 cp "${f}" "s3://${S3_BUCKET}/postgres/lantern-${ts}.sql.gz"
+                  # Prune objects older than RETENTION_DAYS.
+                  cutoff="$(date -u -d "-${RETENTION_DAYS} days" +%Y-%m-%d 2>/dev/null || date -u -v-${RETENTION_DAYS}d +%Y-%m-%d)"
+                  aws ${ep} s3 ls "s3://${S3_BUCKET}/postgres/" | while read -r d _ _ key; do
+                    [ -z "${key:-}" ] && continue
+                    if [ "${d}" \< "${cutoff}" ]; then
+                      echo "[pg-backup] pruning ${key} (date ${d} < ${cutoff})"
+                      aws ${ep} s3 rm "s3://${S3_BUCKET}/postgres/${key}"
+                    fi
+                  done
+                  echo "[pg-backup] done"
+              volumeMounts:
+                - name: dump
+                  mountPath: /dump
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+{{- end }}
