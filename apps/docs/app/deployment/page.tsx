@@ -11,21 +11,126 @@ export default function DeploymentPage() {
       </p>
 
       <h2 id="architecture">Architecture overview</h2>
-      <pre>
-        <code>{`┌─────────────────────────────────┐
-│  Control Plane (Lantern SaaS)   │
-│  Scheduling · Routing · UI      │
-│  Workflow engine · Billing       │
-└──────────┬──────────────────────┘
-           │ gRPC tunnel (mTLS)
-┌──────────▼──────────────────────┐
-│  Data Plane (Your VPC)          │
-│  Firecracker microVMs           │
-│  K8s / Kata pods                │
-│  Secrets · Agent data           │
-│  ← data never leaves here       │
-└─────────────────────────────────┘`}</code>
-      </pre>
+
+      {/* CP/DP split + outbound-tunnel diagram */}
+      <div style={{
+        background: "#0d0d12",
+        border: "1px solid #1e2235",
+        borderRadius: "12px",
+        padding: "1.5rem",
+        marginBottom: "1.5rem",
+        fontFamily: "var(--font-mono)",
+        fontSize: "0.75rem",
+      }}>
+        {/* Control plane box */}
+        <div style={{
+          border: "1px solid #f59e0b",
+          borderRadius: "8px",
+          padding: "0.75rem 1rem",
+          background: "#0f0e06",
+          marginBottom: "0",
+        }}>
+          <div style={{ color: "#f59e0b", fontWeight: 700, marginBottom: "0.4rem" }}>
+            Control Plane (Lantern SaaS or self-hosted)
+          </div>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+            {["Scheduling", "Routing", "Dashboard", "Workflow engine", "Billing"].map(s => (
+              <span key={s} style={{
+                background: "#1a1507",
+                border: "1px solid #78350f",
+                color: "#fbbf24",
+                borderRadius: "4px",
+                padding: "0.1rem 0.45rem",
+                fontSize: "0.65rem",
+              }}>{s}</span>
+            ))}
+          </div>
+        </div>
+
+        {/* Tunnel arrow */}
+        <div style={{ textAlign: "center", padding: "0.5rem 0", color: "#52525b" }}>
+          <div style={{ fontSize: "0.65rem", color: "#38bdf8", letterSpacing: "0.06em" }}>
+            outbound-only · gRPC (mTLS) · :50051
+          </div>
+          <div style={{ color: "#38bdf8", fontSize: "1.1rem" }}>⇅</div>
+          <div style={{ fontSize: "0.6rem", color: "#52525b" }}>
+            data plane dials OUT — no inbound ports required in your VPC
+          </div>
+        </div>
+
+        {/* Data plane box */}
+        <div style={{
+          border: "1px solid #34d399",
+          borderRadius: "8px",
+          padding: "0.75rem 1rem",
+          background: "#050f0c",
+        }}>
+          <div style={{ color: "#34d399", fontWeight: 700, marginBottom: "0.4rem" }}>
+            Data Plane (your VPC — AWS / GCP / Azure)
+          </div>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
+            {["Firecracker microVMs", "K8s / Kata pods", "Wasmtime", "devcontainer"].map(s => (
+              <span key={s} style={{
+                background: "#071a13",
+                border: "1px solid #065f46",
+                color: "#6ee7b7",
+                borderRadius: "4px",
+                padding: "0.1rem 0.45rem",
+                fontSize: "0.65rem",
+              }}>{s}</span>
+            ))}
+          </div>
+          <div style={{ color: "#10b981", fontSize: "0.65rem" }}>
+            Agent data · Secrets · Run payloads — none of this crosses the boundary
+          </div>
+        </div>
+      </div>
+
+      {/* Run routing flow */}
+      <div style={{
+        background: "#0d0d12",
+        border: "1px solid #1e2235",
+        borderRadius: "10px",
+        padding: "1rem 1.25rem",
+        marginBottom: "1.5rem",
+        fontFamily: "var(--font-mono)",
+        fontSize: "0.72rem",
+      }}>
+        <div style={{ color: "#71717a", marginBottom: "0.6rem", fontSize: "0.65rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          Run routing
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+          {[
+            { label: "POST /v1/runs", color: "#f59e0b" },
+            { label: "→" },
+            { label: "data plane connected?", color: "#38bdf8" },
+            { label: "→ YES →" },
+            { label: "dispatch via RunStream", color: "#34d399" },
+          ].map((item, i) =>
+            item.label.startsWith("→") ? (
+              <span key={i} style={{ color: "#52525b" }}>{item.label}</span>
+            ) : (
+              <span key={i} style={{
+                background: "#0f1117",
+                border: `1px solid ${item.color}`,
+                color: item.color,
+                borderRadius: "5px",
+                padding: "0.15rem 0.5rem",
+              }}>{item.label}</span>
+            )
+          )}
+        </div>
+        <div style={{ marginTop: "0.5rem", display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+          <span style={{ color: "#52525b" }}>→ NO (no plane / channel full) →</span>
+          <span style={{
+            background: "#0f1117",
+            border: "1px solid #8b5cf6",
+            color: "#8b5cf6",
+            borderRadius: "5px",
+            padding: "0.15rem 0.5rem",
+          }}>inline execution (managed-cloud fallback)</span>
+        </div>
+      </div>
 
       <h2>Deployment options</h2>
 

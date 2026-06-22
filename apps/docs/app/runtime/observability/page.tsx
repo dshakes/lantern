@@ -26,6 +26,47 @@ export default function RuntimeObservabilityPage() {
         timeline.
       </p>
 
+      {/* Trace spine diagram */}
+      <div style={{
+        background: "#0d0d12",
+        border: "1px solid #1e2235",
+        borderRadius: "12px",
+        padding: "1.5rem",
+        marginBottom: "1.5rem",
+        fontFamily: "var(--font-mono)",
+        fontSize: "0.72rem",
+      }}>
+        <div style={{ color: "#71717a", marginBottom: "1rem", fontSize: "0.65rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          Trace spine — CP → gateway → model-router → runtime → harness
+        </div>
+
+        {/* Each layer as a bar */}
+        {[
+          { label: "gateway.request", sub: "tenant_id · OTLP/HTTP", color: "#38bdf8", indent: 0 },
+          { label: "control-plane: run dispatch", sub: "tenant_id · run_id", color: "#f59e0b", indent: 1 },
+          { label: "model-router: route", sub: "tenant_id · run_id · step_id · model_used · tokens · cost_usd", color: "#8b5cf6", indent: 2 },
+          { label: "runtime-scheduler: place", sub: "node · az · isolation_class", color: "#f59e0b", indent: 3 },
+          { label: "runtime-manager: spawn", sub: "vm_id · image · runtime_class", color: "#f59e0b", indent: 3 },
+          { label: "harness (in-VM): step loop", sub: "step_id · tool_calls · tokens · cost_usd · reasoning_tokens · cache_tokens", color: "#34d399", indent: 4 },
+        ].map((layer, i) => (
+          <div key={i} style={{
+            marginLeft: `${layer.indent * 1.25}rem`,
+            marginBottom: "0.4rem",
+            borderLeft: `2px solid ${layer.color}`,
+            paddingLeft: "0.6rem",
+            paddingTop: "0.25rem",
+            paddingBottom: "0.25rem",
+          }}>
+            <span style={{ color: layer.color, fontWeight: 600 }}>{layer.label}</span>
+            <span style={{ color: "#52525b", marginLeft: "0.5rem", fontSize: "0.65rem" }}>{layer.sub}</span>
+          </div>
+        ))}
+
+        <div style={{ marginTop: "0.75rem", color: "#52525b", fontSize: "0.65rem" }}>
+          W3C traceparent propagated at every boundary · durable resume re-joins the same trace_id
+        </div>
+      </div>
+
       <h2 id="enable">Enabling OTel</h2>
       <p>
         Export is <strong>env-gated</strong>. Set the standard OTLP endpoint and
