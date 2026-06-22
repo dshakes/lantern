@@ -1,0 +1,61 @@
+# Execution leg (h)+(i): a HOSTILE workload that must run INSIDE a Kata microVM
+# on a DEDICATED, tainted node pool (no cross-tenant co-tenancy).
+#
+# Applied only by `validate.sh --execution` against a cluster where the `kata`
+# RuntimeClass (kata-qemu / kata-fc) is installed on a kata-labelled, tainted
+# node pool. The probe prints `uname -r`: a Kata microVM has its OWN guest
+# kernel, so it differs from the host node's kernel — a bare runc pod would
+# share the host kernel (identical uname), which the validator treats as a
+# fail-open isolation breach.
+#
+# The toleration matches the dedicated-pool taint the runtime-manager emits for
+# hostile workloads (lantern.dev/runtimeclass=kata:NoSchedule); the node
+# affinity pins it onto the kata-labelled pool.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hostile-kata-exec
+  namespace: lantern-t-validate
+  labels:
+    lantern.dev/run-id: run-validate-kata
+    lantern.dev/isolation: hostile
+spec:
+  runtimeClassName: kata
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: lantern.dev/runtimeclass
+                operator: In
+                values: ["kata"]
+  tolerations:
+    - key: lantern.dev/runtimeclass
+      operator: Equal
+      value: kata
+      effect: NoSchedule
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: probe
+      image: busybox:1.36
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          echo "[kata-probe] guest uname -r:"; uname -r || true
+          sleep 180
+      resources:
+        requests: { cpu: "100m", memory: "128Mi" }
+        limits: { cpu: "250m", memory: "256Mi" }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]

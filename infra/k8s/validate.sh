@@ -44,9 +44,17 @@ NS="lantern-t-validate"
 # CI mode: the GitHub workflow already created the kind+Calico cluster, so this
 # script must NOT create or tear it down — only run the assertions.
 CI_MODE=0
+# EXEC_MODE runs the gVisor/Kata *execution* legs (g/h/i) — they require a REAL
+# cluster with the gvisor + kata RuntimeClass handlers installed on labelled,
+# tainted node pools (e.g. GKE Agent Sandbox; see gke-agent-sandbox-setup.sh).
+# These legs are NOT runnable on a stock kind cluster or GitHub-hosted runners
+# (no nested virt / no runsc), so they are OFF by default. The always-on legs
+# (a–f) prove the fail-closed contract without a sandbox runtime.
+EXEC_MODE=0
 for arg in "$@"; do
   case "$arg" in
     --ci) CI_MODE=1 ;;
+    --execution) EXEC_MODE=1 ;;
   esac
 done
 RUN_LABEL="lantern.dev/run-id=run-validate-00000001"
@@ -418,6 +426,116 @@ assert_security_chart_renders() {
   fi
 }
 
+# ---- Execution legs (real gVisor/Kata cluster only; --execution) -------------
+# These prove the OTHER half of ADR-0009: not just that untrusted/hostile are
+# REFUSED without a sandbox (legs a–f), but that WITH the sandbox installed they
+# actually run INSIDE it. They need real runsc (gVisor) + Kata handlers, so they
+# only run under --execution against a cluster that advertises those classes.
+
+# assert_gvisor_execution — an UNTRUSTED pod on runtimeClassName=gvisor must RUN
+# (not be refused, not stay Pending) AND be sandboxed by gVisor, not runc.
+assert_gvisor_execution() {
+  section "(g) [execution] UNTRUSTED runs INSIDE gVisor (runsc), not on the host kernel"
+  local podyaml="$SCRIPT_DIR/manifests/92-untrusted-gvisor-exec.yaml"
+  [[ -f "$podyaml" ]] || { fail "gvisor exec manifest present" "missing $podyaml" "ship 92-untrusted-gvisor-exec.yaml"; return; }
+
+  kc -n "$NS" delete pod untrusted-gvisor-exec --ignore-not-found >/dev/null 2>&1
+  if ! kc -n "$NS" apply -f "$podyaml" >/dev/null 2>&1; then
+    fail "gvisor pod admitted" "apply rejected — is RuntimeClass 'gvisor' installed?" \
+      "Install a gVisor node pool + RuntimeClass (see gke-agent-sandbox-setup.sh)"
+    return
+  fi
+  if ! kc -n "$NS" wait --for=condition=Ready pod/untrusted-gvisor-exec --timeout=120s >/dev/null 2>&1; then
+    # It may have already Succeeded (short-lived probe) — check phase.
+    local ph; ph=$(kc -n "$NS" get pod untrusted-gvisor-exec -o jsonpath='{.status.phase}' 2>/dev/null)
+    if [[ "$ph" != "Running" && "$ph" != "Succeeded" ]]; then
+      fail "gvisor pod runs" "phase='${ph:-Pending}' — never reached Running/Succeeded" \
+        "RuntimeClass 'gvisor' handler 'runsc' missing on the node it landed on"
+      return
+    fi
+  fi
+  pass "UNTRUSTED pod runs on gVisor" "reached Running/Succeeded under runtimeClassName=gvisor"
+
+  # Proof it is REALLY gVisor: runsc presents a synthetic kernel whose
+  # /proc/version contains "gVisor". This is the canonical in-sandbox probe.
+  local ver; ver=$(kc -n "$NS" exec untrusted-gvisor-exec -- cat /proc/version 2>/dev/null || true)
+  if [[ "$ver" == *"gVisor"* || "$ver" == *"gvisor"* ]]; then
+    pass "workload is gVisor-sandboxed" "/proc/version advertises gVisor (user-space kernel, not host)"
+  else
+    # Some runsc builds don't stamp /proc/version; fall back to the node label.
+    local node; node=$(kc -n "$NS" get pod untrusted-gvisor-exec -o jsonpath='{.spec.nodeName}' 2>/dev/null)
+    local rc; rc=$(kc get node "$node" -o jsonpath='{.metadata.labels.lantern\.dev/runtimeclass}' 2>/dev/null)
+    if [[ "$rc" == "gvisor" ]]; then
+      pass "workload is gVisor-sandboxed" "node '$node' is a gvisor-labelled sandbox node (/proc/version unstamped on this runsc build)"
+    else
+      fail "workload is gVisor-sandboxed" "/proc/version has no gVisor marker and node '$node' is not gvisor-labelled" \
+        "Pod may have run on a bare runc node — FAIL-OPEN. Verify the runsc handler + node affinity."
+    fi
+  fi
+  kc -n "$NS" delete pod untrusted-gvisor-exec --ignore-not-found >/dev/null 2>&1
+}
+
+# assert_kata_execution — a HOSTILE pod on runtimeClassName=kata must run in a
+# Kata microVM, proven by the guest kernel differing from the host node kernel.
+assert_kata_execution() {
+  section "(h) [execution] HOSTILE runs INSIDE a Kata microVM (own guest kernel)"
+  local podyaml="$SCRIPT_DIR/manifests/93-hostile-kata-exec.yaml"
+  [[ -f "$podyaml" ]] || { fail "kata exec manifest present" "missing $podyaml" "ship 93-hostile-kata-exec.yaml"; return; }
+
+  kc -n "$NS" delete pod hostile-kata-exec --ignore-not-found >/dev/null 2>&1
+  if ! kc -n "$NS" apply -f "$podyaml" >/dev/null 2>&1; then
+    fail "kata pod admitted" "apply rejected — is RuntimeClass 'kata' installed?" \
+      "Install a Kata node pool + RuntimeClass (kata-qemu/kata-fc)"
+    return
+  fi
+  if ! kc -n "$NS" wait --for=condition=Ready pod/hostile-kata-exec --timeout=180s >/dev/null 2>&1; then
+    local ph; ph=$(kc -n "$NS" get pod hostile-kata-exec -o jsonpath='{.status.phase}' 2>/dev/null)
+    if [[ "$ph" != "Running" && "$ph" != "Succeeded" ]]; then
+      fail "kata pod runs" "phase='${ph:-Pending}' — never reached Running/Succeeded" \
+        "RuntimeClass 'kata' handler missing on the node it landed on"
+      return
+    fi
+  fi
+  pass "HOSTILE pod runs on Kata" "reached Running/Succeeded under runtimeClassName=kata"
+
+  # Proof it is a real microVM: the guest kernel release differs from the host
+  # node's kernel. A bare pod (runc) shares the host kernel → identical uname.
+  local node guest_k host_k
+  node=$(kc -n "$NS" get pod hostile-kata-exec -o jsonpath='{.spec.nodeName}' 2>/dev/null)
+  guest_k=$(kc -n "$NS" exec hostile-kata-exec -- uname -r 2>/dev/null || true)
+  host_k=$(kc get node "$node" -o jsonpath='{.status.nodeInfo.kernelVersion}' 2>/dev/null)
+  if [[ -n "$guest_k" && -n "$host_k" && "$guest_k" != "$host_k" ]]; then
+    pass "workload is in a Kata microVM" "guest kernel '$guest_k' != host kernel '$host_k' (separate kernel = hardware isolation)"
+  else
+    fail "workload is in a Kata microVM" "guest kernel '${guest_k:-?}' == host kernel '${host_k:-?}'" \
+      "Identical kernels mean the pod ran on the shared host kernel (runc), not a Kata microVM — FAIL-OPEN."
+  fi
+  # leg (i) reuses this pod's node; defer cleanup to assert_no_cotenancy.
+}
+
+# assert_no_cotenancy — the hostile node pool must be dedicated: no pod from a
+# DIFFERENT tenant namespace may share the node a HOSTILE workload runs on.
+assert_no_cotenancy() {
+  section "(i) [execution] HOSTILE node has NO cross-tenant co-tenancy (dedicated pool)"
+  local node; node=$(kc -n "$NS" get pod hostile-kata-exec -o jsonpath='{.spec.nodeName}' 2>/dev/null)
+  if [[ -z "$node" ]]; then
+    step "no hostile pod node recorded — skipping (leg h must run first)"
+    return
+  fi
+  # Every non-system pod on that node, with its namespace.
+  local others
+  others=$(kc get pods --all-namespaces --field-selector "spec.nodeName=$node" \
+    -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' 2>/dev/null \
+    | grep -E '^lantern-t-' | grep -v "^${NS}\$" | sort -u || true)
+  if [[ -z "$others" ]]; then
+    pass "hostile node is dedicated" "no other lantern-t-* tenant shares node '$node' (taint enforced)"
+  else
+    fail "hostile node is dedicated" "node '$node' also runs tenant ns: $(tr '\n' ' ' <<<"$others")" \
+      "HOSTILE must get a dedicated, tainted node pool — co-tenancy with another tenant is an isolation breach."
+  fi
+  kc -n "$NS" delete pod hostile-kata-exec --ignore-not-found >/dev/null 2>&1
+}
+
 # ---- Main ---------------------------------------------------------------------
 
 main() {
@@ -439,6 +557,17 @@ main() {
   assert_escalation_rejected
   assert_runtimeclass_failclosed
   assert_security_chart_renders
+
+  if [[ "$EXEC_MODE" -eq 1 ]]; then
+    assert_gvisor_execution
+    assert_kata_execution
+    assert_no_cotenancy
+  else
+    section "Execution legs (g/h/i)"
+    step "skipped — pass --execution against a real gVisor+Kata cluster to run them"
+    step "(untrusted-runs-on-gVisor · hostile-runs-in-Kata · hostile node is dedicated)"
+    step "stock kind / GitHub-hosted runners cannot: no runsc, no nested virt. See gke-agent-sandbox-setup.sh"
+  fi
 
   section "Summary"
   if [[ $FAILS -eq 0 ]]; then
