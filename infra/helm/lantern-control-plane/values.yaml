@@ -139,6 +139,16 @@ scheduler:
 # ---------------------------------------------------------------------------
 # Infrastructure dependencies
 # ---------------------------------------------------------------------------
+# Postgres.
+#
+# PRODUCTION GUIDANCE: the in-cluster Bitnami Postgres below (postgresql.enabled=true)
+# is for dev / self-host evaluation only — a single pod on a PVC with NO automated
+# backups or point-in-time recovery. For a real GA deployment, set
+# `postgresql.enabled=false` and point Lantern at a MANAGED Postgres (RDS / Cloud SQL /
+# Azure Database) via `externalDatabase` below — managed Postgres gives you automated
+# snapshots + WAL archiving + PITR + failover out of the box. If you must run in-cluster,
+# enable the `backup` CronJob below (logical pg_dump → S3) and read
+# docs/runbooks/db-restore.md.
 postgresql:
   enabled: true
   auth:
@@ -151,6 +161,39 @@ postgresql:
   image:
     repository: pgvector/pgvector
     tag: pg16
+
+# externalDatabase — point the control-plane at a MANAGED Postgres (the GA path).
+# When enabled, set postgresql.enabled=false. The pgvector extension must be available
+# (RDS/Cloud SQL both support it). Backups/PITR are then the managed provider's job.
+externalDatabase:
+  enabled: false
+  host: ""              # e.g. lantern-prod.xxxx.us-west-2.rds.amazonaws.com
+  port: 5432
+  database: lantern
+  user: lantern
+  sslmode: require
+  existingSecret: "lantern-db"
+  existingSecretPasswordKey: "postgres-password"
+  # The non-superuser role Lantern connects as when RLS enforcement is on
+  # (LANTERN_RLS_ENFORCE=1). Provision it on the managed instance.
+  appUser: "lantern_app"
+  appExistingSecretPasswordKey: "lantern-app-password"
+
+# backup — opt-in logical backup CronJob for the IN-CLUSTER Postgres. pg_dump'd on a
+# schedule and uploaded to S3 (or the in-cluster MinIO). NOT a substitute for
+# managed-Postgres PITR (a logical dump loses data between runs); it's a floor so a
+# self-host install isn't backup-less. Disabled by default. Restore: docs/runbooks/db-restore.md.
+backup:
+  enabled: false
+  schedule: "0 2 * * *"           # 02:00 daily (cluster TZ)
+  image: "pgvector/pgvector:pg16" # has pg_dump + matching server version
+  s3Bucket: "lantern-backups"
+  s3Endpoint: ""                  # empty = AWS S3; set to the MinIO endpoint for in-cluster
+  s3Region: "us-east-1"
+  retentionDays: 14               # prune dumps older than this
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits: { cpu: "500m", memory: "512Mi" }
 
 redis:
   enabled: true
