@@ -233,7 +233,7 @@ audit: ## Run security audits on all dependencies
 	cd services/gateway && cargo audit
 	cd services/model-router && cargo audit
 	cd services/runtime-manager && cargo audit
-	cd packages/sdk-ts && npm audit
+	cd packages/sdk-ts && npm audit --omit=dev  # production deps only — dev-tool advisories (vitest/esbuild) aren't shipped
 
 # ---------- CI ----------
 

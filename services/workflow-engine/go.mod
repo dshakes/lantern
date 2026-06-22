@@ -2,6 +2,8 @@ module github.com/dshakes/lantern/services/workflow-engine
 
 go 1.23
 
+toolchain go1.26.4
+
 require (
 	github.com/dshakes/lantern/gen/go v0.0.0
 	github.com/jackc/pgx/v5 v5.7.4
