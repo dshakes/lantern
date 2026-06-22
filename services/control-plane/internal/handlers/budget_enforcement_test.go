@@ -324,6 +324,301 @@ func TestMarketplaceInvoke_UnpublishedAgent_Returns404(t *testing.T) {
 	// Any scan error means the guard worked.
 }
 
+// ---------------------------------------------------------------------------
+// Fix 1 tests — scheduled runs bypass the budget gate
+// ---------------------------------------------------------------------------
+
+// TestExecuteScheduledRun_HardFail_DoesNotDispatch verifies that
+// ExecuteScheduledRun returns without inserting a run row when the agent
+// has a hard-fail budget that is already exhausted.
+func TestExecuteScheduledRun_HardFail_DoesNotDispatch(t *testing.T) {
+	h, _ := newBudgetTestHandler(t)
+	agentName := "sched-hardfail-" + t.Name()
+	cleanup := ensureAgentForBudgetTest(t, h, devTenantID, agentName)
+	t.Cleanup(cleanup)
+
+	upsertBudgetDirect(t, h, devTenantID, agentName, 1, true)
+	setUsageDirect(t, h, devTenantID, agentName, 1) // already at limit
+	t.Cleanup(func() {
+		deleteBudgetDirect(t, h, devTenantID, agentName)
+		deleteUsageDirect(t, h, devTenantID, agentName)
+	})
+
+	// Count runs before.
+	ctx := context.Background()
+	var runsBefore int
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM runs WHERE agent_id = (SELECT id FROM agents WHERE tenant_id = $1 AND name = $2)`,
+		devTenantID, agentName,
+	).Scan(&runsBefore)
+
+	h.ExecuteScheduledRun(devTenantID, agentName, nil)
+
+	var runsAfter int
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM runs WHERE agent_id = (SELECT id FROM agents WHERE tenant_id = $1 AND name = $2)`,
+		devTenantID, agentName,
+	).Scan(&runsAfter)
+
+	if runsAfter > runsBefore {
+		t.Errorf("scheduled run should not have dispatched: runs before=%d after=%d", runsBefore, runsAfter)
+	}
+}
+
+// TestExecuteScheduledRun_NoBudget_Dispatches verifies that a scheduled run
+// with no budget configured still creates a run row (no regression).
+func TestExecuteScheduledRun_NoBudget_Dispatches(t *testing.T) {
+	h, _ := newBudgetTestHandler(t)
+	agentName := "sched-nobudget-" + t.Name()
+	cleanup := ensureAgentForBudgetTest(t, h, devTenantID, agentName)
+	t.Cleanup(cleanup)
+	// No budget row.
+
+	ctx := context.Background()
+	var runsBefore int
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM runs WHERE agent_id = (SELECT id FROM agents WHERE tenant_id = $1 AND name = $2)`,
+		devTenantID, agentName,
+	).Scan(&runsBefore)
+
+	h.ExecuteScheduledRun(devTenantID, agentName, nil)
+
+	var runsAfter int
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM runs WHERE agent_id = (SELECT id FROM agents WHERE tenant_id = $1 AND name = $2)`,
+		devTenantID, agentName,
+	).Scan(&runsAfter)
+
+	// Run row must be created (dispatched).
+	if runsAfter <= runsBefore {
+		t.Errorf("no-budget scheduled run should have dispatched: runs before=%d after=%d", runsBefore, runsAfter)
+	}
+}
+
+// TestExecuteScheduledRun_SoftFail_Dispatches verifies that a soft-fail
+// (hardFail=false) over-budget agent is NOT blocked by the scheduler.
+func TestExecuteScheduledRun_SoftFail_Dispatches(t *testing.T) {
+	h, _ := newBudgetTestHandler(t)
+	agentName := "sched-softfail-" + t.Name()
+	cleanup := ensureAgentForBudgetTest(t, h, devTenantID, agentName)
+	t.Cleanup(cleanup)
+
+	upsertBudgetDirect(t, h, devTenantID, agentName, 1, false) // soft fail
+	setUsageDirect(t, h, devTenantID, agentName, 1)
+	t.Cleanup(func() {
+		deleteBudgetDirect(t, h, devTenantID, agentName)
+		deleteUsageDirect(t, h, devTenantID, agentName)
+	})
+
+	ctx := context.Background()
+	var runsBefore int
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM runs WHERE agent_id = (SELECT id FROM agents WHERE tenant_id = $1 AND name = $2)`,
+		devTenantID, agentName,
+	).Scan(&runsBefore)
+
+	h.ExecuteScheduledRun(devTenantID, agentName, nil)
+
+	var runsAfter int
+	_ = h.srv.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM runs WHERE agent_id = (SELECT id FROM agents WHERE tenant_id = $1 AND name = $2)`,
+		devTenantID, agentName,
+	).Scan(&runsAfter)
+
+	if runsAfter <= runsBefore {
+		t.Errorf("soft-fail scheduled run should have dispatched: runs before=%d after=%d", runsBefore, runsAfter)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 2 tests — session budget gate
+// ---------------------------------------------------------------------------
+
+// TestCheckBudget_SessionBudgetGate is a table-driven unit test that
+// verifies CheckBudget returns the right Allowed/HardFail pair for the
+// three scenarios the session handler branches on.
+func TestCheckBudget_SessionBudgetGate(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tenantID := devTenantID
+
+	tests := []struct {
+		name          string
+		maxRunsPerDay int
+		runsUsed      int
+		hardFail      bool
+		wantAllowed   bool
+		wantHardFail  bool
+	}{
+		{"no-budget", 0, 0, false, true, false},
+		{"under-limit", 5, 4, true, true, true},
+		{"at-limit-hardfail", 5, 5, true, false, true},
+		{"at-limit-softfail", 5, 5, false, false, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := "sess-gate-" + tc.name + "-" + t.Name()
+			// Reset
+			_, _ = pool.Exec(ctx, `DELETE FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2`, tenantID, agent)
+			_, _ = pool.Exec(ctx, `DELETE FROM agent_usage_daily WHERE tenant_id = $1 AND agent_name = $2`, tenantID, agent)
+			t.Cleanup(func() {
+				_, _ = pool.Exec(ctx, `DELETE FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2`, tenantID, agent)
+				_, _ = pool.Exec(ctx, `DELETE FROM agent_usage_daily WHERE tenant_id = $1 AND agent_name = $2`, tenantID, agent)
+			})
+
+			if tc.maxRunsPerDay > 0 {
+				_, err := pool.Exec(ctx, `
+					INSERT INTO agent_budgets (tenant_id, agent_name, max_runs_per_day, hard_fail, notify_at_pct)
+					VALUES ($1, $2, $3, $4, 80)
+					ON CONFLICT (tenant_id, agent_name) DO UPDATE SET
+					  max_runs_per_day = EXCLUDED.max_runs_per_day,
+					  hard_fail        = EXCLUDED.hard_fail
+				`, tenantID, agent, tc.maxRunsPerDay, tc.hardFail)
+				if err != nil {
+					t.Fatalf("insert budget: %v", err)
+				}
+			}
+			if tc.runsUsed > 0 {
+				_, err := pool.Exec(ctx, `
+					INSERT INTO agent_usage_daily (tenant_id, agent_name, usage_date, runs_count, tokens_in, tokens_out, cost_usd, tool_counts)
+					VALUES ($1, $2, CURRENT_DATE, $3, 0, 0, 0, '{}'::jsonb)
+					ON CONFLICT (tenant_id, agent_name, usage_date) DO UPDATE SET runs_count = EXCLUDED.runs_count
+				`, tenantID, agent, tc.runsUsed)
+				if err != nil {
+					t.Fatalf("insert usage: %v", err)
+				}
+			}
+
+			res := CheckBudget(ctx, pool, tenantID, agent, 0)
+			if res.Allowed != tc.wantAllowed {
+				t.Errorf("Allowed: got %v want %v (reason=%q)", res.Allowed, tc.wantAllowed, res.Reason)
+			}
+			if res.HardFail != tc.wantHardFail {
+				t.Errorf("HardFail: got %v want %v", res.HardFail, tc.wantHardFail)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fix 2 tests — /v1/completions agent-scoped budget gate
+// ---------------------------------------------------------------------------
+
+// newLlmProxyTestHandler builds a minimal LlmProxyHandler backed by a real pool.
+func newLlmProxyTestHandler(t *testing.T) (*LlmProxyHandler, *AuthHandler) {
+	t.Helper()
+	pool := openTestPool(t)
+	logger, _ := zap.NewDevelopment()
+	srv := &server.Server{Pool: pool, Logger: logger}
+	auth := NewAuthHandler(srv, testJWTSecret)
+	h := NewLlmProxyHandler(srv, auth)
+	return h, auth
+}
+
+// postCompletionHTTP fires POST /v1/completions with a given agentName and
+// returns the recorder.
+func postCompletionHTTP(t *testing.T, h *LlmProxyHandler, auth *AuthHandler, tenantID, agentName string) *httptest.ResponseRecorder {
+	t.Helper()
+	tok := mintTestToken(t, tenantID, "user-"+tenantID, "owner")
+	body, _ := json.Marshal(map[string]any{
+		"agentName": agentName,
+		"messages":  []map[string]string{{"role": "user", "content": "hello"}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/completions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rr := httptest.NewRecorder()
+	h.Complete(rr, req)
+	return rr
+}
+
+// TestCompletions_AgentScoped_HardFail_Returns402 verifies that a hard-fail
+// budget blocks agent-scoped POST /v1/completions with 402.
+func TestCompletions_AgentScoped_HardFail_Returns402(t *testing.T) {
+	h, auth := newLlmProxyTestHandler(t)
+	rh, _ := newBudgetTestHandler(t)
+	agentName := "comp-hardfail-" + t.Name()
+	cleanup := ensureAgentForBudgetTest(t, rh, devTenantID, agentName)
+	t.Cleanup(cleanup)
+
+	upsertBudgetDirect(t, rh, devTenantID, agentName, 1, true)
+	setUsageDirect(t, rh, devTenantID, agentName, 1)
+	t.Cleanup(func() {
+		deleteBudgetDirect(t, rh, devTenantID, agentName)
+		deleteUsageDirect(t, rh, devTenantID, agentName)
+	})
+
+	rr := postCompletionHTTP(t, h, auth, devTenantID, agentName)
+	if rr.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := resp["reason"]; !ok {
+		t.Errorf("402 response missing 'reason' field: %v", resp)
+	}
+}
+
+// TestCompletions_AgentScoped_SoftFail_DoesNotBlock verifies that a soft-fail
+// budget breach does NOT block the completion request (warn-only).
+// The LLM call itself will fail (no keys in test env) but must NOT be a 402.
+func TestCompletions_AgentScoped_SoftFail_DoesNotBlock(t *testing.T) {
+	h, auth := newLlmProxyTestHandler(t)
+	rh, _ := newBudgetTestHandler(t)
+	agentName := "comp-softfail-" + t.Name()
+	cleanup := ensureAgentForBudgetTest(t, rh, devTenantID, agentName)
+	t.Cleanup(cleanup)
+
+	upsertBudgetDirect(t, rh, devTenantID, agentName, 1, false) // soft fail
+	setUsageDirect(t, rh, devTenantID, agentName, 1)
+	t.Cleanup(func() {
+		deleteBudgetDirect(t, rh, devTenantID, agentName)
+		deleteUsageDirect(t, rh, devTenantID, agentName)
+	})
+
+	rr := postCompletionHTTP(t, h, auth, devTenantID, agentName)
+	if rr.Code == http.StatusPaymentRequired {
+		t.Fatalf("soft-fail budget must NOT block completion; got 402; body: %s", rr.Body.String())
+	}
+}
+
+// TestRecordUsage_AgentlessCompletions verifies that agentless completions
+// record usage under the sentinel "__agentless__" name (visibility test).
+func TestRecordUsage_AgentlessCompletions(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tenantID := devTenantID
+	sentinel := "__agentless__"
+
+	_, _ = pool.Exec(ctx, `DELETE FROM agent_usage_daily WHERE tenant_id = $1 AND agent_name = $2`, tenantID, sentinel)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM agent_usage_daily WHERE tenant_id = $1 AND agent_name = $2`, tenantID, sentinel)
+	})
+
+	if err := RecordUsage(ctx, pool, tenantID, sentinel, 100, 50, 0.001, nil); err != nil {
+		t.Fatalf("RecordUsage sentinel: %v", err)
+	}
+
+	var runsCount int
+	if err := pool.QueryRow(ctx,
+		`SELECT runs_count FROM agent_usage_daily WHERE tenant_id = $1 AND agent_name = $2 AND usage_date = CURRENT_DATE`,
+		tenantID, sentinel,
+	).Scan(&runsCount); err != nil {
+		t.Fatalf("query sentinel usage: %v", err)
+	}
+	if runsCount != 1 {
+		t.Errorf("sentinel runs_count: got %d, want 1", runsCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestMarketplaceInvoke_PublishedAgent_Visible verifies that a published
+// (unpublished_at IS NULL) agent IS visible to the guarded query.
+// ---------------------------------------------------------------------------
+
 // TestMarketplaceInvoke_PublishedAgent_Visible verifies that a published
 // (unpublished_at IS NULL) agent IS visible to the guarded query.
 func TestMarketplaceInvoke_PublishedAgent_Visible(t *testing.T) {

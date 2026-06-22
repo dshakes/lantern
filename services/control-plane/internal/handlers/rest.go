@@ -1827,6 +1827,18 @@ func (h *RESTHandler) ExecuteScheduledRun(tenantID, agentName string, input map[
 		input = map[string]any{}
 	}
 
+	// Budget pre-check: honour hard-fail limits for scheduled runs so an
+	// over-budget agent does not fire every cron tick unattended.
+	budgetResult := CheckBudget(ctx, h.srv.Pool, tenantID, agentName, 0)
+	if !budgetResult.Allowed && budgetResult.HardFail {
+		h.logger().Warn("scheduler: run blocked by budget",
+			zap.String("tenant_id", tenantID),
+			zap.String("agent", agentName),
+			zap.String("reason", budgetResult.Reason),
+		)
+		return
+	}
+
 	inputStruct, _ := structpb.NewStruct(input)
 
 	// Ensure agent exists.

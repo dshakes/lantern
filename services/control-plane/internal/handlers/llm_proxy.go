@@ -1130,15 +1130,62 @@ func (h *LlmProxyHandler) Complete(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": llmErr.Error()})
 			return
 		}
+		costUsd := estimateCost(usedProvider, usedModel, int(tokensIn), int(tokensOut))
+		// Documented limitation: agentless completions have no per-agent budget
+		// to gate against, so we skip CheckBudget here.  We still record usage
+		// under the sentinel agent name "__agentless__" so tenant-level spend
+		// remains visible in the daily rollup and is not silently invisible.
+		if recErr := RecordUsage(ctx, h.srv.Pool, tenantID, "__agentless__", tokensIn, tokensOut, costUsd, nil); recErr != nil {
+			h.logger().Warn("completions: RecordUsage failed for agentless call",
+				zap.String("tenant_id", tenantID),
+				zap.Error(recErr),
+			)
+		}
 		writeJSON(w, http.StatusOK, completionResponse{
 			Model:     usedModel,
 			Content:   text,
 			Provider:  usedProvider,
 			TokensIn:  int(tokensIn),
 			TokensOut: int(tokensOut),
-			CostUsd:   estimateCost(usedProvider, usedModel, int(tokensIn), int(tokensOut)),
+			CostUsd:   costUsd,
 		})
 		return
+	}
+
+	// Streaming agentless completions (req.Stream && req.AgentName == "") pass
+	// through proxyOpenAI / proxyAnthropic below.  Those proxy functions
+	// forward the raw SSE stream directly and do not surface token counts to
+	// this scope; refactoring them to plumb token counts would require
+	// buffering the stream, which breaks the streaming contract.
+	// Documented limitation: streaming agentless /v1/completions calls are
+	// not yet budget-gated or usage-recorded.  Agent-scoped calls
+	// (req.AgentName != "") are fully gated and recorded via proxyAgentWithTools.
+
+	// Agent-scoped budget pre-check: run this BEFORE key resolution so an
+	// over-hard-fail-budget agent gets 402 regardless of key availability.
+	// The actual RecordUsage call lives inside proxyAgentWithTools after the
+	// LLM call succeeds.
+	if req.AgentName != "" {
+		budgetResult := CheckBudget(ctx, h.srv.Pool, tenantID, req.AgentName, 0)
+		if !budgetResult.Allowed && budgetResult.HardFail {
+			h.logger().Warn("completions: agent-scoped call blocked by budget",
+				zap.String("tenant_id", tenantID),
+				zap.String("agent", req.AgentName),
+				zap.String("reason", budgetResult.Reason),
+			)
+			writeJSON(w, http.StatusPaymentRequired, map[string]string{
+				"error":  "budget limit exceeded",
+				"reason": budgetResult.Reason,
+			})
+			return
+		}
+		if !budgetResult.Allowed {
+			h.logger().Warn("completions: agent budget soft-limit exceeded (continuing)",
+				zap.String("tenant_id", tenantID),
+				zap.String("agent", req.AgentName),
+				zap.String("reason", budgetResult.Reason),
+			)
+		}
 	}
 
 	// Try to get key for resolved provider; if not available, try the other one.
@@ -1253,10 +1300,21 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 			}
 			writeEvt(evt)
 		}
-		text, _, _, _, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, onToolCall, maxToolTurnsEnv())
+		text, _, tin, tout, err := h.callLLMWithTools(ctx, provider, model, apiKey, msgs, tools, dispatch, onToolCall, maxToolTurnsEnv())
 		if err != nil {
 			writeEvt(map[string]any{"type": "error", "message": err.Error()})
 			return
+		}
+		// Record usage even for streaming: token counts come back when the
+		// stream completes, so this is a post-send write (safe — the response
+		// headers are already flushed).
+		costUsd := estimateCost(provider, model, int(tin), int(tout))
+		if recErr := RecordUsage(ctx, h.srv.Pool, tenantID, req.AgentName, tin, tout, costUsd, nil); recErr != nil {
+			h.logger().Warn("completions: RecordUsage failed (stream)",
+				zap.String("tenant_id", tenantID),
+				zap.String("agent", req.AgentName),
+				zap.Error(recErr),
+			)
 		}
 		// Emit the final text as a single delta then done so existing UI
 		// reassembly (which concatenates delta.content) just works.
@@ -1273,13 +1331,21 @@ func (h *LlmProxyHandler) proxyAgentWithTools(
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
+	costUsd := estimateCost(provider, model, int(tin), int(tout))
+	if recErr := RecordUsage(ctx, h.srv.Pool, tenantID, req.AgentName, tin, tout, costUsd, nil); recErr != nil {
+		h.logger().Warn("completions: RecordUsage failed (non-stream)",
+			zap.String("tenant_id", tenantID),
+			zap.String("agent", req.AgentName),
+			zap.Error(recErr),
+		)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"content":   text,
 		"model":     model,
 		"provider":  provider,
 		"tokensIn":  tin,
 		"tokensOut": tout,
-		"costUsd":   estimateCost(provider, model, int(tin), int(tout)),
+		"costUsd":   costUsd,
 	})
 }
 
