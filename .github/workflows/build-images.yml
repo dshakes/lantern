@@ -1,0 +1,102 @@
+# build-images — builds, pushes, and cosign-signs the deployable Lantern service images
+# that Helm/Terraform reference (ghcr.io/dshakes/lantern/<name>). Runs on push to master
+# and on demand (workflow_dispatch). Each image is tagged with the git SHA and `latest`.
+#
+# Signing is Sigstore KEYLESS (Fulcio short-lived cert + Rekor), identical in trust to
+# sign-images.yml — the signing identity IS this workflow file. We sign INLINE here
+# (rather than `uses: ./.github/workflows/sign-images.yml`) so we can sign the exact
+# pushed DIGEST that build-push-action returns, which is the tamper-proof thing to sign.
+#
+# Image-name mapping matches what the Helm charts pull (infra/helm/lantern/values.yaml):
+#   control-plane, gateway, model-router, runtime-manager, runtime-scheduler, web (dashboard).
+# Build contexts differ per service:
+#   - Go (control-plane, runtime-scheduler): context = repo root (Dockerfiles COPY gen/go/).
+#   - Rust (gateway, model-router, runtime-manager): context = the service dir (COPY . .).
+#   - dashboard (apps/web): context = apps/web (COPY package*.json ./ then COPY . .).
+#
+# Action SHAs are pinned (same convention as sdlc-qa.yml / sign-images.yml).
+name: "build-images (push + cosign sign)"
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Least privilege: read the repo, write packages to ghcr, and mint the OIDC token that
+# keyless cosign signing requires. No long-lived secrets.
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: build-images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/dshakes/lantern
+
+jobs:
+  build:
+    name: build (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: control-plane
+            context: .
+            file: services/control-plane/Dockerfile
+          - image: runtime-scheduler
+            context: .
+            file: services/runtime-scheduler/Dockerfile
+          - image: gateway
+            context: services/gateway
+            file: services/gateway/Dockerfile
+          - image: model-router
+            context: services/model-router
+            file: services/model-router/Dockerfile
+          - image: runtime-manager
+            context: services/runtime-manager
+            file: services/runtime-manager/Dockerfile
+          - image: web   # dashboard — Helm pulls .../lantern/web (apps/web)
+            context: apps/web
+            file: apps/web/Dockerfile
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca # v3.9.0
+
+      - name: Log in to ghcr
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
+          provenance: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      # Sign the immutable digest (not a mutable tag) so the signature can't be
+      # re-pointed at a different image later.
+      - name: Sign image (keyless)
+        env:
+          COSIGN_YES: "true"
+          DIGEST_REF: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+        run: cosign sign --recursive "$DIGEST_REF"

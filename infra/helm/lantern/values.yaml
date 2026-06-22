@@ -5,6 +5,14 @@ global:
     tag: "0.1.0"
     pullPolicy: IfNotPresent
   logLevel: info
+  # Bitnami subcharts (postgresql/redis/minio, v1.5.x+ image-verification guard)
+  # refuse to render when their image is overridden to a non-Bitnami container.
+  # Lantern intentionally runs `pgvector/pgvector` for the Postgres subchart (the
+  # pgvector extension is a hard requirement), so the guard must be relaxed for
+  # the in-cluster dev/self-host path. Has no effect on managed-infra deployments
+  # (postgresql.enabled=false etc.).
+  security:
+    allowInsecureImages: true
 
 gateway:
   replicas: 2

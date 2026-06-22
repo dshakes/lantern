@@ -1,0 +1,10 @@
+# Vendored Bitnami subchart archives.
+#
+# These are fetched on demand via `helm dependency build` (which reads the
+# committed Chart.lock to pin exact versions). We commit Chart.yaml's
+# `dependencies:` + Chart.lock, NOT the resolved .tgz archives — keeps the repo
+# lean and lets CI / installers re-fetch reproducibly from the locked versions.
+#
+#   helm dependency build infra/helm/<chart>   # populates charts/ from Chart.lock
+*/charts/*.tgz
+*/charts/

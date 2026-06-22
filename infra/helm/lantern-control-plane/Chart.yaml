@@ -19,3 +19,30 @@ sources:
   - https://github.com/dshakes/lantern
 maintainers:
   - name: dshakes
+
+# ---------------------------------------------------------------------------
+# Subchart dependencies
+#
+# The in-cluster Postgres / Redis / MinIO are provided by the Bitnami charts.
+# Versions are pinned exactly; run `helm dependency build` (uses Chart.lock) to
+# vendor the matching .tgz into charts/ before `helm install`/`helm template`.
+#
+# Each dependency is gated by its `<name>.enabled` value so an operator can skip
+# the in-cluster instance and point Lantern at managed infra:
+#   - postgresql.enabled=false  -> use externalDatabase (RDS / Cloud SQL / Azure)
+#   - redis.enabled=false       -> use a managed Redis (ElastiCache / Memorystore)
+#   - minio.enabled=false       -> use S3 / GCS / Azure Blob
+# ---------------------------------------------------------------------------
+dependencies:
+  - name: postgresql
+    version: 18.7.6
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    version: 27.0.10
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+  - name: minio
+    version: 17.0.21
+    repository: https://charts.bitnami.com/bitnami
+    condition: minio.enabled
