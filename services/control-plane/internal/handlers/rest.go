@@ -79,6 +79,7 @@ type RESTHandler struct {
 	agentSvc     *AgentService
 	runSvc       *RunService
 	llmProxy     *LlmProxyHandler
+	dpRouter     *DataPlaneService // routes runs to a connected data plane (nil = inline-only)
 	spawnLimiter *SpawnRateLimiter // per-tenant spawn-storm guard (nil = disabled)
 
 	// inFlightRuns tracks goroutines started by executeRunInline so the
@@ -89,6 +90,11 @@ type RESTHandler struct {
 // SetSpawnLimiter wires the per-tenant spawn rate limiter (phase 3). nil-safe:
 // when unset, CreateRun does not rate-limit.
 func (h *RESTHandler) SetSpawnLimiter(l *SpawnRateLimiter) { h.spawnLimiter = l }
+
+// SetDataPlaneRouter wires the data-plane run router. nil-safe: when unset (or
+// when no plane is connected for the tenant), runs execute inline in the control
+// plane. When set and a plane is connected, the run is dispatched to it instead.
+func (h *RESTHandler) SetDataPlaneRouter(dp *DataPlaneService) { h.dpRouter = dp }
 
 // DrainInFlightRuns waits for all in-flight inline-run goroutines to finish,
 // up to timeout. Any goroutines still running after timeout are abandoned —
@@ -579,10 +585,28 @@ func (h *RESTHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Placement: if a data plane is connected for this tenant, dispatch the run
+	// there (customer-VPC execution); the plane reports status/completion back
+	// over the RunStream. Otherwise fall back to inline execution in the control
+	// plane (managed-cloud model). RouteRun is fast (a guarded UPDATE + channel
+	// send) and safe to run on the request goroutine.
+	routed := false
+	if h.dpRouter != nil {
+		inputJSON, _ := json.Marshal(body.Input) // map[string]any from decoded JSON — marshal cannot fail
+		if planeID, ok := h.dpRouter.RouteRun(ctx, run.GetId(), run.GetTenantId(), run.GetAgentVersionId(), string(inputJSON)); ok {
+			routed = true
+			h.logger().Info("run dispatched to data plane",
+				zap.String("run_id", run.GetId()),
+				zap.String("tenant_id", run.GetTenantId()),
+				zap.String("plane_id", planeID),
+			)
+		}
+	}
+
 	// Kick off inline execution in a background goroutine so the run
 	// transitions from queued → running → succeeded without needing the
 	// separate workflow-engine service.
-	if h.llmProxy != nil {
+	if !routed && h.llmProxy != nil {
 		h.inFlightRuns.Add(1)
 		go func() {
 			defer h.inFlightRuns.Done()

@@ -23,13 +23,12 @@
 //
 // # Per-plane connection registry
 //
-// RunStream registers a per-plane send channel in planeRegistry. The scheduler
-// can push a DpRunAssignment by calling PlaneRegistry.Send — the channel is
-// consumed by the RunStream goroutine that sends it down the server stream.
-//
-// TODO(dataplane-routing): wire PlaneRegistry.Send into the run-scheduler's
-// placement path so that a concrete run can be dispatched to a specific plane.
-// Today the registry exists and is unit-testable but nothing calls Send yet.
+// RunStream registers a per-plane send channel in planeRegistry. The dispatch
+// path (RESTHandler.CreateRun → DataPlaneService.RouteRun) pushes a
+// DpRunAssignment by calling PlaneRegistry.Send — the channel is consumed by the
+// RunStream goroutine that sends it down the server stream. When a tenant has a
+// connected plane the run executes there (customer-VPC model); otherwise it
+// falls back to inline execution in the control plane (managed-cloud model).
 package handlers
 
 import (
@@ -97,10 +96,8 @@ type planeConn struct {
 }
 
 // PlaneRegistry tracks live RunStream connections keyed by (tenantID, planeID).
-// The scheduler calls Send to push a run assignment to a specific plane.
-//
-// TODO(dataplane-routing): call Send from the run-scheduler placement path once
-// placement decisions include data-plane affinity.
+// The dispatch path calls RouteRun (which selects a plane via PlaneForTenant and
+// pushes through Send) to place a run on a specific plane.
 type PlaneRegistry struct {
 	mu                sync.Mutex
 	conns             map[string]*planeConn // key: tenantID+"/"+planeID
@@ -160,8 +157,7 @@ func (r *PlaneRegistry) register(tenantID, planeID string, ch chan *lanternv1.Dp
 
 // Send pushes a run assignment to the plane identified by (tenantID, planeID).
 // Returns false if the plane is not currently connected or the channel is full.
-//
-// TODO(dataplane-routing): called by the scheduler — not yet wired.
+// Called by RouteRun on the dispatch path.
 func (r *PlaneRegistry) Send(tenantID, planeID string, a *lanternv1.DpRunAssignment) bool {
 	r.mu.Lock()
 	conn, ok := r.conns[registryKey(tenantID, planeID)]
@@ -175,6 +171,26 @@ func (r *PlaneRegistry) Send(tenantID, planeID string, a *lanternv1.DpRunAssignm
 	default:
 		return false // channel full; caller may retry or log
 	}
+}
+
+// PlaneForTenant returns a connected plane for the tenant, or ("", false) if
+// none is connected. Selection is deterministic (lexicographically smallest
+// planeID) so placement is stable across calls — a real load/region-aware
+// placement is the runtime-scheduler service's job; this is the in-process
+// fallback that makes single-plane tenants route correctly.
+func (r *PlaneRegistry) PlaneForTenant(tenantID string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	picked := ""
+	for _, c := range r.conns {
+		if c.tenantID != tenantID {
+			continue
+		}
+		if picked == "" || c.planeID < picked {
+			picked = c.planeID
+		}
+	}
+	return picked, picked != ""
 }
 
 // ConnectedPlanes returns a snapshot of currently connected (tenantID, planeID) pairs.
@@ -656,12 +672,98 @@ func (s *DataPlaneService) handleClientFrame(ctx context.Context, tenantID, plan
 	}
 }
 
+// RouteRun attempts to place a queued run on a connected data plane for the
+// tenant. On success it pins runs.data_plane_id to the chosen plane (so the
+// inbound status/completion frames from that plane match the WHERE guards in
+// updateRunStatus/finalizeRun) and pushes a DpRunAssignment down the plane's
+// RunStream. It returns (planeID, true) when the run was handed off — the
+// caller MUST NOT also execute the run inline.
+//
+// It returns ("", false) — caller executes inline — when no plane is connected,
+// or when the assignment could not be delivered (channel full / racing
+// disconnect). In the delivery-failure case the data_plane_id pin is rolled
+// back so the inline path's own writes aren't blocked by a stale plane scope.
+func (s *DataPlaneService) RouteRun(ctx context.Context, runID, tenantID, agentVersionID, inputJSON string) (string, bool) {
+	if runID == "" || tenantID == "" {
+		return "", false
+	}
+	planeID, ok := s.Registry.PlaneForTenant(tenantID)
+	if !ok {
+		return "", false
+	}
+
+	// Pin the run to the plane (RLS backstop via the tenant GUC). Only a still-
+	// queued, not-yet-pinned run is eligible, so a re-dispatch can't hijack a run
+	// already executing inline or on another plane.
+	pinned := false
+	err := db.WithTenantConn(ctx, s.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
+		ct, e := tx.Exec(ctx, `
+			UPDATE runs
+			SET data_plane_id = $1
+			WHERE id            = $2
+			  AND tenant_id     = $3
+			  AND status        = 'queued'
+			  AND data_plane_id IS NULL
+		`, planeID, runID, tenantID)
+		if e == nil {
+			pinned = ct.RowsAffected() == 1
+		}
+		return e
+	})
+	if err != nil {
+		s.logger().Warn("RouteRun: pin data_plane_id failed",
+			zap.String("run_id", runID), zap.String("tenant_id", tenantID), zap.Error(err))
+		return "", false
+	}
+	if !pinned {
+		// Run is no longer queued/unpinned (raced with another dispatch). Leave it
+		// to whoever owns it; don't double-execute.
+		return "", false
+	}
+
+	assignment := &lanternv1.DpRunAssignment{
+		RunId:          runID,
+		AgentVersionId: agentVersionID,
+		TenantId:       tenantID,
+		InputJson:      inputJSON,
+	}
+	if s.Registry.Send(tenantID, planeID, assignment) {
+		s.logger().Info("run routed to data plane",
+			zap.String("run_id", runID),
+			zap.String("tenant_id", tenantID),
+			zap.String("plane_id", planeID),
+		)
+		return planeID, true
+	}
+
+	// Delivery failed (channel full). Send's select/default branch did NOT enqueue
+	// the assignment, so the plane never receives it — there is no double-execution
+	// window here. Roll back the pin so the inline fallback isn't scoped out by a
+	// plane that never got the run.
+	//
+	// (The other failure mode — Send succeeds, then the plane disconnects before
+	// draining its buffer — leaves the run pinned but un-executed. That is caught
+	// by the recovery sweep, which re-drives queued/running runs lacking a live
+	// lease. See recovery.go.)
+	_ = db.WithTenantConn(ctx, s.srv.TenantPool(), tenantID, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			UPDATE runs SET data_plane_id = NULL
+			WHERE id = $1 AND tenant_id = $2 AND data_plane_id = $3 AND status = 'queued'
+		`, runID, tenantID, planeID)
+		return e
+	})
+	s.logger().Warn("RouteRun: plane connected but assignment undeliverable; falling back to inline",
+		zap.String("run_id", runID), zap.String("plane_id", planeID))
+	return "", false
+}
+
 // updateRunStatus updates a run's status in the runs table, scoped to both
 // tenantID and planeID so a rogue plane cannot forge results for another plane's
 // runs. Terminal states are never overwritten (idempotent).
 //
-// Note: until the run-scheduler wires data_plane_id into AssignRun, the column
-// is NULL in existing rows and the WHERE clause matches 0 rows — which is safe.
+// data_plane_id is pinned by RouteRun at dispatch time; the WHERE clause below
+// matches only rows routed to this plane, so a plane can never forge results for
+// a run it wasn't assigned (or for an inline run, where the column stays NULL).
 func (s *DataPlaneService) updateRunStatus(ctx context.Context, tenantID, planeID, runID, runStatus, detail string) {
 	if runID == "" {
 		return
