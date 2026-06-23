@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import clsx from "clsx";
 import { CodeEnhancer } from "./_components/CodeEnhancer";
+import { Toc } from "./_components/Toc";
 import {
   BookOpen, Rocket, Bot, Plug, MessageSquare, Brain,
   Clock, Shield, Cloud, Code, FileCode, ExternalLink,
@@ -197,10 +198,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </aside>
 
-          {/* Main content — full width on mobile, offset by the rail on lg+ */}
+          {/* Main content + right-hand "On this page" rail */}
           <main className="min-h-screen flex-1 lg:ml-60">
-            <div className="mx-auto max-w-3xl px-5 py-8 sm:px-8 lg:px-10 lg:py-12">
-              <article className="prose">{children}</article>
+            <div className="mx-auto flex max-w-6xl gap-12 px-5 py-8 sm:px-8 lg:px-10 lg:py-12">
+              <article className="prose w-full min-w-0 max-w-3xl">{children}</article>
+              <Toc />
             </div>
           </main>
         </div>

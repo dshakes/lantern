@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Download, Rocket, Bot, Server, ShieldCheck, Boxes, Cloud, Activity } from "lucide-react";
-import { Diagram } from "./_components/Diagram";
+import { ArchHome } from "./_components/ArchHome";
+import { CodeTabs } from "./_components/CodeTabs";
 
 export default function DocsHome() {
   return (
@@ -33,14 +34,43 @@ lantern dev      # Postgres + Redis + API + dashboard + a live agent`}</code></p
         </Link>
       </div>
 
-      <h2 id="architecture">How it works</h2>
-      <p>
-        A multi-tenant <strong>control plane</strong> schedules, routes, and observes. Your
-        <strong> data plane</strong> — in your own VPC — runs the agents. Code and data never leave it.
-      </p>
-      <Diagram
-        name="lantern-architecture"
-        caption="Control plane orchestrates over an outbound-only tunnel; your VPC executes every run."
+      <h2 id="how">How it works</h2>
+      <ArchHome />
+
+      <h2 id="run">Run an agent</h2>
+      <p>One authenticated call kicks off a run — from your shell, your app, or a script.</p>
+      <CodeTabs
+        tabs={[
+          {
+            label: "curl",
+            lang: "bash",
+            code: `curl -X POST http://localhost:8080/v1/runs \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"agentName": "support", "input": {"prompt": "Summarize ticket #4821"}}'`,
+          },
+          {
+            label: "TypeScript",
+            lang: "typescript",
+            code: `const res = await fetch("http://localhost:8080/v1/runs", {
+  method: "POST",
+  headers: { Authorization: \`Bearer \${token}\`, "Content-Type": "application/json" },
+  body: JSON.stringify({ agentName: "support", input: { prompt: "Summarize ticket #4821" } }),
+});
+const run = await res.json();`,
+          },
+          {
+            label: "Python",
+            lang: "python",
+            code: `import requests
+
+run = requests.post(
+    "http://localhost:8080/v1/runs",
+    headers={"Authorization": f"Bearer {token}"},
+    json={"agentName": "support", "input": {"prompt": "Summarize ticket #4821"}},
+).json()`,
+          },
+        ]}
       />
 
       <h2 id="why">Why developers choose Lantern</h2>

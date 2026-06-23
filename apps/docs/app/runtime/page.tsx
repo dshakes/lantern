@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Diagram } from "../_components/Diagram";
+import { Flow } from "../_components/Flow";
 
 export default function RuntimeOverviewPage() {
   return (
@@ -15,9 +15,15 @@ export default function RuntimeOverviewPage() {
       </p>
 
       <h2 id="model">The model in one picture</h2>
-      <Diagram
-        name="runtime-architecture"
-        caption="lantern run → control plane → scheduler → per-node manager → hardened pod → in-VM harness."
+      <Flow
+        steps={[
+          { name: "lantern run agent.yaml", sub: "submit the spec" },
+          { name: "Control plane", sub: "RBAC + quota gate, schedules it" },
+          { name: "Scheduler", sub: "picks a node — warm-pool · region · cost · health" },
+          { name: "Runtime manager", sub: "builds the pod, sets the isolation class" },
+          { name: "Pod in your VPC", sub: "RuntimeClass = isolation tier" },
+          { name: "Harness", sub: "egress allowlist · secret vending · heartbeats · logs" },
+        ]}
       />
 
       <h2 id="principles">What makes it different</h2>
