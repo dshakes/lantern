@@ -56,10 +56,36 @@ type AgentCardProvider struct {
 	URL  string `json:"url"`
 }
 
+// nullableTenant maps an empty tenant ID to a typed SQL NULL so that the
+// "tenant_id = $N" ownership clause never matches a real row for an
+// anonymous caller. agents.tenant_id is UUID NOT NULL, so a NULL comparison
+// is always false — leaving only the is_public clause in force.
+func nullableTenant(tenantID string) any {
+	if tenantID == "" {
+		return nil
+	}
+	return tenantID
+}
+
+// callerTenant returns the authenticated caller's tenant ID, or "" when the
+// request carries no valid credentials. A2A endpoints are optionally
+// authenticated: an authed caller may see its OWN agents regardless of
+// visibility; everyone else is restricted to is_public agents.
+func (h *A2AHandler) callerTenant(r *http.Request) string {
+	claims, err := h.auth.validateRequest(r)
+	if err != nil {
+		return ""
+	}
+	return claims.TenantID
+}
+
 // ---------- GET /v1/agents/{name}/card ----------
 
 // GetAgentCard returns the A2A Agent Card for a specific agent. This endpoint
-// is publicly accessible (no auth required) for cross-platform discovery.
+// is optionally authenticated: a tenant may card its OWN agents (any
+// visibility), while everyone else only sees agents marked is_public. An
+// agent that is neither owned by the caller nor public returns 404 — never
+// leaking the existence of another tenant's private agent.
 func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
@@ -67,9 +93,11 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up the agent from the database (without tenant scoping, since this
-	// is a public discovery endpoint — we only expose agents marked public).
+	// Visibility scope: either the agent is public, or it is owned by the
+	// authenticated caller's tenant. callerTenant is "" for anonymous
+	// requests, which collapses the second clause to false (public-only).
 	ctx := r.Context()
+	tenantID := h.callerTenant(r)
 	var (
 		description *string
 		labelsJSON  []byte
@@ -78,8 +106,9 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		SELECT description, labels
 		FROM agents
 		WHERE name = $1 AND archived_at IS NULL
+		  AND (is_public = true OR tenant_id = $2)
 		LIMIT 1
-	`, name).Scan(&description, &labelsJSON)
+	`, name, nullableTenant(tenantID)).Scan(&description, &labelsJSON)
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
@@ -133,15 +162,17 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 
 // ---------- GET /.well-known/agent.json ----------
 
-// AgentDirectory returns the platform's agent directory — all public agents
-// as Agent Cards. This follows the A2A well-known endpoint convention.
+// AgentDirectory returns the platform's agent directory — only agents marked
+// is_public, as Agent Cards. This follows the A2A well-known endpoint
+// convention and is served to anonymous callers, so it must never list a
+// tenant's private agents.
 func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := h.srv.Pool.Query(ctx, `
 		SELECT name, description, labels
 		FROM agents
-		WHERE archived_at IS NULL
+		WHERE archived_at IS NULL AND is_public = true
 		ORDER BY created_at DESC
 		LIMIT 100
 	`)
@@ -235,16 +266,17 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up the agent across ALL tenants (cross-tenant discovery for A2A).
-	// The caller is authenticated but the target agent may belong to a
-	// different tenant — this is intentional for the marketplace.
+	// Only invocable if the agent is the caller's own (same tenant) or is
+	// explicitly is_public. Anything else returns 404 — we do NOT 403, to
+	// avoid leaking the existence of another tenant's private agent.
 	ctx := r.Context()
 	var agentID, agentTenantID string
 	err = h.srv.Pool.QueryRow(ctx, `
 		SELECT id, tenant_id FROM agents
 		WHERE name = $1 AND archived_at IS NULL
+		  AND (is_public = true OR tenant_id = $2)
 		LIMIT 1
-	`, name).Scan(&agentID, &agentTenantID)
+	`, name, claims.TenantID).Scan(&agentID, &agentTenantID)
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return

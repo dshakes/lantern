@@ -834,15 +834,12 @@ class LanternAPI {
   }
 
   async testConnector(id: string): Promise<{ success: boolean; message: string }> {
-    try {
-      return await this.request<{ success: boolean; message: string }>(
-        `/v1/connectors/${encodeURIComponent(id)}/test`,
-        { method: "POST" },
-      );
-    } catch (err) {
-      notifySimulated("testConnector", err);
-      return { success: true, message: "Connection verified (simulated)" };
-    }
+    // Surface the real error so operators know if the connector endpoint is
+    // unreachable, rather than silently claiming success.
+    return this.request<{ success: boolean; message: string }>(
+      `/v1/connectors/${encodeURIComponent(id)}/test`,
+      { method: "POST" },
+    );
   }
 
   async startOAuth(connectorId: string): Promise<{ redirectUrl: string; state: string }> {
@@ -872,25 +869,12 @@ class LanternAPI {
   }
 
   async configureSurface(data: ConfigureSurfaceInput): Promise<SurfaceConfigRecord> {
-    try {
-      return await this.request<SurfaceConfigRecord>("/v1/surfaces", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
-    } catch (err) {
-      notifySimulated("configureSurface", err);
-      return {
-        id: `sc_${Date.now()}`,
-        tenantId: DEMO_USER.tenantId,
-        surfaceId: data.surfaceId,
-        displayName: data.displayName,
-        status: "connected",
-        config: data.config ?? {},
-        webhookUrl: data.webhookUrl,
-        connectedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-    }
+    // Surface the real error so operators know the save failed, rather than
+    // silently returning a fabricated record that never persisted.
+    return this.request<SurfaceConfigRecord>("/v1/surfaces", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async updateSurface(id: string, data: UpdateSurfaceInput): Promise<SurfaceConfigRecord> {
@@ -928,15 +912,12 @@ class LanternAPI {
   }
 
   async testSurface(id: string): Promise<{ success: boolean; message: string }> {
-    try {
-      return await this.request<{ success: boolean; message: string }>(
-        `/v1/surfaces/${encodeURIComponent(id)}/test`,
-        { method: "POST" },
-      );
-    } catch (err) {
-      notifySimulated("testSurface", err);
-      return { success: true, message: "Test message sent (simulated)" };
-    }
+    // Surface the real error so operators know if the surface endpoint is
+    // unreachable, rather than silently claiming success.
+    return this.request<{ success: boolean; message: string }>(
+      `/v1/surfaces/${encodeURIComponent(id)}/test`,
+      { method: "POST" },
+    );
   }
 
   // ---- API Keys (real endpoints) -------------------------------------------
@@ -997,25 +978,12 @@ class LanternAPI {
   }
 
   async createDeployment(data: CreateDeploymentInput): Promise<Deployment> {
-    try {
-      return await this.request<Deployment>("/v1/deployments", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
-    } catch (err) {
-      notifySimulated("createDeployment", err);
-      return {
-        id: `dep_${Date.now()}`,
-        tenantId: DEMO_USER.tenantId,
-        agentName: data.agentName,
-        version: data.version,
-        environment: data.environment ?? "development",
-        status: "deploying",
-        message: data.message,
-        logs: ["Deployment initiated (simulated)"],
-        createdAt: new Date().toISOString(),
-      };
-    }
+    // Surface the real error so callers know the deployment was not created,
+    // rather than returning a fabricated record that never actually exists.
+    return this.request<Deployment>("/v1/deployments", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async getDeployment(id: string): Promise<Deployment> {
@@ -1032,25 +1000,12 @@ class LanternAPI {
   }
 
   async registerDataPlane(data: RegisterDataPlaneInput): Promise<DataPlane> {
-    try {
-      return await this.request<DataPlane>("/v1/data-planes", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
-    } catch (err) {
-      notifySimulated("registerDataPlane", err);
-      return {
-        id: `dp_${Date.now()}`,
-        tenantId: DEMO_USER.tenantId,
-        name: data.name,
-        cloud: data.cloud,
-        region: data.region,
-        clusterName: data.clusterName,
-        status: "provisioning",
-        agentCount: 0,
-        createdAt: new Date().toISOString(),
-      };
-    }
+    // Surface the real error so the registration modal stays open with a real
+    // failure message, rather than silently returning a fabricated DataPlane row.
+    return this.request<DataPlane>("/v1/data-planes", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async removeDataPlane(id: string): Promise<void> {
