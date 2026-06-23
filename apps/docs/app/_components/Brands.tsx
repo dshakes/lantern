@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   siWhatsapp, siDiscord, siTelegram, siImessage,
   siGithub, siGmail, siGoogle, siNotion, siLinear,
@@ -38,18 +39,27 @@ function Logo({ name }: { name: string }) {
   );
 }
 
-export function BrandGrid({ items }: { items: { name: string; sub?: string }[] }) {
+type Item = { name: string; sub?: string; href?: string };
+
+export function BrandGrid({ items }: { items: Item[] }) {
   return (
     <div className="brand-grid">
-      {items.map((i) => (
-        <div key={i.name} className="brand-card">
-          <span className="brand-chip"><Logo name={i.name} /></span>
-          <div>
-            <div className="brand-name">{i.name}</div>
-            {i.sub ? <div className="brand-sub">{i.sub}</div> : null}
-          </div>
-        </div>
-      ))}
+      {items.map((i) => {
+        const inner = (
+          <>
+            <span className="brand-chip"><Logo name={i.name} /></span>
+            <div>
+              <div className="brand-name">{i.name}</div>
+              {i.sub ? <div className="brand-sub">{i.sub}</div> : null}
+            </div>
+          </>
+        );
+        return i.href ? (
+          <Link key={i.name} href={i.href} className="brand-card brand-link">{inner}</Link>
+        ) : (
+          <div key={i.name} className="brand-card">{inner}</div>
+        );
+      })}
     </div>
   );
 }
