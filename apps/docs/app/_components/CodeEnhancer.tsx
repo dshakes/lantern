@@ -22,6 +22,7 @@ export function CodeEnhancer() {
       if (cancelled) return;
 
       document.querySelectorAll<HTMLElement>("article pre").forEach((pre) => {
+        if (pre.closest(".code-tabs")) return; // CodeTabs manages its own block
         const code = pre.querySelector("code");
         if (!code) return;
 
