@@ -126,6 +126,11 @@ html, body { overflow-x: hidden; }
 .prose th { text-align: left; font-weight: 600; color: #d4d4d8; padding: 0.6rem 0.85rem; border-bottom: 1px solid #27272a; background: #0e0e11; white-space: nowrap; }
 .prose td { padding: 0.6rem 0.85rem; border-bottom: 1px solid rgba(39,39,42,0.4); color: #a1a1aa; }
 
+/* ── Architecture diagrams (inlined SVG) ── */
+.diagram { margin: 2rem 0 2.5rem; border: 1px solid #1f1f23; border-radius: 16px; background: linear-gradient(180deg,#0b0b0f,#08080b); padding: 1.25rem 1.25rem 0.75rem; overflow: hidden; }
+.diagram svg { width: 100%; height: auto; display: block; }
+.diagram figcaption { text-align: center; font-size: 0.8rem; color: #71717a; margin-top: 0.5rem; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
