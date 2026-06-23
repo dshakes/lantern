@@ -9,11 +9,13 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -21,6 +23,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
@@ -608,9 +611,23 @@ func main() {
 	// (365d), agent_usage_daily (400d). Env-configurable; see retention_janitor.go.
 	go handlers.RunRetentionJanitor(ctx, pool, logger)
 
+	// Wrap the whole mux in otelhttp so EVERY HTTP request gets a server span
+	// (invariant #9). The span name is a low-cardinality route template
+	// ("GET /v1/runs/{id}") rather than the raw path, so traces group by route.
+	// Tenant/user/run identifiers are attached as span attributes inside the
+	// handlers (RESTHandler.contextWithTenant → middleware.EnrichSpan), where
+	// the JWT has already been validated — we never re-parse it here.
+	//
+	// Safe when telemetry is disabled: with the no-op global TracerProvider,
+	// otelhttp creates non-recording spans and adds negligible overhead.
+	tracedHTTP := otelhttp.NewHandler(
+		handlers.CORSMiddleware(httpMux),
+		"lantern.control-plane.http",
+		otelhttp.WithSpanNameFormatter(httpSpanName),
+	)
 	httpServer := &http.Server{
 		Addr:              ":8080",
-		Handler:           handlers.CORSMiddleware(httpMux),
+		Handler:           tracedHTTP,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -870,6 +887,11 @@ func mustInitLogger(level string) *zap.Logger {
 }
 
 // unaryTracingInterceptor returns a gRPC unary interceptor that creates OTel spans.
+//
+// It runs AFTER UnaryTenantInterceptor in the chain, so tenant_id is already in
+// the context; we stamp it (plus run_id/step_id when the caller supplies them in
+// metadata) onto the span. This satisfies invariant #9: a gRPC span is filterable
+// by tenant/run, not just method name.
 func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 	tracer := otel.Tracer("lantern.control-plane")
 	return func(
@@ -880,6 +902,7 @@ func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 	) (any, error) {
 		ctx, span := tracer.Start(ctx, info.FullMethod)
 		defer span.End()
+		enrichGRPCSpan(ctx)
 		return handler(ctx, req)
 	}
 }
@@ -895,9 +918,85 @@ func streamTracingInterceptor() grpc.StreamServerInterceptor {
 	) error {
 		ctx, span := tracer.Start(ss.Context(), info.FullMethod)
 		defer span.End()
+		enrichGRPCSpan(ctx)
 		wrapped := &wrappedStream{ServerStream: ss, ctx: ctx}
 		return handler(srv, wrapped)
 	}
+}
+
+// httpSpanName produces a low-cardinality span name from the request so traces
+// group by route rather than by concrete id. Path segments that look like ids
+// (UUIDs, hex digests, long numeric/opaque tokens) are collapsed to "{id}":
+//
+//	GET /v1/runs/9f3c.../events  ->  "GET /v1/runs/{id}/events"
+//
+// The concrete run/step id is preserved as a span ATTRIBUTE by the handlers,
+// not in the name, so cardinality stays bounded while traces remain filterable.
+func httpSpanName(_ string, r *http.Request) string {
+	return r.Method + " " + templatePath(r.URL.Path)
+}
+
+// templatePath replaces id-like path segments with "{id}".
+func templatePath(p string) string {
+	if p == "" || p == "/" {
+		return p
+	}
+	segs := strings.Split(p, "/")
+	for i, s := range segs {
+		if looksLikeID(s) {
+			segs[i] = "{id}"
+		}
+	}
+	return strings.Join(segs, "/")
+}
+
+// looksLikeID reports whether a path segment is a concrete identifier (UUID,
+// hex digest, or a long opaque/numeric token) rather than a static route word.
+func looksLikeID(s string) bool {
+	if len(s) < 8 {
+		return false
+	}
+	var digits, hyphens, hex, other int
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9':
+			digits++
+			hex++
+		case (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'):
+			hex++
+		case c == '-':
+			hyphens++
+		default:
+			other++
+		}
+	}
+	// UUID-shaped (hex + hyphens, nothing else) or all-hex digest.
+	if other == 0 && hex+hyphens == len(s) && (hyphens > 0 || hex == len(s)) {
+		return true
+	}
+	// Long mostly-numeric token (e.g. snowflake-style ids).
+	if other == 0 && digits >= 12 {
+		return true
+	}
+	return false
+}
+
+// enrichGRPCSpan stamps tenant_id (from the tenant interceptor's context) and,
+// when present in incoming metadata, run_id/step_id onto the active span. No-op
+// safe when telemetry is disabled (EnrichSpan guards on span.IsRecording()).
+func enrichGRPCSpan(ctx context.Context) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	var runID, stepID string
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if v := md.Get("run_id"); len(v) > 0 {
+			runID = v[0]
+		}
+		if v := md.Get("step_id"); len(v) > 0 {
+			stepID = v[0]
+		}
+	}
+	// gRPC callers don't carry an end-user id; user_id stays empty here.
+	middleware.EnrichSpan(ctx, tenantID, "", runID, stepID)
 }
 
 // wrappedStream overrides Context() to propagate the traced context.

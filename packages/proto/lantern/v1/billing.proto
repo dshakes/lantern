@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package lantern.v1;
+
+option go_package = "github.com/dshakes/lantern/gen/go/lantern/v1;lanternv1";
+
+import "google/protobuf/timestamp.proto";
+
+// ---------------------------------------------------------------------------
+// Billing
+//
+// Usage metering and budget enforcement. The billing service meters every
+// chargeable event (LLM tokens, compute seconds, sandbox hours, connector
+// calls) and tracks per-tenant monthly spend against a budget. Tenant is
+// carried in gRPC metadata (invariant #7), not in the request body.
+// ---------------------------------------------------------------------------
+
+service BillingService {
+  rpc EmitUsage(EmitUsageRequest) returns (EmitUsageResponse);
+  rpc CheckBudget(CheckBudgetRequest) returns (BudgetStatus);
+  rpc GetUsage(GetUsageRequest) returns (GetUsageResponse);
+  rpc SetBudget(SetBudgetRequest) returns (SetBudgetResponse);
+}
+
+// A single chargeable usage event for metering.
+message UsageEvent {
+  string run_id = 1;
+  string event_type = 2;
+  double quantity = 3;
+  string unit = 4;
+  string model_used = 5;
+  double cost_usd = 6;
+  string idempotency_key = 7;
+}
+
+message EmitUsageRequest {
+  string run_id = 1;
+  repeated UsageEvent events = 2;
+}
+
+message EmitUsageResponse {
+  int32 accepted = 1;
+  int32 rejected = 2;
+}
+
+message CheckBudgetRequest {}
+
+message BudgetStatus {
+  double monthly_limit_usd = 1;
+  double current_spend_usd = 2;
+  double remaining_usd = 3;
+  double usage_percentage = 4;
+  bool hard_limit = 5;
+  bool hard_limit_reached = 6;
+  int32 alert_threshold_pct = 7;
+  bool alert_threshold_hit = 8;
+}
+
+message GetUsageRequest {
+  google.protobuf.Timestamp from = 1;
+  google.protobuf.Timestamp to = 2;
+  // One of: "event_type" (default), "model", "day".
+  string group_by = 3;
+}
+
+message UsageAggregation {
+  string event_type = 1;
+  double total_quantity = 2;
+  double total_cost_usd = 3;
+}
+
+message GetUsageResponse {
+  repeated UsageAggregation aggregations = 1;
+  double total_cost_usd = 2;
+}
+
+message SetBudgetRequest {
+  double monthly_limit_usd = 1;
+  int32 alert_threshold_pct = 2;
+  bool hard_limit = 3;
+}
+
+message SetBudgetResponse {
+  bool success = 1;
+}

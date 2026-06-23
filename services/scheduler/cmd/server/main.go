@@ -21,6 +21,7 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
+	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/scheduler/internal/cron"
 	"github.com/dshakes/lantern/services/scheduler/internal/db"
 	"github.com/dshakes/lantern/services/scheduler/internal/handlers"
@@ -121,7 +122,7 @@ func main() {
 
 	// Register services.
 	schedulerSvc := handlers.NewSchedulerService(srv, createRun)
-	_ = schedulerSvc // Registered via gRPC service descriptor when proto is generated.
+	lanternv1.RegisterSchedulerServiceServer(grpcServer, schedulerSvc)
 
 	// Health check.
 	healthSvc := health.NewServer()

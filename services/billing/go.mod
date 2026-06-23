@@ -5,11 +5,14 @@ go 1.23
 toolchain go1.26.4
 
 require (
+	github.com/dshakes/lantern/gen/go v0.0.0
 	github.com/jackc/pgx/v5 v5.7.4
 	go.opentelemetry.io/otel v1.35.0
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.72.0
 )
+
+replace github.com/dshakes/lantern/gen/go => ../../gen/go
 
 require (
 	github.com/go-logr/logr v1.4.2 // indirect
