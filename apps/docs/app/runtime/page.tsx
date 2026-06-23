@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { Terminal, Server, Network, Boxes, Shield, Activity } from "lucide-react";
-import { Flow } from "../_components/Flow";
+import { RuntimeDiagram } from "../_components/RuntimeDiagram";
 
 export default function RuntimeOverviewPage() {
   return (
@@ -16,16 +15,7 @@ export default function RuntimeOverviewPage() {
       </p>
 
       <h2 id="model">The model in one picture</h2>
-      <Flow
-        steps={[
-          { name: "lantern run agent.yaml", sub: "submit the spec", icon: Terminal },
-          { name: "Control plane", sub: "RBAC + quota gate, schedules it", icon: Server },
-          { name: "Scheduler", sub: "picks a node — warm-pool · region · cost · health", icon: Network },
-          { name: "Runtime manager", sub: "builds the pod, sets the isolation class", icon: Boxes },
-          { name: "Pod in your VPC", sub: "RuntimeClass = isolation tier", icon: Shield },
-          { name: "Harness", sub: "egress allowlist · secret vending · heartbeats · logs", icon: Activity },
-        ]}
-      />
+      <RuntimeDiagram />
 
       <h2 id="principles">What makes it different</h2>
 

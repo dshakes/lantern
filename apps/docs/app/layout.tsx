@@ -10,8 +10,17 @@ import { Toc } from "./_components/Toc";
 import {
   BookOpen, Rocket, Bot, Plug, MessageSquare, Brain,
   Clock, Shield, Cloud, Code, FileCode, ExternalLink,
-  Store, BarChart3, Server, Download, Menu, X,
+  Store, BarChart3, Server, Download, Menu, X, Flame,
 } from "lucide-react";
+
+// The Lantern brand mark — a warm amber "lantern glow".
+function LanternMark() {
+  return (
+    <div className="relative flex h-7 w-7 items-center justify-center rounded-[9px] bg-gradient-to-br from-amber-300 via-amber-400 to-amber-600 shadow-[0_0_16px_-3px_rgba(245,158,11,0.7)]">
+      <Flame className="h-4 w-4 text-amber-950" fill="currentColor" />
+    </div>
+  );
+}
 
 interface NavItem { href: string; label: string; icon: typeof BookOpen; subs?: { href: string; label: string }[] }
 interface NavSection { label: string; items: NavItem[] }
@@ -114,11 +123,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Mobile top bar (hidden on lg+) */}
         <header className="lg:hidden sticky top-0 z-50 flex h-14 items-center justify-between border-b border-zinc-800 bg-surface-0/95 px-4 backdrop-blur">
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-lantern-400 to-lantern-600">
-              <span className="text-xs font-bold text-white">L</span>
-            </div>
+            <LanternMark />
             <span className="text-sm font-semibold text-white">Lantern</span>
-            <span className="rounded bg-lantern-500/10 px-1.5 py-0.5 text-[9px] font-medium text-lantern-400">DOCS</span>
+            <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-400">DOCS</span>
           </Link>
           <button
             type="button"
@@ -150,12 +157,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {/* Logo */}
             <div className="px-5 py-4 border-b border-zinc-800">
               <Link href="/" className="flex items-center gap-2.5">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-lantern-400 to-lantern-600">
-                  <span className="text-xs font-bold text-white">L</span>
-                </div>
+                <LanternMark />
                 <div>
                   <span className="text-sm font-semibold text-white">Lantern</span>
-                  <span className="ml-1.5 rounded bg-lantern-500/10 px-1.5 py-0.5 text-[9px] font-medium text-lantern-400">DOCS</span>
+                  <span className="ml-1.5 rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-400">DOCS</span>
                 </div>
               </Link>
             </div>
