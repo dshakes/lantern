@@ -12,12 +12,12 @@ export default function ConnectorsPage() {
       </p>
 
       <BrandGrid items={[
-        { name: "Gmail", sub: "read · search · send" },
-        { name: "Google", sub: "Calendar · Drive · Sheets" },
-        { name: "GitHub", sub: "issues · PRs · repos" },
-        { name: "Slack", sub: "post · read channels" },
-        { name: "Notion", sub: "pages · databases" },
-        { name: "Linear", sub: "issues · projects" },
+        { name: "Gmail", sub: "read · search · send", href: "#gmail" },
+        { name: "Google", sub: "Calendar · Drive · Sheets", href: "#gmail" },
+        { name: "GitHub", sub: "issues · PRs · repos", href: "#gmail" },
+        { name: "Slack", sub: "post · read channels", href: "#gmail" },
+        { name: "Notion", sub: "pages · databases", href: "#gmail" },
+        { name: "Linear", sub: "issues · projects", href: "#gmail" },
       ]} />
 
       <h2 id="gmail">Available connectors</h2>

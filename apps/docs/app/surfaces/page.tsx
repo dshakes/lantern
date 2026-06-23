@@ -12,18 +12,18 @@ export default function SurfacesPage() {
       </p>
 
       <BrandGrid items={[
-        { name: "WhatsApp", sub: "Baileys · self-host" },
-        { name: "iMessage", sub: "macOS bridge" },
-        { name: "Slack", sub: "events + bot" },
-        { name: "Discord", sub: "bot" },
-        { name: "Telegram", sub: "bot" },
-        { name: "Voice", sub: "Twilio · LiveKit" },
-        { name: "Web Chat", sub: "embeddable widget" },
+        { name: "WhatsApp", sub: "Baileys · self-host", href: "#whatsapp" },
+        { name: "iMessage", sub: "macOS bridge", href: "#whatsapp" },
+        { name: "Slack", sub: "events + bot", href: "#slack" },
+        { name: "Discord", sub: "bot", href: "#discord" },
+        { name: "Telegram", sub: "bot", href: "#telegram" },
+        { name: "Voice", sub: "Twilio · LiveKit", href: "#twilio" },
+        { name: "Web Chat", sub: "embeddable widget", href: "#webchat" },
       ]} />
 
-      <h2 id="whatsapp">Available surfaces</h2>
+      <h2 id="available">Available surfaces</h2>
 
-      <h3>WhatsApp</h3>
+      <h3 id="whatsapp">WhatsApp</h3>
       <p>
         Lantern supports two modes for WhatsApp:
       </p>
@@ -71,7 +71,7 @@ export default function SurfacesPage() {
         read the same variable in this order.
       </p>
 
-      <h3>Slack</h3>
+      <h3 id="slack">Slack</h3>
       <p>
         Create a Slack app and connect it to Lantern:
       </p>
@@ -92,7 +92,7 @@ export default function SurfacesPage() {
         a channel or send a direct message to trigger a run.
       </p>
 
-      <h3>Discord</h3>
+      <h3 id="discord">Discord</h3>
       <p>
         Similar to Slack, add the Lantern bot to your Discord server:
       </p>
@@ -104,7 +104,7 @@ export default function SurfacesPage() {
         <li>Configure which channels the agent monitors</li>
       </ol>
 
-      <h3>Telegram</h3>
+      <h3 id="telegram">Telegram</h3>
       <p>
         Connect a Telegram bot to an agent:
       </p>
@@ -121,7 +121,7 @@ export default function SurfacesPage() {
         </li>
       </ol>
 
-      <h3>Twilio (SMS and Voice)</h3>
+      <h3 id="twilio">Twilio (SMS and Voice)</h3>
       <p>
         Connect your Twilio account for SMS and voice call surfaces:
       </p>
@@ -153,7 +153,7 @@ export default function SurfacesPage() {
         the same thread.
       </p>
 
-      <h3>Web Chat</h3>
+      <h3 id="webchat">Web Chat</h3>
       <p>
         Embed a chat widget on any website:
       </p>
