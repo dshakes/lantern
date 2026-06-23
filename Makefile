@@ -1,4 +1,4 @@
-.PHONY: help dev build test test-db test-e2e lint ci-local clean proto local-dev local-kind k8s-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: help dev build test test-db test-e2e smoke-dataplane lint ci-local clean proto local-dev local-kind k8s-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -188,6 +188,9 @@ test-python: ## Run Python tests
 
 test-e2e: ## Run live-stack e2e suites (needs `make dev-infra` + control-plane on :8080; skips green when down) — see e2e/README.md
 	cd e2e/runtime && go test -tags e2e -count=1 -v ./...
+
+smoke-dataplane: ## Live two-process proof: boots the real control-plane + data-plane-agent binaries and routes a run to the plane over the tunnel
+	@bash scripts/e2e-dataplane-smoke.sh
 
 test-db: ## Start dev Postgres if needed, then run Go tests that require a live DB
 	@echo "==> Ensuring Postgres is up..."
