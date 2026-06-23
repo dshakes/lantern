@@ -406,6 +406,12 @@ pub struct StreamEnd {
 #[derive(Clone)]
 pub struct ControlPlaneClient {
     channel: Channel,
+    /// Shared service token presented to the control-plane on every outbound
+    /// call as `x-lantern-service-token`. Empty when LANTERN_GRPC_SERVICE_TOKEN
+    /// is unset — no header is attached, so dev (where the control-plane also
+    /// has no token configured) keeps working. Additive and not fail-closed on
+    /// the client side; the control-plane is the side that fails closed in prod.
+    service_token: String,
 }
 
 impl ControlPlaneClient {
@@ -440,16 +446,34 @@ impl ControlPlaneClient {
             endpoint.connect_lazy()
         };
 
-        Ok(Self { channel })
+        let service_token = std::env::var("LANTERN_GRPC_SERVICE_TOKEN").unwrap_or_default();
+        if service_token.is_empty() {
+            tracing::warn!(
+                "control-plane channel: LANTERN_GRPC_SERVICE_TOKEN unset — no service token attached (acceptable in dev, required in production)"
+            );
+        }
+
+        Ok(Self {
+            channel,
+            service_token,
+        })
     }
 
-    fn inject_tenant_metadata<T>(request: &mut Request<T>, claims: &Claims) {
+    fn inject_tenant_metadata<T>(&self, request: &mut Request<T>, claims: &Claims) {
         let metadata = request.metadata_mut();
         if let Ok(val) = claims.tenant_id.parse() {
             metadata.insert("x-tenant-id", val);
         }
         if let Ok(val) = claims.user_id.parse() {
             metadata.insert("x-user-id", val);
+        }
+        // Authenticate to the control-plane gRPC trust boundary. Only attached
+        // when configured; the control-plane fails closed in prod if it expects
+        // a token and the header is missing/wrong.
+        if !self.service_token.is_empty() {
+            if let Ok(val) = self.service_token.parse() {
+                metadata.insert("x-lantern-service-token", val);
+            }
         }
     }
 
@@ -462,7 +486,7 @@ impl ControlPlaneClient {
     ) -> Result<Agent, AppError> {
         let mut client = AgentServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        Self::inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims);
         client
             .create_agent(request)
             .await
@@ -477,7 +501,7 @@ impl ControlPlaneClient {
     ) -> Result<Agent, AppError> {
         let mut client = AgentServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        Self::inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims);
         client
             .get_agent(request)
             .await
@@ -492,7 +516,7 @@ impl ControlPlaneClient {
     ) -> Result<ListAgentsResponse, AppError> {
         let mut client = AgentServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        Self::inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims);
         client
             .list_agents(request)
             .await
@@ -507,7 +531,7 @@ impl ControlPlaneClient {
     ) -> Result<DeleteAgentResponse, AppError> {
         let mut client = AgentServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        Self::inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims);
         client
             .delete_agent(request)
             .await
@@ -524,7 +548,7 @@ impl ControlPlaneClient {
     ) -> Result<Run, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        Self::inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims);
         client
             .create_run(request)
             .await
@@ -535,7 +559,7 @@ impl ControlPlaneClient {
     pub async fn get_run(&self, claims: &Claims, req: GetRunRequest) -> Result<Run, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        Self::inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims);
         client
             .get_run(request)
             .await
@@ -550,7 +574,7 @@ impl ControlPlaneClient {
     ) -> Result<ListRunsResponse, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        Self::inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims);
         client
             .list_runs(request)
             .await
@@ -565,7 +589,7 @@ impl ControlPlaneClient {
     ) -> Result<Run, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        Self::inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims);
         client
             .cancel_run(request)
             .await
@@ -580,7 +604,7 @@ impl ControlPlaneClient {
     ) -> Result<Streaming<StreamEvent>, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        Self::inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims);
         client
             .stream_run_events(request)
             .await
@@ -595,7 +619,7 @@ impl ControlPlaneClient {
     ) -> Result<SignalRunResponse, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        Self::inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims);
         client
             .signal_run(request)
             .await

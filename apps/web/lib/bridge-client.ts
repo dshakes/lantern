@@ -13,35 +13,36 @@ import type {
   GroupRow,
 } from "@/lib/bridge-types";
 
-// Per-channel bridge config. WhatsApp lives on :3100, iMessage on
-// :3200 by default. Tokens are channel-scoped so each bridge can
-// have its own shared secret in multi-tenant prod.
-const BRIDGE_URLS: Record<BridgeChannel, string> = {
+// Per-channel bridge base URLs. These are NOT secret — just service addresses.
+// Used only by bridgeWebSocketUrl() which must connect directly (WS cannot
+// go through a Next.js Route Handler).
+//
+// All REST calls from the browser go through /api/bridge/<channel>/...
+// where the server-side handler injects LANTERN_BRIDGE_TOKEN /
+// LANTERN_IMESSAGE_BRIDGE_TOKEN (non-public server env vars). The token
+// never reaches the browser bundle.
+const BRIDGE_WS_URLS: Record<BridgeChannel, string> = {
   whatsapp:
     process.env.NEXT_PUBLIC_LANTERN_BRIDGE_URL || "http://localhost:3100",
   imessage:
     process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_URL || "http://localhost:3200",
 };
-const BRIDGE_TOKENS: Record<BridgeChannel, string> = {
-  whatsapp: process.env.NEXT_PUBLIC_LANTERN_BRIDGE_TOKEN || "",
-  imessage: process.env.NEXT_PUBLIC_LANTERN_IMESSAGE_BRIDGE_TOKEN || "",
-};
 
-export function bridgeBaseUrl(channel: BridgeChannel = "whatsapp"): string {
-  return BRIDGE_URLS[channel].replace(/\/$/, "");
+// Same-origin prefix for all REST bridge calls (proxied server-side).
+function proxyBase(channel: BridgeChannel): string {
+  return `/api/bridge/${channel}`;
 }
 
-function authHeaders(channel: BridgeChannel, extra?: Record<string, string>): HeadersInit {
-  const h: Record<string, string> = { ...(extra ?? {}) };
-  const tok = BRIDGE_TOKENS[channel];
-  if (tok) h["Authorization"] = `Bearer ${tok}`;
-  return h;
+// Still exported so existing code that renders the URL for diagnostics can
+// call it — but REST fetches no longer use this.
+export function bridgeBaseUrl(channel: BridgeChannel = "whatsapp"): string {
+  return BRIDGE_WS_URLS[channel].replace(/\/$/, "");
 }
 
 async function post<T>(channel: BridgeChannel, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${bridgeBaseUrl(channel)}${path}`, {
+  const res = await fetch(`${proxyBase(channel)}${path}`, {
     method: "POST",
-    headers: authHeaders(channel, body ? { "Content-Type": "application/json" } : undefined),
+    headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new BridgeError(res.status, await res.text().catch(() => ""));
@@ -49,7 +50,7 @@ async function post<T>(channel: BridgeChannel, path: string, body?: unknown): Pr
 }
 
 async function get<T>(channel: BridgeChannel, path: string): Promise<T> {
-  const res = await fetch(`${bridgeBaseUrl(channel)}${path}`, { headers: authHeaders(channel) });
+  const res = await fetch(`${proxyBase(channel)}${path}`);
   if (!res.ok) throw new BridgeError(res.status, await res.text().catch(() => ""));
   return (await res.json()) as T;
 }
@@ -218,9 +219,15 @@ export function bridgeWebSocketUrl(
   tenantId: string,
   channel: BridgeChannel = "whatsapp",
 ): string {
+  // WebSocket connections go directly to the bridge — Next.js Route Handlers
+  // cannot proxy WS.  The bridge URL is not a secret (it's a localhost port).
+  // The shared token is intentionally omitted from the WS URL: it would be
+  // visible in browser devtools and logs.  Bridge WS auth is enforced at the
+  // HTTP level (REST calls proxy through /api/bridge/... with the server-side
+  // token).  If the bridge requires token auth on WS too, set
+  // LANTERN_BRIDGE_WS_TOKEN_REQUIRED=0 on the bridge side to disable it,
+  // or upgrade to cookie-based WS auth.
   const wsUrl = bridgeBaseUrl(channel).replace(/^http/, "ws");
   const qs = new URLSearchParams({ tenantId });
-  const tok = BRIDGE_TOKENS[channel];
-  if (tok) qs.set("token", tok);
   return `${wsUrl}/ws?${qs.toString()}`;
 }

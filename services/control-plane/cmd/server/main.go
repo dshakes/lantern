@@ -164,12 +164,18 @@ func main() {
 	// server-side TLS credentials when configured; in prod require them, in dev
 	// fall back to plaintext with a WARN (mirrors runStartupGuards' fail-closed
 	// pattern).
+	// Service-token auth must run BEFORE tenant extraction: only callers holding
+	// the shared token may set a tenant_id. Empty token → pass-through (dev);
+	// runStartupGuards already refused to boot with an empty token in prod.
+	grpcServiceToken := os.Getenv("LANTERN_GRPC_SERVICE_TOKEN")
 	grpcOpts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(
+			middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
 			middleware.UnaryTenantInterceptor(logger),
 			unaryTracingInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
+			middleware.StreamServiceAuthInterceptor(logger, grpcServiceToken),
 			middleware.StreamTenantInterceptor(logger),
 			streamTracingInterceptor(),
 		),
@@ -769,6 +775,16 @@ func runStartupGuards(logger *zap.Logger) {
 	}
 	if rlsMsg != "" {
 		logger.Warn(rlsMsg)
+	}
+
+	// gRPC service-token auth (trust boundary on :50051).
+	// Without a token, any caller reachable to :50051 can set an arbitrary
+	// tenant_id and read/write that tenant's data. Production must require it.
+	if prod && os.Getenv("LANTERN_GRPC_SERVICE_TOKEN") == "" {
+		logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is unset — the control-plane gRPC port (:50051) would accept any caller-supplied tenant_id; set a strong random shared token (also set it on the gateway)")
+	}
+	if !prod && os.Getenv("LANTERN_GRPC_SERVICE_TOKEN") == "" {
+		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — control-plane gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
 	}
 }
 

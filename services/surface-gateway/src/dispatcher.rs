@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::adapter::SurfaceAdapter;
 use crate::error::AppError;
 use crate::session::SessionStore;
+use crate::tenant_resolver::TenantResolver;
 use crate::types::{EventKind, SurfaceEvent, SurfaceId, SurfaceMessage};
 
 /// The dispatcher receives normalized `SurfaceEvent`s, resolves sessions,
@@ -15,6 +16,11 @@ pub struct Dispatcher {
     sessions: SessionStore,
     control_plane_addr: String,
     http: reqwest::Client,
+    /// Resolves each inbound event's platform-native id (chat_id, team_id,
+    /// phone_number_id, …) to the real Lantern tenant UUID.  Without this step,
+    /// runs would be dispatched under the platform's own identifiers, breaking
+    /// multi-tenant isolation.
+    tenant_resolver: TenantResolver,
 }
 
 impl Dispatcher {
@@ -22,12 +28,14 @@ impl Dispatcher {
         adapters: HashMap<SurfaceId, Arc<dyn SurfaceAdapter>>,
         sessions: SessionStore,
         control_plane_addr: String,
+        tenant_resolver: TenantResolver,
     ) -> Self {
         Self {
             adapters,
             sessions,
             control_plane_addr,
             http: reqwest::Client::new(),
+            tenant_resolver,
         }
     }
 
@@ -36,12 +44,27 @@ impl Dispatcher {
     /// - If the session has an active run, signals that run (e.g. for ctx.ask() responses).
     /// - If the event is an approval response, resolves the approval.
     /// - Otherwise, creates a new run with the message as input.
-    pub async fn dispatch(&self, event: SurfaceEvent) -> Result<(), AppError> {
+    pub async fn dispatch(&self, mut event: SurfaceEvent) -> Result<(), AppError> {
+        // P1.2 — Tenant resolution.
+        //
+        // Adapters set `event.tenant_id` to the platform-native identifier present in
+        // the webhook payload (Telegram chat_id, Slack team_id, WhatsApp
+        // phone_number_id, Twilio destination number, Discord guild_id).  Those are
+        // NOT Lantern tenant UUIDs.  Before forwarding to the control-plane we must
+        // replace the platform id with the real Lantern tenant UUID, or reject the
+        // event if the gateway is mis-configured (LANTERN_TENANT_ID not set).
+        //
+        // The raw platform id is preserved in the trace span for debugging but must
+        // never reach the control-plane as a tenant discriminator.
+        let platform_id = std::mem::take(&mut event.tenant_id);
+        event.tenant_id = self.tenant_resolver.resolve(&platform_id, event.surface)?;
+
         let span = tracing::info_span!(
             "dispatch",
             event_id = %event.id,
             surface = %event.surface,
             tenant_id = %event.tenant_id,
+            platform_id = %platform_id,
             user_id = %event.user_id,
             session_id = %event.session_id,
         );
@@ -105,15 +128,9 @@ impl Dispatcher {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("session not found: {session_id}")))?;
 
-        let adapter = self
-            .adapters
-            .get(&session.surface)
-            .ok_or_else(|| {
-                AppError::AdapterNotConfigured(format!(
-                    "no adapter for surface {}",
-                    session.surface
-                ))
-            })?;
+        let adapter = self.adapters.get(&session.surface).ok_or_else(|| {
+            AppError::AdapterNotConfigured(format!("no adapter for surface {}", session.surface))
+        })?;
 
         let channel = format!("{}:{}", session.surface, session.external_user_id);
         adapter.send_message(&channel, msg).await

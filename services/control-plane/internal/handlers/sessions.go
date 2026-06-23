@@ -112,13 +112,17 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert session row.
+	// Insert session row. WithTenant scopes to the caller's tenant via the
+	// app.tenant_id GUC so RLS (when enforced) admits the INSERT under the
+	// tenant_isolation WITH CHECK.
 	var sessionID string
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO sessions (tenant_id, agent_name, status, messages)
-		VALUES ($1, $2, 'active', '[]'::jsonb)
-		RETURNING id
-	`, tenantID, body.AgentName).Scan(&sessionID)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO sessions (tenant_id, agent_name, status, messages)
+			VALUES ($1, $2, 'active', '[]'::jsonb)
+			RETURNING id
+		`, tenantID, body.AgentName).Scan(&sessionID)
+	})
 	if err != nil {
 		h.logger().Error("create session failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create session"})
@@ -197,11 +201,13 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	// Verify session belongs to tenant and is active.
 	var agentName, status string
 	var messagesRaw []byte
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT agent_name, status, messages
-		FROM sessions
-		WHERE id = $1 AND tenant_id = $2
-	`, sessionID, tenantID).Scan(&agentName, &status, &messagesRaw)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT agent_name, status, messages
+			FROM sessions
+			WHERE id = $1 AND tenant_id = $2
+		`, sessionID, tenantID).Scan(&agentName, &status, &messagesRaw)
+	})
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 		return
@@ -234,10 +240,13 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Update messages in DB and mark as processing.
 	updatedMsgs, _ := json.Marshal(messages)
-	_, err = h.srv.Pool.Exec(ctx, `
-		UPDATE sessions SET messages = $1::jsonb, status = 'processing', updated_at = now()
-		WHERE id = $2
-	`, string(updatedMsgs), sessionID)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			UPDATE sessions SET messages = $1::jsonb, status = 'processing', updated_at = now()
+			WHERE id = $2 AND tenant_id = $3
+		`, string(updatedMsgs), sessionID, tenantID)
+		return e
+	})
 	if err != nil {
 		h.logger().Error("update session messages failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save message"})
@@ -282,6 +291,8 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// budget that is already exhausted.  Soft-fail budgets (HardFail=false)
 	// are logged but not blocked — spend is still visible in the daily
 	// rollup written by RecordUsage below.
+	// rls-exempt: shared budget helper takes a *Pool and self-scopes by the
+	// tenantID arg; reused identically across handlers (not a sessions-local query).
 	budgetResult := CheckBudget(ctx, h.llmProxy.srv.Pool, tenantID, agentName, 0)
 	if !budgetResult.Allowed {
 		if budgetResult.HardFail {
@@ -316,9 +327,11 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// producing an out-of-persona reply; the generic fallback is kept for
 	// non-bridge agents so no existing behaviour is broken.
 	var storedPrompt *string
-	_ = h.srv.Pool.QueryRow(ctx, `
-		SELECT system_prompt FROM agents WHERE name = $1 AND tenant_id = $2
-	`, agentName, tenantID).Scan(&storedPrompt)
+	_ = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT system_prompt FROM agents WHERE name = $1 AND tenant_id = $2
+		`, agentName, tenantID).Scan(&storedPrompt)
+	})
 
 	isBridgeAgent := agentName == "whatsapp-assistant" || agentName == "imessage-assistant"
 
@@ -408,6 +421,8 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		h.logger().Debug("session: noTools=true — skipping tool catalog")
 	} else {
 		var toolsErr error
+		// rls-exempt: shared connector-catalog helper takes a *Pool and
+		// self-scopes by tenantID; reused identically across handlers.
 		tools, toolsErr = toolsForTenant(ctx, h.srv.Pool, tenantID)
 		if toolsErr != nil {
 			h.logger().Warn("session: tool catalog lookup failed", zap.Error(toolsErr))
@@ -418,6 +433,8 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// Dispatch function closes over the tenant + pool so the tool-call
 	// loop can invoke connector actions without re-resolving credentials.
 	dispatch := func(dispatchCtx context.Context, name string, args map[string]any) (any, error) {
+		// rls-exempt: shared connector-dispatch helper takes a *Pool and
+		// self-scopes by tenantID; reused identically across handlers.
 		return dispatchTool(dispatchCtx, h.srv.Pool, tenantID, name, args)
 	}
 
@@ -525,6 +542,8 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// estCost=0 so it reads the current daily total; the write below is the
 	// only RecordUsage call for this session turn.
 	costUsd := estimateCost(usedProvider, usedModel, int(tokensIn), int(tokensOut))
+	// rls-exempt: shared usage-rollup helper takes a *Pool and self-scopes by
+	// the tenantID arg; reused identically across handlers.
 	if recErr := RecordUsage(ctx, h.llmProxy.srv.Pool, tenantID, agentName, tokensIn, tokensOut, costUsd, nil); recErr != nil {
 		h.logger().Warn("session: RecordUsage failed",
 			zap.String("tenant_id", tenantID),
@@ -561,13 +580,18 @@ func (h *SessionHandler) appendAssistantMessageWithTools(ctx context.Context, se
 	}
 	msgJSON, _ := json.Marshal(msg)
 
-	_, err := h.srv.Pool.Exec(ctx, `
-		UPDATE sessions
-		SET messages = messages || $1::jsonb,
-		    status = 'active',
-		    updated_at = now()
-		WHERE id = $2
-	`, string(msgJSON), sessionID)
+	// ctx carries the tenant (processMessage injects it on the background
+	// goroutine), so WithTenant sets the GUC and RLS admits the UPDATE.
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			UPDATE sessions
+			SET messages = messages || $1::jsonb,
+			    status = 'active',
+			    updated_at = now()
+			WHERE id = $2
+		`, string(msgJSON), sessionID)
+		return e
+	})
 	if err != nil {
 		h.logger().Error("append assistant message failed", zap.String("session_id", sessionID), zap.Error(err))
 	}
@@ -611,11 +635,15 @@ func (h *SessionHandler) GetEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify session belongs to tenant.
+	// Verify session belongs to tenant. Inject the tenant onto the request
+	// context so WithTenant can scope the read under RLS.
+	verifyCtx := middleware.InjectTenantID(r.Context(), tenantID)
 	var exists bool
-	err = h.srv.Pool.QueryRow(r.Context(), `
-		SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1 AND tenant_id = $2)
-	`, sessionID, tenantID).Scan(&exists)
+	err = h.srv.WithTenant(verifyCtx, func(tx pgx.Tx) error {
+		return tx.QueryRow(verifyCtx, `
+			SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1 AND tenant_id = $2)
+		`, sessionID, tenantID).Scan(&exists)
+	})
 	if err != nil || !exists {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 		return
@@ -687,16 +715,24 @@ func (h *SessionHandler) StopSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		UPDATE sessions SET status = 'stopped', updated_at = now()
-		WHERE id = $1 AND tenant_id = $2
-	`, sessionID, tenantID)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, e := tx.Exec(ctx, `
+			UPDATE sessions SET status = 'stopped', updated_at = now()
+			WHERE id = $1 AND tenant_id = $2
+		`, sessionID, tenantID)
+		if e != nil {
+			return e
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		h.logger().Error("stop session failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 		return
 	}
@@ -725,15 +761,23 @@ func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		DELETE FROM sessions WHERE id = $1 AND tenant_id = $2
-	`, sessionID, tenantID)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, e := tx.Exec(ctx, `
+			DELETE FROM sessions WHERE id = $1 AND tenant_id = $2
+		`, sessionID, tenantID)
+		if e != nil {
+			return e
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		h.logger().Error("delete session failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 		return
 	}
@@ -754,34 +798,41 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id, tenant_id, agent_name, status, messages, created_at, updated_at
-		FROM sessions
-		WHERE tenant_id = $1
-		ORDER BY updated_at DESC
-		LIMIT 100
-	`, tenantID)
+	sessions := make([]sessionJSON, 0)
+	// Scan inside the tx closure: WithTenant commits (closing the tx) before it
+	// returns, so rows must be drained here, not after.
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id, tenant_id, agent_name, status, messages, created_at, updated_at
+			FROM sessions
+			WHERE tenant_id = $1
+			ORDER BY updated_at DESC
+			LIMIT 100
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var s sessionJSON
+			var messagesRaw []byte
+			var createdAt, updatedAt time.Time
+			if err := rows.Scan(&s.ID, &s.TenantID, &s.AgentName, &s.Status, &messagesRaw, &createdAt, &updatedAt); err != nil {
+				continue
+			}
+			s.CreatedAt = createdAt.Format(time.RFC3339)
+			s.UpdatedAt = updatedAt.Format(time.RFC3339)
+			if err := json.Unmarshal(messagesRaw, &s.Messages); err != nil {
+				s.Messages = []sessionMessage{}
+			}
+			sessions = append(sessions, s)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("list sessions failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
-	}
-	defer rows.Close()
-
-	sessions := make([]sessionJSON, 0)
-	for rows.Next() {
-		var s sessionJSON
-		var messagesRaw []byte
-		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&s.ID, &s.TenantID, &s.AgentName, &s.Status, &messagesRaw, &createdAt, &updatedAt); err != nil {
-			continue
-		}
-		s.CreatedAt = createdAt.Format(time.RFC3339)
-		s.UpdatedAt = updatedAt.Format(time.RFC3339)
-		if err := json.Unmarshal(messagesRaw, &s.Messages); err != nil {
-			s.Messages = []sessionMessage{}
-		}
-		sessions = append(sessions, s)
 	}
 
 	writeJSON(w, http.StatusOK, sessions)
@@ -809,11 +860,13 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	var s sessionJSON
 	var messagesRaw []byte
 	var createdAt, updatedAt time.Time
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT id, tenant_id, agent_name, status, messages, created_at, updated_at
-		FROM sessions
-		WHERE id = $1 AND tenant_id = $2
-	`, sessionID, tenantID).Scan(&s.ID, &s.TenantID, &s.AgentName, &s.Status, &messagesRaw, &createdAt, &updatedAt)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT id, tenant_id, agent_name, status, messages, created_at, updated_at
+			FROM sessions
+			WHERE id = $1 AND tenant_id = $2
+		`, sessionID, tenantID).Scan(&s.ID, &s.TenantID, &s.AgentName, &s.Status, &messagesRaw, &createdAt, &updatedAt)
+	})
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 		return

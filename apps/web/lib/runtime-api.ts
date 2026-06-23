@@ -40,7 +40,8 @@ function purgeTokenAndRedirect() {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem("lantern_token");
-    document.cookie = "lantern_token=; path=/; max-age=0; SameSite=Lax";
+    // Clear the HttpOnly cookie via the server-side Route Handler.
+    fetch("/api/auth/session", { method: "DELETE" }).catch(() => {});
   } catch {
     /* ignore */
   }
