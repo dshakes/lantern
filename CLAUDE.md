@@ -317,10 +317,20 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 
 ### A2A (Agent-to-Agent)
 
-| Method | Path                      | Description                       |
-| ------ | ------------------------- | --------------------------------- |
-| `GET`  | `/v1/agents/{name}/card`  | Get agent's A2A card              |
-| `GET`  | `/.well-known/agent.json` | Well-known A2A discovery endpoint |
+**Visibility (tenant isolation).** Agents are private by default
+(`agents.is_public` defaults to `false`). The card, the well-known directory,
+and A2A invoke only expose an agent to a **non-owner** when it is
+`is_public = true`. An authenticated caller always sees/cards/invokes its
+**own** agents (scoped to its auth-context `tenant_id`) regardless of
+visibility — never a tenant supplied in the body or path. A card or invoke for
+an agent that is neither public nor owned by the caller returns **404** (not
+403, to avoid leaking another tenant's private agent's existence); the
+directory lists only `is_public` agents.
+
+| Method | Path                      | Description                                                       |
+| ------ | ------------------------- | ----------------------------------------------------------------- |
+| `GET`  | `/v1/agents/{name}/card`  | Get agent's A2A card (own agent, or `is_public`; else 404)        |
+| `GET`  | `/.well-known/agent.json` | Well-known A2A discovery endpoint — lists only `is_public` agents |
 
 ### Cost forecast + budgets (wedge #1)
 
@@ -834,6 +844,20 @@ is per-binary in macOS TCC — easiest path is to run it via Terminal
 (which already has those grants) or grant FDA explicitly to
 `/Users/shakes/.nvm/.../node` for true always-on. See
 `docs/personal/BOT-SETUP.md`.
+
+### Transient-error retry (control-plane / LLM 429 / 503)
+
+`AgentClient` (`packages/bridge-core/src/agent.ts`) wraps every
+`authedFetch` for session create and message post with bounded exponential
+backoff via `packages/bridge-core/src/retry.ts`. HTTP 429 / 503 and
+network errors (ECONNREFUSED, socket hang-up, etc.) are retried up to
+`LANTERN_BRIDGE_RETRY_ATTEMPTS` times (default 3) with full-jitter
+backoff between `0` and `LANTERN_BRIDGE_RETRY_MAX_MS` (default 4000 ms,
+base step `LANTERN_BRIDGE_RETRY_BASE_MS` = 500 ms). 401 / 403 / 404 /
+409 are never retried — the existing dead-session 404/409 recovery path
+is preserved inside the outer loop. Note: `@lantern/retry` does not yet
+exist as a shared package; `retry.ts` is a local shim to be replaced
+when that canonical package ships.
 
 ### Self-heal (WhatsApp Signal protocol)
 

@@ -42,14 +42,11 @@ import { PageSkeleton } from "@/components/skeleton";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/button";
 import { Modal, ModalField } from "@/components/modal";
+import { EmptyState } from "@/components/empty-state";
 import { StateDot, StatePill, Sparkline, UtilBar } from "../runtime/cockpit-ui";
 import type { VmState } from "@/lib/runtime-types";
-import {
-  DEMO_DATA_PLANES,
-  DEMO_DEPLOYMENTS,
-  type DemoDataPlane,
-  type DemoDeployment,
-} from "@/lib/dataplane-demo";
+// dataplane-demo imports intentionally removed — demo fleet is no longer shown
+// by default; the page renders real data or EmptyState instead.
 
 // ---------------------------------------------------------------------------
 // Unified row model
@@ -333,18 +330,13 @@ export default function DeploymentsPage() {
       }));
     } catch { /* deployments optional */ }
 
-    if (realPlanes.length === 0) {
-      // No registered planes (or API down) → demo fleet behind a badge.
-      setPlanes(DEMO_DATA_PLANES.map(demoToRow));
-      setDeployments(DEMO_DEPLOYMENTS.map(demoDepToRow));
-      setUsingDemo(true);
-    } else {
-      setPlanes(realPlanes);
-      // Real deployments if present; otherwise leave empty (don't fabricate).
-      setDeployments(realDeps);
-      setUsingDemo(false);
-    }
-    void planesErrored; // demo fallback already covers the error path
+    // Show real data (even when empty — EmptyState handles the zero-item case).
+    // Never substitute demo planes; operators must see actual state so they
+    // know whether their data plane is registered or the API is unreachable.
+    setPlanes(realPlanes);
+    setDeployments(realDeps);
+    setUsingDemo(false);
+    void planesErrored;
 
     setLoading(false);
     setLastUpdated(Date.now());
@@ -362,19 +354,10 @@ export default function DeploymentsPage() {
       setAddForm({ name: "", cloud: "aws", region: "us-east-1" });
       loadData();
     } catch (e) {
-      if (usingDemo) {
-        // Genuine demo mode (no API / no real planes) — the register is a no-op
-        // we surface as success so the demo command center stays coherent.
-        toast.success(`Data plane "${addForm.name}" registered (demo mode)`);
-        setShowAddPlane(false);
-        setAddForm({ name: "", cloud: "aws", region: "us-east-1" });
-        loadData();
-      } else {
-        // Real registration that actually failed — do NOT claim success.
-        // Keep the modal open so the user can retry.
-        const msg = e instanceof Error ? e.message : String(e);
-        toast.error(`Failed to register data plane — ${msg}`);
-      }
+      // Registration failed — surface the real error and keep the modal open
+      // so the operator can retry, rather than silently claiming success.
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`Failed to register data plane — ${msg}`);
     } finally {
       setAdding(false);
     }
@@ -451,6 +434,15 @@ export default function DeploymentsPage() {
 
       <div className="space-y-8 p-6 md:p-8">
         {/* PRIMARY: data-plane fleet + region map */}
+        {planes.length === 0 ? (
+          <EmptyState
+            icon={Server}
+            title="No data planes registered"
+            description="Connect a Kubernetes data plane (EKS, GKE, or AKS) so agents run inside your VPC. Use the Terraform + Helm onboarding below, then click Connect data plane."
+            actionLabel="Connect data plane"
+            onAction={() => setShowAddPlane(true)}
+          />
+        ) : (
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
           {/* Fleet (centerpiece) */}
           <section className="min-w-0">
@@ -476,6 +468,7 @@ export default function DeploymentsPage() {
             <RegionMap planes={planes} />
           </div>
         </div>
+        )}
 
         {/* SECONDARY: deployments */}
         <DeploymentsSection deployments={deployments} planes={planes} />
@@ -614,41 +607,6 @@ export default function DeploymentsPage() {
 // ---------------------------------------------------------------------------
 // Demo → row adapters
 // ---------------------------------------------------------------------------
-
-function demoToRow(p: DemoDataPlane): PlaneRow {
-  return {
-    id: p.id,
-    name: p.name,
-    cloud: p.cloud,
-    region: p.region,
-    clusterName: p.clusterName,
-    status: p.status,
-    demo: true,
-    tunnel: p.tunnel,
-    workloadCount: p.workloadCount,
-    nodes: p.nodes,
-    vcpuUsed: p.vcpuUsed,
-    vcpuTotal: p.vcpuTotal,
-    memUsedGib: p.memUsedGib,
-    memTotalGib: p.memTotalGib,
-    capacityHistory: p.capacityHistory,
-    agentCount: p.agentCount,
-    heartbeatAgoSec: p.heartbeatAgoSec,
-    version: p.version,
-  };
-}
-
-function demoDepToRow(d: DemoDeployment): DeploymentRow {
-  return {
-    id: d.id,
-    agentName: d.agentName,
-    version: d.version,
-    environment: d.environment,
-    status: d.status,
-    deployedAgoSec: d.deployedAgoSec,
-    planeId: d.planeId,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Command strip

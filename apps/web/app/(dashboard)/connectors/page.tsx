@@ -257,14 +257,20 @@ export default function ConnectorsPage() {
     const errs = validate(creds, mc.fields);
     setErrors(errs); if (Object.keys(errs).length > 0) return;
     setView("testing"); setMsg("Testing connection...");
-    try {
-      if (usingApi) {
+    if (usingApi) {
+      try {
         const inst = await api.installConnector({ connectorId: mc.id, displayName: mc.name, config: creds });
         const res = await api.testConnector(inst.id);
         if (res.success) { setView("success"); setMsg(res.message); await loadData(); const a = creds.email || mc.name + " account"; setTimeout(() => { setMc(null); toast.success(`${mc.name} connected as ${a}`); }, 800); return; }
         await api.uninstallConnector(inst.id); setView("manual"); setMsg(res.message); return;
+      } catch (e) {
+        // Surface real API/network errors rather than silently claiming success.
+        const msg = e instanceof Error ? e.message : String(e);
+        setView("manual"); setMsg(`Connection failed — ${msg}`);
+        toast.error(`Failed to connect ${mc.name} — ${msg}`);
+        return;
       }
-    } catch { /* fall back */ }
+    }
     await new Promise((r) => setTimeout(r, 1500));
     const account = creds.email || mc.name + " account";
     const up = { ...states, [mc.id]: { installed: true, connectedAccount: account, installedAt: new Date().toISOString(), credentials: { ...creds } } };
@@ -274,7 +280,19 @@ export default function ConnectorsPage() {
 
   const handleTest = async () => {
     if (!mc) return; setMsg("Verifying connection..."); setView("testing");
-    try { const s = states[mc.id]; if (usingApi && s?.backendId) { const r = await api.testConnector(s.backendId); setView("config"); setMsg(r.success ? "Connection is active" : r.message); return; } } catch { /* fall back */ }
+    const s = states[mc.id];
+    if (usingApi && s?.backendId) {
+      try {
+        const r = await api.testConnector(s.backendId);
+        setView("config"); setMsg(r.success ? "Connection is active" : r.message);
+      } catch (e) {
+        // Surface real API/network errors rather than silently claiming success.
+        const msg = e instanceof Error ? e.message : String(e);
+        setView("config"); setMsg(`Test failed — ${msg}`);
+        toast.error(`Connection test failed — ${msg}`);
+      }
+      return;
+    }
     await new Promise((r) => setTimeout(r, 1500)); setView("config"); setMsg("Connection is active and working");
   };
 
