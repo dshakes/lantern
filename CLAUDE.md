@@ -42,7 +42,7 @@ These are **load-bearing**. Violating them silently will cause incidents. If you
 4. **Streaming is end-to-end.** Token streams flow runtime -> gateway -> SDK -> dashboard with no buffering points other than backpressure-aware channels. No service may collect a full response and then forward.
 5. **Untrusted code runs in a microVM.** User-supplied code, Python `exec`, browser automation, anything that loads packages from the internet -- Firecracker or Kata only. Never a bare pod.
 6. **Models are addressed by capability, not name.** SDK code says `model: "auto"` or `model: "reasoning-large"`. The model router maps to a concrete vendor model. Never hardcode `gpt-5` in service code.
-7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `lantern-t-<tenant_id>`. No cross-tenant joins, ever.
+7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `lantern-t-<tenant_id>`. No cross-tenant joins, ever. The control-plane gRPC port (`:50051`) is a **trust boundary**: only callers presenting the shared service token (`x-lantern-service-token`, validated against `LANTERN_GRPC_SERVICE_TOKEN`) may set a `tenant_id`. Without that interceptor any caller reachable to `:50051` could spoof any tenant. See the wiring env vars below; mTLS is the stronger follow-up, the shared token is the pragmatic GA step.
 8. **Idempotency is required for every external side-effect.** Webhook deliveries, model API calls, K8s create -- all carry an idempotency key derived from `(run_id, step_id, attempt)`.
 9. **Observability is not optional.** Every service emits OTel traces with `tenant_id`, `run_id`, `step_id`, `agent_version`. A service that can't be traced is broken.
 10. **Secrets never appear in logs, traces, or run state.** Use the `lantern.secret/...` ref form; the runtime resolves at execution time.
@@ -218,7 +218,7 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `run_receipts`          | Ed25519-signed verifiable execution receipts (HMAC-SHA256 legacy/dev fallback)                                                                                                                  | `run_id` (PK), `tenant_id`, `signature`, `payload` (JSONB), `issued_at`                                                      |
 | `run_feedback`          | Per-run RLHF reactions                                                                                                                                                                           | `run_id`, `tenant_id`, `score` (1-5), `comment`, `preferred_output`, `source`                                                |
 
-Row-Level Security is enabled on `agents` and `runs` with tenant isolation policies.
+Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until `LANTERN_RLS_ENFORCE=1` (the privileged `lantern` superuser pool bypasses RLS; `lantern_app` is subject to it). Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
 
 A dev tenant (`slug: dev`) and admin user (`admin@lantern.dev` / `lantern`) are seeded on startup.
 
@@ -558,6 +558,17 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   relay endpoint (e.g. `http://control-plane:8080`). Must be set together with
   `LANTERN_RUNTIME_SECRET_TOKEN` to activate `RelaySecretResolver`; otherwise
   dev `EnvSecretResolver` is used.
+- `LANTERN_GRPC_SERVICE_TOKEN` — shared service token authenticating callers to
+  the control-plane gRPC port (`:50051`). Set on **both** the control-plane (to
+  accept) and the gateway (to send as `x-lantern-service-token`). A
+  `UnaryServiceAuthInterceptor`/`StreamServiceAuthInterceptor` runs **before**
+  the tenant-extraction interceptor and constant-time-compares the token, so only
+  authenticated callers may set `tenant_id`. **Fail-closed:** when
+  `LANTERN_ENV` is prod/production/staging and this is unset the control-plane
+  **refuses to start**. When unset in dev it warns and allows unauthenticated
+  calls (so `make dev` works). Health-check + `DataPlaneService` methods are
+  exempt (the latter has its own bootstrap-token + JWT auth). mTLS is the stronger
+  follow-up; the shared token is the GA step.
 
 Real protoc Go codegen at `gen/go/lantern/v1/` is hand-maintained stubs.
 These are **tracked in git** (NOT gitignored) — they are a build-critical Go

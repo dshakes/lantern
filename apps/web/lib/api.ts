@@ -414,19 +414,28 @@ class LanternAPI {
   setToken(token: string | null) {
     this._token = token;
     if (typeof window !== "undefined") {
-      // This cookie is set from JS so it can't be HttpOnly here — it exists
-      // only to feed the middleware's /auth/me check. Add Secure over HTTPS
-      // (so it's never sent in cleartext) and keep SameSite=Lax (CSRF
-      // hardening). Moving to a true HttpOnly cookie requires a server route
-      // to set it on login — tracked as a follow-up (see file header note).
-      const secure = window.location.protocol === "https:" ? "; Secure" : "";
+      // Persist token in localStorage for in-memory restoreToken() on page
+      // load (before the HttpOnly cookie is read server-side).
       if (token) {
         localStorage.setItem("lantern_token", token);
-        document.cookie = `lantern_token=${token}; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax${secure}`;
       } else {
         localStorage.removeItem("lantern_token");
-        document.cookie =
-          `lantern_token=; path=/; max-age=0; SameSite=Lax${secure}`;
+      }
+      // Set / clear the auth cookie as HttpOnly via the server-side Route
+      // Handler so XSS cannot read it.  Fire-and-forget: the cookie is only
+      // needed for the middleware's /auth/me check, and a failure here just
+      // means the next page load falls back to localStorage.
+      if (token) {
+        fetch("/api/auth/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        }).catch(() => {
+          // Non-blocking — in-memory token still works for API calls in
+          // this session even if the HttpOnly cookie write fails.
+        });
+      } else {
+        fetch("/api/auth/session", { method: "DELETE" }).catch(() => {});
       }
     }
   }

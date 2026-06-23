@@ -5,6 +5,7 @@ mod dispatcher;
 mod error;
 mod routes;
 mod session;
+mod tenant_resolver;
 mod types;
 
 use std::collections::HashMap;
@@ -20,6 +21,7 @@ use crate::config::Config;
 use crate::dispatcher::Dispatcher;
 use crate::routes::RouteState;
 use crate::session::SessionStore;
+use crate::tenant_resolver::TenantResolver;
 use crate::types::SurfaceId;
 
 #[tokio::main]
@@ -137,10 +139,24 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    let tenant_resolver = TenantResolver::new(config.lantern_tenant_id.clone());
+    if config.lantern_tenant_id.is_none() {
+        tracing::warn!(
+            "LANTERN_TENANT_ID is not set — all inbound webhooks will be rejected at \
+             tenant resolution; set this to the Lantern tenant UUID for this deployment"
+        );
+    } else {
+        tracing::info!(
+            tenant_id = ?config.lantern_tenant_id,
+            "tenant resolver configured"
+        );
+    }
+
     let dispatcher = Arc::new(Dispatcher::new(
         adapters.clone(),
         sessions,
         config.control_plane_addr.clone(),
+        tenant_resolver,
     ));
 
     let route_state = RouteState {
