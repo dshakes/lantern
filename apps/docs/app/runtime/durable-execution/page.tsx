@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function RuntimeDurableExecutionPage() {
   return (
     <>
@@ -82,9 +84,9 @@ run_1      step_c         step_started   ◀── crash here
       </ul>
       <p>
         Each resume is still one trace per spawn — see{" "}
-        <a href="/runtime/observability">Observability</a> — and a completed
-        run&apos;s journal is what the <a href="/runtime/receipts">verifiable
-        receipt</a> is signed over.
+        <Link href="/runtime/observability">Observability</Link> — and a completed
+        run&apos;s journal is what the <Link href="/runtime/receipts">verifiable
+        receipt</Link> is signed over.
       </p>
     </>
   );

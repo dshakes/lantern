@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function RuntimeObservabilityPage() {
   return (
     <>
@@ -19,9 +21,9 @@ export default function RuntimeObservabilityPage() {
       <pre><code>{`(tenant_id, run_id, step_id, agent_instance_id, trace_id)`}</code></pre>
       <p>
         <code>agent_instance_id</code> is the per-spawn identity (see{" "}
-        <a href="/runtime/identity">Identity &amp; secrets</a>), so two runs of
+        <Link href="/runtime/identity">Identity &amp; secrets</Link>), so two runs of
         the same agent never collide in your traces. A{" "}
-        <a href="/runtime/durable-execution">durable resume</a> after a crash is
+        <Link href="/runtime/durable-execution">durable resume</Link> after a crash is
         correlated back to the same run, so the full lifecycle is one coherent
         timeline.
       </p>

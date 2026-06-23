@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function QuickStartPage() {
   return (
     <>
@@ -27,7 +29,7 @@ export default function QuickStartPage() {
       <h2 id="prerequisites">Prerequisites</h2>
       <p>
         You need a running local stack. If you haven&apos;t done that yet, follow
-        the <a href="/installation">Installation guide</a> first (takes about 2
+        the <Link href="/installation">Installation guide</Link> first (takes about 2
         minutes). Then come back here.
       </p>
       <p>
@@ -292,34 +294,34 @@ data: {"kind":"run_completed","cost_usd":0.0004,"tokens_in":45,"tokens_out":120,
         <strong>Other channels:</strong> Slack, Telegram, and the embedded web
         chat widget are configured the same way under{" "}
         <a href="http://localhost:3001/surfaces" target="_blank" rel="noopener noreferrer">Surfaces</a>.
-        See the <a href="/surfaces">Surfaces guide</a> for details.
+        See the <Link href="/surfaces">Surfaces guide</Link> for details.
       </div>
 
       {/* ── What's next ── */}
       <h2 id="next">What&apos;s next</h2>
       <ul>
         <li>
-          <a href="/agents"><strong>Agent configuration</strong></a> — instructions,
+          <Link href="/agents"><strong>Agent configuration</strong></Link> — instructions,
           system prompt, tools, visual editor, guardrails
         </li>
         <li>
-          <a href="/connectors"><strong>Connectors</strong></a> — give your agent
+          <Link href="/connectors"><strong>Connectors</strong></Link> — give your agent
           access to Gmail, Slack, GitHub, Stripe, and more
         </li>
         <li>
-          <a href="/scheduling"><strong>Scheduling</strong></a> — run your agent on
+          <Link href="/scheduling"><strong>Scheduling</strong></Link> — run your agent on
           a cron, trigger on events, deliver output by email
         </li>
         <li>
-          <a href="/models"><strong>Models</strong></a> — capability routing,
+          <Link href="/models"><strong>Models</strong></Link> — capability routing,
           auto mode, and adding provider keys
         </li>
         <li>
-          <a href="/runtime"><strong>Headless runtime</strong></a> — microVM
+          <Link href="/runtime"><strong>Headless runtime</strong></Link> — microVM
           isolation, durable execution, verifiable receipts
         </li>
         <li>
-          <a href="/deployment"><strong>Deployment</strong></a> — production with
+          <Link href="/deployment"><strong>Deployment</strong></Link> — production with
           Helm, Terraform, or the managed Lantern Cloud
         </li>
       </ul>

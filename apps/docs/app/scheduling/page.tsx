@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function SchedulingPage() {
   return (
     <>
@@ -104,7 +106,7 @@ export default function SchedulingPage() {
       <div className="callout callout-info">
         <strong>Note:</strong> Email delivery requires a configured email
         connector (SMTP or Gmail). See{" "}
-        <a href="/connectors">Connectors</a> for setup instructions.
+        <Link href="/connectors">Connectors</Link> for setup instructions.
       </div>
 
       <h2 id="webhooks">Webhook triggers</h2>

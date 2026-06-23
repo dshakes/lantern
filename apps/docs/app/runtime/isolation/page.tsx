@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function RuntimeIsolationPage() {
   return (
     <>
@@ -116,7 +118,7 @@ Is the *input* adversarial / hostile?               ── yes ─▶  HOSTILE  
       rate_bps: 1048576      # 1 MiB/s`}</code></pre>
       <p>
         Egress enforcement and secret vending for untrusted workloads are
-        covered in <a href="/runtime/identity">Identity &amp; secrets</a>.
+        covered in <Link href="/runtime/identity">Identity &amp; secrets</Link>.
       </p>
     </>
   );

@@ -140,10 +140,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                           {isActive && item.subs && item.subs.length > 0 && (
                             <div className="ml-6 mt-0.5 mb-1 space-y-0.5 border-l border-zinc-800 pl-3">
                               {item.subs.map((sub) => (
-                                <a key={sub.href} href={sub.href}
+                                <Link key={sub.href} href={sub.href}
                                   className="block py-1 text-[11px] text-zinc-500 transition-colors hover:text-lantern-400">
                                   {sub.label}
-                                </a>
+                                </Link>
                               ))}
                             </div>
                           )}

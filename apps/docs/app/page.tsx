@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function DocsHome() {
   return (
     <>
@@ -15,7 +17,7 @@ export default function DocsHome() {
         marginBottom: "2rem",
         marginTop: "1.5rem",
       }}>
-        <a href="/installation" style={{
+        <Link href="/installation" style={{
           display: "block",
           background: "#0d0d12",
           border: "1px solid #f59e0b",
@@ -31,8 +33,8 @@ export default function DocsHome() {
             Clone, start three commands, running in under 2 minutes.
           </div>
           <div style={{ color: "#f59e0b", fontSize: "0.72rem", marginTop: "0.5rem" }}>Start here →</div>
-        </a>
-        <a href="/quickstart" style={{
+        </Link>
+        <Link href="/quickstart" style={{
           display: "block",
           background: "#0d0d12",
           border: "1px solid #8b5cf6",
@@ -48,7 +50,7 @@ export default function DocsHome() {
             Create an agent, run it, watch the real-time event stream.
           </div>
           <div style={{ color: "#8b5cf6", fontSize: "0.72rem", marginTop: "0.5rem" }}>5 minutes →</div>
-        </a>
+        </Link>
       </div>
 
       {/* Platform overview diagram */}
@@ -151,11 +153,11 @@ export default function DocsHome() {
       <p>Communication channel — WhatsApp, Slack, Telegram, web chat widget. Agents reply through whatever surface the message arrived on.</p>
 
       <h2 id="next">Get started</h2>
-      <p>→ <a href="/installation"><strong>Installation</strong></a> — prerequisites, clone, <code>lantern dev</code>, service ports, dev credentials</p>
-      <p>→ <a href="/quickstart"><strong>Quickstart</strong></a> — create an agent, run it, watch the event stream (5 minutes)</p>
-      <p>→ <a href="/agents">Agent guide</a> — configure instructions, tools, visual editor</p>
-      <p>→ <a href="/api">API reference</a> — all REST endpoints</p>
-      <p>→ <a href="/runtime">Headless runtime</a> — microVM isolation, durable execution, verifiable receipts</p>
+      <p>→ <Link href="/installation"><strong>Installation</strong></Link> — prerequisites, clone, <code>lantern dev</code>, service ports, dev credentials</p>
+      <p>→ <Link href="/quickstart"><strong>Quickstart</strong></Link> — create an agent, run it, watch the event stream (5 minutes)</p>
+      <p>→ <Link href="/agents">Agent guide</Link> — configure instructions, tools, visual editor</p>
+      <p>→ <Link href="/api">API reference</Link> — all REST endpoints</p>
+      <p>→ <Link href="/runtime">Headless runtime</Link> — microVM isolation, durable execution, verifiable receipts</p>
     </>
   );
 }
