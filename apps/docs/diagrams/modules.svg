@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="720" viewBox="0 0 1240 720" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Lantern — five modules, one runtime">
+  <defs>
+    <style>
+      .h{fill:#f8fafc;font-weight:700} .sub{fill:#94a3b8;font-size:11.5px}
+      .mt{font-size:10px;font-weight:700}
+      .mod{fill:#e2e8f0;font-size:15px;font-weight:700}
+      .cmp{fill:#cbd5e1;font-size:10.5px}
+      .band{fill:#cbd5e1;font-size:12px;font-weight:700;letter-spacing:.14em}
+    </style>
+  </defs>
+  <rect width="1240" height="720" rx="16" fill="#0b1120"/>
+  <rect width="1240" height="720" rx="16" fill="none" stroke="#1e293b"/>
+
+  <text x="32" y="46" class="h" font-size="22">Lantern — five modules, one runtime</text>
+  <text x="32" y="70" class="sub" font-size="13">one substrate powers both a production agent platform and a personal agent</text>
+  <!-- maturity legend -->
+  <g transform="translate(840,34)">
+    <rect x="0" y="0" width="12" height="12" rx="3" fill="#34d399"/><text x="18" y="11" class="sub">prod-ready</text>
+    <rect x="98" y="0" width="12" height="12" rx="3" fill="#8b5cf6"/><text x="116" y="11" class="sub">live</text>
+    <rect x="158" y="0" width="12" height="12" rx="3" fill="#f59e0b"/><text x="176" y="11" class="sub">alpha · fail-closed</text>
+  </g>
+
+  <!-- ===== Module cards ===== -->
+  <text x="32" y="104" class="band">MODULES</text>
+
+  <!-- 1 Agent Runtime -->
+  <g transform="translate(32,118)">
+    <rect width="380" height="196" rx="12" fill="#0e1626" stroke="#38bdf8"/>
+    <circle cx="28" cy="34" r="13" fill="#13233b" stroke="#38bdf8"/><text x="28" y="39" text-anchor="middle" class="mod" fill="#7dd3fc">1</text>
+    <text x="52" y="32" class="mod">Agent Runtime</text>
+    <text x="52" y="50" class="sub">run agents in YOUR cloud</text>
+    <text x="20" y="82" class="cmp">• control-plane (Go) — system of record</text>
+    <text x="20" y="102" class="cmp">• workflow-engine — durable, replayable steps</text>
+    <text x="20" y="122" class="cmp">• model-router (Rust) — capability routing "auto"</text>
+    <text x="20" y="142" class="cmp">• scheduler · runtime-manager · harness</text>
+    <text x="20" y="162" class="cmp">• gateway — TLS edge · streaming</text>
+    <rect x="20" y="172" width="220" height="16" rx="8" fill="#241a37"/>
+    <text x="28" y="184" class="mt" fill="#fcd34d">core prod-ready · microVM boot alpha</text>
+  </g>
+
+  <!-- 2 Personal Agent -->
+  <g transform="translate(430,118)">
+    <rect width="380" height="196" rx="12" fill="#160e26" stroke="#8b5cf6"/>
+    <circle cx="28" cy="34" r="13" fill="#1e1635" stroke="#8b5cf6"/><text x="28" y="39" text-anchor="middle" class="mod" fill="#c4b5fd">2</text>
+    <text x="52" y="32" class="mod">Personal Agent — "Jarvis"</text>
+    <text x="52" y="50" class="sub">texts AS you, indistinguishably</text>
+    <text x="20" y="82" class="cmp">• WhatsApp + iMessage bridges (owner-only)</text>
+    <text x="20" y="102" class="cmp">• learns your voice from real history</text>
+    <text x="20" y="122" class="cmp">• agentic macOS: Calendar / Notes / Mail</text>
+    <text x="20" y="142" class="cmp">• cross-channel memory · urgent alerts</text>
+    <text x="20" y="162" class="cmp">• privacy guards (no whereabouts leak)</text>
+    <rect x="20" y="172" width="70" height="16" rx="8" fill="#1e1635"/>
+    <text x="28" y="184" class="mt" fill="#c4b5fd">live</text>
+  </g>
+
+  <!-- 3 Trust & Governance -->
+  <g transform="translate(828,118)">
+    <rect width="380" height="196" rx="12" fill="#0c1a14" stroke="#34d399"/>
+    <circle cx="28" cy="34" r="13" fill="#10241b" stroke="#34d399"/><text x="28" y="39" text-anchor="middle" class="mod" fill="#6ee7b7">3</text>
+    <text x="52" y="32" class="mod">Trust &amp; Governance</text>
+    <text x="52" y="50" class="sub">finance- and audit-grade controls</text>
+    <text x="20" y="82" class="cmp">• budgets — pre-run forecast + hard-fail 402</text>
+    <text x="20" y="102" class="cmp">• eval-in-CI + rehearsals (regress → 422)</text>
+    <text x="20" y="122" class="cmp">• HMAC-verifiable run receipts (/proof)</text>
+    <text x="20" y="142" class="cmp">• multi-tenant RLS · AES-256-GCM secrets</text>
+    <text x="20" y="162" class="cmp">• fail-closed in production</text>
+    <rect x="20" y="172" width="70" height="16" rx="8" fill="#10241b"/>
+    <text x="28" y="184" class="mt" fill="#6ee7b7">prod-ready</text>
+  </g>
+
+  <!-- 4 Channels & Reach -->
+  <g transform="translate(230,330)">
+    <rect width="380" height="150" rx="12" fill="#0c1a14" stroke="#34d399"/>
+    <circle cx="28" cy="34" r="13" fill="#10241b" stroke="#34d399"/><text x="28" y="39" text-anchor="middle" class="mod" fill="#6ee7b7">4</text>
+    <text x="52" y="32" class="mod">Channels &amp; Reach</text>
+    <text x="52" y="50" class="sub">agents where people already are</text>
+    <text x="20" y="82" class="cmp">WhatsApp · iMessage · Slack · Telegram · Discord</text>
+    <text x="20" y="102" class="cmp">Voice (Twilio / LiveKit) · Webchat · Email</text>
+    <text x="20" y="122" class="cmp">signature-verified inbound · natural paced replies</text>
+    <rect x="300" y="14" width="70" height="16" rx="8" fill="#10241b"/>
+    <text x="335" y="26" text-anchor="middle" class="mt" fill="#6ee7b7">prod-ready</text>
+  </g>
+
+  <!-- 5 Developer Experience -->
+  <g transform="translate(628,330)">
+    <rect width="380" height="150" rx="12" fill="#0c1a14" stroke="#34d399"/>
+    <circle cx="28" cy="34" r="13" fill="#10241b" stroke="#34d399"/><text x="28" y="39" text-anchor="middle" class="mod" fill="#6ee7b7">5</text>
+    <text x="52" y="32" class="mod">Developer Experience</text>
+    <text x="52" y="50" class="sub">clone → run → ship</text>
+    <text x="20" y="82" class="cmp">TS · Python · Go SDKs · `lantern` CLI</text>
+    <text x="20" y="102" class="cmp">one-command dev · visual workflow editor (executes)</text>
+    <text x="20" y="122" class="cmp">MCP registry · A2A cards · agent marketplace</text>
+    <rect x="300" y="14" width="70" height="16" rx="8" fill="#10241b"/>
+    <text x="335" y="26" text-anchor="middle" class="mt" fill="#6ee7b7">prod-ready</text>
+  </g>
+
+  <!-- ===== Shared runtime base ===== -->
+  <text x="32" y="528" class="band">SHARED RUNTIME · YOUR CLOUD</text>
+  <g transform="translate(32,542)">
+    <rect width="1176" height="120" rx="12" fill="#11182a" stroke="#334155"/>
+    <text x="20" y="34" class="mod" font-size="13">Control-plane / data-plane split</text>
+    <text x="20" y="56" class="cmp">control plane never touches user code · data plane runs in your EKS/GKE/AKS · outbound-only mTLS tunnel (metadata only)</text>
+    <text x="20" y="84" class="mod" font-size="13" fill="#fde68a">Stores</text>
+    <text x="110" y="84" class="cmp" fill="#e7c98b">PostgreSQL + pgvector · Redis · S3 / MinIO</text>
+    <text x="20" y="106" class="cmp">capability-based multi-LLM routing (bring your own keys) · microVM isolation for untrusted code · OTel everywhere · idempotent durable steps</text>
+  </g>
+  <text x="32" y="694" class="sub">Apache-2.0 · self-host everything · the managed cloud is convenience, not a paywall.</text>
+</svg>

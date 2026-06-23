@@ -1,0 +1,210 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="960" viewBox="0 0 1280 960" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Lantern agent runtime architecture — the Agent Execution Kernel">
+  <defs>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#38bdf8"/>
+    </marker>
+    <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#34d399"/>
+    </marker>
+    <marker id="h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#f59e0b"/>
+    </marker>
+    <style>
+      .t   { fill:#e2e8f0; }
+      .sub { fill:#94a3b8; font-size:11px; }
+      .h   { fill:#f8fafc; font-weight:700; }
+      .port{ fill:#cbd5e1; font-size:10px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .band{ fill:#cbd5e1; font-size:12px; font-weight:700; letter-spacing:.14em; }
+      .lang{ font-size:9.5px; font-weight:700; }
+      .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .lbl { fill:#cbd5e1; font-size:9.5px; font-family:ui-monospace,Menlo,monospace; }
+      .ok  { fill:#34d399; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="960" rx="16" fill="#0b1120"/>
+  <rect x="0" y="0" width="1280" height="960" rx="16" fill="none" stroke="#1e293b"/>
+
+  <!-- title -->
+  <text x="32" y="44" class="h" font-size="22">Lantern — Agent Execution Kernel</text>
+  <text x="32" y="64" class="sub" font-size="12.5">Vendor-operated, multi-tenant, durable agent runtime that executes inside the customer's VPC · Kubernetes-default substrate (ADR&#160;0009)</text>
+
+  <!-- legend -->
+  <g transform="translate(880,26)">
+    <rect x="0" y="0" width="14" height="14" rx="3" fill="#38bdf8"/><text x="20" y="11" class="sub">Go</text>
+    <rect x="52" y="0" width="14" height="14" rx="3" fill="#f59e0b"/><text x="72" y="11" class="sub">Rust</text>
+    <rect x="112" y="0" width="14" height="14" rx="3" fill="#8b5cf6"/><text x="132" y="11" class="sub">TS</text>
+    <line x1="170" y1="7" x2="200" y2="7" stroke="#38bdf8" stroke-width="2" marker-end="url(#g)"/><text x="206" y="11" class="sub">gRPC</text>
+    <line x1="258" y1="7" x2="288" y2="7" stroke="#34d399" stroke-width="2" marker-end="url(#m)"/><text x="294" y="11" class="sub">mTLS</text>
+    <line x1="342" y1="7" x2="372" y2="7" stroke="#f59e0b" stroke-width="2" marker-end="url(#h)"/><text x="378" y="11" class="sub">HTTPS</text>
+  </g>
+
+  <!-- ============ CONTROL PLANE (SaaS) ============ -->
+  <text x="32" y="98" class="band">CONTROL PLANE · SaaS</text>
+  <g transform="translate(32,108)">
+    <rect x="0" y="0" width="1216" height="118" rx="12" fill="#11182a" stroke="#334155"/>
+    <text x="16" y="22" class="t" font-size="12.5" font-weight="700">control-plane <tspan class="lang" fill="#38bdf8">GO</tspan></text>
+    <text x="1200" y="22" class="port" text-anchor="end">:8080 REST · :50051 gRPC</text>
+
+    <!-- component chips -->
+    <g transform="translate(16,34)">
+      <rect x="0"   y="0" width="190" height="72" rx="8" fill="#1c2336" stroke="#475569"/>
+      <text x="12" y="20" class="t" font-size="11.5" font-weight="700">Schedule + Quota gate</text>
+      <text x="12" y="38" class="sub mono" font-size="9.5">POST /v1/runtime/schedule</text>
+      <text x="12" y="54" class="sub" font-size="10">per-tenant cap · 402 over quota</text>
+      <text x="12" y="67" class="sub" font-size="9.5">handlers/runtime.go</text>
+
+      <rect x="202" y="0" width="190" height="72" rx="8" fill="#1c2336" stroke="#475569"/>
+      <text x="214" y="20" class="t" font-size="11.5" font-weight="700">Per-instance identity</text>
+      <text x="214" y="38" class="sub" font-size="10">HS256 agent-instance JWT</text>
+      <text x="214" y="54" class="sub mono" font-size="9">typ=agent-instance · short-TTL</text>
+      <text x="214" y="67" class="sub" font-size="9.5">internal/agentidentity</text>
+
+      <rect x="404" y="0" width="190" height="72" rx="8" fill="#1c2336" stroke="#475569"/>
+      <text x="416" y="20" class="t" font-size="11.5" font-weight="700">Secret relay</text>
+      <text x="416" y="38" class="sub" font-size="10">fail-closed · VM-bound</text>
+      <text x="416" y="54" class="sub mono" font-size="9">X-Lantern-Runtime-Token</text>
+      <text x="416" y="67" class="sub" font-size="9.5">runtime_secrets.go · ADR 0008</text>
+
+      <rect x="606" y="0" width="190" height="72" rx="8" fill="#1c2336" stroke="#475569"/>
+      <text x="618" y="20" class="t" font-size="11.5" font-weight="700">Report ingestion</text>
+      <text x="618" y="38" class="sub mono" font-size="9.5">POST /v1/runtime/report</text>
+      <text x="618" y="54" class="sub" font-size="10">audit + logs · cert-bound</text>
+      <text x="618" y="67" class="sub" font-size="9.5">runtime_report.go</text>
+
+      <rect x="808" y="0" width="180" height="72" rx="8" fill="#1c2336" stroke="#475569"/>
+      <text x="820" y="20" class="t" font-size="11.5" font-weight="700">Receipt signer</text>
+      <text x="820" y="38" class="sub" font-size="10">Ed25519 · journal hash</text>
+      <text x="820" y="54" class="sub mono" font-size="9">/.well-known/…receipts</text>
+      <text x="820" y="67" class="sub" font-size="9.5">externally verifiable</text>
+
+      <rect x="1000" y="0" width="184" height="72" rx="8" fill="#1c2336" stroke="#475569"/>
+      <text x="1012" y="20" class="t" font-size="11.5" font-weight="700">OTel collector</text>
+      <text x="1012" y="38" class="sub" font-size="10">GenAI semconv</text>
+      <text x="1012" y="54" class="sub mono" font-size="9">tenant/run/step/instance</text>
+      <text x="1012" y="67" class="sub" font-size="9.5">internal/telemetry</text>
+    </g>
+  </g>
+
+  <!-- arrow CP -> scheduler -->
+  <line x1="200" y1="226" x2="200" y2="262" stroke="#38bdf8" stroke-width="2" marker-end="url(#g)"/>
+  <text x="210" y="250" class="lbl">gRPC · tenant_id in metadata (invariant #7)</text>
+
+  <!-- ============ DATA PLANE — SCHEDULER ============ -->
+  <text x="32" y="282" class="band">DATA PLANE · customer K8s / VPC</text>
+  <g transform="translate(32,292)">
+    <rect x="0" y="0" width="1216" height="92" rx="12" fill="#101a26" stroke="#2f5168"/>
+    <text x="16" y="22" class="t" font-size="12.5" font-weight="700">runtime-scheduler <tspan class="lang" fill="#f59e0b">RUST</tspan>  ·  HA (Postgres advisory-lock leader election)</text>
+    <text x="1200" y="22" class="port" text-anchor="end">:50055 gRPC · :8085 REST</text>
+    <g transform="translate(16,34)">
+      <rect x="0" y="0" width="386" height="46" rx="8" fill="#16202e" stroke="#3f6076"/>
+      <text x="12" y="19" class="t" font-size="11" font-weight="700">5-factor placement</text>
+      <text x="12" y="37" class="sub" font-size="10">warm-pool · region · fair-share · cost · health</text>
+      <rect x="398" y="0" width="300" height="46" rx="8" fill="#16202e" stroke="#3f6076"/>
+      <text x="410" y="19" class="t" font-size="11" font-weight="700">Per-tenant hard cap</text>
+      <text x="410" y="37" class="sub" font-size="10">Postgres write-through · Prometheus</text>
+      <rect x="710" y="0" width="474" height="46" rx="8" fill="#16202e" stroke="#3f6076"/>
+      <text x="722" y="19" class="t" font-size="11" font-weight="700">GRPCDialer → manager (connection-pooled, per-node)</text>
+      <text x="722" y="37" class="sub mono" font-size="9.5">LANTERN_DEFAULT_MANAGER_ADDR · LogOnlyDialer = dev fallback only</text>
+    </g>
+  </g>
+
+  <!-- arrow scheduler -> manager -->
+  <line x1="200" y1="384" x2="200" y2="420" stroke="#38bdf8" stroke-width="2" marker-end="url(#g)"/>
+  <text x="210" y="408" class="lbl">gRPC Spawn · authenticated tenant (caller env can't shadow)</text>
+
+  <!-- ============ MANAGER ============ -->
+  <g transform="translate(32,430)">
+    <rect x="0" y="0" width="1216" height="150" rx="12" fill="#101a26" stroke="#2f5168"/>
+    <text x="16" y="22" class="t" font-size="12.5" font-weight="700">runtime-manager <tspan class="lang" fill="#f59e0b">RUST</tspan>  ·  per node  ·  K8s-default backend <tspan class="mono" font-size="9.5" fill="#94a3b8">(RUNTIME_BACKEND=k8s)</tspan></text>
+    <text x="1200" y="22" class="port" text-anchor="end">:50054 gRPC</text>
+
+    <!-- fail-closed gate -->
+    <g transform="translate(16,34)">
+      <rect x="0" y="0" width="360" height="100" rx="8" fill="#1a1426" stroke="#7c3f5a"/>
+      <text x="12" y="20" class="t" font-size="11.5" font-weight="700">Fail-closed isolation gate</text>
+      <text x="12" y="40" class="lbl">choose_backend()  →  satisfies_isolation()</text>
+      <text x="12" y="57" class="lbl">→  build_job()  <tspan class="ok">refuses</tspan> if class absent</text>
+      <text x="12" y="76" class="sub" font-size="10">UNTRUSTED→gVisor · HOSTILE→Kata,</text>
+      <text x="12" y="90" class="sub" font-size="10">else never a bare pod · double-gated</text>
+    </g>
+    <!-- runtimeclass tiers -->
+    <g transform="translate(388,34)">
+      <rect x="0" y="0" width="360" height="100" rx="8" fill="#16202e" stroke="#3f6076"/>
+      <text x="12" y="20" class="t" font-size="11.5" font-weight="700">RuntimeClass tiering (pod)</text>
+      <text x="12" y="40" class="lbl">runc → gVisor → kata-qemu / kata-fc</text>
+      <text x="12" y="58" class="sub" font-size="10">node-affinity + NoSchedule toleration</text>
+      <text x="12" y="72" class="sub mono" font-size="9">lantern.dev/runtimeclass = gvisor|kata</text>
+      <text x="12" y="90" class="sub" font-size="10">boot preflight disables absent class</text>
+    </g>
+    <!-- hardened pod spec -->
+    <g transform="translate(760,34)">
+      <rect x="0" y="0" width="424" height="100" rx="8" fill="#16202e" stroke="#3f6076"/>
+      <text x="12" y="20" class="t" font-size="11.5" font-weight="700">Hardened K8s Job → Pod</text>
+      <text x="12" y="40" class="sub" font-size="10">securityContext: runAsNonRoot · RO rootfs · cap-drop ALL</text>
+      <text x="12" y="56" class="sub" font-size="10">no-priv-esc · seccomp RuntimeDefault · no SA token</text>
+      <text x="12" y="72" class="sub" font-size="10">NetworkPolicy ingress+egress default-deny (+DNS)</text>
+      <text x="12" y="90" class="sub" font-size="10">hostNetwork/PID/IPC=false · requests=limits (Guaranteed)</text>
+    </g>
+  </g>
+
+  <!-- arrow manager -> harness (mTLS) -->
+  <line x1="200" y1="580" x2="200" y2="620" stroke="#34d399" stroke-width="2" marker-end="url(#m)"/>
+  <line x1="640" y1="620" x2="640" y2="580" stroke="#34d399" stroke-width="2" marker-end="url(#m)"/>
+  <text x="210" y="608" class="lbl" fill="#34d399">vsock mTLS · per-VM cert (CN/SAN = vm_id)</text>
+
+  <!-- ============ IN-VM ============ -->
+  <text x="32" y="640" class="band">ISOLATED WORKLOAD · per session</text>
+  <g transform="translate(32,650)">
+    <rect x="0" y="0" width="1216" height="150" rx="12" fill="#0e1726" stroke="#3a2c5e"/>
+    <text x="16" y="22" class="t" font-size="12.5" font-weight="700">microVM / sandbox pod  ·  RuntimeClass-isolated  ·  untrusted code never on a shared kernel</text>
+
+    <g transform="translate(16,34)">
+      <rect x="0" y="0" width="300" height="100" rx="8" fill="#191427" stroke="#5b4a86"/>
+      <text x="12" y="20" class="t" font-size="11.5" font-weight="700">harness <tspan class="lang" fill="#f59e0b">RUST</tspan> · PID 1</text>
+      <text x="12" y="40" class="sub" font-size="10">attests identity · supervises workload</text>
+      <text x="12" y="56" class="sub" font-size="10">presents agent-instance Bearer on</text>
+      <text x="12" y="70" class="sub mono" font-size="9">VendSecret (authorization: Bearer)</text>
+      <text x="12" y="90" class="sub mono" font-size="9">LANTERN_AGENT_INSTANCE_TOKEN</text>
+
+      <rect x="312" y="0" width="290" height="100" rx="8" fill="#191427" stroke="#5b4a86"/>
+      <text x="324" y="20" class="t" font-size="11.5" font-weight="700">Egress — deny default</text>
+      <text x="324" y="40" class="sub" font-size="10">HTTP CONNECT proxy + nftables</text>
+      <text x="324" y="56" class="sub" font-size="10">token-bucket · audit-on-deny</text>
+      <text x="324" y="72" class="sub" font-size="10">blocks 169.254.169.254 + RFC1918</text>
+      <text x="324" y="90" class="sub" font-size="10">revocations propagate on HeartbeatAck</text>
+
+      <rect x="612" y="0" width="290" height="100" rx="8" fill="#191427" stroke="#5b4a86"/>
+      <text x="624" y="20" class="t" font-size="11.5" font-weight="700">Report stream</text>
+      <text x="624" y="40" class="sub" font-size="10">logs · OTLP traces · audit</text>
+      <text x="624" y="56" class="sub" font-size="10">vm_id derived from peer cert</text>
+      <text x="624" y="72" class="sub" font-size="10">(no cross-tenant forgery)</text>
+      <text x="624" y="90" class="sub mono" font-size="9">manager → /v1/runtime/report</text>
+
+      <rect x="912" y="0" width="272" height="100" rx="8" fill="#191427" stroke="#5b4a86"/>
+      <text x="924" y="20" class="t" font-size="11.5" font-weight="700">Bidi Heartbeat</text>
+      <text x="924" y="40" class="sub" font-size="10">liveness over the mTLS channel</text>
+      <text x="924" y="56" class="sub" font-size="10">backoff reset on first ack</text>
+      <text x="924" y="72" class="sub" font-size="10">carries egress-revocation deltas</text>
+      <text x="924" y="90" class="sub" font-size="10">manager records last-seen</text>
+    </g>
+  </g>
+
+  <!-- ============ DURABLE / MEMORY SPINE ============ -->
+  <g transform="translate(32,820)">
+    <rect x="0" y="0" width="600" height="58" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="14" y="22" class="t" font-size="11.5" font-weight="700">Durable spine</text>
+    <text x="14" y="42" class="sub" font-size="10.5"><tspan class="mono" fill="#cbd5e1">journal_events</tspan> (event source) → crash-replay → <tspan class="mono" fill="#cbd5e1">run_receipts</tspan> (Ed25519)</text>
+
+    <rect x="616" y="0" width="600" height="58" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="630" y="22" class="t" font-size="11.5" font-weight="700">Memory spine</text>
+    <text x="630" y="42" class="sub" font-size="10.5">person graph + episodic + topic → temporal validity → mutation audit</text>
+  </g>
+
+  <!-- correlation footer -->
+  <g transform="translate(32,892)">
+    <rect x="0" y="0" width="1216" height="48" rx="10" fill="#0d1830" stroke="#2a3c63"/>
+    <text x="16" y="20" class="h" font-size="11.5">One correlated chain per spawn</text>
+    <text x="16" y="38" class="lbl" fill="#a5b4fc">( tenant_id · run_id · step_id · agent_instance_id · trace_id )  —  shared end-to-end · replayable · externally verifiable</text>
+  </g>
+</svg>

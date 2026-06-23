@@ -1,0 +1,194 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="880" viewBox="0 0 1280 880" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Lantern runtime isolation tiers — RuntimeClass per IsolationClass with fail-closed gate">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#64748b"/>
+    </marker>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#f87171"/>
+    </marker>
+    <style>
+      .t   { fill:#e2e8f0; }
+      .sub { fill:#94a3b8; font-size:11px; }
+      .h   { fill:#f8fafc; font-weight:700; }
+      .band{ fill:#cbd5e1; font-size:12px; font-weight:700; letter-spacing:.14em; }
+      .mono{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+      .hd  { fill:#cbd5e1; font-size:10.5px; font-weight:700; letter-spacing:.04em; }
+      .cell{ fill:#cbd5e1; font-size:10.5px; }
+      .lbl { fill:#cbd5e1; font-size:10px; font-family:ui-monospace,Menlo,monospace; }
+      .red { fill:#f87171; }
+      .grn { fill:#34d399; }
+      .amb { fill:#fbbf24; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="880" rx="16" fill="#0b1120"/>
+  <rect x="0" y="0" width="1280" height="880" rx="16" fill="none" stroke="#1e293b"/>
+
+  <text x="32" y="44" class="h" font-size="22">Runtime Isolation — RuntimeClass per IsolationClass</text>
+  <text x="32" y="64" class="sub" font-size="12.5">ADR&#160;0009 · isolation is a RuntimeClass tier on a pod, not a separate backend · the hard invariant: untrusted / hostile code never runs on a bare shared-kernel pod</text>
+
+  <!-- ============ MATRIX ============ -->
+  <text x="32" y="98" class="band">ISOLATION MATRIX</text>
+  <g transform="translate(32,108)">
+    <rect x="0" y="0" width="1216" height="318" rx="12" fill="#11182a" stroke="#334155"/>
+
+    <!-- header row -->
+    <g transform="translate(0,0)">
+      <text x="18"   y="26" class="hd">IsolationClass</text>
+      <text x="210"  y="26" class="hd">RuntimeClass</text>
+      <text x="420"  y="26" class="hd">Kernel boundary</text>
+      <text x="650"  y="26" class="hd">Co-tenancy</text>
+      <text x="880"  y="26" class="hd">Typical workload</text>
+      <line x1="14" y1="38" x2="1202" y2="38" stroke="#334155"/>
+    </g>
+
+    <!-- rows -->
+    <!-- TRUSTED -->
+    <g transform="translate(0,38)">
+      <rect x="14" y="6" width="1188" height="42" rx="6" fill="#141d30"/>
+      <text x="18"  y="32" class="t mono" font-size="12" font-weight="700">TRUSTED</text>
+      <text x="210" y="26" class="lbl">runc</text>
+      <text x="210" y="40" class="sub" font-size="9">(no RuntimeClass set)</text>
+      <text x="420" y="32" class="cell">shared kernel</text>
+      <text x="650" y="32" class="cell">shared nodes</text>
+      <text x="880" y="26" class="cell">signed first-party agents only</text>
+      <text x="880" y="40" class="sub" font-size="9">control-plane-issued bundles</text>
+    </g>
+    <!-- STANDARD -->
+    <g transform="translate(0,86)">
+      <rect x="14" y="6" width="1188" height="42" rx="6" fill="#0f1626"/>
+      <text x="18"  y="32" class="t mono" font-size="12" font-weight="700">STANDARD <tspan class="sub" font-size="9" font-weight="400">default</tspan></text>
+      <text x="210" y="32" class="lbl grn">gvisor</text>
+      <text x="420" y="32" class="cell">user-space kernel (runsc)</text>
+      <text x="650" y="32" class="cell">shared, gVisor-isolated</text>
+      <text x="880" y="32" class="cell">most agent code</text>
+    </g>
+    <!-- UNTRUSTED -->
+    <g transform="translate(0,134)">
+      <rect x="14" y="6" width="1188" height="42" rx="6" fill="#141d30"/>
+      <text x="18"  y="32" class="t mono" font-size="12" font-weight="700">UNTRUSTED</text>
+      <text x="210" y="32" class="lbl grn">gvisor</text>
+      <text x="210" y="44" class="sub" font-size="8.5">+ egress allowlist + seccomp deny</text>
+      <text x="420" y="32" class="cell">user-space kernel, hardened</text>
+      <text x="650" y="32" class="cell">shared, hardened</text>
+      <text x="880" y="32" class="cell">internet packages · browser automation</text>
+    </g>
+    <!-- HOSTILE -->
+    <g transform="translate(0,182)">
+      <rect x="14" y="6" width="1188" height="42" rx="6" fill="#0f1626"/>
+      <text x="18"  y="32" class="t mono" font-size="12" font-weight="700">HOSTILE</text>
+      <text x="210" y="32" class="lbl amb">kata-qemu</text>
+      <text x="210" y="44" class="sub" font-size="8.5">/ kata-fc (microVM via K8s)</text>
+      <text x="420" y="32" class="cell">hardware VM (KVM)</text>
+      <text x="650" y="32" class="red">dedicated node pool · NO co-tenancy</text>
+      <text x="880" y="32" class="cell">adversarial / untrusted exec</text>
+    </g>
+    <!-- WASM -->
+    <g transform="translate(0,230)">
+      <rect x="14" y="6" width="1188" height="42" rx="6" fill="#141d30"/>
+      <text x="18"  y="32" class="t mono" font-size="12" font-weight="700">WASM</text>
+      <text x="210" y="32" class="lbl">crun + Wasm</text>
+      <text x="420" y="32" class="cell">capability-typed sandbox</text>
+      <text x="650" y="32" class="cell">shared</text>
+      <text x="880" y="32" class="cell">signed components · MCP tools (sub-ms)</text>
+    </g>
+    <!-- DEVCONTAINER -->
+    <g transform="translate(0,278)">
+      <rect x="14" y="6" width="1188" height="32" rx="6" fill="#0f1626"/>
+      <text x="18"  y="27" class="t mono" font-size="12" font-weight="700">DEVCONTAINER</text>
+      <text x="210" y="27" class="lbl grn">gvisor</text>
+      <text x="420" y="27" class="cell">user-space kernel + PVC</text>
+      <text x="650" y="27" class="cell">per-workspace (long-lived)</text>
+      <text x="880" y="27" class="cell">interactive dev sessions</text>
+    </g>
+  </g>
+
+  <!-- ============ FAIL-CLOSED GATE ============ -->
+  <text x="32" y="462" class="band">FAIL-CLOSED GATE · services/runtime-manager/src</text>
+  <g transform="translate(32,472)">
+    <rect x="0" y="0" width="752" height="218" rx="12" fill="#1a1426" stroke="#7c3f5a"/>
+    <text x="16" y="26" class="t" font-size="12.5" font-weight="700">Refusal-to-downgrade — double gated</text>
+
+    <!-- gate 1 -->
+    <g transform="translate(16,40)">
+      <rect x="0" y="0" width="346" height="58" rx="8" fill="#221831" stroke="#7c3f5a"/>
+      <text x="12" y="22" class="t mono" font-size="11" font-weight="700">1 · choose_backend()</text>
+      <text x="12" y="40" class="sub" font-size="10">satisfies_isolation()? node advertises</text>
+      <text x="12" y="52" class="sub" font-size="10">the required hardened RuntimeClass?</text>
+    </g>
+    <line x1="189" y1="98" x2="189" y2="120" stroke="#64748b" stroke-width="1.5" marker-end="url(#a)"/>
+    <!-- gate 2 -->
+    <g transform="translate(16,122)">
+      <rect x="0" y="0" width="346" height="58" rx="8" fill="#221831" stroke="#7c3f5a"/>
+      <text x="12" y="22" class="t mono" font-size="11" font-weight="700">2 · build_job()</text>
+      <text x="12" y="40" class="sub" font-size="10">re-checks before emitting the Pod —</text>
+      <text x="12" y="52" class="sub" font-size="10">refuses UNTRUSTED/HOSTILE w/o class</text>
+    </g>
+
+    <!-- outcomes -->
+    <g transform="translate(388,40)">
+      <rect x="0" y="0" width="348" height="44" rx="8" fill="#11261c" stroke="#2f6b4d"/>
+      <text x="12" y="19" class="grn" font-size="11" font-weight="700">✓ class present → schedule on hardened node</text>
+      <text x="12" y="35" class="sub" font-size="9.5">node-affinity + NoSchedule toleration applied</text>
+
+      <rect x="0" y="54" width="348" height="44" rx="8" fill="#2a1518" stroke="#7f3a3f"/>
+      <text x="12" y="73" class="red" font-size="11" font-weight="700">✗ class absent → REFUSE (never runc fallback)</text>
+      <text x="12" y="89" class="sub" font-size="9.5">BackendChoice::Unavailable · workload denied</text>
+
+      <rect x="0" y="108" width="348" height="44" rx="8" fill="#1c2336" stroke="#475569"/>
+      <text x="12" y="127" class="t" font-size="11" font-weight="700">boot preflight</text>
+      <text x="12" y="143" class="sub" font-size="9.5">missing class at start → capability disabled (still fail-closed)</text>
+    </g>
+    <text x="16" y="210" class="sub mono" font-size="9">escape hatch: LANTERN_ALLOW_RUNC_STANDARD only relaxes STANDARD/DEVCONTAINER — never UNTRUSTED/HOSTILE</text>
+  </g>
+
+  <!-- ============ HARDENED POD SPEC ============ -->
+  <text x="816" y="462" class="band">EVERY POD</text>
+  <g transform="translate(816,472)">
+    <rect x="0" y="0" width="432" height="218" rx="12" fill="#11182a" stroke="#334155"/>
+    <text x="16" y="26" class="t" font-size="12.5" font-weight="700">Pod securityContext &amp; network</text>
+    <g transform="translate(16,40)" class="cell" font-size="10.5">
+      <text x="0" y="14"><tspan class="grn">▪</tspan> runAsNonRoot · runAsUser 1000</text>
+      <text x="0" y="34"><tspan class="grn">▪</tspan> readOnlyRootFilesystem</text>
+      <text x="0" y="54"><tspan class="grn">▪</tspan> allowPrivilegeEscalation=false</text>
+      <text x="0" y="74"><tspan class="grn">▪</tspan> capabilities.drop = [ALL]</text>
+      <text x="0" y="94"><tspan class="grn">▪</tspan> seccompProfile = RuntimeDefault</text>
+      <text x="0" y="114"><tspan class="grn">▪</tspan> automountServiceAccountToken=false</text>
+      <text x="0" y="134"><tspan class="grn">▪</tspan> hostNetwork/PID/IPC = false</text>
+      <text x="0" y="154"><tspan class="grn">▪</tspan> NetworkPolicy ingress+egress deny (+DNS)</text>
+      <text x="0" y="174"><tspan class="grn">▪</tspan> requests = limits (Guaranteed QoS)</text>
+    </g>
+  </g>
+
+  <!-- ============ CLUSTER-SIDE (opt-in) ============ -->
+  <text x="32" y="726" class="band">CLUSTER-SIDE HARDENING · opt-in Helm (default off)</text>
+  <g transform="translate(32,736)">
+    <rect x="0" y="0" width="296" height="112" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="14" y="24" class="t" font-size="11.5" font-weight="700">Kyverno tenant baseline</text>
+    <text x="14" y="46" class="sub" font-size="10">PSA enforce=restricted on</text>
+    <text x="14" y="60" class="sub mono" font-size="9">lantern-t-* namespaces</text>
+    <text x="14" y="80" class="sub" font-size="10">default-deny NetworkPolicy +</text>
+    <text x="14" y="94" class="sub" font-size="10">ResourceQuota + LimitRange (generated)</text>
+
+    <rect x="308" y="0" width="296" height="112" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="322" y="24" class="t" font-size="11.5" font-weight="700">Cosign image verification</text>
+    <text x="322" y="46" class="sub" font-size="10">keyless (GitHub OIDC, Fulcio/Rekor)</text>
+    <text x="322" y="62" class="sub" font-size="10">Kyverno verifyImages · fail-closed</text>
+    <text x="322" y="82" class="sub" font-size="10">blocks unsigned images at admission</text>
+    <text x="322" y="98" class="sub mono" font-size="9">subject pinned to CI identity</text>
+
+    <rect x="616" y="0" width="296" height="112" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="630" y="24" class="t" font-size="11.5" font-weight="700">Cilium host egress</text>
+    <text x="630" y="46" class="sub" font-size="10">CiliumClusterwideNetworkPolicy</text>
+    <text x="630" y="62" class="sub" font-size="10">default-deny + credential-injecting</text>
+    <text x="630" y="78" class="sub" font-size="10">forward proxy (deny-all default)</text>
+    <text x="630" y="94" class="sub" font-size="10">complements in-guest allowlist</text>
+
+    <rect x="924" y="0" width="292" height="112" rx="10" fill="#11182a" stroke="#334155"/>
+    <text x="938" y="24" class="t" font-size="11.5" font-weight="700">External Secrets Operator</text>
+    <text x="938" y="46" class="sub" font-size="10">SecretStore (Vault/AWS/GCP)</text>
+    <text x="938" y="62" class="sub" font-size="10">operator-managed platform secrets</text>
+    <text x="938" y="82" class="sub" font-size="10">agent secrets stay in-VM mTLS vend</text>
+    <text x="938" y="96" class="sub" font-size="10">(refs never land in env)</text>
+  </g>
+</svg>
