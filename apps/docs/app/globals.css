@@ -277,3 +277,11 @@ body::before {
 .sys-comp span { font-size: 0.7rem; color: #71717a; line-height: 1.4; }
 .sys-boundary { padding-bottom: 1.3rem; }
 .sys-note { margin-top: 0.85rem; }
+
+/* Clickable diagram cards → their docs. */
+.sys-comp { display: block; text-decoration: none; cursor: pointer; transition: border-color .15s, background .15s, transform .12s; }
+.sys-comp:hover { border-color: #3b3560; background: rgba(124,109,248,0.07); transform: translateY(-1px); }
+.sys-comp:hover b { color: #ffffff; }
+.sys-actor { text-decoration: none; cursor: pointer; transition: border-color .15s, background .15s; }
+.sys-actor:hover { border-color: #3b3560; background: #111018; }
+.sys-actor:hover .sys-actor-name { color: #ffffff; }
