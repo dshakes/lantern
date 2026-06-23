@@ -131,6 +131,56 @@ html, body { overflow-x: hidden; }
 .diagram svg { width: 100%; height: auto; display: block; }
 .diagram figcaption { text-align: center; font-size: 0.8rem; color: #71717a; margin-top: 0.5rem; }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Polish — gradient hero, ambient glow, code chrome, syntax colors, card chips.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Ambient glow behind the whole page (subtle depth, Vercel-style). */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(60rem 30rem at 78% -8%, rgba(124,109,248,0.10), transparent 60%),
+    radial-gradient(48rem 26rem at 8% 4%, rgba(56,189,248,0.06), transparent 55%);
+}
+
+/* Gradient hero headline. */
+.prose h1 {
+  background: linear-gradient(180deg, #ffffff 6%, #c9c6f0 96%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+}
+
+/* Cards: colored icon chip + gradient hover border. */
+.card { position: relative; }
+.card-title svg { padding: 0.32rem; width: 1.85rem; height: 1.85rem; border-radius: 8px; background: rgba(124,109,248,0.10); border: 1px solid rgba(124,109,248,0.22); }
+.card:hover { box-shadow: 0 8px 30px -12px rgba(124,109,248,0.25); }
+
+/* Code blocks: terminal chrome + copy button. */
+.prose pre { position: relative; padding-top: 2.6rem !important; }
+.code-chrome { position: absolute; top: 0; left: 0; right: 0; height: 2.1rem; display: flex; align-items: center; gap: 0.4rem; padding: 0 0.95rem; border-bottom: 1px solid #1c1c20; background: #0a0a0d; border-radius: 12px 12px 0 0; }
+.code-chrome .dot { width: 0.62rem; height: 0.62rem; border-radius: 999px; background: #2a2a30; }
+.code-chrome .dot:nth-child(1) { background: #ff5f57; opacity: 0.55; }
+.code-chrome .dot:nth-child(2) { background: #febc2e; opacity: 0.55; }
+.code-chrome .dot:nth-child(3) { background: #28c840; opacity: 0.55; }
+.copy-btn { position: absolute; top: 0.4rem; right: 0.55rem; z-index: 2; font-size: 0.72rem; font-weight: 500; color: #a1a1aa; background: #18181b; border: 1px solid #2a2a30; border-radius: 6px; padding: 0.2rem 0.55rem; cursor: pointer; transition: color .15s, border-color .15s; }
+.copy-btn:hover { color: #e4e4e7; border-color: #3b3560; }
+.copy-btn.copied { color: #34d399; border-color: rgba(52,211,153,0.4); }
+
+/* highlight.js token colors — lantern palette (loaded by CodeEnhancer). */
+.hljs { color: #d4d4d8; background: transparent; }
+.hljs-comment, .hljs-quote { color: #5c5c66; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-name { color: #b4a5ff; }
+.hljs-string, .hljs-attr, .hljs-template-string, .hljs-addition { color: #6ee7b7; }
+.hljs-number, .hljs-literal, .hljs-meta .hljs-number { color: #fbbf24; }
+.hljs-title, .hljs-section, .hljs-function .hljs-title { color: #7dd3fc; }
+.hljs-attribute, .hljs-variable, .hljs-template-variable { color: #93c5fd; }
+.hljs-type, .hljs-class .hljs-title { color: #c4b5fd; }
+.hljs-meta, .hljs-comment.hljs-meta { color: #71717a; }
+.hljs-symbol, .hljs-bullet, .hljs-link { color: #f0abfc; }
+.hljs-deletion { color: #fca5a5; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
