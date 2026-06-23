@@ -60,7 +60,11 @@
     "pdf-parse": "^2.4.5",
     "pino": "^9.14.0"
   },
+  "scripts": {
+    "test": "node --import=tsx/esm --test src/*.test.ts"
+  },
   "devDependencies": {
+    "tsx": "^4.22.4",
     "typescript": "^5.7.0"
   }
 }

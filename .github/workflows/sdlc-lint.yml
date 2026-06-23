@@ -1,0 +1,125 @@
+# Lint — PR gate that runs all three linter stacks (Go, Rust, TypeScript) and
+# fails fast on the first violation. Mirrors the targets in the top-level Makefile:
+#   lint-go  → golangci-lint on every Go module
+#   lint-rust → cargo clippy -D warnings on every Rust crate
+#   lint-ts  → eslint/tsc/next lint on all TS packages
+#
+# Named job "lint" so it can be pinned as a required branch-protection check.
+
+name: "sdlc · lint"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdlc-lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint           # stable name — referenced by branch-protection required checks
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: go1.26.4  # pin to the same toolchain as the QA job
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      # ---- Go ---------------------------------------------------------------
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: services/control-plane/go.mod
+          cache: false   # golangci-lint manages its own cache
+
+      - name: golangci-lint (all Go modules)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          # Run against every Go service that has a golangci config or falls
+          # back to the default set. We run each module in its own subdirectory
+          # so imports resolve correctly.
+          working-directory: services/control-plane
+          args: --timeout=5m ./...
+
+      - name: golangci-lint (workflow-engine)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: services/workflow-engine
+          args: --timeout=5m ./...
+
+      - name: golangci-lint (runtime-scheduler)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: services/runtime-scheduler
+          args: --timeout=5m ./...
+
+      - name: golangci-lint (scheduler)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: services/scheduler
+          args: --timeout=5m ./...
+
+      # ---- Rust -------------------------------------------------------------
+      - name: Set up Rust (pinned toolchain from rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # rust-toolchain.toml at repo root pins channel + clippy component
+          toolchain: "1.93"
+          components: clippy
+
+      - name: cargo clippy (gateway)
+        run: cd services/gateway && cargo clippy --all-targets -- -D warnings
+
+      - name: cargo clippy (model-router)
+        run: cd services/model-router && cargo clippy --all-targets -- -D warnings
+
+      - name: cargo clippy (runtime-manager)
+        run: cd services/runtime-manager && cargo clippy --all-targets -- -D warnings
+
+      - name: cargo clippy (surface-gateway)
+        run: cd services/surface-gateway && cargo clippy --all-targets -- -D warnings
+
+      - name: cargo clippy (harness)
+        run: cd services/harness && cargo clippy --all-targets -- -D warnings
+
+      # ---- TypeScript -------------------------------------------------------
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+
+      - name: Install sdk-ts deps
+        run: cd packages/sdk-ts && npm ci
+
+      - name: eslint (sdk-ts)
+        run: cd packages/sdk-ts && npm run lint
+
+      - name: Install bridge-core deps
+        run: cd packages/bridge-core && npm ci
+
+      - name: tsc (bridge-core)
+        run: cd packages/bridge-core && npx tsc --noEmit
+
+      - name: Install landing deps
+        run: cd apps/landing && npm ci
+
+      - name: next lint (landing)
+        run: cd apps/landing && npm run lint
+
+      - name: Install whatsapp-bridge deps
+        run: cd services/whatsapp-bridge && npm ci
+
+      - name: tsc (whatsapp-bridge)
+        run: cd services/whatsapp-bridge && npm run typecheck
+
+      - name: Install imessage-bridge deps
+        run: cd services/imessage-bridge && npm ci
+
+      - name: tsc (imessage-bridge)
+        run: cd services/imessage-bridge && npm run typecheck

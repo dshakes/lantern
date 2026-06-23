@@ -8,7 +8,7 @@ If you are an AI assistant: read this top-to-bottom before your first edit. Then
 
 ## Project in one sentence
 
-Lantern is a **production runtime for AI agents** -- multi-LLM routing (4 strategies), managed sessions, 17 real connector APIs, MCP marketplace, A2A agent cards, agent marketplace, evaluations dashboard, visual workflow editor, cron scheduling, managed cloud hosting, Python SDK at full parity, and guardrails, with a control-plane/data-plane split for customer-cloud or managed-cloud deployments.
+Lantern is a **production runtime for AI agents** -- multi-LLM routing (4 strategies), managed sessions, 17 real connector APIs, MCP marketplace, A2A agent cards, agent marketplace, evaluations dashboard, visual workflow editor, cron scheduling, managed cloud hosting, Python SDK at management-surface parity with the Go SDK, and guardrails, with a control-plane/data-plane split for customer-cloud or managed-cloud deployments.
 
 For the full vision read `README.md`. For the architecture read `docs/architecture/01-overview.md`.
 
@@ -30,6 +30,17 @@ This is a **polyglot monorepo on purpose**. Pick the right tool for the layer; d
 
 **Do not introduce a new language without an ADR.** See `docs/adr/0001-language-stack.md`.
 
+### Python SDK parity status (`packages/sdk-python`)
+
+**Management surface** (`LanternClient` in `lantern/client.py`): at parity with `packages/sdk-go/client.go`.
+Covered namespaces: `agents`, `runs` (incl. `forecast`), `sessions`, `connectors`, `budgets`, `evals`, `experiments`, `marketplace`, `mcp`, `receipts`, `feedback`, `rehearsals`.
+
+**Runtime context** (`AgentContext` in `lantern/types.py`): partial — interface stubs exist (`llm`, `tools`, `mem`, `connectors`, `mcp`, `a2a`, `context`) but all raise `NotImplementedError`. Full runtime wiring is a separate effort.
+
+**Known endpoint fixes (2026-06)**:
+- `connectors.execute` — was `POST /v1/connectors/{id}/actions/{action}` (404). Fixed to `POST /v1/connectors/{id}/execute?action={action}` per Go handler.
+- `sessions.close` — was `POST /v1/sessions/{id}/close` (404). Fixed to `DELETE /v1/sessions/{id}`. `close()` kept as a backward-compat alias; `delete()` is canonical. `stop()` added for `POST /v1/sessions/{id}/stop`.
+
 ---
 
 ## Architectural invariants
@@ -43,7 +54,7 @@ These are **load-bearing**. Violating them silently will cause incidents. If you
 5. **Untrusted code runs in a microVM.** User-supplied code, Python `exec`, browser automation, anything that loads packages from the internet -- Firecracker or Kata only. Never a bare pod.
 6. **Models are addressed by capability, not name.** SDK code says `model: "auto"` or `model: "reasoning-large"`. The model router maps to a concrete vendor model. Never hardcode `gpt-5` in service code.
 7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `lantern-t-<tenant_id>`. No cross-tenant joins, ever. The control-plane gRPC port (`:50051`) is a **trust boundary**: only callers presenting the shared service token (`x-lantern-service-token`, validated against `LANTERN_GRPC_SERVICE_TOKEN`) may set a `tenant_id`. Without that interceptor any caller reachable to `:50051` could spoof any tenant. See the wiring env vars below; mTLS is the stronger follow-up, the shared token is the pragmatic GA step.
-8. **Idempotency is required for every external side-effect.** Webhook deliveries, model API calls, K8s create -- all carry an idempotency key derived from `(run_id, step_id, attempt)`.
+8. **Idempotency is required for every external side-effect.** Webhook deliveries, model API calls, K8s create -- all carry an idempotency key derived from `(run_id, step_id, attempt)`. LLM provider calls (OpenAI + Anthropic, in `internal/handlers/llm_proxy.go`) now send an `Idempotency-Key` header on every request builder: the inline executor stamps a run-scoped base (`WithLLMIdempotencyBase`, from `idempotencyKey(run_id, "llm:main", attempt)`) onto the ctx, so a rate-limit backoff retry to the same provider — or a crash-replay — dedups at the provider instead of double-billing; failover targets get a per-provider-suffixed key. Ad-hoc `/v1/completions` (no run) falls back to a deterministic hash of `(provider, model, messages)`. Key derivation lives in `internal/handlers/llm_idempotency.go`; it is a one-way hash of identifiers (never carries secret material).
 9. **Observability is not optional.** Every service emits OTel traces with `tenant_id`, `run_id`, `step_id`, `agent_version`. A service that can't be traced is broken.
 10. **Secrets never appear in logs, traces, or run state.** Use the `lantern.secret/...` ref form; the runtime resolves at execution time.
 
@@ -435,6 +446,17 @@ types: `trigger`, `ai-step`, `tool`, `connector`, `condition`, `approval`,
 emits `step_started` + `step_completed`/`step_failed` to `journal_events`
 so the run-detail waterfall renders the graph automatically.
 
+The gRPC `RunService.StreamRunEvents` (`internal/handlers/runs.go`) replays
+those `journal_events` — it is no longer a heartbeat-only stub. On stream
+open it sends every row for the run in `(run_id, seq)` order mapped to the
+proto `StreamEvent` oneof (`step_started`/`step_completed`/`step_failed` →
+their dedicated messages; every other kind → a structured `Log` so nothing
+is dropped), then tails for `seq > last` until the run is terminal or the
+client cancels, with a `Heartbeat` keepalive between events. It mirrors the
+REST SSE path `GetRunEvents` (`internal/handlers/run_events.go`) exactly:
+same query, ordering, tenant-ownership gate, poll interval, and
+`isRunTerminal` stop condition.
+
 #### Durable workflow engine step dispatch (`services/workflow-engine`)
 
 The dormant durable engine's leaf executors
@@ -627,6 +649,7 @@ tonic-generated server.
 - Add an ADR (`docs/adr/NNNN-title.md`) for any decision that affects more than one service.
 - For UI changes, manually load the page in a browser before saying "done". Type checking and tests verify code, not UX.
 - Run `make ci-local` before committing -- it runs the same matrix as CI.
+- The `sdlc-lint` PR workflow (`.github/workflows/sdlc-lint.yml`) gates on golangci-lint, `cargo clippy -D warnings`, and eslint/tsc for all TS packages. This is a required check alongside `sdlc-qa`.
 
 ### DO NOT
 
@@ -976,8 +999,10 @@ The four-Makefile-target dance below still works for power users, but
 | `make landing-dev`         | Landing page dev server                                   |
 | `make build`               | Compile Go + Rust + TypeScript                            |
 | `make proto`               | Regenerate from proto definitions                         |
-| `make test`                | All test suites                                           |
-| `make lint`                | All linters                                               |
+| `make test`                | All test suites (Go × 4 services, Rust × 3, TS × 2, Python × 1) |
+| `make test-go`             | Go tests — control-plane, workflow-engine, scheduler, **runtime-scheduler** |
+| `make test-ts`             | TS tests — sdk-ts (vitest) + **bridge-core** (node:test via tsx) |
+| `make lint`                | All linters (golangci-lint, clippy, eslint/tsc)           |
 | `make audit`               | Security audit (all languages)                            |
 | `make ci-local`            | Lint + test + audit (same as CI)                          |
 | `make clean`               | Remove artifacts + docker volumes                         |

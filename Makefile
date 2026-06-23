@@ -174,6 +174,7 @@ test-go: ## Run Go tests
 	cd services/control-plane && go test -race -count=1 ./...
 	cd services/workflow-engine && go test -race -count=1 ./...
 	cd services/scheduler && go test -race -count=1 ./...
+	cd services/runtime-scheduler && CGO_ENABLED=0 go test ./...
 
 test-rust: ## Run Rust tests
 	cd services/gateway && cargo test
@@ -182,6 +183,7 @@ test-rust: ## Run Rust tests
 
 test-ts: ## Run TypeScript tests
 	cd packages/sdk-ts && npx vitest run
+	cd packages/bridge-core && npm test
 
 test-python: ## Run Python tests
 	cd packages/sdk-python && python3 -m pytest tests/ -v

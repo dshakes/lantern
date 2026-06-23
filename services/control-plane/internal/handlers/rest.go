@@ -1373,8 +1373,16 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 	// userFacing=false: run outputs go to runs.output JSON, not directly
 	// to a bridge contact. The existing tools-filter in callLLMWithFailover
 	// already excludes claude-code when tools are present.
+	//
+	// Invariant #8: stamp a stable per-(run, step, attempt) idempotency base
+	// onto the ctx. The provider request builders derive the Idempotency-Key
+	// from it, so a rate-limit backoff retry to the same provider — or a
+	// crash-replay re-running this step — dedups at the provider instead of
+	// double-billing. attempt=1 matches the journal's per-step attempt; the
+	// builder suffixes the provider name so failover targets stay distinct.
+	llmCtx := WithLLMIdempotencyBase(ctx, llmIdempotencyBaseFor(runID, llmStepID, 1))
 	result, _, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.llmProxy.callLLMWithFailover(
-		ctx, tenantID,
+		llmCtx, tenantID,
 		llmMessages, llmTools, llmDispatch, onToolCallStep, onAttempt, 5, false,
 	)
 	if llmErr == nil {

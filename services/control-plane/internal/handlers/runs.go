@@ -369,45 +369,254 @@ func (s *RunService) CancelRun(ctx context.Context, req *lanternv1.CancelRunRequ
 	return run, nil
 }
 
-// StreamRunEvents is a stub that sends heartbeats every 15 seconds.
+// StreamRunEvents replays a run's journal_events over gRPC and then tails for
+// new events until the run reaches a terminal status or the client cancels.
+//
+// This mirrors the REST SSE handler GetRunEvents (run_events.go): same
+// journal_events query, same (run_id, seq) ordering, same tail-poll +
+// terminal-status stop condition, same tenant-ownership gate. The difference
+// is purely the wire shape — each journal row is mapped to the proto
+// StreamEvent the SDK/dashboard gRPC client expects, and a Heartbeat is sent
+// as a keepalive between events.
 func (s *RunService) StreamRunEvents(req *lanternv1.StreamRunEventsRequest, stream lanternv1.RunService_StreamRunEventsServer) error {
-	tenantID, err := middleware.MustTenantID(stream.Context())
+	ctx := stream.Context()
+
+	tenantID, err := middleware.MustTenantID(ctx)
 	if err != nil {
 		return err
 	}
 
-	if req.GetRunId() == "" {
+	runID := req.GetRunId()
+	if runID == "" {
 		return status.Error(codes.InvalidArgument, "run_id is required")
 	}
 
-	s.logger().Info("stream started (stub)",
+	// Ownership gate — the run must belong to the caller's tenant. We also read
+	// the current status so we know whether a tail is needed after replay.
+	var runStatus string
+	if err := s.srv.Pool.QueryRow(ctx, `
+		SELECT status FROM runs WHERE id = $1 AND tenant_id = $2
+	`, runID, tenantID).Scan(&runStatus); err != nil {
+		// pgx.ErrNoRows → not found or owned by another tenant. Don't leak which.
+		return status.Error(codes.NotFound, "run not found")
+	}
+
+	s.logger().Info("stream started",
 		zap.String("tenant_id", tenantID),
-		zap.String("run_id", req.GetRunId()),
+		zap.String("run_id", runID),
 	)
 
-	var seq uint64
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
+	// -----------------------------------------------------------------------
+	// Phase 1 — replay all existing journal_events in seq order. The run was
+	// already confirmed to belong to this tenant, so journal_events.run_id is
+	// a sufficient filter (no second tenant check needed — same reasoning as
+	// the REST handler).
+	// -----------------------------------------------------------------------
+	lastSeq, err := s.replayJournalEvents(ctx, runID, 0, stream)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return status.Errorf(codes.Internal, "replay journal_events: %v", err)
+	}
+
+	// If the run was already terminal, replay is the whole stream.
+	if isRunTerminal(runStatus) {
+		return nil
+	}
+
+	// -----------------------------------------------------------------------
+	// Phase 2 — tail: poll for new rows until the run is terminal or the
+	// client cancels. Heartbeat keepalive runs between events.
+	// -----------------------------------------------------------------------
+	heartbeat := time.NewTicker(runEventsHeartbeatInterval)
+	poll := time.NewTicker(runEventsTailPollInterval)
+	defer heartbeat.Stop()
+	defer poll.Stop()
 
 	for {
 		select {
-		case <-stream.Context().Done():
-			return stream.Context().Err()
-		case <-ticker.C:
-			seq++
-			event := &lanternv1.StreamEvent{
-				RunId: req.GetRunId(),
-				Seq:   seq,
-				Ts:    timestamppb.Now(),
-				Payload: &lanternv1.StreamEvent_Heartbeat{
-					Heartbeat: &lanternv1.Heartbeat{},
-				},
-			}
-			if err := stream.Send(event); err != nil {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case <-heartbeat.C:
+			if err := stream.Send(&lanternv1.StreamEvent{
+				RunId:   runID,
+				Seq:     lastSeq,
+				Ts:      timestamppb.Now(),
+				Payload: &lanternv1.StreamEvent_Heartbeat{Heartbeat: &lanternv1.Heartbeat{}},
+			}); err != nil {
 				return err
+			}
+
+		case <-poll.C:
+			newLast, err := s.replayJournalEvents(ctx, runID, lastSeq, stream)
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				s.logger().Warn("stream tail poll failed",
+					zap.String("run_id", runID), zap.Error(err))
+				continue
+			}
+			lastSeq = newLast
+
+			// Re-check status to detect terminal state.
+			var currentStatus string
+			if err := s.srv.Pool.QueryRow(ctx, `
+				SELECT status FROM runs WHERE id = $1 AND tenant_id = $2
+			`, runID, tenantID).Scan(&currentStatus); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				s.logger().Warn("stream status recheck failed",
+					zap.String("run_id", runID), zap.Error(err))
+				return status.Errorf(codes.Internal, "status recheck: %v", err)
+			}
+			if isRunTerminal(currentStatus) {
+				return nil
 			}
 		}
 	}
+}
+
+// replayJournalEvents streams every journal_events row for runID with
+// seq > afterSeq, in ascending seq order, mapping each to a proto StreamEvent.
+// Returns the highest seq sent (or afterSeq when there were none).
+func (s *RunService) replayJournalEvents(
+	ctx context.Context,
+	runID string,
+	afterSeq uint64,
+	stream lanternv1.RunService_StreamRunEventsServer,
+) (uint64, error) {
+	rows, err := s.srv.Pool.Query(ctx, `
+		SELECT seq, kind, step_id, attempt, payload, created_at
+		FROM   journal_events
+		WHERE  run_id = $1 AND seq > $2
+		ORDER  BY seq ASC
+	`, runID, afterSeq)
+	if err != nil {
+		return afterSeq, err
+	}
+	defer rows.Close()
+
+	lastSeq := afterSeq
+	for rows.Next() {
+		var (
+			seq       int64
+			kind      string
+			stepID    *string
+			attempt   int32
+			payload   []byte
+			createdAt time.Time
+		)
+		if err := rows.Scan(&seq, &kind, &stepID, &attempt, &payload, &createdAt); err != nil {
+			s.logger().Warn("stream scan journal row",
+				zap.String("run_id", runID), zap.Error(err))
+			continue
+		}
+		ev := journalRowToStreamEvent(runID, uint64(seq), kind, stepID, attempt, payload, createdAt)
+		if err := stream.Send(ev); err != nil {
+			return lastSeq, err
+		}
+		if uint64(seq) > lastSeq {
+			lastSeq = uint64(seq)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return lastSeq, err
+	}
+	return lastSeq, nil
+}
+
+// journalRowToStreamEvent maps one journal_events row onto the proto
+// StreamEvent oneof the gRPC client consumes. The journal stores the typed
+// detail in the JSONB payload; we surface the common step lifecycle kinds as
+// their dedicated proto messages and fall back to a structured LogLine for
+// everything else so no event is dropped on the wire.
+func journalRowToStreamEvent(
+	runID string,
+	seq uint64,
+	kind string,
+	stepID *string,
+	attempt int32,
+	payload []byte,
+	createdAt time.Time,
+) *lanternv1.StreamEvent {
+	ev := &lanternv1.StreamEvent{
+		RunId: runID,
+		Seq:   seq,
+		Ts:    timestamppb.New(createdAt),
+	}
+	step := ""
+	if stepID != nil {
+		step = *stepID
+		ev.StepId = step
+	}
+
+	switch kind {
+	case "step_started":
+		ev.Payload = &lanternv1.StreamEvent_StepStarted{StepStarted: &lanternv1.StepStarted{
+			StepId:  step,
+			Attempt: attempt,
+			Kind:    journalPayloadString(payload, "type"),
+		}}
+	case "step_completed":
+		ev.Payload = &lanternv1.StreamEvent_StepCompleted{StepCompleted: &lanternv1.StepCompleted{
+			StepId:  step,
+			Attempt: attempt,
+		}}
+	case "step_failed":
+		ev.Payload = &lanternv1.StreamEvent_StepFailed{StepFailed: &lanternv1.StepFailed{
+			StepId:       step,
+			Attempt:      attempt,
+			ErrorMessage: journalPayloadString(payload, "error"),
+		}}
+	default:
+		// run_completed, run_failed, anomalies, and any other kind ride through
+		// as a structured Log so gRPC subscribers see the full journal, exactly
+		// like the SSE path forwards every row.
+		ev.Payload = &lanternv1.StreamEvent_Log{Log: &lanternv1.LogLine{
+			Level:   "info",
+			Message: kind,
+			Fields:  journalPayloadStruct(payload),
+		}}
+	}
+	return ev
+}
+
+// journalPayloadString pulls a single string field out of a journal payload,
+// returning "" when absent or unparseable (best-effort; never errors).
+func journalPayloadString(payload []byte, key string) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(payload, &m); err != nil {
+		return ""
+	}
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// journalPayloadStruct converts a journal JSONB payload into a structpb.Struct
+// for the LogLine.fields, returning nil on any parse failure so a malformed
+// payload never aborts the stream.
+func journalPayloadStruct(payload []byte) *structpb.Struct {
+	if len(payload) == 0 {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(payload, &m); err != nil {
+		return nil
+	}
+	st, err := structpb.NewStruct(m)
+	if err != nil {
+		return nil
+	}
+	return st
 }
 
 // ReplayRun is not yet implemented for the spike.
