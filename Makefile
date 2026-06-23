@@ -1,4 +1,4 @@
-.PHONY: help dev build test test-db test-e2e smoke-dataplane lint ci-local clean proto local-dev local-kind k8s-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
+.PHONY: help dev build test test-db test-e2e smoke-dataplane loadtest-runs validate-docs-live lint ci-local clean proto local-dev local-kind k8s-validate seed docker-build run-scheduler run-runtime-manager run-api-runtime bridge-setup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -191,6 +191,12 @@ test-e2e: ## Run live-stack e2e suites (needs `make dev-infra` + control-plane o
 
 smoke-dataplane: ## Live two-process proof: boots the real control-plane + data-plane-agent binaries and routes a run to the plane over the tunnel
 	@bash scripts/e2e-dataplane-smoke.sh
+
+loadtest-runs: ## Basic concurrency load test: fire N run-creates at concurrency C against a freshly-booted control-plane (N=120 C=24 by default)
+	@bash scripts/loadtest-runs.sh
+
+validate-docs-live: ## Hit every deployed docs route on GitHub Pages and assert 200 + real content
+	@bash scripts/validate-docs-live.sh
 
 test-db: ## Start dev Postgres if needed, then run Go tests that require a live DB
 	@echo "==> Ensuring Postgres is up..."
