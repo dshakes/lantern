@@ -565,6 +565,41 @@ contract is in `packages/proto/lantern/v1/runtime.proto`; arch overview is
 component is in ADRs 0002–0008. Quota is per tenant; cap exceeded returns
 HTTP 402.
 
+**Harness security model (`services/harness/src`, P2-B7).** The in-VM harness
+is PID 1 and the last in-VM trust boundary around secrets + egress. Three
+controls, all fail-safe:
+
+- **Secrets socket peer auth.** `/run/lantern/secrets.sock` authenticates every
+  connecting peer with `SO_PEERCRED` (kernel-attested uid/pid, unspoofable). It
+  only vends to the workload uid the manager injects as `LANTERN_WORKLOAD_UID`
+  (plus the harness's own uid). Unset → dev path: a loud one-time WARN, allow.
+  **In production the manager MUST inject `LANTERN_WORKLOAD_UID`** so the socket
+  is fail-closed against any other in-VM process. Unauthorized attempts emit a
+  `secret_access_denied` audit event.
+- **Egress enforcement is two-layer, and the harness fails closed without the
+  enforcing layer.** The CONNECT allowlist proxy (`127.0.0.1:3128`) is only
+  advisory unless traffic is forced through it. The harness (a) injects
+  `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY` into the workload env when
+  egress rules are declared, and (b) runs a boot preflight that checks for the
+  **iptables REDIRECT-to-3128 rule**. **True enforcement requires the VM
+  host/image to install that REDIRECT rule** (see the header comment in
+  `services/harness/src/egress.rs`); env injection alone is bypassable by a
+  client that ignores proxy vars. When rules are declared but REDIRECT is
+  absent: `LANTERN_EGRESS_FAIL_CLOSED=1` → harness refuses to start the
+  workload; otherwise a prominent SECURITY WARN + `egress_preflight` audit.
+- **Security audits are never silently dropped.** The harness wires the real
+  `RuntimeHarness.Report` client-streaming RPC with reconnect. Security-critical
+  audits (`secret_vend`, egress `deny`, `secret_access_denied`,
+  `egress_preflight`) are logged locally at WARN *before* any forward attempt
+  and preserved across a transient manager outage (never dropped on a full
+  buffer); routine observability frames stay best-effort.
+
+Harness env vars: `LANTERN_WORKLOAD_UID` (workload uid for peer auth),
+`LANTERN_EGRESS_RULES` (JSON `[{pattern,http_methods,rate_bps}]`, declared
+egress at spawn), `LANTERN_EGRESS_FAIL_CLOSED=1` (refuse to boot without
+iptables REDIRECT when egress declared), `LANTERN_NO_PROXY` (override the
+injected `NO_PROXY`; defaults keep loopback + `169.254.169.254` direct).
+
 | Method   | Path                             | Description                                                                                             |
 | -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `POST`   | `/v1/runtime/schedule`           | Submit an AgentSpec (image, isolation, limits, egress, secrets). Returns `vm_id`. 402 if quota exceeded |

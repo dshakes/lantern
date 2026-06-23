@@ -37,7 +37,7 @@ use tracing_subscriber::EnvFilter;
 use crate::egress::EgressPolicy;
 use crate::heartbeat::Heartbeat;
 use crate::manager_client::ManagerClient;
-use crate::proto::SecretRef;
+use crate::proto::{EgressRule, SecretRef};
 use crate::secrets::SecretCache;
 use crate::supervisor::Supervisor;
 
@@ -47,6 +47,7 @@ struct HarnessEnv {
     manager_addr: String,
     workload_cmd: Vec<String>,
     declared_secrets: Vec<SecretRef>,
+    declared_egress: Vec<EgressRule>,
 }
 
 fn parse_env() -> Result<HarnessEnv> {
@@ -68,11 +69,22 @@ fn parse_env() -> Result<HarnessEnv> {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
 
+    // LANTERN_EGRESS_RULES is a JSON array of {pattern, http_methods, rate_bps}
+    // declared in the AgentSpec, injected by the manager at spawn. Present →
+    // egress is "configured" (the proxy must be enforced); absent/empty → no
+    // egress declared (default-deny applies once the manager pushes rules via
+    // heartbeat). Parsing failure is treated as "no rules".
+    let declared_egress: Vec<EgressRule> = std::env::var("LANTERN_EGRESS_RULES")
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
     Ok(HarnessEnv {
         vm_id,
         manager_addr,
         workload_cmd,
         declared_secrets,
+        declared_egress,
     })
 }
 
@@ -133,8 +145,22 @@ async fn main() -> Result<()> {
         });
     }
 
-    // 4. Egress proxy.
-    let egress_policy = Arc::new(EgressPolicy::new(Vec::new(), manager.clone()));
+    // 4. Egress proxy. Seed it with the AgentSpec's declared rules so the
+    //    allowlist is live the moment the workload starts (don't wait for the
+    //    first heartbeat ack).
+    let egress_configured = !env.declared_egress.is_empty();
+    let egress_policy = Arc::new(EgressPolicy::new(
+        env.declared_egress.clone(),
+        manager.clone(),
+    ));
+
+    // 4a. Boot-time enforcement preflight (P2-B7 fix #2). When egress rules are
+    //     declared but the iptables REDIRECT layer is absent, this fails closed
+    //     (refuses to spawn the workload) if LANTERN_EGRESS_FAIL_CLOSED=1, else
+    //     logs a prominent SECURITY warning + audit event. Runs BEFORE the
+    //     workload is spawned so a bypassable allowlist never silently ships.
+    egress::enforcement_preflight(&manager, egress_configured).await?;
+
     {
         let p = Arc::clone(&egress_policy);
         tokio::spawn(async move {
@@ -169,7 +195,8 @@ async fn main() -> Result<()> {
 
     // 6. Supervisor — spawn workload, hand stdio to log forwarder.
     let (stdio_tx, stdio_rx) = mpsc::channel(4);
-    let supervisor = Supervisor::new(env.workload_cmd.clone(), manager.clone());
+    let supervisor = Supervisor::new(env.workload_cmd.clone(), manager.clone())
+        .with_proxy_env(egress_configured);
     let supervisor_handles = supervisor.handles();
 
     // 7. Signal handlers — drain, snapshot, zombie reap.

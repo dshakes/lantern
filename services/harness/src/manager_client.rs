@@ -237,6 +237,74 @@ impl ManagerClient {
         Ok((req_tx, ack_rx))
     }
 
+    /// Open the real client-streaming `RuntimeHarness.Report` RPC and forward
+    /// every `HarnessReport` drained from `report_rx` to the manager.
+    ///
+    /// Uses the same mTLS channel setup as `vend_secret` / `open_heartbeat_stream`;
+    /// falls back to plaintext when the TLS env vars are absent (dev mode).
+    ///
+    /// Returns `Err` when the manager is unreachable (connect failed) so the
+    /// caller (`report::run`) can apply its fail-safe buffering + WARN logic and
+    /// retry with backoff WITHOUT losing the buffered reports. Returns `Ok(())`
+    /// when the stream completes normally (manager closed the ack).
+    ///
+    /// IMPORTANT: this takes ownership of `report_rx`. On a transport error the
+    /// caller must reconstruct the receiver (it cannot be recovered here); the
+    /// caller therefore owns the un-acked reports it pulled and is responsible
+    /// for not silently dropping security-critical audit events.
+    pub async fn report_stream(&self, report_rx: mpsc::Receiver<HarnessReport>) -> Result<()> {
+        let tls_config = crate::tls::build_client_tls_config()
+            .with_context(|| "report: failed to build TLS client config")?;
+
+        let scheme = if tls_config.is_some() {
+            "https"
+        } else {
+            "http"
+        };
+        let endpoint_url = format!("{scheme}://{}", self.manager_addr);
+        let endpoint = tonic::transport::Endpoint::from_shared(endpoint_url.clone())
+            .with_context(|| format!("report: invalid endpoint URL {endpoint_url}"))?;
+
+        let endpoint = if let Some(tls) = tls_config {
+            endpoint
+                .tls_config(tls)
+                .with_context(|| "report: failed to apply TLS config to endpoint")?
+        } else {
+            endpoint
+        };
+
+        let mut client = pb::runtime_harness_client::RuntimeHarnessClient::connect(endpoint)
+            .await
+            .with_context(|| {
+                format!(
+                    "report: could not connect to manager at {}",
+                    self.manager_addr
+                )
+            })?;
+
+        // Convert internal HarnessReport → pb on the fly as the stream is
+        // consumed. ReceiverStream + map keeps this allocation-light: no
+        // intermediate Vec, one conversion per frame.
+        use tokio_stream::StreamExt;
+        let req_stream =
+            tokio_stream::wrappers::ReceiverStream::new(report_rx).map(pb::HarnessReport::from);
+
+        let mut request = tonic::Request::new(req_stream);
+        // Join the manager's Spawn trace so report frames share the trace id.
+        crate::otel::inject_into_metadata(
+            &opentelemetry::Context::current(),
+            request.metadata_mut(),
+        );
+
+        client
+            .report(request)
+            .await
+            .with_context(|| "report: Report RPC stream failed")?;
+
+        self.note_contact().await;
+        Ok(())
+    }
+
     /// Build the clearly-marked stub response used when
     /// `LANTERN_ALLOW_SECRET_STUB=1`. Extracted so tests can verify the
     /// format without needing to mutate global env.
