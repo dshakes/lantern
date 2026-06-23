@@ -16,84 +16,127 @@
 }
 
 html { scroll-behavior: smooth; color-scheme: dark; }
-body { background: var(--color-surface-0); color: #e4e4e7; font-family: var(--font-sans); }
+body {
+  background: var(--color-surface-0); color: #e4e4e7;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
 
-/* ── Prose ── */
+/* Mobile safety: nothing may push the page wider than the viewport. */
+html, body { overflow-x: hidden; }
+.prose img, .prose svg, .prose video { max-width: 100%; height: auto; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Prose — Linear/Vercel feel: big type, generous whitespace, few words.
+   ────────────────────────────────────────────────────────────────────────── */
 .prose { max-width: none; }
 
 .prose h1 {
-  font-size: 1.875rem; font-weight: 700; letter-spacing: -0.025em;
-  color: #fafafa; margin-bottom: 0.5rem; padding-bottom: 0.75rem;
-  border-bottom: 1px solid #27272a; line-height: 1.2;
+  font-size: 2.5rem; font-weight: 700; letter-spacing: -0.03em;
+  color: #fafafa; line-height: 1.1; margin: 0 0 1rem;
+}
+/* The first paragraph after an <h1> reads as a lead. */
+.prose h1 + p, .prose .lead {
+  font-size: 1.15rem; line-height: 1.7; color: #b4b4be; margin-bottom: 2.25rem;
 }
 
 .prose h2 {
-  font-size: 1.2rem; font-weight: 600; color: #e4e4e7;
-  margin-top: 2.5rem; margin-bottom: 0.75rem; padding-top: 0.5rem;
-  border-top: 1px solid rgba(39,39,42,0.5); scroll-margin-top: 4rem;
+  font-size: 1.6rem; font-weight: 650; letter-spacing: -0.02em; color: #fafafa;
+  margin: 4rem 0 1rem; scroll-margin-top: 5rem;
 }
-.prose h2:first-of-type { border-top: none; }
-
 .prose h3 {
-  font-size: 1rem; font-weight: 600; color: #d4d4d8;
-  margin-top: 1.5rem; margin-bottom: 0.5rem; scroll-margin-top: 4rem;
+  font-size: 1.15rem; font-weight: 600; color: #ededf0;
+  margin: 2.25rem 0 0.6rem; scroll-margin-top: 5rem;
 }
 
-.prose p { font-size: 0.875rem; line-height: 1.75; color: #a1a1aa; margin-bottom: 1rem; }
-.prose strong { color: #e4e4e7; font-weight: 600; }
-.prose a { color: #7c6df8; text-decoration: underline; text-underline-offset: 2px; }
-.prose a:hover { color: #9590e8; }
-.prose ul, .prose ol { font-size: 0.875rem; color: #a1a1aa; margin-bottom: 1rem; padding-left: 1.5rem; }
-.prose li { margin-bottom: 0.3rem; line-height: 1.7; }
-.prose li::marker { color: #52525b; }
+.prose p  { font-size: 1rem; line-height: 1.8; color: #a1a1aa; margin-bottom: 1.25rem; }
+.prose strong { color: #f4f4f5; font-weight: 600; }
+.prose a  { color: #a39bf0; text-decoration: none; border-bottom: 1px solid rgba(124,109,248,0.28); transition: border-color .15s, color .15s; }
+.prose a:hover { color: #c4bdff; border-color: #7c6df8; }
+.prose ul, .prose ol { font-size: 1rem; color: #a1a1aa; margin-bottom: 1.25rem; padding-left: 1.4rem; }
+.prose li { margin-bottom: 0.45rem; line-height: 1.75; }
+.prose li::marker { color: #6e5dce; }
+.prose hr { border: none; border-top: 1px solid #1f1f23; margin: 3rem 0; }
 
-/* Inline code */
+/* Inline code + fenced blocks */
 .prose code {
-  font-family: var(--font-mono); font-size: 0.8rem;
-  background: #18181b; border: 1px solid #27272a; border-radius: 4px;
-  padding: 0.1rem 0.35rem; color: #e4e4e7;
+  font-family: var(--font-mono); font-size: 0.85em;
+  background: #161619; border: 1px solid #27272a; border-radius: 5px;
+  padding: 0.12rem 0.4rem; color: #e8e8ec;
 }
-
-/* Code blocks */
 .prose pre {
-  background: #0f0f12; border: 1px solid #27272a; border-radius: 8px;
-  padding: 1rem 1.25rem; margin-bottom: 1.25rem; overflow-x: auto;
+  background: #0c0c0f; border: 1px solid #26262b; border-radius: 12px;
+  padding: 1.2rem 1.4rem; margin-bottom: 1.5rem; overflow-x: auto;
+  font-size: 0.875rem; -webkit-overflow-scrolling: touch;
 }
-.prose pre code { background: none; border: none; padding: 0; font-size: 0.8rem; line-height: 1.7; color: #d4d4d8; }
+.prose pre code { background: none; border: none; padding: 0; font-size: inherit; line-height: 1.7; color: #d4d4d8; }
 
-/* Mobile safety: never let media/diagrams/tables push the page wider than the
-   viewport (the cause of broken alignment + horizontal scroll on phones). */
-.prose img, .prose svg, .prose video { max-width: 100%; height: auto; }
-.prose table { display: block; max-width: 100%; overflow-x: auto; }
-html, body { overflow-x: hidden; }
-.prose pre { -webkit-overflow-scrolling: touch; }
+/* ──────────────────────────────────────────────────────────────────────────
+   Cards — Mintlify/Supabase style nav + feature grids.
+   ────────────────────────────────────────────────────────────────────────── */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0.9rem; margin: 1.75rem 0 2rem; }
+.card {
+  display: block; border: 1px solid #26262b; border-radius: 14px;
+  background: #0e0e11; padding: 1.2rem 1.3rem;
+  transition: border-color .15s, transform .15s, background .15s;
+}
+.card:hover { border-color: #3b3560; background: #121119; transform: translateY(-2px); }
+.card-title { display: flex; align-items: center; gap: 0.5rem; font-size: 0.97rem; font-weight: 600; color: #fafafa; margin-bottom: 0.35rem; }
+.card-desc  { font-size: 0.85rem; line-height: 1.6; color: #8c8c96; }
 
-/* Callouts */
-.callout { border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.25rem; font-size: 0.85rem; line-height: 1.6; border-left: 3px solid; }
-.callout strong { display: block; margin-bottom: 0.2rem; font-size: 0.8rem; }
-.callout-tip { background: #064e3b15; border-color: #10b981; color: #6ee7b7; }
-.callout-tip strong { color: #34d399; }
-.callout-warning { background: #78350f15; border-color: #f59e0b; color: #fcd34d; }
+/* ──────────────────────────────────────────────────────────────────────────
+   Callouts — friendly, soft.
+   ────────────────────────────────────────────────────────────────────────── */
+.callout { border-radius: 12px; padding: 0.95rem 1.2rem; margin: 1.5rem 0; font-size: 0.925rem; line-height: 1.65; border: 1px solid; }
+.callout strong { display: block; margin-bottom: 0.2rem; font-size: 0.85rem; letter-spacing: 0.01em; }
+.callout-tip     { background: rgba(16,185,129,0.06);  border-color: rgba(16,185,129,0.30);  color: #8ee9c0; }
+.callout-tip strong     { color: #34d399; }
+.callout-warning { background: rgba(245,158,11,0.06);  border-color: rgba(245,158,11,0.30);  color: #f4cd7c; }
 .callout-warning strong { color: #fbbf24; }
-.callout-info { background: #1e1b4b15; border-color: #6366f1; color: #a5b4fc; }
-.callout-info strong { color: #818cf8; }
+.callout-info    { background: rgba(124,109,248,0.06); border-color: rgba(124,109,248,0.30); color: #b4acf4; }
+.callout-info strong    { color: #9590e8; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Steps — numbered walkthrough rail (quickstart/installation).
+   ────────────────────────────────────────────────────────────────────────── */
+.steps { counter-reset: step; border-left: 1px solid #26262b; margin: 1.5rem 0 2rem; padding-left: 1.75rem; }
+.step  { position: relative; padding-bottom: 1.75rem; }
+.step:last-child { padding-bottom: 0; }
+.step::before {
+  counter-increment: step; content: counter(step);
+  position: absolute; left: -2.6rem; top: -0.15rem;
+  width: 1.7rem; height: 1.7rem; border-radius: 999px;
+  background: #15131f; border: 1px solid #3b3560; color: #b4acf4;
+  font-size: 0.8rem; font-weight: 600; display: flex; align-items: center; justify-content: center;
+}
+.step h3 { margin-top: 0; }
 
 /* On-page ToC */
-.toc { border: 1px solid #27272a; border-radius: 8px; background: #0f0f12; padding: 1rem 1.25rem; margin-bottom: 2rem; }
-.toc-title { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #71717a; margin-bottom: 0.5rem; }
+.toc { border: 1px solid #26262b; border-radius: 12px; background: #0e0e11; padding: 1rem 1.25rem; margin-bottom: 2rem; }
+.toc-title { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: #71717a; margin-bottom: 0.5rem; }
 .toc ul { list-style: none; padding-left: 0; margin: 0; }
-.toc li { margin-bottom: 0.2rem; }
-.toc a { font-size: 0.8rem; color: #a1a1aa; text-decoration: none; transition: color 0.15s; }
-.toc a:hover { color: #7c6df8; }
+.toc li { margin-bottom: 0.25rem; }
+.toc a { font-size: 0.85rem; color: #a1a1aa; text-decoration: none; transition: color 0.15s; }
+.toc a:hover { color: #a39bf0; }
 .toc ul ul { padding-left: 1rem; }
-.toc ul ul a { font-size: 0.75rem; color: #71717a; }
+.toc ul ul a { font-size: 0.78rem; color: #71717a; }
 
 /* Tables */
-.prose table { width: 100%; font-size: 0.8rem; border-collapse: collapse; margin-bottom: 1.25rem; }
-.prose th { text-align: left; font-weight: 600; color: #d4d4d8; padding: 0.5rem 0.75rem; border-bottom: 1px solid #27272a; background: #0f0f12; }
-.prose td { padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(39,39,42,0.3); color: #a1a1aa; }
+.prose table { display: block; max-width: 100%; overflow-x: auto; width: 100%; font-size: 0.875rem; border-collapse: collapse; margin-bottom: 1.5rem; }
+.prose th { text-align: left; font-weight: 600; color: #d4d4d8; padding: 0.6rem 0.85rem; border-bottom: 1px solid #27272a; background: #0e0e11; white-space: nowrap; }
+.prose td { padding: 0.6rem 0.85rem; border-bottom: 1px solid rgba(39,39,42,0.4); color: #a1a1aa; }
 
 /* Scrollbar */
-::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: #3a3a42; border-radius: 3px; }
+
+/* ── Responsive type: big on desktop, comfortable on phones ── */
+@media (max-width: 640px) {
+  .prose h1 { font-size: 1.95rem; }
+  .prose h1 + p, .prose .lead { font-size: 1.05rem; margin-bottom: 1.75rem; }
+  .prose h2 { font-size: 1.35rem; margin-top: 2.75rem; }
+  .prose h3 { font-size: 1.05rem; }
+  .prose p, .prose ul, .prose ol { font-size: 0.95rem; }
+  .card-grid { grid-template-columns: 1fr; }
+}
