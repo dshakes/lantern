@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Diagram } from "../_components/Diagram";
 
 export default function RuntimeOverviewPage() {
   return (
@@ -14,22 +15,10 @@ export default function RuntimeOverviewPage() {
       </p>
 
       <h2 id="model">The model in one picture</h2>
-      <pre><code>{`lantern run agent.yaml
-        │
-        ▼
-Control plane (:8080)        — RBAC + quota gate, schedules the spec
-        │  gRPC
-        ▼
-runtime-scheduler (:50055)   — picks a node (warm-pool / region / cost / health)
-        │  gRPC
-        ▼
-runtime-manager (:50054)     — builds the pod spec, sets runtimeClassName
-        │
-        ▼
-Kubernetes pod (your VPC)    — RuntimeClass = isolation tier
-        │
-        ▼
-harness (PID 1, baked in)    — egress allowlist, secret vending, heartbeats, logs`}</code></pre>
+      <Diagram
+        name="runtime-architecture"
+        caption="lantern run → control plane → scheduler → per-node manager → hardened pod → in-VM harness."
+      />
 
       <h2 id="principles">What makes it different</h2>
 

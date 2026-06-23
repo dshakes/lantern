@@ -1,44 +1,75 @@
 import Link from "next/link";
+import { Download, Rocket, Bot, Server, ShieldCheck, Boxes, Cloud, Activity } from "lucide-react";
+import { Diagram } from "./_components/Diagram";
 
 export default function DocsHome() {
   return (
     <>
-      <h1>Lantern Documentation</h1>
+      <h1>The runtime for production AI agents</h1>
       <p>
-        Build, deploy, and operate AI agents in production — multi-model, crash-proof, running in your cloud.
+        Agents that survive crashes, route to any model, and run in <strong>your</strong> cloud.
+        Open-source, Apache-2.0 — one command boots the whole stack.
       </p>
+
+      <pre><code>{`git clone https://github.com/dshakes/lantern && cd lantern
+lantern dev      # Postgres + Redis + API + dashboard + a live agent`}</code></pre>
 
       <div className="card-grid">
         <Link href="/installation" className="card">
-          <div className="card-title">Installation</div>
-          <div className="card-desc">Clone, three commands, running in under 2 minutes.</div>
+          <div className="card-title"><Download className="w-4 h-4 text-lantern-400" /> Install</div>
+          <div className="card-desc">Boot the full stack locally in under two minutes.</div>
         </Link>
         <Link href="/quickstart" className="card">
-          <div className="card-title">Quickstart</div>
-          <div className="card-desc">Create an agent, run it, watch the event stream.</div>
+          <div className="card-title"><Rocket className="w-4 h-4 text-lantern-400" /> Quickstart</div>
+          <div className="card-desc">First agent running, with a live event stream, in 5 min.</div>
         </Link>
         <Link href="/agents" className="card">
-          <div className="card-title">Agents</div>
-          <div className="card-desc">Instructions, tools, visual editor, guardrails.</div>
+          <div className="card-title"><Bot className="w-4 h-4 text-lantern-400" /> Agents</div>
+          <div className="card-desc">Instructions, tools, the visual editor, guardrails.</div>
         </Link>
         <Link href="/runtime" className="card">
-          <div className="card-title">Runtime</div>
-          <div className="card-desc">MicroVM isolation, durable execution, receipts.</div>
+          <div className="card-title"><Server className="w-4 h-4 text-lantern-400" /> Runtime</div>
+          <div className="card-desc">MicroVM isolation, durable execution, signed receipts.</div>
         </Link>
       </div>
 
-      <h2 id="what">What is Lantern?</h2>
+      <h2 id="architecture">How it works</h2>
       <p>
-        Lantern is an open-source platform for running AI agents reliably. Agents survive crashes via step journaling, route to any model by capability, connect to 17 built-in APIs, and execute inside isolated microVMs in your VPC. Control plane manages scheduling; your cloud runs the code.
+        A multi-tenant <strong>control plane</strong> schedules, routes, and observes. Your
+        <strong> data plane</strong> — in your own VPC — runs the agents. Code and data never leave it.
       </p>
+      <Diagram
+        name="lantern-architecture"
+        caption="Control plane orchestrates over an outbound-only tunnel; your VPC executes every run."
+      />
+
+      <h2 id="why">Why developers choose Lantern</h2>
+      <div className="card-grid">
+        <div className="card">
+          <div className="card-title"><ShieldCheck className="w-4 h-4 text-emerald-400" /> Crash-proof</div>
+          <div className="card-desc">Every step is journaled. A run resumes exactly where it died — no double side-effects.</div>
+        </div>
+        <div className="card">
+          <div className="card-title"><Boxes className="w-4 h-4 text-sky-400" /> Any model</div>
+          <div className="card-desc">Address models by capability (<code>auto</code>, <code>reasoning-large</code>); the router picks the vendor.</div>
+        </div>
+        <div className="card">
+          <div className="card-title"><Cloud className="w-4 h-4 text-lantern-400" /> Your cloud</div>
+          <div className="card-desc">Agents execute in your VPC over an outbound-only tunnel. Your keys, your data.</div>
+        </div>
+        <div className="card">
+          <div className="card-title"><Activity className="w-4 h-4 text-amber-400" /> Governed</div>
+          <div className="card-desc">Per-agent budgets (402), eval-in-CI gates (422), Ed25519-signed receipts.</div>
+        </div>
+      </div>
 
       <h2 id="concepts">Core concepts</h2>
       <ul>
         <li><strong>Agent</strong> — named, versioned config: instructions, model tier, tools, guardrails.</li>
-        <li><strong>Run</strong> — single execution; journaled step-by-step, replayable after crash.</li>
-        <li><strong>Session</strong> — long-lived interactive conversation; survives disconnects; streams via SSE.</li>
-        <li><strong>Connector</strong> — links external services (Gmail, Slack, GitHub) to agents via OAuth or API key.</li>
-        <li><strong>Surface</strong> — inbound channel: WhatsApp, Slack, Telegram, web chat widget.</li>
+        <li><strong>Run</strong> — a single execution; journaled step-by-step, replayable after a crash.</li>
+        <li><strong>Session</strong> — a long-lived conversation; survives disconnects, streams over SSE.</li>
+        <li><strong>Connector</strong> — links external services (Gmail, Slack, GitHub) via OAuth or API key.</li>
+        <li><strong>Surface</strong> — an inbound channel: WhatsApp, Slack, Telegram, web chat.</li>
         <li><strong>Data plane</strong> — your VPC; agent code and data never leave it.</li>
       </ul>
     </>

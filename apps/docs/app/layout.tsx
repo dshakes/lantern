@@ -174,20 +174,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                                 ? "bg-lantern-500/10 text-lantern-400 font-medium"
                                 : "text-zinc-400 hover:bg-surface-1 hover:text-zinc-200"
                             )}>
-                            <item.icon className="w-3.5 h-3.5 shrink-0" />
+                            <item.icon className="w-4 h-4 shrink-0" />
                             {item.label}
                           </Link>
-                          {/* Sub-items — shown when page is active */}
-                          {isActive && item.subs && item.subs.length > 0 && (
-                            <div className="ml-6 mt-0.5 mb-1 space-y-0.5 border-l border-zinc-800 pl-3">
-                              {item.subs.map((sub) => (
-                                <Link key={sub.href} href={sub.href}
-                                  className="block py-1 text-[11px] text-zinc-500 transition-colors hover:text-lantern-400">
-                                  {sub.label}
-                                </Link>
-                              ))}
-                            </div>
-                          )}
                         </div>
                       );
                     })}
