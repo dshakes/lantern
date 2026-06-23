@@ -72,6 +72,26 @@ func GRPCServerTLS() (credentials.TransportCredentials, error) {
 	}), nil
 }
 
+// CheckSchedulerAddr evaluates whether LANTERN_SCHEDULER_GRPC_ADDR is
+// correctly configured for the current environment.
+//
+// It returns (fatal bool, message string). When fatal is true, the caller
+// (main.go runStartupGuards) should call logger.Fatal with message. This
+// keeps the function pure and testable without triggering os.Exit in tests.
+//
+// Rules:
+//   - prod (LANTERN_ENV=prod/production/staging): FATAL when addr is empty.
+//     A prod control-plane that silently falls back to the stub scheduler
+//     fabricates fake VM IDs and never actually spawns workloads — that is a
+//     silent data-corruption class bug, not a graceful degradation.
+//   - dev (LANTERN_ENV unset): stub is fine; returns fatal=false.
+func CheckSchedulerAddr(isProdEnv bool, addr string) (fatal bool, message string) {
+	if isProdEnv && addr == "" {
+		return true, "LANTERN_SCHEDULER_GRPC_ADDR is unset — production refuses to start with the stub scheduler (it fabricates VM IDs and spawns nothing); set LANTERN_SCHEDULER_GRPC_ADDR to the runtime-scheduler gRPC address"
+	}
+	return false, ""
+}
+
 // corsAllowedOrigins returns the set of origins that are allowed on
 // authenticated API routes. The caller should reflect the request origin back
 // only when it appears in this set.

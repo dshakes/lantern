@@ -9,6 +9,7 @@ package handlers
 //   M1 — CORSMiddleware: allowlist reflected; public paths keep *; unknown blocked
 //   M1 — remoteIP: XFF ignored when no trusted proxies; honored from trusted peer
 //   isProd — env parsing cases
+//   R1 — CheckSchedulerAddr: prod+unset => fatal; dev+unset => ok; prod+set => ok
 
 import (
 	"net/http"
@@ -442,5 +443,66 @@ func TestRemoteIP_AllMalformedCIDRs_FallsBackToRemoteAddr(t *testing.T) {
 	got := remoteIP(r)
 	if got != "203.0.113.9" {
 		t.Errorf("all-bad CIDRs: expected RemoteAddr host 203.0.113.9, got %q", got)
+	}
+}
+
+// ---------- CheckSchedulerAddr (R1 — W12 runtime guard) ----------
+
+func TestCheckSchedulerAddr_ProdUnset_Fatal(t *testing.T) {
+	fatal, msg := CheckSchedulerAddr(true, "")
+	if !fatal {
+		t.Error("prod + unset addr: expected fatal=true")
+	}
+	if msg == "" {
+		t.Error("prod + unset addr: expected non-empty message")
+	}
+}
+
+func TestCheckSchedulerAddr_ProdSet_OK(t *testing.T) {
+	fatal, msg := CheckSchedulerAddr(true, "scheduler.internal:50055")
+	if fatal {
+		t.Errorf("prod + set addr: expected fatal=false, got msg=%q", msg)
+	}
+	if msg != "" {
+		t.Errorf("prod + set addr: expected empty message, got %q", msg)
+	}
+}
+
+func TestCheckSchedulerAddr_DevUnset_OK(t *testing.T) {
+	fatal, msg := CheckSchedulerAddr(false, "")
+	if fatal {
+		t.Errorf("dev + unset addr: expected fatal=false, got msg=%q", msg)
+	}
+	// dev may return an empty message (no warning needed here — main.go logs one).
+	_ = msg
+}
+
+func TestCheckSchedulerAddr_DevSet_OK(t *testing.T) {
+	fatal, msg := CheckSchedulerAddr(false, "localhost:50055")
+	if fatal {
+		t.Errorf("dev + set addr: expected fatal=false, got msg=%q", msg)
+	}
+	_ = msg
+}
+
+// TestCheckSchedulerAddr_ViaEnv ensures the guard reads the real env var
+// when wired through IsProd() and os.Getenv, matching the main.go call site.
+func TestCheckSchedulerAddr_ViaEnv_ProdFatal(t *testing.T) {
+	t.Setenv("LANTERN_ENV", "prod")
+	t.Setenv("LANTERN_SCHEDULER_GRPC_ADDR", "")
+
+	fatal, msg := CheckSchedulerAddr(IsProd(), "")
+	if !fatal {
+		t.Errorf("expected fatal via env: IsProd()=%v addr=%q msg=%q", IsProd(), "", msg)
+	}
+}
+
+func TestCheckSchedulerAddr_ViaEnv_DevSafe(t *testing.T) {
+	t.Setenv("LANTERN_ENV", "")
+	t.Setenv("LANTERN_SCHEDULER_GRPC_ADDR", "")
+
+	fatal, _ := CheckSchedulerAddr(IsProd(), "")
+	if fatal {
+		t.Error("dev mode with no addr: expected fatal=false")
 	}
 }

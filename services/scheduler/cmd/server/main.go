@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -26,6 +25,7 @@ import (
 	"github.com/dshakes/lantern/services/scheduler/internal/db"
 	"github.com/dshakes/lantern/services/scheduler/internal/handlers"
 	"github.com/dshakes/lantern/services/scheduler/internal/middleware"
+	"github.com/dshakes/lantern/services/scheduler/internal/runclient"
 	"github.com/dshakes/lantern/services/scheduler/internal/server"
 )
 
@@ -75,9 +75,24 @@ func main() {
 		Logger: logger,
 	}
 
-	// --- Run creator function ---
-	// In production, this would call the control-plane gRPC CreateRun endpoint.
-	createRun := newRunCreator(cfg.ControlPlaneAddr, logger)
+	// --- Run creator: long-lived gRPC client to the control-plane RunService ---
+	// A fired schedule creates a run via RunService.CreateRun (invariant #2) with
+	// the schedule's tenant_id in metadata (invariant #7). The conn is shared by
+	// the cron ticker and the delayed-run processor for the whole process life.
+	runClient, err := runclient.New(cfg.ControlPlaneAddr, cfg.ServiceToken, logger)
+	if err != nil {
+		logger.Fatal("failed to create control-plane run client", zap.Error(err))
+	}
+	defer func() {
+		if err := runClient.Close(); err != nil {
+			logger.Warn("run client close failed", zap.Error(err))
+		}
+	}()
+	createRun := runClient.CreateRun
+	logger.Info("control-plane run client ready",
+		zap.String("control_plane_addr", cfg.ControlPlaneAddr),
+		zap.Bool("service_token_set", cfg.ServiceToken != ""),
+	)
 
 	// Initialize schedule next_fire_at for schedules that don't have one.
 	if err := cron.InitScheduleNextFireTimes(ctx, pool, logger); err != nil {
@@ -193,6 +208,7 @@ type config struct {
 	ListenAddr       string
 	HTTPAddr         string
 	ControlPlaneAddr string
+	ServiceToken     string
 	LogLevel         string
 }
 
@@ -203,7 +219,10 @@ func loadConfig() config {
 		ListenAddr:       envOrDefault("LISTEN_ADDR", ":50058"),
 		HTTPAddr:         envOrDefault("HTTP_ADDR", ":8088"),
 		ControlPlaneAddr: envOrDefault("CONTROL_PLANE_ADDR", "localhost:50051"),
-		LogLevel:         envOrDefault("LOG_LEVEL", "info"),
+		// Shared service token for the control-plane's optional service-token
+		// interceptor. When unset, nothing is attached (additive, dev pass-through).
+		ServiceToken: os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"),
+		LogLevel:     envOrDefault("LOG_LEVEL", "info"),
 	}
 }
 
@@ -230,28 +249,6 @@ func mustInitLogger(level string) *zap.Logger {
 		panic(fmt.Sprintf("failed to build logger: %v", err))
 	}
 	return logger
-}
-
-// newRunCreator returns a function that creates runs via the control-plane.
-// In production, this would use a proper gRPC client to the control-plane service.
-func newRunCreator(controlPlaneAddr string, logger *zap.Logger) cron.RunCreator {
-	return func(ctx context.Context, tenantID, agentName string, input json.RawMessage) (string, error) {
-		logger.Info("creating run via control-plane",
-			zap.String("tenant_id", tenantID),
-			zap.String("agent_name", agentName),
-			zap.String("control_plane_addr", controlPlaneAddr),
-		)
-
-		// In production, this would be:
-		// conn, err := grpc.DialContext(ctx, controlPlaneAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		// client := lanternv1.NewRunServiceClient(conn)
-		// resp, err := client.CreateRun(ctx, &lanternv1.CreateRunRequest{...})
-		// return resp.Run.Id, err
-
-		// For now, return an error indicating the control-plane is not connected.
-		// The scheduler will record this in the dead_letter table.
-		return "", fmt.Errorf("control-plane gRPC client not yet connected (addr: %s)", controlPlaneAddr)
-	}
 }
 
 func unaryTracingInterceptor() grpc.UnaryServerInterceptor {

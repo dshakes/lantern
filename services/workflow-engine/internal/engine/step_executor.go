@@ -3,15 +3,28 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
 )
+
+// ErrModelRouterUnavailable is returned by an llm_call step when the engine was
+// started without a configured model-router address (no ModelServiceClient).
+// The step fails honestly rather than returning a fabricated completion.
+var ErrModelRouterUnavailable = errors.New("model router not configured (set LANTERN_MODEL_ROUTER_ADDR)")
+
+// ErrToolDispatchUnavailable is returned by a tool_call step because the
+// runtime-manager gRPC contract (lantern.v1.RuntimeManager) does not yet expose
+// a single-tool execution RPC. See the package docs / task report.
+var ErrToolDispatchUnavailable = errors.New("tool dispatch not available: runtime-manager has no tool-execution RPC")
 
 // StepPayload is the decoded payload from a step request. The Kind field
 // determines what the step does (llm_call, tool_call, sleep, signal, etc.)
@@ -26,18 +39,28 @@ type StepPayload struct {
 // StepExecutor handles the execution of individual steps within a run.
 // It implements the replay-or-execute logic that makes the workflow engine
 // durable: completed steps return cached results, new steps execute for real.
+//
+// The workflow engine is the canonical "go through the model router" consumer
+// (architectural invariant #6): LLM steps dispatch to ModelService.Complete on
+// the model router, never to a provider directly. modelClient is the gRPC
+// client for that service. It may be nil when the engine is started without a
+// configured model-router address — in that case LLM steps return a typed
+// error rather than a fabricated result.
 type StepExecutor struct {
-	pool     *pgxpool.Pool
-	streamer *EventStreamer
-	logger   *zap.Logger
+	pool        *pgxpool.Pool
+	streamer    *EventStreamer
+	logger      *zap.Logger
+	modelClient lanternv1.ModelServiceClient
 }
 
-// NewStepExecutor creates a new StepExecutor.
-func NewStepExecutor(pool *pgxpool.Pool, streamer *EventStreamer, logger *zap.Logger) *StepExecutor {
+// NewStepExecutor creates a new StepExecutor. modelClient may be nil; LLM steps
+// then return a typed ErrModelRouterUnavailable instead of executing.
+func NewStepExecutor(pool *pgxpool.Pool, streamer *EventStreamer, logger *zap.Logger, modelClient lanternv1.ModelServiceClient) *StepExecutor {
 	return &StepExecutor{
-		pool:     pool,
-		streamer: streamer,
-		logger:   logger.Named("step_executor"),
+		pool:        pool,
+		streamer:    streamer,
+		logger:      logger.Named("step_executor"),
+		modelClient: modelClient,
 	}
 }
 
@@ -211,9 +234,29 @@ func (se *StepExecutor) dispatch(ctx context.Context, state *RunState, stepID st
 	}
 }
 
-// executeLLMCall sends a request to the model router. The model router handles
-// capability-based routing, caching, and metering. We never call LLM providers
-// directly (architectural invariant #6).
+// llmCallPayload is the decoded payload for an llm_call step. Either a single
+// prompt (wrapped into a one-message user turn) or an explicit messages array
+// may be supplied. capability is the capability-addressed model selector
+// (invariant #6); optimize is the routing target (cheap/fast/best/balanced).
+type llmCallPayload struct {
+	Capability  string       `json:"capability"`
+	Optimize    string       `json:"optimize,omitempty"`
+	Prompt      string       `json:"prompt,omitempty"`
+	Messages    []llmMessage `json:"messages,omitempty"`
+	MaxTokens   int32        `json:"max_tokens,omitempty"`
+	Temperature float64      `json:"temperature,omitempty"`
+}
+
+type llmMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// executeLLMCall sends a request to the model router via ModelService.Complete.
+// The model router resolves capability -> concrete vendor model, applies
+// caching, and meters usage. We never call LLM providers directly
+// (architectural invariant #6). The idempotency key (run_id:step_id:attempt)
+// is forwarded so retries de-duplicate the external side-effect (invariant #8).
 func (se *StepExecutor) executeLLMCall(ctx context.Context, state *RunState, stepID, idempotencyKey string, data json.RawMessage) (json.RawMessage, error) {
 	se.logger.Info("executing llm_call step",
 		zap.String("run_id", state.RunID),
@@ -221,30 +264,67 @@ func (se *StepExecutor) executeLLMCall(ctx context.Context, state *RunState, ste
 		zap.String("idempotency_key", idempotencyKey),
 	)
 
-	// In the full implementation, this calls the model router via gRPC.
-	// The model router resolves capability -> concrete model, applies caching,
-	// and meters usage. For the spike, we return a placeholder.
-	var req struct {
-		Capability string `json:"capability"`
-		Prompt     string `json:"prompt"`
+	if se.modelClient == nil {
+		return nil, ErrModelRouterUnavailable
 	}
+
+	var req llmCallPayload
 	if err := json.Unmarshal(data, &req); err != nil {
 		return nil, fmt.Errorf("invalid llm_call payload: %w", err)
 	}
 
-	// Placeholder: in production, this calls RuntimeManagerService.Stream
-	// which connects to the model router.
+	messages := make([]*lanternv1.Message, 0, len(req.Messages)+1)
+	for _, m := range req.Messages {
+		messages = append(messages, &lanternv1.Message{Role: m.Role, Content: m.Content})
+	}
+	if req.Prompt != "" {
+		messages = append(messages, &lanternv1.Message{Role: "user", Content: req.Prompt})
+	}
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("invalid llm_call payload: no prompt or messages provided")
+	}
+
+	completeReq := &lanternv1.CompleteRequest{
+		RunId:          state.RunID,
+		StepId:         stepID,
+		TenantId:       state.TenantID,
+		Capability:     capabilityFromString(req.Capability),
+		Optimize:       optimizeFromString(req.Optimize),
+		Messages:       messages,
+		MaxTokens:      req.MaxTokens,
+		Temperature:    req.Temperature,
+		IdempotencyKey: idempotencyKey,
+	}
+
+	resp, err := se.modelClient.Complete(ctx, completeReq)
+	if err != nil {
+		return nil, fmt.Errorf("model-router Complete: %w", err)
+	}
+
+	var text string
+	if resp.GetMessage() != nil {
+		text = resp.GetMessage().GetContent()
+	}
+
 	result := map[string]any{
-		"text":       fmt.Sprintf("[model-router placeholder for capability=%s]", req.Capability),
-		"model_used": "placeholder",
-		"tokens_in":  0,
-		"tokens_out": 0,
+		"text":       text,
+		"model_used": resp.GetModelUsed(),
+		"tokens_in":  resp.GetTokensIn(),
+		"tokens_out": resp.GetTokensOut(),
+		"cost_usd":   resp.GetCostUsd(),
 	}
 	return json.Marshal(result)
 }
 
 // executeToolCall invokes a tool within the runtime sandbox. All tool execution
 // happens inside a microVM (architectural invariant #5).
+//
+// NOTE: the runtime-manager gRPC surface (lantern.v1.RuntimeManager) exposes
+// only Spawn/Stop/Logs/Exec/Stats/Snapshot — there is no clean tool-execution
+// RPC to dispatch a single tool_call against a run's microVM. Rather than
+// fabricate a success string, this returns a typed ErrToolDispatchUnavailable
+// so the step fails honestly and the gap is visible. Wiring this requires a
+// tool-execution RPC on the runtime-manager contract (see report).
 func (se *StepExecutor) executeToolCall(ctx context.Context, state *RunState, stepID, idempotencyKey string, data json.RawMessage) (json.RawMessage, error) {
 	se.logger.Info("executing tool_call step",
 		zap.String("run_id", state.RunID),
@@ -252,8 +332,6 @@ func (se *StepExecutor) executeToolCall(ctx context.Context, state *RunState, st
 		zap.String("idempotency_key", idempotencyKey),
 	)
 
-	// In the full implementation, this sends a StepRequest to the runtime
-	// manager, which executes the tool inside the run's microVM.
 	var req struct {
 		ToolName  string          `json:"tool_name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -262,11 +340,61 @@ func (se *StepExecutor) executeToolCall(ctx context.Context, state *RunState, st
 		return nil, fmt.Errorf("invalid tool_call payload: %w", err)
 	}
 
-	result := map[string]any{
-		"tool_name": req.ToolName,
-		"output":    fmt.Sprintf("[runtime-manager placeholder for tool=%s]", req.ToolName),
+	return nil, fmt.Errorf("tool %q: %w", req.ToolName, ErrToolDispatchUnavailable)
+}
+
+// capabilityFromString maps a capability selector string (as used by the SDK,
+// e.g. "auto", "reasoning-large", "chat-small") to the proto enum. Unknown or
+// empty values fall back to CAPABILITY_AUTO so the model router still routes.
+func capabilityFromString(s string) lanternv1.Capability {
+	switch normalizeSelector(s) {
+	case "reasoning-frontier":
+		return lanternv1.Capability_CAPABILITY_REASONING_FRONTIER
+	case "reasoning-large":
+		return lanternv1.Capability_CAPABILITY_REASONING_LARGE
+	case "reasoning-small":
+		return lanternv1.Capability_CAPABILITY_REASONING_SMALL
+	case "chat-large":
+		return lanternv1.Capability_CAPABILITY_CHAT_LARGE
+	case "chat-small":
+		return lanternv1.Capability_CAPABILITY_CHAT_SMALL
+	case "chat-edge":
+		return lanternv1.Capability_CAPABILITY_CHAT_EDGE
+	case "vision-large":
+		return lanternv1.Capability_CAPABILITY_VISION_LARGE
+	case "vision-small":
+		return lanternv1.Capability_CAPABILITY_VISION_SMALL
+	case "code-large":
+		return lanternv1.Capability_CAPABILITY_CODE_LARGE
+	case "code-small":
+		return lanternv1.Capability_CAPABILITY_CODE_SMALL
+	case "", "auto":
+		return lanternv1.Capability_CAPABILITY_AUTO
+	default:
+		return lanternv1.Capability_CAPABILITY_AUTO
 	}
-	return json.Marshal(result)
+}
+
+// optimizeFromString maps an optimize-target selector to the proto enum.
+func optimizeFromString(s string) lanternv1.OptimizeTarget {
+	switch normalizeSelector(s) {
+	case "cheap":
+		return lanternv1.OptimizeTarget_OPTIMIZE_CHEAP
+	case "fast":
+		return lanternv1.OptimizeTarget_OPTIMIZE_FAST
+	case "best":
+		return lanternv1.OptimizeTarget_OPTIMIZE_BEST
+	case "balanced":
+		return lanternv1.OptimizeTarget_OPTIMIZE_BALANCED
+	default:
+		return lanternv1.OptimizeTarget_OPTIMIZE_UNSPECIFIED
+	}
+}
+
+// normalizeSelector lowercases and converts underscores to hyphens so both
+// "reasoning_large" and "reasoning-large" resolve identically.
+func normalizeSelector(s string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "_", "-")
 }
 
 // executeSleep pauses the run for a specified duration. The sleep is journaled
@@ -528,9 +656,9 @@ func (se *StepExecutor) executeChildRun(ctx context.Context, state *RunState, st
 // executeApproval pauses the run until a human approves or denies the request.
 func (se *StepExecutor) executeApproval(ctx context.Context, state *RunState, stepID string, data json.RawMessage) (json.RawMessage, error) {
 	var req struct {
-		Reason    string   `json:"reason"`
-		Approvers []string `json:"approvers"`
-		TimeoutSec int     `json:"timeout_sec,omitempty"`
+		Reason     string   `json:"reason"`
+		Approvers  []string `json:"approvers"`
+		TimeoutSec int      `json:"timeout_sec,omitempty"`
 	}
 	if err := json.Unmarshal(data, &req); err != nil {
 		return nil, fmt.Errorf("invalid approval payload: %w", err)
@@ -762,10 +890,10 @@ func (se *StepExecutor) journalStepFailed(ctx context.Context, state *RunState, 
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	payloadBytes := mustMarshal(map[string]any{
-		"step_id":       stepID,
-		"attempt":       attempt,
-		"error":         result.Error,
-		"will_retry":    willRetry,
+		"step_id":    stepID,
+		"attempt":    attempt,
+		"error":      result.Error,
+		"will_retry": willRetry,
 	})
 
 	entry := &journal.JournalEntry{

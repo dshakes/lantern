@@ -435,6 +435,30 @@ types: `trigger`, `ai-step`, `tool`, `connector`, `condition`, `approval`,
 emits `step_started` + `step_completed`/`step_failed` to `journal_events`
 so the run-detail waterfall renders the graph automatically.
 
+#### Durable workflow engine step dispatch (`services/workflow-engine`)
+
+The dormant durable engine's leaf executors
+(`internal/engine/step_executor.go`) now do real dispatch instead of
+returning placeholder strings:
+
+- **`llm_call` steps** dispatch through the **model router**
+  (`ModelService.Complete`), never to a provider directly (invariant #6).
+  The step builds a capability-addressed `CompleteRequest` (capability +
+  optimize selectors, messages/prompt, max_tokens, temperature) carrying
+  `tenant_id` and the idempotency key `run_id:step_id:attempt` (invariant
+  #8), and maps `model_used`/`tokens_in`/`tokens_out`/`cost_usd` from the
+  response into the step result. Dial address is
+  `LANTERN_MODEL_ROUTER_ADDR` (default `model-router:50053`). When unset,
+  llm_call steps fail with the typed `ErrModelRouterUnavailable` rather than
+  a fabricated completion.
+- **`tool_call` steps** are intended to dispatch to the **runtime-manager**
+  (microVM tool execution, invariant #5). The current
+  `lantern.v1.RuntimeManager` gRPC contract exposes only
+  Spawn/Stop/Logs/Exec/Stats/Snapshot — there is **no single-tool execution
+  RPC** — so the step returns the typed `ErrToolDispatchUnavailable` instead
+  of faking output. Wiring it requires adding a tool-execution RPC to the
+  runtime-manager proto.
+
 ### Human takeover (W11a)
 
 Workflow `approval` nodes block on a `takeover_requests` row. Operators
@@ -541,15 +565,24 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
 - `LANTERN_SCHEDULER_GRPC_ADDR=localhost:50055` — control-plane dials
   the scheduler. Unset → falls back to `stubSchedulerClient` (synthesizes
   vm-ids, returns `node-stub`/`az-stub`; useful for dashboard-only work).
+  **REQUIRED in production** (`LANTERN_ENV=prod/production/staging`): the
+  control-plane refuses to start when this is unset in prod because the stub
+  fabricates fake VM IDs and spawns nothing — silent data loss, not graceful
+  degradation. Guard: `handlers.CheckSchedulerAddr` called from `runStartupGuards`.
 - `LANTERN_DEFAULT_MANAGER_ADDR=localhost:50054` — scheduler dials this
   node when the placement chooses `node-local` / `node-stub` / empty.
   Also used by the control-plane's Logs SSE proxy to reach the manager
   directly. Unset → scheduler keeps the `LogOnlyDialer` stub.
+  **REQUIRED in production** (`LANTERN_ENV=prod/production/staging`): the
+  scheduler refuses to start when this is unset (or when `LANTERN_DIALER=stub`)
+  in prod because the stub logs a fake success and spawns nothing. Guard:
+  `dialer.CheckManagerDialer` called from `cmd/scheduler/main.go`.
 - `LANTERN_NODE_ADDR_<NODE>=host:port` — explicit per-node override
   when the scheduler picks a named node and its IP isn't discoverable
   via DNS.
 - `LANTERN_DIALER=stub` — force the stub dialer even when
-  `LANTERN_DEFAULT_MANAGER_ADDR` is set (debug aid).
+  `LANTERN_DEFAULT_MANAGER_ADDR` is set (debug aid). **Fatal in prod** — see
+  `LANTERN_DEFAULT_MANAGER_ADDR` above.
 - `LANTERN_RUNTIME_SECRET_TOKEN` — pre-shared token the runtime-manager sends
   as `X-Lantern-Runtime-Token` to `POST /v1/runtime/secrets/resolve`. Set on
   both the control-plane (to accept) and the manager (to send). When unset on
