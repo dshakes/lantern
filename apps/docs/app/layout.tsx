@@ -3,11 +3,12 @@
 import "./globals.css";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState, useEffect } from "react";
 import clsx from "clsx";
 import {
   BookOpen, Rocket, Bot, Plug, MessageSquare, Brain,
   Clock, Shield, Cloud, Code, FileCode, ExternalLink,
-  Store, BarChart3, Server, Download,
+  Store, BarChart3, Server, Download, Menu, X,
 } from "lucide-react";
 
 interface NavItem { href: string; label: string; icon: typeof BookOpen; subs?: { href: string; label: string }[] }
@@ -91,18 +92,58 @@ const sections: NavSection[] = [
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+  // Close the mobile drawer whenever the route changes.
+  useEffect(() => { setOpen(false); }, [pathname]);
 
   return (
     <html lang="en" className="dark">
       <head>
         <title>Lantern Docs</title>
         <meta name="description" content="Documentation for the Lantern AI agent platform." />
+        {/* Critical for mobile: without this the page renders at desktop width
+            and shrinks to unreadable. (App-Router client layouts don't get
+            Next's auto-injected viewport, so we set it explicitly.) */}
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
       </head>
       <body className="antialiased">
+        {/* Mobile top bar (hidden on lg+) */}
+        <header className="lg:hidden sticky top-0 z-50 flex h-14 items-center justify-between border-b border-zinc-800 bg-surface-0/95 px-4 backdrop-blur">
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-lantern-400 to-lantern-600">
+              <span className="text-xs font-bold text-white">L</span>
+            </div>
+            <span className="text-sm font-semibold text-white">Lantern</span>
+            <span className="rounded bg-lantern-500/10 px-1.5 py-0.5 text-[9px] font-medium text-lantern-400">DOCS</span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-label={open ? "Close menu" : "Open menu"}
+            className="-mr-2 rounded-lg p-2 text-zinc-300 hover:bg-surface-1"
+          >
+            {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </header>
+
+        {/* Backdrop when the drawer is open on mobile */}
+        {open && (
+          <div
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+            aria-hidden="true"
+          />
+        )}
+
         <div className="flex min-h-screen">
-          {/* Fixed sidebar */}
-          <aside className="fixed top-0 left-0 w-60 h-screen border-r border-zinc-800 bg-surface-0 flex flex-col overflow-y-auto z-40">
+          {/* Sidebar: a slide-in drawer on mobile, a fixed rail on lg+ */}
+          <aside
+            className={clsx(
+              "fixed top-0 left-0 z-50 flex h-screen w-72 max-w-[82vw] flex-col overflow-y-auto border-r border-zinc-800 bg-surface-0 transition-transform duration-200 ease-out lg:w-60 lg:translate-x-0",
+              open ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+            )}
+          >
             {/* Logo */}
             <div className="px-5 py-4 border-b border-zinc-800">
               <Link href="/" className="flex items-center gap-2.5">
@@ -165,9 +206,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </aside>
 
-          {/* Main content with proper prose width */}
-          <main className="ml-60 flex-1 min-h-screen">
-            <div className="max-w-3xl mx-auto px-10 py-12">
+          {/* Main content — full width on mobile, offset by the rail on lg+ */}
+          <main className="min-h-screen flex-1 lg:ml-60">
+            <div className="mx-auto max-w-3xl px-5 py-8 sm:px-8 lg:px-10 lg:py-12">
               <article className="prose">{children}</article>
             </div>
           </main>
