@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -70,8 +71,28 @@ func main() {
 	}
 	logger.Info("connected to redis")
 
+	// --- Model router client ---
+	// The workflow engine is the canonical "go through the model router"
+	// consumer (invariant #6): llm_call steps dispatch to ModelService.Complete.
+	// When the address is unset the client stays nil and llm_call steps fail
+	// with a typed error rather than executing.
+	var modelClient lanternv1.ModelServiceClient
+	if cfg.ModelRouterAddr != "" {
+		conn, err := grpc.NewClient(cfg.ModelRouterAddr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			logger.Fatal("failed to dial model router", zap.String("addr", cfg.ModelRouterAddr), zap.Error(err))
+		}
+		defer conn.Close() //nolint:errcheck
+		modelClient = lanternv1.NewModelServiceClient(conn)
+		logger.Info("model router client configured", zap.String("addr", cfg.ModelRouterAddr))
+	} else {
+		logger.Warn("LANTERN_MODEL_ROUTER_ADDR unset — llm_call steps will fail with a typed error")
+	}
+
 	// --- Engine ---
-	eng := engine.NewEngine(pool, rdb, logger, cfg.Workers)
+	eng := engine.NewEngine(pool, rdb, logger, cfg.Workers, modelClient)
 	eng.Start(ctx)
 
 	// --- Server struct ---
@@ -185,11 +206,12 @@ func main() {
 
 // config holds values read from environment variables.
 type config struct {
-	DatabaseURL string
-	RedisURL    string
-	ListenAddr  string
-	LogLevel    string
-	Workers     int
+	DatabaseURL     string
+	RedisURL        string
+	ListenAddr      string
+	LogLevel        string
+	Workers         int
+	ModelRouterAddr string
 }
 
 func loadConfig() config {
@@ -199,11 +221,12 @@ func loadConfig() config {
 	}
 
 	return config{
-		DatabaseURL: envOrDefault("DATABASE_URL", "postgres://localhost:5432/lantern?sslmode=disable"),
-		RedisURL:    envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
-		ListenAddr:  envOrDefault("LISTEN_ADDR", ":50052"),
-		LogLevel:    envOrDefault("LOG_LEVEL", "info"),
-		Workers:     workers,
+		DatabaseURL:     envOrDefault("DATABASE_URL", "postgres://localhost:5432/lantern?sslmode=disable"),
+		RedisURL:        envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
+		ListenAddr:      envOrDefault("LISTEN_ADDR", ":50052"),
+		LogLevel:        envOrDefault("LOG_LEVEL", "info"),
+		Workers:         workers,
+		ModelRouterAddr: envOrDefault("LANTERN_MODEL_ROUTER_ADDR", "model-router:50053"),
 	}
 }
 

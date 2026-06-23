@@ -786,6 +786,18 @@ func runStartupGuards(logger *zap.Logger) {
 	if !prod && os.Getenv("LANTERN_GRPC_SERVICE_TOKEN") == "" {
 		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — control-plane gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
 	}
+
+	// R1 — Runtime scheduler address (W12 microVM path).
+	// In prod the stub fabricates VM IDs and spawns nothing — that is silent
+	// data corruption, not a graceful degradation. Refuse to start.
+	// In dev the stub is intentional (no real scheduler needed).
+	schedulerFatal, schedulerMsg := handlers.CheckSchedulerAddr(prod, os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR"))
+	if schedulerFatal {
+		logger.Fatal(schedulerMsg)
+	}
+	if !prod && os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR") == "" {
+		logger.Warn("LANTERN_SCHEDULER_GRPC_ADDR is unset — using stub scheduler (acceptable in dev, required in production)")
+	}
 }
 
 // grpcTLSCreds resolves server-side TLS credentials for the gRPC server,
