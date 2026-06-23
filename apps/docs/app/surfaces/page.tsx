@@ -48,6 +48,16 @@ export default function SurfacesPage() {
         <code>make run-whatsapp-bridge</code>.
       </div>
 
+      <h4>Bridge tenant env var</h4>
+      <p>
+        Set <code>LANTERN_TENANT_ID</code> to the tenant UUID the bridge should
+        operate under. The fallback <code>LANTERN_DEFAULT_TENANT_ID</code> is
+        still accepted for backwards compatibility, but{" "}
+        <code>LANTERN_TENANT_ID</code> is the canonical name going forward. Both
+        the iMessage bridge and the <code>bridge-core</code> shared library
+        read the same variable in this order.
+      </p>
+
       <h3>Slack</h3>
       <p>
         Create a Slack app and connect it to Lantern:

@@ -7,7 +7,7 @@ import clsx from "clsx";
 import {
   BookOpen, Rocket, Bot, Plug, MessageSquare, Brain,
   Clock, Shield, Cloud, Code, FileCode, ExternalLink,
-  Store, BarChart3, Server,
+  Store, BarChart3, Server, Download,
 } from "lucide-react";
 
 interface NavItem { href: string; label: string; icon: typeof BookOpen; subs?: { href: string; label: string }[] }
@@ -16,10 +16,13 @@ interface NavSection { label: string; items: NavItem[] }
 const sections: NavSection[] = [
   { label: "Overview", items: [
     { href: "/", label: "Getting Started", icon: BookOpen, subs: [
-      { href: "/#what", label: "What is Lantern?" }, { href: "/#who", label: "Who is it for?" }, { href: "/#concepts", label: "Core concepts" }, { href: "/#architecture", label: "Architecture" },
+      { href: "/#what", label: "What is Lantern?" }, { href: "/#who", label: "Who is it for?" }, { href: "/#concepts", label: "Core concepts" },
     ]},
-    { href: "/quickstart", label: "Quick Start", icon: Rocket, subs: [
-      { href: "/quickstart#prerequisites", label: "Prerequisites" }, { href: "/quickstart#infra", label: "Start infrastructure" }, { href: "/quickstart#api", label: "Start API" }, { href: "/quickstart#agent", label: "Create first agent" },
+    { href: "/installation", label: "Installation", icon: Download, subs: [
+      { href: "/installation#prerequisites", label: "Prerequisites" }, { href: "/installation#clone", label: "Clone" }, { href: "/installation#one-command", label: "One-command stack" }, { href: "/installation#credentials", label: "Dev credentials" }, { href: "/installation#ports", label: "Service ports" },
+    ]},
+    { href: "/quickstart", label: "Quickstart", icon: Rocket, subs: [
+      { href: "/quickstart#prerequisites", label: "Prerequisites" }, { href: "/quickstart#step1", label: "Start the stack" }, { href: "/quickstart#step3", label: "Create an agent" }, { href: "/quickstart#step4", label: "Run the agent" }, { href: "/quickstart#step5", label: "Stream events" },
     ]},
   ]},
   { label: "Build", items: [
