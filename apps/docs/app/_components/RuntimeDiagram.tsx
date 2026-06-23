@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Terminal } from "lucide-react";
 
 // The headless-runtime execution path, in the same system-context style as the
@@ -21,8 +22,8 @@ export function RuntimeDiagram() {
       <div className="sys-boundary sys-cp">
         <div className="sys-tag">Control Plane · SaaS</div>
         <div className="sys-grid">
-          <div className="sys-comp"><b>control-plane</b><span>RBAC + quota gate · 402 over quota</span></div>
-          <div className="sys-comp"><b>runtime-scheduler</b><span>warm-pool · region · cost · health</span></div>
+          <Link href="/runtime" className="sys-comp"><b>control-plane</b><span>RBAC + quota gate · 402 over quota</span></Link>
+          <Link href="/runtime/isolation" className="sys-comp"><b>runtime-scheduler</b><span>warm-pool · region · cost · health</span></Link>
         </div>
         <div className="sys-note">Schedules the spec onto a node; never runs your workload itself.</div>
       </div>
@@ -32,9 +33,9 @@ export function RuntimeDiagram() {
       <div className="sys-boundary sys-dp">
         <div className="sys-tag sys-tag-dp">Your VPC · Data Plane</div>
         <div className="sys-grid">
-          <div className="sys-comp"><b>runtime-manager</b><span>builds the pod · sets RuntimeClass</span></div>
-          <div className="sys-comp"><b>Pod · RuntimeClass</b><span>runc · gVisor · Kata — by isolation tier</span></div>
-          <div className="sys-comp"><b>harness (PID 1)</b><span>egress allowlist · secret vending · logs</span></div>
+          <Link href="/runtime" className="sys-comp"><b>runtime-manager</b><span>builds the pod · sets RuntimeClass</span></Link>
+          <Link href="/runtime/isolation" className="sys-comp"><b>Pod · RuntimeClass</b><span>runc · gVisor · Kata — by isolation tier</span></Link>
+          <Link href="/runtime/identity" className="sys-comp"><b>harness (PID 1)</b><span>egress allowlist · secret vending · logs</span></Link>
         </div>
         <div className="sys-note">The manager sets the isolation tier; the harness streams logs &amp; traces and vends short-TTL secrets.</div>
       </div>
