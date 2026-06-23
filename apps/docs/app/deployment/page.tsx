@@ -11,21 +11,126 @@ export default function DeploymentPage() {
       </p>
 
       <h2 id="architecture">Architecture overview</h2>
-      <pre>
-        <code>{`┌─────────────────────────────────┐
-│  Control Plane (Lantern SaaS)   │
-│  Scheduling · Routing · UI      │
-│  Workflow engine · Billing       │
-└──────────┬──────────────────────┘
-           │ gRPC tunnel (mTLS)
-┌──────────▼──────────────────────┐
-│  Data Plane (Your VPC)          │
-│  Firecracker microVMs           │
-│  K8s / Kata pods                │
-│  Secrets · Agent data           │
-│  ← data never leaves here       │
-└─────────────────────────────────┘`}</code>
-      </pre>
+
+      {/* CP/DP split + outbound-tunnel diagram */}
+      <div style={{
+        background: "#0d0d12",
+        border: "1px solid #1e2235",
+        borderRadius: "12px",
+        padding: "1.5rem",
+        marginBottom: "1.5rem",
+        fontFamily: "var(--font-mono)",
+        fontSize: "0.75rem",
+      }}>
+        {/* Control plane box */}
+        <div style={{
+          border: "1px solid #f59e0b",
+          borderRadius: "8px",
+          padding: "0.75rem 1rem",
+          background: "#0f0e06",
+          marginBottom: "0",
+        }}>
+          <div style={{ color: "#f59e0b", fontWeight: 700, marginBottom: "0.4rem" }}>
+            Control Plane (Lantern SaaS or self-hosted)
+          </div>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+            {["Scheduling", "Routing", "Dashboard", "Workflow engine", "Billing"].map(s => (
+              <span key={s} style={{
+                background: "#1a1507",
+                border: "1px solid #78350f",
+                color: "#fbbf24",
+                borderRadius: "4px",
+                padding: "0.1rem 0.45rem",
+                fontSize: "0.65rem",
+              }}>{s}</span>
+            ))}
+          </div>
+        </div>
+
+        {/* Tunnel arrow */}
+        <div style={{ textAlign: "center", padding: "0.5rem 0", color: "#52525b" }}>
+          <div style={{ fontSize: "0.65rem", color: "#38bdf8", letterSpacing: "0.06em" }}>
+            outbound-only · gRPC (mTLS) · :50051
+          </div>
+          <div style={{ color: "#38bdf8", fontSize: "1.1rem" }}>⇅</div>
+          <div style={{ fontSize: "0.6rem", color: "#52525b" }}>
+            data plane dials OUT — no inbound ports required in your VPC
+          </div>
+        </div>
+
+        {/* Data plane box */}
+        <div style={{
+          border: "1px solid #34d399",
+          borderRadius: "8px",
+          padding: "0.75rem 1rem",
+          background: "#050f0c",
+        }}>
+          <div style={{ color: "#34d399", fontWeight: 700, marginBottom: "0.4rem" }}>
+            Data Plane (your VPC — AWS / GCP / Azure)
+          </div>
+          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
+            {["Firecracker microVMs", "K8s / Kata pods", "Wasmtime", "devcontainer"].map(s => (
+              <span key={s} style={{
+                background: "#071a13",
+                border: "1px solid #065f46",
+                color: "#6ee7b7",
+                borderRadius: "4px",
+                padding: "0.1rem 0.45rem",
+                fontSize: "0.65rem",
+              }}>{s}</span>
+            ))}
+          </div>
+          <div style={{ color: "#10b981", fontSize: "0.65rem" }}>
+            Agent data · Secrets · Run payloads — none of this crosses the boundary
+          </div>
+        </div>
+      </div>
+
+      {/* Run routing flow */}
+      <div style={{
+        background: "#0d0d12",
+        border: "1px solid #1e2235",
+        borderRadius: "10px",
+        padding: "1rem 1.25rem",
+        marginBottom: "1.5rem",
+        fontFamily: "var(--font-mono)",
+        fontSize: "0.72rem",
+      }}>
+        <div style={{ color: "#71717a", marginBottom: "0.6rem", fontSize: "0.65rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          Run routing
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+          {[
+            { label: "POST /v1/runs", color: "#f59e0b" },
+            { label: "→" },
+            { label: "data plane connected?", color: "#38bdf8" },
+            { label: "→ YES →" },
+            { label: "dispatch via RunStream", color: "#34d399" },
+          ].map((item, i) =>
+            item.label.startsWith("→") ? (
+              <span key={i} style={{ color: "#52525b" }}>{item.label}</span>
+            ) : (
+              <span key={i} style={{
+                background: "#0f1117",
+                border: `1px solid ${item.color}`,
+                color: item.color,
+                borderRadius: "5px",
+                padding: "0.15rem 0.5rem",
+              }}>{item.label}</span>
+            )
+          )}
+        </div>
+        <div style={{ marginTop: "0.5rem", display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+          <span style={{ color: "#52525b" }}>→ NO (no plane / channel full) →</span>
+          <span style={{
+            background: "#0f1117",
+            border: "1px solid #8b5cf6",
+            color: "#8b5cf6",
+            borderRadius: "5px",
+            padding: "0.15rem 0.5rem",
+          }}>inline execution (managed-cloud fallback)</span>
+        </div>
+      </div>
 
       <h2>Deployment options</h2>
 
@@ -57,18 +162,105 @@ export default function DeploymentPage() {
           below)
         </li>
         <li>
-          Register your data plane in the Lantern dashboard under{" "}
-          <strong>Settings &gt; Data Plane</strong>
+          Register your data plane via <code>POST /v1/data-planes</code> (or
+          the dashboard under <strong>Settings &gt; Data Planes</strong>). This
+          mints a one-time 32-byte bootstrap token returned in the response —
+          store it; it is not recoverable after the response is closed.
         </li>
         <li>
-          The data plane establishes a gRPC tunnel to the control plane using
-          mutual TLS
+          The data plane agent dials <strong>out</strong> to the control plane
+          at <code>:50051</code> (gRPC) — no inbound ports are needed in your
+          VPC. It sends the bootstrap token in a{" "}
+          <code>Register</code> RPC, which returns a short-lived session JWT (
+          <code>typ=dataplane-session</code>, 1 h TTL). The agent rotates it
+          with <code>RefreshToken</code> before expiry.
         </li>
         <li>
-          Agent runs execute in your VPC; the control plane orchestrates
-          remotely
+          Once registered, the data plane opens a persistent{" "}
+          <code>RunStream</code> bidirectional RPC. The control plane pushes run
+          assignments down this stream; the agent reports acceptance, status
+          updates, and completion back up. Agent runs execute inside your VPC;
+          only run metadata crosses the boundary.
         </li>
       </ol>
+
+      <h4>Tunnel RPCs at a glance</h4>
+      <p>
+        All RPCs are defined in{" "}
+        <code>packages/proto/lantern/v1/dataplane.proto</code> and served on
+        the control plane&apos;s existing <code>:50051</code> gRPC listener.
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table>
+          <thead>
+            <tr>
+              <th>RPC</th>
+              <th>Direction</th>
+              <th>Auth</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Register</code></td>
+              <td>agent → CP</td>
+              <td>bootstrap token (one-time)</td>
+              <td>Exchange bootstrap token for a session JWT; record hostname / region / cloud</td>
+            </tr>
+            <tr>
+              <td><code>Heartbeat</code></td>
+              <td>agent → CP</td>
+              <td>plane_id + session JWT</td>
+              <td>Liveness probe (every 30 s); learns of drain orders</td>
+            </tr>
+            <tr>
+              <td><code>ReportMetrics</code></td>
+              <td>agent → CP</td>
+              <td>plane_id + session JWT</td>
+              <td>CPU / memory / active-run pressure (every 60 s)</td>
+            </tr>
+            <tr>
+              <td><code>RefreshToken</code></td>
+              <td>agent → CP</td>
+              <td>current session JWT</td>
+              <td>Rotate the session JWT before the 1 h expiry</td>
+            </tr>
+            <tr>
+              <td><code>RunStream</code> (bidi)</td>
+              <td>agent ↔ CP</td>
+              <td>DpHello first frame (session JWT)</td>
+              <td>CP pushes run assignments; agent reports accepted / status / completed</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="callout callout-info">
+        <strong>Per-tenant connection cap:</strong> up to{" "}
+        <code>LANTERN_DP_MAX_STREAMS_PER_TENANT</code> concurrent{" "}
+        <code>RunStream</code> connections are allowed per tenant (default 10).
+        Excess connections are rejected with gRPC <code>RESOURCE_EXHAUSTED</code>.
+      </div>
+
+      <h4>Run routing</h4>
+      <p>
+        When <code>POST /v1/runs</code> is called:
+      </p>
+      <ul>
+        <li>
+          If the tenant has at least one data plane with an active{" "}
+          <code>RunStream</code> connected, the run is dispatched to that plane.
+          The run&apos;s <code>data_plane_id</code> column is pinned at dispatch
+          time; the plane reports completion back over the stream.
+        </li>
+        <li>
+          If <strong>no</strong> data plane is connected (or delivery fails
+          because the assignment channel is full), the run falls back to inline
+          execution inside the control plane — the managed-cloud model. The pin
+          is rolled back so the inline path&apos;s writes are not blocked by a
+          stale plane scope.
+        </li>
+      </ul>
 
       <h3>3. Fully self-hosted</h3>
       <p>
@@ -241,6 +433,53 @@ make dev-infra`}</code>
         <li>Jaeger</li>
         <li>Any OTel-compatible backend</li>
       </ul>
+      <p>
+        Production alert rules, Grafana dashboards, and operator runbooks are
+        in{" "}
+        <a href="https://github.com/dshakes/lantern/blob/master/infra/monitoring/prometheus/alerts.yml">
+          <code>infra/monitoring/prometheus/</code>
+        </a>{" "}
+        and{" "}
+        <a href="https://github.com/dshakes/lantern/blob/master/docs/runbooks/README.md">
+          <code>docs/runbooks/</code>
+        </a>
+        . See <a href="/runtime/observability">Observability</a> for details.
+      </p>
+
+      <h2 id="migrations">Database migrations</h2>
+      <p>
+        The control plane manages its own Postgres schema via{" "}
+        <strong>golang-migrate</strong> (
+        <a href="https://github.com/dshakes/lantern/blob/master/docs/adr/0010-versioned-db-migrations.md">
+          ADR 0010
+        </a>
+        ). Migrations are embedded SQL files shipped inside the binary — no
+        files to mount in the container.
+      </p>
+      <ul>
+        <li>
+          <strong>Fresh databases</strong> — migration <code>0001</code> creates
+          the full schema on first boot.
+        </li>
+        <li>
+          <strong>Existing databases</strong> — <code>0001</code> is fully{" "}
+          <code>IF NOT EXISTS</code>; running it against a database already
+          created by the previous startup runner records version 1 in the{" "}
+          <code>schema_migrations</code> ledger and makes no DDL changes.
+          No manual step or downtime required on upgrade.
+        </li>
+        <li>
+          <strong>New changes</strong> — added as sequentially numbered pairs (
+          <code>0002_*.up.sql</code> / <code>0002_*.down.sql</code>). Down
+          migrations are required for every change after the baseline.
+        </li>
+      </ul>
+      <div className="callout callout-info">
+        <strong>Only the control plane runs migrations.</strong> Other services
+        read and write tables but never apply schema changes. The{" "}
+        <code>schema_migrations</code> ledger is visible to any Postgres client
+        and is the authoritative record of schema version.
+      </div>
     </>
   );
 }

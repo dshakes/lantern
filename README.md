@@ -184,6 +184,8 @@ Four end-to-end demo agents: [`examples/headless-agents/`](examples/headless-age
 | **User guides** (quickstart, isolation, durable execution, observability, identity, receipts) | [`docs/guides/`](docs/guides/) |
 | **Architecture docs** (all 18 components + ADRs) | [`docs/architecture/`](docs/architecture/) · [`docs/adr/`](docs/adr/) |
 | **Runtime strategy + gap analysis** | [`docs/architecture/18-agent-runtime-nextgen.md`](docs/architecture/18-agent-runtime-nextgen.md) |
+| **Operator runbooks** (control-plane, data-plane, DB, gateway, scheduler, budget, restore) | [`docs/runbooks/`](docs/runbooks/) |
+| **Prometheus alerts + Grafana dashboards** | [`infra/monitoring/`](infra/monitoring/) |
 | **Demo agents** | [`examples/headless-agents/`](examples/headless-agents/) |
 | **Manual runtime test walkthrough** | [`examples/headless-agents/MANUAL-TEST.md`](examples/headless-agents/MANUAL-TEST.md) |
 | **Docs site** (full reference, served at `:3002` in dev) | `apps/docs/` · `make dashboard-dev` |
@@ -350,7 +352,8 @@ SDKs: **TypeScript** (primary), **Python**, **Go**.
 - RBAC scopes on all runtime routes (`runtime:read/write/admin`, 403 + audit on denial)
 - Non-owner Postgres role (`lantern_app`) with RLS proven to deny cross-tenant reads; flag-gated (`LANTERN_RLS_ENFORCE`) for staged rollout
 - AES-256-GCM credential encryption at rest · idempotency keys on every external side-effect
-- OTel traces carrying `tenant_id` / `run_id` / `step_id` / `agent_instance_id` · W3C `traceparent` propagated CP → scheduler → manager → harness (one trace per spawn)
+- OTel traces carrying `tenant_id` / `run_id` / `step_id` / `agent_instance_id` · W3C `traceparent` propagated CP → scheduler → manager → harness (one trace per spawn); gateway and model-router now emit their own OTLP spans (gateway: OTLP/HTTP `:4318`; model-router: OTLP/gRPC `:4317`) tagged with `tenant_id` and, on the model-router, `run_id` / `step_id` / `model_used` / `cost_usd` — env-gated via `OTEL_EXPORTER_OTLP_ENDPOINT` or `LANTERN_OTEL_ENABLED=1`, no-op when unset
+- Production alert rules (13 rules, 3 groups), 2 Grafana dashboards, and 8 operator runbooks in [`infra/monitoring/`](infra/monitoring/) and [`docs/runbooks/`](docs/runbooks/)
 
 ```mermaid
 sequenceDiagram
@@ -442,9 +445,11 @@ Full design docs: [`docs/architecture/`](docs/architecture/) · decisions: [`doc
 ## Deployment model
 
 - **Managed cloud** — one-click deploy, billing, autoscaling. Convenience, not a paywall.
-- **Customer VPC** — data plane in your EKS/GKE/AKS; control plane reaches it over an outbound-only mTLS tunnel. Prompts, tokens, and customer data stay in your account; only metadata crosses the boundary. Terraform/Helm in [`infra/`](infra/).
+- **Customer VPC** — data plane in your EKS/GKE/AKS. The data-plane agent dials **out** to the control plane at `:50051` (no inbound ports in your VPC). It exchanges a one-time bootstrap token for a session JWT (`typ=dataplane-session`, 1 h TTL), then holds a persistent `RunStream` gRPC connection. The control plane pushes run assignments down the stream; the agent reports status and completion back up. When no data plane is connected, runs execute inline in the control plane (managed-cloud model). Prompts, tokens, and customer data stay in your account. Terraform/Helm in [`infra/`](infra/).
 
 You choose your LLM providers, where the data plane runs, which models answer which capability aliases, and which surfaces ship.
+
+**DB migrations:** the control plane applies schema changes at startup via golang-migrate ([ADR 0010](docs/adr/0010-versioned-db-migrations.md)). Migration `0001` (the current full schema, `IF NOT EXISTS`) is the baseline — it creates a fresh schema or silently adopts an existing one by recording version 1 in the `schema_migrations` ledger. No manual step, no downtime.
 
 ---
 
