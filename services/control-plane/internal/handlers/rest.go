@@ -147,7 +147,23 @@ func (h *RESTHandler) contextWithTenant(r *http.Request) (context.Context, error
 	// Also inject as context value (what MustTenantID actually reads).
 	ctx = middleware.InjectTenantID(ctx, claims.TenantID)
 
+	// Enrich the otelhttp request span (created by the server wrapper in main)
+	// with tenant/user/run identifiers so HTTP traces are filterable per
+	// invariant #9. Safe no-op when telemetry is disabled. r.Context() is the
+	// span-carrying context; ctx above is a derived context without its own span.
+	middleware.EnrichSpan(r.Context(), claims.TenantID, claims.Subject, runIDFromPath(r), "")
+
 	return ctx, nil
+}
+
+// runIDFromPath extracts the {id} path value for run-scoped routes
+// (/v1/runs/{id}/...). Returns "" for non-run routes. Uses the Go 1.22 ServeMux
+// path-value API; the route patterns register the wildcard as "{id}".
+func runIDFromPath(r *http.Request) string {
+	if !strings.HasPrefix(r.URL.Path, "/v1/runs/") {
+		return ""
+	}
+	return r.PathValue("id")
 }
 
 // ---------- Agent REST endpoints ----------
