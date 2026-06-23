@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function RuntimeReceiptsPage() {
   return (
     <>
@@ -13,8 +15,8 @@ export default function RuntimeReceiptsPage() {
       <h2 id="what">What a receipt attests</h2>
       <p>
         The receipt binds together the run&apos;s identity and the cryptographic
-        hash of its <a href="/runtime/durable-execution">event-sourced
-        journal</a>. Because the journal is the authoritative record of every
+        hash of its <Link href="/runtime/durable-execution">event-sourced
+        journal</Link>. Because the journal is the authoritative record of every
         step that executed, signing over its hash means the receipt attests to{" "}
         <em>the exact sequence of steps that ran</em> — not a summary that could
         drift from reality.
@@ -77,7 +79,7 @@ export default function RuntimeReceiptsPage() {
         <strong>Note:</strong> A receipt is signed over the{" "}
         <strong>journal hash</strong>, so tampering with even one event after
         issuance breaks verification. The journal is also what{" "}
-        <a href="/runtime/durable-execution">durable execution</a> replays on
+        <Link href="/runtime/durable-execution">durable execution</Link> replays on
         recovery — the same record underpins both crash-safety and provenance.
       </div>
 
@@ -90,7 +92,7 @@ export default function RuntimeReceiptsPage() {
       <p>
         Receipts share the same signing + verification machinery as run
         receipts elsewhere on the platform — see the{" "}
-        <a href="/api">API reference</a> for the full request/response shape.
+        <Link href="/api">API reference</Link> for the full request/response shape.
       </p>
     </>
   );

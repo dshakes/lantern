@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function DeploymentPage() {
   return (
     <>
@@ -443,7 +445,7 @@ make dev-infra`}</code>
         <a href="https://github.com/dshakes/lantern/blob/master/docs/runbooks/README.md">
           <code>docs/runbooks/</code>
         </a>
-        . See <a href="/runtime/observability">Observability</a> for details.
+        . See <Link href="/runtime/observability">Observability</Link> for details.
       </p>
 
       <h2 id="migrations">Database migrations</h2>

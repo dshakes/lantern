@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function RuntimeIdentityPage() {
   return (
     <>
@@ -15,7 +17,7 @@ export default function RuntimeIdentityPage() {
         At spawn, the runtime issues the instance its own{" "}
         <strong>Ed25519 keypair</strong>. The identity is scoped to that single
         spawn — two runs of the same agent have different keys — and it is what
-        the <a href="/runtime/observability">observability</a> layer uses as{" "}
+        the <Link href="/runtime/observability">observability</Link> layer uses as{" "}
         <code>agent_instance_id</code> to keep traces from colliding.
       </p>
 
@@ -57,13 +59,13 @@ export default function RuntimeIdentityPage() {
       <div className="callout callout-info">
         <strong>Note:</strong> The <code>lantern.secret/...</code> ref form is
         the same convention used across the platform — see{" "}
-        <a href="/security">Security</a>. The runtime is where it is resolved,
+        <Link href="/security">Security</Link>. The runtime is where it is resolved,
         inside the isolation boundary, at the moment the workload needs it.
       </div>
 
       <div className="callout callout-danger">
         <strong>Important:</strong> Pair secret vending with the right{" "}
-        <a href="/runtime/isolation">isolation class</a>. A workload that loads
+        <Link href="/runtime/isolation">isolation class</Link>. A workload that loads
         internet packages and also holds a secret should be{" "}
         <code>untrusted</code> with an egress allowlist, so a compromised
         dependency can&apos;t exfiltrate the vended value to an arbitrary host.

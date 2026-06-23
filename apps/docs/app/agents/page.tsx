@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function AgentsPage() {
   return (
     <>
@@ -129,7 +131,7 @@ say so rather than making things up.`}</code>
         </li>
       </ul>
       <p>
-        See <a href="/models">Models</a> for a full list of capabilities and
+        See <Link href="/models">Models</Link> for a full list of capabilities and
         how to configure providers.
       </p>
 
@@ -181,7 +183,7 @@ say so rather than making things up.`}</code>
       <h2 id="visual">Scheduling agents</h2>
       <p>
         You can schedule agents to run on a cron expression. See the{" "}
-        <a href="/scheduling">Scheduling</a> page for details on cron syntax,
+        <Link href="/scheduling">Scheduling</Link> page for details on cron syntax,
         AI-assisted scheduling, and email delivery of results.
       </p>
 
