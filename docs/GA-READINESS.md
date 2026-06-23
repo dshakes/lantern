@@ -26,6 +26,7 @@ claim was actually checked.
 | Versioned migrations (golang-migrate baseline, ADR 0010) | ✅ | fresh-DB build + **adopt-on-existing** (records v1, zero DDL on a pre-migrated DB) |
 | Prod secret guard (no dev admin/JWT in prod) | ✅ | `seedDev := !IsProd()` — dev tenant/admin only seeded when not prod |
 | Data-plane tunnel + run-routing **end-to-end** | ✅ | `TestDataPlane_RoutingLoop_E2E` — real gRPC RunStream: queued run → RouteRun pins `data_plane_id` → assignment delivered live → Accept (→running) → Complete (→completed, cost/tokens persisted) |
+| Tunnel + routing **live two-process smoke** | ✅ | `make smoke-dataplane` — boots the real control-plane + data-plane-agent **binaries**, agent dials `:50051` + registers via bootstrap token, `POST /v1/runs` routes to the plane, `DpRunAssignment` delivered over the tunnel. Passing locally. |
 | workflow-engine (journal), runtime-scheduler (scoring/store/leader), data-plane-agent (tunnel) | ✅ | `go test` green (pure-Go packages) |
 
 ## SDKs & surfaces
@@ -74,7 +75,7 @@ claim was actually checked.
 
 ## Honest gaps that remain (not yet closed)
 
-1. **Live full-stack process run.** The tunnel/routing loop is proven in-process over real gRPC + DB; a full `lantern dev` + separate `data-plane-agent` binary smoke run has not been scripted.
+1. ~~Live full-stack process run.~~ ✅ **Closed** — `make smoke-dataplane` boots the real control-plane + data-plane-agent binaries and proves a routed run over the tunnel end-to-end.
 2. **Bridges runtime** — 🔴 needs the owner's live channels.
 3. **Visual QA of docs/landing** — 🔴 needs a browser.
 4. **Load / soak / chaos** — only crash-replay unit coverage exists; no concurrency/perf testing on the run path.
