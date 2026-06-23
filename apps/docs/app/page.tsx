@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Download, Rocket, Bot, Server, ShieldCheck, Boxes, Cloud, Activity } from "lucide-react";
-import { ArchHome } from "./_components/ArchHome";
+import { SystemDiagram } from "./_components/SystemDiagram";
 import { CodeTabs } from "./_components/CodeTabs";
 
 export default function DocsHome() {
@@ -35,7 +35,7 @@ lantern dev      # Postgres + Redis + API + dashboard + a live agent`}</code></p
       </div>
 
       <h2 id="how">How it works</h2>
-      <ArchHome />
+      <SystemDiagram />
 
       <h2 id="run">Run an agent</h2>
       <p>One authenticated call kicks off a run — from your shell, your app, or a script.</p>

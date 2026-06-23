@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Terminal, Server, Network, Boxes, Shield, Activity } from "lucide-react";
 import { Flow } from "../_components/Flow";
 
 export default function RuntimeOverviewPage() {
@@ -17,12 +18,12 @@ export default function RuntimeOverviewPage() {
       <h2 id="model">The model in one picture</h2>
       <Flow
         steps={[
-          { name: "lantern run agent.yaml", sub: "submit the spec" },
-          { name: "Control plane", sub: "RBAC + quota gate, schedules it" },
-          { name: "Scheduler", sub: "picks a node — warm-pool · region · cost · health" },
-          { name: "Runtime manager", sub: "builds the pod, sets the isolation class" },
-          { name: "Pod in your VPC", sub: "RuntimeClass = isolation tier" },
-          { name: "Harness", sub: "egress allowlist · secret vending · heartbeats · logs" },
+          { name: "lantern run agent.yaml", sub: "submit the spec", icon: Terminal },
+          { name: "Control plane", sub: "RBAC + quota gate, schedules it", icon: Server },
+          { name: "Scheduler", sub: "picks a node — warm-pool · region · cost · health", icon: Network },
+          { name: "Runtime manager", sub: "builds the pod, sets the isolation class", icon: Boxes },
+          { name: "Pod in your VPC", sub: "RuntimeClass = isolation tier", icon: Shield },
+          { name: "Harness", sub: "egress allowlist · secret vending · heartbeats · logs", icon: Activity },
         ]}
       />
 

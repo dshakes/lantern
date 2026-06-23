@@ -213,12 +213,14 @@ body::before {
 .arch-link-label::after  { content: " →"; color: #34d399; }
 .arch-link-sub { font-size: 0.66rem; color: #71717a; }
 
-.flow { margin: 1.5rem 0 2rem; }
-.flow-step { display: flex; flex-direction: column; }
-.flow-node { border: 1px solid #26262b; border-radius: 12px; background: #0e0e11; padding: 0.85rem 1.1rem; }
-.flow-name { font-size: 0.95rem; font-weight: 600; color: #ededf0; }
-.flow-sub { font-size: 0.82rem; color: #8c8c96; margin-top: 0.15rem; }
-.flow-arrow { color: #3b3560; font-size: 1.05rem; line-height: 1; padding: 0.3rem 0 0.3rem 1.2rem; }
+.flow { position: relative; margin: 1.75rem 0 2.5rem; }
+.flow-step { position: relative; display: flex; gap: 1rem; padding-bottom: 1.6rem; }
+.flow-step:last-child { padding-bottom: 0; }
+.flow-step:not(:last-child)::before { content: ""; position: absolute; left: 0.92rem; top: 2.05rem; bottom: -0.25rem; width: 2px; background: linear-gradient(#3b3560, #232330); }
+.flow-dot { flex: 0 0 auto; width: 1.85rem; height: 1.85rem; border-radius: 999px; background: linear-gradient(160deg, #19142e, #0d0d11); border: 1px solid #3b3560; color: #b4acf4; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 600; z-index: 1; }
+.flow-body { padding-top: 0.18rem; }
+.flow-name { font-size: 0.98rem; font-weight: 600; color: #ededf0; }
+.flow-sub { font-size: 0.84rem; color: #8c8c96; margin-top: 0.1rem; }
 
 /* ──────────────────────────────────────────────────────────────────────────
    Tabbed code (curl / TS / Python).
@@ -242,3 +244,26 @@ body::before {
 .toc-rail a:hover { color: #a1a1aa; }
 .toc-rail a.active { color: #a39bf0; border-left-color: #7c6df8; }
 .toc-rail .toc-sub a { padding-left: 1.6rem; font-size: 0.76rem; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   System-context diagram (home "How it works").
+   ────────────────────────────────────────────────────────────────────────── */
+.sys { margin: 1.75rem 0 2.5rem; }
+.sys-actors { display: flex; gap: 0.75rem; }
+.sys-actor { flex: 1; display: flex; align-items: center; gap: 0.65rem; border: 1px solid #232330; border-radius: 12px; background: #0d0d11; padding: 0.7rem 0.9rem; }
+.sys-actor-name { font-size: 0.85rem; font-weight: 600; color: #e4e4e7; }
+.sys-actor-sub { font-size: 0.72rem; color: #71717a; margin-top: 0.05rem; }
+.sys-conn { display: flex; justify-content: center; position: relative; height: 2.1rem; }
+.sys-conn::before { content: ""; position: absolute; top: 0; bottom: 0; width: 2px; background: linear-gradient(#2a2740, #232330); }
+.sys-conn span { position: relative; align-self: center; font-size: 0.68rem; color: #71717a; background: #09090b; padding: 0 0.5rem; }
+.sys-boundary { position: relative; border-radius: 16px; padding: 1.5rem 1.3rem 1.1rem; }
+.sys-cp { border: 1px solid rgba(124,109,248,0.30); background: linear-gradient(160deg, rgba(124,109,248,0.09), rgba(56,189,248,0.03)); }
+.sys-dp { border: 1px solid rgba(52,211,153,0.28); background: linear-gradient(160deg, rgba(52,211,153,0.08), rgba(245,158,11,0.03)); }
+.sys-tag { position: absolute; top: -0.68rem; left: 1rem; font-size: 0.66rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #b4acf4; background: #0c0a16; border: 1px solid rgba(124,109,248,0.35); border-radius: 999px; padding: 0.2rem 0.7rem; }
+.sys-tag-dp { color: #6ee7b7; background: #07120d; border-color: rgba(52,211,153,0.35); }
+.sys-chips { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.sys-chips span { font-size: 0.78rem; color: #d4d4d8; background: rgba(255,255,255,0.03); border: 1px solid #2a2a30; border-radius: 8px; padding: 0.34rem 0.62rem; }
+.sys-note { font-size: 0.74rem; color: #71717a; margin-top: 0.75rem; }
+.sys-tunnel { display: flex; justify-content: center; padding: 0.7rem 0; }
+.sys-tunnel span { font-size: 0.74rem; font-weight: 600; color: #b4acf4; border: 1px dashed rgba(124,109,248,0.4); border-radius: 999px; padding: 0.34rem 0.95rem; background: rgba(124,109,248,0.05); white-space: nowrap; }
+@media (max-width: 640px) { .sys-actors { flex-direction: column; } .sys-tunnel span { white-space: normal; text-align: center; } }
