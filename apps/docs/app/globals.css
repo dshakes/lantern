@@ -195,3 +195,50 @@ body::before {
   .prose p, .prose ul, .prose ol { font-size: 0.95rem; }
   .card-grid { grid-template-columns: 1fr; }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Clean diagrams — ArchHome + Flow (glanceable, big elements, few words).
+   ────────────────────────────────────────────────────────────────────────── */
+.arch { margin: 1.75rem 0 2.5rem; }
+.arch-row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: stretch; }
+.arch-node { flex: 1 1 240px; border-radius: 16px; padding: 1.4rem 1.5rem; border: 1px solid; }
+.arch-cp { background: linear-gradient(160deg, rgba(124,109,248,0.10), rgba(56,189,248,0.04)); border-color: rgba(124,109,248,0.30); }
+.arch-dp { background: linear-gradient(160deg, rgba(52,211,153,0.09), rgba(245,158,11,0.04)); border-color: rgba(52,211,153,0.28); }
+.arch-kicker { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: #8c8c96; margin-bottom: 0.35rem; }
+.arch-name { font-size: 1.25rem; font-weight: 650; color: #fafafa; margin-bottom: 0.4rem; }
+.arch-sub { font-size: 0.9rem; line-height: 1.6; color: #a1a1aa; }
+.arch-link { flex: 0 0 auto; align-self: center; display: flex; flex-direction: column; align-items: center; gap: 0.2rem; padding: 0.5rem 0.9rem; }
+.arch-link-label { font-size: 0.74rem; font-weight: 600; color: #b4acf4; white-space: nowrap; }
+.arch-link-label::before { content: "→ "; color: #7c6df8; }
+.arch-link-label::after  { content: " →"; color: #34d399; }
+.arch-link-sub { font-size: 0.66rem; color: #71717a; }
+
+.flow { margin: 1.5rem 0 2rem; }
+.flow-step { display: flex; flex-direction: column; }
+.flow-node { border: 1px solid #26262b; border-radius: 12px; background: #0e0e11; padding: 0.85rem 1.1rem; }
+.flow-name { font-size: 0.95rem; font-weight: 600; color: #ededf0; }
+.flow-sub { font-size: 0.82rem; color: #8c8c96; margin-top: 0.15rem; }
+.flow-arrow { color: #3b3560; font-size: 1.05rem; line-height: 1; padding: 0.3rem 0 0.3rem 1.2rem; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tabbed code (curl / TS / Python).
+   ────────────────────────────────────────────────────────────────────────── */
+.code-tabs { margin: 1.5rem 0; border: 1px solid #26262b; border-radius: 12px; overflow: hidden; background: #0c0c0f; }
+.code-tabs-bar { display: flex; align-items: center; gap: 0.25rem; padding: 0.4rem 0.5rem; border-bottom: 1px solid #1c1c20; background: #0a0a0d; }
+.code-tabs-bar button { font-size: 0.78rem; color: #8c8c96; background: transparent; border: none; border-radius: 6px; padding: 0.3rem 0.7rem; cursor: pointer; transition: color .15s, background .15s; }
+.code-tabs-bar button:hover { color: #e4e4e7; }
+.code-tabs-bar button.active { color: #fafafa; background: #1a1a1f; }
+.code-tabs-copy { margin-left: auto; border: 1px solid #2a2a30 !important; }
+.code-tabs-copy.copied { color: #34d399 !important; border-color: rgba(52,211,153,0.4) !important; }
+.code-tabs pre { margin: 0; border: none; border-radius: 0; padding-top: 1.2rem !important; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   "On this page" rail.
+   ────────────────────────────────────────────────────────────────────────── */
+.toc-rail { flex: 0 0 13rem; align-self: flex-start; position: sticky; top: 5rem; max-height: calc(100vh - 7rem); overflow-y: auto; }
+.toc-rail-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: #71717a; font-weight: 600; margin-bottom: 0.75rem; }
+.toc-rail ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid #1f1f23; }
+.toc-rail a { display: block; font-size: 0.8rem; color: #71717a; text-decoration: none; padding: 0.3rem 0 0.3rem 0.85rem; margin-left: -1px; border-left: 1px solid transparent; transition: color .15s, border-color .15s; }
+.toc-rail a:hover { color: #a1a1aa; }
+.toc-rail a.active { color: #a39bf0; border-left-color: #7c6df8; }
+.toc-rail .toc-sub a { padding-left: 1.6rem; font-size: 0.76rem; }
