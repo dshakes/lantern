@@ -1,3 +1,5 @@
+import { BrandGrid } from "../_components/Brands";
+
 export default function ConnectorsPage() {
   return (
     <>
@@ -8,6 +10,15 @@ export default function ConnectorsPage() {
         and write to that service -- searching emails, creating GitHub issues,
         posting Slack messages, and more.
       </p>
+
+      <BrandGrid items={[
+        { name: "Gmail", sub: "read · search · send" },
+        { name: "Google", sub: "Calendar · Drive · Sheets" },
+        { name: "GitHub", sub: "issues · PRs · repos" },
+        { name: "Slack", sub: "post · read channels" },
+        { name: "Notion", sub: "pages · databases" },
+        { name: "Linear", sub: "issues · projects" },
+      ]} />
 
       <h2 id="gmail">Available connectors</h2>
       <p>Lantern ships with built-in connectors for:</p>

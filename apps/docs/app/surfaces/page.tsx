@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandGrid } from "../_components/Brands";
 
 export default function SurfacesPage() {
   return (
@@ -9,6 +10,16 @@ export default function SurfacesPage() {
         with agents. Lantern supports 11 built-in surfaces, all two-way --
         agents reply in the same channel you messaged from.
       </p>
+
+      <BrandGrid items={[
+        { name: "WhatsApp", sub: "Baileys · self-host" },
+        { name: "iMessage", sub: "macOS bridge" },
+        { name: "Slack", sub: "events + bot" },
+        { name: "Discord", sub: "bot" },
+        { name: "Telegram", sub: "bot" },
+        { name: "Voice", sub: "Twilio · LiveKit" },
+        { name: "Web Chat", sub: "embeddable widget" },
+      ]} />
 
       <h2 id="whatsapp">Available surfaces</h2>
 
