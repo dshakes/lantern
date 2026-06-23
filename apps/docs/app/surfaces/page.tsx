@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function SurfacesPage() {
   return (
     <>
@@ -169,7 +171,7 @@ export default function SurfacesPage() {
       <h3>REST API</h3>
       <p>
         Every agent is accessible via the REST API. See the{" "}
-        <a href="/api">API Reference</a> for full details.
+        <Link href="/api">API Reference</Link> for full details.
       </p>
       <pre>
         <code>{`curl -X POST https://api.lantern.run/v1/agents/my-agent/runs \\

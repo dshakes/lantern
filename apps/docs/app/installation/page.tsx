@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function InstallationPage() {
   return (
     <>
@@ -303,15 +305,15 @@ make dashboard-dev`}</code></pre>
       <h2 id="next">Next steps</h2>
       <ul>
         <li>
-          <a href="/quickstart"><strong>Quickstart</strong></a> — create your
+          <Link href="/quickstart"><strong>Quickstart</strong></Link> — create your
           first agent and run it end-to-end in 5 minutes
         </li>
         <li>
-          <a href="/agents">Agent configuration</a> — instructions, prompts,
+          <Link href="/agents">Agent configuration</Link> — instructions, prompts,
           connectors, visual editor
         </li>
         <li>
-          <a href="/deployment">Deployment</a> — move to production with Helm or
+          <Link href="/deployment">Deployment</Link> — move to production with Helm or
           Terraform
         </li>
       </ul>

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function RuntimeOverviewPage() {
   return (
     <>
@@ -36,7 +38,7 @@ harness (PID 1, baked in)    — egress allowlist, secret vending, heartbeats, l
         Every isolation class runs as a <strong>Kubernetes pod</strong>. There
         is no separate microVM fleet to provision for the common case — the
         data plane is already K8s in your VPC, and the runtime rides the same
-        substrate. See <a href="/runtime/isolation">Isolation classes</a> and{" "}
+        substrate. See <Link href="/runtime/isolation">Isolation classes</Link> and{" "}
         <a href="https://github.com/dshakes/lantern/blob/master/docs/adr/0009-kubernetes-default-runtime-substrate.md" target="_blank" rel="noopener noreferrer">ADR 0009</a>.
       </p>
 
@@ -56,14 +58,14 @@ harness (PID 1, baked in)    — egress allowlist, secret vending, heartbeats, l
         Work is event-sourced into a journal. If a node dies mid-run, the agent
         resumes from the last <code>step_completed</code> on another node — it
         does not re-spend tokens or re-fire side effects.{" "}
-        <a href="/runtime/durable-execution">Read how</a>.
+        <Link href="/runtime/durable-execution">Read how</Link>.
       </p>
 
       <h3>Per-instance identity</h3>
       <p>
         Each spawn is issued its own <strong>Ed25519 keypair</strong>. The
         instance authenticates secret-vending calls with it and is externally
-        verifiable. <a href="/runtime/identity">Read how</a>.
+        verifiable. <Link href="/runtime/identity">Read how</Link>.
       </p>
 
       <h3>One trace per spawn</h3>
@@ -71,24 +73,24 @@ harness (PID 1, baked in)    — egress allowlist, secret vending, heartbeats, l
         Every spawn emits a single OTel trace correlated by{" "}
         <code>(tenant_id, run_id, step_id, agent_instance_id, trace_id)</code>,
         with GenAI semantic-convention attributes for token and cost telemetry.{" "}
-        <a href="/runtime/observability">Read how</a>.
+        <Link href="/runtime/observability">Read how</Link>.
       </p>
 
       <h2 id="guides">In this section</h2>
       <ul>
-        <li><a href="/runtime/quickstart"><strong>Headless agent quickstart</strong></a> — write your first <code>agent.yaml</code> and run it end-to-end in ~15 minutes</li>
-        <li><a href="/runtime/isolation"><strong>Isolation classes</strong></a> — the decision tree from <code>trusted</code> to <code>hostile</code>, and the fail-closed gate</li>
-        <li><a href="/runtime/durable-execution"><strong>Durable execution</strong></a> — exactly-once under crash: journal, replay, idempotency keys</li>
-        <li><a href="/runtime/observability"><strong>Observability</strong></a> — one trace per spawn, OTel wiring, the metrics endpoint</li>
-        <li><a href="/runtime/identity"><strong>Identity &amp; secrets</strong></a> — per-instance keys and short-TTL secret vending</li>
-        <li><a href="/runtime/receipts"><strong>Verifiable receipts</strong></a> — signed, offline-verifiable proof of what ran</li>
+        <li><Link href="/runtime/quickstart"><strong>Headless agent quickstart</strong></Link> — write your first <code>agent.yaml</code> and run it end-to-end in ~15 minutes</li>
+        <li><Link href="/runtime/isolation"><strong>Isolation classes</strong></Link> — the decision tree from <code>trusted</code> to <code>hostile</code>, and the fail-closed gate</li>
+        <li><Link href="/runtime/durable-execution"><strong>Durable execution</strong></Link> — exactly-once under crash: journal, replay, idempotency keys</li>
+        <li><Link href="/runtime/observability"><strong>Observability</strong></Link> — one trace per spawn, OTel wiring, the metrics endpoint</li>
+        <li><Link href="/runtime/identity"><strong>Identity &amp; secrets</strong></Link> — per-instance keys and short-TTL secret vending</li>
+        <li><Link href="/runtime/receipts"><strong>Verifiable receipts</strong></Link> — signed, offline-verifiable proof of what ran</li>
       </ul>
 
       <div className="callout callout-info">
         <strong>Note:</strong> The runtime is the headless (autonomous,
         non-interactive) execution path. For interactive multi-turn agents see{" "}
-        <a href="/agents">Agents</a>; for the control-plane REST surface see the{" "}
-        <a href="/api">API reference</a>.
+        <Link href="/agents">Agents</Link>; for the control-plane REST surface see the{" "}
+        <Link href="/api">API reference</Link>.
       </div>
     </>
   );

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function RuntimeQuickstartPage() {
   return (
     <>
@@ -58,7 +60,7 @@ spec:
         <strong>Note:</strong> <code>image_digest</code> is pinned by digest,
         not a tag — the runtime runs exactly the bytes you signed. Choosing the
         isolation class is the one decision that matters most; the{" "}
-        <a href="/runtime/isolation">isolation classes</a> guide is the
+        <Link href="/runtime/isolation">isolation classes</Link> guide is the
         decision tree.
       </div>
 
@@ -71,7 +73,7 @@ spec:
         <strong>adversarial input → <code>hostile</code></strong>. Demo 02
         (<code>web-scraper</code>) uses <code>untrusted</code> precisely because
         it pulls <code>requests</code> + <code>beautifulsoup4</code> from PyPI.
-        Full tree in <a href="/runtime/isolation">Isolation classes</a>.
+        Full tree in <Link href="/runtime/isolation">Isolation classes</Link>.
       </p>
 
       <h2 id="run">3. Run it</h2>
@@ -100,7 +102,7 @@ spec:
         Or open <a href="http://localhost:3001/runtime" target="_blank" rel="noopener noreferrer">localhost:3001/runtime</a>{" "}
         — the dashboard shows the live instance, its log stream, resource usage,
         and lets you exec in for debugging. If you have an OTel collector wired
-        (<a href="/runtime/observability">Observability</a>) you get one trace
+        (<Link href="/runtime/observability">Observability</Link>) you get one trace
         per spawn with token + cost telemetry; aggregate counters are at{" "}
         <code>GET /v1/runtime/metrics</code>.
       </p>
@@ -119,10 +121,10 @@ spec:
 
       <h2 id="next">What&apos;s next</h2>
       <ul>
-        <li><a href="/runtime/isolation">Isolation classes</a> — pick the right boundary for the workload</li>
-        <li><a href="/runtime/durable-execution">Durable execution</a> — what happens when a node dies mid-run</li>
-        <li><a href="/runtime/identity">Identity &amp; secrets</a> — vend a real secret into the workload (demo 02)</li>
-        <li><a href="/runtime/observability">Observability</a> — wire an OTel collector and read the trace</li>
+        <li><Link href="/runtime/isolation">Isolation classes</Link> — pick the right boundary for the workload</li>
+        <li><Link href="/runtime/durable-execution">Durable execution</Link> — what happens when a node dies mid-run</li>
+        <li><Link href="/runtime/identity">Identity &amp; secrets</Link> — vend a real secret into the workload (demo 02)</li>
+        <li><Link href="/runtime/observability">Observability</Link> — wire an OTel collector and read the trace</li>
       </ul>
     </>
   );
