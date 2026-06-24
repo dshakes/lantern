@@ -394,6 +394,10 @@ func (s *RunService) StreamRunEvents(req *lanternv1.StreamRunEventsRequest, stre
 	// Ownership gate — the run must belong to the caller's tenant. We also read
 	// the current status so we know whether a tail is needed after replay.
 	var runStatus string
+	// rls-exempt: ownership gate inside a long-lived gRPC stream (no per-row
+	// transaction). The explicit `tenant_id = $2` filter is the authoritative
+	// tenant gate here; RLS would only be defence-in-depth and a per-iteration
+	// WithTenant tx in the tail loop adds no isolation the filter doesn't.
 	if err := s.srv.Pool.QueryRow(ctx, `
 		SELECT status FROM runs WHERE id = $1 AND tenant_id = $2
 	`, runID, tenantID).Scan(&runStatus); err != nil {
@@ -463,6 +467,9 @@ func (s *RunService) StreamRunEvents(req *lanternv1.StreamRunEventsRequest, stre
 
 			// Re-check status to detect terminal state.
 			var currentStatus string
+			// rls-exempt: terminal-status recheck in the stream tail loop; the
+			// explicit `tenant_id = $2` filter is the tenant gate (see the
+			// initial ownership gate above).
 			if err := s.srv.Pool.QueryRow(ctx, `
 				SELECT status FROM runs WHERE id = $1 AND tenant_id = $2
 			`, runID, tenantID).Scan(&currentStatus); err != nil {
@@ -489,6 +496,9 @@ func (s *RunService) replayJournalEvents(
 	afterSeq uint64,
 	stream lanternv1.RunService_StreamRunEventsServer,
 ) (uint64, error) {
+	// rls-exempt: journal_events is an RLS-exempt child table (no tenant_id
+	// column; scoped by run_id). The caller already verified run ownership via
+	// the tenant-scoped gate on `runs`, so run_id is a sufficient filter.
 	rows, err := s.srv.Pool.Query(ctx, `
 		SELECT seq, kind, step_id, attempt, payload, created_at
 		FROM   journal_events

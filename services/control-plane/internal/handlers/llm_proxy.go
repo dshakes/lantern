@@ -16,11 +16,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
@@ -120,6 +122,13 @@ type providerConfig struct {
 func (h *LlmProxyHandler) resolveProviderKey(ctx context.Context, tenantID, provider string) (string, error) {
 	// 1. Check tenant-specific keys in DB.
 	var apiKeyEncrypted string
+	// rls-exempt: self-scoped by the explicit `tenant_id = $1` filter. This is a
+	// LIVE LLM hot path called from deep inside the provider-failover loop with
+	// tenantID passed as an ARG (not always present in ctx); the explicit filter
+	// is the authoritative tenant gate. Routing through WithTenant here would
+	// require every failover call site to carry an injected tenant in ctx — a
+	// risky change to the live path for no isolation the filter doesn't already
+	// give. See ADR 0011 "rls-exempt-by-arg".
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT api_key_encrypted FROM llm_provider_configs
 		WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
@@ -153,6 +162,9 @@ func (h *LlmProxyHandler) resolveProviderKey(ctx context.Context, tenantID, prov
 // given provider (DB-configured in Settings, or in the process env as fallback).
 func (h *LlmProxyHandler) providerAvailable(ctx context.Context, tenantID, provider string) bool {
 	var count int
+	// rls-exempt: self-scoped by the explicit `tenant_id = $1` filter; called on
+	// the LIVE model-routing path with tenantID as an ARG (rls-exempt-by-arg,
+	// same rationale as resolveProviderKey).
 	_ = h.srv.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM llm_provider_configs
 		WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
@@ -1778,12 +1790,17 @@ func (h *LlmProxyHandler) SaveLlmProvider(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to secure provider key"})
 		return
 	}
-	_, err = h.srv.Pool.Exec(ctx, `
-		INSERT INTO llm_provider_configs (tenant_id, provider, api_key_encrypted, status)
-		VALUES ($1, $2, $3, 'active')
-		ON CONFLICT (tenant_id, provider)
-		DO UPDATE SET api_key_encrypted = $3, status = 'active', updated_at = now()
-	`, tenantID, body.Provider, encKey)
+	// llm_provider_configs is tenant-scoped → write under WithTenant (RLS). This
+	// is a top-level Settings handler, so the tenant is injected here.
+	err = h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			INSERT INTO llm_provider_configs (tenant_id, provider, api_key_encrypted, status)
+			VALUES ($1, $2, $3, 'active')
+			ON CONFLICT (tenant_id, provider)
+			DO UPDATE SET api_key_encrypted = $3, status = 'active', updated_at = now()
+		`, tenantID, body.Provider, encKey)
+		return e
+	})
 	if err != nil {
 		h.logger().Error("save llm provider config failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save provider config"})
@@ -1809,37 +1826,44 @@ func (h *LlmProxyHandler) ListLlmProviders(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT provider, status, created_at, updated_at
-		FROM llm_provider_configs
-		WHERE tenant_id = $1
-		ORDER BY provider
-	`, tenantID)
+	// llm_provider_configs is tenant-scoped → read under WithTenant (RLS). Rows
+	// are drained inside the closure before the tx commits.
+	result := make([]map[string]any, 0)
+	err = h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
+		rows, qerr := tx.Query(ctx, `
+			SELECT provider, status, created_at, updated_at
+			FROM llm_provider_configs
+			WHERE tenant_id = $1
+			ORDER BY provider
+		`, tenantID)
+		if qerr != nil {
+			return qerr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				provider  string
+				status    string
+				createdAt time.Time
+				updatedAt time.Time
+			)
+			if err := rows.Scan(&provider, &status, &createdAt, &updatedAt); err != nil {
+				continue
+			}
+			result = append(result, map[string]any{
+				"provider":  provider,
+				"status":    status,
+				"keyMasked": "****configured****",
+				"createdAt": createdAt,
+				"updatedAt": updatedAt,
+			})
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("list llm providers failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list providers"})
 		return
-	}
-	defer rows.Close()
-
-	result := make([]map[string]any, 0)
-	for rows.Next() {
-		var (
-			provider  string
-			status    string
-			createdAt time.Time
-			updatedAt time.Time
-		)
-		if err := rows.Scan(&provider, &status, &createdAt, &updatedAt); err != nil {
-			continue
-		}
-		result = append(result, map[string]any{
-			"provider":  provider,
-			"status":    status,
-			"keyMasked": "****configured****",
-			"createdAt": createdAt,
-			"updatedAt": updatedAt,
-		})
 	}
 
 	// Also check for env var fallbacks.

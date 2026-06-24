@@ -127,6 +127,8 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 
 	// Check if user already exists.
 	var existingID string
+	// rls-exempt: pre-auth cross-tenant lookup — email uniqueness is checked
+	// across all tenants before any tenant context exists.
 	err = h.srv.Pool.QueryRow(ctx,
 		`SELECT id FROM users WHERE email = $1 LIMIT 1`, req.Email,
 	).Scan(&existingID)
@@ -144,6 +146,8 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	slugSuffix, _ := randomHex(4)
 	slug := strings.Split(req.Email, "@")[0] + "-" + slugSuffix
 
+	// rls-exempt: pre-auth registration — creates the tenant + first user
+	// before any tenant context exists; nothing to scope to yet.
 	tx, err := h.srv.Pool.Begin(ctx)
 	if err != nil {
 		h.logger().Error("begin tx failed", zap.Error(err))
@@ -284,6 +288,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		passwordHash *string
 		role         string
 	)
+	// rls-exempt: pre-auth login — resolves the tenant from the email/password
+	// across all tenants; the tenant context is the OUTPUT of this lookup.
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT u.id, u.tenant_id, u.display_name, u.password_hash,
 			COALESCE((SELECT 'owner' FROM tenants WHERE id = u.tenant_id LIMIT 1), 'member')
@@ -312,6 +318,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update last_seen_at.
+	// rls-exempt: pre-auth login bookkeeping by user id; no tenant context exists yet.
 	_, _ = h.srv.Pool.Exec(ctx, `UPDATE users SET last_seen_at = now() WHERE id = $1`, userID)
 
 	name := req.Email
@@ -583,6 +590,8 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		name     string
 	)
 
+	// rls-exempt: pre-auth OAuth callback — resolves or creates the tenant from
+	// the verified OAuth email across all tenants; no tenant context exists yet.
 	err = h.srv.Pool.QueryRow(ctx, `
 		SELECT u.id, u.tenant_id, u.display_name,
 			COALESCE((SELECT 'owner' FROM tenants WHERE id = u.tenant_id LIMIT 1), 'member')
@@ -598,6 +607,8 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		slugSuffix, _ := randomHex(4)
 		slug := strings.Split(email, "@")[0] + "-" + slugSuffix
 
+		// rls-exempt: pre-auth OAuth registration — creates the tenant + first
+		// user before any tenant context exists.
 		tx, txErr := h.srv.Pool.Begin(ctx)
 		if txErr != nil {
 			h.logger().Error("begin tx failed", zap.Error(txErr))
@@ -649,6 +660,7 @@ func (h *AuthHandler) OAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	} else {
 		// Existing user: update last_seen_at.
+		// rls-exempt: pre-auth OAuth login bookkeeping by user id.
 		_, _ = h.srv.Pool.Exec(ctx, `UPDATE users SET last_seen_at = now() WHERE id = $1`, userID)
 
 		h.logger().Info("user logged in via OAuth",
@@ -953,6 +965,8 @@ func (h *AuthHandler) validateAPIKey(ctx context.Context, rawKey string) (*Lante
 
 	var tenantID, keyID string
 	var scopes []string
+	// rls-exempt: pre-auth API-key validation — resolves the owning tenant from
+	// the key hash across all tenants; the tenant context is the OUTPUT here.
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT id, tenant_id, COALESCE(scopes, '{}') FROM api_keys
 		WHERE key_hash = $1 AND revoked_at IS NULL
@@ -963,6 +977,7 @@ func (h *AuthHandler) validateAPIKey(ctx context.Context, rawKey string) (*Lante
 	}
 
 	// Best-effort last-used update.
+	// rls-exempt: pre-auth API-key bookkeeping by key id.
 	_, _ = h.srv.Pool.Exec(ctx, `UPDATE api_keys SET last_used_at = now() WHERE id = $1`, keyID)
 
 	return &LanternClaims{

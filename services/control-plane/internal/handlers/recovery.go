@@ -115,6 +115,8 @@ func (h *RESTHandler) RecoverOrphanedRuns(ctx context.Context) (recovered, skipp
 		// Deleting here is safe: the run is already out of findOrphanedRuns
 		// because its status is 'running'/'queued' and we are the only
 		// process that won the lock for it this sweep.
+		// rls-exempt: background run-recovery sweep — no request tenant exists;
+		// it re-drives orphaned runs across ALL tenants and must bypass RLS.
 		_, _ = h.srv.Pool.Exec(ctx, `
 			DELETE FROM run_locks WHERE run_id = $1 AND worker_id = $2
 		`, run.runID, wid)

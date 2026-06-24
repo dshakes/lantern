@@ -19,8 +19,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
@@ -77,57 +79,70 @@ func (h *JarvisHandler) composeBrief(ctx context.Context, tenantID string) (stri
 // upcomingCalendar returns event-kind timeline rows from now through the
 // next 24h, soonest first.
 func (h *JarvisHandler) upcomingCalendar(ctx context.Context, tenantID string) []string {
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT content FROM memory_events
-		WHERE tenant_id = $1 AND kind = 'event'
-		  AND occurred_at >= now() - interval '1 hour'
-		  AND occurred_at <  now() + interval '24 hours'
-		ORDER BY occurred_at ASC LIMIT 20
-	`, tenantID)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
+	// memory_events is tenant-scoped → read under WithTenant (RLS). The tenant
+	// is injected from the tenantID arg so this works for both the request path
+	// and the (single-tenant) scheduled brief push. Rows drained in the closure.
 	var out []string
-	for rows.Next() {
-		var c string
-		if rows.Scan(&c) == nil {
-			out = append(out, c)
+	_ = h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT content FROM memory_events
+			WHERE tenant_id = $1 AND kind = 'event'
+			  AND occurred_at >= now() - interval '1 hour'
+			  AND occurred_at <  now() + interval '24 hours'
+			ORDER BY occurred_at ASC LIMIT 20
+		`, tenantID)
+		if err != nil {
+			return err
 		}
-	}
+		defer rows.Close()
+		for rows.Next() {
+			var c string
+			if rows.Scan(&c) == nil {
+				out = append(out, c)
+			}
+		}
+		return rows.Err()
+	})
 	return out
 }
 
 // recentEmails returns email-kind rows from the last 36h, newest first.
 func (h *JarvisHandler) recentEmails(ctx context.Context, tenantID string) []briefEmail {
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT COALESCE(p.display_name, ''), me.content
-		FROM memory_events me LEFT JOIN people p ON p.id = me.person_id
-		WHERE me.tenant_id = $1 AND me.kind = 'email'
-		  AND me.created_at >= now() - interval '36 hours'
-		ORDER BY me.occurred_at DESC LIMIT 15
-	`, tenantID)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
+	// memory_events is tenant-scoped → read under WithTenant (RLS).
 	var out []briefEmail
-	for rows.Next() {
-		var from, content string
-		if rows.Scan(&from, &content) == nil {
-			if from == "" {
-				from = "?"
-			}
-			out = append(out, briefEmail{From: from, Content: content})
+	_ = h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT COALESCE(p.display_name, ''), me.content
+			FROM memory_events me LEFT JOIN people p ON p.id = me.person_id
+			WHERE me.tenant_id = $1 AND me.kind = 'email'
+			  AND me.created_at >= now() - interval '36 hours'
+			ORDER BY me.occurred_at DESC LIMIT 15
+		`, tenantID)
+		if err != nil {
+			return err
 		}
-	}
+		defer rows.Close()
+		for rows.Next() {
+			var from, content string
+			if rows.Scan(&from, &content) == nil {
+				if from == "" {
+					from = "?"
+				}
+				out = append(out, briefEmail{From: from, Content: content})
+			}
+		}
+		return rows.Err()
+	})
 	return out
 }
 
 // awaitingReply finds people whose most recent message (last 4 days) was
 // inbound — i.e. the ball is in your court.
 func (h *JarvisHandler) awaitingReply(ctx context.Context, tenantID string) []briefReply {
-	rows, err := h.srv.Pool.Query(ctx, `
+	// memory_events is tenant-scoped → read under WithTenant (RLS).
+	var out []briefReply
+	_ = h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
 		WITH latest AS (
 			SELECT DISTINCT ON (person_id)
 			       person_id, direction, content, occurred_at
@@ -142,20 +157,21 @@ func (h *JarvisHandler) awaitingReply(ctx context.Context, tenantID string) []br
 		WHERE l.direction = 'in'
 		ORDER BY l.occurred_at DESC LIMIT 10
 	`, tenantID)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var out []briefReply
-	for rows.Next() {
-		var person, content string
-		if rows.Scan(&person, &content) == nil {
-			if person == "" {
-				person = "someone"
-			}
-			out = append(out, briefReply{Person: person, Content: content})
+		if err != nil {
+			return err
 		}
-	}
+		defer rows.Close()
+		for rows.Next() {
+			var person, content string
+			if rows.Scan(&person, &content) == nil {
+				if person == "" {
+					person = "someone"
+				}
+				out = append(out, briefReply{Person: person, Content: content})
+			}
+		}
+		return rows.Err()
+	})
 	return out
 }
 
@@ -343,9 +359,13 @@ func (h *JarvisHandler) twilioFromNumber(ctx context.Context, tenantID string) s
 		return n
 	}
 	var cfg []byte
-	if err := h.srv.Pool.QueryRow(ctx,
-		`SELECT config FROM connector_installs WHERE tenant_id = $1 AND connector_id = 'twilio' LIMIT 1`,
-		tenantID).Scan(&cfg); err == nil {
+	// connector_installs is tenant-scoped → read under WithTenant (RLS).
+	cfgErr := h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT config FROM connector_installs WHERE tenant_id = $1 AND connector_id = 'twilio' LIMIT 1`,
+			tenantID).Scan(&cfg)
+	})
+	if cfgErr == nil {
 		dec, decErr := secrets.Decrypt(cfg)
 		if decErr != nil {
 			return ""
