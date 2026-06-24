@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
@@ -148,34 +149,39 @@ func (h *RehearseHandler) Rehearse(w http.ResponseWriter, r *http.Request) {
 		ORDER BY r.created_at DESC
 		LIMIT $6
 	`
-	rows, err := h.srv.Pool.Query(ctx, q,
-		tenantID, body.AgentName, cutoff,
-		includeFailures, includeLowScore, body.Limit,
-	)
-	if err != nil {
-		h.logger().Error("rehearse query", zap.Error(err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
-		return
-	}
-	defer rows.Close()
-
 	out := rehearseResponse{
 		AgentName: body.AgentName,
 		Window:    body.Window,
 		Cases:     []rehearseCase{},
 	}
-	for rows.Next() {
-		var c rehearseCase
-		var score *int
-		if err := rows.Scan(
-			&c.OriginalRunID, &c.OriginalAgentVer, &c.OriginalStatus, &score,
-			&c.Input, &c.ExpectedOutput, &c.OriginalCostUsd, &c.OriginalAt,
-		); err != nil {
-			h.logger().Warn("rehearse scan failed", zap.Error(err))
-			continue
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, q,
+			tenantID, body.AgentName, cutoff,
+			includeFailures, includeLowScore, body.Limit,
+		)
+		if qErr != nil {
+			return qErr
 		}
-		c.OriginalScore = score
-		out.Cases = append(out.Cases, c)
+		defer rows.Close()
+		for rows.Next() {
+			var c rehearseCase
+			var score *int
+			if e := rows.Scan(
+				&c.OriginalRunID, &c.OriginalAgentVer, &c.OriginalStatus, &score,
+				&c.Input, &c.ExpectedOutput, &c.OriginalCostUsd, &c.OriginalAt,
+			); e != nil {
+				h.logger().Warn("rehearse scan failed", zap.Error(e))
+				continue
+			}
+			c.OriginalScore = score
+			out.Cases = append(out.Cases, c)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		h.logger().Error("rehearse query", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
+		return
 	}
 	out.Count = len(out.Cases)
 	if out.Count == 0 {

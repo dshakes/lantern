@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
@@ -70,19 +71,21 @@ func (h *RESTHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 	configJSON, _ := json.Marshal(config)
 
 	var id string
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO schedules (tenant_id, agent_name, cron_expr, input_template, config, enabled, next_fire_at)
-		VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)
-		ON CONFLICT (tenant_id, agent_name) DO UPDATE SET
-			cron_expr = EXCLUDED.cron_expr,
-			input_template = EXCLUDED.input_template,
-			config = EXCLUDED.config,
-			enabled = EXCLUDED.enabled,
-			next_fire_at = EXCLUDED.next_fire_at,
-			updated_at = now()
-		RETURNING id
-	`, tenantID, body.AgentName, body.CronExpr, string(inputJSON), string(configJSON), enabled, nextFire,
-	).Scan(&id)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO schedules (tenant_id, agent_name, cron_expr, input_template, config, enabled, next_fire_at)
+			VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)
+			ON CONFLICT (tenant_id, agent_name) DO UPDATE SET
+				cron_expr = EXCLUDED.cron_expr,
+				input_template = EXCLUDED.input_template,
+				config = EXCLUDED.config,
+				enabled = EXCLUDED.enabled,
+				next_fire_at = EXCLUDED.next_fire_at,
+				updated_at = now()
+			RETURNING id
+		`, tenantID, body.AgentName, body.CronExpr, string(inputJSON), string(configJSON), enabled, nextFire,
+		).Scan(&id)
+	})
 	if err != nil {
 		h.logger().Error("CreateSchedule failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -116,65 +119,70 @@ func (h *RESTHandler) ListSchedules(w http.ResponseWriter, r *http.Request) {
 
 	tenantID, _ := middleware.TenantIDFromContext(ctx)
 
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id, tenant_id, agent_name, cron_expr, input_template, config, enabled, next_fire_at, last_fired_at, created_at, updated_at
-		FROM schedules
-		WHERE tenant_id = $1
-		ORDER BY created_at DESC
-	`, tenantID)
+	schedules := make([]map[string]any, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id, tenant_id, agent_name, cron_expr, input_template, config, enabled, next_fire_at, last_fired_at, created_at, updated_at
+			FROM schedules
+			WHERE tenant_id = $1
+			ORDER BY created_at DESC
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				id, tid, agentName, cronExpr string
+				inputJSON, configJSON        []byte
+				enabled                      bool
+				nextFireAt, lastFiredAt      *time.Time
+				createdAt, updatedAt         time.Time
+			)
+			if err := rows.Scan(&id, &tid, &agentName, &cronExpr, &inputJSON, &configJSON, &enabled, &nextFireAt, &lastFiredAt, &createdAt, &updatedAt); err != nil {
+				h.logger().Error("ListSchedules scan error", zap.Error(err))
+				continue
+			}
+
+			s := map[string]any{
+				"id":        id,
+				"tenantId":  tid,
+				"agentName": agentName,
+				"cronExpr":  cronExpr,
+				"enabled":   enabled,
+				"createdAt": createdAt,
+				"updatedAt": updatedAt,
+			}
+
+			var inputTemplate map[string]any
+			if len(inputJSON) > 0 {
+				_ = json.Unmarshal(inputJSON, &inputTemplate)
+			}
+			s["inputTemplate"] = inputTemplate
+
+			var config map[string]any
+			if len(configJSON) > 0 {
+				_ = json.Unmarshal(configJSON, &config)
+			}
+			if email, ok := config["deliveryEmail"].(string); ok {
+				s["deliveryEmail"] = email
+			}
+
+			if nextFireAt != nil {
+				s["nextFireAt"] = *nextFireAt
+			}
+			if lastFiredAt != nil {
+				s["lastFiredAt"] = *lastFiredAt
+			}
+
+			schedules = append(schedules, s)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("ListSchedules failed", zap.Error(err))
 		writeJSON(w, http.StatusOK, []map[string]any{})
 		return
-	}
-	defer rows.Close()
-
-	schedules := make([]map[string]any, 0)
-	for rows.Next() {
-		var (
-			id, tid, agentName, cronExpr string
-			inputJSON, configJSON        []byte
-			enabled                      bool
-			nextFireAt, lastFiredAt      *time.Time
-			createdAt, updatedAt         time.Time
-		)
-		if err := rows.Scan(&id, &tid, &agentName, &cronExpr, &inputJSON, &configJSON, &enabled, &nextFireAt, &lastFiredAt, &createdAt, &updatedAt); err != nil {
-			h.logger().Error("ListSchedules scan error", zap.Error(err))
-			continue
-		}
-
-		s := map[string]any{
-			"id":        id,
-			"tenantId":  tid,
-			"agentName": agentName,
-			"cronExpr":  cronExpr,
-			"enabled":   enabled,
-			"createdAt": createdAt,
-			"updatedAt": updatedAt,
-		}
-
-		var inputTemplate map[string]any
-		if len(inputJSON) > 0 {
-			_ = json.Unmarshal(inputJSON, &inputTemplate)
-		}
-		s["inputTemplate"] = inputTemplate
-
-		var config map[string]any
-		if len(configJSON) > 0 {
-			_ = json.Unmarshal(configJSON, &config)
-		}
-		if email, ok := config["deliveryEmail"].(string); ok {
-			s["deliveryEmail"] = email
-		}
-
-		if nextFireAt != nil {
-			s["nextFireAt"] = *nextFireAt
-		}
-		if lastFiredAt != nil {
-			s["lastFiredAt"] = *lastFiredAt
-		}
-
-		schedules = append(schedules, s)
 	}
 
 	writeJSON(w, http.StatusOK, schedules)
@@ -214,10 +222,12 @@ func (h *RESTHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	var currentCronExpr string
 	var currentConfigJSON []byte
 	var currentEnabled bool
-	err = h.srv.Pool.QueryRow(ctx,
-		`SELECT cron_expr, config, enabled FROM schedules WHERE id = $1 AND tenant_id = $2`,
-		id, tenantID,
-	).Scan(&currentCronExpr, &currentConfigJSON, &currentEnabled)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT cron_expr, config, enabled FROM schedules WHERE id = $1 AND tenant_id = $2`,
+			id, tenantID,
+		).Scan(&currentCronExpr, &currentConfigJSON, &currentEnabled)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "schedule not found"})
 		return
@@ -251,10 +261,13 @@ func (h *RESTHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = h.srv.Pool.Exec(ctx, `
-		UPDATE schedules SET cron_expr = $1, config = $2::jsonb, enabled = $3, next_fire_at = $4, updated_at = now()
-		WHERE id = $5 AND tenant_id = $6
-	`, cronExpr, string(configJSON), enabled, nextFire, id, tenantID)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			UPDATE schedules SET cron_expr = $1, config = $2::jsonb, enabled = $3, next_fire_at = $4, updated_at = now()
+			WHERE id = $5 AND tenant_id = $6
+		`, cronExpr, string(configJSON), enabled, nextFire, id, tenantID)
+		return e
+	})
 	if err != nil {
 		h.logger().Error("UpdateSchedule failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -289,17 +302,25 @@ func (h *RESTHandler) DeleteSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.srv.Pool.Exec(ctx,
-		`DELETE FROM schedules WHERE id = $1 AND tenant_id = $2`,
-		id, tenantID,
-	)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, execErr := tx.Exec(ctx,
+			`DELETE FROM schedules WHERE id = $1 AND tenant_id = $2`,
+			id, tenantID,
+		)
+		if execErr != nil {
+			return execErr
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		h.logger().Error("DeleteSchedule failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "schedule not found"})
 		return
 	}

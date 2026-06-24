@@ -316,6 +316,9 @@ func (s *DataPlaneService) Register(ctx context.Context, req *lanternv1.DpRegist
 	// Fetch ALL planes for this tenant that have a reg_token_hash set.
 	// We iterate and constant-time compare so the DB doesn't see the raw hash
 	// and single-row timing doesn't leak which plane was matched.
+	// rls-exempt: data-plane bootstrap/register path (gRPC, bootstrap-token auth,
+	// no JWT/middleware context). This RESOLVES + validates the claimed tenant via
+	// the reg_token_hash before any session exists, so it runs on the privileged pool.
 	rows, err := s.srv.Pool.Query(ctx, `
 		SELECT id, reg_token_hash
 		FROM data_planes
@@ -366,6 +369,9 @@ func (s *DataPlaneService) Register(ctx context.Context, req *lanternv1.DpRegist
 	}
 
 	// Mark the plane connected and update metadata.
+	// rls-exempt: register path (gRPC bootstrap-token auth, no request context).
+	// The plane was just matched by its bootstrap token; updated by plane id on
+	// the privileged pool.
 	_, err = s.srv.Pool.Exec(ctx, `
 		UPDATE data_planes
 		SET status = 'connected',
@@ -410,6 +416,9 @@ func (s *DataPlaneService) Heartbeat(ctx context.Context, req *lanternv1.DpHeart
 		return nil, err
 	}
 
+	// rls-exempt: data-plane heartbeat (gRPC, session-token auth, no JWT/middleware
+	// context). Tenant comes from the verified session token claims (c.TenantID)
+	// and is enforced by the WHERE clause; runs on the privileged pool.
 	_, dbErr := s.srv.Pool.Exec(ctx, `
 		UPDATE data_planes
 		SET last_heartbeat = now(),
@@ -437,6 +446,8 @@ func (s *DataPlaneService) ReportMetrics(ctx context.Context, req *lanternv1.DpM
 	}
 
 	// Update agent_count from the metrics report (same column used by Heartbeat).
+	// rls-exempt: data-plane metrics report (gRPC, session-token auth, no JWT
+	// context). Tenant from verified token claims (c.TenantID), enforced in WHERE.
 	_, dbErr := s.srv.Pool.Exec(ctx, `
 		UPDATE data_planes
 		SET last_heartbeat = now(),

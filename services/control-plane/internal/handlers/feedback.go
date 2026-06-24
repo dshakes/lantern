@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
@@ -91,23 +92,32 @@ func (h *FeedbackHandler) SubmitFeedback(w http.ResponseWriter, r *http.Request)
 		body.Source = "dashboard"
 	}
 
-	// Verify the run belongs to the caller's tenant before accepting feedback.
-	var agentName string
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT COALESCE(a.name, '')
-		FROM runs r LEFT JOIN agents a ON a.id = r.agent_id AND a.tenant_id = r.tenant_id
-		WHERE r.id = $1 AND r.tenant_id = $2
-	`, runID, tenantID).Scan(&agentName)
-	if err != nil {
+	// Verify the run belongs to the caller's tenant before accepting feedback,
+	// then insert — both in one RLS-scoped transaction.
+	var notFound bool
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		var agentName string
+		if e := tx.QueryRow(ctx, `
+			SELECT COALESCE(a.name, '')
+			FROM runs r LEFT JOIN agents a ON a.id = r.agent_id AND a.tenant_id = r.tenant_id
+			WHERE r.id = $1 AND r.tenant_id = $2
+		`, runID, tenantID).Scan(&agentName); e == pgx.ErrNoRows {
+			notFound = true
+			return nil
+		} else if e != nil {
+			return e
+		}
+		_, e := tx.Exec(ctx, `
+			INSERT INTO run_feedback
+			  (tenant_id, run_id, agent_name, score, comment, preferred_output, source, created_at)
+			VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, NOW())
+		`, tenantID, runID, agentName, body.Score, body.Comment, body.PreferredOutput, body.Source)
+		return e
+	})
+	if notFound {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "run not found"})
 		return
 	}
-
-	_, err = h.srv.Pool.Exec(ctx, `
-		INSERT INTO run_feedback
-		  (tenant_id, run_id, agent_name, score, comment, preferred_output, source, created_at)
-		VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, NOW())
-	`, tenantID, runID, agentName, body.Score, body.Comment, body.PreferredOutput, body.Source)
 	if err != nil {
 		h.logger().Error("insert feedback", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save feedback"})
@@ -126,28 +136,34 @@ func (h *FeedbackHandler) ListFeedback(w http.ResponseWriter, r *http.Request) {
 	}
 	runID := r.PathValue("id")
 
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT run_id, COALESCE(agent_name, ''), score, COALESCE(comment, ''),
-		       COALESCE(preferred_output, ''), source, created_at
-		FROM run_feedback
-		WHERE tenant_id = $1 AND run_id = $2
-		ORDER BY created_at DESC
-	`, tenantID, runID)
-	if err != nil {
+	out := []feedbackRow{}
+	var scanErr error
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT run_id, COALESCE(agent_name, ''), score, COALESCE(comment, ''),
+			       COALESCE(preferred_output, ''), source, created_at
+			FROM run_feedback
+			WHERE tenant_id = $1 AND run_id = $2
+			ORDER BY created_at DESC
+		`, tenantID, runID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var fr feedbackRow
+			if e := rows.Scan(&fr.RunID, &fr.AgentName, &fr.Score, &fr.Comment,
+				&fr.PreferredOutput, &fr.Source, &fr.CreatedAt); e != nil {
+				scanErr = e
+				return nil
+			}
+			out = append(out, fr)
+		}
+		return rows.Err()
+	})
+	if err != nil || scanErr != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
 		return
-	}
-	defer rows.Close()
-
-	out := []feedbackRow{}
-	for rows.Next() {
-		var fr feedbackRow
-		if err := rows.Scan(&fr.RunID, &fr.AgentName, &fr.Score, &fr.Comment,
-			&fr.PreferredOutput, &fr.Source, &fr.CreatedAt); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "scan failed"})
-			return
-		}
-		out = append(out, fr)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -167,20 +183,22 @@ func (h *FeedbackHandler) AgentSummary(w http.ResponseWriter, r *http.Request) {
 
 	var s feedbackSummary
 	s.AgentName = agentName
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT
-		  COUNT(*),
-		  COALESCE(AVG(score), 0),
-		  COUNT(*) FILTER (WHERE score >= 4),
-		  COUNT(*) FILTER (WHERE score <= 2),
-		  COUNT(*) FILTER (WHERE preferred_output IS NOT NULL),
-		  COALESCE(AVG(score) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days'), 0)
-		FROM run_feedback
-		WHERE tenant_id = $1 AND agent_name = $2
-	`, tenantID, agentName).Scan(
-		&s.TotalFeedback, &s.AvgScore, &s.ThumbsUp, &s.ThumbsDown,
-		&s.HasPreferred, &s.Last7DaysAvg,
-	)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT
+			  COUNT(*),
+			  COALESCE(AVG(score), 0),
+			  COUNT(*) FILTER (WHERE score >= 4),
+			  COUNT(*) FILTER (WHERE score <= 2),
+			  COUNT(*) FILTER (WHERE preferred_output IS NOT NULL),
+			  COALESCE(AVG(score) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days'), 0)
+			FROM run_feedback
+			WHERE tenant_id = $1 AND agent_name = $2
+		`, tenantID, agentName).Scan(
+			&s.TotalFeedback, &s.AvgScore, &s.ThumbsUp, &s.ThumbsDown,
+			&s.HasPreferred, &s.Last7DaysAvg,
+		)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
 		return

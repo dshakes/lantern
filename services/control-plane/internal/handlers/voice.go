@@ -28,8 +28,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
@@ -196,25 +198,27 @@ func (h *VoiceHandler) CreateNumber(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var id string
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO voice_numbers
-			(tenant_id, agent_name, provider, phone_number, display_name,
-			 provider_config, voice_id, greeting, status)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, 'active')
-		ON CONFLICT (tenant_id, phone_number) DO UPDATE SET
-			agent_name = EXCLUDED.agent_name,
-			provider = EXCLUDED.provider,
-			display_name = EXCLUDED.display_name,
-			provider_config = EXCLUDED.provider_config,
-			voice_id = EXCLUDED.voice_id,
-			greeting = EXCLUDED.greeting,
-			status = 'active',
-			updated_at = now()
-		RETURNING id::text
-	`,
-		tenantID, body.AgentName, body.Provider, body.PhoneNumber, body.DisplayName,
-		string(configJSON), body.VoiceID, body.Greeting,
-	).Scan(&id)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO voice_numbers
+				(tenant_id, agent_name, provider, phone_number, display_name,
+				 provider_config, voice_id, greeting, status)
+			VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, 'active')
+			ON CONFLICT (tenant_id, phone_number) DO UPDATE SET
+				agent_name = EXCLUDED.agent_name,
+				provider = EXCLUDED.provider,
+				display_name = EXCLUDED.display_name,
+				provider_config = EXCLUDED.provider_config,
+				voice_id = EXCLUDED.voice_id,
+				greeting = EXCLUDED.greeting,
+				status = 'active',
+				updated_at = now()
+			RETURNING id::text
+		`,
+			tenantID, body.AgentName, body.Provider, body.PhoneNumber, body.DisplayName,
+			string(configJSON), body.VoiceID, body.Greeting,
+		).Scan(&id)
+	})
 	if err != nil {
 		h.logger().Error("save voice number failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save number"})
@@ -237,37 +241,43 @@ func (h *VoiceHandler) ListNumbers(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id::text, agent_name, provider, phone_number,
-		       COALESCE(display_name, ''), status, COALESCE(last_error, ''),
-		       created_at, updated_at
-		FROM voice_numbers
-		WHERE tenant_id = $1
-		ORDER BY created_at DESC
-	`, tenantID)
+	out := make([]map[string]any, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id::text, agent_name, provider, phone_number,
+			       COALESCE(display_name, ''), status, COALESCE(last_error, ''),
+			       created_at, updated_at
+			FROM voice_numbers
+			WHERE tenant_id = $1
+			ORDER BY created_at DESC
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, agent, provider, phone, displayName, status, lastErr string
+			var createdAt, updatedAt time.Time
+			if err := rows.Scan(&id, &agent, &provider, &phone, &displayName, &status, &lastErr, &createdAt, &updatedAt); err != nil {
+				continue
+			}
+			out = append(out, map[string]any{
+				"id":          id,
+				"agentName":   agent,
+				"provider":    provider,
+				"phoneNumber": phone,
+				"displayName": displayName,
+				"status":      status,
+				"lastError":   lastErr,
+				"createdAt":   createdAt,
+				"updatedAt":   updatedAt,
+			})
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
 		return
-	}
-	defer rows.Close()
-	out := make([]map[string]any, 0)
-	for rows.Next() {
-		var id, agent, provider, phone, displayName, status, lastErr string
-		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&id, &agent, &provider, &phone, &displayName, &status, &lastErr, &createdAt, &updatedAt); err != nil {
-			continue
-		}
-		out = append(out, map[string]any{
-			"id":          id,
-			"agentName":   agent,
-			"provider":    provider,
-			"phoneNumber": phone,
-			"displayName": displayName,
-			"status":      status,
-			"lastError":   lastErr,
-			"createdAt":   createdAt,
-			"updatedAt":   updatedAt,
-		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -280,12 +290,20 @@ func (h *VoiceHandler) DeleteNumber(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	tag, err := h.srv.Pool.Exec(ctx, `DELETE FROM voice_numbers WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, execErr := tx.Exec(ctx, `DELETE FROM voice_numbers WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+		if execErr != nil {
+			return execErr
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "delete failed"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
@@ -339,6 +357,9 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	// the webhook, so we resolve by the single active number for that
 	// provider — the common one-project-per-deployment case.
 	if to := headers.Get("X-Lantern-To"); to != "" {
+		// rls-exempt: inbound webhook carries no JWT/tenant context — this is the
+		// lookup that RESOLVES which tenant owns the dialed number (keyed by
+		// phone_number across all tenants), so it must run on the privileged pool.
 		err := h.srv.Pool.QueryRow(ctx, `
 			SELECT tenant_id::text, id::text, agent_name,
 			       COALESCE(provider_config, '{}'::jsonb)::text::bytea
@@ -352,6 +373,9 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		// rls-exempt: LiveKit SIP webhook carries no dialed number; resolve the
+		// single active number for the provider across tenants (no tenant context
+		// yet) on the privileged pool.
 		err := h.srv.Pool.QueryRow(ctx, `
 			SELECT tenant_id::text, id::text, agent_name,
 			       COALESCE(provider_config, '{}'::jsonb)::text::bytea
@@ -389,6 +413,8 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	// Budget gate: voice spend counts against the agent's budget, the same
 	// way LLM runs do. A hard-fail-blocked agent declines the call BEFORE it
 	// connects so no carrier/media cost is incurred.
+	// rls-exempt: shared budget helper takes a *Pool and self-scopes by the
+	// resolved tenantID arg; reused identically across handlers.
 	if bc := CheckBudget(ctx, h.srv.Pool, tenantID, agentName, estimatedInboundVoiceUsd); !bc.Allowed && bc.HardFail {
 		h.logger().Warn("voice call blocked by budget",
 			zap.String("agent", agentName), zap.String("reason", bc.Reason))
@@ -411,16 +437,23 @@ func (h *VoiceHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 
 	// Record the call so the dashboard can surface it. duration + actual cost
 	// are reconciled later via POST /v1/voice/calls/status/{provider}, which
-	// the provider's status callback hits when the call ends.
-	_, _ = h.srv.Pool.Exec(ctx, `
-		INSERT INTO voice_calls (tenant_id, voice_number_id, agent_name,
-		                          direction, from_number, to_number,
-		                          provider_call_id, status)
-		VALUES ($1, $2, $3, 'inbound', $4, $5, $6, 'ringing')
-	`, tenantID, numberID, agentName, meta.FromNumber, meta.ToNumber, meta.ProviderCallID)
+	// the provider's status callback hits when the call ends. The tenant was
+	// just resolved from the number lookup; inject it so the INSERT is RLS-scoped.
+	insertCtx := middleware.InjectTenantID(ctx, tenantID)
+	_ = h.srv.WithTenant(insertCtx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(insertCtx, `
+			INSERT INTO voice_calls (tenant_id, voice_number_id, agent_name,
+			                          direction, from_number, to_number,
+			                          provider_call_id, status)
+			VALUES ($1, $2, $3, 'inbound', $4, $5, $6, 'ringing')
+		`, tenantID, numberID, agentName, meta.FromNumber, meta.ToNumber, meta.ProviderCallID)
+		return e
+	})
 
 	// Accrue the estimated cost into the daily rollup immediately so the
 	// budget reflects in-flight voice spend (reconciled to actual on call end).
+	// rls-exempt: shared usage-rollup helper takes a *Pool and self-scopes by
+	// the resolved tenantID arg; reused identically across handlers.
 	if err := RecordUsage(ctx, h.srv.Pool, tenantID, agentName, 0, 0, estimatedInboundVoiceUsd, map[string]int{"voice_call": 1}); err != nil {
 		h.logger().Warn("record voice usage failed", zap.Error(err))
 	}
@@ -475,13 +508,15 @@ func (h *VoiceHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 
 	var configRaw []byte
 	var agentName string
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT agent_name, COALESCE(provider_config, '{}'::jsonb)::text::bytea
-		FROM voice_numbers
-		WHERE tenant_id = $1 AND provider = 'livekit' AND status = 'active'
-		ORDER BY created_at
-		LIMIT 1
-	`, tenantID).Scan(&agentName, &configRaw)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT agent_name, COALESCE(provider_config, '{}'::jsonb)::text::bytea
+			FROM voice_numbers
+			WHERE tenant_id = $1 AND provider = 'livekit' AND status = 'active'
+			ORDER BY created_at
+			LIMIT 1
+		`, tenantID).Scan(&agentName, &configRaw)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no active livekit voice number configured"})
 		return
@@ -489,6 +524,7 @@ func (h *VoiceHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 
 	// Budget gate: deny the join token when the agent is over a hard-fail
 	// budget. No token → the LiveKit Agents worker can't join → no media spend.
+	// rls-exempt: shared budget helper takes a *Pool and self-scopes by tenantID.
 	if bc := CheckBudget(ctx, h.srv.Pool, tenantID, agentName, estimatedInboundVoiceUsd); !bc.Allowed && bc.HardFail {
 		h.logger().Warn("livekit token denied by budget",
 			zap.String("agent", agentName), zap.String("reason", bc.Reason))
@@ -577,6 +613,9 @@ func (h *VoiceHandler) CallStatus(w http.ResponseWriter, r *http.Request) {
 	// connect-time estimate was charged on, so the delta lands on the same day.
 	var callID, tenantID, agentName, status, reservationDay string
 	var cfgRaw []byte
+	// rls-exempt: status callback carries no JWT/tenant context — this lookup
+	// RESOLVES the tenant from the provider_call_id across tenants, so it runs
+	// on the privileged pool.
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT vc.id::text, vc.tenant_id::text, vc.agent_name, vc.status,
 		       to_char(vc.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'),
@@ -642,13 +681,23 @@ func (h *VoiceHandler) CallStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persist actual cost + duration. The WHERE guard makes a concurrent or
-	// duplicate callback a no-op (atomic idempotency).
-	tag, err := h.srv.Pool.Exec(ctx, `
-		UPDATE voice_calls
-		SET status = $2, duration_ms = $3, cost_usd = $4, ended_at = now()
-		WHERE id = $1 AND status NOT IN ('completed','failed')
-	`, callID, newStatus, int64(durationSec)*1000, actual)
-	if err != nil || tag.RowsAffected() == 0 {
+	// duplicate callback a no-op (atomic idempotency). The tenant was resolved
+	// from the call lookup above; inject it so the UPDATE is RLS-scoped.
+	updateCtx := middleware.InjectTenantID(ctx, tenantID)
+	var rowsAffected int64
+	err = h.srv.WithTenant(updateCtx, func(tx pgx.Tx) error {
+		tag, e := tx.Exec(updateCtx, `
+			UPDATE voice_calls
+			SET status = $2, duration_ms = $3, cost_usd = $4, ended_at = now()
+			WHERE id = $1 AND status NOT IN ('completed','failed')
+		`, callID, newStatus, int64(durationSec)*1000, actual)
+		if e != nil {
+			return e
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
+	if err != nil || rowsAffected == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -656,6 +705,7 @@ func (h *VoiceHandler) CallStatus(w http.ResponseWriter, r *http.Request) {
 	// Reconcile the budget on the call's reservation day: estimatedInboundVoiceUsd
 	// was charged at connect. Apply the delta (negative on short/declined calls
 	// = a refund).
+	// rls-exempt: shared usage-rollup helper takes a *Pool and self-scopes by tenantID.
 	if err := AdjustUsageCost(ctx, h.srv.Pool, tenantID, agentName, reservationDay, actual-estimatedInboundVoiceUsd); err != nil {
 		h.logger().Warn("reconcile voice usage failed", zap.Error(err))
 	}
@@ -670,42 +720,48 @@ func (h *VoiceHandler) ListCalls(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id::text, agent_name, direction, from_number, to_number,
-		       status, COALESCE(duration_ms, 0), cost_usd,
-		       started_at, ended_at
-		FROM voice_calls
-		WHERE tenant_id = $1
-		ORDER BY started_at DESC
-		LIMIT 100
-	`, tenantID)
+	out := make([]map[string]any, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id::text, agent_name, direction, from_number, to_number,
+			       status, COALESCE(duration_ms, 0), cost_usd,
+			       started_at, ended_at
+			FROM voice_calls
+			WHERE tenant_id = $1
+			ORDER BY started_at DESC
+			LIMIT 100
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, agent, direction, from, to, status string
+			var durationMs int64
+			var costUsd float64
+			var startedAt time.Time
+			var endedAt *time.Time
+			if err := rows.Scan(&id, &agent, &direction, &from, &to, &status, &durationMs, &costUsd, &startedAt, &endedAt); err != nil {
+				continue
+			}
+			out = append(out, map[string]any{
+				"id":         id,
+				"agentName":  agent,
+				"direction":  direction,
+				"from":       from,
+				"to":         to,
+				"status":     status,
+				"durationMs": durationMs,
+				"costUsd":    costUsd,
+				"startedAt":  startedAt,
+				"endedAt":    endedAt,
+			})
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
 		return
-	}
-	defer rows.Close()
-	out := make([]map[string]any, 0)
-	for rows.Next() {
-		var id, agent, direction, from, to, status string
-		var durationMs int64
-		var costUsd float64
-		var startedAt time.Time
-		var endedAt *time.Time
-		if err := rows.Scan(&id, &agent, &direction, &from, &to, &status, &durationMs, &costUsd, &startedAt, &endedAt); err != nil {
-			continue
-		}
-		out = append(out, map[string]any{
-			"id":         id,
-			"agentName":  agent,
-			"direction":  direction,
-			"from":       from,
-			"to":         to,
-			"status":     status,
-			"durationMs": durationMs,
-			"costUsd":    costUsd,
-			"startedAt":  startedAt,
-			"endedAt":    endedAt,
-		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

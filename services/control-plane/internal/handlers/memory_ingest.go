@@ -24,6 +24,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 )
 
 type MemoryIngestor struct {
@@ -84,6 +86,10 @@ func (m *MemoryIngestor) Run(ctx context.Context) {
 func (m *MemoryIngestor) tick(ctx context.Context) {
 	tctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	// This is a background job with a fixed configured tenant (no request
+	// context). Inject it so the identity helpers' WithTenant calls scope the
+	// person-graph reads/writes under RLS for that tenant.
+	tctx = middleware.InjectTenantID(tctx, m.tenantID)
 	g := m.ingestGmail(tctx)
 	c := m.ingestCalendar(tctx)
 	if g > 0 || c > 0 {

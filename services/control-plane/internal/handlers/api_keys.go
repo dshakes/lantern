@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -35,7 +37,8 @@ func (h *ApiKeyHandler) contextWithTenant(r *http.Request) (context.Context, str
 	if err != nil {
 		return nil, "", err
 	}
-	return r.Context(), claims.TenantID, nil
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	return ctx, claims.TenantID, nil
 }
 
 // ---------- Create API key ----------
@@ -85,11 +88,13 @@ func (h *ApiKeyHandler) CreateApiKey(w http.ResponseWriter, r *http.Request) {
 
 	var id string
 	var createdAt time.Time
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO api_keys (tenant_id, name, key_hash, key_prefix, scopes, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, created_at
-	`, tenantID, body.Name, keyHash, keyPrefix, body.Scopes, tenantID).Scan(&id, &createdAt)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO api_keys (tenant_id, name, key_hash, key_prefix, scopes, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING id, created_at
+		`, tenantID, body.Name, keyHash, keyPrefix, body.Scopes, tenantID).Scan(&id, &createdAt)
+	})
 	if err != nil {
 		h.logger().Error("create api key failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create API key"})
@@ -120,61 +125,66 @@ func (h *ApiKeyHandler) ListApiKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id, name, key_prefix, scopes, expires_at, last_used_at, revoked_at, created_by, created_at
-		FROM api_keys
-		WHERE tenant_id = $1
-		ORDER BY created_at DESC
-	`, tenantID)
+	result := make([]map[string]any, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id, name, key_prefix, scopes, expires_at, last_used_at, revoked_at, created_by, created_at
+			FROM api_keys
+			WHERE tenant_id = $1
+			ORDER BY created_at DESC
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				id, name, keyPrefix string
+				scopes              []string
+				expiresAt           *time.Time
+				lastUsedAt          *time.Time
+				revokedAt           *time.Time
+				createdBy           *string
+				createdAt           time.Time
+			)
+			if err := rows.Scan(&id, &name, &keyPrefix, &scopes, &expiresAt, &lastUsedAt, &revokedAt, &createdBy, &createdAt); err != nil {
+				h.logger().Error("scan api key row failed", zap.Error(err))
+				continue
+			}
+
+			status := "active"
+			if revokedAt != nil {
+				status = "revoked"
+			}
+
+			entry := map[string]any{
+				"id":        id,
+				"name":      name,
+				"prefix":    keyPrefix,
+				"scopes":    scopes,
+				"status":    status,
+				"createdAt": createdAt,
+			}
+			if expiresAt != nil {
+				entry["expiresAt"] = *expiresAt
+			}
+			if lastUsedAt != nil {
+				entry["lastUsedAt"] = *lastUsedAt
+			}
+			if revokedAt != nil {
+				entry["revokedAt"] = *revokedAt
+			}
+			if createdBy != nil {
+				entry["createdBy"] = *createdBy
+			}
+			result = append(result, entry)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("list api keys failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list API keys"})
 		return
-	}
-	defer rows.Close()
-
-	result := make([]map[string]any, 0)
-	for rows.Next() {
-		var (
-			id, name, keyPrefix string
-			scopes              []string
-			expiresAt           *time.Time
-			lastUsedAt          *time.Time
-			revokedAt           *time.Time
-			createdBy           *string
-			createdAt           time.Time
-		)
-		if err := rows.Scan(&id, &name, &keyPrefix, &scopes, &expiresAt, &lastUsedAt, &revokedAt, &createdBy, &createdAt); err != nil {
-			h.logger().Error("scan api key row failed", zap.Error(err))
-			continue
-		}
-
-		status := "active"
-		if revokedAt != nil {
-			status = "revoked"
-		}
-
-		entry := map[string]any{
-			"id":        id,
-			"name":      name,
-			"prefix":    keyPrefix,
-			"scopes":    scopes,
-			"status":    status,
-			"createdAt": createdAt,
-		}
-		if expiresAt != nil {
-			entry["expiresAt"] = *expiresAt
-		}
-		if lastUsedAt != nil {
-			entry["lastUsedAt"] = *lastUsedAt
-		}
-		if revokedAt != nil {
-			entry["revokedAt"] = *revokedAt
-		}
-		if createdBy != nil {
-			entry["createdBy"] = *createdBy
-		}
-		result = append(result, entry)
 	}
 
 	writeJSON(w, http.StatusOK, result)
@@ -196,15 +206,23 @@ func (h *ApiKeyHandler) RevokeApiKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
-	`, id, tenantID)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, execErr := tx.Exec(ctx, `
+			UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+		`, id, tenantID)
+		if execErr != nil {
+			return execErr
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		h.logger().Error("revoke api key failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke API key"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "API key not found or already revoked"})
 		return
 	}
@@ -221,6 +239,9 @@ func (h *ApiKeyHandler) ValidateAPIKey(ctx context.Context, rawKey string) (stri
 	keyHash := hex.EncodeToString(hash[:])
 
 	var tenantID string
+	// rls-exempt: gateway auth-resolution path. This RESOLVES the tenant from a
+	// raw key hash across ALL tenants (there is no tenant context yet — this call
+	// establishes it), so it must run on the privileged pool.
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT tenant_id FROM api_keys
 		WHERE key_hash = $1 AND revoked_at IS NULL
@@ -231,6 +252,7 @@ func (h *ApiKeyHandler) ValidateAPIKey(ctx context.Context, rawKey string) (stri
 	}
 
 	// Update last_used_at.
+	// rls-exempt: same auth-resolution path, keyed by hash before tenant context exists.
 	_, _ = h.srv.Pool.Exec(ctx, `UPDATE api_keys SET last_used_at = now() WHERE key_hash = $1`, keyHash)
 
 	return tenantID, nil
