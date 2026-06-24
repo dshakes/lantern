@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
@@ -78,11 +79,13 @@ func (h *TakeoverHandler) Request(w http.ResponseWriter, r *http.Request) {
 
 	expiresAt := time.Now().Add(time.Duration(body.TimeoutMinutes) * time.Minute)
 	var id string
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO takeover_requests (run_id, tenant_id, step_id, reason, status, expires_at)
-		VALUES ($1, $2, $3, $4, 'pending', $5)
-		RETURNING id::text
-	`, runID, tenantID, body.StepID, body.Reason, expiresAt).Scan(&id)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO takeover_requests (run_id, tenant_id, step_id, reason, status, expires_at)
+			VALUES ($1, $2, $3, $4, 'pending', $5)
+			RETURNING id::text
+		`, runID, tenantID, body.StepID, body.Reason, expiresAt).Scan(&id)
+	})
 	if err != nil {
 		h.logger().Error("create takeover failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create takeover"})
@@ -114,20 +117,28 @@ func (h *TakeoverHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	var body grantBody
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		UPDATE takeover_requests
-		SET status = 'granted',
-		    granted_at = now(),
-		    sdp_offer = COALESCE(NULLIF($3, ''), sdp_offer),
-		    notes = COALESCE(NULLIF($4, ''), notes)
-		WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
-	`, id, tenantID, body.SDPOffer, body.Notes)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, e := tx.Exec(ctx, `
+			UPDATE takeover_requests
+			SET status = 'granted',
+			    granted_at = now(),
+			    sdp_offer = COALESCE(NULLIF($3, ''), sdp_offer),
+			    notes = COALESCE(NULLIF($4, ''), notes)
+			WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
+		`, id, tenantID, body.SDPOffer, body.Notes)
+		if e != nil {
+			return e
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		h.logger().Error("grant takeover failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to grant takeover"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "takeover not found or not pending"})
 		return
 	}
@@ -156,16 +167,24 @@ func (h *TakeoverHandler) Answer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		UPDATE takeover_requests
-		SET sdp_answer = $3
-		WHERE id = $1 AND tenant_id = $2 AND status = 'granted'
-	`, id, tenantID, body.SDPAnswer)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, e := tx.Exec(ctx, `
+			UPDATE takeover_requests
+			SET sdp_answer = $3
+			WHERE id = $1 AND tenant_id = $2 AND status = 'granted'
+		`, id, tenantID, body.SDPAnswer)
+		if e != nil {
+			return e
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to store answer"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "takeover not granted yet"})
 		return
 	}
@@ -182,16 +201,24 @@ func (h *TakeoverHandler) Release(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("takeoverId")
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		UPDATE takeover_requests
-		SET status = 'released', released_at = now()
-		WHERE id = $1 AND tenant_id = $2 AND status IN ('granted', 'pending')
-	`, id, tenantID)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, e := tx.Exec(ctx, `
+			UPDATE takeover_requests
+			SET status = 'released', released_at = now()
+			WHERE id = $1 AND tenant_id = $2 AND status IN ('granted', 'pending')
+		`, id, tenantID)
+		if e != nil {
+			return e
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to release"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "takeover not found or already closed"})
 		return
 	}
@@ -208,45 +235,50 @@ func (h *TakeoverHandler) ListForRun(w http.ResponseWriter, r *http.Request) {
 	}
 	runID := r.PathValue("id")
 
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id::text, step_id, status, COALESCE(reason, ''),
-		       COALESCE(notes, ''),
-		       sdp_offer IS NOT NULL,
-		       sdp_answer IS NOT NULL,
-		       created_at, granted_at, released_at, expires_at
-		FROM takeover_requests
-		WHERE run_id = $1 AND tenant_id = $2
-		ORDER BY created_at DESC
-	`, runID, tenantID)
+	out := make([]map[string]any, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id::text, step_id, status, COALESCE(reason, ''),
+			       COALESCE(notes, ''),
+			       sdp_offer IS NOT NULL,
+			       sdp_answer IS NOT NULL,
+			       created_at, granted_at, released_at, expires_at
+			FROM takeover_requests
+			WHERE run_id = $1 AND tenant_id = $2
+			ORDER BY created_at DESC
+		`, runID, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, stepID, status, reason, notes string
+			var hasOffer, hasAnswer bool
+			var createdAt time.Time
+			var grantedAt, releasedAt, expiresAt *time.Time
+			if e := rows.Scan(&id, &stepID, &status, &reason, &notes, &hasOffer, &hasAnswer, &createdAt, &grantedAt, &releasedAt, &expiresAt); e != nil {
+				continue
+			}
+			entry := map[string]any{
+				"id":         id,
+				"stepId":     stepID,
+				"status":     status,
+				"reason":     reason,
+				"notes":      notes,
+				"hasOffer":   hasOffer,
+				"hasAnswer":  hasAnswer,
+				"createdAt":  createdAt,
+				"grantedAt":  grantedAt,
+				"releasedAt": releasedAt,
+				"expiresAt":  expiresAt,
+			}
+			out = append(out, entry)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
 		return
-	}
-	defer rows.Close()
-
-	out := make([]map[string]any, 0)
-	for rows.Next() {
-		var id, stepID, status, reason, notes string
-		var hasOffer, hasAnswer bool
-		var createdAt time.Time
-		var grantedAt, releasedAt, expiresAt *time.Time
-		if err := rows.Scan(&id, &stepID, &status, &reason, &notes, &hasOffer, &hasAnswer, &createdAt, &grantedAt, &releasedAt, &expiresAt); err != nil {
-			continue
-		}
-		entry := map[string]any{
-			"id":         id,
-			"stepId":     stepID,
-			"status":     status,
-			"reason":     reason,
-			"notes":      notes,
-			"hasOffer":   hasOffer,
-			"hasAnswer":  hasAnswer,
-			"createdAt":  createdAt,
-			"grantedAt":  grantedAt,
-			"releasedAt": releasedAt,
-			"expiresAt":  expiresAt,
-		}
-		out = append(out, entry)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

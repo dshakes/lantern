@@ -36,6 +36,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -89,14 +90,20 @@ func (h *IdentityHandler) embedAsync(tenantID, eventID, text string) {
 		defer func() { <-embedSem }()
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
+		// Background goroutine: carry the tenant on the context so WithTenant
+		// can scope the UPDATE under RLS.
+		ctx = middleware.InjectTenantID(ctx, tenantID)
 		vec, err := h.llm.EmbedText(ctx, tenantID, text)
 		if err != nil {
 			h.logger().Debug("embed skipped", zap.Error(err))
 			return
 		}
-		if _, err := h.srv.Pool.Exec(ctx, `
-			UPDATE memory_events SET embedding = $2::vector WHERE id = $1
-		`, eventID, vectorLiteral(vec)); err != nil {
+		if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+			_, e := tx.Exec(ctx, `
+				UPDATE memory_events SET embedding = $2::vector WHERE id = $1
+			`, eventID, vectorLiteral(vec))
+			return e
+		}); err != nil {
 			h.logger().Warn("embed store failed", zap.Error(err))
 		}
 	}()
@@ -109,23 +116,28 @@ func (h *IdentityHandler) backfillEmbeddings(ctx context.Context, tenantID strin
 	if h.llm == nil {
 		return
 	}
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id::text, content FROM memory_events
-		WHERE tenant_id = $1 AND embedding IS NULL
-		ORDER BY occurred_at DESC LIMIT $2
-	`, tenantID, limit)
-	if err != nil {
-		return
-	}
 	type pending struct{ id, content string }
 	var todo []pending
-	for rows.Next() {
-		var p pending
-		if rows.Scan(&p.id, &p.content) == nil {
-			todo = append(todo, p)
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id::text, content FROM memory_events
+			WHERE tenant_id = $1 AND embedding IS NULL
+			ORDER BY occurred_at DESC LIMIT $2
+		`, tenantID, limit)
+		if qErr != nil {
+			return qErr
 		}
+		defer rows.Close()
+		for rows.Next() {
+			var p pending
+			if rows.Scan(&p.id, &p.content) == nil {
+				todo = append(todo, p)
+			}
+		}
+		return rows.Err()
+	}); err != nil {
+		return
 	}
-	rows.Close()
 	for _, p := range todo {
 		h.embedAsync(tenantID, p.id, p.content)
 	}
@@ -200,62 +212,59 @@ func (h *IdentityHandler) resolvePerson(ctx context.Context, tenantID, channel, 
 		return "", false, errEmptyHandle
 	}
 
-	tx, err := h.srv.Pool.Begin(ctx)
-	if err != nil {
-		return "", false, err
-	}
-	defer tx.Rollback(ctx)
-
 	var personID string
-	var lookupErr error
-	if isPhone {
-		// Unify across every phone-like channel by digits.
-		lookupErr = tx.QueryRow(ctx, `
-			SELECT person_id FROM person_handles
-			WHERE tenant_id = $1 AND handle = $2 AND channel = ANY($3)
-			LIMIT 1
-		`, tenantID, hdl, phoneLikeChannelsList()).Scan(&personID)
-	} else {
-		lookupErr = tx.QueryRow(ctx, `
-			SELECT person_id FROM person_handles
-			WHERE tenant_id = $1 AND channel = $2 AND handle = $3
-			LIMIT 1
-		`, tenantID, chn, hdl).Scan(&personID)
-	}
-
 	created := false
-	switch {
-	case lookupErr == nil:
-		// Found — optionally fill a missing display name.
-		if displayName != "" {
-			_, _ = tx.Exec(ctx, `
-				UPDATE people SET display_name = $2, updated_at = now()
-				WHERE id = $1 AND (display_name IS NULL OR display_name = '')
-			`, personID, displayName)
+	// The whole resolve (lookup → optional insert → handle attach) runs in one
+	// WithTenant transaction so it stays atomic and RLS-scoped to the tenant.
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		var lookupErr error
+		if isPhone {
+			// Unify across every phone-like channel by digits.
+			lookupErr = tx.QueryRow(ctx, `
+				SELECT person_id FROM person_handles
+				WHERE tenant_id = $1 AND handle = $2 AND channel = ANY($3)
+				LIMIT 1
+			`, tenantID, hdl, phoneLikeChannelsList()).Scan(&personID)
+		} else {
+			lookupErr = tx.QueryRow(ctx, `
+				SELECT person_id FROM person_handles
+				WHERE tenant_id = $1 AND channel = $2 AND handle = $3
+				LIMIT 1
+			`, tenantID, chn, hdl).Scan(&personID)
 		}
-	case lookupErr == pgx.ErrNoRows:
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO people (tenant_id, display_name)
-			VALUES ($1, NULLIF($2, ''))
-			RETURNING id::text
-		`, tenantID, displayName).Scan(&personID); err != nil {
-			return "", false, err
+
+		switch {
+		case lookupErr == nil:
+			// Found — optionally fill a missing display name.
+			if displayName != "" {
+				_, _ = tx.Exec(ctx, `
+					UPDATE people SET display_name = $2, updated_at = now()
+					WHERE id = $1 AND (display_name IS NULL OR display_name = '')
+				`, personID, displayName)
+			}
+		case lookupErr == pgx.ErrNoRows:
+			if err := tx.QueryRow(ctx, `
+				INSERT INTO people (tenant_id, display_name)
+				VALUES ($1, NULLIF($2, ''))
+				RETURNING id::text
+			`, tenantID, displayName).Scan(&personID); err != nil {
+				return err
+			}
+			created = true
+		default:
+			return lookupErr
 		}
-		created = true
-	default:
-		return "", false, lookupErr
-	}
 
-	// Attach this exact (channel, handle) if not already present.
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO person_handles (tenant_id, person_id, channel, handle)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (tenant_id, channel, handle) DO NOTHING
-	`, tenantID, personID, chn, hdl); err != nil {
-		return "", false, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
+		// Attach this exact (channel, handle) if not already present.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO person_handles (tenant_id, person_id, channel, handle)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (tenant_id, channel, handle) DO NOTHING
+		`, tenantID, personID, chn, hdl); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
 		return "", false, err
 	}
 	return personID, created, nil
@@ -270,13 +279,15 @@ func (h *IdentityHandler) ingestExternal(ctx context.Context, tenantID, personID
 	}
 	metaJSON, _ := json.Marshal(metadata)
 	var id string
-	err := h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO memory_events
-			(tenant_id, person_id, channel, kind, content, occurred_at, metadata, external_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NULLIF($8, ''))
-		ON CONFLICT (tenant_id, kind, external_id) WHERE external_id IS NOT NULL DO NOTHING
-		RETURNING id::text
-	`, tenantID, personID, channel, kind, content, occurredAt, string(metaJSON), externalID).Scan(&id)
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO memory_events
+				(tenant_id, person_id, channel, kind, content, occurred_at, metadata, external_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NULLIF($8, ''))
+			ON CONFLICT (tenant_id, kind, external_id) WHERE external_id IS NOT NULL DO NOTHING
+			RETURNING id::text
+		`, tenantID, personID, channel, kind, content, occurredAt, string(metaJSON), externalID).Scan(&id)
+	})
 	if err == pgx.ErrNoRows {
 		return false, nil // already ingested
 	}
@@ -295,22 +306,28 @@ type personHandle struct {
 }
 
 func (h *IdentityHandler) loadHandles(ctx context.Context, tenantID, personID string) ([]personHandle, error) {
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT channel, handle FROM person_handles
-		WHERE tenant_id = $1 AND person_id = $2
-		ORDER BY created_at ASC
-	`, tenantID, personID)
+	out := []personHandle{}
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT channel, handle FROM person_handles
+			WHERE tenant_id = $1 AND person_id = $2
+			ORDER BY created_at ASC
+		`, tenantID, personID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var ph personHandle
+			if err := rows.Scan(&ph.Channel, &ph.Handle); err != nil {
+				continue
+			}
+			out = append(out, ph)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
-	}
-	defer rows.Close()
-	out := []personHandle{}
-	for rows.Next() {
-		var ph personHandle
-		if err := rows.Scan(&ph.Channel, &ph.Handle); err != nil {
-			continue
-		}
-		out = append(out, ph)
 	}
 	return out, nil
 }
@@ -326,28 +343,34 @@ func (h *IdentityHandler) loadFacts(ctx context.Context, tenantID, personID stri
 			jids = append(jids, phoneHandleVariants(ph.Handle)...)
 		}
 	}
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT content FROM whatsapp_contact_facts
-		WHERE tenant_id = $1 AND (person_id = $2 OR jid = ANY($3))
-		ORDER BY updated_at DESC
-		LIMIT 25
-	`, tenantID, personID, jids)
+	out := []string{}
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT content FROM whatsapp_contact_facts
+			WHERE tenant_id = $1 AND (person_id = $2 OR jid = ANY($3))
+			ORDER BY updated_at DESC
+			LIMIT 25
+		`, tenantID, personID, jids)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		seen := map[string]bool{}
+		for rows.Next() {
+			var c string
+			if err := rows.Scan(&c); err != nil {
+				continue
+			}
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			out = append(out, c)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
-	}
-	defer rows.Close()
-	out := []string{}
-	seen := map[string]bool{}
-	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
-			continue
-		}
-		if seen[c] {
-			continue
-		}
-		seen[c] = true
-		out = append(out, c)
 	}
 	return out, nil
 }
@@ -375,14 +398,15 @@ func (h *IdentityHandler) ResolvePerson(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "channel and handle required"})
 		return
 	}
-	personID, created, err := h.resolvePerson(r.Context(), claims.TenantID, body.Channel, body.Handle, body.DisplayName)
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	personID, created, err := h.resolvePerson(ctx, claims.TenantID, body.Channel, body.Handle, body.DisplayName)
 	if err != nil {
 		h.logger().Error("resolve person failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "resolve failed"})
 		return
 	}
-	handles, _ := h.loadHandles(r.Context(), claims.TenantID, personID)
-	facts, _ := h.loadFacts(r.Context(), claims.TenantID, personID, handles)
+	handles, _ := h.loadHandles(ctx, claims.TenantID, personID)
+	facts, _ := h.loadFacts(ctx, claims.TenantID, personID, handles)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"personId": personID,
 		"created":  created,
@@ -399,29 +423,36 @@ func (h *IdentityHandler) ListPeople(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	rows, err := h.srv.Pool.Query(r.Context(), `
-		SELECT id::text, COALESCE(display_name, ''), COALESCE(relationship, ''),
-		       is_owner, updated_at
-		FROM people WHERE tenant_id = $1
-		ORDER BY updated_at DESC LIMIT 500
-	`, claims.TenantID)
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	out := []map[string]any{}
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id::text, COALESCE(display_name, ''), COALESCE(relationship, ''),
+			       is_owner, updated_at
+			FROM people WHERE tenant_id = $1
+			ORDER BY updated_at DESC LIMIT 500
+		`, claims.TenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, name, rel string
+			var isOwner bool
+			var updatedAt time.Time
+			if err := rows.Scan(&id, &name, &rel, &isOwner, &updatedAt); err != nil {
+				continue
+			}
+			out = append(out, map[string]any{
+				"id": id, "displayName": name, "relationship": rel,
+				"isOwner": isOwner, "updatedAt": updatedAt,
+			})
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
 		return
-	}
-	defer rows.Close()
-	out := []map[string]any{}
-	for rows.Next() {
-		var id, name, rel string
-		var isOwner bool
-		var updatedAt time.Time
-		if err := rows.Scan(&id, &name, &rel, &isOwner, &updatedAt); err != nil {
-			continue
-		}
-		out = append(out, map[string]any{
-			"id": id, "displayName": name, "relationship": rel,
-			"isOwner": isOwner, "updatedAt": updatedAt,
-		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"people": out})
 }
@@ -456,13 +487,14 @@ func (h *IdentityHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
 	personID := strings.TrimSpace(body.PersonID)
 	if personID == "" {
 		if strings.TrimSpace(body.Handle) == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "personId or handle required"})
 			return
 		}
-		pid, _, err := h.resolvePerson(r.Context(), claims.TenantID, body.Channel, body.Handle, body.DisplayName)
+		pid, _, err := h.resolvePerson(ctx, claims.TenantID, body.Channel, body.Handle, body.DisplayName)
 		if err != nil {
 			h.logger().Error("ingest: resolve failed", zap.Error(err))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "resolve failed"})
@@ -482,13 +514,15 @@ func (h *IdentityHandler) IngestEvent(w http.ResponseWriter, r *http.Request) {
 	metaJSON, _ := json.Marshal(meta)
 
 	var id string
-	err = h.srv.Pool.QueryRow(r.Context(), `
-		INSERT INTO memory_events
-			(tenant_id, person_id, channel, kind, direction, content, occurred_at, metadata)
-		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8::jsonb)
-		RETURNING id::text
-	`, claims.TenantID, personID, strings.ToLower(body.Channel), body.Kind, body.Direction,
-		body.Content, occurred, string(metaJSON)).Scan(&id)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO memory_events
+				(tenant_id, person_id, channel, kind, direction, content, occurred_at, metadata)
+			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8::jsonb)
+			RETURNING id::text
+		`, claims.TenantID, personID, strings.ToLower(body.Channel), body.Kind, body.Direction,
+			body.Content, occurred, string(metaJSON)).Scan(&id)
+	})
 	if err != nil {
 		h.logger().Error("ingest event failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "ingest failed"})
@@ -506,6 +540,7 @@ func (h *IdentityHandler) GetContext(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
 	q := r.URL.Query()
 	personID := strings.TrimSpace(q.Get("personId"))
 	if personID == "" {
@@ -515,7 +550,7 @@ func (h *IdentityHandler) GetContext(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "personId or channel+handle required"})
 			return
 		}
-		pid, _, err := h.resolvePerson(r.Context(), claims.TenantID, channel, handle, "")
+		pid, _, err := h.resolvePerson(ctx, claims.TenantID, channel, handle, "")
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "resolve failed"})
 			return
@@ -542,35 +577,43 @@ func (h *IdentityHandler) GetContext(w http.ResponseWriter, r *http.Request) {
 
 	keyword := strings.TrimSpace(q.Get("q"))
 
-	handles, _ := h.loadHandles(r.Context(), claims.TenantID, personID)
-	facts, _ := h.loadFacts(r.Context(), claims.TenantID, personID, handles)
+	handles, _ := h.loadHandles(ctx, claims.TenantID, personID)
+	facts, _ := h.loadFacts(ctx, claims.TenantID, personID, handles)
 
 	// Unified timeline across all channels. With a query we prefer
 	// semantic recall (vector similarity over embedded rows); we fall
 	// back to keyword (ILIKE) when embeddings are unavailable, and to
 	// pure recency when there's no query at all. windowDays filters both
 	// vector and recency paths equally.
-	var rows pgx.Rows
+	//
+	// Build the SQL + args once, then run the chosen query and drain rows
+	// inside a single WithTenant tx (rows must be consumed before the tx
+	// commits). The embedding lookup happens before the tx since it is an
+	// external LLM call, not a DB read.
+	var (
+		querySQL  string
+		queryArgs []any
+	)
 	usedVector := false
 	if keyword != "" && h.llm != nil {
-		if vec, embErr := h.llm.EmbedText(r.Context(), claims.TenantID, keyword); embErr == nil {
+		if vec, embErr := h.llm.EmbedText(ctx, claims.TenantID, keyword); embErr == nil {
 			if windowDays > 0 {
-				rows, err = h.srv.Pool.Query(r.Context(), `
+				querySQL = `
 					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
 					FROM memory_events
 					WHERE tenant_id = $1 AND person_id = $2 AND embedding IS NOT NULL
 					  AND occurred_at >= now() - ($5 || ' days')::interval
-					ORDER BY embedding <=> $3::vector LIMIT $4
-				`, claims.TenantID, personID, vectorLiteral(vec), limit, strconv.Itoa(windowDays))
+					ORDER BY embedding <=> $3::vector LIMIT $4`
+				queryArgs = []any{claims.TenantID, personID, vectorLiteral(vec), limit, strconv.Itoa(windowDays)}
 			} else {
-				rows, err = h.srv.Pool.Query(r.Context(), `
+				querySQL = `
 					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
 					FROM memory_events
 					WHERE tenant_id = $1 AND person_id = $2 AND embedding IS NOT NULL
-					ORDER BY embedding <=> $3::vector LIMIT $4
-				`, claims.TenantID, personID, vectorLiteral(vec), limit)
+					ORDER BY embedding <=> $3::vector LIMIT $4`
+				queryArgs = []any{claims.TenantID, personID, vectorLiteral(vec), limit}
 			}
-			usedVector = err == nil
+			usedVector = true
 		} else {
 			h.logger().Debug("context: embed query failed, using keyword", zap.Error(embErr))
 		}
@@ -578,61 +621,66 @@ func (h *IdentityHandler) GetContext(w http.ResponseWriter, r *http.Request) {
 	if !usedVector {
 		if keyword != "" {
 			if windowDays > 0 {
-				rows, err = h.srv.Pool.Query(r.Context(), `
+				querySQL = `
 					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
 					FROM memory_events
 					WHERE tenant_id = $1 AND person_id = $2 AND content ILIKE '%' || $3 || '%'
 					  AND occurred_at >= now() - ($5 || ' days')::interval
-					ORDER BY occurred_at DESC LIMIT $4
-				`, claims.TenantID, personID, keyword, limit, strconv.Itoa(windowDays))
+					ORDER BY occurred_at DESC LIMIT $4`
+				queryArgs = []any{claims.TenantID, personID, keyword, limit, strconv.Itoa(windowDays)}
 			} else {
-				rows, err = h.srv.Pool.Query(r.Context(), `
+				querySQL = `
 					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
 					FROM memory_events
 					WHERE tenant_id = $1 AND person_id = $2 AND content ILIKE '%' || $3 || '%'
-					ORDER BY occurred_at DESC LIMIT $4
-				`, claims.TenantID, personID, keyword, limit)
+					ORDER BY occurred_at DESC LIMIT $4`
+				queryArgs = []any{claims.TenantID, personID, keyword, limit}
 			}
 		} else {
 			if windowDays > 0 {
-				rows, err = h.srv.Pool.Query(r.Context(), `
+				querySQL = `
 					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
 					FROM memory_events
 					WHERE tenant_id = $1 AND person_id = $2
 					  AND occurred_at >= now() - ($4 || ' days')::interval
-					ORDER BY occurred_at DESC LIMIT $3
-				`, claims.TenantID, personID, limit, strconv.Itoa(windowDays))
+					ORDER BY occurred_at DESC LIMIT $3`
+				queryArgs = []any{claims.TenantID, personID, limit, strconv.Itoa(windowDays)}
 			} else {
-				rows, err = h.srv.Pool.Query(r.Context(), `
+				querySQL = `
 					SELECT channel, kind, COALESCE(direction, ''), content, occurred_at
 					FROM memory_events
 					WHERE tenant_id = $1 AND person_id = $2
-					ORDER BY occurred_at DESC LIMIT $3
-				`, claims.TenantID, personID, limit)
+					ORDER BY occurred_at DESC LIMIT $3`
+				queryArgs = []any{claims.TenantID, personID, limit}
 			}
 		}
 	}
 	events := []map[string]any{}
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var channel, kind, direction, content string
-			var occurredAt time.Time
-			if err := rows.Scan(&channel, &kind, &direction, &content, &occurredAt); err != nil {
-				continue
-			}
-			events = append(events, map[string]any{
-				"channel": channel, "kind": kind, "direction": direction,
-				"content": content, "occurredAt": occurredAt,
-			})
-		}
-	}
-
 	var name, rel string
-	_ = h.srv.Pool.QueryRow(r.Context(), `
-		SELECT COALESCE(display_name, ''), COALESCE(relationship, '')
-		FROM people WHERE id = $1 AND tenant_id = $2
-	`, personID, claims.TenantID).Scan(&name, &rel)
+	_ = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, querySQL, queryArgs...)
+		if qErr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var channel, kind, direction, content string
+				var occurredAt time.Time
+				if err := rows.Scan(&channel, &kind, &direction, &content, &occurredAt); err != nil {
+					continue
+				}
+				events = append(events, map[string]any{
+					"channel": channel, "kind": kind, "direction": direction,
+					"content": content, "occurredAt": occurredAt,
+				})
+			}
+			rows.Close()
+		}
+		// Person display name + relationship (same tx).
+		_ = tx.QueryRow(ctx, `
+			SELECT COALESCE(display_name, ''), COALESCE(relationship, '')
+			FROM people WHERE id = $1 AND tenant_id = $2
+		`, personID, claims.TenantID).Scan(&name, &rel)
+		return nil
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"personId":     personID,
@@ -682,7 +730,8 @@ func (h *IdentityHandler) MergePeople(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	merged, note, err := h.mergePeople(r.Context(), claims.TenantID, body.PrimaryID, body.DuplicateID)
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	merged, note, err := h.mergePeople(ctx, claims.TenantID, body.PrimaryID, body.DuplicateID)
 	if err != nil {
 		h.logger().Error("merge people failed",
 			zap.String("primary", body.PrimaryID),
@@ -707,116 +756,120 @@ func (h *IdentityHandler) MergePeople(w http.ResponseWriter, r *http.Request) {
 // Tenant isolation is enforced by checking both person IDs belong to tenantID
 // before touching any data.
 func (h *IdentityHandler) mergePeople(ctx context.Context, tenantID, primaryID, duplicateID string) (bool, string, error) {
-	tx, err := h.srv.Pool.Begin(ctx)
+	var (
+		merged bool
+		note   string
+	)
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		// Idempotency: duplicate already gone from a prior merge is a no-op.
+		var dupExists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM people WHERE id = $1 AND tenant_id = $2
+			)
+		`, duplicateID, tenantID).Scan(&dupExists); err != nil {
+			return err
+		}
+		if !dupExists {
+			// Read-only path: signal idempotent success. The tx commits cleanly.
+			merged = true
+			note = "duplicate already merged or does not exist"
+			return nil
+		}
+
+		// Verify primary belongs to the same tenant (hard guard: never merge
+		// across tenants even if the caller somehow passes a cross-tenant ID).
+		var primaryExists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM people WHERE id = $1 AND tenant_id = $2
+			)
+		`, primaryID, tenantID).Scan(&primaryExists); err != nil {
+			return err
+		}
+		if !primaryExists {
+			return errors.New("primary person not found in tenant")
+		}
+
+		// Re-point memory_events. Rows that would create a duplicate external_id
+		// (same (tenant_id, kind, external_id) as an existing primary row) are
+		// dropped so the unique index is never violated.
+		if _, err := tx.Exec(ctx, `
+			UPDATE memory_events SET person_id = $1
+			WHERE person_id = $2 AND tenant_id = $3
+			  AND NOT EXISTS (
+				  SELECT 1 FROM memory_events e2
+				  WHERE e2.person_id = $1
+				    AND e2.tenant_id = $3
+				    AND e2.external_id IS NOT NULL
+				    AND e2.external_id = memory_events.external_id
+				    AND e2.kind = memory_events.kind
+			  )
+		`, primaryID, duplicateID, tenantID); err != nil {
+			return err
+		}
+		// Delete any remaining duplicate-person events that collided on external_id.
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM memory_events
+			WHERE person_id = $1 AND tenant_id = $2
+		`, duplicateID, tenantID); err != nil {
+			return err
+		}
+
+		// Re-point whatsapp_contact_facts. Handles can't duplicate because the
+		// facts table uses (tenant_id, jid) as its natural key — we just
+		// update person_id for all remaining rows.
+		if _, err := tx.Exec(ctx, `
+			UPDATE whatsapp_contact_facts SET person_id = $1
+			WHERE person_id = $2 AND tenant_id = $3
+		`, primaryID, duplicateID, tenantID); err != nil {
+			return err
+		}
+
+		// Re-point person_handles. The UNIQUE constraint on (tenant_id, channel,
+		// handle) means a duplicate handle can't be re-inserted; skip it so it
+		// is dropped with the person row via CASCADE.
+		if _, err := tx.Exec(ctx, `
+			UPDATE person_handles SET person_id = $1
+			WHERE person_id = $2 AND tenant_id = $3
+			  AND NOT EXISTS (
+				  SELECT 1 FROM person_handles ph2
+				  WHERE ph2.person_id = $1
+				    AND ph2.tenant_id = $3
+				    AND ph2.channel = person_handles.channel
+				    AND ph2.handle = person_handles.handle
+			  )
+		`, primaryID, duplicateID, tenantID); err != nil {
+			return err
+		}
+
+		// Delete the duplicate person row. Remaining handles + events that
+		// couldn't be migrated (exact duplicates) are cleaned up by CASCADE.
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM people WHERE id = $1 AND tenant_id = $2
+		`, duplicateID, tenantID); err != nil {
+			return err
+		}
+
+		// Touch primary's updated_at so callers can detect the merge.
+		if _, err := tx.Exec(ctx, `
+			UPDATE people SET updated_at = now() WHERE id = $1 AND tenant_id = $2
+		`, primaryID, tenantID); err != nil {
+			return err
+		}
+		merged = true
+		return nil
+	})
 	if err != nil {
 		return false, "", err
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
-	// Idempotency: duplicate already gone from a prior merge is a no-op.
-	var dupExists bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM people WHERE id = $1 AND tenant_id = $2
-		)
-	`, duplicateID, tenantID).Scan(&dupExists); err != nil {
-		return false, "", err
+	if note == "" {
+		h.logger().Info("people merged",
+			zap.String("tenant", tenantID),
+			zap.String("primary", primaryID),
+			zap.String("duplicate", duplicateID))
 	}
-	if !dupExists {
-		// Commit the read-only transaction and signal idempotent success.
-		_ = tx.Commit(ctx)
-		return true, "duplicate already merged or does not exist", nil
-	}
-
-	// Verify primary belongs to the same tenant (hard guard: never merge
-	// across tenants even if the caller somehow passes a cross-tenant ID).
-	var primaryExists bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM people WHERE id = $1 AND tenant_id = $2
-		)
-	`, primaryID, tenantID).Scan(&primaryExists); err != nil {
-		return false, "", err
-	}
-	if !primaryExists {
-		return false, "", errors.New("primary person not found in tenant")
-	}
-
-	// Re-point memory_events. Rows that would create a duplicate external_id
-	// (same (tenant_id, kind, external_id) as an existing primary row) are
-	// dropped so the unique index is never violated.
-	if _, err := tx.Exec(ctx, `
-		UPDATE memory_events SET person_id = $1
-		WHERE person_id = $2 AND tenant_id = $3
-		  AND NOT EXISTS (
-			  SELECT 1 FROM memory_events e2
-			  WHERE e2.person_id = $1
-			    AND e2.tenant_id = $3
-			    AND e2.external_id IS NOT NULL
-			    AND e2.external_id = memory_events.external_id
-			    AND e2.kind = memory_events.kind
-		  )
-	`, primaryID, duplicateID, tenantID); err != nil {
-		return false, "", err
-	}
-	// Delete any remaining duplicate-person events that collided on external_id.
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM memory_events
-		WHERE person_id = $1 AND tenant_id = $2
-	`, duplicateID, tenantID); err != nil {
-		return false, "", err
-	}
-
-	// Re-point whatsapp_contact_facts. Handles can't duplicate because the
-	// facts table uses (tenant_id, jid) as its natural key — we just
-	// update person_id for all remaining rows.
-	if _, err := tx.Exec(ctx, `
-		UPDATE whatsapp_contact_facts SET person_id = $1
-		WHERE person_id = $2 AND tenant_id = $3
-	`, primaryID, duplicateID, tenantID); err != nil {
-		return false, "", err
-	}
-
-	// Re-point person_handles. The UNIQUE constraint on (tenant_id, channel,
-	// handle) means a duplicate handle can't be re-inserted; skip it so it
-	// is dropped with the person row via CASCADE.
-	if _, err := tx.Exec(ctx, `
-		UPDATE person_handles SET person_id = $1
-		WHERE person_id = $2 AND tenant_id = $3
-		  AND NOT EXISTS (
-			  SELECT 1 FROM person_handles ph2
-			  WHERE ph2.person_id = $1
-			    AND ph2.tenant_id = $3
-			    AND ph2.channel = person_handles.channel
-			    AND ph2.handle = person_handles.handle
-		  )
-	`, primaryID, duplicateID, tenantID); err != nil {
-		return false, "", err
-	}
-
-	// Delete the duplicate person row. Remaining handles + events that
-	// couldn't be migrated (exact duplicates) are cleaned up by CASCADE.
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM people WHERE id = $1 AND tenant_id = $2
-	`, duplicateID, tenantID); err != nil {
-		return false, "", err
-	}
-
-	// Touch primary's updated_at so callers can detect the merge.
-	if _, err := tx.Exec(ctx, `
-		UPDATE people SET updated_at = now() WHERE id = $1 AND tenant_id = $2
-	`, primaryID, tenantID); err != nil {
-		return false, "", err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return false, "", err
-	}
-	h.logger().Info("people merged",
-		zap.String("tenant", tenantID),
-		zap.String("primary", primaryID),
-		zap.String("duplicate", duplicateID))
-	return true, "", nil
+	return merged, note, nil
 }
 
 // ---- HTTP: duplicate candidates --------------------------------------------
@@ -841,33 +894,39 @@ func (h *IdentityHandler) ListDuplicates(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rows, err := h.srv.Pool.Query(r.Context(), `
-		SELECT a.id::text, b.id::text, a.display_name
-		FROM people a
-		JOIN people b
-		  ON  b.tenant_id = a.tenant_id
-		  AND b.id > a.id
-		  AND lower(trim(b.display_name)) = lower(trim(a.display_name))
-		WHERE a.tenant_id = $1
-		  AND a.display_name IS NOT NULL
-		  AND trim(a.display_name) <> ''
-		ORDER BY a.display_name, a.id
-		LIMIT 200
-	`, claims.TenantID)
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	candidates := []duplicateCandidate{}
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT a.id::text, b.id::text, a.display_name
+			FROM people a
+			JOIN people b
+			  ON  b.tenant_id = a.tenant_id
+			  AND b.id > a.id
+			  AND lower(trim(b.display_name)) = lower(trim(a.display_name))
+			WHERE a.tenant_id = $1
+			  AND a.display_name IS NOT NULL
+			  AND trim(a.display_name) <> ''
+			ORDER BY a.display_name, a.id
+			LIMIT 200
+		`, claims.TenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c duplicateCandidate
+			if err := rows.Scan(&c.PersonIDA, &c.PersonIDB, &c.DisplayName); err != nil {
+				continue
+			}
+			candidates = append(candidates, c)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("list duplicates failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
 		return
-	}
-	defer rows.Close()
-
-	candidates := []duplicateCandidate{}
-	for rows.Next() {
-		var c duplicateCandidate
-		if err := rows.Scan(&c.PersonIDA, &c.PersonIDB, &c.DisplayName); err != nil {
-			continue
-		}
-		candidates = append(candidates, c)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"duplicates": candidates})
 }
@@ -907,6 +966,7 @@ func (h *IdentityHandler) StampRelationship(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
 	// Resolve the person.
 	personID := strings.TrimSpace(body.PersonID)
 	if personID == "" {
@@ -914,7 +974,7 @@ func (h *IdentityHandler) StampRelationship(w http.ResponseWriter, r *http.Reque
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "personId or channel+handle required"})
 			return
 		}
-		pid, _, err := h.resolvePerson(r.Context(), claims.TenantID, body.Channel, body.Handle, body.DisplayName)
+		pid, _, err := h.resolvePerson(ctx, claims.TenantID, body.Channel, body.Handle, body.DisplayName)
 		if err != nil {
 			h.logger().Error("stamp relationship: resolve failed", zap.Error(err))
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "resolve failed"})
@@ -923,21 +983,32 @@ func (h *IdentityHandler) StampRelationship(w http.ResponseWriter, r *http.Reque
 		personID = pid
 	}
 
-	// Verify the person belongs to this tenant before writing.
+	// Verify the person belongs to this tenant and stamp the relationship in a
+	// single RLS-scoped transaction.
 	var exists bool
-	if err := h.srv.Pool.QueryRow(r.Context(), `
-		SELECT EXISTS(SELECT 1 FROM people WHERE id = $1 AND tenant_id = $2)
-	`, personID, claims.TenantID).Scan(&exists); err != nil || !exists {
+	var updateErr error
+	verifyErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS(SELECT 1 FROM people WHERE id = $1 AND tenant_id = $2)
+		`, personID, claims.TenantID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return nil
+		}
+		_, updateErr = tx.Exec(ctx, `
+			UPDATE people SET relationship = $1, updated_at = now()
+			WHERE id = $2 AND tenant_id = $3
+		`, body.Relationship, personID, claims.TenantID)
+		return updateErr
+	})
+	if verifyErr != nil || !exists {
+		if verifyErr != nil && exists {
+			h.logger().Error("stamp relationship failed", zap.Error(verifyErr))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
+			return
+		}
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "person not found"})
-		return
-	}
-
-	if _, err := h.srv.Pool.Exec(r.Context(), `
-		UPDATE people SET relationship = $1, updated_at = now()
-		WHERE id = $2 AND tenant_id = $3
-	`, body.Relationship, personID, claims.TenantID); err != nil {
-		h.logger().Error("stamp relationship failed", zap.Error(err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update failed"})
 		return
 	}
 

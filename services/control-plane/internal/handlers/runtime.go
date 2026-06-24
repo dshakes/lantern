@@ -46,8 +46,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
+	"github.com/jackc/pgx/v5"
+
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -523,6 +526,9 @@ func (h *RuntimeHandler) reconcileOnce() {
 
 	// Distinct tenants with live rows — reconcile each (scheduler.List is
 	// tenant-scoped). Keeps the query small on a busy cluster.
+	// rls-exempt: background sweep with no request tenant — this discovery query
+	// spans ALL tenants to find which ones have live VMs, so it runs on the
+	// privileged pool. The per-tenant writes below ARE tenant-scoped via WithTenant.
 	rows, err := h.srv.Pool.Query(ctx, `
 		SELECT DISTINCT tenant_id FROM runtime_vms
 		WHERE state IN ('pending','spawning','running','draining')
@@ -546,12 +552,18 @@ func (h *RuntimeHandler) reconcileOnce() {
 			h.logger().Debug("reconcile: ListStates failed", zap.String("tenant", tenantID), zap.Error(err))
 			continue
 		}
+		// The sweep has a concrete per-tenant id (from the discovery query, not a
+		// request); inject it so the reconcile writes are RLS-scoped.
+		tctx := middleware.InjectTenantID(ctx, tenantID)
 		// Update each live VM the scheduler still knows about.
 		for vmID, state := range states {
-			_, err := h.srv.Pool.Exec(ctx, `
-				UPDATE runtime_vms SET state = $1
-				WHERE vm_id = $2 AND tenant_id = $3 AND state <> $1
-			`, state, vmID, tenantID)
+			err := h.srv.WithTenant(tctx, func(tx pgx.Tx) error {
+				_, e := tx.Exec(tctx, `
+					UPDATE runtime_vms SET state = $1
+					WHERE vm_id = $2 AND tenant_id = $3 AND state <> $1
+				`, state, vmID, tenantID)
+				return e
+			})
 			if err != nil {
 				h.logger().Debug("reconcile: state update failed", zap.String("vm", vmID), zap.Error(err))
 			}
@@ -572,15 +584,18 @@ func (h *RuntimeHandler) reconcileOnce() {
 		if len(liveIDs) == 0 {
 			continue
 		}
-		_, err = h.srv.Pool.Exec(ctx, `
-			UPDATE runtime_vms
-			SET state = 'terminated',
-			    terminated_at = COALESCE(terminated_at, now())
-			WHERE tenant_id = $1
-			  AND state IN ('pending','spawning','running','draining')
-			  AND created_at < now() - interval '30 seconds'
-			  AND NOT (vm_id = ANY($2))
-		`, tenantID, liveIDs)
+		err = h.srv.WithTenant(tctx, func(tx pgx.Tx) error {
+			_, e := tx.Exec(tctx, `
+				UPDATE runtime_vms
+				SET state = 'terminated',
+				    terminated_at = COALESCE(terminated_at, now())
+				WHERE tenant_id = $1
+				  AND state IN ('pending','spawning','running','draining')
+				  AND created_at < now() - interval '30 seconds'
+				  AND NOT (vm_id = ANY($2))
+			`, tenantID, liveIDs)
+			return e
+		})
 		if err != nil {
 			h.logger().Debug("reconcile: terminate-sweep failed", zap.String("tenant", tenantID), zap.Error(err))
 		}
@@ -697,26 +712,39 @@ func (h *RuntimeHandler) checkRuntimeQuota(ctx context.Context, tenantID string,
 		hardFail      bool
 		exists        bool
 	}
-	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT max_concurrent_vms, max_cost_usd_per_day, hard_fail
-		FROM runtime_quotas
-		WHERE tenant_id = $1
-	`, tenantID).Scan(&q.maxConcurrent, &q.maxCostDay, &q.hardFail)
-	if err == nil {
-		q.exists = true
-	}
+	var live int
+	var spentToday float64
+	_ = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		if e := tx.QueryRow(ctx, `
+			SELECT max_concurrent_vms, max_cost_usd_per_day, hard_fail
+			FROM runtime_quotas
+			WHERE tenant_id = $1
+		`, tenantID).Scan(&q.maxConcurrent, &q.maxCostDay, &q.hardFail); e == nil {
+			q.exists = true
+		}
+		if !q.exists {
+			return nil
+		}
+		// Concurrent VMs.
+		_ = tx.QueryRow(ctx, `
+			SELECT COUNT(*) FROM runtime_vms
+			WHERE tenant_id = $1
+			  AND state IN ('pending','spawning','running')
+			  AND terminated_at IS NULL
+		`, tenantID).Scan(&live)
+		// Today's cost (aggregated from audit events).
+		_ = tx.QueryRow(ctx, `
+			SELECT COALESCE(SUM((attrs->>'cost_usd_estimate')::float8), 0)
+			FROM runtime_audit_events
+			WHERE tenant_id = $1
+			  AND action = 'schedule'
+			  AND at >= date_trunc('day', now())
+		`, tenantID).Scan(&spentToday)
+		return nil
+	})
 	if !q.exists {
 		return quotaCheckResult{Allowed: true}
 	}
-
-	// Concurrent VMs.
-	var live int
-	_ = h.srv.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM runtime_vms
-		WHERE tenant_id = $1
-		  AND state IN ('pending','spawning','running')
-		  AND terminated_at IS NULL
-	`, tenantID).Scan(&live)
 	if q.maxConcurrent > 0 && live >= q.maxConcurrent {
 		return quotaCheckResult{
 			Allowed:  false,
@@ -724,16 +752,6 @@ func (h *RuntimeHandler) checkRuntimeQuota(ctx context.Context, tenantID string,
 			Reason:   fmt.Sprintf("concurrent VM limit reached (%d/%d)", live, q.maxConcurrent),
 		}
 	}
-
-	// Today's cost (aggregated from audit events).
-	var spentToday float64
-	_ = h.srv.Pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM((attrs->>'cost_usd_estimate')::float8), 0)
-		FROM runtime_audit_events
-		WHERE tenant_id = $1
-		  AND action = 'schedule'
-		  AND at >= date_trunc('day', now())
-	`, tenantID).Scan(&spentToday)
 	if q.maxCostDay > 0 && spentToday >= q.maxCostDay {
 		return quotaCheckResult{
 			Allowed:  false,
@@ -773,10 +791,13 @@ func (h *RuntimeHandler) auditRuntime(ctx context.Context, tenantID, vmID, actio
 	if agentInstanceID != "" {
 		instanceArg = agentInstanceID
 	}
-	if _, err := h.srv.Pool.Exec(ctx, `
-		INSERT INTO runtime_audit_events (tenant_id, vm_id, action, attrs, principal_id, agent_instance_id)
-		VALUES ($1, $2, $3, $4::jsonb, $5, $6)
-	`, tenantID, vmIDArg, action, attrsJSON, principalArg, instanceArg); err != nil {
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			INSERT INTO runtime_audit_events (tenant_id, vm_id, action, attrs, principal_id, agent_instance_id)
+			VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+		`, tenantID, vmIDArg, action, attrsJSON, principalArg, instanceArg)
+		return e
+	}); err != nil {
 		h.logger().Warn("audit insert failed",
 			zap.String("tenant_id", tenantID),
 			zap.String("action", action),
@@ -810,7 +831,9 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Carry the tenant on the context so every WithTenant-routed DB call below
+	// (quota check, audit, runtime_vms insert) is RLS-scoped to this tenant.
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 
 	// Start a span covering the scheduling work (after auth).
 	tracer := otel.Tracer("lantern.control-plane")
@@ -941,12 +964,15 @@ func (h *RuntimeHandler) Schedule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	created := time.Now().UTC()
-	_, err = h.srv.Pool.Exec(ctx, `
-		INSERT INTO runtime_vms
-		  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, agent_instance_id, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, $10)
-		ON CONFLICT (vm_id) DO NOTHING
-	`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, created)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			INSERT INTO runtime_vms
+			  (vm_id, tenant_id, agent_version_id, run_id, node, az, isolation_class, state, spec, agent_instance_id, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, $9, $10)
+			ON CONFLICT (vm_id) DO NOTHING
+		`, vmID, tenantID, agentVerArg, runIDArg, node, az, spec.Isolation, specJSON, instanceID, created)
+		return e
+	})
 	if err != nil {
 		h.logger().Error("insert runtime_vms failed", zap.Error(err))
 		span.RecordError(err)
@@ -983,8 +1009,8 @@ func (h *RuntimeHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
 	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
 		return
 	}
-	ctx := r.Context()
 	tenantID := claims.TenantID
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 
 	state := r.URL.Query().Get("state")
 	limit := 100
@@ -1007,28 +1033,33 @@ func (h *RuntimeHandler) ListVMs(w http.ResponseWriter, r *http.Request) {
 	}
 	query += fmt.Sprintf(` ORDER BY created_at DESC LIMIT %d`, limit)
 
-	rows, err := h.srv.Pool.Query(ctx, query, args...)
+	out := make([]vmRow, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, query, args...)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var v vmRow
+			var specJSON []byte
+			if err := rows.Scan(&v.VmID, &v.TenantID, &v.AgentVersionID, &v.RunID,
+				&v.Node, &v.Az, &v.Region, &v.IsolationClass, &v.State, &specJSON,
+				&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt); err != nil {
+				continue
+			}
+			if len(specJSON) == 0 {
+				specJSON = []byte("{}")
+			}
+			v.Spec = specJSON
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("list runtime_vms failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
-	}
-	defer rows.Close()
-
-	out := make([]vmRow, 0)
-	for rows.Next() {
-		var v vmRow
-		var specJSON []byte
-		if err := rows.Scan(&v.VmID, &v.TenantID, &v.AgentVersionID, &v.RunID,
-			&v.Node, &v.Az, &v.Region, &v.IsolationClass, &v.State, &specJSON,
-			&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt); err != nil {
-			continue
-		}
-		if len(specJSON) == 0 {
-			specJSON = []byte("{}")
-		}
-		v.Spec = specJSON
-		out = append(out, v)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -1043,8 +1074,8 @@ func (h *RuntimeHandler) GetVM(w http.ResponseWriter, r *http.Request) {
 	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
 		return
 	}
-	ctx := r.Context()
 	tenantID := claims.TenantID
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 	vmID := r.PathValue("id")
 	if vmID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vm id required"})
@@ -1053,14 +1084,45 @@ func (h *RuntimeHandler) GetVM(w http.ResponseWriter, r *http.Request) {
 
 	var v vmRow
 	var specJSON []byte
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT vm_id, tenant_id, agent_version_id, run_id, node, az, region,
-		       isolation_class, state, spec, last_heartbeat_at, created_at, terminated_at
-		FROM runtime_vms
-		WHERE vm_id = $1 AND tenant_id = $2
-	`, vmID, tenantID).Scan(&v.VmID, &v.TenantID, &v.AgentVersionID, &v.RunID,
-		&v.Node, &v.Az, &v.Region, &v.IsolationClass, &v.State, &specJSON,
-		&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt)
+	events := make([]auditDTO, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		if e := tx.QueryRow(ctx, `
+			SELECT vm_id, tenant_id, agent_version_id, run_id, node, az, region,
+			       isolation_class, state, spec, last_heartbeat_at, created_at, terminated_at
+			FROM runtime_vms
+			WHERE vm_id = $1 AND tenant_id = $2
+		`, vmID, tenantID).Scan(&v.VmID, &v.TenantID, &v.AgentVersionID, &v.RunID,
+			&v.Node, &v.Az, &v.Region, &v.IsolationClass, &v.State, &specJSON,
+			&v.LastHeartbeatAt, &v.CreatedAt, &v.TerminatedAt); e != nil {
+			return e
+		}
+		// Recent audit events for this VM.
+		rows, qErr := tx.Query(ctx, `
+			SELECT id, tenant_id, vm_id, action, attrs, principal_id, at
+			FROM runtime_audit_events
+			WHERE tenant_id = $1 AND vm_id = $2
+			ORDER BY at DESC
+			LIMIT 50
+		`, tenantID, vmID)
+		if qErr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var e auditDTO
+				var attrs []byte
+				var principal *string
+				if err := rows.Scan(&e.ID, &e.TenantID, &e.VmID, &e.Action, &attrs, &principal, &e.At); err != nil {
+					continue
+				}
+				if len(attrs) == 0 {
+					attrs = []byte("{}")
+				}
+				e.Attrs = attrs
+				e.PrincipalID = principal
+				events = append(events, e)
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "vm not found"})
 		return
@@ -1069,33 +1131,6 @@ func (h *RuntimeHandler) GetVM(w http.ResponseWriter, r *http.Request) {
 		specJSON = []byte("{}")
 	}
 	v.Spec = specJSON
-
-	// Recent audit events for this VM.
-	events := make([]auditDTO, 0)
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id, tenant_id, vm_id, action, attrs, principal_id, at
-		FROM runtime_audit_events
-		WHERE tenant_id = $1 AND vm_id = $2
-		ORDER BY at DESC
-		LIMIT 50
-	`, tenantID, vmID)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var e auditDTO
-			var attrs []byte
-			var principal *string
-			if err := rows.Scan(&e.ID, &e.TenantID, &e.VmID, &e.Action, &attrs, &principal, &e.At); err != nil {
-				continue
-			}
-			if len(attrs) == 0 {
-				attrs = []byte("{}")
-			}
-			e.Attrs = attrs
-			e.PrincipalID = principal
-			events = append(events, e)
-		}
-	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"vm":     v,
@@ -1115,18 +1150,22 @@ func (h *RuntimeHandler) StreamLogs(w http.ResponseWriter, r *http.Request) {
 	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
 		return
 	}
-	ctx := r.Context()
 	tenantID := claims.TenantID
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 	vmID := r.PathValue("id")
 	if vmID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vm id required"})
 		return
 	}
 
-	// Confirm the VM belongs to this tenant + capture its node placement.
+	// Confirm the VM belongs to this tenant + capture its node placement. The
+	// tenant_id predicate (plus RLS scoping under WithTenant) makes a cross-tenant
+	// vm_id return no row → 404, the same outcome as the prior owner!=tenant check.
 	var owner string
 	var node *string
-	err = h.srv.Pool.QueryRow(ctx, `SELECT tenant_id, node FROM runtime_vms WHERE vm_id = $1`, vmID).Scan(&owner, &node)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT tenant_id, node FROM runtime_vms WHERE vm_id = $1 AND tenant_id = $2`, vmID, tenantID).Scan(&owner, &node)
+	})
 	if err != nil || owner != tenantID {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "vm not found"})
 		return
@@ -1251,16 +1290,20 @@ func (h *RuntimeHandler) TerminateVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := claims.TenantID
-	ctx := r.Context()
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 	vmID := r.PathValue("id")
 	if vmID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vm id required"})
 		return
 	}
 
-	// Confirm ownership.
+	// Confirm ownership. The tenant_id predicate + RLS scoping means a
+	// cross-tenant vm_id returns no row → 404 (the 403 branch below is preserved
+	// for the unenforced pool where the row is visible but owned by another tenant).
 	var owner string
-	err = h.srv.Pool.QueryRow(ctx, `SELECT tenant_id FROM runtime_vms WHERE vm_id = $1`, vmID).Scan(&owner)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT tenant_id FROM runtime_vms WHERE vm_id = $1 AND tenant_id = $2`, vmID, tenantID).Scan(&owner)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "vm not found"})
 		return
@@ -1281,11 +1324,14 @@ func (h *RuntimeHandler) TerminateVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = h.srv.Pool.Exec(ctx, `
-		UPDATE runtime_vms
-		SET state = 'terminated', terminated_at = now()
-		WHERE vm_id = $1 AND tenant_id = $2
-	`, vmID, tenantID)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			UPDATE runtime_vms
+			SET state = 'terminated', terminated_at = now()
+			WHERE vm_id = $1 AND tenant_id = $2
+		`, vmID, tenantID)
+		return e
+	})
 	if err != nil {
 		h.logger().Error("update runtime_vms terminated_at failed", zap.Error(err))
 	}
@@ -1308,16 +1354,18 @@ func (h *RuntimeHandler) ExecVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := claims.TenantID
-	ctx := r.Context()
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 	vmID := r.PathValue("id")
 	if vmID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vm id required"})
 		return
 	}
 
-	// Confirm ownership.
+	// Confirm ownership (tenant-scoped; cross-tenant vm_id → no row → 404).
 	var owner string
-	err = h.srv.Pool.QueryRow(ctx, `SELECT tenant_id FROM runtime_vms WHERE vm_id = $1`, vmID).Scan(&owner)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT tenant_id FROM runtime_vms WHERE vm_id = $1 AND tenant_id = $2`, vmID, tenantID).Scan(&owner)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "vm not found"})
 		return
@@ -1388,18 +1436,20 @@ func (h *RuntimeHandler) GetQuota(w http.ResponseWriter, r *http.Request) {
 	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
 		return
 	}
-	ctx := r.Context()
 	tenantID := claims.TenantID
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 
 	var dto quotaDTO
 	var updatedAt time.Time
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT max_concurrent_vms, max_compute_hours_per_day, max_egress_gb_per_day,
-		       max_cost_usd_per_day, hard_fail, updated_at
-		FROM runtime_quotas
-		WHERE tenant_id = $1
-	`, tenantID).Scan(&dto.MaxConcurrentVMs, &dto.MaxComputeHoursPerDay,
-		&dto.MaxEgressGBPerDay, &dto.MaxCostUsdPerDay, &dto.HardFail, &updatedAt)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT max_concurrent_vms, max_compute_hours_per_day, max_egress_gb_per_day,
+			       max_cost_usd_per_day, hard_fail, updated_at
+			FROM runtime_quotas
+			WHERE tenant_id = $1
+		`, tenantID).Scan(&dto.MaxConcurrentVMs, &dto.MaxComputeHoursPerDay,
+			&dto.MaxEgressGBPerDay, &dto.MaxCostUsdPerDay, &dto.HardFail, &updatedAt)
+	})
 	if err != nil {
 		// Return defaults so the dashboard can render before first PUT.
 		writeJSON(w, http.StatusOK, quotaDTO{
@@ -1426,8 +1476,8 @@ func (h *RuntimeHandler) UpsertQuota(w http.ResponseWriter, r *http.Request) {
 	if !h.requireRuntimeScope(w, claims, ScopeRuntimeAdmin) {
 		return
 	}
-	ctx := r.Context()
 	tenantID := claims.TenantID
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 
 	var body quotaDTO
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1447,20 +1497,23 @@ func (h *RuntimeHandler) UpsertQuota(w http.ResponseWriter, r *http.Request) {
 		body.MaxCostUsdPerDay = 5.0
 	}
 
-	_, err = h.srv.Pool.Exec(ctx, `
-		INSERT INTO runtime_quotas
-		  (tenant_id, max_concurrent_vms, max_compute_hours_per_day,
-		   max_egress_gb_per_day, max_cost_usd_per_day, hard_fail, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, now())
-		ON CONFLICT (tenant_id) DO UPDATE SET
-		  max_concurrent_vms        = EXCLUDED.max_concurrent_vms,
-		  max_compute_hours_per_day = EXCLUDED.max_compute_hours_per_day,
-		  max_egress_gb_per_day     = EXCLUDED.max_egress_gb_per_day,
-		  max_cost_usd_per_day      = EXCLUDED.max_cost_usd_per_day,
-		  hard_fail                 = EXCLUDED.hard_fail,
-		  updated_at                = now()
-	`, tenantID, body.MaxConcurrentVMs, body.MaxComputeHoursPerDay,
-		body.MaxEgressGBPerDay, body.MaxCostUsdPerDay, body.HardFail)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			INSERT INTO runtime_quotas
+			  (tenant_id, max_concurrent_vms, max_compute_hours_per_day,
+			   max_egress_gb_per_day, max_cost_usd_per_day, hard_fail, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, now())
+			ON CONFLICT (tenant_id) DO UPDATE SET
+			  max_concurrent_vms        = EXCLUDED.max_concurrent_vms,
+			  max_compute_hours_per_day = EXCLUDED.max_compute_hours_per_day,
+			  max_egress_gb_per_day     = EXCLUDED.max_egress_gb_per_day,
+			  max_cost_usd_per_day      = EXCLUDED.max_cost_usd_per_day,
+			  hard_fail                 = EXCLUDED.hard_fail,
+			  updated_at                = now()
+		`, tenantID, body.MaxConcurrentVMs, body.MaxComputeHoursPerDay,
+			body.MaxEgressGBPerDay, body.MaxCostUsdPerDay, body.HardFail)
+		return e
+	})
 	if err != nil {
 		h.logger().Error("upsert runtime_quotas failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
@@ -1489,8 +1542,8 @@ func (h *RuntimeHandler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
 		return
 	}
-	ctx := r.Context()
 	tenantID := claims.TenantID
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 
 	limit := 100
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -1517,30 +1570,35 @@ func (h *RuntimeHandler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	query += fmt.Sprintf(` ORDER BY id DESC LIMIT %d`, limit)
 
-	rows, err := h.srv.Pool.Query(ctx, query, args...)
+	out := make([]auditDTO, 0)
+	var nextBefore int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, query, args...)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var e auditDTO
+			var attrs []byte
+			var principal *string
+			if err := rows.Scan(&e.ID, &e.TenantID, &e.VmID, &e.Action, &attrs, &principal, &e.At); err != nil {
+				continue
+			}
+			if len(attrs) == 0 {
+				attrs = []byte("{}")
+			}
+			e.Attrs = attrs
+			e.PrincipalID = principal
+			out = append(out, e)
+			nextBefore = e.ID
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("list runtime_audit_events failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
-	}
-	defer rows.Close()
-
-	out := make([]auditDTO, 0)
-	var nextBefore int64
-	for rows.Next() {
-		var e auditDTO
-		var attrs []byte
-		var principal *string
-		if err := rows.Scan(&e.ID, &e.TenantID, &e.VmID, &e.Action, &attrs, &principal, &e.At); err != nil {
-			continue
-		}
-		if len(attrs) == 0 {
-			attrs = []byte("{}")
-		}
-		e.Attrs = attrs
-		e.PrincipalID = principal
-		out = append(out, e)
-		nextBefore = e.ID
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1589,50 +1647,54 @@ func (h *RuntimeHandler) LiveMetrics(w http.ResponseWriter, r *http.Request) {
 	if !h.requireRuntimeScope(w, claims, ScopeRuntimeRead) {
 		return
 	}
-	ctx := r.Context()
 	tenantID := claims.TenantID
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 
 	// Fetch all VMs for the tenant, most-recently-created first.
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT v.vm_id, v.state, v.node, v.az, v.isolation_class,
-		       v.created_at, v.terminated_at,
-		       a.action, a.at
-		FROM runtime_vms v
-		LEFT JOIN LATERAL (
-			SELECT action, at
-			FROM runtime_audit_events
-			WHERE tenant_id = $1 AND vm_id = v.vm_id
-			ORDER BY at DESC
-			LIMIT 1
-		) a ON true
-		WHERE v.tenant_id = $1
-		ORDER BY v.created_at DESC
-		LIMIT 200
-	`, tenantID)
+	out := make([]vmMetricsDTO, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT v.vm_id, v.state, v.node, v.az, v.isolation_class,
+			       v.created_at, v.terminated_at,
+			       a.action, a.at
+			FROM runtime_vms v
+			LEFT JOIN LATERAL (
+				SELECT action, at
+				FROM runtime_audit_events
+				WHERE tenant_id = $1 AND vm_id = v.vm_id
+				ORDER BY at DESC
+				LIMIT 1
+			) a ON true
+			WHERE v.tenant_id = $1
+			ORDER BY v.created_at DESC
+			LIMIT 200
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var dto vmMetricsDTO
+			var auditAction *string
+			var auditAt *time.Time
+			if err := rows.Scan(
+				&dto.VmID, &dto.State, &dto.Node, &dto.Az, &dto.IsolationClass,
+				&dto.CreatedAt, &dto.TerminatedAt,
+				&auditAction, &auditAt,
+			); err != nil {
+				continue
+			}
+			dto.LastAuditAction = auditAction
+			dto.LastAuditAt = auditAt
+			out = append(out, dto)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("live metrics: query failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
 	}
-	defer rows.Close()
-
-	out := make([]vmMetricsDTO, 0)
-	for rows.Next() {
-		var dto vmMetricsDTO
-		var auditAction *string
-		var auditAt *time.Time
-		if err := rows.Scan(
-			&dto.VmID, &dto.State, &dto.Node, &dto.Az, &dto.IsolationClass,
-			&dto.CreatedAt, &dto.TerminatedAt,
-			&auditAction, &auditAt,
-		); err != nil {
-			continue
-		}
-		dto.LastAuditAction = auditAction
-		dto.LastAuditAt = auditAt
-		out = append(out, dto)
-	}
-	rows.Close()
 
 	// Overlay the latest prometheus metrics from the in-memory store.
 	if h.metricsStore != nil {
