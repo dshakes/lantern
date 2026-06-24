@@ -104,6 +104,17 @@ pub struct CompleteRequest {
     pub no_cache: bool,
     #[prost(string, tag = "41")]
     pub idempotency_key: String,
+
+    /// Request-scoped provider credentials: provider id ("openai",
+    /// "anthropic") -> API key, supplied per-call by the control-plane (which
+    /// holds the tenant's AES-GCM key). When present the router builds a
+    /// per-request provider from these; when empty it uses its startup env
+    /// provider. INVARIANT #10: these are secrets — NEVER logged or traced.
+    /// `#[serde(skip)]` keeps them out of any serde rendering (e.g. cache
+    /// keying or accidental debug serialization).
+    #[prost(map = "string, string", tag = "42")]
+    #[serde(skip)]
+    pub provider_credentials: std::collections::HashMap<String, String>,
 }
 
 #[derive(Clone, prost::Message, Serialize, Deserialize)]
@@ -268,6 +279,13 @@ pub struct EmbedRequest {
     pub capability: i32,
     #[prost(string, repeated, tag = "3")]
     pub texts: Vec<String>,
+
+    /// Same request-scoped credential map as CompleteRequest.provider_credentials.
+    /// provider id -> API key, supplied per-call by the control-plane; NEVER
+    /// logged (invariant #10). Empty -> router uses its startup env provider.
+    #[prost(map = "string, string", tag = "4")]
+    #[serde(skip)]
+    pub provider_credentials: std::collections::HashMap<String, String>,
 }
 
 #[derive(Clone, prost::Message, Serialize, Deserialize)]
@@ -423,7 +441,10 @@ struct CompleteService<T: ModelService>(std::sync::Arc<T>);
 impl<T: ModelService> tonic::server::UnaryService<CompleteRequest> for CompleteService<T> {
     type Response = CompleteResponse;
     type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<tonic::Response<Self::Response>, tonic::Status>> + Send>,
+        Box<
+            dyn std::future::Future<Output = Result<tonic::Response<Self::Response>, tonic::Status>>
+                + Send,
+        >,
     >;
     fn call(&mut self, request: tonic::Request<CompleteRequest>) -> Self::Future {
         let inner = self.0.clone();
@@ -454,7 +475,10 @@ struct EmbedService<T: ModelService>(std::sync::Arc<T>);
 impl<T: ModelService> tonic::server::UnaryService<EmbedRequest> for EmbedService<T> {
     type Response = EmbedResponse;
     type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<tonic::Response<Self::Response>, tonic::Status>> + Send>,
+        Box<
+            dyn std::future::Future<Output = Result<tonic::Response<Self::Response>, tonic::Status>>
+                + Send,
+        >,
     >;
     fn call(&mut self, request: tonic::Request<EmbedRequest>) -> Self::Future {
         let inner = self.0.clone();
@@ -466,7 +490,10 @@ struct TokenizeService<T: ModelService>(std::sync::Arc<T>);
 impl<T: ModelService> tonic::server::UnaryService<TokenizeRequest> for TokenizeService<T> {
     type Response = TokenizeResponse;
     type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<tonic::Response<Self::Response>, tonic::Status>> + Send>,
+        Box<
+            dyn std::future::Future<Output = Result<tonic::Response<Self::Response>, tonic::Status>>
+                + Send,
+        >,
     >;
     fn call(&mut self, request: tonic::Request<TokenizeRequest>) -> Self::Future {
         let inner = self.0.clone();
