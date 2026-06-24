@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -249,10 +250,12 @@ func (h *TemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	//    (archived_at IS NOT NULL) row is fine — the underlying CreateAgent
 	//    upsert will restore it by clearing archived_at.
 	var existingID string
-	_ = h.rest.srv.Pool.QueryRow(ctx,
-		`SELECT id::text FROM agents WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL`,
-		tenantID, agentName,
-	).Scan(&existingID)
+	_ = h.rest.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT id::text FROM agents WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL`,
+			tenantID, agentName,
+		).Scan(&existingID)
+	})
 	if existingID != "" {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error":    fmt.Sprintf("agent %q already exists; pick a different name", agentName),
@@ -280,39 +283,48 @@ func (h *TemplateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		"lantern.required_connectors": tpl.Connectors,
 		"lantern.required_surfaces":   tpl.Surfaces,
 	})
-	_, _ = h.rest.srv.Pool.Exec(ctx,
-		`UPDATE agents SET system_prompt = $1, model = $2, labels = COALESCE(labels, '{}'::jsonb) || $5::jsonb
-		 WHERE name = $3 AND tenant_id = $4`,
-		tpl.SystemPrompt, tpl.Model, agentName, tenantID, string(labelsPatch),
-	)
+	_ = h.rest.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE agents SET system_prompt = $1, model = $2, labels = COALESCE(labels, '{}'::jsonb) || $5::jsonb
+			 WHERE name = $3 AND tenant_id = $4`,
+			tpl.SystemPrompt, tpl.Model, agentName, tenantID, string(labelsPatch),
+		)
+		return err
+	})
 
 	// 4. Insert a budget row. Hard-cap so the template can never surprise.
-	_, _ = h.rest.srv.Pool.Exec(ctx, `
-		INSERT INTO agent_budgets
-			(tenant_id, agent_name, max_cost_usd_per_day, max_cost_usd_per_run, hard_fail)
-		VALUES ($1, $2, $3, $4, true)
-		ON CONFLICT (tenant_id, agent_name) DO UPDATE SET
-			max_cost_usd_per_day = EXCLUDED.max_cost_usd_per_day,
-			max_cost_usd_per_run = EXCLUDED.max_cost_usd_per_run,
-			hard_fail            = EXCLUDED.hard_fail,
-			updated_at           = now()
-	`, tenantID, agentName, tpl.MaxCostUsdDay, tpl.MaxCostRun)
+	_ = h.rest.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO agent_budgets
+				(tenant_id, agent_name, max_cost_usd_per_day, max_cost_usd_per_run, hard_fail)
+			VALUES ($1, $2, $3, $4, true)
+			ON CONFLICT (tenant_id, agent_name) DO UPDATE SET
+				max_cost_usd_per_day = EXCLUDED.max_cost_usd_per_day,
+				max_cost_usd_per_run = EXCLUDED.max_cost_usd_per_run,
+				hard_fail            = EXCLUDED.hard_fail,
+				updated_at           = now()
+		`, tenantID, agentName, tpl.MaxCostUsdDay, tpl.MaxCostRun)
+		return err
+	})
 
 	// 5. Optional schedule. Only insert when the template carries a cron.
 	if tpl.CronExpr != "" {
 		cfgJSON, _ := json.Marshal(map[string]any{
 			"deliverySurfaces": tpl.Surfaces, // hint for the runner
 		})
-		_, _ = h.rest.srv.Pool.Exec(ctx, `
-			INSERT INTO schedules
-				(tenant_id, agent_name, cron_expr, input_template, config, enabled, next_fire_at)
-			VALUES ($1, $2, $3, '{}'::jsonb, $4::jsonb, true, now())
-			ON CONFLICT (tenant_id, agent_name) DO UPDATE SET
-				cron_expr      = EXCLUDED.cron_expr,
-				config         = EXCLUDED.config,
-				enabled        = true,
-				updated_at     = now()
-		`, tenantID, agentName, tpl.CronExpr, string(cfgJSON))
+		_ = h.rest.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `
+				INSERT INTO schedules
+					(tenant_id, agent_name, cron_expr, input_template, config, enabled, next_fire_at)
+				VALUES ($1, $2, $3, '{}'::jsonb, $4::jsonb, true, now())
+				ON CONFLICT (tenant_id, agent_name) DO UPDATE SET
+					cron_expr      = EXCLUDED.cron_expr,
+					config         = EXCLUDED.config,
+					enabled        = true,
+					updated_at     = now()
+			`, tenantID, agentName, tpl.CronExpr, string(cfgJSON))
+			return err
+		})
 	}
 
 	// 6. Compute the "still to do" checklist for the UI. Tokens are user-
@@ -369,11 +381,13 @@ func (h *TemplateHandler) SetupStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Pull labels off the agent.
 	var labelsBytes []byte
-	err = h.rest.srv.Pool.QueryRow(ctx,
-		`SELECT COALESCE(labels, '{}'::jsonb)::text::bytea FROM agents
-		 WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL`,
-		tenantID, name,
-	).Scan(&labelsBytes)
+	err = h.rest.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT COALESCE(labels, '{}'::jsonb)::text::bytea FROM agents
+			 WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL`,
+			tenantID, name,
+		).Scan(&labelsBytes)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
@@ -421,35 +435,37 @@ func (h *TemplateHandler) SetupStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pull installed connectors for this tenant.
+	// Pull installed connectors + configured surfaces for this tenant. Rows are
+	// drained inside the WithTenant closure (the tx is committed once fn returns).
 	installedConnectors := map[string]bool{}
-	if rows, err := h.rest.srv.Pool.Query(ctx,
-		`SELECT connector_id FROM connector_installs WHERE tenant_id = $1 AND status = 'connected'`,
-		tenantID,
-	); err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var c string
-			if err := rows.Scan(&c); err == nil {
-				installedConnectors[c] = true
-			}
-		}
-	}
-
-	// Pull configured surfaces for this tenant.
 	configuredSurfaces := map[string]bool{}
-	if rows, err := h.rest.srv.Pool.Query(ctx,
-		`SELECT surface_id FROM surface_configs WHERE tenant_id = $1 AND status = 'connected'`,
-		tenantID,
-	); err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var s string
-			if err := rows.Scan(&s); err == nil {
-				configuredSurfaces[s] = true
+	_ = h.rest.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		if rows, qerr := tx.Query(ctx,
+			`SELECT connector_id FROM connector_installs WHERE tenant_id = $1 AND status = 'connected'`,
+			tenantID,
+		); qerr == nil {
+			for rows.Next() {
+				var c string
+				if err := rows.Scan(&c); err == nil {
+					installedConnectors[c] = true
+				}
 			}
+			rows.Close()
 		}
-	}
+		if rows, qerr := tx.Query(ctx,
+			`SELECT surface_id FROM surface_configs WHERE tenant_id = $1 AND status = 'connected'`,
+			tenantID,
+		); qerr == nil {
+			for rows.Next() {
+				var s string
+				if err := rows.Scan(&s); err == nil {
+					configuredSurfaces[s] = true
+				}
+			}
+			rows.Close()
+		}
+		return nil
+	})
 
 	// Diff.
 	installedC := []string{}

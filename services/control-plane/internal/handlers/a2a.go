@@ -102,6 +102,10 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		description *string
 		labelsJSON  []byte
 	)
+	// rls-exempt: public A2A card discovery — intentionally cross-tenant. Serves
+	// anonymous callers (tenantID == "") and is gated by the explicit
+	// `is_public = true OR tenant_id = $2` clause, not by RLS. Running under the
+	// app role would hide other tenants' public agents from discovery.
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT description, labels
 		FROM agents
@@ -169,6 +173,9 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	// rls-exempt: public A2A directory — anonymous, cross-tenant by design,
+	// gated by `is_public = true`. Must bypass RLS to list every tenant's
+	// public agents in the well-known directory.
 	rows, err := h.srv.Pool.Query(ctx, `
 		SELECT name, description, labels
 		FROM agents
@@ -271,6 +278,10 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 	// avoid leaking the existence of another tenant's private agent.
 	ctx := r.Context()
 	var agentID, agentTenantID string
+	// rls-exempt: authenticated A2A invoke is intentionally cross-tenant — a
+	// caller may invoke its OWN agent OR any tenant's `is_public` agent (the
+	// whole point of A2A). The explicit `is_public = true OR tenant_id = $2`
+	// clause does the gating; RLS would block legitimate public invocations.
 	err = h.srv.Pool.QueryRow(ctx, `
 		SELECT id, tenant_id FROM agents
 		WHERE name = $1 AND archived_at IS NULL

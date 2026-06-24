@@ -79,6 +79,9 @@ func (h *RESTHandler) GetRunEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Ownership check — also fetch current run status so we know when to stop.
 	var runStatus string
+	// rls-exempt: ownership gate for an SSE stream (no per-row transaction). The
+	// explicit `tenant_id = $2` filter is the authoritative tenant gate; a
+	// per-iteration WithTenant tx in the tail loop adds no isolation it doesn't.
 	err = h.srv.Pool.QueryRow(ctx, `
 		SELECT status
 		FROM   runs
@@ -137,6 +140,9 @@ func (h *RESTHandler) GetRunEvents(w http.ResponseWriter, r *http.Request) {
 	// the FK that binds them.
 	// -----------------------------------------------------------------------
 	var lastSeq int64
+	// rls-exempt: journal_events is an RLS-exempt child table (no tenant_id;
+	// scoped by run_id). Run ownership was already verified by the tenant-scoped
+	// gate above, so run_id is a sufficient filter.
 	rows, qerr := h.srv.Pool.Query(ctx, `
 		SELECT seq, kind, step_id, attempt, payload, created_at
 		FROM   journal_events
@@ -190,6 +196,8 @@ func (h *RESTHandler) GetRunEvents(w http.ResponseWriter, r *http.Request) {
 
 		case <-poll.C:
 			// Fetch any new journal_events rows since lastSeq.
+			// rls-exempt: journal_events child table, scoped by run_id (ownership
+			// already verified above).
 			newRows, perr := h.srv.Pool.Query(ctx, `
 				SELECT seq, kind, step_id, attempt, payload, created_at
 				FROM   journal_events
@@ -222,6 +230,8 @@ func (h *RESTHandler) GetRunEvents(w http.ResponseWriter, r *http.Request) {
 
 			// Re-check run status to detect terminal state.
 			var currentStatus string
+			// rls-exempt: terminal-status recheck in the SSE tail loop; explicit
+			// `tenant_id = $2` filter is the tenant gate (see ownership gate above).
 			serr := h.srv.Pool.QueryRow(ctx, `
 				SELECT status FROM runs WHERE id = $1 AND tenant_id = $2
 			`, runID, tenantID).Scan(&currentStatus)

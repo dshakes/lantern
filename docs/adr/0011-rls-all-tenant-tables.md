@@ -155,19 +155,83 @@ NOT zero — the critical regression check) AND a cross-tenant-blocked test:
   pre-existing). These take a `*Pool` (not `srv.Pool.<method>`) so they don't appear
   in the cutover grep, but are noted here for completeness.
 
-**Remaining non-exempt `srv.Pool.<method>` tenant-scoped sites in the P1.1b handler
-groups: 0.** The remaining `srv.Pool` sites in the package live in handlers NOT in
-this batch's scope — `a2a.go`, `auth.go`, `gdpr.go`, `jarvis.go`, `llm_proxy.go`,
-`mcp_registry.go`, `recovery.go`, `rest.go` (the run executor + workflow
-interpreter), `run_events.go`, `runs.go`, `slack_command.go`, `templates.go` — and
-are a follow-up batch.
+### Final batch (P1.1b‑final) — the last 12 files — CUTOVER COMPLETE
 
-**`LANTERN_RLS_ENFORCE=1` is now safe to flip per-env for the cut-over tables**:
-every group above keeps same-tenant reads/writes working under the `lantern_app`
-role (proven by the harness tests) and the database denies cross-tenant access.
-Before flipping globally, the remaining out-of-scope handlers (above) must be cut
-over too, since under enforcement their un-scoped `srv.Pool` queries on
-`lantern_app` would return zero tenant rows.
+The remaining 12 handlers — `auth.go`, `gdpr.go`, `recovery.go`, `a2a.go`,
+`rest.go` (the run executor + workflow interpreter), `runs.go`, `run_events.go`,
+`templates.go`, `mcp_registry.go`, `slack_command.go`, `jarvis.go`,
+`llm_proxy.go` — are now cut over or explicitly exempt. **Non-exempt
+tenant-scoped `srv.Pool.<method>` sites across the ENTIRE `internal/handlers`
+package: 0.** Every remaining `srv.Pool` site carries a `// rls-exempt:` line.
+
+Per-file decisions:
+
+- **`templates.go`** — fully cut over to `WithTenant`. Templates are a static
+  in-memory registry; every Pool site queried tenant-scoped tables (`agents`,
+  `agent_budgets`, `schedules`, `connector_installs`, `surface_configs`).
+- **`mcp_registry.go`** — `mcp_servers` (global catalog) stays exempt; the
+  `agent_mcp_attachments` reads/writes (attach/list/detach) are cut over to
+  `WithTenant`. Cutover surfaced + fixed a latent bug: `attached_at`
+  (timestamptz) was scanned into a `string`, which only worked under the
+  superuser pool's text protocol; under `lantern_app`'s binary protocol it now
+  scans into `time.Time`.
+- **`slack_command.go`** — `resolveTenantFromSlackTeam` stays exempt (pre-tenant
+  lookup that *resolves* the tenant from the Slack team). The post-resolution
+  `statusReply`/`agentsReply` reads are cut over; the resolved tenant is injected
+  into the ctx before they run.
+- **`jarvis.go`** — the brief read helpers (`memory_events`/`connector_installs`)
+  are cut over; they inject the tenant from their `tenantID` arg so the same code
+  serves the request path and the single-tenant scheduled push.
+- **`runs.go`** — CRUD (`CreateRun`/`ListRuns`/`GetRun`) was already scoped via
+  `TenantPool().Begin` + `setRLSTenantID` (equivalent to `WithTenant`). The
+  `StreamRunEvents` ownership gate on `runs` stays exempt (explicit `tenant_id`
+  filter inside a long-lived stream, no per-row tx); `journal_events` replay is an
+  exempt child table.
+- **`run_events.go`** — same shape as the gRPC stream: SSE ownership/status gates
+  on `runs` use an explicit `tenant_id` filter (exempt); `journal_events` reads
+  are exempt child.
+- **`a2a.go`** — exempt: public card + directory (`is_public`-gated, anonymous)
+  and the authenticated invoke (`is_public = true OR tenant_id = $2`) are
+  intentionally cross-tenant; RLS would block legitimate public A2A invocations.
+- **`auth.go`** — all 9 sites exempt: login/register/OAuth resolve the tenant from
+  email across all tenants *before* a tenant context exists; `validateAPIKey`
+  resolves the tenant from the key hash. The tenant is the OUTPUT of these.
+- **`gdpr.go`** — exempt: admin/system tenant purge runs leaf‑to‑root down to the
+  `tenants` row and must bypass RLS or it would leave PII behind.
+- **`recovery.go`** — exempt: background orphan-run sweep, no request tenant,
+  re-drives runs across all tenants.
+
+LIVE-path judgment calls (kept on `Pool` with explicit tenant filter +
+`rls-exempt`, deliberately NOT cut over):
+
+- **`rest.go` inline run executor** (`executeRunInline`/`Sync`,
+  `runWorkflowIfPresent`, `journalCompletedStep`, `createSubAgentRunRow`,
+  `emitRunAnomalies`, Gmail/WhatsApp delivery): runs in a detached background
+  goroutine. `runs` writes are keyed by the already-authorized run id;
+  `agents`/`agent_budgets`/`connector_installs`/`schedules` access carries an
+  explicit `tenant_id = $N`; `journal_events`/`run_locks`/`takeover_requests` are
+  child/by-id; and several terminal-status safety nets deliberately use a fresh
+  `context.Background()` with **no tenant** so a cancelled request ctx can't
+  abandon a run in `running` — those *cannot* route through `WithTenant`. Cutting
+  the executor over would risk the live run path for no isolation the explicit
+  filters don't already provide. (`autoCreateVersion` WAS switched to
+  `TenantPool().Begin` since it already sets the GUC — zero-risk.)
+- **`llm_proxy.go` `resolveProviderKey`/`providerAvailable`**: called from deep
+  inside the provider-failover loop with `tenantID` passed as an **arg** (not
+  always present in ctx). Self-scoped by the explicit `tenant_id = $1` filter
+  (`rls-exempt-by-arg`). The top-level Settings handlers `SaveLlmProvider`/
+  `ListLlmProviders` WERE cut over to `WithTenant`. `RecordUsage`/`CheckBudget`
+  remain shared `*Pool` helpers keyed by `tenantID` arg (self-scoping; left as-is
+  per the prior batches' convention).
+
+**`LANTERN_RLS_ENFORCE=1` is now safe to flip per-env (with the prod app-pool
+password set).** The whole `internal/handlers` package keeps same-tenant
+reads/writes working under the `lantern_app` role (proven by the
+`newEnforcedServer` harness tests across every group) and the database denies
+cross-tenant access. The only sites that stay on the privileged `Pool` are
+genuinely pre-auth / system / public-catalog / child-table / detached-executor,
+each annotated `// rls-exempt: <reason>`. Operator step before flipping per-env:
+`ALTER ROLE lantern_app PASSWORD '<strong>'` and set `LANTERN_APP_DB_PASSWORD`.
 
 ## Consequences
 
@@ -196,10 +260,15 @@ over too, since under enforcement their un-scoped `srv.Pool` queries on
    same-tenant reads/writes still return rows AND cross-tenant is blocked, and the
    full `internal/handlers` package stays green. Connectors batch:
    `TestRLSConnectors_SameTenant_FullLifecycle` + `TestRLSConnectors_CrossTenant_Blocked`.
-6. P1.1b handler-group cutover (this batch): all `RLS`-prefixed enforcement tests
-   pass under `DATABASE_URL=…lantern go test ./internal/handlers/ -run RLS` (26
-   tests incl. the harness self-test + connectors batch), the full
+6. P1.1b handler-group cutover: all `RLS`-prefixed enforcement tests pass under
+   `DATABASE_URL=…lantern go test ./internal/handlers/ -run RLS`, the full
    `internal/handlers` suite stays green, and `go test -race` on the RLS tests is
    clean. The cutover grep shows **0** non-exempt tenant-scoped `srv.Pool.<method>`
    sites in the P1.1b group files (every remaining `srv.Pool` site in those files
    carries a `// rls-exempt:` justification).
+7. P1.1b-final (last 12 files): cutover COMPLETE. `RLSRuns_*` (runs CRUD
+   same-tenant + cross-tenant) and `RLSMCPAttachments_*` (attach/list/detach +
+   cross-tenant) enforcement tests pass under the `lantern_app` harness; the full
+   `internal/handlers` suite stays green; `go test -race ./internal/handlers/ -run
+   RLS` is clean. **Non-exempt tenant-scoped `srv.Pool.<method>` sites across the
+   ENTIRE package: 0.** `LANTERN_RLS_ENFORCE=1` is safe to flip per-env.
