@@ -86,11 +86,11 @@ flowchart TB
 |---|---|---|
 | **1 · Agent Runtime** | Durable workflow engine, capability-based multi-LLM router, Kubernetes-default substrate with isolation as a RuntimeClass tier (runc → gVisor → Kata microVM → Firecracker-backed Kata). Fail-closed: untrusted/hostile refused unless the hardened RuntimeClass is configured — never silently downgraded to a bare pod. Durable crash-replay (exactly-once, no re-spent tokens). One trace per spawn (W3C across CP → scheduler → manager → harness). Ed25519 per-instance identity + scheduler HA + per-tenant spawn rate limiting. | Phases 0–4 landed; Phase 5/6 (frontier UX, confidential compute) on roadmap |
 | **2 · Personal Agent ("Jarvis")** | WhatsApp + iMessage assistant that texts *as you* — owner-only, learns your real voice from history, agentic macOS actions, cross-channel memory, urgent-alerting, privacy guards. | Live |
-| **3 · Trust & Governance** | Policy-as-code budgets (hard-fail 402), eval-in-CI + rehearsals, Ed25519-signed verifiable receipts, per-agent-instance identity tokens, RBAC scopes on runtime routes, RLS-enforced non-owner Postgres role, AES-256-GCM secrets. | Prod-ready |
+| **3 · Trust & Governance** | Policy-as-code budgets (hard-fail 402), eval-in-CI + rehearsals, Ed25519-signed verifiable receipts, per-agent-instance identity tokens, RBAC scopes on runtime routes, gRPC service-token auth, OTel traces (tenant_id/run_id/step_id), LLM idempotency keys on all provider calls, AES-256-GCM secrets. RLS policies on all 34 tenant tables — enforcement staged via `LANTERN_RLS_ENFORCE` (handler cutover in progress). | Substantially complete; RLS enforcement pending cutover |
 | **4 · Channels & Reach** | WhatsApp · iMessage · Slack · Telegram · Discord · Voice (Twilio/LiveKit) · Webchat · Email — signature-verified, naturally paced. | Prod-ready |
-| **5 · Developer Experience** | TS/Python/Go SDKs, `lantern` CLI, one-command dev, visual workflow editor that *executes*, MCP registry, A2A cards, forkable agent marketplace. | Prod-ready |
+| **5 · Developer Experience** | TS/Python/Go SDKs, `lantern` CLI, one-command dev, visual workflow editor that *executes*, MCP registry, A2A cards, forkable agent marketplace. Python SDK: management surface at parity; runtime `AgentContext` still stubbed. | Prod-ready (TS); Python management parity done, runtime context pending |
 
-> **Status (as of 2026-06-21):** modules 2–5 are in real use. Module 1 is substantially complete:
+> **Status (as of 2026-06-23):** modules 2–5 are in real use. Module 1 is substantially complete:
 > - ✅ **K8s-default substrate + RuntimeClass tiering** — `STANDARD` runs on gVisor, `HOSTILE` on Kata, fail-closed double gate in `choose_backend` + `build_job` (never downgrades to a bare pod). Node-affinity, per-workload default-deny NetworkPolicy, PSA-restricted, cosign image verification, and the boot-time RuntimeClass preflight are all landed (#36).
 > - ✅ **Durable crash-replay** — journal-backed exactly-once execution: no re-spent tokens on crash, side-effect dedup via `side_effect_receipts`, run lease + recovery watchdog (#38).
 > - ✅ **One-trace-per-spawn observability** — W3C `traceparent` propagates CP → scheduler → manager → harness; GenAI semconv spans carry reasoning and cache tokens; real-time loop/retry anomaly events mid-run; `GET /v1/runtime/metrics` for the cockpit Live mode (#39).
@@ -541,6 +541,17 @@ make lint         # golangci-lint + cargo clippy + tsc
 make audit        # govulncheck + cargo audit + npm audit
 make ci-local     # lint + test + audit — the same gate CI runs
 ```
+
+**What is green today (as of GA-phase3):**
+- Control-plane Go suite — 9+ packages including 24 DB-backed handler tests (auth / sessions cross-tenant isolation / connectors encrypted-credential round-trip)
+- `TestRLSEnforcement_AllTenantTables` — catalog gate ensures every tenant table has `ENABLE` + `FORCE` + `USING`/`WITH CHECK` policy; adding a new tenant table without RLS fails CI
+- gRPC auth interceptor — 7/7 `grpcauth_test.go`
+- bridge-core — 613 tests (node:test + tsx) in `make test-ts`
+- runtime-scheduler — full Go suite
+- Python SDK — 66 pytest (CI only; pytest not installed on dev host)
+- Vuln gate — `govulncheck` + `cargo-audit` + `npm audit` on every PR
+
+**What is still aspirational** (designed, not yet run in CI): Testcontainers integration tests, k6 E2E API suite, Playwright web E2E, fuzz harnesses, chaos testing. These appear in `docs/architecture/11-testing.md` as design intent.
 
 New behavior ships with unit tests; bug fixes ship with a regression test. Run `make ci-local` before every push.
 

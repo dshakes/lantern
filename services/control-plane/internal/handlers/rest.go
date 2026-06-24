@@ -1769,39 +1769,12 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			}
 			return out, nil
 		},
-		CompletedStep: func(stepCtx context.Context, stepRunID, stepID string) (map[string]any, bool, error) {
-			// Query journal_events for the most recent step_completed event for
-			// this (run_id, step_id) pair. If found, unmarshal the payload and
-			// return done=true so the interpreter reuses the cached output
-			// instead of re-invoking the side-effecting dep.
-			var payloadJSON []byte
-			err := h.srv.Pool.QueryRow(stepCtx, `
-				SELECT payload
-				FROM journal_events
-				WHERE run_id = $1 AND step_id = $2 AND kind = 'step_completed'
-				ORDER BY seq DESC
-				LIMIT 1
-			`, stepRunID, stepID).Scan(&payloadJSON)
-			if err != nil {
-				// No completed record or DB error — fall through to re-execute.
-				return nil, false, nil
-			}
-			var payload map[string]any
-			if err := json.Unmarshal(payloadJSON, &payload); err != nil {
-				return nil, false, nil
-			}
-			// The step_completed payload carries {"output": ..., "name": ..., "type": ...}.
-			// Extract the output field; if absent return the whole payload.
-			if out, ok := payload["output"]; ok {
-				switch v := out.(type) {
-				case map[string]any:
-					return v, true, nil
-				case string:
-					return map[string]any{"result": v}, true, nil
-				}
-			}
-			return payload, true, nil
-		},
+		// Resume hook: on a re-drive (crash recovery or retry) the interpreter
+		// asks, for each side-effecting node, whether a step_completed event is
+		// already in the journal. journalCompletedStep answers from
+		// journal_events so already-finished nodes are skipped — the walk
+		// resumes from the first incomplete step instead of restarting.
+		CompletedStep: h.journalCompletedStep,
 	}
 
 	res, runErr := workflow.Run(ctx, runID, deps, def, input)
@@ -1836,6 +1809,51 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		zap.Int("steps_ran", res.StepsRan),
 	)
 	return true
+}
+
+// journalCompletedStep is the resume hook wired into the workflow interpreter
+// (workflow.Deps.CompletedStep). It answers "has this node already finished on
+// a prior attempt?" by reading the most recent step_completed event for the
+// (run_id, step_id) pair from journal_events.
+//
+// When a step_completed row exists it returns the cached output with done=true,
+// so the interpreter reuses that output instead of re-invoking the node's
+// side-effecting dep (LLM / connector / tool / subagent). This is what makes a
+// crash-recovery re-drive RESUME from the journal rather than restart from
+// scratch and double-execute completed steps (invariant #3).
+//
+// On any error (no completed row, DB error, corrupt payload) it returns
+// done=false so the node re-executes — safe because the LLM path additionally
+// dedups via checkCachedLLMStep and external deliveries dedup via
+// claimSideEffect's (run:step:attempt) idempotency key (invariant #8).
+func (h *RESTHandler) journalCompletedStep(stepCtx context.Context, stepRunID, stepID string) (map[string]any, bool, error) {
+	var payloadJSON []byte
+	err := h.srv.Pool.QueryRow(stepCtx, `
+		SELECT payload
+		FROM journal_events
+		WHERE run_id = $1 AND step_id = $2 AND kind = 'step_completed'
+		ORDER BY seq DESC
+		LIMIT 1
+	`, stepRunID, stepID).Scan(&payloadJSON)
+	if err != nil {
+		// No completed record or DB error — fall through to re-execute.
+		return nil, false, nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+		return nil, false, nil
+	}
+	// The step_completed payload carries {"output": ..., "name": ..., "type": ...}.
+	// Extract the output field; if absent return the whole payload.
+	if out, ok := payload["output"]; ok {
+		switch v := out.(type) {
+		case map[string]any:
+			return v, true, nil
+		case string:
+			return map[string]any{"result": v}, true, nil
+		}
+	}
+	return payload, true, nil
 }
 
 // dispatchConnectorInProc is a slim wrapper that mirrors what the HTTP
