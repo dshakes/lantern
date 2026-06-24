@@ -31,6 +31,9 @@ import (
 type LlmProxyHandler struct {
 	srv  *server.Server
 	auth *AuthHandler
+	// router holds the model-router cutover wiring (task P2-B5/6). Default
+	// zero value = flag-driven, real gRPC dial. See llm_proxy_router.go.
+	router modelRouterDeps
 }
 
 // NewLlmProxyHandler creates a new LlmProxyHandler.
@@ -2865,6 +2868,30 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 	)
 	if len(chain) == 0 {
 		return "", nil, "", "", 0, 0, fmt.Errorf("no LLM provider configured for this tenant")
+	}
+
+	// Model-router cutover (P2-B5/6). Behind LANTERN_USE_MODEL_ROUTER
+	// (default OFF). When ON, offload PLAIN provider completions (no tools,
+	// real hosted provider at the head of the chain) to the model-router
+	// service. claude-code and the tool loop stay on the direct path for
+	// this batch.
+	//
+	// CRITICAL: on ANY router error (dial / timeout / non-OK / empty), we
+	// fall THROUGH to the direct chain below — the live bridges never see a
+	// router failure. RecordUsage/CheckBudget are unaffected: this function
+	// returns the same tuple the direct path returns, and callers run usage
+	// accounting on that tuple regardless of which path produced it.
+	if h.modelRouterEnabled() && len(tools) == 0 && chain[0].Provider != "claude-code" {
+		text, used, tin, tout, ok := h.tryModelRouter(ctx, tenantID, chain[0], messages)
+		if ok {
+			if onAttempt != nil {
+				onAttempt(candidateAttempt{Provider: used.Provider, Model: used.Model})
+			}
+			text = rewriteUnbackedClaims(text, nil, h.logger())
+			return text, nil, used.Provider, used.Model, tin, tout, nil
+		}
+		// ok==false → router unavailable or errored; fall through to the
+		// direct provider chain. tryModelRouter already logged a warn.
 	}
 	// The local `claude -p` CLI doesn't support OpenAI-style tools[]. If
 	// this run actually needs tool calling, drop claude-code from the

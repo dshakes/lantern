@@ -306,6 +306,37 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 | ------ | ----------------- | ----------------------------------------------- |
 | `POST` | `/v1/completions` | LLM completion (routes to configured providers) |
 
+#### Model-router cutover (default OFF — ADR 0014)
+
+The control-plane can route PLAIN provider completions through the
+model-router service instead of calling OpenAI/Anthropic directly, gated by
+`LANTERN_USE_MODEL_ROUTER` (default OFF) and wired at the
+`callLLMWithFailover` seam in `internal/handlers/llm_proxy.go`.
+
+- **Default OFF.** Unset / `0` → existing direct path, exactly as before. This
+  is the LIVE path the WhatsApp/iMessage bridges use, so the change is opt-in.
+- **Automatic fallback.** When ON, ANY router error (dial / timeout / non-OK /
+  empty body) falls THROUGH to the direct provider chain — the router error is
+  never surfaced to the caller. `RecordUsage`/`CheckBudget` run on the returned
+  tuple regardless of path.
+- **Scope.** Only plain completions are offloaded. claude-code and the tool-use
+  loop stay on the direct path for now.
+- **Per-tenant key.** The control-plane resolves the tenant's AES-GCM key per
+  call and ships it in `CompleteRequest.provider_credentials` (proto field 42).
+  This is a SECRET — never logged/traced (invariant #10). New trust boundary:
+  for cross-trust-zone deployments this gRPC hop must run over mTLS.
+
+Env vars (control-plane):
+
+| Var                        | Default              | Purpose                                            |
+| -------------------------- | -------------------- | -------------------------------------------------- |
+| `LANTERN_USE_MODEL_ROUTER` | _(off)_              | `1`/`true`/`on` enables the cutover. Default OFF.  |
+| `LANTERN_MODEL_ROUTER_ADDR`| `model-router:50053` | gRPC address the control-plane dials.              |
+
+**Rollout (staged):** enable on a NON-bridge tenant first → watch traces
+(`gen_ai.*` + router spans) and error rate → only then enable on the bridge
+tenant. The fallback guarantee keeps the bridges safe at every step.
+
 ### Settings
 
 | Method | Path                                         | Description               |

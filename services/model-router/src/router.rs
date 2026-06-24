@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::stream::BoxStream;
@@ -9,6 +10,7 @@ use crate::proto::{
     OptimizeTarget,
 };
 use crate::provider::{ModelInfo, Provider};
+use crate::providers::{AnthropicProvider, OpenAiProvider};
 
 /// The core routing engine. Selects providers and models based on capability and
 /// optimization target, with transparent failover on retryable errors.
@@ -23,29 +25,65 @@ impl ModelRouter {
         Self { providers }
     }
 
-    /// Resolve the AUTO capability to a concrete one. AUTO defaults to CHAT_LARGE.
-    fn resolve_capability(&self, cap: Capability) -> Capability {
-        if cap == Capability::Auto || cap == Capability::Unspecified {
-            Capability::ChatLarge
-        } else {
-            cap
+    /// Build the provider set to use for one request.
+    ///
+    /// When `credentials` is non-empty (the multi-tenant control-plane path),
+    /// construct a FRESH provider per supplied (provider id -> API key) entry,
+    /// so this single request is served with that tenant's own key. When empty
+    /// (single-tenant dev), reuse the startup env providers (cheap Arc clones).
+    ///
+    /// INVARIANT #10: the credential VALUES are secrets. We never log the keys —
+    /// only provider ids (the map keys) appear in the debug line below, and only
+    /// at debug level. Unknown provider ids are skipped (no panic).
+    fn providers_for_request(
+        &self,
+        credentials: &HashMap<String, String>,
+    ) -> Vec<Arc<dyn Provider>> {
+        if credentials.is_empty() {
+            return self.providers.clone();
         }
+        let mut per_request: Vec<Arc<dyn Provider>> = Vec::with_capacity(credentials.len());
+        for (provider_id, api_key) in credentials {
+            match provider_id.as_str() {
+                "openai" => {
+                    per_request.push(Arc::new(OpenAiProvider::new(api_key.clone())));
+                }
+                "anthropic" => {
+                    per_request.push(Arc::new(AnthropicProvider::new(api_key.clone())));
+                }
+                other => {
+                    warn!(
+                        provider = other,
+                        "unknown provider id in request credentials; skipping"
+                    );
+                }
+            }
+        }
+        // Defensive: if none of the supplied ids were recognized, fall back to
+        // the startup providers rather than serving zero candidates.
+        if per_request.is_empty() {
+            debug!("no recognized per-request providers; using startup providers");
+            return self.providers.clone();
+        }
+        debug!(
+            num_per_request = per_request.len(),
+            "built per-request providers from supplied credentials"
+        );
+        per_request
     }
 
-    /// Rank candidate (provider, model) pairs for a given capability and optimization target.
-    fn rank_candidates(
-        &self,
+    /// Rank candidates using an EXPLICIT provider set (per-request or startup).
+    fn rank_candidates_in(
+        providers: &[Arc<dyn Provider>],
         capability: Capability,
         optimize: OptimizeTarget,
     ) -> Vec<(Arc<dyn Provider>, ModelInfo)> {
         let mut candidates: Vec<(Arc<dyn Provider>, ModelInfo)> = Vec::new();
-
-        for provider in &self.providers {
+        for provider in providers {
             if let Some(model_info) = provider.model_for(capability) {
                 candidates.push((provider.clone(), model_info.clone()));
             }
         }
-
         match optimize {
             OptimizeTarget::Cheap => {
                 candidates.sort_by(|a, b| {
@@ -60,11 +98,9 @@ impl ModelRouter {
                 candidates.sort_by_key(|c| c.1.latency_p50_ms);
             }
             OptimizeTarget::Best => {
-                // Highest quality first.
                 candidates.sort_by(|a, b| b.1.quality_score.cmp(&a.1.quality_score));
             }
             OptimizeTarget::Balanced | OptimizeTarget::Unspecified => {
-                // Apply default preference: Anthropic for reasoning/code, OpenAI for chat/embed.
                 candidates.sort_by(|a, b| {
                     let score_a = default_preference_score(a.0.name(), capability);
                     let score_b = default_preference_score(b.0.name(), capability);
@@ -72,8 +108,27 @@ impl ModelRouter {
                 });
             }
         }
-
         candidates
+    }
+
+    /// Resolve the AUTO capability to a concrete one. AUTO defaults to CHAT_LARGE.
+    fn resolve_capability(&self, cap: Capability) -> Capability {
+        if cap == Capability::Auto || cap == Capability::Unspecified {
+            Capability::ChatLarge
+        } else {
+            cap
+        }
+    }
+
+    /// Rank candidate (provider, model) pairs for a given capability and
+    /// optimization target, over the STARTUP provider set. Kept for callers
+    /// (and tests) that route against the env providers.
+    fn rank_candidates(
+        &self,
+        capability: Capability,
+        optimize: OptimizeTarget,
+    ) -> Vec<(Arc<dyn Provider>, ModelInfo)> {
+        Self::rank_candidates_in(&self.providers, capability, optimize)
     }
 
     /// Non-streaming completion with failover.
@@ -84,7 +139,8 @@ impl ModelRouter {
         let optimize =
             OptimizeTarget::try_from(req.optimize).unwrap_or(OptimizeTarget::Unspecified);
 
-        let candidates = self.rank_candidates(capability, optimize);
+        let providers = self.providers_for_request(&req.provider_credentials);
+        let candidates = Self::rank_candidates_in(&providers, capability, optimize);
         if candidates.is_empty() {
             return Err(RouterError::NoProvider {
                 capability: capability.as_str().into(),
@@ -170,7 +226,8 @@ impl ModelRouter {
         let optimize =
             OptimizeTarget::try_from(req.optimize).unwrap_or(OptimizeTarget::Unspecified);
 
-        let candidates = self.rank_candidates(capability, optimize);
+        let providers = self.providers_for_request(&req.provider_credentials);
+        let candidates = Self::rank_candidates_in(&providers, capability, optimize);
         if candidates.is_empty() {
             return Err(RouterError::NoProvider {
                 capability: capability.as_str().into(),
@@ -250,7 +307,8 @@ impl ModelRouter {
             capability
         };
 
-        let candidates = self.rank_candidates(capability, OptimizeTarget::Balanced);
+        let providers = self.providers_for_request(&req.provider_credentials);
+        let candidates = Self::rank_candidates_in(&providers, capability, OptimizeTarget::Balanced);
         if candidates.is_empty() {
             return Err(RouterError::NoProvider {
                 capability: capability.as_str().into(),
@@ -459,6 +517,7 @@ mod tests {
             stop: vec![],
             no_cache: true,
             idempotency_key: String::new(),
+            provider_credentials: HashMap::new(),
         }
     }
 
@@ -857,5 +916,91 @@ mod tests {
             message: "no embeddings".into(),
         };
         assert!(!e.is_retryable());
+    }
+
+    // ---- per-request provider credentials (cutover P2-B5/6) ----
+
+    #[test]
+    fn providers_for_request_empty_creds_uses_startup_providers() {
+        let startup = Arc::new(StubProvider::new(
+            "openai",
+            vec![chat_large_model("gpt-4o", 2.5, 85, 600)],
+        ));
+        let router = ModelRouter::new(vec![startup as Arc<dyn Provider>]);
+        let got = router.providers_for_request(&HashMap::new());
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name(), "openai");
+    }
+
+    #[test]
+    fn providers_for_request_builds_from_credentials() {
+        // Startup has only openai; the request supplies an anthropic key, so the
+        // per-request set must be built from the credentials (real provider),
+        // NOT the startup providers.
+        let startup = Arc::new(StubProvider::new(
+            "openai",
+            vec![chat_large_model("gpt-4o", 2.5, 85, 600)],
+        ));
+        let router = ModelRouter::new(vec![startup as Arc<dyn Provider>]);
+
+        let mut creds = HashMap::new();
+        creds.insert("anthropic".to_string(), "sk-ant-tenant-key".to_string());
+        let got = router.providers_for_request(&creds);
+
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            got[0].name(),
+            "anthropic",
+            "per-request set must come from credentials, not startup providers"
+        );
+    }
+
+    #[test]
+    fn providers_for_request_unknown_id_falls_back_to_startup() {
+        let startup = Arc::new(StubProvider::new(
+            "openai",
+            vec![chat_large_model("gpt-4o", 2.5, 85, 600)],
+        ));
+        let router = ModelRouter::new(vec![startup as Arc<dyn Provider>]);
+
+        let mut creds = HashMap::new();
+        creds.insert("totally-unknown".to_string(), "secret".to_string());
+        let got = router.providers_for_request(&creds);
+
+        // No recognized id → defensive fallback to startup providers.
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name(), "openai");
+    }
+
+    #[test]
+    fn providers_for_request_builds_both_providers() {
+        let router = ModelRouter::new(vec![]);
+        let mut creds = HashMap::new();
+        creds.insert("openai".to_string(), "sk-oai".to_string());
+        creds.insert("anthropic".to_string(), "sk-ant".to_string());
+        let got = router.providers_for_request(&creds);
+        assert_eq!(got.len(), 2);
+        let names: std::collections::HashSet<&str> = got.iter().map(|p| p.name()).collect();
+        assert!(names.contains("openai"));
+        assert!(names.contains("anthropic"));
+    }
+
+    #[test]
+    fn provider_credentials_excluded_from_serde() {
+        // INVARIANT #10 guard: serializing a request must never emit the
+        // credential map (it is #[serde(skip)]). This protects against an
+        // accidental debug/JSON render of a request leaking the tenant's key.
+        let mut req = make_complete_req(Capability::ChatLarge, OptimizeTarget::Balanced);
+        req.provider_credentials
+            .insert("openai".to_string(), "sk-super-secret-key".to_string());
+        let json = serde_json::to_string(&req).expect("serialize");
+        assert!(
+            !json.contains("sk-super-secret-key"),
+            "credential value leaked into serde output"
+        );
+        assert!(
+            !json.contains("provider_credentials"),
+            "credential field name leaked into serde output"
+        );
     }
 }
