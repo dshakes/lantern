@@ -446,6 +446,32 @@ types: `trigger`, `ai-step`, `tool`, `connector`, `condition`, `approval`,
 emits `step_started` + `step_completed`/`step_failed` to `journal_events`
 so the run-detail waterfall renders the graph automatically.
 
+**Crash-resume from the journal (invariant #3).** The inline executor runs in
+a goroutine, so a process restart between `step_started` and `step_completed`
+must not lose the run or restart it from scratch (double-executing
+side-effecting steps). It doesn't. Two mechanisms cooperate, both reading the
+existing `journal_events` event log — no new store:
+
+- **Reclaim.** The recovery sweep (`internal/handlers/recovery.go`,
+  `RunRecoveryLoop`, default every 30s, `LANTERN_RECOVERY_INTERVAL`) finds
+  runs in `running`/`queued` whose `run_locks` row is absent or expired,
+  wins a fresh lock via `acquireRecoveryLock` (UPSERT that only steals an
+  expired lock — the distributed guard), and re-drives them through
+  `redriveRun` → `runWorkflowIfPresent` / `executeRunInlineSync`.
+- **Resume, not restart.** On re-drive the workflow interpreter walks the
+  graph from the trigger again, but for every side-effecting node type
+  (`ai-step`, `tool`, `connector`, `subagent`, `approval`) it first calls
+  `Deps.CompletedStep` — wired in `rest.go` to `RESTHandler.journalCompletedStep`,
+  which returns the cached output when a `step_completed` row already exists
+  for `(run_id, step_id)`. Completed nodes are skipped (dep never re-invoked);
+  the walk resumes at the first incomplete node. The plain-LLM path has the
+  analogous `checkCachedLLMStep` cache (`durable_replay.go`). External
+  deliveries additionally dedup via `claimSideEffect`'s
+  `(run:step:attempt)` idempotency key (invariant #8), so no double
+  side-effect even if a re-drive re-reaches a delivery. Tests:
+  `internal/handlers/workflow_resume_test.go` (DB-backed, multi-step graph
+  skip) + the `crash_replay_*`/`recovery_*` suites.
+
 The gRPC `RunService.StreamRunEvents` (`internal/handlers/runs.go`) replays
 those `journal_events` — it is no longer a heartbeat-only stub. On stream
 open it sends every row for the run in `(run_id, seq)` order mapped to the

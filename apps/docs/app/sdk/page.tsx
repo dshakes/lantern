@@ -166,9 +166,20 @@ const result = await run.result();`}</code>
 
       <h2 id="python">Python SDK</h2>
 
+      <div className="callout callout-warning">
+        <strong>Status:</strong> The Python SDK covers the full management surface
+        (agents, runs, sessions, connectors, budgets, evals, experiments, marketplace,
+        MCP, receipts, feedback, rehearsals) at parity with the TypeScript SDK.
+        The agent runtime context (<code>AgentContext</code>, durable <code>step()</code>,
+        and <code>ctx.llm</code>) is not yet implemented -- those raise
+        <code>NotImplementedError</code>. The package is installed from the repository;
+        it is not yet published to PyPI.
+      </div>
+
       <h3>Installation</h3>
       <pre>
-        <code>{`pip install lantern-sdk`}</code>
+        <code>{`# Install from the repository (not yet on PyPI)
+pip install ./packages/sdk-python`}</code>
       </pre>
 
       <h3>Creating an agent</h3>

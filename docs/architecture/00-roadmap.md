@@ -27,6 +27,8 @@
 | Security & multi-tenancy (`10-security.md`) | 🟡 |
 | Testing strategy (`11-testing.md`) | 🟡 |
 | ADRs 0001–0010 | ✅ |
+| ADR 0011 — RLS all tenant tables (`docs/adr/0011-rls-all-tenant-tables.md`) | ✅ |
+| ADR 0013 — billing/scheduler gRPC; memory REST-only (`docs/adr/0013-billing-scheduler-grpc-memory-rest.md`) | ✅ |
 
 ## API surface
 
@@ -40,15 +42,16 @@
 
 | Service | Language | Status |
 |---|---|---|
-| `control-plane` | Go | ✅ — agents/runs CRUD, auth (email+password, Google OAuth, JWT), API keys, LLM provider management, deployments, data planes, Postgres schema with RLS |
-| `workflow-engine` | Go | 🟡 spike — step journaling, replay loop, in-memory queue |
-| `runtime-manager` | Rust | 🟡 spike — K8s Job runtime, Firecracker integration seam |
+| `control-plane` | Go | ✅ — agents/runs CRUD, auth (email+password, Google OAuth, JWT), API keys, LLM provider management, deployments, data planes, Postgres schema with RLS (policies enabled on all 34 tenant tables; enforcement staged via `LANTERN_RLS_ENFORCE`); gRPC :50051 service-token auth; OTel HTTP+gRPC spans; LLM idempotency keys; gRPC StreamRunEvents journal replay; durable crash-resume primitives |
+| `workflow-engine` | Go | 🟡 spike — step journaling, replay loop, in-memory queue; LLM steps now dispatch through model-router gRPC (engine path wired but remains dormant — no live caller yet) |
+| `runtime-manager` | Rust | 🟡 spike — K8s Job runtime, Firecracker integration seam; harness SO_PEERCRED peer auth + egress proxy injection (CI-gated, UNVERIFIED locally — no macOS linker) |
 | `gateway` | Rust | 🟡 spike — Axum, JWT auth, SSE streaming proxy, rate limiting |
 | `model-router` | Rust | ✅ — multi-provider (OpenAI, Anthropic, Google), streaming, capability-based routing, per-tenant key management, inline completions from control-plane |
-| `memory` | Go | ⬜ stub |
+| `memory` | Go | ⬜ stub — memory is served over REST by the control-plane (`/v1/memory/*`, `/v1/people/*`); no gRPC MemoryService (see ADR 0013) |
 | `notifier` | Go | ⬜ stub |
-| `billing` | Go | ⬜ stub |
-| `scheduler` | Go | ⬜ stub |
+| `billing` | Go | 🟡 spike — `billing.proto` + `BillingServiceServer` registered on gRPC; `EmitUsage`/`CheckBudget`/`GetUsage`/`SetBudget` wired; see ADR 0013 |
+| `scheduler` | Go | 🟡 spike — `scheduler.proto` + `SchedulerServiceServer` registered on gRPC; `RegisterSchedule`/`ListSchedules`/`DeleteSchedule`/`Trigger` wired; creates runs via control-plane RunService; see ADR 0013 |
+| `surface-gateway` | Rust | 🟡 spike — real tenant resolution (LANTERN_TENANT_ID) replacing platform IDs; rejects unknown installs |
 
 ## Surface gateway
 
@@ -78,8 +81,8 @@
 
 | Package | Status |
 |---|---|
-| `sdk-ts` | 🟡 spike — `agent()`, `step()`, `step.map`, streaming |
-| `sdk-python` | ⬜ stub |
+| `sdk-ts` | ✅ — `agent()`, `step()`, `step.map`, streaming; 24/24 vitest green |
+| `sdk-python` | 🟡 spike — management namespaces at parity with sdk-go (agents, runs, sessions, connectors, budgets, evals, experiments, marketplace, MCP, receipts, feedback, rehearsals); 66 tests green; `AgentContext` / durable `step()` runtime still stubs (`NotImplementedError`); install from repo, not yet published to PyPI |
 | `sdk-go` | ⬜ stub |
 | `cli` (Go) | ✅ — `init`, `build`, `deploy`, `run`, `logs`, `replay` commands |
 | `proto` | ✅ — agents.proto, runs.proto, events.proto, models.proto, engine.proto |
@@ -90,7 +93,7 @@
 
 | App | Status |
 |---|---|
-| `web` (Next.js dashboard) | ✅ — agents CRUD, agent detail (settings, versions, deployments, runs), runs list + detail with event stream, playground with live LLM streaming, settings (API keys, LLM providers, team, billing), connectors, surfaces, Google OAuth login, demo mode fallback |
+| `web` (Next.js dashboard) | ✅ — agents CRUD, agent detail, runs + event stream, playground, settings, connectors, surfaces, Google OAuth; auth JWT now HttpOnly cookie (server-side); `/runtime` and `/deployments` render real EmptyState (no fake demo data); bridge tokens proxied server-side (not in client bundle) |
 | `docs-site` | 🟡 spike — Nextra-style scaffold |
 | `landing` (YC-style) | ✅ — landing page with feature sections, pricing, pitch deck |
 
@@ -132,10 +135,17 @@
 | Item | Status |
 |---|---|
 | Unit (Go/Rust/TS) | 🟡 spike — at least one per service/package |
+| Control-plane handler tests (DB-backed) | ✅ — 24+ handler tests covering auth (JWT, expiry, no-enumeration), sessions (lifecycle + cross-tenant isolation), connectors (credential round-trip + cross-tenant isolation), RLS catalog gate, A2A tenant isolation, runs+stream |
+| bridge-core (TS) | ✅ — 613 tests green (node:test + tsx), in CI (`make test-ts`) |
+| runtime-scheduler (Go) | ✅ — full suite in `make test-go` (CGO off) |
+| Python SDK | 🟡 CI-only — 66 pytest tests pass in CI; pytest not installed on dev host |
+| gRPC auth (grpcauth) | ✅ — 7/7 green |
+| billing + scheduler gRPC bufconn smoke tests | ✅ — green in CI |
 | Integration (Testcontainers) | ⬜ stub |
 | E2E API (k6) | ⬜ stub |
 | E2E web (Playwright) | ⬜ stub |
-| Security: SAST (Semgrep, gosec, cargo-audit) | ⬜ CI config only |
+| Security vuln gate (govulncheck / cargo-audit / npm audit) | ✅ — CI `vuln` green |
+| Security: SAST (Semgrep, gosec) | ⬜ CI config only |
 | Security: DAST (OWASP ZAP) | ⬜ CI config only |
 | Security: image scan (Trivy) | ⬜ CI config only |
 | Fuzz harnesses (sandbox boundary) | ⬜ stub |
