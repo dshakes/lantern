@@ -36,7 +36,10 @@ type Engine struct {
 // NewEngine creates a new Engine instance. modelClient is the model-router
 // gRPC client used by llm_call steps; it may be nil when no model-router
 // address is configured, in which case llm_call steps fail with a typed error.
-func NewEngine(pool *pgxpool.Pool, rdb *redis.Client, logger *zap.Logger, workerCount int, modelClient lanternv1.ModelServiceClient) *Engine {
+// runtimeClient is the runtime-manager gRPC client used by tool_call steps; it
+// may be nil when no runtime-manager address is configured, in which case
+// tool_call steps fail with a typed error.
+func NewEngine(pool *pgxpool.Pool, rdb *redis.Client, logger *zap.Logger, workerCount int, modelClient lanternv1.ModelServiceClient, runtimeClient lanternv1.RuntimeManagerClient) *Engine {
 	eng := &Engine{
 		pool:    pool,
 		redis:   rdb,
@@ -46,7 +49,7 @@ func NewEngine(pool *pgxpool.Pool, rdb *redis.Client, logger *zap.Logger, worker
 	}
 
 	eng.streamer = NewEventStreamer(rdb, logger)
-	eng.executor = NewStepExecutor(pool, eng.streamer, logger, modelClient)
+	eng.executor = NewStepExecutor(pool, eng.streamer, logger, modelClient, runtimeClient)
 	eng.scheduler = NewScheduler(pool, logger, eng.dispatchRun)
 
 	return eng

@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
@@ -21,10 +23,11 @@ import (
 // The step fails honestly rather than returning a fabricated completion.
 var ErrModelRouterUnavailable = errors.New("model router not configured (set LANTERN_MODEL_ROUTER_ADDR)")
 
-// ErrToolDispatchUnavailable is returned by a tool_call step because the
-// runtime-manager gRPC contract (lantern.v1.RuntimeManager) does not yet expose
-// a single-tool execution RPC. See the package docs / task report.
-var ErrToolDispatchUnavailable = errors.New("tool dispatch not available: runtime-manager has no tool-execution RPC")
+// ErrRuntimeManagerUnavailable is returned by a tool_call step when the engine
+// was started without a configured runtime-manager address (no
+// RuntimeManagerClient). The step fails honestly rather than fabricating a
+// tool result.
+var ErrRuntimeManagerUnavailable = errors.New("runtime manager not configured (set LANTERN_RUNTIME_MANAGER_ADDR)")
 
 // StepPayload is the decoded payload from a step request. The Kind field
 // determines what the step does (llm_call, tool_call, sleep, signal, etc.)
@@ -47,20 +50,24 @@ type StepPayload struct {
 // configured model-router address — in that case LLM steps return a typed
 // error rather than a fabricated result.
 type StepExecutor struct {
-	pool        *pgxpool.Pool
-	streamer    *EventStreamer
-	logger      *zap.Logger
-	modelClient lanternv1.ModelServiceClient
+	pool          *pgxpool.Pool
+	streamer      *EventStreamer
+	logger        *zap.Logger
+	modelClient   lanternv1.ModelServiceClient
+	runtimeClient lanternv1.RuntimeManagerClient
 }
 
 // NewStepExecutor creates a new StepExecutor. modelClient may be nil; LLM steps
 // then return a typed ErrModelRouterUnavailable instead of executing.
-func NewStepExecutor(pool *pgxpool.Pool, streamer *EventStreamer, logger *zap.Logger, modelClient lanternv1.ModelServiceClient) *StepExecutor {
+// runtimeClient may be nil; tool_call steps then return a typed
+// ErrRuntimeManagerUnavailable instead of executing.
+func NewStepExecutor(pool *pgxpool.Pool, streamer *EventStreamer, logger *zap.Logger, modelClient lanternv1.ModelServiceClient, runtimeClient lanternv1.RuntimeManagerClient) *StepExecutor {
 	return &StepExecutor{
-		pool:        pool,
-		streamer:    streamer,
-		logger:      logger.Named("step_executor"),
-		modelClient: modelClient,
+		pool:          pool,
+		streamer:      streamer,
+		logger:        logger.Named("step_executor"),
+		modelClient:   modelClient,
+		runtimeClient: runtimeClient,
 	}
 }
 
@@ -316,15 +323,26 @@ func (se *StepExecutor) executeLLMCall(ctx context.Context, state *RunState, ste
 	return json.Marshal(result)
 }
 
-// executeToolCall invokes a tool within the runtime sandbox. All tool execution
-// happens inside a microVM (architectural invariant #5).
+// toolCallPayload is the decoded payload for a tool_call step. tool_name is the
+// tool to invoke against the run's workload; arguments is the structured
+// argument object (forwarded verbatim as a protobuf Struct); vm_id optionally
+// pins the target VM when the caller already knows it (the runtime manager
+// otherwise resolves the workload from run_id).
+type toolCallPayload struct {
+	ToolName  string          `json:"tool_name"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	VMID      string          `json:"vm_id,omitempty"`
+}
+
+// executeToolCall invokes a single named tool within the runtime sandbox. All
+// tool execution happens inside a microVM (architectural invariant #5), so the
+// engine dispatches to RuntimeManager.ExecTool rather than running anything
+// in-process. The idempotency key (run_id:step_id:attempt) is forwarded so a
+// retried tool side-effect de-duplicates (invariant #8).
 //
-// NOTE: the runtime-manager gRPC surface (lantern.v1.RuntimeManager) exposes
-// only Spawn/Stop/Logs/Exec/Stats/Snapshot — there is no clean tool-execution
-// RPC to dispatch a single tool_call against a run's microVM. Rather than
-// fabricate a success string, this returns a typed ErrToolDispatchUnavailable
-// so the step fails honestly and the gap is visible. Wiring this requires a
-// tool-execution RPC on the runtime-manager contract (see report).
+// The runtime manager returns a typed ToolStatus: OK maps to the step output,
+// ERROR and UNAVAILABLE both fail the step with the manager's detail so the gap
+// (or the tool's own failure) is visible rather than fabricated.
 func (se *StepExecutor) executeToolCall(ctx context.Context, state *RunState, stepID, idempotencyKey string, data json.RawMessage) (json.RawMessage, error) {
 	se.logger.Info("executing tool_call step",
 		zap.String("run_id", state.RunID),
@@ -332,15 +350,71 @@ func (se *StepExecutor) executeToolCall(ctx context.Context, state *RunState, st
 		zap.String("idempotency_key", idempotencyKey),
 	)
 
-	var req struct {
-		ToolName  string          `json:"tool_name"`
-		Arguments json.RawMessage `json:"arguments"`
+	if se.runtimeClient == nil {
+		return nil, ErrRuntimeManagerUnavailable
 	}
+
+	var req toolCallPayload
 	if err := json.Unmarshal(data, &req); err != nil {
 		return nil, fmt.Errorf("invalid tool_call payload: %w", err)
 	}
+	if req.ToolName == "" {
+		return nil, fmt.Errorf("invalid tool_call payload: tool_name is required")
+	}
 
-	return nil, fmt.Errorf("tool %q: %w", req.ToolName, ErrToolDispatchUnavailable)
+	// Decode the structured arguments into a protobuf Struct. An absent or null
+	// arguments object is fine (some tools take no args).
+	var args *structpb.Struct
+	if len(req.Arguments) > 0 {
+		var argMap map[string]any
+		if err := json.Unmarshal(req.Arguments, &argMap); err != nil {
+			return nil, fmt.Errorf("invalid tool_call arguments: %w", err)
+		}
+		if argMap != nil {
+			s, err := structpb.NewStruct(argMap)
+			if err != nil {
+				return nil, fmt.Errorf("encode tool_call arguments: %w", err)
+			}
+			args = s
+		}
+	}
+
+	execReq := &lanternv1.ExecToolRequest{
+		VmId:           req.VMID,
+		RunId:          state.RunID,
+		StepId:         stepID,
+		ToolName:       req.ToolName,
+		Args:           args,
+		IdempotencyKey: idempotencyKey,
+	}
+
+	// Forward the step's remaining deadline (set from StepPayload.TimeoutSec) so
+	// the manager can cap the in-VM tool invocation to the same budget.
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 {
+			execReq.Timeout = durationpb.New(remaining)
+		}
+	}
+
+	resp, err := se.runtimeClient.ExecTool(ctx, execReq)
+	if err != nil {
+		return nil, fmt.Errorf("runtime-manager ExecTool (tool %q): %w", req.ToolName, err)
+	}
+
+	switch resp.GetStatus() {
+	case lanternv1.ToolStatus_TOOL_STATUS_OK:
+		result := map[string]any{
+			"tool_name": req.ToolName,
+			"result":    resp.GetResult().AsMap(),
+		}
+		return json.Marshal(result)
+	case lanternv1.ToolStatus_TOOL_STATUS_ERROR:
+		return nil, fmt.Errorf("tool %q failed: %s", req.ToolName, resp.GetError())
+	case lanternv1.ToolStatus_TOOL_STATUS_UNAVAILABLE:
+		return nil, fmt.Errorf("tool %q unavailable: %s: %w", req.ToolName, resp.GetError(), ErrRuntimeManagerUnavailable)
+	default:
+		return nil, fmt.Errorf("tool %q: unexpected runtime status %v", req.ToolName, resp.GetStatus())
+	}
 }
 
 // capabilityFromString maps a capability selector string (as used by the SDK,

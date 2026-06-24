@@ -91,8 +91,28 @@ func main() {
 		logger.Warn("LANTERN_MODEL_ROUTER_ADDR unset — llm_call steps will fail with a typed error")
 	}
 
+	// --- Runtime manager client ---
+	// Tool execution happens inside a microVM (invariant #5): tool_call steps
+	// dispatch to RuntimeManager.ExecTool. When the address is unset the client
+	// stays nil and tool_call steps fail with a typed error rather than
+	// fabricating a tool result.
+	var runtimeClient lanternv1.RuntimeManagerClient
+	if cfg.RuntimeManagerAddr != "" {
+		conn, err := grpc.NewClient(cfg.RuntimeManagerAddr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			logger.Fatal("failed to dial runtime manager", zap.String("addr", cfg.RuntimeManagerAddr), zap.Error(err))
+		}
+		defer conn.Close() //nolint:errcheck
+		runtimeClient = lanternv1.NewRuntimeManagerClient(conn)
+		logger.Info("runtime manager client configured", zap.String("addr", cfg.RuntimeManagerAddr))
+	} else {
+		logger.Warn("LANTERN_RUNTIME_MANAGER_ADDR unset — tool_call steps will fail with a typed error")
+	}
+
 	// --- Engine ---
-	eng := engine.NewEngine(pool, rdb, logger, cfg.Workers, modelClient)
+	eng := engine.NewEngine(pool, rdb, logger, cfg.Workers, modelClient, runtimeClient)
 	eng.Start(ctx)
 
 	// --- Server struct ---
@@ -206,12 +226,13 @@ func main() {
 
 // config holds values read from environment variables.
 type config struct {
-	DatabaseURL     string
-	RedisURL        string
-	ListenAddr      string
-	LogLevel        string
-	Workers         int
-	ModelRouterAddr string
+	DatabaseURL        string
+	RedisURL           string
+	ListenAddr         string
+	LogLevel           string
+	Workers            int
+	ModelRouterAddr    string
+	RuntimeManagerAddr string
 }
 
 func loadConfig() config {
@@ -221,12 +242,13 @@ func loadConfig() config {
 	}
 
 	return config{
-		DatabaseURL:     envOrDefault("DATABASE_URL", "postgres://localhost:5432/lantern?sslmode=disable"),
-		RedisURL:        envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
-		ListenAddr:      envOrDefault("LISTEN_ADDR", ":50052"),
-		LogLevel:        envOrDefault("LOG_LEVEL", "info"),
-		Workers:         workers,
-		ModelRouterAddr: envOrDefault("LANTERN_MODEL_ROUTER_ADDR", "model-router:50053"),
+		DatabaseURL:        envOrDefault("DATABASE_URL", "postgres://localhost:5432/lantern?sslmode=disable"),
+		RedisURL:           envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
+		ListenAddr:         envOrDefault("LISTEN_ADDR", ":50052"),
+		LogLevel:           envOrDefault("LOG_LEVEL", "info"),
+		Workers:            workers,
+		ModelRouterAddr:    envOrDefault("LANTERN_MODEL_ROUTER_ADDR", "model-router:50053"),
+		RuntimeManagerAddr: envOrDefault("LANTERN_RUNTIME_MANAGER_ADDR", "runtime-manager:50054"),
 	}
 }
 

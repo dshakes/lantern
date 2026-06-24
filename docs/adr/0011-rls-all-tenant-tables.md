@@ -85,6 +85,43 @@ The exempt set is allowlisted in code, not implicit.
   **Adding a new tenant table without RLS fails this test** — the gate that keeps
   this from silently regressing.
 
+## Enforcement-on test harness + staged handler cutover (P1.1b)
+
+Cutting ~275 handler query sites over to `WithTenant` is staged by handler
+group. Each batch is proven under a **reusable enforcement-on harness** rather
+than the GUC-only simulation in `internal/db/rls_test.go`:
+
+- **Harness:** `internal/handlers/rls_integration_test.go` —
+  `newEnforcedServer(t)` builds a real `server.Server` whose `TenantPool()`
+  (`AppPool`) connects to Postgres **as the non-superuser `lantern_app` role**
+  over its own DSN, so RLS is genuinely enforced at the database for every query
+  routed through `s.srv.WithTenant`, exactly as production behaves under
+  `LANTERN_RLS_ENFORCE=1`. It runs `Migrate`, stamps a test password on the
+  `lantern_app` role (`ALTER ROLE … PASSWORD …`, the documented prod step), and
+  reuses the production `buildAppPoolConfig` logic (parse `DATABASE_URL`, swap
+  user+password, preserve all other DSN params). Skips cleanly when
+  `DATABASE_URL` is unset or the role can't be made loginable.
+  `TestRLSHarness_EnforcesOnAppPool` is a self-test that the harness actually
+  enforces (cross-tenant read returns zero) so it guards the guard.
+- **First real batch — connectors group** (cut over in P1.1b):
+  `connectors.go` (install / list / get / test / uninstall / OAuth callback),
+  `connector_auth.go` (pure helpers, no DB), and `connector_executor.go`. The
+  HTTP `Execute` path and `executeConnectorAction` route the credential read +
+  best-effort OAuth-token-refresh write through `WithTenant`;
+  `executeConnectorAction` now takes a `connectorExecQuerier` interface so a
+  `pgx.Tx` (RLS-enforced) is passed on the connectors path while not-yet-cut-over
+  callers (memory_ingest, template_prefetch, jarvis, gmail, messaging, sms,
+  tool_catalog) keep passing `srv.Pool` unchanged until their own group lands.
+  Proven by `connectors_rls_test.go`:
+  `TestRLSConnectors_SameTenant_FullLifecycle` (owner still installs/lists/gets/
+  uninstalls — rows returned, not zero) and `TestRLSConnectors_CrossTenant_Blocked`
+  (tenant B sees zero / can't act).
+
+**Staged remainder** (each cut over under the same harness, one group per batch):
+identity/people/memory · voice/runtime · evals/experiments/budgets ·
+surfaces/schedules/deployments/api_keys · whatsapp/feedback/receipts/takeover.
+Enforcement (`LANTERN_RLS_ENFORCE=1`) is flipped only after the last group lands.
+
 ## Consequences
 
 - A future tenant table must either ship an RLS policy in its migration or be
@@ -107,3 +144,8 @@ The exempt set is allowlisted in code, not implicit.
    visibility on the first cutover table under the `lantern_app` role.
 4. The session handler tests stay green — same-tenant callers see no behaviour
    change after the `sessions.go` cutover.
+5. Per cutover batch: `newEnforcedServer` harness self-test
+   (`TestRLSHarness_EnforcesOnAppPool`) + that group's enforcement-on tests prove
+   same-tenant reads/writes still return rows AND cross-tenant is blocked, and the
+   full `internal/handlers` package stays green. Connectors batch:
+   `TestRLSConnectors_SameTenant_FullLifecycle` + `TestRLSConnectors_CrossTenant_Blocked`.
