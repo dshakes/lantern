@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 )
@@ -84,7 +86,7 @@ func TestExecuteLLMCall_BuildsRequestAndMapsResponse(t *testing.T) {
 	client, cleanup := newFakeModelClient(t, fake)
 	defer cleanup()
 
-	se := NewStepExecutor(nil, nil, zap.NewNop(), client)
+	se := NewStepExecutor(nil, nil, zap.NewNop(), client, nil)
 	state := NewRunState("run-42", "tenant-99", "v3")
 	idempotencyKey := "run-42:step-7:1"
 
@@ -171,7 +173,7 @@ func TestExecuteLLMCall_ExplicitMessages(t *testing.T) {
 	client, cleanup := newFakeModelClient(t, fake)
 	defer cleanup()
 
-	se := NewStepExecutor(nil, nil, zap.NewNop(), client)
+	se := NewStepExecutor(nil, nil, zap.NewNop(), client, nil)
 	state := NewRunState("run-1", "tenant-1", "v1")
 
 	data := json.RawMessage(`{
@@ -201,7 +203,7 @@ func TestExecuteLLMCall_ExplicitMessages(t *testing.T) {
 // TestExecuteLLMCall_NilClient verifies that with no model-router client the
 // step returns the typed ErrModelRouterUnavailable instead of a fake result.
 func TestExecuteLLMCall_NilClient(t *testing.T) {
-	se := NewStepExecutor(nil, nil, zap.NewNop(), nil)
+	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, nil)
 	state := NewRunState("run-1", "tenant-1", "v1")
 
 	_, err := se.executeLLMCall(context.Background(), state, "step-1", "run-1:step-1:1", json.RawMessage(`{"prompt":"hi"}`))
@@ -217,7 +219,7 @@ func TestExecuteLLMCall_NoMessages(t *testing.T) {
 	client, cleanup := newFakeModelClient(t, fake)
 	defer cleanup()
 
-	se := NewStepExecutor(nil, nil, zap.NewNop(), client)
+	se := NewStepExecutor(nil, nil, zap.NewNop(), client, nil)
 	state := NewRunState("run-1", "tenant-1", "v1")
 
 	if _, err := se.executeLLMCall(context.Background(), state, "step-1", "k", json.RawMessage(`{"capability":"auto"}`)); err == nil {
@@ -228,15 +230,208 @@ func TestExecuteLLMCall_NoMessages(t *testing.T) {
 	}
 }
 
-// TestExecuteToolCall_TypedError verifies the tool step fails honestly with the
-// typed ErrToolDispatchUnavailable rather than fabricating output.
-func TestExecuteToolCall_TypedError(t *testing.T) {
-	se := NewStepExecutor(nil, nil, zap.NewNop(), nil)
+// fakeRuntimeServer is an in-process RuntimeManager that records the last
+// ExecToolRequest and returns a canned ExecToolResponse, so the test can assert
+// the engine builds the right ExecTool request and maps the response.
+type fakeRuntimeServer struct {
+	lanternv1.UnimplementedRuntimeManagerServer
+	lastReq *lanternv1.ExecToolRequest
+	resp    *lanternv1.ExecToolResponse
+	err     error
+}
+
+func (f *fakeRuntimeServer) ExecTool(_ context.Context, req *lanternv1.ExecToolRequest) (*lanternv1.ExecToolResponse, error) {
+	f.lastReq = req
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.resp, nil
+}
+
+// newFakeRuntimeClient spins up the fake runtime manager on a bufconn listener
+// and returns a connected RuntimeManagerClient plus a cleanup func.
+func newFakeRuntimeClient(t *testing.T, fake *fakeRuntimeServer) (lanternv1.RuntimeManagerClient, func()) {
+	t.Helper()
+
+	lis := bufconn.Listen(1024 * 1024)
+	srv := grpc.NewServer()
+	lanternv1.RegisterRuntimeManagerServer(srv, fake)
+
+	go func() { _ = srv.Serve(lis) }()
+
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("grpc.NewClient: %v", err)
+	}
+
+	cleanup := func() {
+		_ = conn.Close()
+		srv.Stop()
+		_ = lis.Close()
+	}
+	return lanternv1.NewRuntimeManagerClient(conn), cleanup
+}
+
+// TestExecuteToolCall_BuildsRequestAndMapsResult verifies a tool_call step
+// dispatches to RuntimeManager.ExecTool: the request carries the tool name,
+// structured args, run/step identity, and idempotency key; and an OK response's
+// structured result is mapped into the step output.
+func TestExecuteToolCall_BuildsRequestAndMapsResult(t *testing.T) {
+	result, err := structpb.NewStruct(map[string]any{"matches": float64(3), "top": "lantern"})
+	if err != nil {
+		t.Fatalf("build result struct: %v", err)
+	}
+	fake := &fakeRuntimeServer{
+		resp: &lanternv1.ExecToolResponse{
+			Status: lanternv1.ToolStatus_TOOL_STATUS_OK,
+			Result: result,
+		},
+	}
+	client, cleanup := newFakeRuntimeClient(t, fake)
+	defer cleanup()
+
+	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, client)
+	state := NewRunState("run-42", "tenant-99", "v3")
+	idempotencyKey := "run-42:step-7:1"
+
+	data := json.RawMessage(`{
+		"tool_name": "web_search",
+		"vm_id": "vm-abc",
+		"arguments": {"query": "lantern runtime", "limit": 3}
+	}`)
+
+	out, err := se.executeToolCall(context.Background(), state, "step-7", idempotencyKey, data)
+	if err != nil {
+		t.Fatalf("executeToolCall: %v", err)
+	}
+
+	// --- assert the request the engine built ---
+	req := fake.lastReq
+	if req == nil {
+		t.Fatal("runtime manager received no request")
+	}
+	if req.GetToolName() != "web_search" {
+		t.Errorf("tool_name = %q, want web_search", req.GetToolName())
+	}
+	if req.GetVmId() != "vm-abc" {
+		t.Errorf("vm_id = %q, want vm-abc", req.GetVmId())
+	}
+	if req.GetRunId() != "run-42" {
+		t.Errorf("run_id = %q, want run-42", req.GetRunId())
+	}
+	if req.GetStepId() != "step-7" {
+		t.Errorf("step_id = %q, want step-7", req.GetStepId())
+	}
+	if req.GetIdempotencyKey() != idempotencyKey {
+		t.Errorf("idempotency_key = %q, want %q", req.GetIdempotencyKey(), idempotencyKey)
+	}
+	gotArgs := req.GetArgs().AsMap()
+	if gotArgs["query"] != "lantern runtime" {
+		t.Errorf("args[query] = %v, want 'lantern runtime'", gotArgs["query"])
+	}
+	if gotArgs["limit"] != float64(3) {
+		t.Errorf("args[limit] = %v, want 3", gotArgs["limit"])
+	}
+
+	// --- assert the response maps into the step output ---
+	var mapped struct {
+		ToolName string         `json:"tool_name"`
+		Result   map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(out, &mapped); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	if mapped.ToolName != "web_search" {
+		t.Errorf("tool_name = %q", mapped.ToolName)
+	}
+	if mapped.Result["top"] != "lantern" {
+		t.Errorf("result[top] = %v, want lantern", mapped.Result["top"])
+	}
+	if mapped.Result["matches"] != float64(3) {
+		t.Errorf("result[matches] = %v, want 3", mapped.Result["matches"])
+	}
+}
+
+// TestExecuteToolCall_NilClient verifies that with no runtime-manager client the
+// step returns the typed ErrRuntimeManagerUnavailable instead of fabricating a
+// tool result.
+func TestExecuteToolCall_NilClient(t *testing.T) {
+	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, nil)
 	state := NewRunState("run-1", "tenant-1", "v1")
 
 	_, err := se.executeToolCall(context.Background(), state, "step-1", "k", json.RawMessage(`{"tool_name":"search"}`))
-	if !errors.Is(err, ErrToolDispatchUnavailable) {
-		t.Fatalf("err = %v, want ErrToolDispatchUnavailable", err)
+	if !errors.Is(err, ErrRuntimeManagerUnavailable) {
+		t.Fatalf("err = %v, want ErrRuntimeManagerUnavailable", err)
+	}
+}
+
+// TestExecuteToolCall_ErrorStatus verifies a TOOL_STATUS_ERROR response fails
+// the step with the manager's detail rather than returning a result.
+func TestExecuteToolCall_ErrorStatus(t *testing.T) {
+	fake := &fakeRuntimeServer{
+		resp: &lanternv1.ExecToolResponse{
+			Status: lanternv1.ToolStatus_TOOL_STATUS_ERROR,
+			Error:  "rate limited by upstream",
+		},
+	}
+	client, cleanup := newFakeRuntimeClient(t, fake)
+	defer cleanup()
+
+	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, client)
+	state := NewRunState("run-1", "tenant-1", "v1")
+
+	_, err := se.executeToolCall(context.Background(), state, "step-1", "run-1:step-1:1", json.RawMessage(`{"tool_name":"search"}`))
+	if err == nil {
+		t.Fatal("expected an error for TOOL_STATUS_ERROR")
+	}
+	if !strings.Contains(err.Error(), "rate limited by upstream") {
+		t.Errorf("err = %v, want it to carry the manager detail", err)
+	}
+}
+
+// TestExecuteToolCall_UnavailableStatus verifies a TOOL_STATUS_UNAVAILABLE
+// response (tool execution not wired in the VM yet) fails honestly and wraps the
+// typed ErrRuntimeManagerUnavailable so callers can detect the gap.
+func TestExecuteToolCall_UnavailableStatus(t *testing.T) {
+	fake := &fakeRuntimeServer{
+		resp: &lanternv1.ExecToolResponse{
+			Status: lanternv1.ToolStatus_TOOL_STATUS_UNAVAILABLE,
+			Error:  "in-VM tool execution not yet wired",
+		},
+	}
+	client, cleanup := newFakeRuntimeClient(t, fake)
+	defer cleanup()
+
+	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, client)
+	state := NewRunState("run-1", "tenant-1", "v1")
+
+	_, err := se.executeToolCall(context.Background(), state, "step-1", "run-1:step-1:1", json.RawMessage(`{"tool_name":"search"}`))
+	if !errors.Is(err, ErrRuntimeManagerUnavailable) {
+		t.Fatalf("err = %v, want it to wrap ErrRuntimeManagerUnavailable", err)
+	}
+}
+
+// TestExecuteToolCall_MissingToolName verifies a payload without a tool name is
+// rejected before any RPC is made.
+func TestExecuteToolCall_MissingToolName(t *testing.T) {
+	fake := &fakeRuntimeServer{resp: &lanternv1.ExecToolResponse{Status: lanternv1.ToolStatus_TOOL_STATUS_OK}}
+	client, cleanup := newFakeRuntimeClient(t, fake)
+	defer cleanup()
+
+	se := NewStepExecutor(nil, nil, zap.NewNop(), nil, client)
+	state := NewRunState("run-1", "tenant-1", "v1")
+
+	if _, err := se.executeToolCall(context.Background(), state, "step-1", "k", json.RawMessage(`{"arguments":{"x":1}}`)); err == nil {
+		t.Fatal("expected error for payload with no tool_name")
+	}
+	if fake.lastReq != nil {
+		t.Error("runtime manager should not have been called for a payload with no tool_name")
 	}
 }
 

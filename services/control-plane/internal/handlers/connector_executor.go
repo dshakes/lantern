@@ -15,9 +15,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
@@ -26,6 +27,17 @@ import (
 // *pgxpool.Pool and pgx.Tx satisfy it.
 type credRowQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// connectorExecQuerier is the subset of pgx that executeConnectorAction needs:
+// a tenant-scoped credential read (QueryRow) plus a best-effort token-refresh
+// write (Exec). Both *pgxpool.Pool and pgx.Tx satisfy it, which lets the HTTP
+// Execute handler route the call through s.srv.WithTenant (an RLS-enforced tx)
+// while non-connector callers that haven't been cut over to WithTenant yet keep
+// passing srv.Pool unchanged.
+type connectorExecQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 // loadDecryptedConfig fetches connector_installs.config for an install,
@@ -98,7 +110,9 @@ func (h *ConnectorExecutor) Execute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := claims.TenantID
-	ctx := r.Context()
+	// Inject the tenant into the context so WithTenant scopes the credential
+	// read (and best-effort token-refresh write) under RLS.
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 
 	connectorID := r.PathValue("connectorId")
 	if connectorID == "" {
@@ -140,8 +154,27 @@ func (h *ConnectorExecutor) Execute(w http.ResponseWriter, r *http.Request) {
 
 	// Delegate to the shared dispatcher so the in-process tool-call loop
 	// (sessions / completions) can reuse the same credential-loading,
-	// token-refresh, and execution paths.
-	result, execErr := executeConnectorAction(ctx, h.srv.Pool, tenantID, connectorID, action, params)
+	// token-refresh, and execution paths. Route through WithTenant so the
+	// credential read runs as the tenant under RLS (the tx is passed as the
+	// querier). execErr (a downstream API / not-installed error) is carried out
+	// of the closure as data; returning it rolls back the unneeded best-effort
+	// token-refresh write, which is acceptable — it will be refreshed next call.
+	var result any
+	var execErr error
+	if txErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		result, execErr = executeConnectorAction(ctx, tx, tenantID, connectorID, action, params)
+		return execErr
+	}); txErr != nil && execErr == nil {
+		// A WithTenant infrastructure failure (begin / set_config / commit) with
+		// no execErr — surface it as a 500 rather than masking it as a 502.
+		h.logger().Error("connector execute tenant tx failed",
+			zap.String("connector", connectorID),
+			zap.String("action", action),
+			zap.Error(txErr),
+		)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		return
+	}
 	if execErr != nil {
 		// Map the not-installed sentinel to 404; everything else is 502.
 		if isConnectorNotInstalled(execErr) {
@@ -190,9 +223,13 @@ func isConnectorNotInstalled(err error) bool {
 // refreshes OAuth tokens when possible, and dispatches to the right per-
 // connector executor function. Used by both the HTTP `/v1/connectors/.../execute`
 // endpoint and by the LLM tool-call loop in sessions.go.
+// q is a tenant-scoped querier: pass a pgx.Tx from s.srv.WithTenant when the
+// caller is RLS-cut-over (the connectors HTTP path), or srv.Pool for callers
+// that haven't been cut over yet. The function self-scopes every query by
+// tenant_id either way, so behaviour is identical for same-tenant callers.
 func executeConnectorAction(
 	ctx context.Context,
-	pool *pgxpool.Pool,
+	q connectorExecQuerier,
 	tenantID, connectorID, action string,
 	params map[string]any,
 ) (any, error) {
@@ -202,7 +239,7 @@ func executeConnectorAction(
 
 	var configJSON []byte
 	var oauthTokenJSON []byte
-	err := pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT config, oauth_token_encrypted
 		FROM connector_installs
 		WHERE tenant_id = $1 AND connector_id = $2 AND status = 'connected'
@@ -245,7 +282,7 @@ func executeConnectorAction(
 				"token_type":    "Bearer",
 			})
 			if encOAuth, encErr := secrets.Encrypt(updatedOAuth); encErr == nil {
-				_, _ = pool.Exec(ctx,
+				_, _ = q.Exec(ctx,
 					`UPDATE connector_installs SET oauth_token_encrypted = $1 WHERE tenant_id = $2 AND connector_id = $3`,
 					string(encOAuth), tenantID, connectorID,
 				)

@@ -231,6 +231,8 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 
 Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until `LANTERN_RLS_ENFORCE=1` (the privileged `lantern` superuser pool bypasses RLS; `lantern_app` is subject to it). Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
 
+**Handler cutover to `WithTenant` is staged by group.** The reusable enforcement-on test harness is `internal/handlers/rls_integration_test.go` — `newEnforcedServer(t)` builds a `Server` whose `TenantPool()` connects as the non-superuser `lantern_app` role over its own DSN, so RLS is *genuinely* enforced (not GUC-simulated like `internal/db/rls_test.go`). Every future cutover batch reuses this harness to prove (a) same-tenant reads/writes still return rows and (b) cross-tenant is blocked. **Cut over so far:** sessions (P1.1), and the **connectors group** (P1.1b: `connectors.go`, `connector_auth.go`, `connector_executor.go` — proven by `connectors_rls_test.go`). **Staged remainder:** identity/people/memory · voice/runtime · evals/experiments/budgets · surfaces/schedules/deployments/api_keys · whatsapp/feedback/receipts/takeover. Shared helpers that take a raw `*Pool` and self-scope by `tenant_id` (e.g. `executeConnectorAction` called from non-connector handlers) stay on `Pool` with a `// rls-exempt: <reason>` comment until their own group lands. Run a batch's tests with `DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` (the harness sets the `lantern_app` password itself via `ALTER ROLE`).
+
 A dev tenant (`slug: dev`) and admin user (`admin@lantern.dev` / `lantern`) are seeded on startup.
 
 ---
@@ -530,13 +532,22 @@ returning placeholder strings:
   `LANTERN_MODEL_ROUTER_ADDR` (default `model-router:50053`). When unset,
   llm_call steps fail with the typed `ErrModelRouterUnavailable` rather than
   a fabricated completion.
-- **`tool_call` steps** are intended to dispatch to the **runtime-manager**
-  (microVM tool execution, invariant #5). The current
-  `lantern.v1.RuntimeManager` gRPC contract exposes only
-  Spawn/Stop/Logs/Exec/Stats/Snapshot — there is **no single-tool execution
-  RPC** — so the step returns the typed `ErrToolDispatchUnavailable` instead
-  of faking output. Wiring it requires adding a tool-execution RPC to the
-  runtime-manager proto.
+- **`tool_call` steps** dispatch to the **runtime-manager** via
+  `RuntimeManager.ExecTool` (microVM tool execution, invariant #5; see ADR
+  0015). The step builds an `ExecToolRequest` carrying `tool_name`, structured
+  `args` (`google.protobuf.Struct`), `run_id`/`step_id`/optional `vm_id`, the
+  step's remaining timeout, and the idempotency key `run_id:step_id:attempt`
+  (invariant #8). The response's typed `ToolStatus` is mapped: `OK` → step
+  output `{tool_name, result}`; `ERROR` → step failure with the manager's
+  detail; `UNAVAILABLE` → step failure wrapping `ErrRuntimeManagerUnavailable`.
+  Dial address is `LANTERN_RUNTIME_MANAGER_ADDR` (default
+  `runtime-manager:50054`); when unset, the client stays nil and tool_call
+  steps fail with the typed `ErrRuntimeManagerUnavailable` rather than faking
+  output. The runtime-manager side is honest-but-incomplete: there is no
+  in-guest tool-runner yet (the harness serves a raw `Exec` shell channel, not
+  a typed tool registry), so `exec_tool` validates the request and returns
+  `TOOL_STATUS_UNAVAILABLE` — never a fabricated success — until the in-VM
+  runner lands.
 
 ### Human takeover (W11a)
 
@@ -691,6 +702,11 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   scheduler refuses to start when this is unset (or when `LANTERN_DIALER=stub`)
   in prod because the stub logs a fake success and spawns nothing. Guard:
   `dialer.CheckManagerDialer` called from `cmd/scheduler/main.go`.
+- `LANTERN_RUNTIME_MANAGER_ADDR=runtime-manager:50054` — the
+  **workflow-engine** dials this to dispatch `tool_call` steps via
+  `RuntimeManager.ExecTool` (ADR 0015). Unset → the engine's runtime client
+  stays nil and tool_call steps fail with the typed
+  `ErrRuntimeManagerUnavailable` rather than fabricating tool output.
 - `LANTERN_NODE_ADDR_<NODE>=host:port` — explicit per-node override
   when the scheduler picks a named node and its IP isn't discoverable
   via DNS.
