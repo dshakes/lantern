@@ -33,10 +33,12 @@ import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
   agentPersonaPrompt,
   defaultQuietHours,
+  countTrailingUnanswered,
   detectBotTells,
   detectEscalation,
   greetingReply,
   inferStyle,
+  isNoReplySentinel,
   isQuietHours,
   naturalize,
   shouldRespond,
@@ -955,15 +957,18 @@ export class IMessageSession {
   // cold-start fix: a contact with no per-contact history still hears the
   // owner's actual voice. For a Telugu inbound we also pass a Telugu-only
   // subset so the reply mimics the owner's real Telangana phrasing.
-  private buildOwnerVoiceBlock(ownerName: string, teluguInbound: boolean): string {
+  private buildOwnerVoiceBlock(ownerName: string, teluguInbound: boolean, relevantTo?: string): string {
     const samples: OwnerVoiceSample[] = [];
     for (const msgs of this.ownerSentHistory.values()) {
       for (const m of msgs) samples.push({ text: m });
     }
     if (samples.length === 0) return "";
-    const general = ownerVoiceExemplars(samples, { max: 12 });
+    // relevantTo (the current inbound) ranks exemplars by keyword overlap so
+    // the few-shot is shaped like the message being answered — recency is the
+    // tie-breaker / fallback when nothing overlaps.
+    const general = ownerVoiceExemplars(samples, { max: 12, relevantTo });
     const telugu = teluguInbound
-      ? ownerVoiceExemplars(samples, { max: 8, lang: "telugu" })
+      ? ownerVoiceExemplars(samples, { max: 8, lang: "telugu", relevantTo })
       : [];
     return formatOwnerVoiceBlock(ownerName, general, telugu);
   }
@@ -3119,14 +3124,18 @@ export class IMessageSession {
     // dislike memory, live presence, episodic memory, cross-contact
     // context. Each best-effort; empty block when data unavailable
     // (persona falls back to prior behavior).
-    const contactStyleBlock = !isGroup ? styleBlockFor(ownerSamples) : "";
+    // Relevance-rank the verbatim few-shot to the current inbound so the
+    // examples are SHAPED like the message being answered (cheap token
+    // overlap; recency fallback). Backward-compatible — undefined relevantTo
+    // is pure recency.
+    const contactStyleBlock = !isGroup ? styleBlockFor(ownerSamples, { relevantTo: text }) : "";
     // GLOBAL owner-voice corpus — aggregate the owner's OWN sent messages
     // across ALL contacts so even a brand-new/sparse contact (no
     // per-contact fingerprint above) still mimics the owner's REAL voice
     // instead of falling back to generic rules. For a Telugu inbound, also
     // surface the owner's real Telugu phrasing (beats the BAD→GOOD dialect
     // rules — the source of broken-Telangana output). Cheap pure function.
-    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu");
+    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu", text);
     // Cross-contact recall — episodes from other chats (self-chat
     // especially) that mention this contact by first name. Surfaces
     // "Sujith was here this weekend" when Sujith messages later.
@@ -3235,6 +3244,11 @@ export class IMessageSession {
       episodesBlock,
       relatedBlock,
       lowContext,
+      // Unanswered-backlog hint — how many messages this contact sent in a
+      // row without a reply (trailing "them:" run in the chronological chat.db
+      // transcript). Tells the model to catch up on the whole backlog, not
+      // just the last line. 0/1 → no hint.
+      unansweredBacklog: isGroup ? 0 : countTrailingUnanswered(recentTranscript),
       // Structured owner facts (ground truth) so the bot never denies a
       // known fact ("happy anniversary" gets a truthful reply).
       ownerFacts: this.ownerProfileStore.factsBlock(),
@@ -3306,12 +3320,21 @@ export class IMessageSession {
 
     // Call the agent. LLM keys + budgets live in the control-plane.
     // turnHint pins a model FLOOR so the owner's outgoing texts are never
-    // drafted by the weakest (trivial-tier) model — "balanced" = Sonnet by
-    // default; set LANTERN_REPLY_MODEL_TIER=hard for Opus-grade replies.
+    // drafted by the weakest (trivial-tier) model. QUALITY LEVER: defaults to
+    // "hard" (frontier tier) so contact replies get the best model — set
+    // LANTERN_REPLY_MODEL_TIER=balanced to trade quality for cost.
+    const replyTier = process.env.LANTERN_REPLY_MODEL_TIER || "hard";
     const userText = isGroup ? `[group message]\n${text}` : text;
-    const draft = await this.agent.respondTo(row.handle, userText, systemHint, {
-      turnHint: process.env.LANTERN_REPLY_MODEL_TIER || "balanced",
+    let draft = await this.agent.respondTo(row.handle, userText, systemHint, {
+      turnHint: replyTier,
     });
+    // ABSTAIN SENTINEL — the model emitted [[NO_REPLY]] to signal "no reply
+    // warranted". Treat as a deliberate silence so decision-prose never
+    // reaches the contact. Deterministic; no send.
+    if (draft && isNoReplySentinel(draft)) {
+      this.logger.debug({ from: row.handle }, "model abstained ([[NO_REPLY]]) — staying silent");
+      return;
+    }
     if (!draft) {
       // Don't vanish on a greeting just because the LLM round-trip returned
       // nothing — send a deterministic opener so "hi" always gets a reply.
@@ -3339,30 +3362,58 @@ export class IMessageSession {
     // a draft trips this, we STAY SILENT rather than send fiction.
     // (Real motivation: a friend got "I can't see any text in your
     // message - try typing it out?" and asked "Is this really you?".)
-    const tellCheck = detectBotTells(draft, text, {
+    const botTellCtx = {
       contactName: isGroup ? undefined : this.contactNames.get(row.handle),
       relationship: isGroup
         ? undefined
         : this.ownerProfileStore.relationshipFor(row.handle, this.contactNames.get(row.handle)),
-      audience: isOwnerChan ? "owner" : "contact",
-    });
+      audience: (isOwnerChan ? "owner" : "contact") as "owner" | "contact",
+    };
+    let tellCheck = detectBotTells(draft, text, botTellCtx);
     if (!tellCheck.ok) {
-      this.logger.info({ from: row.handle, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft suppressed by bot-tell filter");
-      this.broadcast({
-        type: "activity",
-        data: {
-          kind: "agent_skipped",
-          summary: `draft suppressed — ${tellCheck.reason}`,
-          detail: draft.slice(0, 200),
-          jid: row.handle,
-          timestamp: Date.now(),
-        },
-      });
-      // The classic case: a stranger texts "Hi", the model replies "Hey! How
-      // can I help you?", and the customer-service guard suppresses it →
-      // silence. For a pure greeting, fall back to a human opener instead.
-      if (!isGroup) await this.sendGreetingFallback(row.handle, text, `bot-tell: ${tellCheck.reason}`);
-      return;
+      // REGENERATE-ON-BOT-TELL (not drop). The first draft tripped a tell;
+      // give the model ONE more shot with a corrective hint before falling
+      // back to silence/greeting. Catches the common case where the model
+      // narrated a capability/verdict instead of just answering.
+      this.logger.info({ from: row.handle, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft tripped bot-tell filter — regenerating once");
+      const correctiveHint =
+        systemHint +
+        `\n\n(Your previous draft was REJECTED — reason: ${tellCheck.reason}. Output ONLY the literal message text a real person would send — no meta-commentary, no capability statements ("I can't open links"), no narration that something is spam/marketing. If truly nothing warrants a reply, output ${"[[NO_REPLY]]"}.)`;
+      let retry: string | null = null;
+      try {
+        retry = await this.agent.respondTo(row.handle, userText, correctiveHint, { turnHint: replyTier });
+      } catch (err) {
+        this.logger.warn({ err, from: row.handle }, "bot-tell regeneration threw — falling back");
+      }
+      // A retry that abstains is a clean no-reply.
+      if (retry && isNoReplySentinel(retry)) {
+        this.logger.debug({ from: row.handle }, "regeneration abstained ([[NO_REPLY]]) — staying silent");
+        return;
+      }
+      const retryCheck = retry ? detectBotTells(retry, text, botTellCtx) : { ok: false, reason: "empty regeneration" };
+      if (retry && retryCheck.ok) {
+        draft = retry;
+        tellCheck = retryCheck;
+      } else {
+        // SECOND draft also failed — now fall back to silence/greeting and
+        // keep the owner heads-up so a suppressed-twice reply isn't invisible.
+        this.logger.info({ from: row.handle, reason: retryCheck.reason, draftPreview: (retry ?? draft).slice(0, 120) }, "draft suppressed by bot-tell filter (after regeneration)");
+        this.broadcast({
+          type: "activity",
+          data: {
+            kind: "agent_skipped",
+            summary: `draft suppressed — ${retryCheck.reason ?? tellCheck.reason}`,
+            detail: (retry ?? draft).slice(0, 200),
+            jid: row.handle,
+            timestamp: Date.now(),
+          },
+        });
+        // The classic case: a stranger texts "Hi", the model replies "Hey! How
+        // can I help you?", and the customer-service guard suppresses it →
+        // silence. For a pure greeting, fall back to a human opener instead.
+        if (!isGroup) await this.sendGreetingFallback(row.handle, text, `bot-tell: ${retryCheck.reason ?? tellCheck.reason}`);
+        return;
+      }
     }
 
     // CONFIDENCE GATE + VIP gate. Both route the draft to human approval
