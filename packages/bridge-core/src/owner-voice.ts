@@ -85,6 +85,33 @@ export interface OwnerVoiceOptions {
   minWords?: number;
   /** Max words so a pasted paragraph doesn't dominate (default 20). */
   maxWords?: number;
+  /** OPTIONAL: the current inbound text. When supplied, qualifying samples
+   *  are ranked by simple keyword/token overlap with this text so the
+   *  few-shot prefers exemplars SHAPED like the message being answered —
+   *  recency breaks ties and is the fallback when nothing overlaps. Cheap
+   *  (token-set intersection, no embeddings). Omit for pure-recency. */
+  relevantTo?: string;
+}
+
+// Tokenize for overlap scoring: lowercased word tokens ≥3 chars (drops
+// "i"/"to"/"a" noise) across Latin + Telugu letters. Pure + cheap.
+const RELEVANCE_STOPWORDS = new Set([
+  "the", "and", "you", "your", "for", "are", "was", "but", "not", "with",
+  "this", "that", "have", "has", "can", "will", "would", "what", "when",
+  "how", "why", "yeah", "ok", "okay", "lol", "got", "get", "out", "all",
+]);
+function relevanceTokens(s: string): Set<string> {
+  const out = new Set<string>();
+  for (const t of s.toLowerCase().split(/[^a-zఀ-౿]+/)) {
+    if (t.length >= 3 && !RELEVANCE_STOPWORDS.has(t)) out.add(t);
+  }
+  return out;
+}
+function overlapScore(queryTokens: Set<string>, sample: string): number {
+  if (queryTokens.size === 0) return 0;
+  let hits = 0;
+  for (const t of relevanceTokens(sample)) if (queryTokens.has(t)) hits++;
+  return hits;
 }
 
 /**
@@ -111,8 +138,11 @@ export function ownerVoiceExemplars(
   // dated recent message is always preferred over an undated one.
   const sorted = [...samples].sort((a, b) => (b.ts ?? -1) - (a.ts ?? -1));
 
+  // Filter + dedup once, preserving recency order. We collect the full
+  // qualifying set first so an optional relevance re-rank below can pick
+  // the BEST matches across all of them rather than just the recent head.
   const seen = new Set<string>();
-  const out: string[] = [];
+  const qualifying: string[] = [];
   for (const s of sorted) {
     const text = (s?.text ?? "").trim();
     if (!text || isBotSelfMessage(text)) continue;
@@ -124,10 +154,27 @@ export function ownerVoiceExemplars(
     // collapsing them all to one bucket would over-prune.
     if (key && seen.has(key)) continue;
     if (key) seen.add(key);
-    out.push(text);
-    if (out.length >= max) break;
+    qualifying.push(text);
   }
-  return out;
+
+  // Relevance re-rank (optional): prefer samples that share keywords with
+  // the current inbound, so the few-shot is shaped like the message being
+  // answered. Stable sort keeps recency order among equal-overlap samples
+  // (and overlap 0 everywhere ⇒ pure recency, the original behavior).
+  if (options.relevantTo && qualifying.length > 1) {
+    const q = relevanceTokens(options.relevantTo);
+    if (q.size > 0) {
+      const scored = qualifying.map((text, idx) => ({
+        text,
+        idx,
+        score: overlapScore(q, text),
+      }));
+      scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
+      return scored.slice(0, max).map((x) => x.text);
+    }
+  }
+
+  return qualifying.slice(0, max);
 }
 
 /**

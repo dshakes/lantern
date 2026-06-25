@@ -20,11 +20,13 @@ import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
   agentPersonaPrompt,
+  countTrailingUnanswered,
   defaultQuietHours,
   detectBotTells,
   detectEscalation,
   greetingReply,
   inferStyle,
+  isNoReplySentinel,
   isQuietHours,
   naturalize,
   shouldRespond,
@@ -1341,6 +1343,12 @@ export class WhatsAppSession {
   // cold. In-memory only (a fresh thread after restart is fine). Parity
   // with the iMessage bridge — keep the wording + threshold identical.
   private lastInboundTs = new Map<string, number>();
+  // Per-jid count of consecutive inbound messages from this contact since the
+  // bridge last replied to them. Incremented on each 1:1 inbound, reset to 0
+  // after the bridge sends a reply. Feeds the unanswered-backlog persona hint
+  // so the model catches up on the whole run, not just the last line.
+  // In-memory only (a fresh thread after restart is fine).
+  private unansweredInbound = new Map<string, number>();
   // A turn within this window of the previous inbound is a continuation.
   private static readonly THREAD_CONTINUATION_MS = 6 * 60 * 60 * 1000;
   // Dedup guard for the bad-feedback retry. Both 👎 (record + retry) and
@@ -1695,15 +1703,18 @@ export class WhatsAppSession {
   // per-message timestamps, so samples are undated (recency falls back to
   // map/insertion order). For a Telugu inbound we also pass a Telugu-only
   // subset so the reply mimics the owner's actual Telangana phrasing.
-  private buildOwnerVoiceBlock(ownerName: string, teluguInbound: boolean): string {
+  private buildOwnerVoiceBlock(ownerName: string, teluguInbound: boolean, relevantTo?: string): string {
     const samples: OwnerVoiceSample[] = [];
     for (const msgs of this.ownerSentHistory.values()) {
       for (const m of msgs) samples.push({ text: m });
     }
     if (samples.length === 0) return "";
-    const general = ownerVoiceExemplars(samples, { max: 12 });
+    // relevantTo (the current inbound) ranks exemplars by keyword overlap so
+    // the few-shot is shaped like the message being answered — recency is the
+    // tie-breaker / fallback when nothing overlaps.
+    const general = ownerVoiceExemplars(samples, { max: 12, relevantTo });
     const telugu = teluguInbound
-      ? ownerVoiceExemplars(samples, { max: 8, lang: "telugu" })
+      ? ownerVoiceExemplars(samples, { max: 8, lang: "telugu", relevantTo })
       : [];
     return formatOwnerVoiceBlock(ownerName, general, telugu);
   }
@@ -6795,15 +6806,18 @@ export class WhatsAppSession {
     }
     // World-class authenticity blocks. Each best-effort with empty
     // fallback so cold contacts and groups keep prior behavior.
-    const contactStyleBlock = !opts.isGroup ? styleBlockFor(ownerSamples) : "";
+    // Relevance-rank the verbatim few-shot to the current inbound so examples
+    // are SHAPED like the message being answered (cheap token overlap; recency
+    // fallback). Backward-compatible — undefined relevantTo is pure recency.
+    const contactStyleBlock = !opts.isGroup ? styleBlockFor(ownerSamples, { relevantTo: text }) : "";
     // GLOBAL owner-voice corpus — aggregate the owner's OWN sent messages
     // across ALL contacts so even a brand-new/sparse contact (no
     // per-contact fingerprint above) still mimics the owner's REAL voice
     // instead of falling back to generic rules. For a Telugu inbound, also
     // surface the owner's real Telugu phrasing (beats the BAD→GOOD dialect
     // rules — the source of the "vazthani Meeru chustha?" garbage). Cheap
-    // pure function; recomputed per reply.
-    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu");
+    // pure function; recomputed per reply. relevantTo ranks by inbound overlap.
+    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu", text);
     // Compute the sync prerequisites for the reads up front so the reads
     // themselves can be issued concurrently below.
     const senderName = opts.senderName || this.contactNames.get(from);
@@ -6923,6 +6937,14 @@ export class WhatsAppSession {
         episodesBlock,
         relatedBlock,
         lowContext,
+        // Unanswered-backlog hint — count of consecutive inbounds from this
+        // contact with no reply between them. WhatsApp's rough transcript is
+        // NOT chronologically interleaved (it lists owner-sent first, then the
+        // contact's recent inbounds), so countTrailingUnanswered would
+        // over-count here. We derive it from the contact's inbound bucket vs.
+        // the replies we've sent: inbounds-since-last-reply ≈ how far they got
+        // ahead. Conservative — only hints when clearly > 1.
+        unansweredBacklog: opts.isGroup ? 0 : this.unansweredBacklogFor(from),
         // Learning flywheel: teach the persona the owner's distilled style
         // dislikes on every reply (refreshed by the flywheel scheduler).
         styleLessonsBlock: this.styleLessonsBlock || undefined,
@@ -7027,10 +7049,12 @@ export class WhatsAppSession {
     // by the time the read delay ends, the draft is usually already
     // available so we can switch on "composing" then.
     // turnHint pins a model FLOOR so the owner's outgoing texts are never
-    // drafted by the weakest (trivial-tier) model — "balanced" = Sonnet by
-    // default; set LANTERN_REPLY_MODEL_TIER=hard for Opus-grade replies.
+    // drafted by the weakest (trivial-tier) model. QUALITY LEVER: defaults to
+    // "hard" (frontier tier) so contact replies get the best model — set
+    // LANTERN_REPLY_MODEL_TIER=balanced to trade quality for cost.
+    const replyTier = process.env.LANTERN_REPLY_MODEL_TIER || "hard";
     const draftPromise = this.agent.respondTo(from, userText, systemHint, {
-      turnHint: process.env.LANTERN_REPLY_MODEL_TIER || "balanced",
+      turnHint: replyTier,
     });
 
     // Wait for draft + naturalize, but don't block on it during the
@@ -7046,6 +7070,14 @@ export class WhatsAppSession {
       if (!opts.isGroup) {
         this.notifyOwnerOfDrop({ jid: from, reason: "I couldn't generate a reply (LLM error)", text, senderName: opts.senderName });
       }
+      return;
+    }
+
+    // ABSTAIN SENTINEL — the model emitted [[NO_REPLY]] to deliberately signal
+    // "no reply warranted". Treat as silence so decision-prose never reaches
+    // the contact. Deterministic; no send, no greeting fallback.
+    if (draft && isNoReplySentinel(draft)) {
+      this.logger.debug({ from }, "model abstained ([[NO_REPLY]]) — staying silent");
       return;
     }
 
@@ -7072,28 +7104,56 @@ export class WhatsAppSession {
     // net AND the register-aware formal-"-andi" suppressor (spares elders).
     // Suppressed drafts log to the dashboard so the owner can see what was
     // almost sent.
-    const tellCheck = detectBotTells(draft, text, {
+    const botTellCtx = {
       contactName: opts.isGroup ? undefined : (opts.senderName ?? this.contactNames.get(from)),
       relationship,
-      audience: isOwnerChan ? "owner" : "contact",
-    });
+      audience: (isOwnerChan ? "owner" : "contact") as "owner" | "contact",
+    };
+    let tellCheck = detectBotTells(draft, text, botTellCtx);
     if (!tellCheck.ok) {
-      this.logger.info({ from, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft suppressed by bot-tell filter");
-      this.broadcast({
-        type: "activity",
-        data: {
-          kind: "agent_skipped",
-          summary: `draft suppressed — ${tellCheck.reason}`,
-          detail: draft.slice(0, 200),
-          jid: from,
-          timestamp: Date.now(),
-        },
-      });
-      // The classic case: a stranger texts "Hi", the model replies "Hey! How
-      // can I help you?", and the customer-service guard suppresses it →
-      // silence. For a pure greeting, fall back to a human opener instead.
-      if (!opts.isGroup) await this.sendGreetingFallback(from, text, `bot-tell: ${tellCheck.reason}`);
-      return;
+      // REGENERATE-ON-BOT-TELL (not drop). The first draft tripped a tell;
+      // give the model ONE more shot with a corrective hint before falling
+      // back to silence/greeting. Catches the common case where the model
+      // narrated a capability/verdict instead of just answering.
+      this.logger.info({ from, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft tripped bot-tell filter — regenerating once");
+      const correctiveHint =
+        systemHint +
+        `\n\n(Your previous draft was REJECTED — reason: ${tellCheck.reason}. Output ONLY the literal message text a real person would send — no meta-commentary, no capability statements ("I can't open links"), no narration that something is spam/marketing. If truly nothing warrants a reply, output ${"[[NO_REPLY]]"}.)`;
+      let retry: string | null = null;
+      try {
+        retry = await this.agent.respondTo(from, userText, correctiveHint, { turnHint: replyTier });
+      } catch (err) {
+        this.logger.warn({ err, from }, "bot-tell regeneration threw — falling back");
+      }
+      // A retry that abstains is a clean no-reply.
+      if (retry && isNoReplySentinel(retry)) {
+        this.logger.debug({ from }, "regeneration abstained ([[NO_REPLY]]) — staying silent");
+        return;
+      }
+      const retryCheck = retry ? detectBotTells(retry, text, botTellCtx) : { ok: false, reason: "empty regeneration" };
+      if (retry && retryCheck.ok) {
+        draft = retry;
+        tellCheck = retryCheck;
+      } else {
+        // SECOND draft also failed — fall back to silence/greeting and keep
+        // the owner heads-up so a suppressed-twice reply isn't invisible.
+        this.logger.info({ from, reason: retryCheck.reason, draftPreview: (retry ?? draft).slice(0, 120) }, "draft suppressed by bot-tell filter (after regeneration)");
+        this.broadcast({
+          type: "activity",
+          data: {
+            kind: "agent_skipped",
+            summary: `draft suppressed — ${retryCheck.reason ?? tellCheck.reason}`,
+            detail: (retry ?? draft).slice(0, 200),
+            jid: from,
+            timestamp: Date.now(),
+          },
+        });
+        // The classic case: a stranger texts "Hi", the model replies "Hey! How
+        // can I help you?", and the customer-service guard suppresses it →
+        // silence. For a pure greeting, fall back to a human opener instead.
+        if (!opts.isGroup) await this.sendGreetingFallback(from, text, `bot-tell: ${retryCheck.reason ?? tellCheck.reason}`);
+        return;
+      }
     }
 
     // CONFIDENCE GATE + VIP gate. Route to human approval instead of
@@ -7458,6 +7518,8 @@ export class WhatsAppSession {
         ring.splice(0, ring.length - WhatsAppSession.RECENT_BOT_REPLIES_PER_CONTACT);
       }
       this.recentBotReplies.set(from, ring);
+      // We just answered — clear the unanswered-backlog counter for this jid.
+      this.unansweredInbound.set(from, 0);
     }
 
     // MEDIUM-confidence audit ping for non-group sends.
@@ -7575,6 +7637,19 @@ export class WhatsAppSession {
   // WhatsApp has no chat.db, so we approximate from the captured inbound
   // (them) tail; for 1:1 we also weave in the owner-sent (you) tail so
   // the model sees both voices. Best-effort + bounded; "" when empty.
+  // Best-effort unanswered-backlog count for a 1:1 contact: how many
+  // messages they've sent since the bridge last replied. WhatsApp captures
+  // inbound + owner-sent into separate per-jid rings with NO interleaving
+  // timestamps, so we can't reconstruct a precise chronological run the way
+  // the iMessage chat.db transcript allows. We approximate with the per-jid
+  // counter the inbound handler maintains (incremented on inbound, reset when
+  // the bridge sends). Returns 0 when we have no reliable signal so the
+  // persona simply gets no hint (backward-compatible). Never throws.
+  private unansweredBacklogFor(from: string): number {
+    const n = this.unansweredInbound.get(from) ?? 0;
+    return n > 1 ? n : 0;
+  }
+
   private buildRecentTranscript(from: string, isGroup?: boolean): string {
     try {
       const key = isGroup ? `group:${from}` : from;
@@ -7618,6 +7693,13 @@ export class WhatsAppSession {
     bucket.push(text);
     if (bucket.length > WhatsAppSession.INBOUND_HISTORY_PER_CONTACT) {
       bucket.splice(0, bucket.length - WhatsAppSession.INBOUND_HISTORY_PER_CONTACT);
+    }
+    // Track unanswered backlog (1:1 only) — incremented per inbound, reset to
+    // 0 once the bridge replies. Capped so a runaway thread can't grow it
+    // unbounded.
+    if (!this.isGroupJid(from)) {
+      const prev = this.unansweredInbound.get(from) ?? 0;
+      this.unansweredInbound.set(from, Math.min(prev + 1, 99));
     }
   }
 
