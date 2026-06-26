@@ -1,0 +1,29 @@
+# Docs links — PR gate that fails when a Markdown link points at a missing file
+# or a non-existent #anchor. Catches doc link-rot (e.g. ADR renumbers, dead
+# in-page anchors) before it ships. Pure Node, no install step → fast.
+#
+# Named job "docs-links" so it can be pinned as a required branch-protection check.
+
+name: "sdlc · docs-links"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-links-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  docs-links:
+    name: docs-links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Check internal documentation links
+        run: node scripts/check-docs-links.mjs

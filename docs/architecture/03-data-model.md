@@ -14,7 +14,7 @@
 | **Logs** | Loki | Structured logs | Standard |
 | **Traces** | Tempo | OTel traces | Standard |
 
-**No Kafka, no Elasticsearch, no separate vector DB, no DynamoDB, no MongoDB.** See [`adr/0005-storage-layer.md`](../adr/0005-storage-layer.md).
+**No Kafka, no Elasticsearch, no separate vector DB, no DynamoDB, no MongoDB.**
 
 ---
 

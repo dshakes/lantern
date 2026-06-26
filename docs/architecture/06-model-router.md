@@ -407,5 +407,4 @@ The agent **never names a vendor or model**. The Spectrum makes the choice, lear
 ## See also
 
 - [`07-context-management.md`](07-context-management.md) — token budgeter, summarization, cache reuse
-- [`adr/0006-spectrum-routing.md`](../adr/0006-spectrum-routing.md) — why we built the Spectrum and didn't just point at OpenRouter
-- [`adr/0011-mcp-and-a2a.md`](../adr/0011-mcp-and-a2a.md) — how the Spectrum participates in MCP/A2A flows
+- [`adr/0014-control-plane-model-router-cutover.md`](../adr/0014-control-plane-model-router-cutover.md) — why the control-plane routes LLM calls through the model-router
