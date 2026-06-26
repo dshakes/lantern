@@ -26,10 +26,10 @@ import {
 } from "./escalation-detector.ts";
 import { formatRelatedBlock } from "./social-graph.ts";
 
-const OWNER = "Shekhar";
+const OWNER = "Ada";
 const STYLE = inferStyle(["hey", "sup", "lol yeah"]);
 const FACTS =
-  "Owner facts (TRUE — never deny or contradict these): married to Maya; wedding anniversary June 3, 2017.";
+  "Owner facts (TRUE — never deny or contradict these): married to Sam; wedding anniversary June 3, 2017.";
 
 // ── 1. Audience-aware persona ──
 
@@ -57,7 +57,7 @@ test("contact persona does NOT instruct confirming the owner's private facts", (
     "contact persona still tells the model to confirm facts",
   );
   // The facts may be injected as a VOICE anchor, but framed as do-not-disclose.
-  if (p.includes("married to Maya")) {
+  if (p.includes("married to Sam")) {
     assert.ok(
       /do NOT disclose|non-disclosure/i.test(p),
       "facts injected on contact path without a do-not-disclose frame",
@@ -80,7 +80,7 @@ test("owner persona keeps FULL factual access (what's my anniversary?)", () => {
     ownerFacts: FACTS,
   });
   // The owner can ask their own facts and get a truthful answer.
-  assert.ok(p.includes("married to Maya"), "owner persona dropped the facts");
+  assert.ok(p.includes("married to Sam"), "owner persona dropped the facts");
   assert.ok(/TRUE/.test(p), "owner persona lost the ground-truth framing");
   assert.ok(
     /answer truthfully|answer his own|asking about his own/i.test(p),
@@ -192,11 +192,11 @@ test("relatedBlock no longer has the 'unless asks' cross-contact hatch", () => {
 // contact (regression: bot told a probing contact "He's at Poolville, MD").
 test("contact persona forbids revealing the owner's location (presence = availability only)", () => {
   const style = inferStyle([]);
-  const contact = agentPersonaPrompt("Shekhar", style, false, { audience: "contact" });
+  const contact = agentPersonaPrompt("Ada", style, false, { audience: "contact" });
   assert.match(contact, /AVAILABILITY ONLY, NEVER LOCATION/i);
   assert.match(contact, /never reveal his specific WHEREABOUTS/i);
   // Owner self-chat keeps full presence (no whereabouts restriction).
-  const owner = agentPersonaPrompt("Shekhar", style, false, { audience: "owner" });
+  const owner = agentPersonaPrompt("Ada", style, false, { audience: "owner" });
   assert.ok(
     !/never reveal his specific WHEREABOUTS/i.test(owner),
     "owner persona should NOT restrict whereabouts",

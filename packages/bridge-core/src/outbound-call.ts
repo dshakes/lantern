@@ -313,7 +313,7 @@ export function planCall(
   // explicit opt → LANTERN_OWNER_NAME → neutral fallback.
   const ownerName = opts.ownerName || process.env.LANTERN_OWNER_NAME || "the owner";
   // Always surface the resolved NUMBER alongside the name so the owner can
-  // catch a wrong-contact resolution (e.g. multiple "Maya" entries) before
+  // catch a wrong-contact resolution (e.g. multiple "Sam" entries) before
   // confirming. Never dial a name without showing what it resolved to.
   const who = req.contactName ? `${req.contactName} (${req.to})` : req.to;
   let summary: string;

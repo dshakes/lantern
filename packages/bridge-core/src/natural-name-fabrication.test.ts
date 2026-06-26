@@ -129,29 +129,29 @@ for (const w of WISHES) {
 const style = inferStyle(["hey", "lol ok"]);
 
 test("persona carries the NEVER-FABRICATE-A-NAME hard rule", () => {
-  const p = agentPersonaPrompt("Shekhar", style, false, {});
+  const p = agentPersonaPrompt("Ada", style, false, {});
   assert.match(p, /NEVER FABRICATE A NAME/i);
   assert.match(p, /do NOT use any name/i);
 });
 
 test("persona carries the celebratory-wish short-thanks guidance", () => {
-  const p = agentPersonaPrompt("Shekhar", style, false, {});
+  const p = agentPersonaPrompt("Ada", style, false, {});
   assert.match(p, /CELEBRATORY WISH RULE/i);
   assert.match(p, /one short, warm, casual thanks/i);
 });
 
 test("persona surfaces the known contact name as the only allowed name", () => {
-  const p = agentPersonaPrompt("Shekhar", style, false, { contactName: "Bhramari" });
+  const p = agentPersonaPrompt("Ada", style, false, { contactName: "Bhramari" });
   assert.match(p, /This contact's name is "Bhramari"/);
   assert.match(p, /ONLY name you may use/i);
 });
 
 test("persona does NOT surface a phone-number-only contactName", () => {
-  const p = agentPersonaPrompt("Shekhar", style, false, { contactName: "+15125551234" });
+  const p = agentPersonaPrompt("Ada", style, false, { contactName: "+15125551234" });
   assert.doesNotMatch(p, /ONLY name you may use/i);
 });
 
 test("group wish guidance tells the bot not to escalate to 1:1", () => {
-  const p = agentPersonaPrompt("Shekhar", style, true, {});
+  const p = agentPersonaPrompt("Ada", style, true, {});
   assert.match(p, /never turn a group wish into a private 1:1/i);
 });

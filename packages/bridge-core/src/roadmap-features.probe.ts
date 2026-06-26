@@ -52,7 +52,7 @@ writeFileSync(
   `# Owner profile
 
 ## About me
-I'm Shekhar.
+I'm Ada.
 
 ## Relationships
 - Sujith Penchala: brother-in-law | also: +15551234567, +15559876543

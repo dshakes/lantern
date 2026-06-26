@@ -19,7 +19,7 @@ import (
 //     disabled. Bridge consults this on every reply; if matched, the
 //     draft is posted here for human approval rather than sent.
 //
-//   - Contact facts: durable per-JID notes ("her daughter is Maya",
+//   - Contact facts: durable per-JID notes ("her daughter is Sam",
 //     "works at Stripe"). Bridge injects relevant facts into the
 //     persona prompt so cold-start conversations don't feel hollow.
 //

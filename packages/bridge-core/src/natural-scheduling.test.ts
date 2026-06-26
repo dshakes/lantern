@@ -8,12 +8,12 @@ import { agentPersonaPrompt, schedulingBlock, inferStyle } from "./natural.ts";
 const style = inferStyle(["hey", "yeah for sure", "lol ok"]);
 
 test("scheduling block is absent by default", () => {
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {});
+  const prompt = agentPersonaPrompt("Ada", style, false, {});
   assert.doesNotMatch(prompt, /SCHEDULING —/);
 });
 
 test("scheduling block is injected when schedulingEnabled with free slots", () => {
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     schedulingEnabled: true,
     freeSlotsBlock: "after 6pm weekdays, Saturday morning",
   });
@@ -25,7 +25,7 @@ test("scheduling block is injected when schedulingEnabled with free slots", () =
 });
 
 test("scheduling block is REACTIVE — never tells the model to volunteer/propose", () => {
-  const block = schedulingBlock("Shekhar", "after 6pm weekdays");
+  const block = schedulingBlock("Ada", "after 6pm weekdays");
   // The old proactive wording is gone — the bot must not push meetings.
   assert.doesNotMatch(block, /\bPROPOSE\b/);
   assert.doesNotMatch(block, /pencil one in/i);
@@ -35,21 +35,21 @@ test("scheduling block is REACTIVE — never tells the model to volunteer/propos
 });
 
 test("scheduling block keeps the work-hours guardrail intact", () => {
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     schedulingEnabled: true,
     freeSlotsBlock: "Saturday morning",
   });
   // The new block re-asserts the guardrail...
-  assert.match(prompt, /NEVER offer or agree to a slot inside Shekhar's stated work hours/i);
+  assert.match(prompt, /NEVER offer or agree to a slot inside Ada's stated work hours/i);
   // ...and the original SCHEDULING guardrail line is still present.
-  assert.match(prompt, /NEVER offer or agree to sync inside Shekhar's stated work hours/i);
+  assert.match(prompt, /NEVER offer or agree to sync inside Ada's stated work hours/i);
 });
 
 test("schedulingEnabled with no free slots falls back to reframe-only", () => {
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     schedulingEnabled: true,
   });
-  assert.match(prompt, /don't have Shekhar's open slots/i);
+  assert.match(prompt, /don't have Ada's open slots/i);
   assert.match(prompt, /don't name a specific time/i);
 });
 

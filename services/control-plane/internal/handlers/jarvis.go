@@ -207,7 +207,7 @@ func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calend
 	if h.llm == nil {
 		return fallback
 	}
-	ownerName := getEnvOr("LANTERN_OWNER_NAME", "Shekhar")
+	ownerName := getEnvOr("LANTERN_OWNER_NAME", "Ada")
 	system := strings.Join([]string{
 		"You are " + ownerName + "'s chief of staff. Write his brief from the data below.",
 		"Terse, scannable, friendly. Plain text, no markdown headers. Group into short lines.",

@@ -2,7 +2,7 @@
 //
 // Triggered on owner self-chat messages that look like they're
 // TEACHING the bot something contextual ("Raju moved to MD",
-// "Maya now goes by Mae with old friends", "work hours changed
+// "Sam now goes by Mae with old friends", "work hours changed
 // to 10-7"). Extracts a structured fact, dedupes against the
 // existing profile, and appends to a managed "Auto-learned" section.
 //
@@ -272,7 +272,7 @@ async function finalizeStyleWrite(
 export interface AutoFact {
   // One terse line, sentence-cased. Examples:
   //   "Raju lives in Poolville, MD"
-  //   "Maya preferred address: Mae with old friends"
+  //   "Sam preferred address: Mae with old friends"
   //   "Work hours updated: Mon-Fri 10am-7pm"
   line: string;
   // Loose category — debug only, not persisted EXCEPT for the typed
@@ -281,7 +281,7 @@ export interface AutoFact {
   category: "location" | "address-form" | "schedule" | "role" | "relationship" | "preference" | "owner-fact" | "other";
   // For owner-fact: the typed Facts directive to write (e.g.
   //   { key: "married", value: "yes" }
-  //   { key: "spouse", value: "Maya" }
+  //   { key: "spouse", value: "Sam" }
   //   { key: "wedding anniversary", value: "2017-06-03" }).
   // Absent for non-fact categories.
   fact?: { key: string; value: string };
@@ -326,7 +326,7 @@ const EXTRACT_PROMPT_PREAMBLE = [
   "   (their marriage, spouse, kids, a personal key date like an",
   "   anniversary/birthday). Add a `fact` object: {\"key\":..., \"value\":...}.",
   "   - \"I'm married\" → {\"category\":\"owner-fact\",\"line\":\"married\",\"fact\":{\"key\":\"married\",\"value\":\"yes\"}}",
-  "   - \"my wife is Maya\" → {\"category\":\"owner-fact\",\"line\":\"spouse: Maya\",\"fact\":{\"key\":\"spouse\",\"value\":\"Maya\"}}",
+  "   - \"my wife is Sam\" → {\"category\":\"owner-fact\",\"line\":\"spouse: Sam\",\"fact\":{\"key\":\"spouse\",\"value\":\"Sam\"}}",
   "   - \"my anniversary is June 3 2017\" → {\"category\":\"owner-fact\",\"line\":\"wedding anniversary 2017-06-03\",\"fact\":{\"key\":\"wedding anniversary\",\"value\":\"2017-06-03\"}}",
   "   Dates in `fact.value` MUST be YYYY-MM-DD. key for marital state is",
   "   exactly \"married\" with value \"yes\"; spouse key is \"spouse\";",

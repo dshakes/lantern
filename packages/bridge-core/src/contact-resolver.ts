@@ -46,7 +46,7 @@ export interface ResolveResult {
 }
 
 const SELF_TOKENS = new Set([
-  "me", "myself", "yourself", "i", "i'?m", "owner", "self", "shekhar",
+  "me", "myself", "yourself", "i", "i'?m", "owner", "self", "ada",
 ]);
 
 /**

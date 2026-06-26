@@ -106,9 +106,9 @@ describe("isGroupRow", () => {
       isGroupRow({
         chatStyle: 45,
         chatRoomName: "",
-        chatIdentifier: "shekhar@icloud.com",
+        chatIdentifier: "ada@icloud.com",
         chatDisplayName: "",
-        handle: "shekhar@icloud.com",
+        handle: "ada@icloud.com",
       }),
     ).toBe(false);
   });

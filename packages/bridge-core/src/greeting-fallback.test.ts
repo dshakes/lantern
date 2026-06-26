@@ -52,7 +52,7 @@ const NOT_GREETINGS = [
   "hi when does my passport expire",
   "hey can you check my email",
   "good morning, set a reminder for 9am",
-  "hello, draft a reply to maya",
+  "hello, draft a reply to sam",
   "what's the plan for tonight",
   "are we still on for 7?",
   "", // empty

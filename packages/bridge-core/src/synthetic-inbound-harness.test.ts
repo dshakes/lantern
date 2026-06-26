@@ -65,7 +65,7 @@ const STYLE = {
   avgWordsPerMessage: 6,
 } as never;
 
-const OWNER = "Shekhar";
+const OWNER = "Ada";
 
 // Faithful replica of the bridge's decision sequence with a stubbed LLM.
 // Returns action, text, reason, AND ownerNotified (true when detectUrgency
@@ -160,7 +160,7 @@ test("HARNESS: em-dash reply → SEND with the dash stripped (was suppressed)", 
 
 test("HARNESS: anniversary wish from a contact → SEND a thanks", () => {
   const r = decideReplyAction({
-    inbound: "Happy wedding anniversary Shekhar & Maya 🎉",
+    inbound: "Happy wedding anniversary Ada & Sam 🎉",
     llmReply: "thank you so much 🙏",
     relationship: "friend", contactName: "Sowmyadhar",
   });
@@ -323,7 +323,7 @@ test("HARNESS urgency: casual 'urgent' in a sentence → owner NOT notified (no 
 
 test("HARNESS whereabouts: draft 'he's at Poolville, MD' to contact → SUPPRESS", () => {
   const r = decideReplyAction({
-    inbound: "where is Shekhar?",
+    inbound: "where is Ada?",
     llmReply: "He's at Poolville, MD right now",
     contactName: "Kavya", relationship: "friend",
     isOwner: false,

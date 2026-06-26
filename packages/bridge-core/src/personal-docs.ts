@@ -162,7 +162,7 @@ export function isGreetingSmallTalk(text: string): boolean {
 // is intentionally narrow so it doesn't widen the group-reply surface).
 //
 // Matches on substring (a wish often rides along with a name + extra words:
-// "Happy Wedding Anniversary Shekhar & Maya 🎉"), unlike isGreetingSmallTalk
+// "Happy Wedding Anniversary Ada & Sam 🎉"), unlike isGreetingSmallTalk
 // which anchors the whole utterance.
 const CELEBRATORY_RE =
   /\b(?:(?:belated\s+|happy\s+|wedding\s+)*(?:anniversary|annivarsary|anniv|birthday|bday|b'day))\b|\b(?:many\s+(?:more\s+)?happy\s+returns|happy\s+returns\s+of\s+the\s+day)\b/i;
@@ -233,7 +233,7 @@ export class PersonalDocs {
 
   // Resolve a path the LLM put in an [ATTACH:...] marker to a real
   // file on disk. The LLM sometimes hallucinates parent directories
-  // — it sees "Shekhar-current-passport-full.pdf" in the context
+  // — it sees "Ada-current-passport-full.pdf" in the context
   // block and emits "/Users/shakes/Documents/Passport/..." instead
   // of the real iCloud path. We rescue these cases:
   //   1. If the literal path exists + is allowed → return it.
@@ -370,7 +370,7 @@ export class PersonalDocs {
     // but don't beat real files.
     const ownerFirst = (process.env.LANTERN_OWNER_NAME || "").trim().split(/\s+/)[0]?.toLowerCase() || "";
     const wantsMine = /\bmy\b|\bmine\b|\bi\b/i.test(query);
-    // Detect a third-party possessive ("Maya's drivers license",
+    // Detect a third-party possessive ("Sam's drivers license",
     // "Arin's passport") and rank files containing that name higher
     // than the owner's. The first capture group is the bare name.
     const possessiveMatch = query.match(/\b([A-Za-z]{3,})['’]s\b/);
@@ -386,11 +386,11 @@ export class PersonalDocs {
       for (const phrase of phrases) {
         if (baseLower.includes(phrase.toLowerCase())) { s += 30; break; }
       }
-      // Person-targeting boost. If the query said "Maya's …" we
-      // want Maya's files even though the user (Shekhar) typed.
-      // Penalize the OTHER name to keep cross-talk down (Shekhar's
-      // license file shouldn't beat Maya's when asked about
-      // Maya's).
+      // Person-targeting boost. If the query said "Sam's …" we
+      // want Sam's files even though the user (Ada) typed.
+      // Penalize the OTHER name to keep cross-talk down (Ada's
+      // license file shouldn't beat Sam's when asked about
+      // Sam's).
       if (targetName && pathLower.includes(targetName)) s += 25;
       if (possessiveMatch && ownerFirst && targetName !== ownerFirst && pathLower.includes(ownerFirst)) s -= 15;
       if (r.ext && r.ext !== "") s += 10;          // not a folder

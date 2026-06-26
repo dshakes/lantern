@@ -20,7 +20,7 @@ const style = inferStyle([]);
 
 test("A1: short transcript is passed through verbatim", () => {
   const transcript = "them: hey\nyou: hi\nthem: what's up";
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     recentTranscript: transcript,
   });
   assert.ok(prompt.includes("them: what's up"), "tail present");
@@ -36,7 +36,7 @@ test("A1: long transcript keeps recent tail verbatim + a head note", () => {
   }
   lines.push("them: WHATABOUTTHEFRESHTOPIC right now");
   const transcript = lines.join("\n");
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     recentTranscript: transcript,
   });
 
@@ -61,7 +61,7 @@ test("A1: tail is larger than the old 2000-char cap (more context kept)", () => 
   const lines: string[] = [];
   for (let i = 0; i < 300; i++) lines.push(`you: line ${i} padding padding padding`);
   const transcript = lines.join("\n");
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     recentTranscript: transcript,
   });
   // Find the transcript region in the prompt and confirm it carries

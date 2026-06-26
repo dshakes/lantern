@@ -63,7 +63,7 @@ const LIFE_THREAT_PATTERNS: Array<{ re: RegExp; reason: string }> = [
   { re: /\b(?:i'?m|i\s+am)\s+(?:in\s+danger|scared|terrified|being\s+(?:hurt|chased|stalked|followed|attacked|threatened))\b/i, reason: "imminent-danger" },
   { re: /\b(?:call|dial)\s+9-?1-?1\b/i, reason: "911-mention" },
   { re: /\b(?:emergency|critical)\s+(?:situation|help|please)?\b/i, reason: "emergency-word" },
-  { re: /\b(?:please\s+)?(?:urgently?|asap)\s+(?:call|reach|contact|find|talk\s+to)\s+(?:him|her|them|shekhar)\b/i, reason: "urgent-call-request" },
+  { re: /\b(?:please\s+)?(?:urgently?|asap)\s+(?:call|reach|contact|find|talk\s+to)\s+(?:him|her|them|ada)\b/i, reason: "urgent-call-request" },
   { re: /\b(?:help\s+me\s+please|please\s+help\s+me|i\s+need\s+help)\b/i, reason: "help-plea" },
   { re: /\b(?:accident|hospital|er|ambulance|police|robbed|attacked|assaulted)\b/i, reason: "incident-word" },
 ];
@@ -180,7 +180,7 @@ export function detectBotClocked(text: string): EscalationVerdict | null {
 // ─────────────────────────────────────────────────────────────
 // These are deliberate attempts to social-engineer the bot. The
 // correct response is REFUSAL + escalation. We don't engage; even
-// "Shekhar's helper" is too much information.
+// "Ada's helper" is too much information.
 const PROMPT_INJECTION_PATTERNS: Array<{ re: RegExp; reason: string }> = [
   { re: /\b(?:forget|ignore|disregard|override)\s+(?:all|the|your|previous|prior|earlier)?\s*(?:system\s+)?(?:instructions?|prompts?|rules?|directives?)\b/i, reason: "ignore-instructions" },
   { re: /\b(?:what'?s|tell\s+me|show\s+me|reveal|leak)\s+your\s+(?:system\s+prompt|instructions?|prompt|rules)\b/i, reason: "leak-prompt" },

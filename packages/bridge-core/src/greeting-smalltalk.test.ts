@@ -37,7 +37,7 @@ const ACTIONABLE = [
   "good morning, set a reminder for 9am",
   "how do I renew my license",
   "what's up with my flight booking",
-  "hello, draft a reply to maya",
+  "hello, draft a reply to sam",
   "morning — what's on my calendar today",
 ];
 
@@ -64,12 +64,12 @@ for (const t of ACTIONABLE) {
 // ---------------------------------------------------------------------------
 
 const WISHES = [
-  "Happy Wedding Anniversary Shekhar & Maya",
-  "Happy Wedding Anniversary Shekhar & Maya 🎉",
+  "Happy Wedding Anniversary Ada & Sam",
+  "Happy Wedding Anniversary Ada & Sam 🎉",
   "Happy Birthday!!",
   "happy bday bro",
   "Happy anniversary to you both 💐",
-  "Belated happy birthday Shekhar",
+  "Belated happy birthday Ada",
   "Congratulations on the new house!",
   "congrats man 🎉",
   "Many more happy returns of the day",
@@ -78,12 +78,12 @@ const WISHES = [
   "Happy Diwali 🪔",
   "Happy Sankranti to the family",
   // Telugu Romanized
-  "Pelliroju shubhakankshalu Shekhar anna",
+  "Pelliroju shubhakankshalu Ada anna",
   "Puttinaroju subhakankshalu 🎂",
   "janmadina subhakankshalu",
   "Sankranti subhakankshalu andariki",
   // Telugu native script
-  "శుభాకాంక్షలు Shekhar",
+  "శుభాకాంక్షలు Ada",
   "పుట్టినరోజు శుభాకాంక్షలు",
   "పెళ్లిరోజు శుభాకాంక్షలు మనసా & శేఖర్",
   // Emoji-only wish

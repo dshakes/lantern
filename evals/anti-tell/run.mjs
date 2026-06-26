@@ -34,7 +34,7 @@ const SEED_PATH = ARGS.seeds ?? join(__dirname, "seeds.json");
 const API_URL = process.env.LANTERN_API_URL || "http://localhost:8080";
 const TENANT = process.env.LANTERN_TENANT || "00000000-0000-0000-0000-000000000001";
 const AGENT_NAME = process.env.LANTERN_AGENT || "whatsapp-assistant";
-const OWNER_NAME = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+const OWNER_NAME = (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0];
 
 function parseArgs(argv) {
   const out = {};
@@ -116,10 +116,10 @@ function buildPersonaPrompt(seed) {
     "- Never claim completed actions you didn't take ('I sent', 'I added', 'I told him').",
     "- Match contact's language. Telugu → reply in Telugu (Telangana dialect, SHORT verbs: vasta/cheptha/matladta — NOT vacchina tarvata/matladutanu).",
     "- NEVER use 'bava' with Srinivas/Arun/Raju/Sowmyadhar — they're addressed by name.",
-    "- Wife is Maya. Never 'Mae' (that's just the contact-save alias).",
+    "- Wife is Sam. Never 'Mae' (that's just the contact-save alias).",
     "- Work hours Mon-Fri 9-5:30 ET. Never offer sync inside; reframe to evening/weekend.",
     "",
-    "Reply now in plain text, in Shekhar's voice, no preface.",
+    "Reply now in plain text, in Ada's voice, no preface.",
   ].join("\n");
 }
 

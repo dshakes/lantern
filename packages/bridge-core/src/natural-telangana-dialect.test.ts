@@ -92,7 +92,7 @@ test("detectBotTells allows the casual medium-Telangana form", () => {
 // ── Persona steering ──
 
 test("persona carries the medium-tone Telangana dialect rule", () => {
-  const p = agentPersonaPrompt("Shekhar", style, false, {});
+  const p = agentPersonaPrompt("Ada", style, false, {});
   assert.match(p, /medium-tone Telangana/i, "medium-tone Telangana rule missing");
   assert.match(p, /cheppu/i, "casual imperative guidance missing");
   assert.match(p, /-andi/i, "formal -andi guidance missing");
@@ -147,7 +147,7 @@ test("garbled invented-Telugu word-salad is suppressed (nudistunnanu)", () => {
 });
 
 test("persona no longer instructs the model to use 'ra'", () => {
-  const p = agentPersonaPrompt("Shekhar", style, false, {});
+  const p = agentPersonaPrompt("Ada", style, false, {});
   assert.doesNotMatch(p, /"thanks ra"/i, "persona must not suggest 'thanks ra'");
   assert.doesNotMatch(p, /"raa"\/"ra"/i, "persona must not give 'ra' as an imperative example");
   assert.match(p, /NEVER use the vocative\/address particles/i, "explicit 'ra' ban missing");

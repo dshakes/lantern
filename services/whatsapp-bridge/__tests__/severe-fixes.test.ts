@@ -171,13 +171,13 @@ describe("shouldAutoReplyToInbound — unified live/history gate", () => {
   });
 
   it("a celebratory wish naming the owner bypasses monitoring + targeting", () => {
-    process.env.LANTERN_OWNER_NAME = "Shekhar";
+    process.env.LANTERN_OWNER_NAME = "Ada";
     const s = makeSession() as unknown as Gate;
     // unmonitored group, not @mention-targeted, but it's a wish naming the owner
     expect(
       s.shouldAutoReplyToInbound({
         jid: group,
-        text: "Happy birthday Shekhar! 🎉",
+        text: "Happy birthday Ada! 🎉",
         isGroup: true,
         targetsOwner: false,
       }),
