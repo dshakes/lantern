@@ -186,7 +186,7 @@ const GREETING_REPLIES = [
 export function greetingReply(inbound: string): string | null {
   const t = (inbound || "").trim();
   if (!t || t.length > 40) return null;
-  // Strip a leading name mention ("hey Shekhar", "hi there") is already
+  // Strip a leading name mention ("hey Ada", "hi there") is already
   // covered by the regex tail; keep this purely about the opener shape.
   if (!PURE_GREETING_RE.test(t)) return null;
   let h = 0;
@@ -403,7 +403,7 @@ export interface PersonaOptions {
   unansweredBacklog?: number;
   // Structured owner facts (from owner-profile.ts → factsBlock). One
   // ground-truth line: "Owner facts (TRUE — never deny…): married to
-  // Maya; kids: …; wedding anniversary June 3, 2017." Injected for
+  // Sam; kids: …; wedding anniversary June 3, 2017." Injected for
   // BOTH owner + contact prompts so the bot never denies the owner's
   // marriage/family/key dates. Empty when no facts are declared.
   ownerFacts?: string;

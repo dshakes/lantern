@@ -349,7 +349,7 @@ export class IMessageSession {
 
   // Per-handle history for style inference + few-shot owner mimicry.
   // Inbound = what the contact sends; ownerSent = what the user sends
-  // themselves (used as exemplars for "talk like Shekhar").
+  // themselves (used as exemplars for "talk like Ada").
   private inboundHistory: Map<string, string[]> = new Map();
   private ownerSentHistory: Map<string, string[]> = new Map();
   // GLOBAL owner-voice pool mined from a DEEP scan of chat.db (across all
@@ -3047,7 +3047,7 @@ export class IMessageSession {
     // (participantCount === 1 && chatIdentifier === handle) which is
     // true for EVERY 1-on-1 DM, not just self-DM — so every friend's
     // chat was misclassified as the owner's self-chat. Result: the
-    // bot greeted friends with "hey shekhar!" and processed their
+    // bot greeted friends with "hey ada!" and processed their
     // messages through the owner-channel pipeline.
     //
     // Now: ONLY trust LANTERN_IMESSAGE_OWNER_HANDLE. When unset,
@@ -3074,7 +3074,7 @@ export class IMessageSession {
   //       their primary Apple ID on their phone. Messages arrive as
   //       1-on-1 with row.handle == owner's primary handle. Set
   //       LANTERN_IMESSAGE_OWNER_HANDLE to the owner's primary phone
-  //       or email (e.g. "+15125551234" or "shekhar@icloud.com").
+  //       or email (e.g. "+15125551234" or "ada@icloud.com").
   //   (B) SELF-CHAT MODE — single Apple ID across owner's devices.
   //       Owner messages themselves; the chat is a self-chat (1
   //       participant, chatIdentifier == handle).
@@ -3446,7 +3446,7 @@ export class IMessageSession {
       //      group message would be insanely noisy.
       //
       // EXCEPTION: a celebratory WISH that names the owner (e.g. "Happy
-      // Wedding Anniversary Shekhar & Maya 🎉") gets ONE casual thanks
+      // Wedding Anniversary Ada & Sam 🎉") gets ONE casual thanks
       // IN the group even if the chat isn't monitored — staying silent on
       // a wish addressed to the owner reads as rude. General group chatter
       // still requires an explicitly-monitored chat. The persona's
@@ -3504,7 +3504,7 @@ export class IMessageSession {
     // owner is the judge. Deterministic, no LLM on the hot path.
     let forceDraftCaution = false;
     if (!isGroup) {
-      const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+      const ownerName = (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0];
       const lifeThreat = detectLifeThreat(text);
       if (lifeThreat) {
         this.logger.warn(
@@ -3773,7 +3773,7 @@ export class IMessageSession {
     }
     let presenceLine = presenceSnap.line || "";
     // AWAY directive: tell the contact where the owner is + offer to take a
-    // message ("Shekhar's at the temple, he'll get back — can I pass a note?").
+    // message ("Ada's at the temple, he'll get back — can I pass a note?").
     if (presenceSnap.away && !isGroup) {
       const where = presenceSnap.place ? `at ${presenceSnap.place}` : presenceSnap.line;
       presenceLine =
@@ -5089,7 +5089,7 @@ export class IMessageSession {
     const today = new Date().toISOString().slice(0, 10);
     const hour = new Date().getHours();
     const timeOfDay = hour < 5 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 22 ? "evening" : "late night";
-    const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+    const ownerName = (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0];
 
     // PRE-FETCH appointment-style queries — runs Gmail + Calendar in
     // parallel and stuffs results into the prompt so the LLM has
@@ -6108,7 +6108,7 @@ export class IMessageSession {
     const effectiveChatRowid = chatRowid || (this.selfChatRowIds.size > 0 ? Array.from(this.selfChatRowIds)[0] : 0);
     const recentTranscript = effectiveChatRowid ? this.buildRecentTranscript(effectiveChatRowid) : "";
     const today = new Date().toISOString().slice(0, 10);
-    const ownerName = process.env.LANTERN_OWNER_NAME || "Shekhar";
+    const ownerName = process.env.LANTERN_OWNER_NAME || "Ada";
     // Language modality applies to owner self-chat too — if he asks
     // something in Telugu, reply in Telugu (Telangana dialect, owner
     // vocab preferences from profile).
@@ -6167,7 +6167,7 @@ export class IMessageSession {
       "",
       "# Voice",
       "  • Direct answer first, lowercase, conversational. 1-3 short lines max.",
-      "  • No 'I'd be happy to' / 'feel free' / 'certainly' — sound like Shekhar would.",
+      "  • No 'I'd be happy to' / 'feel free' / 'certainly' — sound like Ada would.",
       "  • State the FACT when you have it. No 'check the file' / 'check your inbox' if a tool returned the data.",
       "",
       "# Agentic follow-ups (mandatory when applicable)",
@@ -6180,7 +6180,7 @@ export class IMessageSession {
       "  • Calendar:       [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]",
       "  • Note:           [NOTE:Title|Body text]",
       "  • Mail draft:     [MAIL:to@x.com|Subject|Body]",
-      "  • Phone call:     [CALL:Maya|conference|why you're calling]   (mode = conference | voicemail | task)",
+      "  • Phone call:     [CALL:Sam|conference|why you're calling]   (mode = conference | voicemail | task)",
       "CALLS: when the owner asks you to call / phone / dial / ring / conference / reach someone (ANY phrasing, any language, typos and all — e.g. 'call mae', 'conference me withe mae', 'can you ring her') you MUST emit a [CALL:...] marker. The bridge places the real call via Twilio and asks the owner to confirm before dialing. NEVER say 'I'll call' / 'calling her' / 'will do' WITHOUT the [CALL:...] marker — a reply that claims a call without the marker is a lie, because no call happens. 'conference me with X' → mode conference. 'leave X a voicemail saying Y' → mode voicemail, message Y. 'call the pharmacy to refill' → mode task. Use the contact's real name as target; the bridge resolves it to a number.",
       "  • Away status:    [STATUS:at the swimming pool|2026-06-02T19:30:00|swimming pool]   (label | until-ISO-or-empty | place)  ·  or  [STATUS:CLEAR]",
       "STATUS: when the owner tells you where they are or that they're away/busy/back (ANY phrasing or language — 'I am at the pool till 7:30pm est', 'in a meeting for 2h', 'driving', 'I'm back', Telugu, etc.), emit a [STATUS:...] marker. Compute the until-ISO from the time they gave (their local timezone; resolve 'till 7:30pm' to today's datetime). When they say they're back/free/available, emit [STATUS:CLEAR]. The bridge then tells anyone who messages — on EVERY channel — that the owner is at <place> and will get back, and offers to take a message. Confirm to the owner in your reply.",

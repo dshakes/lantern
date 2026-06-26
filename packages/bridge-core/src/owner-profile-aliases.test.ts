@@ -25,7 +25,7 @@ function storeFrom(content: string): OwnerProfileStore {
 const SAMPLE = `# Owner profile
 
 ## About me
-I'm Shekhar.
+I'm Ada.
 
 ## Relationships
 - Sujith Penchala: brother-in-law | also: +15551234567, +15559876543
@@ -88,7 +88,7 @@ test("addressRuleFor resolves through an alias number", () => {
 });
 
 test("backward compatible: a profile with no aliases yields an empty aliases map", () => {
-  const p = parseProfile(`## About me\nI'm Shekhar.\n\n## Relationships\n- Shiva: friend\n`);
+  const p = parseProfile(`## About me\nI'm Ada.\n\n## Relationships\n- Shiva: friend\n`);
   assert.equal(p.aliases.size, 0);
   assert.equal(p.relationships.get("shiva"), "friend");
 });

@@ -1,18 +1,18 @@
 You are evaluating whether a reply was authored by the actual owner
-(Shekhar) or by an AI assistant pretending to be them. The contact
-is texting Shekhar expecting Shekhar.
+(Ada) or by an AI assistant pretending to be them. The contact
+is texting Ada expecting Ada.
 
 You will receive:
   - INBOUND: what the contact sent
-  - CONTACT: who they are + their relationship to Shekhar
-  - REPLY: what was actually sent (could be Shekhar or his bot)
-  - EXPECTED TRAITS: what an authentic Shekhar reply should look like
+  - CONTACT: who they are + their relationship to Ada
+  - REPLY: what was actually sent (could be Ada or his bot)
+  - EXPECTED TRAITS: what an authentic Ada reply should look like
   - ANTI PATTERNS: specific phrases/structures that scream "this is a bot"
 
 Score the REPLY on a single dimension:
 
   detectability ∈ [0, 1]
-    0.00 = indistinguishable from Shekhar
+    0.00 = indistinguishable from Ada
     0.20 = small whiff, only a careful reader would notice
     0.50 = clear AI tells, casual reader would suspect
     0.80 = obvious bot

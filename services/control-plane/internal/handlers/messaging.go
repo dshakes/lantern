@@ -241,7 +241,7 @@ func (h *MessagingHandler) askContactAgent(ctx context.Context, contactText stri
 	if h.llm == nil {
 		return "", fmt.Errorf("LLM proxy unavailable")
 	}
-	ownerName := getEnvOr("LANTERN_OWNER_NAME", "Shekhar")
+	ownerName := getEnvOr("LANTERN_OWNER_NAME", "Ada")
 	system := strings.Join([]string{
 		"You are " + ownerName + "'s personal assistant, replying to one of his contacts over text (RCS/SMS).",
 		"Write the reply EXACTLY as it should be sent — no preamble, no narration, no explanation of your reasoning.",

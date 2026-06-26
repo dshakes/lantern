@@ -886,14 +886,14 @@ references them. Supported keys:
 ```markdown
 ## Facts
 - married: yes
-- spouse: Maya
-- kids: Aarav, Anaya
+- spouse: Sam
+- kids: Kai, Nia
 - wedding anniversary: 2017-06-03
 ```
 
 Date values must be `YYYY-MM-DD`. The bot renders them as "June 3, 2017" in
 the prompt. `factsBlock()` produces a single injected line like
-`"Owner facts (TRUE — never deny or contradict these): married to Maya; …"`.
+`"Owner facts (TRUE — never deny or contradict these): married to Sam; …"`.
 
 **`## Relationships` section** — per-contact relationship labels plus optional
 addressing rules. Extended grammar (pipe-delimited):
@@ -907,7 +907,7 @@ addressing rules. Extended grammar (pipe-delimited):
 
 The `address as: X` clause sets what to call this contact. `never: a, b`
 forbids those kinship/nickname terms — using one is an instant bot-tell.
-Parenthetical aliases also work: `Maya(Mae): wife` indexes both names.
+Parenthetical aliases also work: `Sam(Mae): wife` indexes both names.
 
 **`## Style lessons (managed)` section** — auto-written by the 👎 learning
 flywheel (see below). Do not hand-edit the `<!-- id:... -->` comment tags;
@@ -1065,7 +1065,7 @@ Privacy posture (HARD rules):
 
 | Var                                   | Purpose                                                                                                                                                                                          |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `LANTERN_OWNER_NAME`                  | First name used for ranker boost ("Shekhar" → boost files whose path contains "shekhar" when the query says "my")                                                                                |
+| `LANTERN_OWNER_NAME`                  | First name used for ranker boost ("Ada" → boost files whose path contains "ada" when the query says "my")                                                                                |
 | `LANTERN_OWNER_EMAIL`                 | Mirror destination for bot status updates                                                                                                                                                        |
 | `LANTERN_OWNER_TIMEZONE`              | IANA timezone (e.g. `America/Los_Angeles`). Used by quiet hours, daily digest scheduling, and calendar lookups. Defaults to process timezone when unset.                                         |
 | `LANTERN_IMESSAGE_OWNER_HANDLE`       | (Optional) Owner's primary iMessage handle (phone or email). When set, bridge accepts DMs from this handle as owner-channel (dedicated-bot mode). When unset, falls back to self-chat detection. |

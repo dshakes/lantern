@@ -70,7 +70,7 @@ func personalDocsTools() []map[string]any {
 					"properties": map[string]any{
 						"query": map[string]any{
 							"type":        "string",
-							"description": "Name / nickname / company to search, e.g. 'Mae', 'Maya', 'Hammer and Nails'.",
+							"description": "Name / nickname / company to search, e.g. 'Mae', 'Sam', 'Hammer and Nails'.",
 						},
 						"limit": map[string]any{
 							"type":        "integer",

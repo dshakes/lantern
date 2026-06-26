@@ -8,9 +8,9 @@ import { strict as assert } from "node:assert";
 import { extractActionMarkers } from "./mac-actions.ts";
 
 test("parses a conference [CALL] marker", () => {
-  const r = extractActionMarkers("sure, setting that up.\n[CALL:Maya|conference|owner wants to talk]");
+  const r = extractActionMarkers("sure, setting that up.\n[CALL:Sam|conference|owner wants to talk]");
   assert.equal(r.calls.length, 1);
-  assert.equal(r.calls[0].target, "Maya");
+  assert.equal(r.calls[0].target, "Sam");
   assert.equal(r.calls[0].mode, "conference");
   assert.equal(r.calls[0].message, "owner wants to talk");
   assert.ok(!r.cleanedText.includes("[CALL:"), "marker stripped from reply text");
@@ -34,9 +34,9 @@ test("parses voicemail + task modes", () => {
 });
 
 test("no marker → no calls, text untouched", () => {
-  const r = extractActionMarkers("i'll reach out to Maya when she's free");
+  const r = extractActionMarkers("i'll reach out to Sam when she's free");
   assert.equal(r.calls.length, 0);
-  assert.equal(r.cleanedText, "i'll reach out to Maya when she's free");
+  assert.equal(r.cleanedText, "i'll reach out to Sam when she's free");
 });
 
 test("CALL coexists with other action markers", () => {

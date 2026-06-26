@@ -32,7 +32,7 @@ Add to your shell env (or `~/.lantern/env`):
 ```bash
 export LANTERN_IMESSAGE_OWNER_HANDLE="+15125551234"   # your primary phone
 # OR an email if your primary Apple ID uses one:
-# export LANTERN_IMESSAGE_OWNER_HANDLE="shekhar@icloud.com"
+# export LANTERN_IMESSAGE_OWNER_HANDLE="ada@icloud.com"
 ```
 
 Restart the bridge: `make run-imessage-bridge`.
@@ -138,7 +138,7 @@ Create `~/.lantern/owner-profile.md` to give the bot your voice, world, and grou
 # Owner profile
 
 ## About me
-I'm Shekhar — founder building Lantern. Currently heads-down on launch.
+I'm Ada — founder building Lantern. Currently heads-down on launch.
 
 ## How I text
 - lowercase, short, dry
@@ -151,8 +151,8 @@ I'm Shekhar — founder building Lantern. Currently heads-down on launch.
 
 ## Facts
 - married: yes
-- spouse: Maya
-- kids: Aarav, Anaya
+- spouse: Sam
+- kids: Kai, Nia
 - wedding anniversary: 2017-06-03
 
 ## Relationships

@@ -103,27 +103,27 @@ test("ownerVoiceExemplars: lang:telugu returns ONLY the owner's Telugu voice", (
 // ── Formatter + persona integration ───────────────────────────────────
 
 test("formatOwnerVoiceBlock: empty when no exemplars", () => {
-  assert.equal(formatOwnerVoiceBlock("Shekhar", [], []), "");
+  assert.equal(formatOwnerVoiceBlock("Ada", [], []), "");
 });
 
 test("formatOwnerVoiceBlock: includes general + a prominent Telugu sub-block", () => {
   const block = formatOwnerVoiceBlock(
-    "Shekhar",
+    "Ada",
     ["yeah for sure", "lemme check"],
     ["repu vasta", "cheptha ra"],
   );
-  assert.match(block, /HOW SHEKHAR ACTUALLY WRITES/);
+  assert.match(block, /HOW ADA ACTUALLY WRITES/);
   assert.match(block, /> yeah for sure/);
   assert.match(block, /When replying in Telugu/);
   assert.match(block, /> repu vasta/);
 });
 
 test("persona prompt includes the global owner-voice block", () => {
-  const block = formatOwnerVoiceBlock("Shekhar", ["yeah for sure", "lemme check"]);
-  const prompt = agentPersonaPrompt("Shekhar", inferStyle([]), false, {
+  const block = formatOwnerVoiceBlock("Ada", ["yeah for sure", "lemme check"]);
+  const prompt = agentPersonaPrompt("Ada", inferStyle([]), false, {
     ownerVoiceBlock: block,
   });
-  assert.match(prompt, /HOW SHEKHAR ACTUALLY WRITES/);
+  assert.match(prompt, /HOW ADA ACTUALLY WRITES/);
   assert.match(prompt, /> lemme check/);
 });
 
@@ -179,7 +179,7 @@ test("corpus filter: caps at limit, newest-first preserved by caller order", () 
 });
 
 test("persona prompt: anti-repetition forbids reusing the same offer", () => {
-  const prompt = agentPersonaPrompt("Shekhar", inferStyle([]), false, {
+  const prompt = agentPersonaPrompt("Ada", inferStyle([]), false, {
     recentBotReplies: ["want me to pass a specific message along?"],
   });
   assert.match(prompt, /do NOT reuse the same OPENER or the same concierge OFFER/i);

@@ -170,7 +170,7 @@ const OWNER_OK = [
   "lemme check and get back",
   "haha true",
   "for sure, after 6 works",
-  "not sure, will check with maya",
+  "not sure, will check with sam",
   "arin's got school tmrw",
 ];
 
@@ -199,7 +199,7 @@ test("kinship cue returns null for non-kinship relationships", () => {
 
 test("persona prompt injects register cue when relationship has kinship term", () => {
   const prompt = agentPersonaPrompt(
-    "Shekhar",
+    "Ada",
     inferStyle(["yeah", "for sure"]),
     false,
     { relationship: "brother-in-law (bava)" },
@@ -214,7 +214,7 @@ test("persona prompt injects register cue when relationship has kinship term", (
 
 test("persona prompt keeps up to 12 owner samples", () => {
   const samples = Array.from({ length: 20 }, (_, i) => `sample line number ${i}`);
-  const prompt = agentPersonaPrompt("Shekhar", inferStyle([]), false, {
+  const prompt = agentPersonaPrompt("Ada", inferStyle([]), false, {
     ownerSamples: samples,
   });
   const quoted = (prompt.match(/^> sample line number/gm) ?? []).length;
@@ -257,7 +257,7 @@ test("lowercase Telugu / proper-noun messages are NOT classed as uppercase", () 
     "meeting srinivas at New Jersey tmrw",
     "arin's school starts monday",
     "ela undi anna",
-    "maya said ok",
+    "sam said ok",
   ];
   const style = computeContactStyle(msgs);
   // None of these are sentence-cased; proper nouns shouldn't inflate it.

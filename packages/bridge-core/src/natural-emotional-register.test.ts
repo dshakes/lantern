@@ -8,19 +8,19 @@ import { agentPersonaPrompt, inferStyle } from "./natural.ts";
 const style = inferStyle(["hey", "yeah for sure", "lol ok"]);
 
 test("no register → no emotional addendum (backward compatible)", () => {
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {});
+  const prompt = agentPersonaPrompt("Ada", style, false, {});
   assert.doesNotMatch(prompt, /EMOTIONAL READ/);
 });
 
 test("explicit neutral → no addendum", () => {
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     emotionalRegister: "neutral",
   });
   assert.doesNotMatch(prompt, /EMOTIONAL READ/);
 });
 
 test("distress register injects the empathy/no-scheduling addendum", () => {
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     emotionalRegister: "distress",
   });
   assert.match(prompt, /EMOTIONAL READ/);
@@ -29,7 +29,7 @@ test("distress register injects the empathy/no-scheduling addendum", () => {
 });
 
 test("distress addendum lands AFTER the scheduling block so it can override it", () => {
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     schedulingEnabled: true,
     freeSlotsBlock: "Saturday morning",
     emotionalRegister: "distress",
@@ -42,21 +42,21 @@ test("distress addendum lands AFTER the scheduling block so it can override it",
 });
 
 test("frustration register injects acknowledge-first", () => {
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     emotionalRegister: "frustration",
   });
   assert.match(prompt, /acknowledge/i);
 });
 
 test("excitement register injects match-energy", () => {
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     emotionalRegister: "excitement",
   });
   assert.match(prompt, /match.*energy/i);
 });
 
 test("hard safety rules remain present alongside the addendum", () => {
-  const prompt = agentPersonaPrompt("Shekhar", style, false, {
+  const prompt = agentPersonaPrompt("Ada", style, false, {
     emotionalRegister: "distress",
   });
   // The addendum must not displace the non-negotiable rules.

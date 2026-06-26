@@ -34,7 +34,7 @@ test("formatNowContext never throws on a bad timezone", () => {
 });
 
 test("agentPersonaPrompt injects the time anchor when now is provided", () => {
-  const prompt = agentPersonaPrompt("Shekhar", STYLE, false, {
+  const prompt = agentPersonaPrompt("Ada", STYLE, false, {
     now: new Date("2026-06-14T03:19:00Z"),
     ownerTimezone: "America/Los_Angeles",
     schedulingEnabled: true,
@@ -45,6 +45,6 @@ test("agentPersonaPrompt injects the time anchor when now is provided", () => {
 });
 
 test("agentPersonaPrompt stays clock-free when now is omitted (pure)", () => {
-  const prompt = agentPersonaPrompt("Shekhar", STYLE, false, {});
+  const prompt = agentPersonaPrompt("Ada", STYLE, false, {});
   assert.doesNotMatch(prompt, /Right now it is/);
 });
