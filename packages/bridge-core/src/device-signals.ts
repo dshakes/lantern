@@ -312,7 +312,7 @@ export function presenceFromSignals(
     .sort((a, b) => b.ts - a.ts);
   const latest = (kind: SignalKind): DeviceSignal | undefined => recent.find((s) => s.kind === kind);
 
-  // 1. Driving — strongest, most time-sensitive (CarPlay / Tesla Bluetooth).
+  // 1. Driving — strongest, most time-sensitive (CarPlay / car Bluetooth).
   const dev = (latest("device")?.detail || "").trim().toLowerCase();
   if (/carplay|driving/.test(dev)) {
     return { state: "driving", line: "driving right now", away: true };

@@ -42,7 +42,7 @@ is a single fixed POST — no input variable — so they run reliably.
 | `Lantern-Status-Available` | `focus: Available` | Action Button / tap (clears Busy) |
 | `Lantern-Status-DND` | `focus: DND` | tap, or Focus → "Do Not Disturb" turns On |
 | `Lantern-Status-Desk` | `focus: Desk` | NFC tag on your desk |
-| `Lantern-Driving` | `device: driving` | **two automations, same shortcut:** ① **CarPlay Connects** (Odyssey) ② **Bluetooth → Tesla Connects** (no CarPlay) |
+| `Lantern-Driving` | `device: driving` | **CarPlay Connects** — or, for a car without CarPlay, **Bluetooth → your car Connects** (point both at this one shortcut) |
 | `Lantern-Sleep` | `focus: Sleep` | **Sleep** Focus turns On (or bedtime) |
 | `Lantern-Wake` | `focus: Available` | **Sleep** Focus turns Off / first alarm |
 | `Lantern-LowBattery` | `device: low_battery` | **Low Power Mode** turns On |
@@ -56,9 +56,9 @@ is a single fixed POST — no input variable — so they run reliably.
 > (e.g. "When CarPlay Connects") → **Run Immediately** (turn OFF "Ask Before
 > Running") → action **Run Shortcut** → pick the matching `Lantern-…` shortcut.
 
-> **Two cars?** Point **multiple** automations at the same `Lantern-Driving`
-> shortcut: one **CarPlay Connects** (for a car with CarPlay, e.g. Odyssey) and
-> one **Bluetooth → \<your Tesla\> Connects** (for a car without it). Both fire
+> **More than one car?** Point **multiple** automations at the same
+> `Lantern-Driving` shortcut: one **CarPlay Connects** (for a car with CarPlay)
+> and one **Bluetooth → \<your car\> Connects** (for a car without it). Both fire
 > the same `device: driving` signal. Optionally add the mirror automations —
 > **CarPlay Disconnects** and **Bluetooth Disconnects** → `Lantern-Status-Available`
 > — so the bot knows you've parked (otherwise "driving" just ages out of the 2h
