@@ -20,6 +20,7 @@ Each alert's `runbook:` annotation points at one of the files below.
 | [scheduler-not-firing.md](scheduler-not-firing.md) | runtime placement + cron not firing | `SchedulerDown`, `SchedulerNoLeader`, `SchedulerScheduleErrorRateHigh`, `CronScheduleOverdue` |
 | [gateway-latency.md](gateway-latency.md) | gateway / model-router down or slow | `GatewayDown`, `ModelRouterDown`, `*P99LatencyHigh` *(TODO)* |
 | [db-restore.md](db-restore.md) | Postgres backup & restore (PITR / logical dump) | — *(DR procedure, not alert-driven)* |
+| [ga-staged-rollout.md](ga-staged-rollout.md) | enabling staged GA features (RLS enforce, model-router cutover, Kata, in-VM tools) | — *(enable/verify/rollback procedure)* |
 
 ## Metric reality — read this before trusting a dashboard
 
