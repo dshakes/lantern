@@ -248,6 +248,7 @@ make run-whatsapp-bridge   # terminal 4 (optional): WhatsApp bridge on :3100
 
 </details>
 
+<a id="prerequisites"></a>
 <details>
 <summary>Prerequisites</summary>
 

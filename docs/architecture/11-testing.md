@@ -323,6 +323,5 @@ CI configs in `.github/workflows/` (or your CI of choice).
 
 ## See also
 
-- [`adr/0012-testing-strategy.md`](../adr/0012-testing-strategy.md) — why we picked this matrix over the alternatives
 - [`05-workflow-engine.md`](05-workflow-engine.md) — replay correctness rules
 - [`10-security.md`](10-security.md) — what the security tests are guarding

@@ -306,6 +306,5 @@ These are conservative for the spike. Production targets will be higher.
 
 ## See also
 
-- [`adr/0003-durable-workflow-engine.md`](../adr/0003-durable-workflow-engine.md) — why we built this and didn't use Temporal/Inngest directly
 - [`03-data-model.md`](03-data-model.md) — the journal schema
 - [`08-streaming.md`](08-streaming.md) — how step events stream to clients live

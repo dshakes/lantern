@@ -272,6 +272,5 @@ These are p50 targets for the spike. Production p99 targets are stricter and tra
 
 ## See also
 
-- [`adr/0002-microvm-runtime.md`](../adr/0002-microvm-runtime.md) — full rationale for picking Firecracker + Kata + Wasmtime
-- [`adr/0010-control-surfaces.md`](../adr/0010-control-surfaces.md) — how the computer-use frame stream feeds Control Surfaces
+- [`adr/0002-runtime-class-per-workload.md`](../adr/0002-runtime-class-per-workload.md) — full rationale for picking Firecracker + Kata + Wasmtime
 - [`10-security.md`](10-security.md) — the threat model that justifies this layering

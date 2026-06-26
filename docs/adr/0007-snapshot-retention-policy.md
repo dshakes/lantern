@@ -9,7 +9,7 @@
 
 Lantern relies on Firecracker memory snapshots for two distinct purposes:
 
-1. **Cold-start acceleration.** A snapshot taken after the agent's `init()` hook runs lets subsequent runs of the same `agent_version_id` restore in ~200ms via `MAP_PRIVATE` mmap (see [`04-runtime-isolation.md`](../architecture/04-runtime-isolation.md#snapshot--restore-for-fast-cold-starts)).
+1. **Cold-start acceleration.** A snapshot taken after the agent's `init()` hook runs lets subsequent runs of the same `agent_version_id` restore in ~200ms via `MAP_PRIVATE` mmap (see [`04-runtime-isolation.md`](../architecture/04-runtime-isolation.md#snapshot-restore-for-fast-cold-starts)).
 2. **HA + forensics.** Periodic snapshots of long-running VMs let us restore an idempotent workload on another node after a host failure (see [`04b-microvm-productionization.md`](../architecture/04b-microvm-productionization.md#node-death)) and let security review a frozen state after an incident.
 
 These two uses pull retention in opposite directions:

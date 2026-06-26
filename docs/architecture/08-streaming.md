@@ -307,4 +307,3 @@ Cancellation is **cooperative**: the agent code can run cleanup in a `finally` b
 
 - [`06-model-router.md`](06-model-router.md) — generation IDs and provider failover
 - [`12-control-surfaces.md`](12-control-surfaces.md) — how SSE flows to mobile/chat surfaces
-- [`adr/0004-streaming-protocol.md`](../adr/0004-streaming-protocol.md) — why SSE not WebSocket for the default

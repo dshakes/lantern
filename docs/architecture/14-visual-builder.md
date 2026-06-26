@@ -215,5 +215,3 @@ These defaults can be overridden, but only after confirmation.
 - `services/control-plane/canvas_compiler.go` — canvas.json → TypeScript → bundle
 - `packages/canvas-types` — shared types between canvas and compiler
 - `apps/web/builder/templates/` — the 50 launch templates as canvas.json files
-
-See [`adr/0009-visual-builder.md`](../adr/0009-visual-builder.md) for the design rationale.

@@ -256,6 +256,6 @@ We do NOT rely on prompt-level "Ignore previous instructions" defenses. Those do
 
 ## See also
 
-- [`adr/0008-zero-knowledge-vault.md`](../adr/0008-zero-knowledge-vault.md) — the personal vault design
+- [`adr/0008-runtime-secret-relay.md`](../adr/0008-runtime-secret-relay.md) — how tenant secrets are resolved at runtime
 - [`04-runtime-isolation.md`](04-runtime-isolation.md) — sandbox classes
 - [`13-connectors-and-integrations.md`](13-connectors-and-integrations.md) — connector token handling
