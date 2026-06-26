@@ -66,6 +66,9 @@ and deploy agent code from your terminal.`,
 	root.AddCommand(newWhoamiCommand())
 	root.AddCommand(newLogoutCommand())
 
+	// Readiness check.
+	root.AddCommand(newDoctorCommand())
+
 	return root
 }
 

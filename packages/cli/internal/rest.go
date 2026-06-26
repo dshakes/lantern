@@ -189,6 +189,37 @@ func (c *RESTClient) GetAgent(name string) (*RESTAgent, error) {
 	return &agent, nil
 }
 
+// CreateAgentWithSystemPrompt creates an agent with an explicit system prompt
+// via POST /v1/agents.
+func (c *RESTClient) CreateAgentWithSystemPrompt(name, description, systemPrompt string) (*RESTAgent, error) {
+	body := map[string]interface{}{
+		"name":         name,
+		"description":  description,
+		"systemPrompt": systemPrompt,
+	}
+	req, err := c.newRequest("POST", "/v1/agents", body)
+	if err != nil {
+		return nil, err
+	}
+	var agent RESTAgent
+	if err := c.do(req, &agent); err != nil {
+		return nil, fmt.Errorf("create agent: %w", err)
+	}
+	return &agent, nil
+}
+
+// NewGETRequest builds an authenticated GET *http.Request for the given path.
+// Callers that need to decode the response themselves should pair this with DoJSON.
+func (c *RESTClient) NewGETRequest(path string) (*http.Request, error) {
+	return c.newRequest("GET", path, nil)
+}
+
+// DoJSON executes req and JSON-decodes the response body into out.
+// It reuses the same error-handling semantics as the internal do helper.
+func (c *RESTClient) DoJSON(req *http.Request, out interface{}) error {
+	return c.do(req, out)
+}
+
 // DeleteAgent deletes an agent by name via DELETE /v1/agents/:name.
 func (c *RESTClient) DeleteAgent(name string) error {
 	req, err := c.newRequest("DELETE", "/v1/agents/"+name, nil)
