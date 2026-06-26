@@ -22,6 +22,54 @@ grounds replies to **you** in your own self-chat.
 
 ---
 
+## Fastest path: generate the whole set with one command
+
+Instead of building each shortcut by hand, generate the full signed set from the
+template:
+
+```bash
+scripts/iphone/app-context/generate-signals.sh
+```
+
+It writes 13 ready-to-import `.shortcut` files to `~/Desktop` (token baked in,
+so they're **never** committed). AirDrop them to the iPhone (or open in
+Shortcuts), then attach each to the Personal Automation trigger below. Each one
+is a single fixed POST — no input variable — so they run reliably.
+
+| Shortcut | Posts | Attach to automation trigger |
+| --- | --- | --- |
+| `Lantern-Status-Busy` | `focus: Busy` | Action Button / home-screen tap / NFC tag |
+| `Lantern-Status-Available` | `focus: Available` | Action Button / tap (clears Busy) |
+| `Lantern-Status-DND` | `focus: DND` | tap, or Focus → "Do Not Disturb" turns On |
+| `Lantern-Status-Desk` | `focus: Desk` | NFC tag on your desk |
+| `Lantern-Driving` | `device: driving` | **two automations, same shortcut:** ① **CarPlay Connects** (Odyssey) ② **Bluetooth → Tesla Connects** (no CarPlay) |
+| `Lantern-Sleep` | `focus: Sleep` | **Sleep** Focus turns On (or bedtime) |
+| `Lantern-Wake` | `focus: Available` | **Sleep** Focus turns Off / first alarm |
+| `Lantern-LowBattery` | `device: low_battery` | **Low Power Mode** turns On |
+| `Lantern-Location-Home` | `location: Home` | **Arrive** Home |
+| `Lantern-Location-Office` | `location: Office` | **Arrive** Office |
+| `Lantern-Location-Gym` | `location: Gym` | **Arrive** Gym |
+| `Lantern-Location-Airport` | `location: Airport` | **Arrive** Airport |
+| `Lantern-Traveling` | `location: Traveling` | **Airplane Mode** On, or boarding-pass |
+
+> Attach a trigger: Shortcuts app → **Automation** tab → **+** → pick the trigger
+> (e.g. "When CarPlay Connects") → **Run Immediately** (turn OFF "Ask Before
+> Running") → action **Run Shortcut** → pick the matching `Lantern-…` shortcut.
+
+> **Two cars?** Point **multiple** automations at the same `Lantern-Driving`
+> shortcut: one **CarPlay Connects** (for a car with CarPlay, e.g. Odyssey) and
+> one **Bluetooth → \<your Tesla\> Connects** (for a car without it). Both fire
+> the same `device: driving` signal. Optionally add the mirror automations —
+> **CarPlay Disconnects** and **Bluetooth Disconnects** → `Lantern-Status-Available`
+> — so the bot knows you've parked (otherwise "driving" just ages out of the 2h
+> window on its own).
+
+These `focus` / `device` / `location` values are also what the **availability
+concierge** reads to tell people pinging you whether you're reachable — so the
+more of these you wire, the more accurate it is.
+
+---
+
 ## The shared contract (what to POST)
 
 `POST https://<your-tailscale-host>/v1/signals`
@@ -310,8 +358,10 @@ curl -s -H "x-lantern-signal-token: <your-token>" \
 You should see your recent `location` / `focus` / `device` / `health` /
 `now_playing` lines. Or open `~/.lantern/device-signals.jsonl` directly — one
 JSON object per line. Then ask the bot in self-chat: "where am I / how many steps
-today / what am I listening to" — within ~10 minutes (the bridge polls every 10
-min) it'll have the composite line in context.
+today / what am I listening to" — the bridge reads the signals file **on-demand**
+on every owner self-chat turn (zero lag), so a signal that just landed is already
+in context. (A 30-min background tick keeps a warm fallback line if a read ever
+fails.)
 
 ## Privacy recap
 

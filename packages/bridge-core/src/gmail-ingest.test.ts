@@ -91,6 +91,45 @@ describe("gmail-ingest: state roundtrip", () => {
   });
 });
 
+describe("gmail-ingest: connector envelope", () => {
+  // REGRESSION: the real control-plane wraps connector output as
+  // { action, connector, data: { count, messages } }. The poller must read
+  // data.messages — reading top-level `messages` (the old bug) silently yields
+  // zero new emails forever even though the connector returns mail.
+  test("reads messages from the {data:{messages}} control-plane envelope", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gmail-env-"));
+    const path = join(dir, "state.json");
+    try {
+      const msgs = [
+        email("e1", "1782484475000", "GEICO <noreply@geico.com>", "Your bill is due", "Amount due $182.40 due Jul 2"),
+      ];
+      // Mock the REAL envelope, not the flattened test shape.
+      const execute: GmailConnectorExecute = async () => ({
+        action: "list_recent",
+        connector: "gmail",
+        data: { count: msgs.length, messages: msgs },
+      });
+      const r = await pollGmailOnce(execute, { statePath: path });
+      assert.equal(r.status, "ok");
+      assert.equal(r.newMessages.length, 1);
+      assert.match(r.newMessages[0].text, /GEICO/);
+      assert.match(r.newMessages[0].text, /\$182\.40/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("surfaces an auth error nested under data.error as auth_expired", async () => {
+    const execute: GmailConnectorExecute = async () => ({
+      action: "list_recent",
+      connector: "gmail",
+      data: { error: "Gmail API error 401: Invalid Credentials" },
+    });
+    const r = await pollGmailOnce(execute, { persist: false, state: { seenIds: [] } });
+    assert.equal(r.status, "auth_expired");
+  });
+});
+
 describe("gmail-ingest: dedup", () => {
   test("a message id is processed at most once across ticks", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gmail-dedup-"));

@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="560" viewBox="0 0 1240 560" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Personal harness phone-trigger flow — iPhone automations POST signals over Tailscale to the control plane, the bridge reads them on-demand, grounding owner self-chat and the availability concierge; location never shared with contacts">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#64748b"/></marker>
+    <style>
+      .h{fill:#f8fafc;font-weight:700} .sub{fill:#94a3b8;font-size:12.5px}
+      .band{fill:#cbd5e1;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+      .ct{fill:#fcd34d} .dt{fill:#6ee7b7} .bt{fill:#7dd3fc}
+      .cmp{fill:#ededf0;font-size:12.5px;font-weight:600} .cs{fill:#8b93a1;font-size:10.5px}
+      .flow{fill:#94a3b8;font-size:11px;font-weight:600} .gate{fill:#fca5a5;font-size:11px;font-weight:700}
+    </style>
+  </defs>
+  <rect width="1240" height="560" rx="16" fill="#0b1120"/>
+  <rect width="1240" height="560" rx="16" fill="none" stroke="#1e293b"/>
+  <text x="32" y="44" class="h" font-size="20">Personal harness — phone-trigger flow</text>
+  <text x="430" y="44" class="sub">owner-only · local · zero-lag · location never shared with contacts</text>
+
+  <!-- ── Stage A · iPhone triggers ─────────────────────────────── -->
+  <g transform="translate(24,84)">
+    <rect width="276" height="380" rx="14" fill="#0d0d11" stroke="#232330"/>
+    <text x="18" y="30" class="band bt">iPhone triggers</text>
+    <g transform="translate(16,48)">
+      <rect width="244" height="74" rx="9" fill="rgba(125,211,252,0.05)" stroke="#26303a"/>
+      <text x="14" y="26" class="cmp">🚗 Drive</text>
+      <text x="14" y="46" class="cs">CarPlay (Odyssey) · Bluetooth (Tesla)</text>
+      <text x="14" y="62" class="cs">→ device: driving</text>
+    </g>
+    <g transform="translate(16,134)">
+      <rect width="244" height="74" rx="9" fill="rgba(52,211,153,0.05)" stroke="#1f3a30"/>
+      <text x="14" y="26" class="cmp">📍 Place</text>
+      <text x="14" y="46" class="cs">arrive/leave Home · Office · Gym</text>
+      <text x="14" y="62" class="cs">→ location: Office</text>
+    </g>
+    <g transform="translate(16,220)">
+      <rect width="244" height="74" rx="9" fill="rgba(245,158,11,0.05)" stroke="#3a2e18"/>
+      <text x="14" y="26" class="cmp">🎛 Status</text>
+      <text x="14" y="46" class="cs">Action Button · NFC tag · Focus</text>
+      <text x="14" y="62" class="cs">→ focus: Busy</text>
+    </g>
+    <g transform="translate(16,306)">
+      <rect width="244" height="58" rx="9" fill="rgba(167,139,250,0.05)" stroke="#2e2740"/>
+      <text x="14" y="24" class="cmp">🌙 Rhythm</text>
+      <text x="14" y="44" class="cs">Sleep/Wake · low battery · media · health</text>
+    </g>
+  </g>
+
+  <!-- arrow A → B -->
+  <line x1="304" y1="274" x2="344" y2="274" stroke="#64748b" stroke-width="1.6" marker-end="url(#ar)"/>
+  <text x="324" y="262" class="flow" text-anchor="middle">Shortcut</text>
+  <text x="324" y="296" class="flow" text-anchor="middle">POST</text>
+
+  <!-- ── Stage B · control plane (Tailscale) ───────────────────── -->
+  <g transform="translate(348,84)">
+    <rect width="300" height="380" rx="14" fill="none" stroke="rgba(245,158,11,0.30)"/>
+    <rect width="300" height="380" rx="14" fill="rgba(245,158,11,0.05)"/>
+    <text x="18" y="30" class="band ct">Control plane · over Tailscale</text>
+    <g transform="translate(16,52)">
+      <rect width="268" height="92" rx="9" fill="rgba(255,255,255,0.02)" stroke="#3a2e18"/>
+      <text x="14" y="28" class="cmp">POST /v1/signals</text>
+      <text x="14" y="50" class="cs">token-gated · x-lantern-signal-token</text>
+      <text x="14" y="68" class="cs">constant-time compare · fails closed</text>
+      <text x="14" y="84" class="cs">token never logged</text>
+    </g>
+    <g transform="translate(16,160)">
+      <rect width="268" height="80" rx="9" fill="rgba(255,255,255,0.02)" stroke="#3a2e18"/>
+      <text x="14" y="28" class="cmp">device-signals.jsonl</text>
+      <text x="14" y="50" class="cs">append one line · chmod 0600</text>
+      <text x="14" y="68" class="cs">owner-only · auto-trimmed</text>
+    </g>
+    <g transform="translate(16,256)">
+      <rect width="268" height="104" rx="9" fill="rgba(125,211,252,0.04)" stroke="#26303a"/>
+      <text x="14" y="26" class="cmp">Tailscale Serve</text>
+      <text x="14" y="48" class="cs">private tailnet · phone ⇄ Mac</text>
+      <text x="14" y="66" class="cs">never exposed to the public internet</text>
+      <text x="14" y="88" class="cs">URL survives reboots</text>
+    </g>
+  </g>
+
+  <!-- arrow B → C -->
+  <line x1="652" y1="274" x2="692" y2="274" stroke="#64748b" stroke-width="1.6" marker-end="url(#ar)"/>
+  <text x="672" y="262" class="flow" text-anchor="middle">read on</text>
+  <text x="672" y="296" class="flow" text-anchor="middle">every turn</text>
+
+  <!-- ── Stage C · your Mac · bridge ───────────────────────────── -->
+  <g transform="translate(696,84)">
+    <rect width="300" height="380" rx="14" fill="none" stroke="rgba(52,211,153,0.28)"/>
+    <rect width="300" height="380" rx="14" fill="rgba(52,211,153,0.05)"/>
+    <text x="18" y="30" class="band dt">Your Mac · bridge</text>
+    <g transform="translate(16,52)">
+      <rect width="268" height="80" rx="9" fill="rgba(255,255,255,0.02)" stroke="#1f3a30"/>
+      <text x="14" y="28" class="cmp">freshIphoneSignalsLine()</text>
+      <text x="14" y="50" class="cs">reads the file on every owner turn</text>
+      <text x="14" y="68" class="cs">sub-ms, in front of the LLM — zero lag</text>
+    </g>
+    <g transform="translate(16,148)">
+      <rect width="268" height="80" rx="9" fill="rgba(255,255,255,0.02)" stroke="#1f3a30"/>
+      <text x="14" y="28" class="cmp">presence + summary</text>
+      <text x="14" y="50" class="cs">latest focus · device · location</text>
+      <text x="14" y="68" class="cs">health · now-playing (last ~2h)</text>
+    </g>
+    <g transform="translate(16,244)">
+      <rect width="268" height="56" rx="9" fill="rgba(245,158,11,0.05)" stroke="#3a2e18"/>
+      <text x="14" y="24" class="cmp">owner context</text>
+      <text x="14" y="44" class="cs">self-chat only · never a contact reply</text>
+    </g>
+    <g transform="translate(16,310)">
+      <rect width="268" height="56" rx="9" fill="rgba(125,211,252,0.05)" stroke="#26303a"/>
+      <text x="14" y="24" class="cmp">availability concierge</text>
+      <text x="14" y="44" class="cs">tells contacts if you're reachable</text>
+    </g>
+  </g>
+
+  <!-- arrow C → D -->
+  <line x1="1000" y1="274" x2="1036" y2="274" stroke="#64748b" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  <!-- ── Stage D · outcomes ────────────────────────────────────── -->
+  <g transform="translate(1040,84)">
+    <rect width="176" height="380" rx="14" fill="#0d0d11" stroke="#232330"/>
+    <text x="16" y="30" class="band">Outcomes</text>
+    <g transform="translate(14,52)">
+      <rect width="148" height="138" rx="9" fill="rgba(245,158,11,0.05)" stroke="#3a2e18"/>
+      <text x="13" y="26" class="cmp">👤 You</text>
+      <text x="13" y="44" class="cs">self-chat</text>
+      <text x="13" y="74" class="cs">“where am I”</text>
+      <text x="13" y="92" class="cs">“what have I</text>
+      <text x="13" y="108" class="cs"> been doing”</text>
+      <text x="13" y="126" class="cs">“am I free at 3?”</text>
+    </g>
+    <g transform="translate(14,206)">
+      <rect width="148" height="158" rx="9" fill="rgba(125,211,252,0.05)" stroke="#26303a"/>
+      <text x="13" y="26" class="cmp">👥 Contacts</text>
+      <text x="13" y="44" class="cs">who DM you</text>
+      <text x="13" y="74" class="cs">“is he around?”</text>
+      <text x="13" y="92" class="cs">“when’s he free?”</text>
+      <text x="13" y="110" class="cs">take a message</text>
+      <text x="13" y="136" class="gate">availability</text>
+      <text x="13" y="151" class="gate">only — no place</text>
+    </g>
+  </g>
+
+  <!-- footer guard strip -->
+  <text x="32" y="496" class="gate">Owner-only ·</text>
+  <text x="128" y="496" class="cs">signals stored locally at ~/.lantern/device-signals.jsonl (mode 0600) — they never leave your Mac · the summary grounds only your own self-chat.</text>
+  <text x="32" y="516" class="cs">The concierge shares availability, never your location · turn it all off with LANTERN_IPHONE_SIGNALS=off.</text>
+</svg>

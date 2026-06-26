@@ -21,6 +21,7 @@ import {
   parseSignals,
   summarizeDeviceSignals,
   deviceContextBlock,
+  presenceFromSignals,
   type DeviceSignal,
 } from "./device-signals.ts";
 
@@ -335,4 +336,57 @@ test("deviceContextBlock accepts a full summary object", () => {
   const out = summarizeDeviceSignals([app("Slack", 10)], { nowMs: NOW });
   const block = deviceContextBlock(out);
   assert.match(block, /Slack/);
+});
+
+// ─── presenceFromSignals (contact-facing availability) ───────────────────────
+test("presenceFromSignals: device driving (CarPlay/Tesla) → driving, away", () => {
+  const p = presenceFromSignals([sig("device", 5, { detail: "driving" })], { nowMs: NOW });
+  assert.equal(p?.state, "driving");
+  assert.equal(p?.away, true);
+  assert.match(p!.line, /driving/i);
+});
+
+test("presenceFromSignals: CarPlay detail also maps to driving", () => {
+  const p = presenceFromSignals([sig("device", 5, { detail: "CarPlay" })], { nowMs: NOW });
+  assert.equal(p?.state, "driving");
+});
+
+test("presenceFromSignals: focus DND / Sleep / Available / Busy", () => {
+  assert.equal(presenceFromSignals([sig("focus", 2, { detail: "DND" })], { nowMs: NOW })?.state, "dnd");
+  assert.equal(presenceFromSignals([sig("focus", 2, { detail: "Sleep" })], { nowMs: NOW })?.state, "sleep");
+  const free = presenceFromSignals([sig("focus", 2, { detail: "Available" })], { nowMs: NOW });
+  assert.equal(free?.state, "free");
+  assert.equal(free?.away, false);
+  assert.equal(presenceFromSignals([sig("focus", 2, { detail: "Busy" })], { nowMs: NOW })?.state, "busy");
+});
+
+test("presenceFromSignals: driving (device) beats a focus signal", () => {
+  const p = presenceFromSignals(
+    [sig("focus", 1, { detail: "Busy" }), sig("device", 3, { detail: "driving" })],
+    { nowMs: NOW },
+  );
+  assert.equal(p?.state, "driving");
+});
+
+test("presenceFromSignals: geofence maps to coarse availability and NEVER leaks the place", () => {
+  const gym = presenceFromSignals([sig("location", 4, { detail: "Gym" })], { nowMs: NOW });
+  assert.equal(gym?.state, "busy");
+  assert.doesNotMatch(gym!.line, /gym/i); // place name never echoed
+  const air = presenceFromSignals([sig("location", 4, { detail: "Airport" })], { nowMs: NOW });
+  assert.equal(air?.state, "busy");
+  assert.doesNotMatch(air!.line, /airport/i);
+  // Home is not an availability signal.
+  assert.equal(presenceFromSignals([sig("location", 4, { detail: "Home" })], { nowMs: NOW }), null);
+});
+
+test("presenceFromSignals: a named Focus is never echoed verbatim (no whereabouts leak)", () => {
+  const p = presenceFromSignals([sig("focus", 2, { detail: "Poolville cabin" })], { nowMs: NOW });
+  assert.equal(p?.state, "busy");
+  assert.doesNotMatch(p!.line, /poolville|cabin/i);
+});
+
+test("presenceFromSignals: no usable signal, stale signal, and empty → null", () => {
+  assert.equal(presenceFromSignals([app("YouTube", 5)], { nowMs: NOW }), null); // app_open isn't presence
+  assert.equal(presenceFromSignals([sig("device", 600, { detail: "driving" })], { nowMs: NOW }), null); // 10h stale
+  assert.equal(presenceFromSignals([], { nowMs: NOW }), null);
 });

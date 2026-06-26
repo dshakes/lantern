@@ -16,6 +16,7 @@ import { AttentionClassifier } from "./attention.js";
 import { authedFetch } from "@lantern/bridge-core/auth";
 import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
+import { parseSignals, presenceFromSignals, type SignalPresence } from "@lantern/bridge-core/device-signals";
 import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
@@ -7197,6 +7198,7 @@ export class WhatsAppSession {
           nextEvent: async () => {
             try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
           },
+          iphone: opts.isGroup ? null : this.contactIphonePresence(),
         }),
       ]);
 
@@ -8404,6 +8406,24 @@ export class WhatsAppSession {
   // from a "Schedule" / "Availability" / "Free" section in the owner profile
   // prose. Empty string when none — the persona then falls back to the
   // safe reframe-only behavior. Never throws.
+  // CONTACT-FACING availability from the iPhone signals (driving / Focus status /
+  // geofence), for the concierge — mirrors the iMessage bridge. Reads the SHARED
+  // signals file directly (sub-ms) using the pure bridge-core derivation, which
+  // is availability-only and carries NO place, so the result is safe to surface
+  // to a contact. Returns null when disabled / no usable signal / any error.
+  private contactIphonePresence(): SignalPresence | null {
+    if ((process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() === "off") return null;
+    try {
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return null;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+      return presenceFromSignals(parseSignals(tail));
+    } catch (err) {
+      this.logger.debug({ err }, "iPhone presence read failed (no-op)");
+      return null;
+    }
+  }
+
   private ownerFreeSlotsBlock(): string {
     try {
       const prose = this.ownerProfileStore.prose();
