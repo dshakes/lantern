@@ -22,6 +22,7 @@ import { join } from "path";
 import { existsSync } from "fs";
 import type { Logger } from "pino";
 import { decodeAttributedBody } from "./attributed-body.js";
+import { dedupeKey } from "@lantern/bridge-core/owner-voice";
 
 export interface IMessageRow {
   // Stable per-message identity. We track lastSeenRowid in memory and
@@ -433,6 +434,62 @@ export class ChatDB {
     // Buckets are newest-first; reverse to oldest-first so callers append
     // into a ring that ends on the most recent message.
     for (const bucket of out.values()) bucket.reverse();
+    return out;
+  }
+
+  // GLOBAL owner-voice corpus. Where ownerSentByHandle() buckets by
+  // contact (and so caps total reach + is dominated by the most recent
+  // rows — which on a live bridge are mostly the bot's OWN auto-replies),
+  // this scans ONE large window of the owner's authentic 1:1 sent
+  // messages across every contact and returns a flat, deduped pool.
+  //
+  // Why a large window: the newest rows are bot-dominated, so a small
+  // LIMIT yields only a handful of authentic samples after the
+  // isBotSelfMessage filter upstream. Scanning deep (maxScan default
+  // 60k rows) reaches PAST the bot era into the owner's real pre-bot
+  // voice — hundreds of genuine samples across registers.
+  //
+  // Filters: is_from_me=1, non-tapback (associated_message_type=0), 1:1
+  // only (display_name=''), text-or-attributedBody non-empty, decoded
+  // length 2..280. Dedupe uses the SAME key as the exemplar selector so
+  // a ring of "ok"/"sure" collapses to one. Returns newest-first, up to
+  // `limit`. The query is a single ROWID-ordered LIMIT (cheap; ROWID is
+  // the table's rowid index). Does NOT filter bot-self here — that lives
+  // in bot-self.ts and the caller applies it (keeps this query pure SQL).
+  ownerVoiceCorpus(opts: { limit: number; maxScan?: number }): string[] {
+    if (!this.db) return [];
+    const limit = Math.max(1, opts.limit);
+    const maxScan = Math.max(limit, opts.maxScan ?? 60_000);
+    const rows = this.db
+      .prepare(
+        `SELECT COALESCE(m.text, '')  AS text,
+                m.attributedBody      AS attributed_body
+         FROM message m
+         LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         LEFT JOIN chat c            ON c.ROWID = cmj.chat_id
+         WHERE m.is_from_me = 1
+           AND COALESCE(m.associated_message_type, 0) = 0
+           AND COALESCE(c.display_name, '') = ''
+           AND (COALESCE(m.text, '') <> '' OR m.attributedBody IS NOT NULL)
+         ORDER BY m.ROWID DESC
+         LIMIT ?`,
+      )
+      .all(maxScan) as Array<{ text: string; attributed_body: Buffer | null }>;
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const r of rows) {
+      const text = (r.text.trim() || decodeAttributedBody(r.attributed_body) || "").trim();
+      if (text.length < 2 || text.length > 280) continue;
+      const key = dedupeKey(text);
+      // Empty key (pure emoji/punctuation) is kept — collapsing them all
+      // would over-prune; they're rare in a 600-cap pool anyway.
+      if (key) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+      }
+      out.push(text);
+      if (out.length >= limit) break;
+    }
     return out;
   }
 
