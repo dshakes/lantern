@@ -355,6 +355,46 @@ function billUrgency(dueIso: string | undefined, now: Date): Urgency {
   return "fyi";
 }
 
+// ── Recency gate (only surface RECENT + actionable) ─────────────────────────
+// Gmail ingestion pulls recently-RECEIVED mail, but the CONTENT can be about a
+// PAST event — an old flight confirmation, an already-due statement, a delivered
+// package. Surfacing those as fresh nudges is the "stale Gmail nudge" bug (e.g.
+// the phantom "✈️ travel update" from last year's itinerary). This gate
+// suppresses date-bearing actionable events whose resolved date is clearly in
+// the past. HIGH PRECISION: parseDueDate rolls bare (year-less) dates to their
+// NEXT occurrence, so only an EXPLICIT past date resolves as past — valid
+// upcoming/recent events are never suppressed.
+
+const RECENCY_GRACE_MS = 2 * 86_400_000; // events up to 2 days past still count
+
+// Past-tense delivery: the package already arrived, so there's nothing to put on
+// a calendar. Distinct from "out for delivery" / "arriving" (still in transit).
+const DELIVERED_PAST_RE =
+  /\b(was\s+delivered|has\s+been\s+delivered|delivered\s+(?:on|to|at)|delivery\s+(?:complete|completed)|(?:was\s+)?left\s+at)\b/i;
+
+// Best concrete event date for a date-bearing kind, or null. Reuses parseDueDate
+// (respects an explicit year; rolls bare dates forward).
+function resolveEventDate(event: LifeEvent, now: Date): Date | null {
+  let iso: string | undefined;
+  if (event.kind === "bill") {
+    iso = event.fields.dueDate;
+  } else if (event.kind === "travel" || event.kind === "appointment" || event.kind === "delivery") {
+    const f = event.fields;
+    iso = parseDueDate(`${f.time ?? ""} ${f.eta ?? ""} ${event.rawText}`, now);
+  }
+  if (!iso) return null;
+  const d = new Date(`${iso}T23:59:59`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// True when an actionable, date-bearing event already happened (so it is not
+// actionable). otp/fraud/receipt/promo/personal are never gated here.
+export function isStaleEvent(event: LifeEvent, now: Date = new Date()): boolean {
+  if (event.kind === "delivery" && DELIVERED_PAST_RE.test(event.rawText)) return true;
+  const d = resolveEventDate(event, now);
+  return d !== null && d.getTime() < now.getTime() - RECENCY_GRACE_MS;
+}
+
 // ── Suggested actions ───────────────────────────────────────────────────────
 
 const ACTIONABLE_KINDS: ReadonlySet<LifeEventKind> = new Set<LifeEventKind>([
@@ -498,7 +538,7 @@ function fmtDueShort(iso?: string): string {
  * Owner-model overlay: after enough IGNOREs of a kind, downgrade its route one
  * notch (ping→digest→suppress). ACCEPT history protects/keeps the route.
  */
-export function proactiveDecision(event: LifeEvent, prefs: LifeEventPrefs = {}): ProactiveDecision {
+export function proactiveDecision(event: LifeEvent, prefs: LifeEventPrefs = {}, now: Date = new Date()): ProactiveDecision {
   const actions = suggestedActionsFor(event);
   const ownerMessage = buildOwnerMessage(event, actions);
 
@@ -513,6 +553,13 @@ export function proactiveDecision(event: LifeEvent, prefs: LifeEventPrefs = {}):
   // surface a non-existent "travel update" from an old flight email and then
   // admit it had nothing). A dated one still routes normally.
   if ((event.kind === "travel" || event.kind === "appointment") && !event.fields.time) {
+    return { route: "suppress", ownerMessage, actions, event };
+  }
+
+  // Recency gate: a date-bearing actionable event that already happened (an old
+  // flight email, a long-past-due statement, a delivered package) isn't
+  // actionable — suppress it rather than surface a stale nudge.
+  if (isStaleEvent(event, now)) {
     return { route: "suppress", ownerMessage, actions, event };
   }
 
