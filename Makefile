@@ -190,6 +190,7 @@ test-python: ## Run Python tests
 
 test-e2e: ## Run live-stack e2e suites (needs `make dev-infra` + control-plane on :8080; skips green when down) — see e2e/README.md
 	cd e2e/runtime && go test -tags e2e -count=1 -v ./...
+	cd e2e/quickstart && go test -tags e2e -count=1 -v ./...
 
 smoke-dataplane: ## Live two-process proof: boots the real control-plane + data-plane-agent binaries and routes a run to the plane over the tunnel
 	@bash scripts/e2e-dataplane-smoke.sh

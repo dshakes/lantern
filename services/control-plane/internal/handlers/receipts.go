@@ -31,6 +31,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -341,15 +342,17 @@ var errRunNotFound = fmt.Errorf("run not found")
 func (h *ReceiptHandler) buildReceipt(ctx context.Context, tenantID, runID string) (*signedReceipt, error) {
 	var p receiptPayload
 	var versionDigest *string
+	// NOTE: model/provider are NOT columns on the runs table (they live in
+	// trigger_meta step logs, not as first-class columns) — selecting them
+	// here previously errored on every call and was silently mapped to a 404.
+	// They are omitempty payload fields, so leaving them empty is correct.
 	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT
 			  r.id,
 			  r.tenant_id,
 			  COALESCE(a.name, ''),
-			  av.digest,
-			  COALESCE(r.model, ''),
-			  COALESCE(r.provider, ''),
+			  encode(av.digest, 'hex'),
 			  r.status,
 			  COALESCE(r.tokens_in, 0),
 			  COALESCE(r.tokens_out, 0),
@@ -360,12 +363,16 @@ func (h *ReceiptHandler) buildReceipt(ctx context.Context, tenantID, runID strin
 			WHERE r.id = $1 AND r.tenant_id = $2
 		`, runID, tenantID).Scan(
 			&p.RunID, &p.TenantID, &p.AgentName, &versionDigest,
-			&p.Model, &p.Provider, &p.Status,
-			&p.TokensIn, &p.TokensOut, &p.CostUsd,
+			&p.Status, &p.TokensIn, &p.TokensOut, &p.CostUsd,
 		)
 	})
 	if err != nil {
-		return nil, errRunNotFound
+		// Only a genuine missing run is a 404; any other error (e.g. schema
+		// drift) must surface so it isn't masked as "run not found".
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errRunNotFound
+		}
+		return nil, fmt.Errorf("query run for receipt: %w", err)
 	}
 	if versionDigest != nil {
 		p.AgentVersion = *versionDigest

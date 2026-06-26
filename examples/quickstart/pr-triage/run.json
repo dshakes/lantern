@@ -1,0 +1,7 @@
+{
+  "agentName": "pr-triage",
+  "input": {
+    "title": "Allow password reset tokens to be reused within 24h",
+    "diff_summary": "auth/reset.go: removed the single-use check on reset tokens; tokens now valid until expiry. Added a 24h TTL. No new tests. Touches the password-reset flow and the tokens table."
+  }
+}

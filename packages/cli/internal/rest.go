@@ -220,6 +220,29 @@ func (c *RESTClient) DoJSON(req *http.Request, out interface{}) error {
 	return c.do(req, out)
 }
 
+// ApplyTemplate creates an agent from a built-in template via
+// POST /v1/agents/from-template. name overrides the default agent name;
+// pass empty to use the template's default.
+func (c *RESTClient) ApplyTemplate(templateID, name string) (*RESTAgent, error) {
+	body := map[string]interface{}{
+		"templateId": templateID,
+	}
+	if name != "" {
+		body["name"] = name
+	}
+	req, err := c.newRequest("POST", "/v1/agents/from-template", body)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Agent RESTAgent `json:"agent"`
+	}
+	if err := c.do(req, &resp); err != nil {
+		return nil, fmt.Errorf("apply template: %w", err)
+	}
+	return &resp.Agent, nil
+}
+
 // DeleteAgent deletes an agent by name via DELETE /v1/agents/:name.
 func (c *RESTClient) DeleteAgent(name string) error {
 	req, err := c.newRequest("DELETE", "/v1/agents/"+name, nil)

@@ -1,0 +1,6 @@
+{
+  "agentName": "incident-summarizer",
+  "input": {
+    "logs": "12:01:14 api-gateway INFO p99 latency 220ms\n12:03:02 checkout-svc WARN db pool at 95% (190/200)\n12:03:51 checkout-svc ERROR pq: remaining connection slots are reserved\n12:04:10 checkout-svc ERROR failed to charge order o_8821: context deadline exceeded\n12:04:12 pagerduty ALERT checkout error rate 41% (threshold 5%)\n12:05:30 checkout-svc ERROR failed to charge order o_8830: context deadline exceeded\n12:08:00 dba INFO killed long-running analytics query holding 60 connections\n12:08:40 checkout-svc INFO db pool at 30% (60/200)\n12:09:10 pagerduty INFO checkout error rate 2% — recovering"
+  }
+}

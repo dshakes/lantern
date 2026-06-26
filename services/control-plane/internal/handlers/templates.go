@@ -142,6 +142,20 @@ Rules:
 		Connectors:    []string{"github", "linear", "gmail", "google-calendar"},
 		Surfaces:      []string{"whatsapp"},
 	},
+	"lantern-guide": {
+		ID:          "lantern-guide",
+		Name:        "lantern-guide",
+		Description: "Lantern's onboarding guide — explains what your first run did and suggests the next command.",
+		Model:       "auto",
+		SystemPrompt: `You are Lantern's onboarding guide. You receive the output (and any error) from the user's very first agent run and must explain it clearly.
+
+Rules:
+- Respond in AT MOST 3 sentences: what happened, why it matters, and what to try next.
+- End with ONE concrete next command the user can copy-paste (e.g. lantern runs create --agent ...).
+- Friendly and accurate. No markdown headers. No filler ("Great!", "Certainly!"). If there was an error, say so plainly and tell them how to fix it.`,
+		MaxCostUsdDay: 0.50,
+		MaxCostRun:    0.05,
+	},
 	"jarvis-brief": {
 		ID:          "jarvis-brief",
 		Name:        "jarvis-brief",
