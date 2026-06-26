@@ -578,6 +578,13 @@ export class IMessageSession {
   private styleLessonsBlock = "";
   private flywheelTimer: ReturnType<typeof setInterval> | null = null;
   private nudgeTimer: ReturnType<typeof setInterval> | null = null;
+  // GMAIL INGESTION — poll the owner's mailbox and feed bills/deliveries/etc
+  // into the SAME life-event engine the texts use. Default OFF (until the owner
+  // re-auths Google). `gmailAuthWarned` gates the one-time re-auth warning so an
+  // expired token doesn't spam the log every tick.
+  private gmailIngestTimer: ReturnType<typeof setInterval> | null = null;
+  private gmailAuthWarned = false;
+  private static readonly GMAIL_INGEST_DEFAULT_SEC = 180;
   // Fired-nudge dedupe keys persisted to disk (0600) so a launchd respawn
   // doesn't re-nag the owner with a nudge already surfaced today. Map of
   // dedupeKey -> epoch ms fired; GC'd on load past NUDGE_DEDUP_TTL_MS.
@@ -771,6 +778,7 @@ export class IMessageSession {
     this.startQuietReplay();
     this.startLearningFlywheel();
     this.startAnticipationNudges();
+    this.startGmailIngest();
     this.logger.info("iMessage session ready");
   }
 
@@ -1101,6 +1109,81 @@ export class IMessageSession {
       }
     } catch (err) {
       this.logger.warn({ err }, "anticipation tick failed (non-fatal)");
+    }
+  }
+
+  // 3) GMAIL INGESTION. Poll the OWNER's mailbox via the control-plane Gmail
+  // connector (the OAuth token lives there, encrypted — the bridge never does
+  // OAuth) and feed each NEW email through the SAME life-event engine the texts
+  // use, so a bill / delivery / travel / fraud notice arriving by EMAIL gets the
+  // same proactive surface + auto-act path (including cross-channel idempotency
+  // with the SMS version — a UPS email + UPS text for one package surface once).
+  //
+  // Ships DARK: gated on LANTERN_GMAIL_INGEST=on (default off) until the owner
+  // re-auths Google in the dashboard. An expired/invalid token logs ONE clear
+  // re-auth warning then backs off (never spams); network blips retry next tick.
+  private startGmailIngest(): void {
+    if (this.gmailIngestTimer) return;
+    if ((process.env.LANTERN_GMAIL_INGEST || "off").toLowerCase() !== "on") {
+      this.logger.info("gmail ingestion disabled (set LANTERN_GMAIL_INGEST=on after re-authing Google)");
+      return;
+    }
+    const sec = Math.max(60, parseInt(process.env.LANTERN_GMAIL_POLL_SEC || "", 10) || IMessageSession.GMAIL_INGEST_DEFAULT_SEC);
+    const t = setInterval(() => {
+      void this.runGmailIngestTick();
+    }, sec * 1000);
+    t.unref?.();
+    this.gmailIngestTimer = t;
+    this.logger.info({ pollSec: sec }, "gmail ingestion enabled");
+    // First poll ~30s after boot so the connector client + auth are warm.
+    const kick = setTimeout(() => void this.runGmailIngestTick(), 30_000);
+    kick.unref?.();
+  }
+
+  private async runGmailIngestTick(): Promise<void> {
+    try {
+      const { pollGmailOnce } = await import("@lantern/bridge-core/gmail-ingest");
+      const { defaultConnectorClient } = await import("@lantern/bridge-core/prefetch");
+      const client = defaultConnectorClient(this.logger);
+      const execute = (connectorId: string, action: string, params: Record<string, string | number>) =>
+        client.execute(connectorId, action, params);
+
+      const outcome = await pollGmailOnce(execute, { limit: 25 });
+
+      if (outcome.status === "auth_expired") {
+        // ONE-TIME warning, then back off — don't spam every tick.
+        if (!this.gmailAuthWarned) {
+          this.gmailAuthWarned = true;
+          this.logger.warn(
+            { err: outcome.error },
+            "Gmail token expired — re-auth Google in the dashboard (/connectors). Gmail ingestion paused until then.",
+          );
+        }
+        return;
+      }
+      if (outcome.status === "error") {
+        // Transient (network / 5xx) — retry next tick, debug-level only.
+        this.logger.debug({ err: outcome.error }, "gmail ingest poll error — retrying next tick");
+        return;
+      }
+      // A successful poll means auth is healthy again — re-arm the warning so a
+      // future expiry warns once more.
+      this.gmailAuthWarned = false;
+      if (outcome.newMessages.length === 0) return;
+
+      this.logger.info({ count: outcome.newMessages.length }, "gmail ingest: new emails to classify");
+      for (const { message, text } of outcome.newMessages) {
+        try {
+          // Feed through the EXACT same engine as texts — surfaceLifeEvent
+          // classifies (channel:"email"), runs the auto-act ladder + proactive
+          // routing, and dedups cross-channel via the shared acted-keys store.
+          await this.surfaceLifeEvent(`email:${message.id}`, text, "email");
+        } catch (err) {
+          this.logger.warn({ err, id: message.id }, "gmail ingest: surfacing one email failed (non-fatal)");
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "gmail ingest tick failed (non-fatal)");
     }
   }
 
@@ -1659,12 +1742,12 @@ export class IMessageSession {
   //              via mac-actions; pay-link/track/fraud surface the URL/number).
   //   digest   → queue the short owner line into the morning briefing.
   //   suppress → drop (record kind for the owner model), as today.
-  private async surfaceLifeEvent(handle: string, text: string): Promise<boolean> {
+  private async surfaceLifeEvent(handle: string, text: string, channel = "iMessage"): Promise<boolean> {
     const { classifyLifeEvent, proactiveDecision, isActionableKind, autoActDecision } =
       await import("@lantern/bridge-core/life-events");
     const { loadLifeEventPrefs, isAutoActPaused } = await import("@lantern/bridge-core/life-events-store");
 
-    const event = await classifyLifeEvent(text, { channel: "iMessage" });
+    const event = await classifyLifeEvent(text, { channel });
     if (!isActionableKind(event.kind)) return false; // promo/personal/other → legacy path
 
     const prefs = loadLifeEventPrefs();

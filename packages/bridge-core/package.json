@@ -24,6 +24,7 @@
     "./inbound-classifier": "./src/inbound-classifier.ts",
     "./life-events": "./src/life-events.ts",
     "./life-events-store": "./src/life-events-store.ts",
+    "./gmail-ingest": "./src/gmail-ingest.ts",
     "./humanize": "./src/humanize.ts",
     "./prefetch": "./src/prefetch.ts",
     "./owner-profile": "./src/owner-profile.ts",
