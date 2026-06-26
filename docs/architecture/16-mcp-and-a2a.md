@@ -247,8 +247,6 @@ This is the network effect: **the more agents on Lantern, the more useful Lanter
 - `packages/sdk-python/src/mcp/` and `packages/sdk-python/src/a2a/` — Python equivalents
 - `services/control-plane/src/registry/` — agent registry (post-launch)
 
-See [`adr/0011-mcp-and-a2a.md`](../adr/0011-mcp-and-a2a.md) for the rationale.
-
 ---
 
 ## What we're betting on

@@ -217,6 +217,5 @@ mTLS between every internal service. JWT for user requests. API keys for SDK req
 - [`06-model-router.md`](06-model-router.md) — capability addressing, big/small routing, caching
 - [`07-context-management.md`](07-context-management.md) — token budgeter, summarization, cache reuse
 - [`08-streaming.md`](08-streaming.md) — protocols, backpressure, reconnect resume
-- [`09-observability.md`](09-observability.md) — OTel, traces, metrics, run inspector
 - [`10-security.md`](10-security.md) — threat model, mTLS, secrets, isolation
 - [`11-testing.md`](11-testing.md) — unit, integration, e2e, security, chaos
