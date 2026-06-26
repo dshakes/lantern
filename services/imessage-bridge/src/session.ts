@@ -835,6 +835,15 @@ export class IMessageSession {
   private escalationsToday = 0;
   private digestStopFn: (() => void) | null = null;
 
+  // LIFE-EVENT ENGINE: short owner-facing lines for 'digest'-routed events
+  // (deliveries, receipts, far-out bills) accumulated since the last digest.
+  // Drained into the morning briefing. In-memory — a batched FYI lost on
+  // restart is acceptable (the source SMS is still in the user's Messages).
+  private lifeEventDigestQueue: string[] = [];
+  // Most-recent life-event surfaced per owner target — so a later "no"/ignore
+  // can be attributed to the right kind for the owner-model downgrade.
+  private lastLifeEventKind: import("@lantern/bridge-core/life-events").LifeEventKind | null = null;
+
   private startDailyDigest(): void {
     this.digestStopFn?.();
     const handle = scheduleDigest({
@@ -850,10 +859,12 @@ export class IMessageSession {
           monitoredChats: this.monitoredChats.size,
           escalations: this.escalationsToday,
           channelLabel: "iMessage",
+          lifeEvents: [...this.lifeEventDigestQueue],
         };
         // Reset counters AFTER snapshotting so the next day starts fresh.
         this.repliesSentToday = 0;
         this.escalationsToday = 0;
+        this.lifeEventDigestQueue = [];
         return data;
       },
       deliver: async (body) => {
@@ -1570,16 +1581,32 @@ export class IMessageSession {
     }));
   }
 
-  // Proactive ingester for UNKNOWN-sender inbound. Appointment confirmation →
-  // DM the owner + arm a "yes" offer that adds it to the calendar (reusing the
-  // freeform-followup → [CALENDAR:] path). Marketing/spam → suppress. Returns
-  // "handled" to skip the normal auto-reply path. Best-effort + flag-gated.
+  // Proactive ingester for UNKNOWN-sender inbound. The LIFE-EVENT ENGINE runs
+  // FIRST: a transactional notice the bridge used to drop as "marketing/spam"
+  // (a GEICO bill, a UPS delivery window, an Amex fraud alert, an OTP) is now
+  // recognized as a TYPED life-event, its fields extracted, and surfaced to the
+  // OWNER (self-chat) — either a real-time ping with a one-tap action or a
+  // batched digest line. True promos (DSW sale) are still suppressed. Anything
+  // the engine deems non-actionable falls back to the legacy appointment/spam
+  // classifier. OWNER-FACING ONLY — never targets the third-party sender.
+  // Returns "handled" to skip the normal auto-reply path. Best-effort + flag-gated.
   private async maybeIngestUnknownInbound(handle: string, text: string): Promise<"handled" | "pass"> {
     if ((process.env.LANTERN_APPT_INGEST || "on").toLowerCase() === "off") return "pass";
     if (!handle || !text) return "pass";
     // Only UNKNOWN senders — never reclassify a saved contact / known person.
     if (this.contactNames.has(handle)) return "pass";
     if (this.ownerProfileStore.relationshipFor(handle, undefined)) return "pass";
+
+    // ── LIFE-EVENT ENGINE (owner-facing) ──
+    if ((process.env.LANTERN_LIFE_EVENTS || "on").toLowerCase() !== "off") {
+      try {
+        const handled = await this.surfaceLifeEvent(handle, text);
+        if (handled) return "handled";
+      } catch (err) {
+        this.logger.warn({ err }, "life-event surfacing failed — falling back to legacy classifier");
+      }
+    }
+
     let kind: "appointment" | "spam" | "other";
     let signals: string[];
     try {
@@ -1607,6 +1634,78 @@ export class IMessageSession {
       } as any);
     }
     return "handled"; // don't auto-reply to the unknown sender
+  }
+
+  // Classify an unknown-sender message as a typed life-event and route it to the
+  // owner self-chat. Returns true when the engine took ownership of the message
+  // (ping / digest / suppress), false when it's not an actionable life-event and
+  // the caller should fall through to the legacy classifier.
+  //
+  // Routes:
+  //   ping     → DM the owner NOW + arm a PendingOffer so "yes"/"do it" fires the
+  //              top suggested action via executeCachedOffer (calendar/reminder
+  //              via mac-actions; pay-link/track/fraud surface the URL/number).
+  //   digest   → queue the short owner line into the morning briefing.
+  //   suppress → drop (record kind for the owner model), as today.
+  private async surfaceLifeEvent(handle: string, text: string): Promise<boolean> {
+    const { classifyLifeEvent, proactiveDecision, isActionableKind } =
+      await import("@lantern/bridge-core/life-events");
+    const { loadLifeEventPrefs } = await import("@lantern/bridge-core/life-events-store");
+
+    const event = await classifyLifeEvent(text, { channel: "iMessage" });
+    if (!isActionableKind(event.kind)) return false; // promo/personal/other → legacy path
+
+    const prefs = loadLifeEventPrefs();
+    const decision = proactiveDecision(event, prefs);
+    const owner = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim() || this.ownerSelfChatTarget();
+
+    this.logger.info(
+      { kind: event.kind, urgency: event.urgency, route: decision.route, conf: event.confidence },
+      "life-event classified",
+    );
+
+    if (decision.route === "suppress") return true; // owned + dropped
+
+    if (!owner) {
+      // No self-chat target — surface to the dashboard feed so it isn't invisible.
+      this.broadcast({ type: "activity", data: { kind: "system", summary: decision.ownerMessage, timestamp: Date.now() } });
+      return true;
+    }
+
+    if (decision.route === "digest") {
+      this.lifeEventDigestQueue.push(decision.ownerMessage);
+      return true;
+    }
+
+    // ping — DM the owner now + arm the one-tap offer for the top action.
+    await this.send(owner, decision.ownerMessage).catch(() => {});
+    this.lastLifeEventKind = event.kind;
+    const top = decision.actions.find((a) => a.kind !== "snooze" && a.kind !== "none");
+    if (top && top.offerAction) {
+      this.pendingOffers.set(owner, {
+        kind: "freeform-followup",
+        freeformAction: top.offerAction + (top.url ? ` (relevant link: ${top.url})` : "") + (top.phone ? ` (callback number: ${top.phone})` : ""),
+        freeformInbound: text,
+        freeformPriorReply: decision.ownerMessage,
+        issuedAt: Date.now(),
+      } as any);
+    }
+    return true;
+  }
+
+  // Owner-model-lite: when the owner accepts/rejects the most-recent life-event
+  // offer, persist that signal so the engine downgrades nagging kinds over time.
+  // Best-effort + one-shot (clears lastLifeEventKind).
+  private recordLifeEventOutcome(accepted: boolean): void {
+    const kind = this.lastLifeEventKind;
+    if (!kind) return;
+    this.lastLifeEventKind = null;
+    void (async () => {
+      try {
+        const { persistAccept, persistIgnore } = await import("@lantern/bridge-core/life-events-store");
+        if (accepted) persistAccept(kind); else persistIgnore(kind);
+      } catch { /* best-effort */ }
+    })();
   }
 
   // Apply an owner presence/status command from self-chat (set place + timer,
@@ -2211,12 +2310,14 @@ export class IMessageSession {
       if (pending && looksLikeConfirmation(text)) {
         this.logger.info({ kind: pending.kind, chat: row.handle }, "executing cached offer on confirmation (early intercept)");
         this.pendingOffers.delete(row.handle);
+        this.recordLifeEventOutcome(true);
         void this.executeCachedOffer(row.handle, pending);
         return;
       }
       if (pending && looksLikeRejection(text)) {
         this.logger.info({ kind: pending.kind, chat: row.handle }, "dropping cached offer on rejection (early intercept)");
         this.pendingOffers.delete(row.handle);
+        this.recordLifeEventOutcome(false);
         void this.send(row.handle, "👍 no worries");
         return;
       }
