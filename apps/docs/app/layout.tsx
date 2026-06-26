@@ -202,7 +202,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 className="flex items-center gap-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
                 <ExternalLink className="h-3 w-3" /> GitHub
               </a>
-              <p className="text-[10px] text-zinc-700">Alpha release · v0.1.0</p>
+              <p className="text-[10px] text-zinc-700">Apache 2.0 · GA</p>
             </div>
           </aside>
 
