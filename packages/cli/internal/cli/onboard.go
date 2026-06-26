@@ -108,6 +108,17 @@ day-to-day tasks. Be concise, accurate, and honest about what you do and don't k
 // quickstartRunInput is the first run payload sent to prove the agent works.
 var quickstartRunInput = json.RawMessage(`{"prompt":"Say hi and name one thing you can help me with."}`)
 
+// guideAgentName is the on-platform guide agent created via the lantern-guide template.
+const guideAgentName = "lantern-guide"
+
+// guideSystemPrompt is the fallback prompt used when the template endpoint is unavailable.
+const guideSystemPrompt = `You are Lantern's onboarding guide. You receive the output (and any error) from the user's very first agent run and must explain it clearly.
+
+Rules:
+- Respond in AT MOST 3 sentences: what happened, why it matters, and what to try next.
+- End with ONE concrete next command the user can copy-paste (e.g. lantern runs create --agent ...).
+- Friendly and accurate. No markdown headers. No filler ("Great!", "Certainly!"). If there was an error, say so plainly and tell them how to fix it.`
+
 // newOnboardCommand builds the `lantern onboard` cobra.Command.
 func newOnboardCommand() *cobra.Command {
 	var (
@@ -234,12 +245,15 @@ func runOnboard(cfg *onboardConfig) error {
 	fmt.Fprintf(os.Stderr, "%sYou're set.%s\n\n", colorGreen, colorReset)
 
 	// Print the agent output.
+	agentOutputText := ""
 	if finalRun.Output != nil {
 		if text, ok := finalRun.Output["text"].(string); ok && text != "" {
+			agentOutputText = text
 			fmt.Fprintf(os.Stderr, "Agent replied:\n  %s\n\n", text)
 		} else {
 			// Fallback: print the whole output map.
 			if b, err := json.MarshalIndent(finalRun.Output, "  ", "  "); err == nil {
+				agentOutputText = string(b)
 				fmt.Fprintf(os.Stderr, "Agent output:\n  %s\n\n", string(b))
 			}
 		}
@@ -255,6 +269,14 @@ func runOnboard(cfg *onboardConfig) error {
 	fmt.Fprintln(os.Stderr, "Run it again:")
 	fmt.Fprintf(os.Stderr, "  lantern runs create --agent %s --input '{\"prompt\":\"What can you do?\"}'\n", quickstartAgentName)
 	fmt.Fprintln(os.Stderr)
+
+	// ── Step 6: Guide (BEST-EFFORT / FAIL-SOFT) ─────────────────────────────
+	// Build context from the first run's output (and any error detail).
+	firstRunContext := agentOutputText
+	if firstRunContext == "" {
+		firstRunContext = "(run produced no text output)"
+	}
+	runGuideStep(client, firstRunContext)
 
 	return nil
 }
@@ -513,4 +535,89 @@ func providerNames(providers []map[string]any) string {
 		}
 	}
 	return strings.Join(names, ", ")
+}
+
+// runGuideStep is the BEST-EFFORT step 6 of onboard. It spins up the
+// on-platform lantern-guide agent (via the from-template endpoint, with
+// budget caps) and runs it with the context from the first real run.
+//
+// FAIL-SOFT CONTRACT: this function NEVER returns an error and NEVER
+// prints a ✗ that implies onboard failed. Any failure is swallowed or
+// results in a single dim skip line. The deterministic steps 1–5 are
+// the authoritative gate; this is a nice-to-have explanation.
+func runGuideStep(client *internal.RESTClient, firstRunContext string) {
+	// Create or reuse the guide agent. Prefer the template path so the
+	// budget cap applies automatically.
+	_, templateErr := client.ApplyTemplate("lantern-guide", guideAgentName)
+	if templateErr != nil {
+		// Template endpoint may return 409 (already exists) or be unavailable.
+		// Either way, check if the agent already exists before falling back.
+		if _, getErr := client.GetAgent(guideAgentName); getErr != nil {
+			// Agent doesn't exist and template failed — try direct creation.
+			if _, createErr := client.CreateAgentWithSystemPrompt(
+				guideAgentName,
+				"Lantern's onboarding guide — explains what your first run did and suggests the next command.",
+				guideSystemPrompt,
+			); createErr != nil {
+				// Cannot create the guide agent at all — skip silently.
+				fmt.Fprintf(os.Stderr, "%s(skipped guided explanation — could not create guide agent)%s\n\n", colorDim, colorReset)
+				return
+			}
+		}
+		// Agent already exists (409) or was just created via fallback — proceed.
+	}
+
+	// Build the guide input from the first run's output context.
+	guideInput, err := json.Marshal(map[string]string{
+		"prompt": "Here is the output from the user's first Lantern agent run:\n\n" + firstRunContext + "\n\nExplain what happened and suggest one next command.",
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s(skipped guided explanation — could not build input)%s\n\n", colorDim, colorReset)
+		return
+	}
+
+	guideRun, err := client.CreateRun(guideAgentName, json.RawMessage(guideInput), false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s(skipped guided explanation — could not start guide run)%s\n\n", colorDim, colorReset)
+		return
+	}
+
+	finalGuide, err := pollRunUntilTerminal(client, guideRun.ID, 30*time.Second)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s(skipped guided explanation — guide run timed out)%s\n\n", colorDim, colorReset)
+		return
+	}
+
+	if finalGuide.Status != "succeeded" {
+		fmt.Fprintf(os.Stderr, "%s(skipped guided explanation — guide run did not succeed)%s\n\n", colorDim, colorReset)
+		return
+	}
+
+	// Extract the explanation text and print it. The inline executor may return
+	// the reply under "text", "result", or "output" — try each in order.
+	explanation := ""
+	if finalGuide.Output != nil {
+		for _, key := range []string{"text", "result", "output", "content", "message"} {
+			if v, ok := finalGuide.Output[key].(string); ok && v != "" {
+				explanation = strings.TrimSpace(v)
+				break
+			}
+		}
+		// Last resort: if none of the known keys matched but there is exactly
+		// one string value in the map, use it.
+		if explanation == "" && len(finalGuide.Output) == 1 {
+			for _, v := range finalGuide.Output {
+				if s, ok := v.(string); ok && s != "" {
+					explanation = strings.TrimSpace(s)
+				}
+			}
+		}
+	}
+	if explanation == "" {
+		fmt.Fprintf(os.Stderr, "%s(skipped guided explanation — guide produced no text)%s\n\n", colorDim, colorReset)
+		return
+	}
+
+	fmt.Fprintln(os.Stderr, "What just happened:")
+	fmt.Fprintf(os.Stderr, "  %s\n\n", strings.ReplaceAll(explanation, "\n", "\n  "))
 }

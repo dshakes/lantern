@@ -1,5 +1,14 @@
 # whatsapp-assistant
 
+> **Heads up: this example targets the Lantern SDK in-VM runtime, which is not
+> runnable yet.** It uses `agent()` / `step()` with `ctx.llm`, `ctx.tools`,
+> `ctx.connectors`, and/or `ctx.mem` — the in-microVM tool runtime, where
+> `exec_tool` currently returns `TOOL_STATUS_UNAVAILABLE` (see the repo
+> `CLAUDE.md`). It illustrates the intended SDK shape; it does **not** execute
+> against the running stack today. For agents that run right now against the
+> live control-plane, see [`examples/quickstart/`](../quickstart/).
+
+
 Personal WhatsApp agent that manages your calendar, email, tasks, reminders, and expenses through natural conversation.
 
 ## How to run
