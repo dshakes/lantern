@@ -390,8 +390,17 @@ a, button, .card, .sys-comp, .sys-actor { transition: color .15s ease, backgroun
 .harness-rail:hover { border-color: rgba(244,63,94,0.55); background: linear-gradient(180deg, rgba(244,63,94,0.12), rgba(244,63,94,0.03)); transform: translateY(-1px); }
 .harness-rail-head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; font-size: 0.84rem; font-weight: 650; color: #fda4af; margin-bottom: 0.55rem; }
 .harness-rail-sub { flex-basis: 100%; font-size: 0.66rem; font-weight: 500; color: #9b6b72; }
-.harness-rail-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
-.harness-rail-list li { font-size: 0.74rem; color: #d4d4d8; border: 1px solid rgba(244,63,94,0.18); border-radius: 7px; background: rgba(255,255,255,0.02); padding: 0.34rem 0.5rem; }
+/* Grow + distribute the controls so each sits beside a layer — fills the
+   full-height rail instead of leaving an empty rose box below the items. */
+.harness-rail-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; flex: 1 1 auto; justify-content: space-between; gap: 0.4rem; }
+.harness-rail-list li { font-size: 0.74rem; color: #d4d4d8; border: 1px solid rgba(244,63,94,0.18); border-radius: 7px; background: rgba(255,255,255,0.02); padding: 0.5rem 0.5rem; }
+
+/* Clickable deep-link on every section heading (added by HeadingAnchors). */
+.has-anchor { position: relative; }
+.heading-anchor { margin-left: 0.45rem; color: #f59e0b; font-weight: 600; text-decoration: none; opacity: 0.32; transition: opacity .15s; vertical-align: baseline; }
+.has-anchor:hover .heading-anchor { opacity: 0.85; }
+.heading-anchor:hover { opacity: 1; }
+.heading-anchor:focus-visible { opacity: 1; outline: 2px solid rgba(245,158,11,0.5); outline-offset: 2px; border-radius: 3px; }
 
 /* Bottom substrate — control plane */
 .harness-base { border: 1px solid rgba(245,158,11,0.3); border-radius: 14px; background: linear-gradient(160deg, rgba(245,158,11,0.08), rgba(56,189,248,0.025)); padding: 0.7rem 0.85rem; box-shadow: 0 12px 34px -24px rgba(0,0,0,0.85); }
