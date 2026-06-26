@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import clsx from "clsx";
 import { CodeEnhancer } from "./_components/CodeEnhancer";
+import { HeadingAnchors } from "./_components/HeadingAnchors";
 import { Toc } from "./_components/Toc";
 import {
   BookOpen, Rocket, Bot, Plug, MessageSquare, Brain,
@@ -123,6 +124,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="antialiased">
         <CodeEnhancer />
+        <HeadingAnchors />
         {/* Mobile top bar (hidden on lg+) */}
         <header className="lg:hidden sticky top-0 z-50 flex h-14 items-center justify-between border-b border-zinc-800 bg-surface-0/95 px-4 backdrop-blur">
           <Link href="/" className="flex items-center gap-2.5">

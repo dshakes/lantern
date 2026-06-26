@@ -8,8 +8,16 @@ export default function DocsHome() {
     <>
       <h1>The runtime for production AI agents</h1>
       <p>
-        Agents that survive crashes, route to any model, and run in <strong>your</strong> cloud.
+        An agent demo takes an afternoon; agents in <em>production</em> take a year —
+        durable execution, a cost cap finance will sign, an eval gate in CI, real
+        isolation for untrusted code, and the channels your users actually live on.
+        <strong>Lantern is the runtime that solves the production half — in your
+        own cloud.</strong> Your prompts, tokens, and data never leave your VPC.
         Open-source, Apache-2.0 — one command boots the whole stack.
+      </p>
+      <p>
+        The same primitives power a headless backend worker and a personal agent
+        that texts on your real number — so you build the runtime once and get both.
       </p>
 
       <pre><code>{`git clone https://github.com/dshakes/lantern && cd lantern

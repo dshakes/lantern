@@ -22,6 +22,18 @@ lantern dev     # hot-reload daily driver: infra + API + dashboard + bridges
 
 ---
 
+## The pitch
+
+**An agent demo takes an afternoon. Agents in *production* take a year.** Durable execution so a crash doesn't lose state or double-spend tokens. A cost forecast finance will actually sign — with a hard cap that blocks the runaway tool loop *before* it bills. An eval gate in CI so a prompt tweak can't silently regress in front of users. Real isolation for untrusted code — a microVM, not a container on a shared daemon. And the channels your users actually live on, not another vendor dashboard.
+
+**Lantern is the runtime that solves the production half — and runs entirely in _your_ cloud.** Your prompts, tokens, and customer data never leave your VPC. One command runs the whole stack on your laptop; one ships it to your own Kubernetes.
+
+The bet: those primitives are identical whether the agent is a headless backend worker or a personal assistant **texting your family on your real number**. Build the runtime once — durable steps, capability-routed models (`model: "auto"`), hard budgets, microVM isolation, cryptographically verifiable receipts, real channels — and you get both. The system around the model is the moat, not the model.
+
+> Read the full thesis — problem, insight, why-now, the five modules — in [`PITCH.md`](PITCH.md).
+
+---
+
 ## What is Lantern?
 
 Lantern is a **production runtime for AI agents** with a control-plane / data-plane split: Go/Rust orchestration layer manages agents, runs, budgets, evals, and routing — while your prompts and customer data stay in your own VPC. 100% Apache-2.0. No feature gates.
