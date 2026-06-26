@@ -622,13 +622,13 @@ env vars are unset, dashboard falls back to direct bridge probe.
 
 ### Personal device signals (iPhone Shortcuts → tunnel)
 
-The owner's iPhone Shortcuts POST app-context signals (e.g. "Calendar
-opened") to the control-plane on `:8080` THROUGH the existing cloudflared
-tunnel (which fronts the API, not the dashboard on `:3001`). The bridge reads
-`~/.lantern/device-signals.jsonl` (one compact JSON object per line:
-`{app, kind, detail, ts}`) and summarizes it into owner context. A parallel
-dashboard route at `apps/web/app/api/signals/route.ts` writes the same
-contract on `:3001`; this endpoint is the tunnel-reachable twin.
+The owner's iPhone Shortcuts POST rich device-context signals to the
+control-plane on `:8080` THROUGH the existing cloudflared tunnel (which fronts
+the API, not the dashboard on `:3001`). The bridge reads
+`~/.lantern/device-signals.jsonl` (one compact JSON object per line —
+`{app?, kind, detail?, metric?, value?, ts}`) and summarizes them into owner
+context. A parallel dashboard route at `apps/web/app/api/signals/route.ts`
+writes the same contract on `:3001`; this endpoint is the tunnel-reachable twin.
 
 Single-owner PERSONAL endpoint — **NOT** JWT/tenant-scoped. Gated by the
 `LANTERN_SIGNAL_TOKEN` shared secret via a constant-time compare; **fails
@@ -636,10 +636,24 @@ closed** (401) when the env var is unset or the `x-lantern-signal-token`
 header is missing/mismatched. The token is never logged. The JSONL file is
 mode 0600 and bounded (trimmed to the last 4000 lines past 5000).
 
-| Method | Path           | Description                                                                                                                                |
-| ------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `POST` | `/v1/signals`  | Shared-token auth. Body `{app (required, ≤100), kind (default "app_open"), detail (≤500), ts (ms, default now)}`. Appends one JSONL line     |
-| `GET`  | `/v1/signals`  | Shared-token auth. `?limit=N` (default 50, cap 500). Returns the last N parsed signals as a JSON array (debugging / future view)            |
+**Supported kinds (bridge reads all):**
+
+| kind | Required fields | Optional fields | Example |
+|------|----------------|----------------|---------|
+| `app_open` | `app` | `detail` | `{kind:"app_open", app:"YouTube", ts}` |
+| `location` | one of app/detail/value | — | `{kind:"location", detail:"Home", ts}` |
+| `focus` | one of app/detail/value | — | `{kind:"focus", detail:"Work", ts}` |
+| `device` | one of app/detail/value | — | `{kind:"device", detail:"CarPlay", ts}` |
+| `health` | one of app/detail/value | `metric` (steps\|sleep\|workout), `value` | `{kind:"health", metric:"steps", value:6200, ts}` |
+| `now_playing` | one of app/detail/value | — | `{kind:"now_playing", detail:"Song - Artist", ts}` |
+| `wake`/`sleep`/`screenshot` | one of app/detail/value | — | `{kind:"wake", detail:"morning", ts}` |
+
+Validation: `kind` is always required (≤40 chars). For `kind=app_open`, `app` is required (≤100 chars). For all other kinds, at least one of `app`/`detail`/`value` must be present (fully-empty payload → 400). `detail` clamped to 500 chars; `metric` to 40 chars. `ts` defaults to now (ms) when absent or zero.
+
+| Method | Path           | Description                                                                                                                                                 |
+| ------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/v1/signals`  | Shared-token auth. Body `{kind (required), app?, detail?, metric?, value?, ts?}`. Appends one JSONL line with omitempty fields                              |
+| `GET`  | `/v1/signals`  | Shared-token auth. `?limit=N` (default 50, cap 500). Returns the last N parsed signals including metric/value fields as a JSON array                       |
 
 | Env var                 | Purpose                                                                                              |
 | ----------------------- | ---------------------------------------------------------------------------------------------------- |

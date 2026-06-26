@@ -2,11 +2,15 @@
 // No real fs — lines/signals are mocked, so this runs anywhere.
 //
 // Coverage:
-//   - JSONL line parsing (valid, defaults, bad JSON, missing app/ts, bad kind).
+//   - JSONL line parsing (valid, defaults, bad JSON, missing app/ts, bad kind,
+//     appless ambient kinds, health metric/value, bare rhythm markers).
 //   - window filtering (stale signals dropped).
 //   - per-app grouping + opens count + "mostly X" dominant phrasing.
 //   - most-recent ordering in `recent`.
-//   - focus / location / now_playing enrichment clauses.
+//   - composite line: app + location + focus + device + health + media.
+//   - latest-wins per category for location / focus.
+//   - health formatting: steps (6200 -> "6.2k steps"), sleep (-> "slept Xh"),
+//     workout (metric or detail-only).
 //   - empty / all-stale input -> empty summaryLine.
 //   - owner-context block gating + owner-only framing.
 
@@ -23,12 +27,23 @@ import {
 const NOW = 1_700_000_000_000; // fixed "now" for deterministic windows
 const min = (n: number) => n * 60 * 1000;
 
-function sig(app: string, kind: DeviceSignal["kind"], agoMin: number, detail?: string): DeviceSignal {
-  return { app, kind, detail, ts: NOW - min(agoMin) };
+/** Build a signal `agoMin` minutes before NOW. Extra fields (detail/metric/
+ *  value/app) are spread in so ambient + health signals are easy to express. */
+function sig(
+  kind: DeviceSignal["kind"],
+  agoMin: number,
+  extra: Partial<DeviceSignal> = {},
+): DeviceSignal {
+  return { kind, ts: NOW - min(agoMin), ...extra };
+}
+
+/** Shorthand for an app_open signal (the common case). */
+function app(name: string, agoMin: number): DeviceSignal {
+  return sig("app_open", agoMin, { app: name });
 }
 
 // ─── Parsing ─────────────────────────────────────────────────────────────────
-test("parseSignalLine parses a valid line and keeps all fields", () => {
+test("parseSignalLine parses a valid app_open line and keeps all fields", () => {
   const s = parseSignalLine(
     JSON.stringify({ app: "Instagram", kind: "app_open", detail: "feed", ts: NOW }),
   );
@@ -47,14 +62,67 @@ test("parseSignalLine coerces an unknown kind back to app_open", () => {
   assert.equal(s?.kind, "app_open");
 });
 
-test("parseSignalLine rejects bad JSON, missing app, and missing/zero ts", () => {
+test("parseSignalLine rejects bad JSON, missing app on app_open, and missing/zero ts", () => {
   assert.equal(parseSignalLine("not json {"), null);
   assert.equal(parseSignalLine(""), null);
   assert.equal(parseSignalLine("   "), null);
-  assert.equal(parseSignalLine(JSON.stringify({ kind: "app_open", ts: NOW })), null);
+  assert.equal(parseSignalLine(JSON.stringify({ kind: "app_open", ts: NOW })), null); // no app
   assert.equal(parseSignalLine(JSON.stringify({ app: "X" })), null); // no ts
   assert.equal(parseSignalLine(JSON.stringify({ app: "X", ts: 0 })), null);
   assert.equal(parseSignalLine(JSON.stringify({ app: "X", ts: "soon" })), null);
+});
+
+test("parseSignalLine parses appless ambient kinds via detail", () => {
+  const loc = parseSignalLine(JSON.stringify({ kind: "location", detail: "Home", ts: NOW }));
+  assert.deepEqual(loc, { kind: "location", detail: "Home", ts: NOW });
+
+  const focus = parseSignalLine(JSON.stringify({ kind: "focus", detail: "Work", ts: NOW }));
+  assert.deepEqual(focus, { kind: "focus", detail: "Work", ts: NOW });
+
+  const dev = parseSignalLine(JSON.stringify({ kind: "device", detail: "CarPlay", ts: NOW }));
+  assert.deepEqual(dev, { kind: "device", detail: "CarPlay", ts: NOW });
+
+  const np = parseSignalLine(
+    JSON.stringify({ kind: "now_playing", detail: "Song - Artist", ts: NOW }),
+  );
+  assert.deepEqual(np, { kind: "now_playing", detail: "Song - Artist", ts: NOW });
+});
+
+test("parseSignalLine parses health metric/value and drops a bad metric", () => {
+  const steps = parseSignalLine(
+    JSON.stringify({ kind: "health", metric: "steps", value: 6200, ts: NOW }),
+  );
+  assert.deepEqual(steps, { kind: "health", metric: "steps", value: 6200, ts: NOW });
+
+  // detail-only health (workout) is allowed.
+  const ran = parseSignalLine(JSON.stringify({ kind: "health", detail: "ran 3mi", ts: NOW }));
+  assert.deepEqual(ran, { kind: "health", detail: "ran 3mi", ts: NOW });
+
+  // unknown metric is stripped; with no detail/value left, the line is dropped.
+  assert.equal(
+    parseSignalLine(JSON.stringify({ kind: "health", metric: "heartrate", ts: NOW })),
+    null,
+  );
+});
+
+test("parseSignalLine accepts bare rhythm markers with no payload", () => {
+  assert.deepEqual(parseSignalLine(JSON.stringify({ kind: "wake", ts: NOW })), {
+    kind: "wake",
+    ts: NOW,
+  });
+  assert.deepEqual(parseSignalLine(JSON.stringify({ kind: "sleep", ts: NOW })), {
+    kind: "sleep",
+    ts: NOW,
+  });
+  assert.deepEqual(parseSignalLine(JSON.stringify({ kind: "screenshot", ts: NOW })), {
+    kind: "screenshot",
+    ts: NOW,
+  });
+});
+
+test("parseSignalLine drops an ambient kind with no payload", () => {
+  assert.equal(parseSignalLine(JSON.stringify({ kind: "location", ts: NOW })), null);
+  assert.equal(parseSignalLine(JSON.stringify({ kind: "focus", ts: NOW })), null);
 });
 
 test("parseSignals drops malformed lines and keeps the good ones", () => {
@@ -64,20 +132,21 @@ test("parseSignals drops malformed lines and keeps the good ones", () => {
     "",
     JSON.stringify({ app: "Slack", kind: "app_open", ts: NOW - 1 }),
     JSON.stringify({ ts: NOW }), // no app
+    JSON.stringify({ kind: "location", detail: "Home", ts: NOW }),
   ];
   const got = parseSignals(lines);
-  assert.equal(got.length, 2);
+  assert.equal(got.length, 3);
   assert.deepEqual(
-    got.map((s) => s.app),
-    ["Instagram", "Slack"],
+    got.map((s) => s.app ?? s.detail),
+    ["Instagram", "Slack", "Home"],
   );
 });
 
 // ─── Window filtering ──────────────────────────────────────────────────────--
 test("summarizeDeviceSignals drops signals older than the window", () => {
   const signals = [
-    sig("Instagram", "app_open", 30),
-    sig("Slack", "app_open", 200), // 200 min ago — outside default 2h
+    app("Instagram", 30),
+    app("Slack", 200), // 200 min ago — outside default 2h
   ];
   const out = summarizeDeviceSignals(signals, { nowMs: NOW });
   assert.deepEqual(
@@ -91,11 +160,11 @@ test("summarizeDeviceSignals drops signals older than the window", () => {
 // ─── Grouping + dominant phrasing ──────────────────────────────────────────--
 test("summarizeDeviceSignals groups by app, counts opens, and notes the dominant app", () => {
   const signals = [
-    sig("Instagram", "app_open", 10),
-    sig("Instagram", "app_open", 20),
-    sig("Instagram", "app_open", 30),
-    sig("Slack", "app_open", 15),
-    sig("Maps", "app_open", 5),
+    app("Instagram", 10),
+    app("Instagram", 20),
+    app("Instagram", 30),
+    app("Slack", 15),
+    app("Maps", 5),
   ];
   const out = summarizeDeviceSignals(signals, { nowMs: NOW });
   assert.equal(out.topApps[0].app, "Instagram");
@@ -106,40 +175,127 @@ test("summarizeDeviceSignals groups by app, counts opens, and notes the dominant
   for (const a of ["Instagram", "Slack", "Maps"]) assert.match(out.summaryLine, new RegExp(a));
 });
 
+test("only-app-opens still produces the classic line", () => {
+  const out = summarizeDeviceSignals([app("YouTube", 5), app("LinkedIn", 8)], { nowMs: NOW });
+  assert.equal(out.summaryLine, "On iPhone (last 2h): YouTube, LinkedIn.");
+});
+
 test("most-recent signal leads `recent`", () => {
-  const signals = [
-    sig("Slack", "app_open", 40),
-    sig("Maps", "app_open", 2),
-    sig("Instagram", "app_open", 20),
-  ];
+  const signals = [app("Slack", 40), app("Maps", 2), app("Instagram", 20)];
   const out = summarizeDeviceSignals(signals, { nowMs: NOW });
   assert.equal(out.recent[0].app, "Maps"); // 2 min ago is newest
 });
 
-// ─── Ambient enrichers ─────────────────────────────────────────────────────--
-test("location, focus and now_playing enrich the line and don't count as opens", () => {
+// ─── Composite line (the headline feature) ─────────────────────────────────--
+test("mixed-kind input produces a composite line: app + location + focus + device + health + media", () => {
   const signals = [
-    sig("Instagram", "app_open", 10),
-    sig("Home", "location", 5, "Home"),
-    sig("Work", "focus", 8, "Work"),
-    sig("Spotify", "now_playing", 3, "Lo-fi beats"),
+    app("YouTube", 12),
+    app("LinkedIn", 8),
+    sig("location", 6, { detail: "Home" }),
+    sig("focus", 10, { detail: "Work" }),
+    sig("device", 4, { detail: "charging" }),
+    sig("health", 30, { metric: "steps", value: 6200 }),
+    sig("now_playing", 2, { detail: "Hardcore History" }),
   ];
   const out = summarizeDeviceSignals(signals, { nowMs: NOW });
-  // Only the app_open counts as a top app.
-  assert.deepEqual(
-    out.topApps.map((a) => a.app),
-    ["Instagram"],
-  );
+  // Apps lead (both present); each enricher follows after the " — " divider.
+  assert.match(out.summaryLine, /^On iPhone \(last 2h\): (YouTube, LinkedIn|LinkedIn, YouTube) —/);
   assert.match(out.summaryLine, /at Home/);
-  assert.match(out.summaryLine, /Work focus on/);
-  assert.match(out.summaryLine, /playing Lo-fi beats/);
+  assert.match(out.summaryLine, /Work focus/);
+  assert.match(out.summaryLine, /charging/);
+  assert.match(out.summaryLine, /6\.2k steps/);
+  assert.match(out.summaryLine, /playing Hardcore History/);
+  // ambient kinds never become top apps (only the two app_opens, any order)
+  assert.deepEqual(
+    out.topApps.map((a) => a.app).sort(),
+    ["LinkedIn", "YouTube"],
+  );
 });
 
-test("ambient-only signals still produce a line (no app opens)", () => {
-  const signals = [sig("Home", "location", 5, "Home")];
+test("CarPlay device state reads as driving", () => {
+  const out = summarizeDeviceSignals([app("Maps", 5), sig("device", 3, { detail: "CarPlay" })], {
+    nowMs: NOW,
+  });
+  assert.match(out.summaryLine, /driving/);
+  assert.doesNotMatch(out.summaryLine, /CarPlay/);
+});
+
+test("focus 'off' is skipped", () => {
+  const out = summarizeDeviceSignals([app("Slack", 5), sig("focus", 3, { detail: "off" })], {
+    nowMs: NOW,
+  });
+  assert.doesNotMatch(out.summaryLine, /focus/);
+});
+
+// ─── Latest-wins per category ──────────────────────────────────────────────--
+test("location uses the LATEST detail (latest-wins)", () => {
+  const signals = [
+    sig("location", 40, { detail: "Office" }),
+    sig("location", 3, { detail: "Home" }), // newer
+  ];
   const out = summarizeDeviceSignals(signals, { nowMs: NOW });
-  assert.equal(out.topApps.length, 0);
   assert.match(out.summaryLine, /at Home/);
+  assert.doesNotMatch(out.summaryLine, /Office/);
+});
+
+test("focus uses the LATEST mode (latest-wins)", () => {
+  const signals = [
+    sig("focus", 40, { detail: "Sleep" }),
+    sig("focus", 3, { detail: "Work" }), // newer
+  ];
+  const out = summarizeDeviceSignals(signals, { nowMs: NOW });
+  assert.match(out.summaryLine, /Work focus/);
+  assert.doesNotMatch(out.summaryLine, /Sleep/);
+});
+
+// ─── Health formatting ─────────────────────────────────────────────────────--
+test("health steps formats 6200 -> '6.2k steps' and a round 10000 -> '10k steps'", () => {
+  const out1 = summarizeDeviceSignals([sig("health", 5, { metric: "steps", value: 6200 })], {
+    nowMs: NOW,
+  });
+  assert.match(out1.summaryLine, /6\.2k steps/);
+
+  const out2 = summarizeDeviceSignals([sig("health", 5, { metric: "steps", value: 10000 })], {
+    nowMs: NOW,
+  });
+  assert.match(out2.summaryLine, /10k steps/);
+
+  const out3 = summarizeDeviceSignals([sig("health", 5, { metric: "steps", value: 850 })], {
+    nowMs: NOW,
+  });
+  assert.match(out3.summaryLine, /850 steps/);
+});
+
+test("health sleep formats value -> 'slept Xh'", () => {
+  const out = summarizeDeviceSignals([sig("health", 5, { metric: "sleep", value: 6.5 })], {
+    nowMs: NOW,
+  });
+  assert.match(out.summaryLine, /slept 6\.5h/);
+
+  const round = summarizeDeviceSignals([sig("health", 5, { metric: "sleep", value: 8 })], {
+    nowMs: NOW,
+  });
+  assert.match(round.summaryLine, /slept 8h/);
+});
+
+test("health workout uses metric:'workout' detail, and a detail-only health line", () => {
+  const metricWorkout = summarizeDeviceSignals(
+    [sig("health", 5, { metric: "workout", detail: "ran 3mi" })],
+    { nowMs: NOW },
+  );
+  assert.match(metricWorkout.summaryLine, /ran 3mi/);
+
+  const detailWorkout = summarizeDeviceSignals([sig("health", 5, { detail: "ran 3mi" })], {
+    nowMs: NOW,
+  });
+  assert.match(detailWorkout.summaryLine, /ran 3mi/);
+});
+
+// ─── Ambient-only ──────────────────────────────────────────────────────────--
+test("ambient-only signals still produce a line (no app opens)", () => {
+  const out = summarizeDeviceSignals([sig("location", 5, { detail: "Home" })], { nowMs: NOW });
+  assert.equal(out.topApps.length, 0);
+  assert.match(out.summaryLine, /^On iPhone \(last 2h\): at Home\.$/);
 });
 
 // ─── Empty ─────────────────────────────────────────────────────────────────--
@@ -151,12 +307,12 @@ test("empty input yields an empty summary line", () => {
 });
 
 test("all-stale input yields an empty summary line", () => {
-  const out = summarizeDeviceSignals([sig("Instagram", "app_open", 999)], { nowMs: NOW });
+  const out = summarizeDeviceSignals([app("Instagram", 999)], { nowMs: NOW });
   assert.equal(out.summaryLine, "");
 });
 
 test("custom window label reflects a shorter lookback", () => {
-  const out = summarizeDeviceSignals([sig("Slack", "app_open", 10)], {
+  const out = summarizeDeviceSignals([app("Slack", 10)], {
     nowMs: NOW,
     windowMs: min(30),
   });
@@ -176,7 +332,7 @@ test("deviceContextBlock gates on a present summary line and is owner-framed", (
 });
 
 test("deviceContextBlock accepts a full summary object", () => {
-  const out = summarizeDeviceSignals([sig("Slack", "app_open", 10)], { nowMs: NOW });
+  const out = summarizeDeviceSignals([app("Slack", 10)], { nowMs: NOW });
   const block = deviceContextBlock(out);
   assert.match(block, /Slack/);
 });

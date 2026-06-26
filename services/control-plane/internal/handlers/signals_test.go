@@ -76,7 +76,7 @@ func TestSignalIngest(t *testing.T) {
 			name:       "blank app is 400",
 			setEnv:     true,
 			token:      tok,
-			body:       map[string]any{"app": "   "},
+			body:       map[string]any{"app": "   ", "kind": "app_open"},
 			wantStatus: http.StatusBadRequest,
 			wantLine:   false,
 		},
@@ -84,7 +84,7 @@ func TestSignalIngest(t *testing.T) {
 			name:       "wrong token is 401",
 			setEnv:     true,
 			token:      "nope",
-			body:       map[string]any{"app": "Calendar"},
+			body:       map[string]any{"app": "Calendar", "kind": "app_open"},
 			wantStatus: http.StatusUnauthorized,
 			wantLine:   false,
 		},
@@ -92,7 +92,7 @@ func TestSignalIngest(t *testing.T) {
 			name:       "missing token is 401",
 			setEnv:     true,
 			token:      "",
-			body:       map[string]any{"app": "Calendar"},
+			body:       map[string]any{"app": "Calendar", "kind": "app_open"},
 			wantStatus: http.StatusUnauthorized,
 			wantLine:   false,
 		},
@@ -100,8 +100,81 @@ func TestSignalIngest(t *testing.T) {
 			name:       "unset env fails closed even with a token",
 			setEnv:     false,
 			token:      tok,
-			body:       map[string]any{"app": "Calendar"},
+			body:       map[string]any{"app": "Calendar", "kind": "app_open"},
 			wantStatus: http.StatusUnauthorized,
+			wantLine:   false,
+		},
+		// --- richer kinds ---
+		{
+			name:       "location with only detail no app",
+			setEnv:     true,
+			token:      tok,
+			body:       map[string]any{"kind": "location", "detail": "Home"},
+			wantStatus: http.StatusOK,
+			wantLine:   true,
+		},
+		{
+			name:       "focus signal",
+			setEnv:     true,
+			token:      tok,
+			body:       map[string]any{"kind": "focus", "detail": "Work"},
+			wantStatus: http.StatusOK,
+			wantLine:   true,
+		},
+		{
+			name:       "device signal CarPlay",
+			setEnv:     true,
+			token:      tok,
+			body:       map[string]any{"kind": "device", "detail": "CarPlay"},
+			wantStatus: http.StatusOK,
+			wantLine:   true,
+		},
+		{
+			name:       "health with metric and value no app or detail",
+			setEnv:     true,
+			token:      tok,
+			body:       map[string]any{"kind": "health", "metric": "steps", "value": 6200},
+			wantStatus: http.StatusOK,
+			wantLine:   true,
+		},
+		{
+			name:       "health with detail only",
+			setEnv:     true,
+			token:      tok,
+			body:       map[string]any{"kind": "health", "detail": "ran 3mi"},
+			wantStatus: http.StatusOK,
+			wantLine:   true,
+		},
+		{
+			name:       "now_playing signal",
+			setEnv:     true,
+			token:      tok,
+			body:       map[string]any{"kind": "now_playing", "detail": "Blinding Lights - The Weeknd"},
+			wantStatus: http.StatusOK,
+			wantLine:   true,
+		},
+		{
+			name:       "wake signal bare no app detail value",
+			setEnv:     true,
+			token:      tok,
+			body:       map[string]any{"kind": "wake"},
+			wantStatus: http.StatusBadRequest, // no app/detail/value — fully empty payload
+			wantLine:   false,
+		},
+		{
+			name:       "missing kind is 400",
+			setEnv:     true,
+			token:      tok,
+			body:       map[string]any{"app": "Calendar"},
+			wantStatus: http.StatusBadRequest,
+			wantLine:   false,
+		},
+		{
+			name:       "fully empty non-app_open is 400",
+			setEnv:     true,
+			token:      tok,
+			body:       map[string]any{"kind": "device"},
+			wantStatus: http.StatusBadRequest,
 			wantLine:   false,
 		},
 	}
@@ -148,9 +221,10 @@ func TestSignalIngestDefaultsAndFormat(t *testing.T) {
 	t.Setenv("LANTERN_SIGNAL_TOKEN", tok)
 	h := newSignalHandlerForTest(t)
 
-	// kind/ts omitted -> defaults applied; detail clamped to 500.
+	// kind explicit, ts omitted -> ts defaults to now; detail clamped to 500.
 	rec := postSignal(t, h, tok, map[string]any{
 		"app":    "Mail",
+		"kind":   "app_open",
 		"detail": strings.Repeat("x", 600),
 	})
 	if rec.Code != http.StatusOK {
@@ -178,7 +252,7 @@ func TestSignalIngestDefaultsAndFormat(t *testing.T) {
 		t.Errorf("app = %q, want Mail", e.App)
 	}
 	if e.Kind != "app_open" {
-		t.Errorf("kind = %q, want app_open default", e.Kind)
+		t.Errorf("kind = %q, want app_open", e.Kind)
 	}
 	if len(e.Detail) != signalMaxDetailLen {
 		t.Errorf("detail len = %d, want clamped to %d", len(e.Detail), signalMaxDetailLen)
@@ -197,6 +271,53 @@ func TestSignalIngestDefaultsAndFormat(t *testing.T) {
 	}
 }
 
+func TestSignalHealthMetricValueJSONL(t *testing.T) {
+	const tok = "test-signal-token"
+	home := isolateHome(t)
+	t.Setenv("LANTERN_SIGNAL_TOKEN", tok)
+	h := newSignalHandlerForTest(t)
+
+	val := 6200.0
+	rec := postSignal(t, h, tok, map[string]any{
+		"kind":   "health",
+		"metric": "steps",
+		"value":  val,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	path := filepath.Join(home, ".lantern", "device-signals.jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+
+	var e signalEntry
+	if err := json.Unmarshal(bytes.TrimSpace(data), &e); err != nil {
+		t.Fatalf("unmarshal line: %v (line=%s)", err, data)
+	}
+	if e.Kind != "health" {
+		t.Errorf("kind = %q, want health", e.Kind)
+	}
+	if e.Metric != "steps" {
+		t.Errorf("metric = %q, want steps", e.Metric)
+	}
+	if e.Value == nil || *e.Value != val {
+		t.Errorf("value = %v, want %v", e.Value, val)
+	}
+	// app_open omitempty: app should be absent / empty for a health signal.
+	if e.App != "" {
+		t.Errorf("app = %q, want empty (omitempty)", e.App)
+	}
+
+	// Confirm the raw JSON line has no "app" key.
+	line := strings.TrimSpace(string(data))
+	if strings.Contains(line, `"app"`) {
+		t.Errorf("JSONL line contains unexpected 'app' key: %s", line)
+	}
+}
+
 func TestSignalListReturnsAppended(t *testing.T) {
 	const tok = "test-signal-token"
 	isolateHome(t)
@@ -204,7 +325,7 @@ func TestSignalListReturnsAppended(t *testing.T) {
 	h := newSignalHandlerForTest(t)
 
 	for _, app := range []string{"Calendar", "Mail", "Notes"} {
-		if rec := postSignal(t, h, tok, map[string]any{"app": app}); rec.Code != http.StatusOK {
+		if rec := postSignal(t, h, tok, map[string]any{"app": app, "kind": "app_open"}); rec.Code != http.StatusOK {
 			t.Fatalf("post %s: status %d", app, rec.Code)
 		}
 	}
@@ -228,6 +349,52 @@ func TestSignalListReturnsAppended(t *testing.T) {
 	// Last-N in order: Mail then Notes.
 	if got[0].App != "Mail" || got[1].App != "Notes" {
 		t.Errorf("apps = [%s %s], want [Mail Notes]", got[0].App, got[1].App)
+	}
+}
+
+// TestSignalListReturnsMetricValue verifies that metric and value fields
+// round-trip through POST → JSONL → GET correctly.
+func TestSignalListReturnsMetricValue(t *testing.T) {
+	const tok = "test-signal-token"
+	isolateHome(t)
+	t.Setenv("LANTERN_SIGNAL_TOKEN", tok)
+	h := newSignalHandlerForTest(t)
+
+	// POST a health signal with metric+value.
+	if rec := postSignal(t, h, tok, map[string]any{
+		"kind":   "health",
+		"metric": "steps",
+		"value":  8500.0,
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("post health: status %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// GET and verify the fields come back.
+	req := httptest.NewRequest(http.MethodGet, "/v1/signals?limit=1", nil)
+	req.Header.Set("x-lantern-signal-token", tok)
+	rec := httptest.NewRecorder()
+	h.ListSignals(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	var got []signalEntry
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	e := got[0]
+	if e.Kind != "health" {
+		t.Errorf("kind = %q, want health", e.Kind)
+	}
+	if e.Metric != "steps" {
+		t.Errorf("metric = %q, want steps", e.Metric)
+	}
+	if e.Value == nil || *e.Value != 8500.0 {
+		t.Errorf("value = %v, want 8500", e.Value)
 	}
 }
 
@@ -265,7 +432,7 @@ func TestSignalFileBounded(t *testing.T) {
 	}
 
 	h := newSignalHandlerForTest(t)
-	if rec := postSignal(t, h, tok, map[string]any{"app": "Calendar"}); rec.Code != http.StatusOK {
+	if rec := postSignal(t, h, tok, map[string]any{"app": "Calendar", "kind": "app_open"}); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
