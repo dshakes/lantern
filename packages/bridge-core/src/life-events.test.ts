@@ -10,6 +10,7 @@ import {
   classifyLifeEventSync,
   suggestedActionsFor,
   proactiveDecision,
+  isStaleEvent,
   applyPrefDowngrade,
   recordAccept,
   recordIgnore,
@@ -42,24 +43,78 @@ describe("life-events — undated travel/appointment must NOT nudge (placeholder
   test("undated travel → no calendar action and route 'suppress'", () => {
     const e = ev({ kind: "travel", fields: {} });
     assert.equal(suggestedActionsFor(e).length, 0, "undated travel must offer no action");
-    assert.equal(proactiveDecision(e).route, "suppress");
+    assert.equal(proactiveDecision(e, {}, NOW).route, "suppress");
   });
 
   test("undated appointment → route 'suppress'", () => {
     const e = ev({ kind: "appointment", fields: {}, rawText: "we got your message" });
-    assert.equal(proactiveDecision(e).route, "suppress");
+    assert.equal(proactiveDecision(e, {}, NOW).route, "suppress");
   });
 
   test("DATED travel still surfaces with a calendar action", () => {
     const e = ev({ kind: "travel", urgency: "soon", fields: { time: "Jul 5 9:00 AM" }, rawText: "Flight UA123 departs Jul 5 9:00 AM" });
-    const d = proactiveDecision(e);
+    const d = proactiveDecision(e, {}, NOW);
     assert.notEqual(d.route, "suppress", "a dated trip is real — it should surface");
     assert.equal(d.actions[0]?.kind, "calendar");
   });
 
   test("the travel gate does NOT affect otp (empty actions by design still surfaces)", () => {
     const e = ev({ kind: "otp", urgency: "now", fields: { code: "123456" }, rawText: "Your verification code is 123456" });
-    assert.notEqual(proactiveDecision(e).route, "suppress", "otp must still surface");
+    assert.notEqual(proactiveDecision(e, {}, NOW).route, "suppress", "otp must still surface");
+  });
+});
+
+describe("life-events — recency gate: only surface RECENT + actionable (stale-Gmail-nudge bug)", () => {
+  // Gmail ingestion pulls recently-RECEIVED mail whose CONTENT may be PAST.
+  // An event that already happened isn't actionable and must be suppressed —
+  // WITHOUT suppressing valid future/recent events (high precision).
+  const evt = (over: Partial<LifeEvent>): LifeEvent => ({
+    kind: "travel", confidence: 0.85, urgency: "soon", channel: "email", fields: {}, rawText: "", ...over,
+  } as LifeEvent);
+
+  test("travel with an EXPLICIT past date → stale → suppress", () => {
+    const e = evt({ kind: "travel", fields: { time: "Jun 5, 2024 9:00 AM" }, rawText: "Flight UA10 departed Jun 5, 2024 9:00 AM" });
+    assert.equal(isStaleEvent(e, NOW), true);
+    assert.equal(proactiveDecision(e, {}, NOW).route, "suppress");
+  });
+
+  test("travel with a FUTURE date → not stale → surfaces", () => {
+    const e = evt({ kind: "travel", fields: { time: "Aug 12, 2026 6:00 AM" }, rawText: "Flight UA10 departs Aug 12, 2026 6:00 AM" });
+    assert.equal(isStaleEvent(e, NOW), false);
+    assert.notEqual(proactiveDecision(e, {}, NOW).route, "suppress");
+  });
+
+  test("bare (year-less) future-ish date is NOT suppressed (rolls forward — precision guard)", () => {
+    // "Jul 5" with no year → parseDueDate rolls to the next occurrence → future.
+    const e = evt({ kind: "appointment", fields: { time: "Jul 5 2:00 PM" }, rawText: "Your appointment is Jul 5 at 2:00 PM" });
+    assert.equal(isStaleEvent(e, NOW), false);
+  });
+
+  test("bill with an explicit past due date → stale → suppress", () => {
+    const e = classifyLifeEventSync("Acme Power: your payment of $84.20 was due Jan 15, 2024.", opts);
+    assert.equal(e.kind, "bill");
+    assert.equal(e.fields.dueDate, "2024-01-15");
+    assert.equal(proactiveDecision(e, {}, NOW).route, "suppress");
+  });
+
+  test("already-DELIVERED package → nothing to schedule → suppress", () => {
+    const e = classifyLifeEventSync("UPS: Your package 1Z999AA10123456784 was delivered to your front door.", opts);
+    assert.equal(e.kind, "delivery");
+    assert.equal(isStaleEvent(e, NOW), true);
+    assert.equal(proactiveDecision(e, {}, NOW).route, "suppress");
+  });
+
+  test("out-for-delivery (in transit) is NOT stale → still surfaces", () => {
+    const e = classifyLifeEventSync("UPS: 1Z999AA10123456784 is out for delivery, arriving tomorrow.", opts);
+    assert.equal(e.kind, "delivery");
+    assert.equal(isStaleEvent(e, NOW), false);
+  });
+
+  test("recency gate never touches fraud/otp (always surface)", () => {
+    const fraud = classifyLifeEventSync("Amex Fraud Alert: declined $420 charge — was this you? call 1-800-528-4800.", opts);
+    assert.equal(isStaleEvent(fraud, NOW), false);
+    const otp = classifyLifeEventSync("Your one-time code is 884213", opts);
+    assert.equal(isStaleEvent(otp, NOW), false);
   });
 });
 
@@ -85,7 +140,7 @@ describe("classifyLifeEvent — REAL owner examples", () => {
     );
     assert.equal(e.kind, "bill");
     assert.equal(e.urgency, "now");
-    const d = proactiveDecision(e);
+    const d = proactiveDecision(e, {}, NOW);
     assert.equal(d.route, "ping");
     assert.ok(d.ownerMessage.includes("GEICO"));
     assert.ok(d.ownerMessage.includes("$1,989.85"));
@@ -112,7 +167,7 @@ describe("classifyLifeEvent — REAL owner examples", () => {
     );
     assert.equal(e.kind, "fraud_alert");
     assert.equal(e.urgency, "now");
-    const d = proactiveDecision(e);
+    const d = proactiveDecision(e, {}, NOW);
     assert.equal(d.route, "ping");
     assert.ok(d.ownerMessage.includes("⚠️"));
     assert.match(d.ownerMessage, /800/);
@@ -128,7 +183,7 @@ describe("classifyLifeEvent — REAL owner examples", () => {
     assert.equal(e.kind, "otp");
     assert.equal(e.fields.code, "611586");
     assert.equal(e.urgency, "now");
-    const d = proactiveDecision(e);
+    const d = proactiveDecision(e, {}, NOW);
     assert.equal(d.route, "ping");
     assert.ok(d.ownerMessage.includes("611586"));
     assert.equal(d.actions.length, 0);
@@ -146,14 +201,14 @@ describe("classifyLifeEvent — REAL owner examples", () => {
       opts,
     );
     assert.equal(e.kind, "promo");
-    assert.equal(proactiveDecision(e).route, "suppress");
+    assert.equal(proactiveDecision(e, {}, NOW).route, "suppress");
   });
 
   test("normal human message → personal/other, NOT misclassified", () => {
     const e = classifyLifeEventSync("hey are we still on for dinner saturday? lmk", opts);
     assert.ok(["personal", "other"].includes(e.kind));
     assert.equal(isActionableKind(e.kind), false);
-    assert.equal(proactiveDecision(e).route, "suppress");
+    assert.equal(proactiveDecision(e, {}, NOW).route, "suppress");
   });
 });
 
@@ -161,36 +216,36 @@ describe("proactiveDecision routing", () => {
   test("fraud → ping", () => {
     const e = classifyLifeEventSync("Chase: suspicious unusual activity detected. Was this you?", opts);
     assert.equal(e.kind, "fraud_alert");
-    assert.equal(proactiveDecision(e).route, "ping");
+    assert.equal(proactiveDecision(e, {}, NOW).route, "ping");
   });
 
   test("otp → ping", () => {
     const e = classifyLifeEventSync("Your one-time code is 884213", opts);
     assert.equal(e.kind, "otp");
-    assert.equal(proactiveDecision(e).route, "ping");
+    assert.equal(proactiveDecision(e, {}, NOW).route, "ping");
   });
 
   test("delivery → digest (soon, batched)", () => {
     const e = classifyLifeEventSync("FedEx: your package shipped and is arriving Friday.", opts);
     assert.equal(e.kind, "delivery");
-    assert.equal(proactiveDecision(e).route, "digest");
+    assert.equal(proactiveDecision(e, {}, NOW).route, "digest");
   });
 
   test("far-out bill → digest", () => {
     const e = classifyLifeEventSync("AT&T: your bill of $84.20 is due Jul 30.", opts);
     assert.equal(e.kind, "bill");
-    assert.equal(proactiveDecision(e).route, "digest"); // ~35 days → fyi
+    assert.equal(proactiveDecision(e, {}, NOW).route, "digest"); // ~35 days → fyi
   });
 
   test("promo → suppress", () => {
     const e = classifyLifeEventSync("Limited time deal! 50% off, buy now.", opts);
-    assert.equal(proactiveDecision(e).route, "suppress");
+    assert.equal(proactiveDecision(e, {}, NOW).route, "suppress");
   });
 
   test("receipt → digest", () => {
     const e = classifyLifeEventSync("Amazon: Thank you for your order #112-9. Total $35.99.", opts);
     assert.equal(e.kind, "receipt");
-    assert.equal(proactiveDecision(e).route, "digest");
+    assert.equal(proactiveDecision(e, {}, NOW).route, "digest");
   });
 });
 
@@ -250,7 +305,7 @@ describe("owner-model-lite preference downgrade", () => {
     const e = classifyLifeEventSync("FedEx package arriving Friday.", opts);
     assert.equal(e.kind, "delivery");
     const prefs: LifeEventPrefs = { delivery: { accepts: 0, ignores: 3 } };
-    assert.equal(proactiveDecision(e, prefs).route, "suppress");
+    assert.equal(proactiveDecision(e, prefs, NOW).route, "suppress");
   });
 
   test("recordAccept / recordIgnore are pure increments", () => {
@@ -300,7 +355,7 @@ describe("self-chat prefixes", () => {
       "Amex fraud alert: declined. Call 1-800-528-4800.",
     ];
     for (const text of cases) {
-      const d = proactiveDecision(classifyLifeEventSync(text, opts));
+      const d = proactiveDecision(classifyLifeEventSync(text, opts), {}, NOW);
       const matched = LIFE_EVENT_SELF_PREFIXES.some((p) => d.ownerMessage.startsWith(p.trim()));
       assert.ok(matched, `"${d.ownerMessage}" should match a registered self-prefix`);
     }
@@ -322,7 +377,7 @@ describe("self-chat prefixes", () => {
       "Amex fraud alert: declined. Call 1-800-528-4800.",
     ];
     for (const text of cases) {
-      const d = proactiveDecision(classifyLifeEventSync(text, opts));
+      const d = proactiveDecision(classifyLifeEventSync(text, opts), {}, NOW);
       assert.ok(isBotSelfMessage(d.ownerMessage), `ping "${d.ownerMessage}" must be bot-self`);
     }
   });
