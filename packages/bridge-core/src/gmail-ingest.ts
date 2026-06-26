@@ -241,12 +241,28 @@ export async function pollGmailOnce(
 function extractErrorString(result: unknown): string | undefined {
   if (!result || typeof result !== "object") return undefined;
   const r = result as Record<string, unknown>;
+  // The error may sit at the top level (control-plane 4xx envelope) or nested
+  // under `data` (a connector that returned 200 with an embedded error).
   if (typeof r.error === "string" && r.error) return r.error;
+  const d = r.data as Record<string, unknown> | undefined;
+  if (d && typeof d === "object" && typeof d.error === "string" && d.error) return d.error;
   return undefined;
 }
 
-function extractMessages(result: unknown): unknown[] {
-  if (!result || typeof result !== "object") return [];
+// The control-plane wraps connector output as { action, connector, data: {...} }
+// (see /v1/connectors/{id}/execute). Unwrap `data` when present so we read the
+// real payload; fall back to the top level so a flattened/test shape still works.
+function connectorPayload(result: unknown): Record<string, unknown> | null {
+  if (!result || typeof result !== "object") return null;
   const r = result as Record<string, unknown>;
+  if (r.data && typeof r.data === "object" && !Array.isArray(r.data)) {
+    return r.data as Record<string, unknown>;
+  }
+  return r;
+}
+
+function extractMessages(result: unknown): unknown[] {
+  const r = connectorPayload(result);
+  if (!r) return [];
   return Array.isArray(r.messages) ? r.messages : [];
 }
