@@ -48,6 +48,7 @@ import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
+import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
   PersonalDocs,
@@ -585,6 +586,14 @@ export class IMessageSession {
   private gmailIngestTimer: ReturnType<typeof setInterval> | null = null;
   private gmailAuthWarned = false;
   private static readonly GMAIL_INGEST_DEFAULT_SEC = 180;
+  // 4) MAC APP-USAGE. OWNER-ONLY ambient signal ("learn what the owner uses").
+  // Default OFF (LANTERN_MAC_USAGE=on). On a slow interval we distill the
+  // owner's local macOS app-usage into ONE short "what you've been doing" line
+  // and stash it here, then inject it ONLY into the OWNER's self-chat assistant
+  // context — never a contact reply. Summaries only; the reader fails closed.
+  private macUsageTimer: ReturnType<typeof setInterval> | null = null;
+  private macUsageSummaryLine = "";
+  private static readonly MAC_USAGE_DEFAULT_SEC = 30 * 60; // every 30 min
   // Fired-nudge dedupe keys persisted to disk (0600) so a launchd respawn
   // doesn't re-nag the owner with a nudge already surfaced today. Map of
   // dedupeKey -> epoch ms fired; GC'd on load past NUDGE_DEDUP_TTL_MS.
@@ -779,6 +788,7 @@ export class IMessageSession {
     this.startLearningFlywheel();
     this.startAnticipationNudges();
     this.startGmailIngest();
+    this.startMacUsage();
     this.logger.info("iMessage session ready");
   }
 
@@ -1184,6 +1194,75 @@ export class IMessageSession {
       }
     } catch (err) {
       this.logger.warn({ err }, "gmail ingest tick failed (non-fatal)");
+    }
+  }
+
+  // 4) MAC APP-USAGE. OWNER-ONLY ambient signal: read the owner's local macOS
+  // app-usage (knowledgeC.db) on a slow interval, distill it to ONE short line,
+  // and stash it for injection into the OWNER's self-chat assistant context.
+  //
+  // Ships DARK: gated on LANTERN_MAC_USAGE=on (default off). The summary is
+  // injected ONLY into handleOwnerDocQuery (owner self-chat) — NEVER into a
+  // contact reply, so a contact can't learn what apps the owner uses. The
+  // reader fails closed (no FDA / missing DB / schema drift → empty, no crash).
+  private startMacUsage(): void {
+    if (this.macUsageTimer) return;
+    if ((process.env.LANTERN_MAC_USAGE || "off").toLowerCase() !== "on") {
+      this.logger.info("mac app-usage signal disabled (set LANTERN_MAC_USAGE=on to enable; owner-only)");
+      return;
+    }
+    const sec = Math.max(
+      60,
+      parseInt(process.env.LANTERN_MAC_USAGE_SEC || "", 10) || IMessageSession.MAC_USAGE_DEFAULT_SEC,
+    );
+    const t = setInterval(() => {
+      void this.runMacUsageTick();
+    }, sec * 1000);
+    t.unref?.();
+    this.macUsageTimer = t;
+    this.logger.info({ pollSec: sec }, "mac app-usage signal enabled (owner-only, summaries only)");
+    // First read ~20s after boot so the bridge is settled.
+    const kick = setTimeout(() => void this.runMacUsageTick(), 20_000);
+    kick.unref?.();
+  }
+
+  private async runMacUsageTick(): Promise<void> {
+    try {
+      const { readMacUsageSummary } = await import("./mac-usage-reader.js");
+      const summary = readMacUsageSummary(this.logger);
+      // Empty summaryLine == "no signal this tick" — keep the previous line so a
+      // transient empty read (e.g. early morning) doesn't blank the context.
+      if (summary.summaryLine) {
+        this.macUsageSummaryLine = summary.summaryLine;
+        await this.persistMacUsageCache(summary);
+        this.logger.debug({ summaryLine: summary.summaryLine }, "mac app-usage signal refreshed");
+      }
+    } catch (err) {
+      // Fails closed — never crash the bridge over an optional ambient signal.
+      this.logger.debug({ err }, "mac app-usage tick failed (non-fatal, no-op)");
+    }
+  }
+
+  // Persist ONLY the small rolling summary (mode 0600) — never raw per-event
+  // logs. PII-light (friendly app names + minutes), owner-machine-local.
+  private async persistMacUsageCache(summary: { summaryLine: string; topApps: Array<{ app: string; minutes: number }>; totalMinutes: number }): Promise<void> {
+    try {
+      const { homedir } = await import("node:os");
+      const dir = join(homedir(), ".lantern");
+      const file = join(dir, "mac-usage.json");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        file,
+        JSON.stringify(
+          { updatedAt: new Date().toISOString(), summaryLine: summary.summaryLine, topApps: summary.topApps, totalMinutes: summary.totalMinutes },
+          null,
+          0,
+        ),
+        { mode: 0o600 },
+      );
+      try { chmodSync(file, 0o600); } catch { /* best-effort */ }
+    } catch {
+      /* persistence is best-effort — never throw into the bridge */
     }
   }
 
@@ -6000,6 +6079,10 @@ export class IMessageSession {
       // Screen-context (opt-in, off by default). Adds recent
       // foreground-app OCR snippets the user might be referring to.
       this.screenContext.recentContext() ? "\n" + this.screenContext.recentContext() : "",
+      // Mac app-usage signal (opt-in, off by default). OWNER-ONLY — injected
+      // here (self-chat) and NOWHERE else so a contact never learns what apps
+      // the owner uses. One short "what you've been doing today" line.
+      this.macUsageSummaryLine ? "\n" + macUsageContextBlock(this.macUsageSummaryLine) : "",
     ].filter(Boolean).join("\n");
 
     // First attempt. withTools=true so the agent has the personal-docs
