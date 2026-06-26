@@ -49,6 +49,7 @@ import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
 import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
+import { deviceContextBlock as iphoneContextBlock } from "@lantern/bridge-core/device-signals";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
   PersonalDocs,
@@ -594,6 +595,16 @@ export class IMessageSession {
   private macUsageTimer: ReturnType<typeof setInterval> | null = null;
   private macUsageSummaryLine = "";
   private static readonly MAC_USAGE_DEFAULT_SEC = 30 * 60; // every 30 min
+  // 4b) iPHONE APP-CONTEXT. OWNER-ONLY ambient signal ("learn what the owner
+  // uses on his phone"). The owner's iOS Shortcuts automations POST events to
+  // the dashboard /api/signals route, which appends them to
+  // ~/.lantern/device-signals.jsonl. On a slow interval we tail + summarize and
+  // stash ONE short line here, injected ONLY into the OWNER's self-chat assistant
+  // context — never a contact reply. AUTO-ON when the file exists / has recent
+  // data; kill with LANTERN_IPHONE_SIGNALS=off. Reader fails closed.
+  private iphoneSignalsTimer: ReturnType<typeof setInterval> | null = null;
+  private iphoneSignalsSummaryLine = "";
+  private static readonly IPHONE_SIGNALS_DEFAULT_SEC = 10 * 60; // every 10 min
   // Fired-nudge dedupe keys persisted to disk (0600) so a launchd respawn
   // doesn't re-nag the owner with a nudge already surfaced today. Map of
   // dedupeKey -> epoch ms fired; GC'd on load past NUDGE_DEDUP_TTL_MS.
@@ -799,6 +810,7 @@ export class IMessageSession {
     this.startAnticipationNudges();
     this.startGmailIngest();
     this.startMacUsage();
+    this.startIphoneSignals();
     this.logger.info("iMessage session ready");
   }
 
@@ -1273,6 +1285,54 @@ export class IMessageSession {
       try { chmodSync(file, 0o600); } catch { /* best-effort */ }
     } catch {
       /* persistence is best-effort — never throw into the bridge */
+    }
+  }
+
+  // 4b) iPHONE APP-CONTEXT. OWNER-ONLY ambient signal: tail the device-signals
+  // JSONL the dashboard /api/signals route appends from the owner's iOS
+  // Shortcuts automations, distill it to ONE short "what you've been on your
+  // phone" line, and stash it for injection into the OWNER's self-chat assistant
+  // context — NEVER a contact reply.
+  //
+  // AUTO-ON: unlike mac-usage (which reads a sensitive system DB and ships
+  // dark), this only ever reads a file the owner themselves populates, so it
+  // enables itself whenever the signals file exists. Kill with
+  // LANTERN_IPHONE_SIGNALS=off. The reader fails closed (missing file → empty).
+  private startIphoneSignals(): void {
+    if (this.iphoneSignalsTimer) return;
+    if ((process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() === "off") {
+      this.logger.info("iPhone app-context signal disabled (LANTERN_IPHONE_SIGNALS=off)");
+      return;
+    }
+    const sec = Math.max(
+      60,
+      parseInt(process.env.LANTERN_IPHONE_SIGNALS_SEC || "", 10) ||
+        IMessageSession.IPHONE_SIGNALS_DEFAULT_SEC,
+    );
+    const t = setInterval(() => {
+      void this.runIphoneSignalsTick();
+    }, sec * 1000);
+    t.unref?.();
+    this.iphoneSignalsTimer = t;
+    this.logger.info({ pollSec: sec }, "iPhone app-context signal enabled (owner-only, summaries only)");
+    // First read ~25s after boot so the bridge is settled.
+    const kick = setTimeout(() => void this.runIphoneSignalsTick(), 25_000);
+    kick.unref?.();
+  }
+
+  private async runIphoneSignalsTick(): Promise<void> {
+    try {
+      const { readDeviceSignalsSummary } = await import("./device-signals-reader.js");
+      const summary = readDeviceSignalsSummary(this.logger);
+      // Empty summaryLine == "no signal this tick" — keep the previous line so a
+      // transient empty read (e.g. quiet stretch) doesn't blank the context.
+      if (summary.summaryLine) {
+        this.iphoneSignalsSummaryLine = summary.summaryLine;
+        this.logger.debug({ summaryLine: summary.summaryLine }, "iPhone app-context signal refreshed");
+      }
+    } catch (err) {
+      // Fails closed — never crash the bridge over an optional ambient signal.
+      this.logger.debug({ err }, "iPhone app-context tick failed (non-fatal, no-op)");
     }
   }
 
@@ -6093,6 +6153,11 @@ export class IMessageSession {
       // here (self-chat) and NOWHERE else so a contact never learns what apps
       // the owner uses. One short "what you've been doing today" line.
       this.macUsageSummaryLine ? "\n" + macUsageContextBlock(this.macUsageSummaryLine) : "",
+      // iPhone app-context signal (auto-on when ~/.lantern/device-signals.jsonl
+      // exists; LANTERN_IPHONE_SIGNALS=off to kill). OWNER-ONLY — injected here
+      // (self-chat) and NOWHERE else so a contact never learns what apps the
+      // owner uses on his phone. One short "what you've been on" line.
+      this.iphoneSignalsSummaryLine ? "\n" + iphoneContextBlock(this.iphoneSignalsSummaryLine) : "",
     ].filter(Boolean).join("\n");
 
     // First attempt. withTools=true so the agent has the personal-docs
