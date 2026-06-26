@@ -280,8 +280,11 @@ iOS exposes it, otherwise a tap-to-run shortcut after exercising.
 
 ### Now playing
 
-The simplest version posts from a tap-to-run shortcut or a "when [music app]
-opens" automation.
+**Generated for you:** `python3 scripts/iphone/app-context/generate-media-signal.py`
+signs `Lantern-NowPlaying.shortcut` (Get Current Song → POST `now_playing:<track>`,
+the variable already plumbed into the JSON body). AirDrop it or grab it from the
+install page, then attach a **"When [music app] opens"** automation. The manual
+build is below if you'd rather wire it yourself.
 
 1. **Add Action** → **Get Current Song** (Music) — gives you the title + artist.
 2. Build a `detail` like `"<Title> - <Artist>"`.
