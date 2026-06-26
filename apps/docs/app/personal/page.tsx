@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PersonalHarnessArchitecture } from "../_components/PersonalHarnessArchitecture";
 import { PersonalHarnessDiagram } from "../_components/PersonalHarnessDiagram";
 
 export default function PersonalHarnessPage() {
@@ -7,112 +8,142 @@ export default function PersonalHarnessPage() {
       <h1>Personal harness — your phone, your bot</h1>
       <p>
         The iMessage + WhatsApp bridges run on your own Mac and answer as{" "}
-        <em>you</em>. The personal harness gives them real-world context from
-        your iPhone — where you are, whether you&apos;re driving, what Focus
-        you&apos;re in — so the bot grounds its replies to you in what&apos;s
-        actually happening, and can tell people pinging you whether you&apos;re
-        reachable. It&apos;s entirely <strong>owner-only and local</strong>:
-        signals live on your Mac, and nothing about your whereabouts is ever
-        revealed to a contact.
+        <em>you</em>. The personal harness is the whole stack behind that: it{" "}
+        <strong>senses</strong> what&apos;s happening, <strong>remembers</strong>{" "}
+        you and the people you talk to across every channel,{" "}
+        <strong>reasons</strong> about what to do, makes the reply{" "}
+        <strong>sound like you</strong>, and then <strong>acts</strong> — all{" "}
+        owner-only and local, with nothing about your whereabouts ever revealed
+        to a contact.
       </p>
 
-      <h2 id="model">The model in one picture</h2>
+      <h2 id="harness">The harness, end to end</h2>
       <p>
-        An iPhone automation fires a Lantern Shortcut, which POSTs one tiny
-        signal to your control plane over a private Tailscale network. The
-        bridge reads those signals on-demand and folds them into context.
+        Five layers, top to bottom, fed by your surfaces and grounded by the
+        control plane. Every cell links to the section that explains it. The{" "}
+        <strong>memory layer</strong> (amber) is the cross-app store — one
+        canonical identity and one timeline that every other layer reads from
+        and writes to.
+      </p>
+      <PersonalHarnessArchitecture />
+
+      <h2 id="signals">L1 · Sense — signals &amp; ingestion</h2>
+      <p>
+        The harness starts from real-world context. iPhone automations
+        (geofences, Focus, the Action Button, NFC, and{" "}
+        <strong>CarPlay / Bluetooth → driving</strong>) fire signed Shortcuts
+        that POST one tiny signal — location, focus, device, health, media — to
+        the control plane over a private Tailscale network. On-device screen and
+        app-usage stays owner-only and never leaves the Mac; inbound email is
+        ingested and classified into life-events; and every inbound message on
+        every channel is a signal too. The bridge reads the signals file fresh
+        on every owner turn, in front of the LLM, so a signal that just landed is
+        already in context with zero polling lag.
+      </p>
+      <p>
+        The phone-trigger flow in detail — triggers, the token-gated{" "}
+        <code>/v1/signals</code> hop over Tailscale, and the on-demand read:
       </p>
       <PersonalHarnessDiagram />
-
-      <h2 id="triggers">1 · iPhone triggers</h2>
       <p>
-        Each trigger is a one-line iOS <strong>Personal Automation</strong>{" "}
-        wired to a signed Shortcut. Generate the whole set with one command:
-      </p>
-      <pre><code>scripts/iphone/app-context/generate-signals.sh</code></pre>
-      <p>
-        That writes 13 ready-to-import shortcuts to your Desktop (the signal
-        token is baked in, so they&apos;re never committed). AirDrop them to the
-        phone and attach each to its trigger. A few examples:
-      </p>
-      <ul>
-        <li><strong>Drive</strong> — point <em>two</em> automations at the same{" "}
-          <code>Lantern-Driving</code> shortcut: <strong>CarPlay Connects</strong>{" "}
-          (a car with CarPlay, e.g. an Odyssey) and{" "}
-          <strong>Bluetooth → your Tesla Connects</strong> (no CarPlay needed).</li>
-        <li><strong>Place</strong> — <strong>Arrive</strong>/<strong>Leave</strong>{" "}
-          geofences for Home, Office, Gym, Airport.</li>
-        <li><strong>Status</strong> — the iPhone <strong>Action Button</strong>,
-          an <strong>NFC tag</strong> on your desk, or a <strong>Focus</strong>{" "}
-          turning on.</li>
-        <li><strong>Rhythm</strong> — <strong>Sleep</strong> Focus, <strong>Low
-          Power Mode</strong>, now-playing, and Health automations.</li>
-      </ul>
-      <p>
-        Full recipe + trigger table:{" "}
-        <a href="https://github.com/dshakes/lantern/blob/master/scripts/iphone/app-context/RICH-SIGNALS.md" target="_blank" rel="noopener noreferrer">RICH-SIGNALS.md</a>.
-      </p>
-
-      <h2 id="pipeline">2 · The signal pipeline</h2>
-      <p>
-        Every shortcut POSTs the same shape to{" "}
-        <code>/v1/signals</code> with an <code>x-lantern-signal-token</code>{" "}
-        header:
-      </p>
-      <pre><code>{`{ "kind": "location", "detail": "Office" }     // where you are
-{ "kind": "device",   "detail": "driving" }    // CarPlay / Tesla BT
-{ "kind": "focus",    "detail": "Busy" }        // status / Focus mode`}</code></pre>
-      <p>
-        The endpoint is <strong>token-gated and fails closed</strong> — a
-        missing or wrong token is rejected, and the token is never logged. It
-        appends one line to <code>~/.lantern/device-signals.jsonl</code>{" "}
-        (mode <code>0600</code>, your user only), auto-trimmed to the most
-        recent entries. The phone reaches it over a{" "}
-        <strong>private Tailscale Serve</strong> host — nothing is exposed to the
-        public internet. See{" "}
+        Each trigger is a one-line iOS <strong>Personal Automation</strong> wired
+        to a signed Shortcut. Generate the whole set with one command —{" "}
+        <code>scripts/iphone/app-context/generate-signals.sh</code> writes 13
+        ready-to-import shortcuts to your Desktop (the signal token is baked in,
+        so they&apos;re never committed). Full recipe + trigger table:{" "}
+        <a href="https://github.com/dshakes/lantern/blob/master/scripts/iphone/app-context/RICH-SIGNALS.md" target="_blank" rel="noopener noreferrer">RICH-SIGNALS.md</a>;
+        remote-access setup in{" "}
         <a href="https://github.com/dshakes/lantern/blob/master/docs/personal/REMOTE-ACCESS.md" target="_blank" rel="noopener noreferrer">REMOTE-ACCESS.md</a>.
       </p>
 
-      <h2 id="bridge">3 · The bridge reads on-demand</h2>
+      <h2 id="memory">L2 · Remember — cross-app memory &amp; identity</h2>
       <p>
-        On <em>every</em> owner self-chat turn the bridge reads the signals file
-        fresh (<code>freshIphoneSignalsLine()</code>) right before the model
-        call — a sub-millisecond local read in front of a multi-second LLM call,
-        so a signal that just landed is <strong>already in context</strong>{" "}
-        (zero polling lag). It keeps the <strong>latest of each category</strong>{" "}
-        from the last ~2 hours and composes one line:
+        This is how the harness stores cross-app stuff. The{" "}
+        <strong>person graph</strong> resolves any{" "}
+        <code>(channel, handle)</code> — an iMessage address, a WhatsApp JID, an
+        email, a phone number for voice — to a single canonical person, so what
+        you learned about someone on WhatsApp is there when they email or call.
+        On top of that identity sit two recall indices:{" "}
+        <strong>episodic memory</strong> (a rolling 14-day log of{" "}
+        <code>date · topic · outcome</code> per contact) and a 7-day{" "}
+        <strong>topic index</strong> that surfaces what <em>other</em> threads
+        said about the same topic, so cross-thread context is available without
+        ever volunteering it.
       </p>
-      <blockquote>
-        On iPhone (last 2h): YouTube, LinkedIn — at Office, Work focus, driving,
-        6.2k steps, playing Hardcore History.
-      </blockquote>
       <p>
-        That line is injected <strong>only</strong> into your own self-chat
-        assistant context — never a contact reply. Ask the bot &ldquo;where am
-        I&rdquo;, &ldquo;what have I been doing&rdquo;, or &ldquo;am I free at
-        3&rdquo; and it answers from real context.
+        The <strong>owner profile</strong> — your facts, per-contact
+        relationship rules, and the style lessons the 👎 flywheel mines — is
+        injected as ground truth into every reply. <strong>Presence</strong> is a
+        live cross-bridge view of whether you&apos;re reachable, and the{" "}
+        <strong>life-events ledger</strong> records classified bills, deliveries,
+        travel, and fraud alerts so the dashboard can show a feed and per-category
+        trust toggles. The substrate is deliberately split:{" "}
+        <strong>local 0600 JSONL on the Mac</strong> for the most personal
+        signals (episodes, topics, dislikes) and{" "}
+        <strong>control-plane Postgres with row-level security, encrypted at
+        rest</strong> for the tenant-scoped person graph, memory events, and
+        life-events. Because both channels write the <em>same</em> person and the
+        same timeline, a fact learned on one channel is recalled on the other for
+        the same canonical person.
       </p>
 
-      <h2 id="concierge">4 · The availability concierge</h2>
+      <h2 id="reason">L3 · Reason — decisioning &amp; orchestration</h2>
       <p>
-        When a <em>contact</em> DMs you, the bridge uses the same presence
-        signals — plus your calendar — to be genuinely helpful while staying
-        discreet:
+        With context and memory in hand, the harness decides what to do. The{" "}
+        <strong>life-event engine</strong> classifies inbound into typed events
+        and extracts their fields; the <strong>auto-act ladder</strong> routes
+        each one by your per-category trust setting —{" "}
+        <code>safe-auto</code> (just do it), <code>ask</code> (one-tap confirm),
+        or <code>never</code>. The <strong>availability concierge</strong> turns
+        live presence plus your calendar into truthful replies for contacts who
+        ask if you&apos;re around, while <strong>anticipation</strong> fires
+        proactive nudges to your self-chat for pre-meetings, anniversaries,
+        overdue replies, and open commitments. When a meeting is in play,{" "}
+        <strong>scheduling</strong> can propose, hold, and confirm a concrete
+        time and book it.
       </p>
-      <ul>
-        <li>&ldquo;Is he around?&rdquo; → a truthful status from your Focus +
-          calendar, with an offer to take a message or have you call back.</li>
-        <li>&ldquo;When&apos;s he free?&rdquo; → real open slots from your
-          calendar.</li>
-        <li>Anything urgent or from a VIP → escalated straight to you instead of
-          auto-handled.</li>
-      </ul>
+
+      <h2 id="persona">L4 · Sound like you — persona &amp; authenticity</h2>
       <p>
-        A hard guard ensures the concierge shares <strong>availability only —
-        never your location</strong>: a contact asking &ldquo;where are
-        you?&rdquo; gets &ldquo;he&apos;s away from his phone right now&rdquo;,
-        not a city or place. See{" "}
-        <Link href="/security">Security</Link> for the full privacy model.
+        A correct reply still has to sound like you. <strong>Owner-voice</strong>{" "}
+        is mined from your real sent messages, and a{" "}
+        <strong>language &amp; dialect</strong> modality keeps the bot in your
+        attested forms — never invented word-forms. The last pass before every
+        send is the <strong>bot-tell guards</strong>: they suppress drafts that
+        use customer-service stock phrases, leak reasoning, or deny your
+        biographical facts, and trigger a regeneration instead of staying silent.{" "}
+        <strong>Pacing</strong> replays your real per-contact reply latency with
+        typing indicators, and <strong>draft-and-confirm</strong> plus the{" "}
+        <strong>claim verifier</strong> hold low-confidence replies for your
+        approval and rewrite any &ldquo;I did X&rdquo; the bridge can&apos;t
+        actually back up into honest intent form.
+      </p>
+
+      <h2 id="actions">L5 · Act — actions &amp; delivery</h2>
+      <p>
+        Finally the harness follows through. <strong>Reply send</strong> delivers
+        the paced message on the right channel (with an SMS/RCS fallback when an
+        iMessage send fails). <strong>Mac actions</strong> create Calendar events,
+        Notes, and Mail via locale-safe AppleScript — only after you confirm.{" "}
+        <strong>Connectors</strong> (Gmail, Calendar, and the rest of the 17)
+        reach your other systems through the control plane, and{" "}
+        <strong>voice calls</strong> place real outbound calls over Twilio or
+        LiveKit when a task needs a phone, not a text.
+      </p>
+
+      <h2 id="safety">Safety &amp; privacy — the rail beside every layer</h2>
+      <p>
+        Privacy isn&apos;t a layer; it runs alongside all of them.{" "}
+        <strong>Owner-only enforcement</strong> means the doc, action, and command
+        pipelines fire only for the owner — DMs from non-owner contacts never
+        reach them. A hard <strong>location-leak guard</strong> ensures the
+        concierge shares <strong>availability only — never your location</strong>:
+        a contact asking &ldquo;where are you?&rdquo; gets &ldquo;he&apos;s away
+        from his phone right now&rdquo;, not a place. A master{" "}
+        <strong>kill switch</strong> lets you silence all inbound from self-chat.
+        The most personal stores are <strong>local 0600 and path-restricted</strong>,
+        and <strong>secrets never appear in logs, traces, or run state</strong>.
+        See <Link href="/security">Security</Link> for the full model.
       </p>
 
       <h2 id="privacy">Privacy recap</h2>
