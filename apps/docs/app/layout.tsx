@@ -48,7 +48,7 @@ const sections: NavSection[] = [
       { href: "/surfaces#whatsapp", label: "WhatsApp" }, { href: "/surfaces#slack", label: "Slack" }, { href: "/surfaces#telegram", label: "Telegram" }, { href: "/surfaces#webchat", label: "Web Chat" },
     ]},
     { href: "/personal", label: "Personal harness", icon: Smartphone, subs: [
-      { href: "/personal#model", label: "The model" }, { href: "/personal#triggers", label: "iPhone triggers" }, { href: "/personal#pipeline", label: "Signal pipeline" }, { href: "/personal#bridge", label: "On-demand context" }, { href: "/personal#concierge", label: "Availability concierge" },
+      { href: "/personal#harness", label: "The harness" }, { href: "/personal#signals", label: "Sense — signals" }, { href: "/personal#memory", label: "Cross-app memory" }, { href: "/personal#reason", label: "Reason" }, { href: "/personal#persona", label: "Sound like you" }, { href: "/personal#actions", label: "Act" }, { href: "/personal#safety", label: "Safety & privacy" },
     ]},
     { href: "/models", label: "Models", icon: Brain, subs: [
       { href: "/models#providers", label: "Providers" }, { href: "/models#routing", label: "Capability routing" }, { href: "/models#auto", label: "Auto mode" }, { href: "/models#keys", label: "API keys" },

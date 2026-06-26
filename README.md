@@ -421,6 +421,18 @@ Two macOS bridges — **WhatsApp** and **iMessage** — turn an LLM into a perso
 
 Owner profile at `~/.lantern/owner-profile.md` — facts, per-contact rules, dialect, timezone — hot-reloaded every 30s. Copy the template at [`docs/personal/owner-profile.example.md`](docs/personal/owner-profile.example.md) (your real profile is gitignored). See [`docs/architecture/15-personal-workflows.md`](docs/architecture/).
 
+### The harness, layer by layer
+
+<p align="center">
+  <img src="docs/assets/personal-harness-architecture.svg" alt="Personal harness layered architecture — Surfaces ingress, then five layers (Sense, Remember, Reason, Sound-like-you, Act), a Safety and Privacy rail alongside, and the control-plane substrate underneath" width="100%">
+</p>
+
+**The harness** is the whole stack behind the bot: your **surfaces** (iMessage, WhatsApp, Voice, Email, Webchat) feed five layers that **sense** what's happening, **remember** you and your people, **reason** about what to do, make the reply **sound like you**, and **act** — grounded throughout by the control plane and guarded by a privacy rail that runs alongside every layer.
+
+**Cross-app memory** is the load-bearing middle. A **person graph** resolves any `(channel, handle)` to one canonical identity, so a fact learned on WhatsApp is there when the same person emails or calls. On top sit a 14-day **episodic memory** (`date · topic · outcome`), a 7-day **topic index** for cross-thread recall, your **owner profile** (facts · relationships · style lessons), live **presence**, and a **life-events ledger** (bills · deliveries · travel · fraud). The substrate is split: local `0600` JSONL on the Mac for the most personal signals, plus control-plane Postgres (RLS, encrypted at rest) for the tenant-scoped graph and timeline.
+
+**Leveraged in every layer.** That memory isn't a sidecar — **sense** writes signals into it, **remember** is it, **reason** decides against it, **sound-like-you** draws voice and relationship rules from it, and **act** records outcomes back into it. The result is one assistant that knows you across every channel and follows through. Full interactive walkthrough at the docs site **[`/personal`](docs/personal/)**.
+
 ### Phone-trigger context — your iPhone, your bot
 
 iPhone automations (CarPlay/Bluetooth driving, geofences, Focus, the Action Button, NFC) fire signed Shortcuts that POST one tiny signal over a **private Tailscale** network. The control plane appends it to an owner-only `0600` file; the bridge reads it **on-demand on every owner turn** (zero lag) and folds it into context — grounding *your* self-chat and the availability concierge, while **never** sharing your location with a contact.

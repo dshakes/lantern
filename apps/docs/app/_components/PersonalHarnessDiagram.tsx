@@ -13,7 +13,7 @@ export function PersonalHarnessDiagram() {
           <Car className="h-4 w-4 text-sky-300" />
           <div>
             <div className="sys-actor-name">Drive</div>
-            <div className="sys-actor-sub">CarPlay (Odyssey) · Bluetooth (Tesla)</div>
+            <div className="sys-actor-sub">CarPlay / Bluetooth → driving</div>
           </div>
         </Link>
         <Link href="#triggers" className="sys-actor">
