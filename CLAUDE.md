@@ -620,6 +620,31 @@ env vars are unset, dashboard falls back to direct bridge probe.
 | `POST` | `/v1/surfaces/whatsapp/heartbeat` | Shared-token auth. Upserts pairing state per tenant          |
 | `GET`  | `/v1/surfaces/whatsapp/status`    | JWT auth. Returns last-known pairing state with `stale` flag |
 
+### Personal device signals (iPhone Shortcuts → tunnel)
+
+The owner's iPhone Shortcuts POST app-context signals (e.g. "Calendar
+opened") to the control-plane on `:8080` THROUGH the existing cloudflared
+tunnel (which fronts the API, not the dashboard on `:3001`). The bridge reads
+`~/.lantern/device-signals.jsonl` (one compact JSON object per line:
+`{app, kind, detail, ts}`) and summarizes it into owner context. A parallel
+dashboard route at `apps/web/app/api/signals/route.ts` writes the same
+contract on `:3001`; this endpoint is the tunnel-reachable twin.
+
+Single-owner PERSONAL endpoint — **NOT** JWT/tenant-scoped. Gated by the
+`LANTERN_SIGNAL_TOKEN` shared secret via a constant-time compare; **fails
+closed** (401) when the env var is unset or the `x-lantern-signal-token`
+header is missing/mismatched. The token is never logged. The JSONL file is
+mode 0600 and bounded (trimmed to the last 4000 lines past 5000).
+
+| Method | Path           | Description                                                                                                                                |
+| ------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST` | `/v1/signals`  | Shared-token auth. Body `{app (required, ≤100), kind (default "app_open"), detail (≤500), ts (ms, default now)}`. Appends one JSONL line     |
+| `GET`  | `/v1/signals`  | Shared-token auth. `?limit=N` (default 50, cap 500). Returns the last N parsed signals as a JSON array (debugging / future view)            |
+
+| Env var                 | Purpose                                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- |
+| `LANTERN_SIGNAL_TOKEN`  | Shared secret for `/v1/signals` (sent as `x-lantern-signal-token`). Unset → endpoint is 401 fail-closed |
+
 ### Life-event engine (bridge "Automations" feed)
 
 The bridges classify inbound into typed life-events
