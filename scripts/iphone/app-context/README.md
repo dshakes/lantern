@@ -19,8 +19,8 @@ your dashboard.
 ## What you need (one-time)
 
 1. **The tunnel host** — the same `https://…` URL you already use to open your
-   Lantern dashboard from your phone. Example: `https://lantern.example.com`.
-   Everything below posts to `<that host>/api/signals`.
+   Lantern dashboard from your phone. Example: `https://macbook-pro-2.tail0be192.ts.net`.
+   Everything below posts to `<that host>/v1/signals`.
 
 2. **The signal token** — a shared secret. Pick any long random string (e.g.
    run `openssl rand -hex 24` in Terminal), then set it in **two** places so
@@ -50,7 +50,7 @@ You'll build this once, then call it from every app automation.
 2. Name it **Post Signal**.
 3. Tap **Add Action** → search **Get Contents of URL** → add it.
 4. Configure **Get Contents of URL**:
-   - **URL**: `https://<your-tunnel-host>/api/signals`
+   - **URL**: `https://macbook-pro-2.tail0be192.ts.net/v1/signals`
    - Tap **Show More**.
    - **Method**: `POST`
    - **Headers** → **Add new header**:
@@ -99,7 +99,7 @@ The body is the same shape every time — just change the `"app"` value.
 
 ## Step 3 (optional) — Location and Focus signals
 
-Same `/api/signals` endpoint, different `kind`. These add a trailing note to the
+Same `/v1/signals` endpoint, different `kind`. These add a trailing note to the
 summary ("…— at Home", "…— Work focus on").
 
 **Arrive home / leave home**
@@ -131,7 +131,7 @@ and token):
 
 ```bash
 curl -s -H "x-lantern-signal-token: <your-token>" \
-  "https://<your-tunnel-host>/api/signals?limit=10"
+  "https://macbook-pro-2.tail0be192.ts.net/v1/signals?limit=10"
 ```
 
 You should see a JSON `{ "signals": [ … ] }` array of your recent events. You
@@ -146,7 +146,7 @@ min) it'll have the summary in context.
 
 ## Body reference
 
-`POST /api/signals` — header `x-lantern-signal-token: <token>`, JSON body:
+`POST /v1/signals` — header `x-lantern-signal-token: <token>`, JSON body:
 
 | Field    | Required | Notes                                                        |
 | -------- | -------- | ------------------------------------------------------------ |
