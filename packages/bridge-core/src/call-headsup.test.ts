@@ -30,7 +30,7 @@ function makeDeps(overrides: Partial<OrchestratorDeps> = {}): { deps: Orchestrat
     logger: noopLogger,
     twilioFromNumber: "+15128819998",
     ownerPhone: "+15555550100",
-    ownerName: "Shekhar",
+    ownerName: "Ada",
     callerId: "+15555550100", // owner's verified cell
     smsHeadsUp: true,
     resolveContact: async () => null,
@@ -58,7 +58,7 @@ test("recipient leg dials FROM the caller-ID override; SMS + owner leg use the T
   assert.ok(sms, "heads-up SMS should be sent");
   assert.equal(sms!.body.from, "+15128819998", "SMS must come from the Twilio DID");
   assert.equal(sms!.body.to, "+15125550000");
-  assert.match(sms!.body.body, /Shekhar/, "SMS names the owner");
+  assert.match(sms!.body.body, /Ada/, "SMS names the owner");
 
   assert.ok(placeCall, "recipient should be dialed");
   assert.equal(placeCall!.body.from, "+15555550100", "recipient leg uses the caller-ID override");

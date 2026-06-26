@@ -50,15 +50,15 @@ test("detectBotTells leaves genuine replies untouched", () => {
 // ── Persona injection ──
 
 test("agentPersonaPrompt injects ownerFacts as ground truth", () => {
-  const p = agentPersonaPrompt("Shekhar", style, false, {
-    ownerFacts: "Owner facts (TRUE — never deny or contradict these): married to Maya.",
+  const p = agentPersonaPrompt("Ada", style, false, {
+    ownerFacts: "Owner facts (TRUE — never deny or contradict these): married to Sam.",
   });
-  assert.ok(p.includes("married to Maya"), "ownerFacts not injected");
+  assert.ok(p.includes("married to Sam"), "ownerFacts not injected");
   assert.ok(/TRUE/.test(p), "ground-truth framing missing");
 });
 
 test("agentPersonaPrompt renders addressRule (addressAs + neverCall)", () => {
-  const p = agentPersonaPrompt("Shekhar", style, false, {
+  const p = agentPersonaPrompt("Ada", style, false, {
     addressRule: { addressAs: "Sujith", neverCall: ["bava", "anna"] },
   });
   assert.ok(p.includes('Address this contact as "Sujith"'), "addressAs missing");
@@ -66,16 +66,16 @@ test("agentPersonaPrompt renders addressRule (addressAs + neverCall)", () => {
 });
 
 test("agentPersonaPrompt lists recentBotReplies for anti-repetition", () => {
-  const p = agentPersonaPrompt("Shekhar", style, false, {
-    recentBotReplies: ["best to wait for Shekhar directly on this one."],
+  const p = agentPersonaPrompt("Ada", style, false, {
+    recentBotReplies: ["best to wait for Ada directly on this one."],
   });
   assert.ok(p.includes("ALREADY sent"), "anti-repetition block missing");
-  assert.ok(p.includes("best to wait for Shekhar directly"), "recent reply not listed");
+  assert.ok(p.includes("best to wait for Ada directly"), "recent reply not listed");
 });
 
 test("ownerFacts injected for group prompts too", () => {
-  const p = agentPersonaPrompt("Shekhar", style, true, {
-    ownerFacts: "Owner facts (TRUE — never deny or contradict these): married to Maya.",
+  const p = agentPersonaPrompt("Ada", style, true, {
+    ownerFacts: "Owner facts (TRUE — never deny or contradict these): married to Sam.",
   });
-  assert.ok(p.includes("married to Maya"), "facts should apply in groups");
+  assert.ok(p.includes("married to Sam"), "facts should apply in groups");
 });

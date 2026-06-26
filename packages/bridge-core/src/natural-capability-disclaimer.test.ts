@@ -150,7 +150,7 @@ test("computeContactStyle relevance ranking is backward-compatible when relevant
 // ── 4. Persona-prompt items (sentinel instruction + backlog hint) ──────────
 
 test("agentPersonaPrompt instructs the model to emit the abstain sentinel", () => {
-  const p = agentPersonaPrompt("Shekhar", style, false, { contactName: "Sujith" });
+  const p = agentPersonaPrompt("Ada", style, false, { contactName: "Sujith" });
   assert.ok(
     p.includes(NO_REPLY_SENTINEL),
     "persona prompt should mention the [[NO_REPLY]] abstain token",
@@ -163,7 +163,7 @@ test("agentPersonaPrompt instructs the model to emit the abstain sentinel", () =
 });
 
 test("agentPersonaPrompt surfaces the unanswered-backlog hint when > 1", () => {
-  const withBacklog = agentPersonaPrompt("Shekhar", style, false, {
+  const withBacklog = agentPersonaPrompt("Ada", style, false, {
     contactName: "Sujith",
     unansweredBacklog: 3,
   });
@@ -173,7 +173,7 @@ test("agentPersonaPrompt surfaces the unanswered-backlog hint when > 1", () => {
   );
 
   // 0/1 → no hint (single fresh message is the normal case).
-  const single = agentPersonaPrompt("Shekhar", style, false, {
+  const single = agentPersonaPrompt("Ada", style, false, {
     contactName: "Sujith",
     unansweredBacklog: 1,
   });

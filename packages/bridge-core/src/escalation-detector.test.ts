@@ -60,22 +60,22 @@ test("life-threat still detected (sanity)", () => {
 });
 
 test("pickRefusal: rotates (not byte-identical back to back)", () => {
-  const a = pickRefusal("Shekhar");
-  const b = pickRefusal("Shekhar");
+  const a = pickRefusal("Ada");
+  const b = pickRefusal("Ada");
   assert.notEqual(a, b, "consecutive refusals should differ");
-  assert.ok(a.includes("Shekhar"));
-  assert.ok(b.includes("Shekhar"));
+  assert.ok(a.includes("Ada"));
+  assert.ok(b.includes("Ada"));
 });
 
 test("refusalReply: prompt-injection uses a varied refusal", () => {
-  const r = refusalReply("prompt-injection", "Shekhar");
-  assert.ok(r.includes("Shekhar"));
+  const r = refusalReply("prompt-injection", "Ada");
+  assert.ok(r.includes("Ada"));
   assert.ok(r.length > 0);
 });
 
 test("refusalReply: life-threat pages owner", () => {
-  const r = refusalReply("life-threat", "Shekhar");
-  assert.ok(/paged Shekhar/i.test(r));
+  const r = refusalReply("life-threat", "Ada");
+  assert.ok(/paged Ada/i.test(r));
 });
 
 // ─────────────────────────────────────────────────────────────

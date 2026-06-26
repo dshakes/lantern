@@ -41,7 +41,7 @@ const BOT_TEXTS = [
   "👀 monitored groups (2):",
   "🙈 stopped monitoring this group.",
   // Memory replies
-  "📝 noted about Maya: she's vegetarian",
+  "📝 noted about Sam: she's vegetarian",
   "📝 got it — noted about Shiva: birthday june 3",
   "personal-docs ENABLED",
   "personal-docs DISABLED",

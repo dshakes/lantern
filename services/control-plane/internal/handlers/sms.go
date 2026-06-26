@@ -442,7 +442,7 @@ func (h *SMSHandler) VoiceTurn(w http.ResponseWriter, r *http.Request) {
 // askOwnerAgent runs the LLM with the owner-agent persona. Uses the
 // LLM proxy's internal completions method — no HTTP, no JWT.
 func (h *SMSHandler) askOwnerAgent(ctx context.Context, userText string) (string, error) {
-	ownerName := getEnvOr("LANTERN_OWNER_NAME", "Shekhar")
+	ownerName := getEnvOr("LANTERN_OWNER_NAME", "Ada")
 	system := strings.Join([]string{
 		"You are " + ownerName + "'s private agent, reached via his Twilio number.",
 		"This is HIS personal command channel — treat every message as coming from him.",

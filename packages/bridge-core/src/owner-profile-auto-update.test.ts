@@ -27,7 +27,7 @@ function stubLLM(payload: unknown): (p: string) => Promise<string> {
 }
 
 test("owner-fact: married routes into ## Facts section (typed)", async () => {
-  const path = tmpProfile(`# Owner profile\n\n## About me\nI'm Shekhar.\n`);
+  const path = tmpProfile(`# Owner profile\n\n## About me\nI'm Ada.\n`);
   const res = await maybeAutoUpdateOwnerProfile("remember I'm married", {
     profilePath: path,
     llmCall: stubLLM({
@@ -45,17 +45,17 @@ test("owner-fact: married routes into ## Facts section (typed)", async () => {
 
 test("owner-fact: spouse + anniversary land as structured facts", async () => {
   const path = tmpProfile(`# Owner profile\n\n## About me\nfounder.\n`);
-  await maybeAutoUpdateOwnerProfile("remember my anniversary is June 3 2017 and my wife is Maya", {
+  await maybeAutoUpdateOwnerProfile("remember my anniversary is June 3 2017 and my wife is Sam", {
     profilePath: path,
     llmCall: stubLLM({
       facts: [
-        { category: "owner-fact", line: "spouse Maya", fact: { key: "spouse", value: "Maya" } },
+        { category: "owner-fact", line: "spouse Sam", fact: { key: "spouse", value: "Sam" } },
         { category: "owner-fact", line: "anniversary", fact: { key: "wedding anniversary", value: "2017-06-03" } },
       ],
     }),
   });
   const parsed = parseProfile(readFileSync(path, "utf8"));
-  assert.equal(parsed.facts?.spouse, "Maya");
+  assert.equal(parsed.facts?.spouse, "Sam");
   assert.deepEqual(parsed.facts?.keyDates, [{ label: "wedding anniversary", date: "2017-06-03" }]);
 });
 

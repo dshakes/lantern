@@ -32,7 +32,7 @@ This shapes how the bot sounds. Do NOT put secrets here (passwords).
 Edit freely; reloads within 30 seconds.
 
 ## About me
-I'm Shekhar. I'm a founder building Lantern.
+I'm Ada. I'm a founder building Lantern.
 
 ## How I text
 - lowercase mostly, short
@@ -45,7 +45,7 @@ I'm Shekhar. I'm a founder building Lantern.
 # Format: "- Name: relationship"
 # The bot uses this to match tone — warm for family, measured for work.
 - Shiva: <friend>
-- Maya(Mae): <Spouse>
+- Sam(Mae): <Spouse>
 - Arin Sharma: <son>
 - Srinivas Merugu: <brother-in-law, Harika's spouse>
 - +1 (512) 555-1234: college roommate
@@ -56,7 +56,7 @@ test("prose excludes title + preamble + relationships + secrets warning", () => 
   assert.ok(!p.prose.includes("# Owner profile"), "title leaked into prose");
   assert.ok(!p.prose.includes("Do NOT put secrets"), "preamble leaked into prose");
   assert.ok(!p.prose.includes("Shiva"), "relationships leaked into prose");
-  assert.ok(p.prose.includes("I'm Shekhar"), "About me missing from prose");
+  assert.ok(p.prose.includes("I'm Ada"), "About me missing from prose");
   assert.ok(p.prose.includes("never \"certainly\""), "How I text missing");
   assert.ok(p.prose.includes("Chantilly"), "My world missing");
 });
@@ -80,8 +80,8 @@ test("angle-bracket template values are stripped", () => {
 
 test("parenthetical aliases index all forms", () => {
   const p = parseProfile(SAMPLE);
-  assert.equal(p.relationships.get("maya(mae)"), "Spouse");
-  assert.equal(p.relationships.get("maya"), "Spouse");
+  assert.equal(p.relationships.get("sam(mae)"), "Spouse");
+  assert.equal(p.relationships.get("sam"), "Spouse");
   assert.equal(p.relationships.get("mae"), "Spouse");
 });
 
@@ -116,12 +116,12 @@ test("a profile that is ALL preamble (no ## sections) yields empty prose", () =>
 const FACTS_SAMPLE = `# Owner profile
 
 ## About me
-I'm Shekhar.
+I'm Ada.
 
 ## Facts
 - married: yes
-- spouse: Maya
-- kids: Aarav, Anaya
+- spouse: Sam
+- kids: Kai, Nia
 - wedding anniversary: 2017-06-03
 
 ## Relationships
@@ -133,8 +133,8 @@ test("facts: parses marital status, spouse, kids, key dates", () => {
   const p = parseProfile(FACTS_SAMPLE);
   assert.ok(p.facts, "facts missing");
   assert.equal(p.facts!.maritalStatus, "married");
-  assert.equal(p.facts!.spouse, "Maya");
-  assert.deepEqual(p.facts!.kids, ["Aarav", "Anaya"]);
+  assert.equal(p.facts!.spouse, "Sam");
+  assert.deepEqual(p.facts!.kids, ["Kai", "Nia"]);
   assert.deepEqual(p.facts!.keyDates, [
     { label: "wedding anniversary", date: "2017-06-03" },
   ]);
@@ -160,8 +160,8 @@ test("factsBlock: deterministic ground-truth line", () => {
   const store = storeFrom(FACTS_SAMPLE);
   const block = store.factsBlock();
   assert.ok(block.startsWith("Owner facts (TRUE"), `unexpected: ${block}`);
-  assert.ok(block.includes("married to Maya"), block);
-  assert.ok(block.includes("kids: Aarav, Anaya"), block);
+  assert.ok(block.includes("married to Sam"), block);
+  assert.ok(block.includes("kids: Kai, Nia"), block);
   assert.ok(block.includes("wedding anniversary June 3, 2017"), block);
 });
 
@@ -215,7 +215,7 @@ test("relationshipFor still works alongside address rules", () => {
 const VAULT_SAMPLE = `# Owner profile
 
 ## About me
-I'm Shekhar. I'm a founder building Lantern.
+I'm Ada. I'm a founder building Lantern.
 
 ## Private
 - mother's maiden name: TestSurname
@@ -240,12 +240,12 @@ test("vault: ## Private body lands in privateVault, NEVER in prose", () => {
   assert.ok(p.privateVault.includes("TestCity"), "vault missing birth city");
   assert.ok(p.privateVault.includes("TestSchool"), "vault missing first school");
   // Prose still has the real prose content.
-  assert.ok(p.prose.includes("I'm Shekhar"), "About me missing from prose");
+  assert.ok(p.prose.includes("I'm Ada"), "About me missing from prose");
 });
 
 test("vault: ## Vault and ## Security aliases also seal", () => {
   for (const header of ["## Vault", "## Security"]) {
-    const p = parseProfile(`# Owner profile\n\n## About me\nI'm Shekhar.\n\n${header}\n- mother's maiden name: TestSurname\n`);
+    const p = parseProfile(`# Owner profile\n\n## About me\nI'm Ada.\n\n${header}\n- mother's maiden name: TestSurname\n`);
     assert.ok(!p.prose.includes("TestSurname"), `${header}: leaked into prose`);
     assert.ok(p.privateVault.includes("TestSurname"), `${header}: missing from vault`);
   }

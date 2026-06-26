@@ -1,7 +1,7 @@
 // Episodic memory per contact.
 //
 // Today's contact memory is a flat list of `facts` ("his daughter is
-// Maya", "works at Stripe"). Useful but ahistorical: the bot can't
+// Sam", "works at Stripe"). Useful but ahistorical: the bot can't
 // answer "did you ever connect with Sarah?" or "what did we discuss
 // last week?" because there's no notion of EPISODES — discrete
 // events the owner shared or experienced with this person.

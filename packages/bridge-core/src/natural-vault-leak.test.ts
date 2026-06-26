@@ -18,7 +18,7 @@ import { strict as assert } from "node:assert";
 import { agentPersonaPrompt, inferStyle } from "./natural.ts";
 import { parseProfile } from "./owner-profile.ts";
 
-const OWNER = "Shekhar";
+const OWNER = "Ada";
 const STYLE = inferStyle(["hey", "sup", "lol yeah"]);
 
 // A profile carrying a sealed vault. The bridge passes `prose` (NOT the
@@ -27,7 +27,7 @@ const STYLE = inferStyle(["hey", "sup", "lol yeah"]);
 const PROFILE_WITH_VAULT = `# Owner profile
 
 ## About me
-I'm Shekhar, a founder building Lantern.
+I'm Ada, a founder building Lantern.
 
 ## Private
 - mother's maiden name: TestSurname

@@ -478,7 +478,7 @@ export class WhatsAppSession {
     const today = new Date().toISOString().slice(0, 10);
     const hour = new Date().getHours();
     const timeOfDay = hour < 5 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 22 ? "evening" : "late night";
-    const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+    const ownerName = (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0];
 
     const langHint = detectLanguageHints(text);
     const nativity = this.ownerProfileStore.nativity();
@@ -2746,7 +2746,7 @@ export class WhatsAppSession {
           if (m.type !== "notify" || !text) continue;
 
           // A celebratory WISH that names the owner ("Happy Wedding
-          // Anniversary Shekhar & Maya 🎉") gets ONE casual thanks IN the
+          // Anniversary Ada & Sam 🎉") gets ONE casual thanks IN the
           // group even when the group isn't monitored and there's no
           // @mention — staying silent on a wish addressed to the owner reads
           // as rude. General group chatter still requires an opted-in group
@@ -3904,7 +3904,7 @@ export class WhatsAppSession {
   // Text-based "is this message addressed to the owner?" — the owner's first
   // name / full name appears as a word. Used for the celebratory-wish group
   // exception, where a wish is typed as plain text ("Happy Anniversary
-  // Shekhar") and carries no @mention JID for isOwnerTargeted to catch.
+  // Ada") and carries no @mention JID for isOwnerTargeted to catch.
   // Parity with the iMessage bridge's isAddressedToOwner.
   private isAddressedToOwner(text: string): boolean {
     const owner = (process.env.LANTERN_OWNER_NAME || OWNER_NAME).trim();
@@ -5102,7 +5102,7 @@ export class WhatsAppSession {
     // contact reply path must NEVER include this.
     const privateVault = this.ownerProfileStore.privateVaultBlock();
     const today = new Date().toISOString().slice(0, 10);
-    const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+    const ownerName = (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0];
     // Language modality applies to owner self-chat too.
     const langHint = detectLanguageHints(query);
     const nativity = this.ownerProfileStore.nativity();
@@ -5167,7 +5167,7 @@ export class WhatsAppSession {
       `  • Calendar event: [CALENDAR:Title|2026-08-19T09:00:00|2026-08-19T10:00:00|Optional notes]`,
       `  • Note:           [NOTE:Title|Body text]`,
       `  • Mail draft:     [MAIL:to@x.com|Subject|Body]`,
-      `  • Phone call:     [CALL:Maya|conference|why you're calling]   (mode = conference | voicemail | task)`,
+      `  • Phone call:     [CALL:Sam|conference|why you're calling]   (mode = conference | voicemail | task)`,
       `CALLS: when ${ownerName} asks you to call / phone / dial / ring / conference / reach someone (ANY phrasing, any language, typos and all — e.g. "call mae", "conference me withe manmanu", "can you ring her") you MUST emit a [CALL:...] marker. The bridge places the real call via Twilio and asks ${ownerName} to confirm before dialing. NEVER say "I'll call" / "calling her" / "will do" WITHOUT the [CALL:...] marker — a reply that claims a call without the marker is a lie, because no call happens. "conference me with X" → mode conference. "leave X a voicemail saying Y" → mode voicemail, message Y. "call the pharmacy to refill" → mode task, message the task. Use the contact's real name as target; the bridge resolves it to a number.`,
       `  • Away status:    [STATUS:at the swimming pool|2026-06-02T19:30:00|swimming pool]   (label | until-ISO-or-empty | place)  ·  or  [STATUS:CLEAR]`,
       `STATUS: when ${ownerName} tells you where they are or that they're away/busy/back (ANY phrasing or language — "I am at the pool till 7:30pm est", "in a meeting for 2h", "driving", "I'm back", Telugu, etc.), emit a [STATUS:...] marker. Compute the until-ISO from the time they gave (their local timezone; resolve "till 7:30pm" to today's datetime). When they say they're back/free/available, emit [STATUS:CLEAR]. The bridge then tells anyone who messages — on EVERY channel — that ${ownerName} is at <place> and will get back, and offers to take a message. Confirm to ${ownerName} in your reply ("📍 got it — you're at the pool till 7:30; I'll let people know.").`,
@@ -5469,7 +5469,7 @@ export class WhatsAppSession {
     const today = new Date().toISOString().slice(0, 10);
     const hour = new Date().getHours();
     const timeOfDay = hour < 5 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 22 ? "evening" : "late night";
-    const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+    const ownerName = (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0];
 
     // Pre-fetch Gmail + Calendar for appointment-style queries so
     // the LLM receives all live data up-front and just synthesizes.
@@ -6902,7 +6902,7 @@ export class WhatsAppSession {
     // LLM on the hot path. Parity with the iMessage bridge.
     let forceDraftCaution = false;
     if (!opts.isGroup) {
-      const ownerName = (process.env.LANTERN_OWNER_NAME || "Shekhar").split(/\s+/)[0];
+      const ownerName = (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0];
       const lifeThreat = detectLifeThreat(text);
       if (lifeThreat) {
         this.logger.warn(
@@ -7232,7 +7232,7 @@ export class WhatsAppSession {
     let presenceLine = presenceSnap.line || "";
     // AWAY directive: when the owner set a status, tell the contact where he
     // is + that he'll get back, and offer to take a message. This is the
-    // "Shekhar's at the temple right now, can I pass a message?" behavior.
+    // "Ada's at the temple right now, can I pass a message?" behavior.
     if (presenceSnap.away && !opts.isGroup) {
       const where = presenceSnap.place ? `at ${presenceSnap.place}` : presenceSnap.line;
       presenceLine =
@@ -7319,7 +7319,7 @@ export class WhatsAppSession {
       }
     );
 
-    // Inject durable contact facts ("her daughter is Maya", "works at
+    // Inject durable contact facts ("her daughter is Sam", "works at
     // Stripe") so the assistant doesn't cold-start each conversation.
     // Empty string when no facts exist — zero overhead.
     if (!opts.isGroup) {

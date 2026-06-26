@@ -19,7 +19,7 @@
 //   TIER C — Sensitive / high-stakes
 //     Medical, legal, financial, family-emergency. Even tier-B
 //     contacts get bumped to C if topic matches. Bot defaults to
-//     "let me run that by Shekhar first" for any commitment.
+//     "let me run that by Ada first" for any commitment.
 //     Approval: ALWAYS requires owner ack + bot summarizes intended
 //     content first.
 //
