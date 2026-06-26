@@ -3012,15 +3012,30 @@ export class WhatsAppSession {
     }));
   }
 
-  // Proactive ingester for UNKNOWN-sender inbound. Appointment confirmation →
-  // DM the owner + arm a "yes" offer that adds it to the calendar (via the
-  // freeform-followup → [CALENDAR:] path). Marketing/spam → suppress. Returns
-  // "handled" to skip the auto-reply path. Best-effort + flag-gated.
+  // Proactive ingester for UNKNOWN-sender inbound. The LIFE-EVENT ENGINE runs
+  // FIRST: a transactional notice the bridge used to drop as "marketing/spam"
+  // (a GEICO bill, a UPS delivery window, an Amex fraud alert, an OTP) is now
+  // recognized as a TYPED life-event and surfaced to the OWNER (self-chat) —
+  // a real-time ping with a one-tap action, or a batched digest line. True
+  // promos are still suppressed; non-actionable text falls back to the legacy
+  // appointment/spam classifier. OWNER-FACING ONLY. Returns "handled" to skip
+  // the auto-reply path. Best-effort + flag-gated.
   private async maybeIngestUnknownInbound(from: string, text: string): Promise<"handled" | "pass"> {
     if ((process.env.LANTERN_APPT_INGEST || "on").toLowerCase() === "off") return "pass";
     if (!from || !text || this.isGroupJid(from)) return "pass";
     if (this.contactNames.has(from)) return "pass";
     if (this.ownerProfileStore.relationshipFor(from, undefined)) return "pass";
+
+    // ── LIFE-EVENT ENGINE (owner-facing) ──
+    if ((process.env.LANTERN_LIFE_EVENTS || "on").toLowerCase() !== "off") {
+      try {
+        const handled = await this.surfaceLifeEvent(from, text);
+        if (handled) return "handled";
+      } catch (err) {
+        this.logger.warn({ err }, "life-event surfacing failed — falling back to legacy classifier");
+      }
+    }
+
     let kind: "appointment" | "spam" | "other";
     let signals: string[];
     try {
@@ -3047,6 +3062,66 @@ export class WhatsAppSession {
       } as any);
     }
     return "handled";
+  }
+
+  // Classify an unknown-sender message as a typed life-event and route it to the
+  // owner self-chat. Returns true when the engine took ownership (ping/digest/
+  // suppress), false when it's not actionable (caller falls back to legacy).
+  private async surfaceLifeEvent(from: string, text: string): Promise<boolean> {
+    const { classifyLifeEvent, proactiveDecision, isActionableKind } =
+      await import("@lantern/bridge-core/life-events");
+    const { loadLifeEventPrefs } = await import("@lantern/bridge-core/life-events-store");
+
+    const event = await classifyLifeEvent(text, { channel: "WhatsApp" });
+    if (!isActionableKind(event.kind)) return false;
+
+    const prefs = loadLifeEventPrefs();
+    const decision = proactiveDecision(event, prefs);
+    const ownJid = this.ownJid();
+
+    this.logger.info(
+      { kind: event.kind, urgency: event.urgency, route: decision.route, conf: event.confidence },
+      "life-event classified",
+    );
+
+    if (decision.route === "suppress") return true;
+    if (!ownJid) {
+      this.logActivity("attention_dm", decision.ownerMessage, { scope: "self" });
+      return true;
+    }
+    if (decision.route === "digest") {
+      this.lifeEventDigestQueue.push(decision.ownerMessage);
+      return true;
+    }
+
+    // ping — DM the owner now + arm the one-tap offer for the top action.
+    await this.confirmToSelf(decision.ownerMessage).catch(() => {});
+    this.lastLifeEventKind = event.kind;
+    const top = decision.actions.find((a) => a.kind !== "snooze" && a.kind !== "none");
+    if (top && top.offerAction) {
+      this.pendingOffers.set(ownJid, {
+        kind: "freeform-followup",
+        freeformAction: top.offerAction + (top.url ? ` (relevant link: ${top.url})` : "") + (top.phone ? ` (callback number: ${top.phone})` : ""),
+        freeformInbound: text,
+        freeformPriorReply: decision.ownerMessage,
+        issuedAt: Date.now(),
+      } as any);
+    }
+    return true;
+  }
+
+  // Owner-model-lite: persist the owner's accept/reject of the last life-event
+  // offer so the engine downgrades nagging kinds. Best-effort + one-shot.
+  private recordLifeEventOutcome(accepted: boolean): void {
+    const kind = this.lastLifeEventKind;
+    if (!kind) return;
+    this.lastLifeEventKind = null;
+    void (async () => {
+      try {
+        const { persistAccept, persistIgnore } = await import("@lantern/bridge-core/life-events-store");
+        if (accepted) persistAccept(kind); else persistIgnore(kind);
+      } catch { /* best-effort */ }
+    })();
   }
 
   // Apply an owner presence/status command from self-chat (set place + timer,
@@ -3958,6 +4033,7 @@ export class WhatsAppSession {
       if (cachedOffer && looksLikeConfirmation(text)) {
         this.logger.info({ kind: cachedOffer.kind, jid }, "executing cached offer on confirmation");
         this.pendingOffers.delete(jid);
+        this.recordLifeEventOutcome(true);
         void this.executeCachedOffer(jid, cachedOffer);
         return;
       }
@@ -3967,6 +4043,7 @@ export class WhatsAppSession {
       if (cachedOffer && looksLikeRejection(text)) {
         this.logger.info({ kind: cachedOffer.kind, jid }, "dropping cached offer on rejection");
         this.pendingOffers.delete(jid);
+        this.recordLifeEventOutcome(false);
         void this.confirmToSelf("👍 no worries");
         return;
       }
@@ -4230,6 +4307,13 @@ export class WhatsAppSession {
   private escalationsToday = 0;
   private digestStopFn: (() => void) | null = null;
 
+  // LIFE-EVENT ENGINE: short owner-facing lines for 'digest'-routed events
+  // (deliveries, receipts, far-out bills) since the last digest. In-memory.
+  private lifeEventDigestQueue: string[] = [];
+  // Most-recent life-event kind surfaced — attributes a later accept/ignore to
+  // the right kind for the owner-model downgrade.
+  private lastLifeEventKind: import("@lantern/bridge-core/life-events").LifeEventKind | null = null;
+
   // Set to true once the bridge has been in `connected` state at least
   // once. OfflineMonitor uses this to distinguish first-boot idle
   // (expected, no alert) from post-disconnect idle (worth alerting on).
@@ -4273,9 +4357,11 @@ export class WhatsAppSession {
           monitoredChats: this.monitoredGroups.size,
           escalations: this.escalationsToday,
           channelLabel: "WhatsApp",
+          lifeEvents: [...this.lifeEventDigestQueue],
         };
         this.repliesSentToday = 0;
         this.escalationsToday = 0;
+        this.lifeEventDigestQueue = [];
         return data;
       },
       deliver: async (body) => {
