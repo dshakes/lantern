@@ -16,9 +16,19 @@ import {
   Loader2,
   Play,
   Sparkles,
+  AlertTriangle,
+  XCircle,
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
+import { useToast } from "@/components/toast";
+import {
+  decideProviderSave,
+  decideAgentCreate,
+  decideRunDisplay,
+  isTerminalRunStatus,
+  type RunDisplay,
+} from "./onboarding-logic";
 
 // ---------------------------------------------------------------------------
 // Templates (same 6 as the create modal)
@@ -90,11 +100,29 @@ function StepIndicator({ current, total }: { current: number; total: number }) {
 }
 
 // ---------------------------------------------------------------------------
+// Inline error banner — surfaces a REAL backend failure near the step that
+// produced it. Never auto-dismisses; the user must fix the underlying cause.
+// ---------------------------------------------------------------------------
+
+function InlineError({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5"
+    >
+      <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+      <p className="text-xs text-red-300">{message}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Onboarding page
 // ---------------------------------------------------------------------------
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const toast = useToast();
   const [step, setStep] = useState(0);
 
   // Step 2: LLM provider
@@ -107,16 +135,28 @@ export default function OnboardingPage() {
     openai: "untested",
     anthropic: "untested",
   });
+  // Real, surfaced provider errors (the message the backend / test returned).
+  const [providerError, setProviderError] = useState<Record<string, string | null>>({
+    openai: null,
+    anthropic: null,
+  });
+  const [savingProviders, setSavingProviders] = useState(false);
+  // Honest "skip" acknowledgement — the bot will NOT run without a key.
+  const [skipAck, setSkipAck] = useState(false);
 
   // Step 3: Create agent
   const [selectedTemplate, setSelectedTemplate] = useState("research");
   const [agentName, setAgentName] = useState("my-first-agent");
   const [creatingAgent, setCreatingAgent] = useState(false);
+  // Set ONLY on a real 2xx from createAgent — gates the success banner.
   const [agentCreated, setAgentCreated] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Step 4: Run it
   const [inputJson, setInputJson] = useState("");
   const [running, setRunning] = useState(false);
+  // The real run outcome (terminal status / output) or the real error.
+  const [runDisplay, setRunDisplay] = useState<RunDisplay | null>(null);
 
   // Update input JSON when template changes
   useEffect(() => {
@@ -124,90 +164,147 @@ export default function OnboardingPage() {
     if (tmpl) setInputJson(tmpl.defaultInput);
   }, [selectedTemplate]);
 
-  // Provider test — saves the key, then asks the backend to round-trip
-  // a noop completion. Marks "ok" only on a real success; otherwise "error".
+  // Provider test — saves the key, then asks the backend to round-trip a
+  // noop completion. Marks "ok" only on a real success; on any failure it
+  // surfaces the REAL error (thrown request, or the /test failure reason)
+  // both inline and as a toast. Returns true only on a genuine success so
+  // callers can gate on it.
   const handleTestProvider = useCallback(
-    async (provider: "openai" | "anthropic") => {
+    async (provider: "openai" | "anthropic"): Promise<boolean> => {
       const key = provider === "openai" ? openaiKey : anthropicKey;
-      if (!key.trim()) return;
+      if (!key.trim()) return false;
       setTestingProvider(provider);
+      setProviderError((prev) => ({ ...prev, [provider]: null }));
+
+      let saveError: unknown | null = null;
+      let testResult: Awaited<ReturnType<typeof api.testLlmProvider>> | null = null;
       try {
         await api.saveLlmProvider(provider, key);
-        const result = await api.testLlmProvider(provider);
-        setProviderStatus((prev) => ({
-          ...prev,
-          [provider]: result.success ? "ok" : "error",
-        }));
-      } catch {
-        setProviderStatus((prev) => ({ ...prev, [provider]: "error" }));
+        testResult = await api.testLlmProvider(provider);
+      } catch (err) {
+        saveError = err;
       } finally {
         setTestingProvider(null);
       }
+
+      const outcome = decideProviderSave(saveError, testResult);
+      if (outcome.ok) {
+        setProviderStatus((prev) => ({ ...prev, [provider]: "ok" }));
+        setProviderError((prev) => ({ ...prev, [provider]: null }));
+        return true;
+      }
+      setProviderStatus((prev) => ({ ...prev, [provider]: "error" }));
+      setProviderError((prev) => ({ ...prev, [provider]: outcome.error }));
+      toast.error(`${provider}: ${outcome.error}`);
+      return false;
     },
-    [openaiKey, anthropicKey]
+    [openaiKey, anthropicKey, toast]
   );
 
-  // Create the user's first agent against the real backend.
-  const handleCreateAgent = async () => {
-    if (!agentName.trim()) return;
+  // Create the user's first agent against the real backend. Returns true ONLY
+  // on a real 2xx. On failure it surfaces the real error inline + via toast and
+  // does NOT mark the agent created — the caller must not advance.
+  const handleCreateAgent = async (): Promise<boolean> => {
+    if (!agentName.trim()) return false;
     setCreatingAgent(true);
+    setCreateError(null);
     const tmpl = templates.find((t) => t.id === selectedTemplate);
+
+    let createError: unknown | null = null;
     try {
       await api.createAgent({
         name: agentName.trim().toLowerCase().replace(/\s+/g, "-"),
         description: tmpl?.desc ?? "Created from onboarding",
         template: selectedTemplate,
       });
-      setAgentCreated(true);
-    } catch {
-      // Non-fatal — surface page handles the error state. We still let the
-      // user advance so they can poke around even if the API is unreachable.
-      setAgentCreated(true);
+    } catch (err) {
+      createError = err;
     } finally {
       setCreatingAgent(false);
     }
+
+    const outcome = decideAgentCreate(createError);
+    if (outcome.ok) {
+      setAgentCreated(true);
+      return true;
+    }
+    setAgentCreated(false);
+    setCreateError(outcome.error);
+    toast.error(outcome.error);
+    return false;
   };
 
-  // Kick off a real run, then bounce to the agents dashboard.
+  // Kick off a REAL run, poll it to a terminal status, and render the actual
+  // result (output) or the real error. We never claim success blindly, and we
+  // only mark onboarding complete + navigate once the user has seen a real
+  // terminal outcome.
   const handleRun = async () => {
     setRunning(true);
+    setRunDisplay(null);
     let parsed: unknown;
     try {
       parsed = JSON.parse(inputJson);
     } catch {
       parsed = { input: inputJson };
     }
+
+    let display: RunDisplay;
     try {
-      await api.createRun({
+      const created = await api.createRun({
         agentName: agentName.trim().toLowerCase().replace(/\s+/g, "-"),
         input: parsed,
       });
-    } catch {
-      // Swallow — onboarding completes even if the backend rejects it.
+      // Poll the run to terminal (bounded). Render whatever it actually does.
+      let run = created;
+      const deadline = Date.now() + 60_000;
+      while (!isTerminalRunStatus(run.status) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500));
+        run = await api.getRun(run.id);
+      }
+      display = decideRunDisplay(run, null);
+    } catch (err) {
+      display = decideRunDisplay(null, err);
     }
-    if (typeof window !== "undefined") {
-      localStorage.setItem("lantern_onboarding_complete", "true");
+
+    setRunDisplay(display);
+    setRunning(false);
+
+    if (display.kind === "succeeded") {
+      // Cosmetic-only flag: whether the welcome wizard reappears. Does NOT
+      // affect whether anything actually runs.
+      if (typeof window !== "undefined") {
+        localStorage.setItem("lantern_onboarding_complete", "true");
+      }
+      toast.success("Run succeeded — taking you to your agents");
+      router.push("/agents");
+    } else if (display.kind === "failed") {
+      toast.error(display.error);
+    } else {
+      toast.info("Run is still in progress — check the Runs page for the result.");
     }
-    router.push("/agents");
   };
 
   // Persist provider keys on continue. Saving here as well as in Test catches
-  // the "user typed a key but didn't click Test" case.
+  // the "user typed a key but didn't click Test" case. On any failure we
+  // surface the REAL error and stay on this step — we never silently advance
+  // with a key that never persisted.
   const handleProviderContinue = async () => {
-    try {
-      if (openaiKey.trim()) await api.saveLlmProvider("openai", openaiKey);
-      if (anthropicKey.trim()) await api.saveLlmProvider("anthropic", anthropicKey);
-    } catch {
-      // Non-fatal — settings page can retry later.
+    // Nothing entered → this is the explicit "skip" path; handled by its own
+    // button. If we got here with no key, just advance (nothing to save).
+    if (!openaiKey.trim() && !anthropicKey.trim()) {
+      setStep(2);
+      return;
     }
-    if (typeof window !== "undefined") {
-      const providers = {
-        openai: { configured: !!openaiKey },
-        anthropic: { configured: !!anthropicKey },
-      };
-      localStorage.setItem("lantern_settings_providers", JSON.stringify(providers));
-    }
-    setStep(2);
+
+    setSavingProviders(true);
+    let ok = true;
+    if (openaiKey.trim()) ok = (await handleTestProvider("openai")) && ok;
+    if (anthropicKey.trim()) ok = (await handleTestProvider("anthropic")) && ok;
+    setSavingProviders(false);
+
+    // handleTestProvider already surfaced inline errors + a toast for any
+    // failure. Only advance when every entered key actually saved + tested ok.
+    if (ok) setStep(2);
   };
 
   return (
@@ -292,7 +389,7 @@ export default function OnboardingPage() {
                     </span>
                   )}
                   {providerStatus.openai === "error" && (
-                    <span className="text-xs text-red-400">Invalid key</span>
+                    <span className="text-xs text-red-400">Failed</span>
                   )}
                 </div>
                 <div className="flex gap-2">
@@ -303,6 +400,7 @@ export default function OnboardingPage() {
                       onChange={(e) => {
                         setOpenaiKey(e.target.value);
                         setProviderStatus((p) => ({ ...p, openai: "untested" }));
+                        setProviderError((p) => ({ ...p, openai: null }));
                       }}
                       placeholder="sk-..."
                       className="w-full rounded-lg border border-zinc-700 bg-surface-3 px-3 py-2 pr-10 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30 font-mono"
@@ -315,7 +413,7 @@ export default function OnboardingPage() {
                     </button>
                   </div>
                   <button
-                    onClick={() => handleTestProvider("openai")}
+                    onClick={() => void handleTestProvider("openai")}
                     disabled={!openaiKey.trim() || testingProvider === "openai"}
                     className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -326,6 +424,7 @@ export default function OnboardingPage() {
                     )}
                   </button>
                 </div>
+                {providerError.openai && <InlineError message={providerError.openai} />}
               </div>
 
               {/* Anthropic */}
@@ -343,7 +442,7 @@ export default function OnboardingPage() {
                     </span>
                   )}
                   {providerStatus.anthropic === "error" && (
-                    <span className="text-xs text-red-400">Invalid key</span>
+                    <span className="text-xs text-red-400">Failed</span>
                   )}
                 </div>
                 <div className="flex gap-2">
@@ -354,6 +453,7 @@ export default function OnboardingPage() {
                       onChange={(e) => {
                         setAnthropicKey(e.target.value);
                         setProviderStatus((p) => ({ ...p, anthropic: "untested" }));
+                        setProviderError((p) => ({ ...p, anthropic: null }));
                       }}
                       placeholder="sk-ant-..."
                       className="w-full rounded-lg border border-zinc-700 bg-surface-3 px-3 py-2 pr-10 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30 font-mono"
@@ -366,7 +466,7 @@ export default function OnboardingPage() {
                     </button>
                   </div>
                   <button
-                    onClick={() => handleTestProvider("anthropic")}
+                    onClick={() => void handleTestProvider("anthropic")}
                     disabled={!anthropicKey.trim() || testingProvider === "anthropic"}
                     className="rounded-lg border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300 transition-colors hover:bg-surface-3 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -377,28 +477,56 @@ export default function OnboardingPage() {
                     )}
                   </button>
                 </div>
+                {providerError.anthropic && <InlineError message={providerError.anthropic} />}
               </div>
             </div>
+
+            {/* Honest skip: the bot will NOT run without a provider key. We
+                make the user acknowledge that, and we never later claim
+                success on their behalf. */}
+            {skipAck && (
+              <div className="mt-5 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                <p className="text-xs text-amber-300">
+                  Heads up: without an LLM provider key, your agent can be
+                  created but <span className="font-medium">runs will fail</span> —
+                  there is no model to call. Add a key here or later in Settings,
+                  then come back to run it. Click skip again to continue anyway.
+                </p>
+              </div>
+            )}
 
             <div className="mt-6 flex items-center justify-between">
               <button
                 onClick={() => {
-                  // Skip — save demo mode flag
-                  if (typeof window !== "undefined") {
-                    localStorage.setItem("lantern_settings_demo_mode", "true");
+                  // Honest skip — no demo-mode flag, no fabricated success.
+                  // First click warns; second click proceeds.
+                  if (!skipAck) {
+                    setSkipAck(true);
+                    return;
                   }
                   setStep(2);
                 }}
                 className="text-sm text-zinc-500 transition-colors hover:text-zinc-300"
               >
-                Skip for now (demo mode)
+                {skipAck ? "Skip anyway — I'll add a key later" : "Skip for now"}
               </button>
               <button
                 onClick={handleProviderContinue}
-                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-lantern-400"
+                disabled={savingProviders || testingProvider !== null}
+                className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {openaiKey || anthropicKey ? "Test & Continue" : "Continue"}
-                <ArrowRight className="h-4 w-4" />
+                {savingProviders ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Testing...
+                  </>
+                ) : (
+                  <>
+                    {openaiKey || anthropicKey ? "Test & Continue" : "Continue"}
+                    <ArrowRight className="h-4 w-4" />
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -457,7 +585,9 @@ export default function OnboardingPage() {
               </p>
             </div>
 
-            <div className="flex items-center justify-between">
+            {createError && <InlineError message={createError} />}
+
+            <div className="mt-6 flex items-center justify-between">
               <button
                 onClick={() => setStep(1)}
                 className="text-sm text-zinc-500 transition-colors hover:text-zinc-300"
@@ -466,8 +596,10 @@ export default function OnboardingPage() {
               </button>
               <button
                 onClick={async () => {
-                  await handleCreateAgent();
-                  setStep(3);
+                  // Advance ONLY on a real 2xx. On failure handleCreateAgent
+                  // surfaces the real error inline + toast and we stay here.
+                  const ok = await handleCreateAgent();
+                  if (ok) setStep(3);
                 }}
                 disabled={!agentName.trim() || creatingAgent}
                 className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -494,19 +626,22 @@ export default function OnboardingPage() {
         {step === 3 && (
           <div className="rounded-2xl border border-zinc-800 bg-surface-1 p-8 shadow-2xl">
             <div className="mb-6">
-              {/* Success banner */}
-              <div className="mb-4 flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
-                <Check className="h-5 w-5 text-emerald-400" />
-                <div>
-                  <p className="text-sm font-medium text-emerald-400">
-                    Agent created successfully
-                  </p>
-                  <p className="text-xs text-emerald-400/70">
-                    <span className="font-mono">{agentName}</span> is ready to run using the{" "}
-                    {templates.find((t) => t.id === selectedTemplate)?.name} template.
-                  </p>
+              {/* Success banner — gated on a REAL 2xx create. We never claim
+                  the agent was created unless the backend confirmed it. */}
+              {agentCreated && (
+                <div className="mb-4 flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+                  <Check className="h-5 w-5 text-emerald-400" />
+                  <div>
+                    <p className="text-sm font-medium text-emerald-400">
+                      Agent created
+                    </p>
+                    <p className="text-xs text-emerald-400/70">
+                      <span className="font-mono">{agentName}</span> was created using the{" "}
+                      {templates.find((t) => t.id === selectedTemplate)?.name} template.
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <h2 className="text-lg font-semibold text-zinc-100">
                 Run your agent
@@ -530,7 +665,31 @@ export default function OnboardingPage() {
               />
             </div>
 
-            <div className="flex items-center justify-between">
+            {/* Real run outcome — the ACTUAL terminal result of the run, or
+                the real error. Never an unconditional "success". */}
+            {runDisplay?.kind === "succeeded" && (
+              <div className="mb-6">
+                <div className="mb-2 flex items-center gap-2 text-sm font-medium text-emerald-400">
+                  <Check className="h-4 w-4" /> Run succeeded
+                </div>
+                <pre className="max-h-48 overflow-auto rounded-lg border border-zinc-800 bg-surface-2 px-3 py-2 font-mono text-xs text-zinc-300">
+                  {typeof runDisplay.output === "string"
+                    ? runDisplay.output
+                    : JSON.stringify(runDisplay.output, null, 2)}
+                </pre>
+              </div>
+            )}
+            {runDisplay?.kind === "failed" && (
+              <InlineError message={`Run failed: ${runDisplay.error}`} />
+            )}
+            {runDisplay?.kind === "pending" && (
+              <div className="mb-6 flex items-center gap-2 text-xs text-zinc-400">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Run is still in progress — check the Runs page for the final result.
+              </div>
+            )}
+
+            <div className="mt-6 flex items-center justify-between">
               <button
                 onClick={() => setStep(2)}
                 className="text-sm text-zinc-500 transition-colors hover:text-zinc-300"
