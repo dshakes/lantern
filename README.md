@@ -421,6 +421,16 @@ Two macOS bridges — **WhatsApp** and **iMessage** — turn an LLM into a perso
 
 Owner profile at `~/.lantern/owner-profile.md` — facts, per-contact rules, dialect, timezone — hot-reloaded every 30s. Copy the template at [`docs/personal/owner-profile.example.md`](docs/personal/owner-profile.example.md) (your real profile is gitignored). See [`docs/architecture/15-personal-workflows.md`](docs/architecture/).
 
+### Phone-trigger context — your iPhone, your bot
+
+iPhone automations (CarPlay/Bluetooth driving, geofences, Focus, the Action Button, NFC) fire signed Shortcuts that POST one tiny signal over a **private Tailscale** network. The control plane appends it to an owner-only `0600` file; the bridge reads it **on-demand on every owner turn** (zero lag) and folds it into context — grounding *your* self-chat and the availability concierge, while **never** sharing your location with a contact.
+
+<p align="center">
+  <img src="docs/assets/personal-harness-flow.svg" alt="Personal harness phone-trigger flow — iPhone automations POST signals over Tailscale to the control plane; the bridge reads them on-demand, grounding owner self-chat and the availability concierge; location is never shared with contacts" width="100%">
+</p>
+
+One command generates the whole shortcut set: `scripts/iphone/app-context/generate-signals.sh`. Recipes + trigger table in [`scripts/iphone/app-context/RICH-SIGNALS.md`](scripts/iphone/app-context/RICH-SIGNALS.md); remote-access setup in [`docs/personal/REMOTE-ACCESS.md`](docs/personal/REMOTE-ACCESS.md). The interactive version lives on the docs site at **`/personal`**.
+
 ---
 
 ## Architecture invariants
