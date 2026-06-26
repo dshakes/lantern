@@ -21,7 +21,9 @@ import {
   Tag,
   RefreshCw,
   Undo2,
-  X,
+  CheckCircle2,
+  ExternalLink,
+  Phone,
   Zap,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
@@ -59,6 +61,17 @@ const KIND_LABELS: Record<LifeEventKind, string> = {
   promo: "Promos",
 };
 
+const KIND_EMOJI: Record<LifeEventKind, string> = {
+  delivery: "📦",
+  bill: "💸",
+  fraud_alert: "🚨",
+  otp: "🔑",
+  travel: "✈️",
+  receipt: "🧾",
+  appointment: "📅",
+  promo: "🏷️",
+};
+
 const STATUS_LABELS: Record<string, string> = {
   suggested: "Suggested",
   "auto-acted": "Auto-acted",
@@ -92,6 +105,62 @@ const PREF_KINDS: LifeEventKind[] = [
 
 const REFRESH_INTERVAL_MS = 30_000;
 
+// Carrier tracking URL builders
+const CARRIER_URLS: Record<string, (trackingNo: string) => string> = {
+  ups: (t) => `https://www.ups.com/track?tracknum=${encodeURIComponent(t)}`,
+  fedex: (t) => `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(t)}`,
+  usps: (t) => `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(t)}`,
+};
+
+// ---------------------------------------------------------------------------
+// Filter chip definitions
+// ---------------------------------------------------------------------------
+
+type FilterId =
+  | "all"
+  | "needs-attention"
+  | "bills"
+  | "deliveries"
+  | "travel"
+  | "done";
+
+interface FilterChip {
+  id: FilterId;
+  label: string;
+}
+
+const FILTER_CHIPS: FilterChip[] = [
+  { id: "all", label: "All" },
+  { id: "needs-attention", label: "⚠️ Needs attention" },
+  { id: "bills", label: "💸 Bills" },
+  { id: "deliveries", label: "📦 Deliveries" },
+  { id: "travel", label: "✈️ Travel" },
+  { id: "done", label: "✓ Done" },
+];
+
+function matchesFilter(event: LifeEvent, filter: FilterId): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "needs-attention":
+      return (
+        event.urgency === "now" ||
+        event.kind === "fraud_alert" ||
+        event.kind === "bill"
+      );
+    case "bills":
+      return event.kind === "bill";
+    case "deliveries":
+      return event.kind === "delivery";
+    case "travel":
+      return event.kind === "travel";
+    case "done":
+      return event.status === "undone" || event.status === "dismissed";
+    default:
+      return true;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -105,6 +174,110 @@ function relativeTime(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   return `${days}d ago`;
+}
+
+/** Build a carrier tracking URL from event fields, or null if not enough info. */
+function buildTrackingUrl(fields: Record<string, unknown>): string | null {
+  const trackingNo = fields.trackingNo ?? fields.tracking_no ?? fields.trackingNumber;
+  if (typeof trackingNo !== "string" || !trackingNo) return null;
+
+  const carrier = String(
+    fields.carrier ?? fields.Carrier ?? ""
+  ).toLowerCase();
+
+  const buildUrl = CARRIER_URLS[carrier];
+  if (!buildUrl) {
+    // Unknown carrier — link to UPS as generic fallback only if carrier key exists
+    return null;
+  }
+  return buildUrl(trackingNo);
+}
+
+/** Extract a pay/open URL from event fields, or null. */
+function buildPayUrl(fields: Record<string, unknown>): { label: string; url: string } | null {
+  if (typeof fields.pay === "string" && fields.pay) return { label: "Pay", url: fields.pay };
+  if (typeof fields.payUrl === "string" && fields.payUrl) return { label: "Pay", url: fields.payUrl };
+  if (typeof fields.url === "string" && fields.url) return { label: "Open", url: fields.url };
+  if (typeof fields.link === "string" && fields.link) return { label: "Open", url: fields.link };
+  return null;
+}
+
+/** Extract a phone number for fraud callback, or null. */
+function buildPhoneLink(fields: Record<string, unknown>): string | null {
+  const phone = fields.phone ?? fields.callbackPhone ?? fields.callback_phone;
+  if (typeof phone !== "string" || !phone) return null;
+  // Normalise: strip non-digits for the tel: href
+  const digits = phone.replace(/\D/g, "");
+  return digits ? `tel:+${digits}` : null;
+}
+
+// ---------------------------------------------------------------------------
+// Summary strip
+// ---------------------------------------------------------------------------
+
+interface SummaryItem {
+  emoji: string;
+  label: string;
+  filterId: FilterId;
+  count: number;
+}
+
+function buildSummaryItems(events: LifeEvent[]): SummaryItem[] {
+  const active = events.filter(
+    (e) => e.status === "suggested" || e.status === "auto-acted",
+  );
+
+  const kindCounts: Partial<Record<LifeEventKind, number>> = {};
+  for (const e of active) {
+    kindCounts[e.kind] = (kindCounts[e.kind] ?? 0) + 1;
+  }
+
+  const needsAttention = active.filter(
+    (e) => e.urgency === "now" || e.kind === "fraud_alert" || e.kind === "bill",
+  ).length;
+
+  const items: SummaryItem[] = [];
+
+  if (needsAttention > 0) {
+    items.push({
+      emoji: "⚠️",
+      label: `${needsAttention} needs attention`,
+      filterId: "needs-attention",
+      count: needsAttention,
+    });
+  }
+
+  const billCount = kindCounts.bill ?? 0;
+  if (billCount > 0) {
+    items.push({
+      emoji: "💸",
+      label: `${billCount} ${billCount === 1 ? "bill" : "bills"} due`,
+      filterId: "bills",
+      count: billCount,
+    });
+  }
+
+  const deliveryCount = kindCounts.delivery ?? 0;
+  if (deliveryCount > 0) {
+    items.push({
+      emoji: "📦",
+      label: `${deliveryCount} ${deliveryCount === 1 ? "delivery" : "deliveries"}`,
+      filterId: "deliveries",
+      count: deliveryCount,
+    });
+  }
+
+  const travelCount = kindCounts.travel ?? 0;
+  if (travelCount > 0) {
+    items.push({
+      emoji: "✈️",
+      label: `${travelCount} travel`,
+      filterId: "travel",
+      count: travelCount,
+    });
+  }
+
+  return items;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,16 +297,144 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+/** Compact horizontal summary strip above the feed. */
+function SummaryStrip({
+  events,
+  activeFilter,
+  onFilterChange,
+}: {
+  events: LifeEvent[];
+  activeFilter: FilterId;
+  onFilterChange: (id: FilterId) => void;
+}) {
+  const items = buildSummaryItems(events);
+  if (items.length === 0) return null;
+
+  return (
+    <div className="mb-4 flex flex-wrap gap-x-3 gap-y-1.5 rounded-xl border border-zinc-800 bg-surface-1 px-4 py-3">
+      {items.map((item) => (
+        <button
+          key={item.filterId}
+          onClick={() =>
+            onFilterChange(
+              activeFilter === item.filterId ? "all" : item.filterId,
+            )
+          }
+          className={clsx(
+            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors",
+            activeFilter === item.filterId
+              ? "bg-lantern-500/20 text-lantern-200"
+              : "text-zinc-400 hover:text-zinc-200",
+          )}
+        >
+          <span aria-hidden>{item.emoji}</span>
+          <span>{item.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Horizontal scrollable filter chips. */
+function FilterChips({
+  active,
+  onChange,
+}: {
+  active: FilterId;
+  onChange: (id: FilterId) => void;
+}) {
+  return (
+    <div
+      className="mb-4 -mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0"
+      style={{ scrollbarWidth: "none" }}
+    >
+      {FILTER_CHIPS.map((chip) => (
+        <button
+          key={chip.id}
+          onClick={() => onChange(chip.id)}
+          className={clsx(
+            "inline-flex shrink-0 items-center rounded-full px-3.5 py-1.5 text-[12px] font-medium transition-colors",
+            "min-h-[34px]", // large enough tap target on mobile
+            active === chip.id
+              ? "bg-lantern-500/20 text-lantern-200 ring-1 ring-lantern-500/40"
+              : "border border-zinc-800 bg-surface-1 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200",
+          )}
+        >
+          {chip.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Inline action links derived from event.fields. */
+function InlineActions({ event }: { event: LifeEvent }) {
+  const payLink = buildPayUrl(event.fields);
+  const trackingUrl =
+    event.kind === "delivery" ? buildTrackingUrl(event.fields) : null;
+  const phoneLink =
+    event.kind === "fraud_alert" ? buildPhoneLink(event.fields) : null;
+
+  const links: React.ReactNode[] = [];
+
+  if (payLink) {
+    links.push(
+      <a
+        key="pay"
+        href={payLink.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-zinc-700 bg-surface-2 px-3 py-1.5 text-[12px] font-medium text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100"
+      >
+        <ExternalLink className="h-3 w-3" />
+        {payLink.label}
+      </a>,
+    );
+  }
+
+  if (trackingUrl) {
+    links.push(
+      <a
+        key="track"
+        href={trackingUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-zinc-700 bg-surface-2 px-3 py-1.5 text-[12px] font-medium text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100"
+      >
+        <Package className="h-3 w-3" />
+        Track
+      </a>,
+    );
+  }
+
+  if (phoneLink) {
+    links.push(
+      <a
+        key="call"
+        href={phoneLink}
+        className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-zinc-700 bg-surface-2 px-3 py-1.5 text-[12px] font-medium text-zinc-300 transition-colors hover:border-zinc-600 hover:text-zinc-100"
+      >
+        <Phone className="h-3 w-3" />
+        Call back
+      </a>,
+    );
+  }
+
+  if (links.length === 0) return null;
+
+  return <div className="mt-3 flex flex-wrap gap-2">{links}</div>;
+}
+
 function EventCard({
   event,
   onUndo,
-  onDismiss,
+  onMarkDone,
 }: {
   event: LifeEvent;
   onUndo: (id: string) => void;
-  onDismiss: (id: string) => void;
+  onMarkDone: (id: string) => void;
 }) {
-  const [busy, setBusy] = useState<"undo" | "dismiss" | null>(null);
+  const [busy, setBusy] = useState<"undo" | "mark-done" | null>(null);
   const icon = KIND_ICONS[event.kind] ?? <Zap className="h-4 w-4" />;
   const isDone = event.status === "undone" || event.status === "dismissed";
 
@@ -146,10 +447,10 @@ function EventCard({
     }
   };
 
-  const handleDismiss = async () => {
-    setBusy("dismiss");
+  const handleMarkDone = async () => {
+    setBusy("mark-done");
     try {
-      await onDismiss(event.id);
+      await onMarkDone(event.id);
     } finally {
       setBusy(null);
     }
@@ -196,6 +497,9 @@ function EventCard({
         </p>
       )}
 
+      {/* Inline action links from fields */}
+      {!isDone && <InlineActions event={event} />}
+
       {/* Action buttons — large tap targets for mobile */}
       {!isDone && (
         <div className="mt-3 flex gap-2">
@@ -211,18 +515,17 @@ function EventCard({
               Undo
             </Button>
           )}
-          {event.status === "suggested" && (
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<X className="h-3.5 w-3.5" />}
-              loading={busy === "dismiss"}
-              onClick={handleDismiss}
-              className="min-h-[36px] flex-1"
-            >
-              Dismiss
-            </Button>
-          )}
+          {/* Mark done (suggested or auto-acted) */}
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+            loading={busy === "mark-done"}
+            onClick={handleMarkDone}
+            className="min-h-[36px] flex-1"
+          >
+            Mark done
+          </Button>
         </div>
       )}
     </div>
@@ -279,6 +582,9 @@ export default function AutomationsPage() {
   const [events, setEvents] = useState<LifeEvent[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Active filter
+  const [activeFilter, setActiveFilter] = useState<FilterId>("all");
 
   // Prefs state
   const [prefs, setPrefs] = useState<LifeEventPref[]>([]);
@@ -347,16 +653,26 @@ export default function AutomationsPage() {
     [toastSuccess, toastError],
   );
 
-  const handleDismiss = useCallback(
+  /** Mark done = dismiss; optimistic update. */
+  const handleMarkDone = useCallback(
     async (id: string) => {
+      // Optimistic update
+      setEvents((prev) =>
+        prev.map((e) => (e.id === id ? { ...e, status: "dismissed" as const } : e)),
+      );
       try {
         await api.dismissLifeEvent(id);
-        setEvents((prev) =>
-          prev.map((e) => (e.id === id ? { ...e, status: "dismissed" as const } : e)),
-        );
-        toastSuccess("Dismissed");
+        toastSuccess("Marked as done");
       } catch (err) {
-        toastError(err instanceof Error ? err.message : "Failed to dismiss");
+        // Revert on failure
+        setEvents((prev) =>
+          prev.map((e) =>
+            e.id === id
+              ? { ...e, status: "suggested" as const }
+              : e,
+          ),
+        );
+        toastError(err instanceof Error ? err.message : "Failed to mark done");
       }
     },
     [toastSuccess, toastError],
@@ -382,13 +698,15 @@ export default function AutomationsPage() {
     [toastSuccess, toastError, fetchPrefs],
   );
 
-  // ---- Render helpers ------------------------------------------------------
+  // ---- Derived state -------------------------------------------------------
 
-  // Group events: active (suggested/auto-acted) first, then terminal
-  const activeEvents = events.filter(
+  const filteredEvents = events.filter((e) => matchesFilter(e, activeFilter));
+
+  // Within the filtered view, active events first, then terminal
+  const activeEvents = filteredEvents.filter(
     (e) => e.status === "suggested" || e.status === "auto-acted",
   );
-  const terminalEvents = events.filter(
+  const terminalEvents = filteredEvents.filter(
     (e) => e.status === "undone" || e.status === "dismissed",
   );
 
@@ -397,6 +715,9 @@ export default function AutomationsPage() {
     const found = prefs.find((p) => p.kind === kind);
     return found ?? { kind, mode: "ask" as LifeEventMode };
   });
+
+  // Determine if the current filter produced an empty result despite having events
+  const isFilteredEmpty = !loadingEvents && events.length > 0 && filteredEvents.length === 0;
 
   // ---- Render --------------------------------------------------------------
 
@@ -441,34 +762,57 @@ export default function AutomationsPage() {
               size="compact"
             />
           ) : (
-            <div className="space-y-3">
-              {activeEvents.map((e) => (
-                <EventCard
-                  key={e.id}
-                  event={e}
-                  onUndo={handleUndo}
-                  onDismiss={handleDismiss}
-                />
-              ))}
+            <>
+              {/* Summary strip — tap a stat to filter */}
+              <SummaryStrip
+                events={events}
+                activeFilter={activeFilter}
+                onFilterChange={setActiveFilter}
+              />
 
-              {terminalEvents.length > 0 && (
-                <>
-                  {activeEvents.length > 0 && (
-                    <div className="pt-1 pb-1">
-                      <p className="text-xs font-medium text-zinc-600">Earlier</p>
-                    </div>
-                  )}
-                  {terminalEvents.map((e) => (
+              {/* Filter chips — horizontal scroll on mobile */}
+              <FilterChips active={activeFilter} onChange={setActiveFilter} />
+
+              {isFilteredEmpty ? (
+                <EmptyState
+                  icon={Zap}
+                  title="Nothing here"
+                  description="No events match this filter. Try All to see everything."
+                  size="compact"
+                  actionLabel="Show all"
+                  onAction={() => setActiveFilter("all")}
+                />
+              ) : (
+                <div className="space-y-3">
+                  {activeEvents.map((e) => (
                     <EventCard
                       key={e.id}
                       event={e}
                       onUndo={handleUndo}
-                      onDismiss={handleDismiss}
+                      onMarkDone={handleMarkDone}
                     />
                   ))}
-                </>
+
+                  {terminalEvents.length > 0 && (
+                    <>
+                      {activeEvents.length > 0 && (
+                        <div className="pt-1 pb-1">
+                          <p className="text-xs font-medium text-zinc-600">Earlier</p>
+                        </div>
+                      )}
+                      {terminalEvents.map((e) => (
+                        <EventCard
+                          key={e.id}
+                          event={e}
+                          onUndo={handleUndo}
+                          onMarkDone={handleMarkDone}
+                        />
+                      ))}
+                    </>
+                  )}
+                </div>
               )}
-            </div>
+            </>
           )}
         </section>
 

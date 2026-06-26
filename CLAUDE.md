@@ -996,6 +996,32 @@ notify-third-party rewrite ("I let him know" → "I'll make sure he sees this")
 runs unconditionally because the bridge has no channel to truthfully complete
 it mid-thread.
 
+### Mac app-usage signal ("learn what the owner uses")
+
+OWNER-ONLY ambient signal that distills the owner's local macOS app-usage into
+ONE short "what you've been doing today" line, fed into the OWNER's self-chat
+assistant context for proactive awareness + better-grounded replies (Mac only;
+iPhone usage is deferred). Lives in `packages/bridge-core/src/mac-usage.ts`
+(pure parse + summarize, unit-tested with mock rows) and
+`services/imessage-bridge/src/mac-usage-reader.ts` (the knowledgeC.db reader).
+
+Privacy posture (HARD rules):
+
+- **OFF by default.** Requires `LANTERN_MAC_USAGE=on`. When off, nothing reads
+  knowledgeC.db and nothing is stored.
+- **Owner-only.** The summary is injected ONLY into the owner's self-chat
+  assistant prompt (`handleOwnerDocQuery`) — NEVER into a contact reply. A
+  contact must never learn what apps the owner uses.
+- **Summaries, not raw logs.** Only the distilled per-app rollup + one sentence
+  is kept; the rolling cache is `~/.lantern/mac-usage.json` (mode 0600). No raw
+  per-event log is persisted.
+- **Fails closed.** The reader copies `~/Library/Application Support/Knowledge/
+  knowledgeC.db` to a tempfile and opens it read-only; any failure (no Full
+  Disk Access, missing DB, schema drift, lock) → empty signal + one debug log,
+  never a throw/crash. Source rows: `ZOBJECT` where `ZSTREAMNAME` is
+  `/app/usage` or `/app/inFocus`; `ZVALUESTRING` = bundle id; `ZSTARTDATE`/
+  `ZENDDATE` are Mac-absolute-time seconds (Unix = mac + 978307200).
+
 ### Required env (bridge process)
 
 | Var                                   | Purpose                                                                                                                                                                                          |
@@ -1007,6 +1033,8 @@ it mid-thread.
 | `LANTERN_WA_OWNER_JID`                | (Optional) Owner's primary WhatsApp JID — `15125551234` or `15125551234@s.whatsapp.net`. Same role as the iMessage env.                                                                          |
 | `LANTERN_PERSONAL_DOCS_ROOTS`         | Colon-separated allowed roots (default `~/Documents:~/Desktop:~/Library/Mobile Documents/com~apple~CloudDocs`)                                                                                   |
 | `LANTERN_PERSONAL_DOCS_OCR_MAX_PAGES` | Max PDF pages to render+OCR per file (default 3)                                                                                                                                                 |
+| `LANTERN_MAC_USAGE`                   | (Optional) `on` to enable the OWNER-ONLY Mac app-usage signal (reads knowledgeC.db, distills one "what you've been doing today" line into the owner's self-chat context). Default OFF. Summaries only; fails closed. |
+| `LANTERN_MAC_USAGE_SEC`               | (Optional) Mac app-usage refresh interval in seconds (min 60, default 1800 = 30 min).                                                                                                            |
 | `LANTERN_DEFAULT_CALENDAR`            | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`)                                                                                         |
 | `LANTERN_QUIET_START`                 | Start of quiet-hours window, 24h integer (default `1` = 1 AM). No auto-reply; messages queued for morning replay.                                                                                |
 | `LANTERN_QUIET_END`                   | End of quiet-hours window, 24h integer (default `6` = 6 AM).                                                                                                                                    |
