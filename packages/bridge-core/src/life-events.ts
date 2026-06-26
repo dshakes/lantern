@@ -406,6 +406,13 @@ export function suggestedActionsFor(event: LifeEvent): ProactiveAction[] {
     }
     case "appointment":
     case "travel":
+      // Only actionable when a concrete date/time was parsed. An undated
+      // "travel update" (an old flight receipt, a year-in-review email, a
+      // boarding pass for a past trip) has nothing to put on a calendar —
+      // offering "add it to your calendar?" with no date is the placeholder
+      // nudge. No date → no action (and proactiveDecision then suppresses it),
+      // so we never surface a calendar offer with nothing behind it.
+      if (!f.time) return [];
       return [
         {
           label: "add to calendar",
@@ -497,6 +504,15 @@ export function proactiveDecision(event: LifeEvent, prefs: LifeEventPrefs = {}):
 
   // Non-actionable or low-confidence → suppress (but still recorded by caller).
   if (!isActionableKind(event.kind) || event.confidence < CONFIDENCE_FLOOR) {
+    return { route: "suppress", ownerMessage, actions, event };
+  }
+
+  // Undated travel/appointment → suppress. With no concrete date there is
+  // nothing to put on a calendar, so "add it to your calendar?" would be a
+  // placeholder nudge with no itinerary behind it (the bug that made the bot
+  // surface a non-existent "travel update" from an old flight email and then
+  // admit it had nothing). A dated one still routes normally.
+  if ((event.kind === "travel" || event.kind === "appointment") && !event.fields.time) {
     return { route: "suppress", ownerMessage, actions, event };
   }
 
