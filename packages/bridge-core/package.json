@@ -56,7 +56,8 @@
     "./dislike-consolidator": "./src/dislike-consolidator.ts",
     "./contact-priority": "./src/contact-priority.ts",
     "./anticipation": "./src/anticipation.ts",
-    "./emotional-register": "./src/emotional-register.ts"
+    "./emotional-register": "./src/emotional-register.ts",
+    "./life-events-emit": "./src/life-events-emit.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
