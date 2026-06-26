@@ -604,7 +604,9 @@ export class IMessageSession {
   // data; kill with LANTERN_IPHONE_SIGNALS=off. Reader fails closed.
   private iphoneSignalsTimer: ReturnType<typeof setInterval> | null = null;
   private iphoneSignalsSummaryLine = "";
-  private static readonly IPHONE_SIGNALS_DEFAULT_SEC = 10 * 60; // every 10 min
+  // The owner self-chat path reads signals on-demand (freshIphoneSignalsLine),
+  // so this timer is only a fallback cache-warmer — a slow keepalive is fine.
+  private static readonly IPHONE_SIGNALS_DEFAULT_SEC = 30 * 60; // 30 min keepalive
   // Fired-nudge dedupe keys persisted to disk (0600) so a launchd respawn
   // doesn't re-nag the owner with a nudge already surfaced today. Map of
   // dedupeKey -> epoch ms fired; GC'd on load past NUDGE_DEDUP_TTL_MS.
@@ -1334,6 +1336,28 @@ export class IMessageSession {
       // Fails closed — never crash the bridge over an optional ambient signal.
       this.logger.debug({ err }, "iPhone app-context tick failed (non-fatal, no-op)");
     }
+  }
+
+  // ON-DEMAND read of the iPhone signal summary, called inline on the owner
+  // self-chat path so the context is ALWAYS live (zero polling lag). The
+  // signals file is small and local (a few-ms read), so doing it in front of a
+  // multi-second LLM call is free. The timer (runIphoneSignalsTick) is now just
+  // a cache-warmer/fallback. Refreshes the cached line on a hit; on any failure
+  // (or LANTERN_IPHONE_SIGNALS=off) falls back to the last-known cached line so
+  // a transient empty read never blanks the context. Never throws.
+  private async freshIphoneSignalsLine(): Promise<string> {
+    if ((process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() === "off") return "";
+    try {
+      const { readDeviceSignalsSummary } = await import("./device-signals-reader.js");
+      const summary = readDeviceSignalsSummary(this.logger);
+      if (summary.summaryLine) {
+        this.iphoneSignalsSummaryLine = summary.summaryLine; // keep cache fresh
+        return summary.summaryLine;
+      }
+    } catch (err) {
+      this.logger.debug({ err }, "fresh iPhone signal read failed (falling back to cached line)");
+    }
+    return this.iphoneSignalsSummaryLine; // last-known, possibly ""
   }
 
   // Gather the signals available to this bridge for the nudge engine. All
@@ -6070,6 +6094,10 @@ export class IMessageSession {
     const langHint = detectLanguageHints(query);
     const nativity = this.ownerProfileStore.nativity();
     const languageModality = languageModalityHint(langHint, { nativity });
+    // Read the iPhone signal summary FRESH here (on-demand) so the owner's
+    // self-chat context reflects signals the instant they land — no 10-min
+    // poll lag. Falls back to the last-known cached line on any failure.
+    const iphoneLine = await this.freshIphoneSignalsLine();
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his iMessage self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
@@ -6157,7 +6185,7 @@ export class IMessageSession {
       // exists; LANTERN_IPHONE_SIGNALS=off to kill). OWNER-ONLY — injected here
       // (self-chat) and NOWHERE else so a contact never learns what apps the
       // owner uses on his phone. One short "what you've been on" line.
-      this.iphoneSignalsSummaryLine ? "\n" + iphoneContextBlock(this.iphoneSignalsSummaryLine) : "",
+      iphoneLine ? "\n" + iphoneContextBlock(iphoneLine) : "",
     ].filter(Boolean).join("\n");
 
     // First attempt. withTools=true so the agent has the personal-docs
