@@ -58,7 +58,8 @@
     "./anticipation": "./src/anticipation.ts",
     "./emotional-register": "./src/emotional-register.ts",
     "./life-events-emit": "./src/life-events-emit.ts",
-    "./mac-usage": "./src/mac-usage.ts"
+    "./mac-usage": "./src/mac-usage.ts",
+    "./device-signals": "./src/device-signals.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
