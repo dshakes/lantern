@@ -1136,6 +1136,65 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
         Ok(Response::new(out_stream))
     }
 
+    /// Invoke a single named tool against a run's workload.
+    ///
+    /// This is the unary, structured counterpart to [`exec`](Self::exec): the
+    /// workflow engine calls it for `tool_call` steps with a tool name + JSON
+    /// args and expects a typed [`pb::ToolStatus`] back.
+    ///
+    /// HONEST STATUS: there is no in-VM single-tool dispatch path yet. The
+    /// harness serves a raw `Exec` (shell) channel, not a typed tool registry,
+    /// so we cannot truthfully run a named tool and return its structured
+    /// result. Rather than fabricate a success, this validates the request and
+    /// the target VM, then returns `TOOL_STATUS_UNAVAILABLE` with a clear
+    /// reason. When the in-guest tool-runner lands, swap the unavailable branch
+    /// for a forward to the harness and map its result into `result` / the
+    /// `OK`/`ERROR` statuses. Callers (the engine) already treat UNAVAILABLE as
+    /// a hard, typed failure — they do not retry it as a transient error.
+    async fn exec_tool(
+        &self,
+        request: Request<pb::ExecToolRequest>,
+    ) -> Result<Response<pb::ExecToolResponse>, Status> {
+        let req = request.into_inner();
+
+        if req.tool_name.is_empty() {
+            return Err(Status::invalid_argument("exec_tool: tool_name is required"));
+        }
+        // Need either an explicit vm_id or a run_id to resolve the workload.
+        if req.vm_id.is_empty() && req.run_id.is_empty() {
+            return Err(Status::invalid_argument(
+                "exec_tool: one of vm_id or run_id is required",
+            ));
+        }
+
+        // If a vm_id was supplied, it must resolve to a known workload — a
+        // tool call against a non-existent VM is a caller error, not an
+        // "unavailable" feature.
+        if !req.vm_id.is_empty() && self.registry.get(&req.vm_id).is_none() {
+            return Err(Status::not_found(format!("vm {} not found", req.vm_id)));
+        }
+
+        tracing::info!(
+            vm_id = %req.vm_id,
+            run_id = %req.run_id,
+            step_id = %req.step_id,
+            tool_name = %req.tool_name,
+            idempotency_key = %req.idempotency_key,
+            "exec_tool: in-VM tool dispatch not yet wired — returning UNAVAILABLE"
+        );
+
+        Ok(Response::new(pb::ExecToolResponse {
+            status: pb::ToolStatus::Unavailable as i32,
+            result: None,
+            error: format!(
+                "in-VM tool execution is not yet wired on this runtime-manager: \
+                 cannot invoke tool '{}' (the harness serves a raw exec channel, \
+                 not a typed tool registry)",
+                req.tool_name
+            ),
+        }))
+    }
+
     async fn snapshot(
         &self,
         request: Request<pb::SnapshotRequest>,
@@ -2621,6 +2680,135 @@ mod tests {
             }
             other => panic!("expected harness route, got {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // ExecTool — single-tool dispatch for workflow tool_call steps
+    //
+    // In-VM tool execution is not yet wired, so a well-formed call must return
+    // a TYPED UNAVAILABLE status (never a fabricated success), and malformed
+    // calls must fail fast with the right gRPC code.
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn exec_tool_empty_tool_name_is_invalid_argument() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let svc = manager_with_backend_vm("docker", "vm-tool-1", "handle-tool-1");
+        let req = Request::new(pb::ExecToolRequest {
+            vm_id: "vm-tool-1".to_string(),
+            run_id: "run-1".to_string(),
+            step_id: "step-1".to_string(),
+            tool_name: String::new(),
+            args: None,
+            timeout: None,
+            idempotency_key: "run-1:step-1:1".to_string(),
+        });
+        let err = svc
+            .exec_tool(req)
+            .await
+            .expect_err("empty tool_name must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument, "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn exec_tool_without_vm_or_run_is_invalid_argument() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let svc = manager_with_backend_vm("docker", "vm-tool-2", "handle-tool-2");
+        let req = Request::new(pb::ExecToolRequest {
+            vm_id: String::new(),
+            run_id: String::new(),
+            step_id: "step-1".to_string(),
+            tool_name: "search".to_string(),
+            args: None,
+            timeout: None,
+            idempotency_key: String::new(),
+        });
+        let err = svc
+            .exec_tool(req)
+            .await
+            .expect_err("missing vm_id and run_id must be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument, "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn exec_tool_unknown_vm_is_not_found() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let svc = manager_with_backend_vm("docker", "vm-tool-3", "handle-tool-3");
+        let req = Request::new(pb::ExecToolRequest {
+            vm_id: "vm-does-not-exist".to_string(),
+            run_id: "run-1".to_string(),
+            step_id: "step-1".to_string(),
+            tool_name: "search".to_string(),
+            args: None,
+            timeout: None,
+            idempotency_key: "run-1:step-1:1".to_string(),
+        });
+        let err = svc
+            .exec_tool(req)
+            .await
+            .expect_err("unknown vm_id must yield NOT_FOUND");
+        assert_eq!(err.code(), tonic::Code::NotFound, "got {err:?}");
+    }
+
+    /// A well-formed call against a known VM returns a TYPED UNAVAILABLE status
+    /// with an explanatory error and no fabricated result — this is the honest
+    /// "not wired yet" contract the workflow engine relies on.
+    #[tokio::test]
+    async fn exec_tool_known_vm_returns_typed_unavailable() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let svc = manager_with_backend_vm("docker", "vm-tool-4", "handle-tool-4");
+        let req = Request::new(pb::ExecToolRequest {
+            vm_id: "vm-tool-4".to_string(),
+            run_id: "run-1".to_string(),
+            step_id: "step-1".to_string(),
+            tool_name: "web_search".to_string(),
+            args: None,
+            timeout: None,
+            idempotency_key: "run-1:step-1:1".to_string(),
+        });
+        let resp = svc
+            .exec_tool(req)
+            .await
+            .expect("well-formed call should return Ok with a typed status")
+            .into_inner();
+        assert_eq!(
+            resp.status,
+            pb::ToolStatus::Unavailable as i32,
+            "must be UNAVAILABLE (not OK/fabricated), got status {}",
+            resp.status
+        );
+        assert!(
+            resp.result.is_none(),
+            "UNAVAILABLE must not carry a fabricated result"
+        );
+        assert!(
+            resp.error.contains("web_search") && resp.error.contains("not yet wired"),
+            "error should name the tool and the gap, got: {}",
+            resp.error
+        );
+    }
+
+    /// run_id alone (no vm_id) is sufficient to address the workload; the call
+    /// still returns the typed UNAVAILABLE rather than an argument error.
+    #[tokio::test]
+    async fn exec_tool_run_id_only_is_accepted() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+        let svc = manager_with_backend_vm("docker", "vm-tool-5", "handle-tool-5");
+        let req = Request::new(pb::ExecToolRequest {
+            vm_id: String::new(),
+            run_id: "run-xyz".to_string(),
+            step_id: "step-1".to_string(),
+            tool_name: "search".to_string(),
+            args: None,
+            timeout: None,
+            idempotency_key: "run-xyz:step-1:1".to_string(),
+        });
+        let resp = svc
+            .exec_tool(req)
+            .await
+            .expect("run_id-only call should be accepted")
+            .into_inner();
+        assert_eq!(resp.status, pb::ToolStatus::Unavailable as i32, "got {}", resp.status);
     }
 
     // -----------------------------------------------------------------------

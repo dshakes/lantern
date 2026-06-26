@@ -206,41 +206,29 @@ export class ScreenContext {
   // (System Events).
   private frontmostApp(): Promise<{ app: string; window: string } | null> {
     return new Promise((resolve) => {
-      const script = `
-ObjC.import('AppKit');
-function run() {
-  const ws = $.NSWorkspace.sharedWorkspace;
-  const app = ws.frontmostApplication;
-  const name = app.localizedName.UTF8String;
-  let title = '';
-  try {
-    // Get the frontmost window title via the System Events bridge.
-    const SystemEvents = Application('System Events');
-    const proc = SystemEvents.processes.byName(name);
-    if (proc && proc.exists()) {
-      const wins = proc.windows();
-      if (wins && wins.length > 0) {
-        title = String(wins[0].name() || '');
-      }
-    }
-  } catch (e) { /* no window title — that's ok */ }
-  return JSON.stringify({ app: name, window: title });
-}`;
-      const proc = spawn("osascript", ["-l", "JavaScript", "-e", script]);
+      // Use `lsappinfo` (a plain system CLI that needs NO TCC) rather than
+      // AppleScript/JXA. The bridge runs under launchd, which has Full Disk
+      // Access but NOT Automation — so `osascript`/`System Events` returns
+      // nothing and the whole feature silently no-ops. lsappinfo works
+      // regardless. Window title isn't available without Automation; that's
+      // fine — the blocklist gates on app NAME, which is what we need.
+      const proc = spawn("/bin/sh", [
+        "-c",
+        'front=$(lsappinfo front 2>/dev/null); [ -n "$front" ] && lsappinfo info -only name "$front" 2>/dev/null',
+      ]);
       let stdout = "";
       const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; resolve(null); }, 4000);
       proc.stdout.on("data", (d) => (stdout += d.toString()));
       proc.on("close", () => {
         clearTimeout(timer);
-        const out = stdout.trim();
-        if (!out) return resolve(null);
-        try {
-          const r = JSON.parse(out) as { app?: string; window?: string };
-          if (!r.app) return resolve(null);
-          resolve({ app: r.app, window: r.window || "" });
-        } catch {
-          resolve(null);
+        // Output looks like: "LSDisplayName"="iTerm2"
+        const m = stdout.match(/"LSDisplayName"\s*=\s*"([^"]+)"/);
+        const app = (m?.[1] || "").trim();
+        if (!app) {
+          this.logger.debug({ raw: stdout.trim().slice(0, 80) }, "screen-context: could not resolve frontmost app");
+          return resolve(null);
         }
+        resolve({ app, window: "" });
       });
       proc.on("error", () => { clearTimeout(timer); resolve(null); });
     });
@@ -257,16 +245,27 @@ function run() {
       const out = join(tmpdir(), `lantern-screen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`);
       // -x: no shutter sound. -m: main display only. -t png: PNG output.
       const proc = spawn("screencapture", ["-x", "-m", "-t", "png", out]);
-      const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; resolve(""); }, 8000);
+      let stderr = "";
+      proc.stderr?.on("data", (d) => (stderr += d.toString()));
+      const timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {}; this.logger.warn({}, "screen-context: screencapture timed out"); resolve(""); }, 8000);
       proc.on("close", (code) => {
         clearTimeout(timer);
         if (code === 0 && existsSync(out)) {
           resolve(out);
         } else {
+          // Loud, actionable: a non-zero exit with "could not create image
+          // from display" means the bridge's node binary lacks Screen
+          // Recording permission (TCC is per-binary; launchd-spawned nvm
+          // node must be granted explicitly, and the grant only attaches
+          // to a freshly-started process).
+          this.logger.warn(
+            { code, stderr: stderr.trim().slice(0, 200) },
+            "screen-context: screencapture failed — likely missing Screen Recording permission for the bridge's node binary",
+          );
           resolve("");
         }
       });
-      proc.on("error", () => { clearTimeout(timer); resolve(""); });
+      proc.on("error", (err) => { clearTimeout(timer); this.logger.warn({ err: String(err) }, "screen-context: screencapture spawn error"); resolve(""); });
     });
   }
 

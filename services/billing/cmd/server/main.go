@@ -20,6 +20,7 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
+	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/billing/internal/aggregator"
 	"github.com/dshakes/lantern/services/billing/internal/db"
 	"github.com/dshakes/lantern/services/billing/internal/handlers"
@@ -85,7 +86,7 @@ func main() {
 
 	// Register services.
 	billingSvc := handlers.NewBillingService(srv)
-	_ = billingSvc // Registered via gRPC service descriptor when proto is generated.
+	lanternv1.RegisterBillingServiceServer(grpcServer, billingSvc)
 
 	// Health check.
 	healthSvc := health.NewServer()

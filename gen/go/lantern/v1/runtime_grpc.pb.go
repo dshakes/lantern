@@ -350,6 +350,7 @@ const (
 	RuntimeManager_Stop_FullMethodName     = "/lantern.v1.RuntimeManager/Stop"
 	RuntimeManager_Logs_FullMethodName     = "/lantern.v1.RuntimeManager/Logs"
 	RuntimeManager_Exec_FullMethodName     = "/lantern.v1.RuntimeManager/Exec"
+	RuntimeManager_ExecTool_FullMethodName = "/lantern.v1.RuntimeManager/ExecTool"
 	RuntimeManager_Stats_FullMethodName    = "/lantern.v1.RuntimeManager/Stats"
 	RuntimeManager_Snapshot_FullMethodName = "/lantern.v1.RuntimeManager/Snapshot"
 )
@@ -365,9 +366,17 @@ type RuntimeManagerClient interface {
 	Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RuntimeLogLine], error)
 	// Live exec into a running VM (debugger).
 	Exec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecRequest, ExecResponse], error)
+	// Invoke a single named tool against a run's running workload and return
+	// its structured result. Unlike Exec (a raw, streaming shell into the VM),
+	// ExecTool is the unary, structured dispatch the workflow engine uses for
+	// tool_call steps: it carries a tool name + JSON args and gets back a JSON
+	// result + a typed status. The idempotency key (run:step:attempt) lets the
+	// manager de-duplicate retried side-effects (invariant #8).
+	ExecTool(ctx context.Context, in *ExecToolRequest, opts ...grpc.CallOption) (*ExecToolResponse, error)
 	// Live stats.
 	Stats(ctx context.Context, in *StatsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ResourceUsage], error)
-	// Take a snapshot — durable, identified by sha256.
+	// Take a snapshot of a running VM — durable, identified by sha256.
+	// Reuses the same SnapshotRequest/SnapshotResponse as RuntimeScheduler.
 	Snapshot(ctx context.Context, in *SnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error)
 }
 
@@ -431,6 +440,16 @@ func (c *runtimeManagerClient) Exec(ctx context.Context, opts ...grpc.CallOption
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RuntimeManager_ExecClient = grpc.BidiStreamingClient[ExecRequest, ExecResponse]
 
+func (c *runtimeManagerClient) ExecTool(ctx context.Context, in *ExecToolRequest, opts ...grpc.CallOption) (*ExecToolResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExecToolResponse)
+	err := c.cc.Invoke(ctx, RuntimeManager_ExecTool_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *runtimeManagerClient) Stats(ctx context.Context, in *StatsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ResourceUsage], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &RuntimeManager_ServiceDesc.Streams[2], RuntimeManager_Stats_FullMethodName, cOpts...)
@@ -471,9 +490,17 @@ type RuntimeManagerServer interface {
 	Logs(*LogsRequest, grpc.ServerStreamingServer[RuntimeLogLine]) error
 	// Live exec into a running VM (debugger).
 	Exec(grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error
+	// Invoke a single named tool against a run's running workload and return
+	// its structured result. Unlike Exec (a raw, streaming shell into the VM),
+	// ExecTool is the unary, structured dispatch the workflow engine uses for
+	// tool_call steps: it carries a tool name + JSON args and gets back a JSON
+	// result + a typed status. The idempotency key (run:step:attempt) lets the
+	// manager de-duplicate retried side-effects (invariant #8).
+	ExecTool(context.Context, *ExecToolRequest) (*ExecToolResponse, error)
 	// Live stats.
 	Stats(*StatsRequest, grpc.ServerStreamingServer[ResourceUsage]) error
-	// Take a snapshot — durable, identified by sha256.
+	// Take a snapshot of a running VM — durable, identified by sha256.
+	// Reuses the same SnapshotRequest/SnapshotResponse as RuntimeScheduler.
 	Snapshot(context.Context, *SnapshotRequest) (*SnapshotResponse, error)
 	mustEmbedUnimplementedRuntimeManagerServer()
 }
@@ -496,6 +523,9 @@ func (UnimplementedRuntimeManagerServer) Logs(*LogsRequest, grpc.ServerStreaming
 }
 func (UnimplementedRuntimeManagerServer) Exec(grpc.BidiStreamingServer[ExecRequest, ExecResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method Exec not implemented")
+}
+func (UnimplementedRuntimeManagerServer) ExecTool(context.Context, *ExecToolRequest) (*ExecToolResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ExecTool not implemented")
 }
 func (UnimplementedRuntimeManagerServer) Stats(*StatsRequest, grpc.ServerStreamingServer[ResourceUsage]) error {
 	return status.Errorf(codes.Unimplemented, "method Stats not implemented")
@@ -578,6 +608,24 @@ func _RuntimeManager_Exec_Handler(srv interface{}, stream grpc.ServerStream) err
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RuntimeManager_ExecServer = grpc.BidiStreamingServer[ExecRequest, ExecResponse]
 
+func _RuntimeManager_ExecTool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecToolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RuntimeManagerServer).ExecTool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RuntimeManager_ExecTool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RuntimeManagerServer).ExecTool(ctx, req.(*ExecToolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _RuntimeManager_Stats_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(StatsRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -621,6 +669,10 @@ var RuntimeManager_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Stop",
 			Handler:    _RuntimeManager_Stop_Handler,
+		},
+		{
+			MethodName: "ExecTool",
+			Handler:    _RuntimeManager_ExecTool_Handler,
 		},
 		{
 			MethodName: "Snapshot",

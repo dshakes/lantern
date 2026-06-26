@@ -147,7 +147,23 @@ func (h *RESTHandler) contextWithTenant(r *http.Request) (context.Context, error
 	// Also inject as context value (what MustTenantID actually reads).
 	ctx = middleware.InjectTenantID(ctx, claims.TenantID)
 
+	// Enrich the otelhttp request span (created by the server wrapper in main)
+	// with tenant/user/run identifiers so HTTP traces are filterable per
+	// invariant #9. Safe no-op when telemetry is disabled. r.Context() is the
+	// span-carrying context; ctx above is a derived context without its own span.
+	middleware.EnrichSpan(r.Context(), claims.TenantID, claims.Subject, runIDFromPath(r), "")
+
 	return ctx, nil
+}
+
+// runIDFromPath extracts the {id} path value for run-scoped routes
+// (/v1/runs/{id}/...). Returns "" for non-run routes. Uses the Go 1.22 ServeMux
+// path-value API; the route patterns register the wildcard as "{id}".
+func runIDFromPath(r *http.Request) string {
+	if !strings.HasPrefix(r.URL.Path, "/v1/runs/") {
+		return ""
+	}
+	return r.PathValue("id")
 }
 
 // ---------- Agent REST endpoints ----------
@@ -876,6 +892,8 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	// Delivery side-effects: only for top-level runs, not child subagent runs.
 	// Check if email delivery is configured for this agent's schedule.
 	var deliveryEmail string
+	// rls-exempt: inline executor delivery — schedules read self-scoped by
+	// explicit `tenant_id = $1`; detached goroutine ctx.
 	_ = h.srv.Pool.QueryRow(ctx,
 		`SELECT config->>'deliveryEmail' FROM schedules WHERE tenant_id = $1 AND agent_name = $2 AND enabled = true`,
 		tenantID, agentName,
@@ -947,6 +965,19 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 // and a non-nil error is returned so the caller can short-circuit delivery.
 // Child subagent runs call this directly with the parent's context so
 // cancellation propagates and depth is tracked.
+//
+// RLS note (applies to this whole inline-executor subsystem — executeRunInline,
+// executeRunInlineSync, runWorkflowIfPresent, journalCompletedStep,
+// createSubAgentRunRow, emitRunAnomalies, the Gmail/WhatsApp delivery helpers):
+// these run in a detached background goroutine, NOT a request. `runs` writes are
+// keyed by the already-authorized run id; `agents`/`agent_budgets`/
+// `connector_installs`/`schedules` access carries an explicit `tenant_id = $N`
+// filter; `journal_events`/`run_locks` are RLS-exempt child tables; and several
+// terminal-status safety nets deliberately use a fresh context.Background() with
+// NO tenant (so a cancelled request ctx can't abandon a run in 'running') — those
+// CANNOT route through WithTenant. Per ADR 0011 the executor stays on Pool with
+// explicit tenant filters rather than risk the live run path. Each site below is
+// marked rls-exempt with its specific reason.
 func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID, agentName string, input map[string]any) (outResult string, outTemplate string, outErr error) {
 	var resolvedTemplateID string
 	h.logger().Info("inline executor: starting run", zap.String("run_id", runID), zap.String("agent", agentName))
@@ -956,6 +987,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 		step := map[string]string{"step": stepName, "status": status, "detail": detail, "ts": time.Now().Format(time.RFC3339)}
 		stepJSON, _ := json.Marshal(step)
 		// Append to trigger_meta as a JSON array of steps
+		// rls-exempt: inline executor — runs write keyed by id (authorized run).
 		_, _ = h.srv.Pool.Exec(ctx,
 			`UPDATE runs SET trigger_meta = CASE
 				WHEN trigger_meta IS NULL OR trigger_meta::text = '{}' THEN jsonb_build_array($2::jsonb)
@@ -970,6 +1002,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	// run_locks UPSERT; only one wins (rows_affected > 0) and proceeds.
 	// The loser aborts silently — the winner will complete or fail the run,
 	// and the recovery sweep will re-drive if the winner crashes.
+	// rls-exempt: inline executor — run_locks lease keyed by run_id (child table).
 	leaseAcquired, releaseLease, leaseErr := acquireRunLease(ctx, h.srv.Pool, runID, h.logger())
 	if leaseErr != nil {
 		h.logger().Error("inline executor: lease acquisition error — aborting to avoid double-execute",
@@ -1006,6 +1039,8 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 		}
 		// We query the current status and only write if still non-terminal.
 		var currentStatus string
+		// rls-exempt: detached safety-net read on context.Background() (no tenant);
+		// keyed by the authorized run id. Cannot use WithTenant (no tenant in ctx).
 		_ = h.srv.Pool.QueryRow(
 			context.Background(), // detached — ctx may already be cancelled
 			`SELECT status FROM runs WHERE id = $1`,
@@ -1016,6 +1051,8 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 				"code":    "executor_abort",
 				"message": "run executor exited without completing the run",
 			})
+			// rls-exempt: detached safety-net write on context.Background() (no
+			// tenant); keyed by the authorized run id. Cannot use WithTenant.
 			if _, dbErr := h.srv.Pool.Exec(
 				context.Background(),
 				`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
@@ -1029,6 +1066,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 
 	// 1b. Mark as running.
 	logStep("initialize", "running", "Starting agent execution")
+	// rls-exempt: inline executor — runs write keyed by id (authorized run).
 	_, err := h.srv.Pool.Exec(ctx,
 		`UPDATE runs SET status = 'running', started_at = now() WHERE id = $1`,
 		runID,
@@ -1047,6 +1085,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 		// can return it. On workflow failure the DB already has an error row;
 		// read whatever was written for delivery side-effects.
 		var outputJSON []byte
+		// rls-exempt: inline executor — runs read keyed by id (authorized run).
 		_ = h.srv.Pool.QueryRow(ctx,
 			`SELECT COALESCE(output, '{}'::jsonb)::text::bytea FROM runs WHERE id = $1`, runID,
 		).Scan(&outputJSON)
@@ -1071,6 +1110,8 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	inputJSON, _ := json.Marshal(input)
 	var storedSystemPrompt *string
 	var labelsJSON []byte
+	// rls-exempt: inline executor — agents read self-scoped by explicit
+	// `tenant_id = $2`; runs in a detached goroutine ctx.
 	_ = h.srv.Pool.QueryRow(ctx,
 		`SELECT system_prompt, COALESCE(labels, '{}'::jsonb)::text::bytea FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
@@ -1121,6 +1162,8 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 				"lantern.required_connectors": tpl.Connectors,
 				"lantern.required_surfaces":   tpl.Surfaces,
 			})
+			// rls-exempt: inline executor — agents back-fill self-scoped by
+			// explicit `tenant_id = $4`.
 			_, _ = h.srv.Pool.Exec(ctx,
 				`UPDATE agents
 				 SET system_prompt = $1,
@@ -1191,6 +1234,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 			cached.Provider, cached.Model, cached.TokensOut))
 		logStep("save_output", "running", "Saving results (replay)")
 		outputJSON, _ := json.Marshal(map[string]string{"result": cached.Result})
+		// rls-exempt: inline executor — runs write keyed by id (authorized run).
 		_, _ = h.srv.Pool.Exec(ctx,
 			`UPDATE runs SET status = 'succeeded', finished_at = now(), output = $2::jsonb, tokens_in = $3, tokens_out = $4, cost_usd = $5 WHERE id = $1`,
 			runID, string(outputJSON), cached.TokensIn, cached.TokensOut, cached.CostUSD,
@@ -1229,6 +1273,7 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 				"error": err.Error(),
 			})
 			noLLMJSON, _ := json.Marshal(map[string]string{"code": "no_llm", "message": err.Error()})
+			// rls-exempt: inline executor — runs write keyed by id (authorized run).
 			if _, updateErr := h.srv.Pool.Exec(ctx,
 				`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
 				runID, string(noLLMJSON),
@@ -1373,8 +1418,16 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 	// userFacing=false: run outputs go to runs.output JSON, not directly
 	// to a bridge contact. The existing tools-filter in callLLMWithFailover
 	// already excludes claude-code when tools are present.
+	//
+	// Invariant #8: stamp a stable per-(run, step, attempt) idempotency base
+	// onto the ctx. The provider request builders derive the Idempotency-Key
+	// from it, so a rate-limit backoff retry to the same provider — or a
+	// crash-replay re-running this step — dedups at the provider instead of
+	// double-billing. attempt=1 matches the journal's per-step attempt; the
+	// builder suffixes the provider name so failover targets stay distinct.
+	llmCtx := WithLLMIdempotencyBase(ctx, llmIdempotencyBaseFor(runID, llmStepID, 1))
 	result, _, usedProvider, usedModel, tokensIn, tokensOut, llmErr := h.llmProxy.callLLMWithFailover(
-		ctx, tenantID,
+		llmCtx, tenantID,
 		llmMessages, llmTools, llmDispatch, onToolCallStep, onAttempt, 5, false,
 	)
 	if llmErr == nil {
@@ -1391,6 +1444,7 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 			"error": llmErr.Error(),
 		})
 		errJSON, _ := json.Marshal(map[string]string{"code": "llm_error", "message": llmErr.Error()})
+		// rls-exempt: inline executor — runs write keyed by id (authorized run).
 		_, _ = h.srv.Pool.Exec(ctx,
 			`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
 			runID, string(errJSON),
@@ -1421,6 +1475,7 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 	logStep("call_llm", "completed", fmt.Sprintf("Response from %s/%s: %d tokens", provider, model, tokensOut))
 	logStep("save_output", "running", "Saving results")
 	outputJSON, _ := json.Marshal(map[string]string{"result": result})
+	// rls-exempt: inline executor — runs write keyed by id (authorized run).
 	_, _ = h.srv.Pool.Exec(ctx,
 		`UPDATE runs SET status = 'succeeded', finished_at = now(), output = $2::jsonb, tokens_in = $3, tokens_out = $4, cost_usd = $5 WHERE id = $1`,
 		runID, string(outputJSON), tokensIn, tokensOut, costUsd,
@@ -1607,6 +1662,8 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		return false
 	}
 	var wfRaw []byte
+	// rls-exempt: inline executor — agents read self-scoped by explicit
+	// `tenant_id = $2`; detached goroutine ctx.
 	err := h.srv.Pool.QueryRow(ctx,
 		`SELECT COALESCE(workflow, '{}'::jsonb)::text::bytea FROM agents WHERE name = $1 AND tenant_id = $2`,
 		agentName, tenantID,
@@ -1650,6 +1707,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		},
 		EmitEvent: func(ctx context.Context, ev workflow.JournalEvent) error {
 			payload, _ := json.Marshal(ev.Payload)
+			// rls-exempt: journal_events is an RLS-exempt child table (keyed by run_id).
 			_, err := h.srv.Pool.Exec(ctx,
 				`INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
 				 VALUES ($1, $2, $3, $4, $5, $6)
@@ -1665,6 +1723,8 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			// real production load this should switch to LISTEN/NOTIFY
 			// on a Postgres channel — punting that to a follow-up.
 			var takeoverID string
+			// rls-exempt: inline executor — takeover_requests insert carries the
+			// explicit tenant_id; row keyed by run within the authorized run.
 			err := h.srv.Pool.QueryRow(ctx, `
 				INSERT INTO takeover_requests (run_id, tenant_id, step_id, reason, status, expires_at)
 				VALUES ($1, $2, $3, $4, 'pending', now() + interval '30 minutes')
@@ -1683,6 +1743,8 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 				case <-ticker.C:
 					var status, notes string
 					var expiresAt *time.Time
+					// rls-exempt: inline executor — poll the takeover row created
+					// above, keyed by its own id.
 					err := h.srv.Pool.QueryRow(ctx, `
 						SELECT status, COALESCE(notes, ''), expires_at
 						FROM takeover_requests WHERE id = $1
@@ -1700,6 +1762,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 					}
 					// Mark expired ourselves if the wall-clock passed.
 					if expiresAt != nil && time.Now().After(*expiresAt) {
+						// rls-exempt: inline executor — expire the takeover row by id.
 						_, _ = h.srv.Pool.Exec(ctx, `
 							UPDATE takeover_requests SET status = 'expired' WHERE id = $1
 						`, takeoverID)
@@ -1733,6 +1796,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 
 			// Read back the child run's output from the DB.
 			var outputJSON []byte
+			// rls-exempt: inline executor — read the child run's output by id.
 			_ = h.srv.Pool.QueryRow(childCtx,
 				`SELECT COALESCE(output, '{}'::jsonb)::text::bytea FROM runs WHERE id = $1`, childRunID,
 			).Scan(&outputJSON)
@@ -1745,44 +1809,18 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			}
 			return out, nil
 		},
-		CompletedStep: func(stepCtx context.Context, stepRunID, stepID string) (map[string]any, bool, error) {
-			// Query journal_events for the most recent step_completed event for
-			// this (run_id, step_id) pair. If found, unmarshal the payload and
-			// return done=true so the interpreter reuses the cached output
-			// instead of re-invoking the side-effecting dep.
-			var payloadJSON []byte
-			err := h.srv.Pool.QueryRow(stepCtx, `
-				SELECT payload
-				FROM journal_events
-				WHERE run_id = $1 AND step_id = $2 AND kind = 'step_completed'
-				ORDER BY seq DESC
-				LIMIT 1
-			`, stepRunID, stepID).Scan(&payloadJSON)
-			if err != nil {
-				// No completed record or DB error — fall through to re-execute.
-				return nil, false, nil
-			}
-			var payload map[string]any
-			if err := json.Unmarshal(payloadJSON, &payload); err != nil {
-				return nil, false, nil
-			}
-			// The step_completed payload carries {"output": ..., "name": ..., "type": ...}.
-			// Extract the output field; if absent return the whole payload.
-			if out, ok := payload["output"]; ok {
-				switch v := out.(type) {
-				case map[string]any:
-					return v, true, nil
-				case string:
-					return map[string]any{"result": v}, true, nil
-				}
-			}
-			return payload, true, nil
-		},
+		// Resume hook: on a re-drive (crash recovery or retry) the interpreter
+		// asks, for each side-effecting node, whether a step_completed event is
+		// already in the journal. journalCompletedStep answers from
+		// journal_events so already-finished nodes are skipped — the walk
+		// resumes from the first incomplete step instead of restarting.
+		CompletedStep: h.journalCompletedStep,
 	}
 
 	res, runErr := workflow.Run(ctx, runID, deps, def, input)
 	if runErr != nil {
 		errJSON, _ := json.Marshal(map[string]string{"code": "workflow_error", "message": runErr.Error()})
+		// rls-exempt: inline executor — runs write keyed by id (authorized run).
 		_, _ = h.srv.Pool.Exec(ctx,
 			`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
 			runID, string(errJSON),
@@ -1795,6 +1833,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 			"message": res.LastError,
 			"stepId":  res.FailedAt,
 		})
+		// rls-exempt: inline executor — runs write keyed by id (authorized run).
 		_, _ = h.srv.Pool.Exec(ctx,
 			`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
 			runID, string(errJSON),
@@ -1803,6 +1842,7 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 	}
 
 	outputJSON, _ := json.Marshal(map[string]any{"result": res.Output, "stepsRan": res.StepsRan})
+	// rls-exempt: inline executor — runs write keyed by id (authorized run).
 	_, _ = h.srv.Pool.Exec(ctx,
 		`UPDATE runs SET status = 'succeeded', finished_at = now(), output = $2::jsonb WHERE id = $1`,
 		runID, string(outputJSON),
@@ -1812,6 +1852,52 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		zap.Int("steps_ran", res.StepsRan),
 	)
 	return true
+}
+
+// journalCompletedStep is the resume hook wired into the workflow interpreter
+// (workflow.Deps.CompletedStep). It answers "has this node already finished on
+// a prior attempt?" by reading the most recent step_completed event for the
+// (run_id, step_id) pair from journal_events.
+//
+// When a step_completed row exists it returns the cached output with done=true,
+// so the interpreter reuses that output instead of re-invoking the node's
+// side-effecting dep (LLM / connector / tool / subagent). This is what makes a
+// crash-recovery re-drive RESUME from the journal rather than restart from
+// scratch and double-execute completed steps (invariant #3).
+//
+// On any error (no completed row, DB error, corrupt payload) it returns
+// done=false so the node re-executes — safe because the LLM path additionally
+// dedups via checkCachedLLMStep and external deliveries dedup via
+// claimSideEffect's (run:step:attempt) idempotency key (invariant #8).
+func (h *RESTHandler) journalCompletedStep(stepCtx context.Context, stepRunID, stepID string) (map[string]any, bool, error) {
+	var payloadJSON []byte
+	// rls-exempt: journal_events is an RLS-exempt child table (keyed by run_id).
+	err := h.srv.Pool.QueryRow(stepCtx, `
+		SELECT payload
+		FROM journal_events
+		WHERE run_id = $1 AND step_id = $2 AND kind = 'step_completed'
+		ORDER BY seq DESC
+		LIMIT 1
+	`, stepRunID, stepID).Scan(&payloadJSON)
+	if err != nil {
+		// No completed record or DB error — fall through to re-execute.
+		return nil, false, nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+		return nil, false, nil
+	}
+	// The step_completed payload carries {"output": ..., "name": ..., "type": ...}.
+	// Extract the output field; if absent return the whole payload.
+	if out, ok := payload["output"]; ok {
+		switch v := out.(type) {
+		case map[string]any:
+			return v, true, nil
+		case string:
+			return map[string]any{"result": v}, true, nil
+		}
+	}
+	return payload, true, nil
 }
 
 // dispatchConnectorInProc is a slim wrapper that mirrors what the HTTP
@@ -1870,6 +1956,8 @@ func dispatchConnectorInProc(ctx context.Context, pool *pgxpool.Pool, tenantID, 
 // Returns the new child run ID on success.
 func (h *RESTHandler) createSubAgentRunRow(ctx context.Context, tenantID, agentName, parentRunID string, input map[string]any) (string, error) {
 	var agentID, versionID string
+	// rls-exempt: inline executor — subagent run creation; agents read
+	// self-scoped by explicit `tenant_id = $1`; detached goroutine ctx.
 	if err := h.srv.Pool.QueryRow(ctx, `
 		SELECT id::text, COALESCE(current_version_id::text, '')
 		FROM agents
@@ -1885,6 +1973,8 @@ func (h *RESTHandler) createSubAgentRunRow(ctx context.Context, tenantID, agentN
 		return "", fmt.Errorf("marshal input: %w", err)
 	}
 	var childRunID string
+	// rls-exempt: inline executor — child runs INSERT carries the explicit
+	// tenant_id; detached goroutine ctx.
 	if err := h.srv.Pool.QueryRow(ctx, `
 		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, trigger_kind, input, parent_run_id, session_id)
 		VALUES (
@@ -2027,6 +2117,8 @@ func (h *RESTHandler) doGmailSend(accessToken, to, subject, body string) error {
 // tenant and updates it in the database.
 func (h *RESTHandler) tryRefreshGmailToken(ctx context.Context, tenantID string) (string, error) {
 	var oauthTokenJSON []byte
+	// rls-exempt: inline executor delivery — connector_installs read self-scoped
+	// by explicit `tenant_id = $1`; called from the detached delivery goroutine.
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT oauth_token_encrypted
 		FROM connector_installs
@@ -2062,6 +2154,8 @@ func (h *RESTHandler) tryRefreshGmailToken(ctx context.Context, tenantID string)
 	if err != nil {
 		return "", fmt.Errorf("encrypt token: %w", err)
 	}
+	// rls-exempt: inline executor delivery — connector_installs write self-scoped
+	// by explicit `tenant_id = $2`; detached delivery goroutine.
 	_, _ = h.srv.Pool.Exec(ctx,
 		`UPDATE connector_installs SET oauth_token_encrypted = $1::jsonb WHERE tenant_id = $2 AND connector_id = 'gmail'`,
 		encUpdated, tenantID,
@@ -2193,7 +2287,9 @@ func (h *RESTHandler) autoCreateVersion(ctx context.Context, agentName string) {
 		return
 	}
 
-	tx, err := h.srv.Pool.Begin(ctx)
+	// TenantPool routes to the RLS-enforced lantern_app role when
+	// LANTERN_RLS_ENFORCE=1; the set_config below scopes app.tenant_id either way.
+	tx, err := h.srv.TenantPool().Begin(ctx)
 	if err != nil {
 		return
 	}
@@ -2266,6 +2362,8 @@ func (h *RESTHandler) emitRunAnomalies(ctx context.Context, runID, tenantID, age
 	limits := workflow.DefaultAnomalyLimits()
 	var maxCostRaw *float64
 	var maxTokensRaw *int64
+	// rls-exempt: inline executor — agent_budgets read self-scoped by explicit
+	// `tenant_id = $1`; detached goroutine ctx.
 	if err := h.srv.Pool.QueryRow(ctx, `
 		SELECT max_cost_usd_per_run, max_tokens_per_day
 		FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2
@@ -2290,6 +2388,7 @@ func (h *RESTHandler) emitRunAnomalies(ctx context.Context, runID, tenantID, age
 
 	// Fetch the current max seq for this run so we can append.
 	var maxSeq int64
+	// rls-exempt: journal_events is an RLS-exempt child table (keyed by run_id).
 	_ = h.srv.Pool.QueryRow(ctx,
 		`SELECT COALESCE(MAX(seq), 0) FROM journal_events WHERE run_id = $1`, runID,
 	).Scan(&maxSeq)
@@ -2302,6 +2401,7 @@ func (h *RESTHandler) emitRunAnomalies(ctx context.Context, runID, tenantID, age
 			"message":  a.Message,
 		})
 		seq := maxSeq + int64(i) + 1
+		// rls-exempt: journal_events is an RLS-exempt child table (keyed by run_id).
 		_, err := h.srv.Pool.Exec(ctx, `
 			INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
 			VALUES ($1, $2, 'anomaly_detected', '', 1, $3)

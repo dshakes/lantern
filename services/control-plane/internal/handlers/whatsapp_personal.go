@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -52,26 +54,33 @@ func (h *WhatsAppPersonalHandler) ListVIPs(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	rows, err := h.srv.Pool.Query(r.Context(),
-		`SELECT jid, COALESCE(display_name, '') FROM whatsapp_vip_contacts WHERE tenant_id = $1 ORDER BY added_at ASC`,
-		claims.TenantID,
-	)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
 	type vipRow struct {
 		JID         string `json:"jid"`
 		DisplayName string `json:"displayName"`
 	}
 	out := []vipRow{}
-	for rows.Next() {
-		var v vipRow
-		if err := rows.Scan(&v.JID, &v.DisplayName); err != nil {
-			continue
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx,
+			`SELECT jid, COALESCE(display_name, '') FROM whatsapp_vip_contacts WHERE tenant_id = $1 ORDER BY added_at ASC`,
+			claims.TenantID,
+		)
+		if qErr != nil {
+			return qErr
 		}
-		out = append(out, v)
+		defer rows.Close()
+		for rows.Next() {
+			var v vipRow
+			if e := rows.Scan(&v.JID, &v.DisplayName); e != nil {
+				continue
+			}
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"vips": out})
 }
@@ -91,11 +100,15 @@ func (h *WhatsAppPersonalHandler) AddVIP(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "jid required"})
 		return
 	}
-	if _, err := h.srv.Pool.Exec(r.Context(),
-		`INSERT INTO whatsapp_vip_contacts (tenant_id, jid, display_name) VALUES ($1, $2, NULLIF($3, ''))
-		 ON CONFLICT (tenant_id, jid) DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, whatsapp_vip_contacts.display_name)`,
-		claims.TenantID, body.JID, body.DisplayName,
-	); err != nil {
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx,
+			`INSERT INTO whatsapp_vip_contacts (tenant_id, jid, display_name) VALUES ($1, $2, NULLIF($3, ''))
+			 ON CONFLICT (tenant_id, jid) DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, whatsapp_vip_contacts.display_name)`,
+			claims.TenantID, body.JID, body.DisplayName,
+		)
+		return e
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -113,10 +126,14 @@ func (h *WhatsAppPersonalHandler) RemoveVIP(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "jid required"})
 		return
 	}
-	if _, err := h.srv.Pool.Exec(r.Context(),
-		`DELETE FROM whatsapp_vip_contacts WHERE tenant_id = $1 AND jid = $2`,
-		claims.TenantID, jid,
-	); err != nil {
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx,
+			`DELETE FROM whatsapp_vip_contacts WHERE tenant_id = $1 AND jid = $2`,
+			claims.TenantID, jid,
+		)
+		return e
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -147,29 +164,36 @@ func (h *WhatsAppPersonalHandler) ListFacts(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "jid required"})
 		return
 	}
-	rows, err := h.srv.Pool.Query(r.Context(),
-		`SELECT id, content, source, updated_at FROM whatsapp_contact_facts
-		 WHERE tenant_id = $1 AND jid = $2 ORDER BY updated_at DESC LIMIT 50`,
-		claims.TenantID, jid,
-	)
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	out := []map[string]any{}
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx,
+			`SELECT id, content, source, updated_at FROM whatsapp_contact_facts
+			 WHERE tenant_id = $1 AND jid = $2 ORDER BY updated_at DESC LIMIT 50`,
+			claims.TenantID, jid,
+		)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, content, source string
+			var updatedAt string
+			if e := rows.Scan(&id, &content, &source, &updatedAt); e != nil {
+				continue
+			}
+			out = append(out, map[string]any{
+				"id":        id,
+				"content":   content,
+				"source":    source,
+				"updatedAt": updatedAt,
+			})
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
-	}
-	defer rows.Close()
-	out := []map[string]any{}
-	for rows.Next() {
-		var id, content, source string
-		var updatedAt string
-		if err := rows.Scan(&id, &content, &source, &updatedAt); err != nil {
-			continue
-		}
-		out = append(out, map[string]any{
-			"id":        id,
-			"content":   content,
-			"source":    source,
-			"updatedAt": updatedAt,
-		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"facts": out})
 }
@@ -201,12 +225,15 @@ func (h *WhatsAppPersonalHandler) AddFact(w http.ResponseWriter, r *http.Request
 	default:
 		src = "manual"
 	}
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
 	var id string
-	if err := h.srv.Pool.QueryRow(r.Context(),
-		`INSERT INTO whatsapp_contact_facts (tenant_id, jid, content, source)
-		 VALUES ($1, $2, $3, $4) RETURNING id`,
-		claims.TenantID, body.JID, body.Content, src,
-	).Scan(&id); err != nil {
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`INSERT INTO whatsapp_contact_facts (tenant_id, jid, content, source)
+			 VALUES ($1, $2, $3, $4) RETURNING id`,
+			claims.TenantID, body.JID, body.Content, src,
+		).Scan(&id)
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -224,10 +251,14 @@ func (h *WhatsAppPersonalHandler) DeleteFact(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"})
 		return
 	}
-	if _, err := h.srv.Pool.Exec(r.Context(),
-		`DELETE FROM whatsapp_contact_facts WHERE tenant_id = $1 AND id = $2`,
-		claims.TenantID, id,
-	); err != nil {
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx,
+			`DELETE FROM whatsapp_contact_facts WHERE tenant_id = $1 AND id = $2`,
+			claims.TenantID, id,
+		)
+		return e
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -266,12 +297,15 @@ func (h *WhatsAppPersonalHandler) CreateDraft(w http.ResponseWriter, r *http.Req
 	if channel != "imessage" {
 		channel = "whatsapp" // back-compat default
 	}
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
 	var id string
-	if err := h.srv.Pool.QueryRow(r.Context(),
-		`INSERT INTO whatsapp_pending_drafts (tenant_id, jid, display_name, inbound_text, draft_text, channel)
-		 VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6) RETURNING id`,
-		claims.TenantID, body.JID, body.DisplayName, body.InboundText, body.DraftText, channel,
-	).Scan(&id); err != nil {
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`INSERT INTO whatsapp_pending_drafts (tenant_id, jid, display_name, inbound_text, draft_text, channel)
+			 VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6) RETURNING id`,
+			claims.TenantID, body.JID, body.DisplayName, body.InboundText, body.DraftText, channel,
+		).Scan(&id)
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -288,36 +322,43 @@ func (h *WhatsAppPersonalHandler) ListDrafts(w http.ResponseWriter, r *http.Requ
 	if status == "" {
 		status = "pending"
 	}
-	rows, err := h.srv.Pool.Query(r.Context(),
-		`SELECT id, jid, COALESCE(display_name, ''), inbound_text, draft_text, status, COALESCE(final_text, ''), created_at, channel
-		 FROM whatsapp_pending_drafts
-		 WHERE tenant_id = $1 AND status = $2
-		 ORDER BY created_at DESC LIMIT 100`,
-		claims.TenantID, status,
-	)
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	out := []map[string]any{}
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx,
+			`SELECT id, jid, COALESCE(display_name, ''), inbound_text, draft_text, status, COALESCE(final_text, ''), created_at, channel
+			 FROM whatsapp_pending_drafts
+			 WHERE tenant_id = $1 AND status = $2
+			 ORDER BY created_at DESC LIMIT 100`,
+			claims.TenantID, status,
+		)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, jid, displayName, inbound, draft, st, final, channel string
+			var createdAt string
+			if e := rows.Scan(&id, &jid, &displayName, &inbound, &draft, &st, &final, &createdAt, &channel); e != nil {
+				continue
+			}
+			out = append(out, map[string]any{
+				"id":          id,
+				"jid":         jid,
+				"displayName": displayName,
+				"inboundText": inbound,
+				"draftText":   draft,
+				"status":      st,
+				"finalText":   final,
+				"channel":     channel,
+				"createdAt":   createdAt,
+			})
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
-	}
-	defer rows.Close()
-	out := []map[string]any{}
-	for rows.Next() {
-		var id, jid, displayName, inbound, draft, st, final, channel string
-		var createdAt string
-		if err := rows.Scan(&id, &jid, &displayName, &inbound, &draft, &st, &final, &createdAt, &channel); err != nil {
-			continue
-		}
-		out = append(out, map[string]any{
-			"id":          id,
-			"jid":         jid,
-			"displayName": displayName,
-			"inboundText": inbound,
-			"draftText":   draft,
-			"status":      st,
-			"finalText":   final,
-			"channel":     channel,
-			"createdAt":   createdAt,
-		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"drafts": out})
 }
@@ -347,13 +388,16 @@ func (h *WhatsAppPersonalHandler) ActOnDraft(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
 	// Fetch the draft + JID + channel — we need them to call the right bridge.
 	var jid, draftText, channel string
-	if err := h.srv.Pool.QueryRow(r.Context(),
-		`SELECT jid, draft_text, channel FROM whatsapp_pending_drafts
-		 WHERE tenant_id = $1 AND id = $2 AND status = 'pending'`,
-		claims.TenantID, id,
-	).Scan(&jid, &draftText, &channel); err != nil {
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT jid, draft_text, channel FROM whatsapp_pending_drafts
+			 WHERE tenant_id = $1 AND id = $2 AND status = 'pending'`,
+			claims.TenantID, id,
+		).Scan(&jid, &draftText, &channel)
+	}); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "draft not found or already resolved"})
 		return
 	}
@@ -379,11 +423,14 @@ func (h *WhatsAppPersonalHandler) ActOnDraft(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if _, err := h.srv.Pool.Exec(r.Context(),
-		`UPDATE whatsapp_pending_drafts SET status = $1, final_text = NULLIF($2, ''), acted_at = now()
-		 WHERE tenant_id = $3 AND id = $4`,
-		finalStatus, finalText, claims.TenantID, id,
-	); err != nil {
+	if err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx,
+			`UPDATE whatsapp_pending_drafts SET status = $1, final_text = NULLIF($2, ''), acted_at = now()
+			 WHERE tenant_id = $3 AND id = $4`,
+			finalStatus, finalText, claims.TenantID, id,
+		)
+		return e
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

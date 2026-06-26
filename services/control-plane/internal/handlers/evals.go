@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
@@ -107,15 +108,17 @@ func (h *EvalHandler) UpsertSuite(w http.ResponseWriter, r *http.Request) {
 	}
 	casesJSON, _ := json.Marshal(body.Cases)
 	var id string
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO eval_suites (tenant_id, agent_name, name, description, cases)
-		VALUES ($1, $2, $3, $4, $5::jsonb)
-		ON CONFLICT (tenant_id, agent_name, name) DO UPDATE SET
-		  description = EXCLUDED.description,
-		  cases       = EXCLUDED.cases,
-		  updated_at  = now()
-		RETURNING id
-	`, tenantID, body.AgentName, body.Name, body.Description, casesJSON).Scan(&id)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO eval_suites (tenant_id, agent_name, name, description, cases)
+			VALUES ($1, $2, $3, $4, $5::jsonb)
+			ON CONFLICT (tenant_id, agent_name, name) DO UPDATE SET
+			  description = EXCLUDED.description,
+			  cases       = EXCLUDED.cases,
+			  updated_at  = now()
+			RETURNING id
+		`, tenantID, body.AgentName, body.Name, body.Description, casesJSON).Scan(&id)
+	})
 	if err != nil {
 		h.logger().Error("upsert suite failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
@@ -139,21 +142,27 @@ func (h *EvalHandler) ListSuites(w http.ResponseWriter, r *http.Request) {
 		args = append(args, agentName)
 	}
 	sql += ` ORDER BY updated_at DESC`
-	rows, err := h.srv.Pool.Query(ctx, sql, args...)
+	out := make([]evalSuiteDTO, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, sql, args...)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var s evalSuiteDTO
+			var casesJSON []byte
+			if err := rows.Scan(&s.ID, &s.AgentName, &s.Name, &s.Description, &casesJSON, &s.CreatedAt, &s.UpdatedAt); err != nil {
+				continue
+			}
+			_ = json.Unmarshal(casesJSON, &s.Cases)
+			out = append(out, s)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
 		return
-	}
-	defer rows.Close()
-	out := make([]evalSuiteDTO, 0)
-	for rows.Next() {
-		var s evalSuiteDTO
-		var casesJSON []byte
-		if err := rows.Scan(&s.ID, &s.AgentName, &s.Name, &s.Description, &casesJSON, &s.CreatedAt, &s.UpdatedAt); err != nil {
-			continue
-		}
-		_ = json.Unmarshal(casesJSON, &s.Cases)
-		out = append(out, s)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -168,10 +177,12 @@ func (h *EvalHandler) GetSuite(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var s evalSuiteDTO
 	var casesJSON []byte
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT id, agent_name, name, COALESCE(description,''), cases, created_at, updated_at
-		FROM eval_suites WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&s.ID, &s.AgentName, &s.Name, &s.Description, &casesJSON, &s.CreatedAt, &s.UpdatedAt)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT id, agent_name, name, COALESCE(description,''), cases, created_at, updated_at
+			FROM eval_suites WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID).Scan(&s.ID, &s.AgentName, &s.Name, &s.Description, &casesJSON, &s.CreatedAt, &s.UpdatedAt)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -188,7 +199,10 @@ func (h *EvalHandler) DeleteSuite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	_, err = h.srv.Pool.Exec(ctx, `DELETE FROM eval_suites WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `DELETE FROM eval_suites WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+		return e
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
 		return
@@ -238,9 +252,11 @@ func (h *EvalHandler) RecordRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// Pull the agent_name for the suite.
 	var agentName string
-	err = h.srv.Pool.QueryRow(ctx,
-		`SELECT agent_name FROM eval_suites WHERE id = $1 AND tenant_id = $2`,
-		body.SuiteID, tenantID).Scan(&agentName)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT agent_name FROM eval_suites WHERE id = $1 AND tenant_id = $2`,
+			body.SuiteID, tenantID).Scan(&agentName)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "suite not found"})
 		return
@@ -263,14 +279,16 @@ func (h *EvalHandler) RecordRun(w http.ResponseWriter, r *http.Request) {
 
 	caseResultsJSON, _ := json.Marshal(body.CaseResults)
 	var id string
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO eval_runs
-		  (tenant_id, suite_id, agent_name, agent_version, commit_sha, branch, passed, score,
-		   cases_total, cases_passed, cases_result, duration_ms, total_cost_usd)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)
-		RETURNING id
-	`, tenantID, body.SuiteID, agentName, body.AgentVersion, body.CommitSha, body.Branch,
-		allPassed, score, total, passed, caseResultsJSON, body.DurationMs, body.TotalCostUsd).Scan(&id)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO eval_runs
+			  (tenant_id, suite_id, agent_name, agent_version, commit_sha, branch, passed, score,
+			   cases_total, cases_passed, cases_result, duration_ms, total_cost_usd)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13)
+			RETURNING id
+		`, tenantID, body.SuiteID, agentName, body.AgentVersion, body.CommitSha, body.Branch,
+			allPassed, score, total, passed, caseResultsJSON, body.DurationMs, body.TotalCostUsd).Scan(&id)
+	})
 	if err != nil {
 		h.logger().Error("record eval run failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed: " + err.Error()})
@@ -296,10 +314,12 @@ func (h *EvalHandler) RecordRun(w http.ResponseWriter, r *http.Request) {
 
 		// Ownership gate: the run must belong to the caller's tenant.
 		var ownCheck int
-		ownerErr := h.srv.Pool.QueryRow(ctx,
-			`SELECT 1 FROM runs WHERE id = $1 AND tenant_id = $2`,
-			body.RunID, tenantID,
-		).Scan(&ownCheck)
+		ownerErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx,
+				`SELECT 1 FROM runs WHERE id = $1 AND tenant_id = $2`,
+				body.RunID, tenantID,
+			).Scan(&ownCheck)
+		})
 		if ownerErr != nil {
 			// run not found or wrong tenant — skip journal write silently.
 			// We do NOT surface this as an error to the caller: the eval run
@@ -320,6 +340,9 @@ func (h *EvalHandler) RecordRun(w http.ResponseWriter, r *http.Request) {
 				"source":      "eval_run",
 			})
 			for attempt := 0; attempt < maxEvalJournalRetries; attempt++ {
+				// rls-exempt: journal_events has no tenant_id column (child of runs,
+				// PK run_id+seq) and is on the RLS-exempt allowlist per ADR 0011.
+				// The run's tenant ownership was already verified above.
 				tag, evErr := h.srv.Pool.Exec(ctx, `
 					INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
 					SELECT $1,
@@ -396,21 +419,27 @@ func (h *EvalHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	sql += " ORDER BY created_at DESC LIMIT 100"
 
-	rows, err := h.srv.Pool.Query(ctx, sql, args...)
+	out := make([]evalRunDTO, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, sql, args...)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var dto evalRunDTO
+			if err := rows.Scan(&dto.ID, &dto.SuiteID, &dto.AgentName, &dto.AgentVersion,
+				&dto.CommitSha, &dto.Branch, &dto.Passed, &dto.Score, &dto.CasesTotal,
+				&dto.CasesPassed, &dto.DurationMs, &dto.TotalCostUsd, &dto.CreatedAt); err != nil {
+				continue
+			}
+			out = append(out, dto)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
 		return
-	}
-	defer rows.Close()
-	out := make([]evalRunDTO, 0)
-	for rows.Next() {
-		var dto evalRunDTO
-		if err := rows.Scan(&dto.ID, &dto.SuiteID, &dto.AgentName, &dto.AgentVersion,
-			&dto.CommitSha, &dto.Branch, &dto.Passed, &dto.Score, &dto.CasesTotal,
-			&dto.CasesPassed, &dto.DurationMs, &dto.TotalCostUsd, &dto.CreatedAt); err != nil {
-			continue
-		}
-		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -425,14 +454,16 @@ func (h *EvalHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var dto evalRunDTO
 	var caseResultsJSON []byte
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT id, suite_id, agent_name, COALESCE(agent_version,''), COALESCE(commit_sha,''),
-		       COALESCE(branch,''), passed, score, cases_total, cases_passed, cases_result,
-		       duration_ms, total_cost_usd, created_at
-		FROM eval_runs WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&dto.ID, &dto.SuiteID, &dto.AgentName, &dto.AgentVersion,
-		&dto.CommitSha, &dto.Branch, &dto.Passed, &dto.Score, &dto.CasesTotal,
-		&dto.CasesPassed, &caseResultsJSON, &dto.DurationMs, &dto.TotalCostUsd, &dto.CreatedAt)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT id, suite_id, agent_name, COALESCE(agent_version,''), COALESCE(commit_sha,''),
+			       COALESCE(branch,''), passed, score, cases_total, cases_passed, cases_result,
+			       duration_ms, total_cost_usd, created_at
+			FROM eval_runs WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID).Scan(&dto.ID, &dto.SuiteID, &dto.AgentName, &dto.AgentVersion,
+			&dto.CommitSha, &dto.Branch, &dto.Passed, &dto.Score, &dto.CasesTotal,
+			&dto.CasesPassed, &caseResultsJSON, &dto.DurationMs, &dto.TotalCostUsd, &dto.CreatedAt)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -469,13 +500,16 @@ func (h *EvalHandler) SetBaseline(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agentName, branch, evalRunId required"})
 		return
 	}
-	_, err = h.srv.Pool.Exec(ctx, `
-		INSERT INTO eval_baselines (tenant_id, agent_name, branch, eval_run_id)
-		VALUES ($1,$2,$3,$4)
-		ON CONFLICT (tenant_id, agent_name, branch) DO UPDATE SET
-		  eval_run_id = EXCLUDED.eval_run_id,
-		  set_at      = now()
-	`, tenantID, body.AgentName, body.Branch, body.EvalRunID)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			INSERT INTO eval_baselines (tenant_id, agent_name, branch, eval_run_id)
+			VALUES ($1,$2,$3,$4)
+			ON CONFLICT (tenant_id, agent_name, branch) DO UPDATE SET
+			  eval_run_id = EXCLUDED.eval_run_id,
+			  set_at      = now()
+		`, tenantID, body.AgentName, body.Branch, body.EvalRunID)
+		return e
+	})
 	if err != nil {
 		h.logger().Error("set baseline failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
@@ -500,12 +534,14 @@ func (h *EvalHandler) GetBaseline(w http.ResponseWriter, r *http.Request) {
 	var runID string
 	var score float64
 	var setAt time.Time
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT b.eval_run_id, r.score, b.set_at
-		FROM eval_baselines b
-		JOIN eval_runs r ON r.id = b.eval_run_id
-		WHERE b.tenant_id = $1 AND b.agent_name = $2 AND b.branch = $3
-	`, tenantID, agentName, branch).Scan(&runID, &score, &setAt)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT b.eval_run_id, r.score, b.set_at
+			FROM eval_baselines b
+			JOIN eval_runs r ON r.id = b.eval_run_id
+			WHERE b.tenant_id = $1 AND b.agent_name = $2 AND b.branch = $3
+		`, tenantID, agentName, branch).Scan(&runID, &score, &setAt)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no baseline"})
 		return

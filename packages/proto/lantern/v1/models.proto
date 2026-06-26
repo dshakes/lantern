@@ -64,6 +64,22 @@ message CompleteRequest {
 
   bool no_cache = 40;
   string idempotency_key = 41;
+
+  // Request-scoped provider credentials, keyed by provider id
+  // ("openai", "anthropic") -> API key. Supplied PER CALL by the
+  // control-plane, which resolves the tenant's AES-256-GCM-encrypted key
+  // at execution time (see services/control-plane resolveProviderKey).
+  //
+  // When present the router builds a per-REQUEST provider from these keys
+  // instead of the process-env provider it built at startup; this is what
+  // lets the single-process router carry multi-tenant traffic without a
+  // per-tenant key store of its own. When absent (single-tenant dev) the
+  // router falls back to its startup env provider.
+  //
+  // Invariant #10: these are secrets. They are NEVER logged, traced, or
+  // persisted by the router — only used to construct the outbound provider
+  // client for this one call.
+  map<string, string> provider_credentials = 42;
 }
 
 message Message {
@@ -152,6 +168,11 @@ message EmbedRequest {
   string tenant_id = 1;
   Capability capability = 2;
   repeated string texts = 3;
+
+  // Same request-scoped credential map as CompleteRequest.provider_credentials.
+  // provider id -> API key, supplied per-call by the control-plane; NEVER
+  // logged (invariant #10). Absent -> router uses its startup env provider.
+  map<string, string> provider_credentials = 4;
 }
 
 message EmbedResponse {

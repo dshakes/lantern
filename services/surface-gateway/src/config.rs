@@ -34,6 +34,18 @@ pub struct Config {
     pub log_level: String,
     /// Comma-separated allowed CORS origins. Defaults to "http://localhost:3001".
     pub allowed_origins: Vec<String>,
+    /// Lantern tenant UUID that owns this surface-gateway deployment.
+    ///
+    /// Inbound webhook events carry platform-native identifiers (Telegram chat_id,
+    /// Slack team_id, WhatsApp phone_number_id) in their payloads.  Those are NOT
+    /// Lantern tenant UUIDs.  This value is the real Lantern tenant UUID injected at
+    /// deploy time so the dispatcher can stamp every event with the correct tenant
+    /// before forwarding to the control plane.
+    ///
+    /// Set `LANTERN_TENANT_ID`.  Required for production.  If unset the gateway will
+    /// still start but every webhook dispatch will be rejected at the tenant-resolution
+    /// step with a 503.
+    pub lantern_tenant_id: Option<String>,
 }
 
 impl Config {
@@ -76,6 +88,7 @@ impl Config {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect(),
+            lantern_tenant_id: std::env::var("LANTERN_TENANT_ID").ok(),
         })
     }
 }

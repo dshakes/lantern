@@ -60,6 +60,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -271,6 +272,10 @@ func isTerminalState(state string) bool {
 // Errors always return the same sentinel — no oracle about which condition fired.
 func (h *RuntimeReportHandler) checkReportVMBinding(ctx context.Context, vmID, tenantID string, kind reportKind) (vmBindingRow, error) {
 	var row vmBindingRow
+	// rls-exempt: service-to-service report path (runtime token, no JWT). This is
+	// the trust-boundary check that RESOLVES the VM's real owner by vm_id across
+	// tenants and compares it to the body-claimed tenant — it must NOT trust the
+	// body tenant, so it runs on the privileged pool and verifies row.tenantID below.
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT tenant_id, state, COALESCE(agent_instance_id, ''), terminated_at
 		FROM runtime_vms
@@ -321,11 +326,13 @@ func (h *RuntimeReportHandler) insertAuditEvent(ctx context.Context, tenantID, v
 	if agentInstanceID != "" {
 		instanceArg = agentInstanceID
 	}
-	_, execErr := h.srv.Pool.Exec(ctx, `
-		INSERT INTO runtime_audit_events (tenant_id, vm_id, action, attrs, agent_instance_id)
-		VALUES ($1, $2, $3, $4::jsonb, $5)
-	`, tenantID, vmID, a.Action, attrsJSON, instanceArg)
-	return execErr
+	return h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, execErr := tx.Exec(ctx, `
+			INSERT INTO runtime_audit_events (tenant_id, vm_id, action, attrs, agent_instance_id)
+			VALUES ($1, $2, $3, $4::jsonb, $5)
+		`, tenantID, vmID, a.Action, attrsJSON, instanceArg)
+		return execErr
+	})
 }
 
 // insertLogLine writes a runtime_vm_logs row for kind=log payloads.
@@ -335,11 +342,13 @@ func (h *RuntimeReportHandler) insertLogLine(ctx context.Context, tenantID, vmID
 	if stream == "" {
 		stream = "stdout"
 	}
-	_, err := h.srv.Pool.Exec(ctx, `
-		INSERT INTO runtime_vm_logs (vm_id, tenant_id, stream, text, at)
-		VALUES ($1, $2, $3, $4, now())
-	`, vmID, tenantID, stream, entry.Text)
-	return err
+	return h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO runtime_vm_logs (vm_id, tenant_id, stream, text, at)
+			VALUES ($1, $2, $3, $4, now())
+		`, vmID, tenantID, stream, entry.Text)
+		return err
+	})
 }
 
 // ---------- HTTP handler ----------
@@ -434,6 +443,10 @@ func (h *RuntimeReportHandler) Report(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"error":"forbidden"}`))
 		return
 	}
+
+	// The binding check verified req.TenantID == the VM's real owner; inject it
+	// so the audit/log inserts below are RLS-scoped to the verified tenant.
+	ctx = middleware.InjectTenantID(ctx, req.TenantID)
 
 	// --- Dispatch by kind ---
 	switch req.Kind {
@@ -588,6 +601,9 @@ func (h *RuntimeReportHandler) sweepTerminatedVMMetrics(ctx context.Context) int
 
 	// Ask the DB which of these vm_ids are in a non-terminal (live) state.
 	// Any vm_id NOT in the result set is either terminal or absent → evict.
+	// rls-exempt: background janitor with no request tenant — the in-memory
+	// metrics map mixes vm_ids across tenants, so this liveness check spans all
+	// tenants on the privileged pool.
 	rows, err := h.srv.Pool.Query(ctx, `
 		SELECT vm_id FROM runtime_vms
 		WHERE vm_id = ANY($1)
@@ -624,6 +640,8 @@ func (h *RuntimeReportHandler) sweepTerminatedVMMetrics(ctx context.Context) int
 func (h *RuntimeReportHandler) sweepOldLogs(ctx context.Context) (int64, error) {
 	days := logRetentionDays()
 	interval := fmt.Sprintf("%d days", days)
+	// rls-exempt: retention janitor with no request tenant — sweeps expired log
+	// rows across ALL tenants on the privileged pool.
 	tag, err := h.srv.Pool.Exec(ctx,
 		`DELETE FROM runtime_vm_logs WHERE at < now() - $1::interval`,
 		interval,

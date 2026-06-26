@@ -82,6 +82,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/agentidentity"
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
@@ -372,11 +373,13 @@ func parseRef(ref string) parsedRef {
 // Errors are logged; the caller gets a "not found" response (no error oracle).
 func (h *RuntimeSecretsHandler) resolveLLMRef(ctx context.Context, tenantID, provider string) (string, bool) {
 	var apiKeyEncrypted string
-	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT api_key_encrypted
-		FROM llm_provider_configs
-		WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
-	`, tenantID, provider).Scan(&apiKeyEncrypted)
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT api_key_encrypted
+			FROM llm_provider_configs
+			WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
+		`, tenantID, provider).Scan(&apiKeyEncrypted)
+	})
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			h.logger().Warn("resolveLLMRef: db error",
@@ -408,11 +411,13 @@ func (h *RuntimeSecretsHandler) resolveLLMRef(ctx context.Context, tenantID, pro
 // top-level string at config_key.
 func (h *RuntimeSecretsHandler) resolveConnectorConfigRef(ctx context.Context, tenantID, installID, configKey string) (string, bool) {
 	var configEncrypted []byte
-	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT config
-		FROM connector_installs
-		WHERE id = $1 AND tenant_id = $2
-	`, installID, tenantID).Scan(&configEncrypted)
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT config
+			FROM connector_installs
+			WHERE id = $1 AND tenant_id = $2
+		`, installID, tenantID).Scan(&configEncrypted)
+	})
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			h.logger().Warn("resolveConnectorConfigRef: db error",
@@ -466,11 +471,13 @@ func (h *RuntimeSecretsHandler) resolveConnectorOAuthRef(ctx context.Context, te
 	// oauth_token_encrypted is JSONB in production (see internal/db/migrate.go).
 	// Scan into []byte — pgx returns JSONB as raw JSON bytes.
 	var oauthEncrypted []byte
-	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT oauth_token_encrypted
-		FROM connector_installs
-		WHERE id = $1 AND tenant_id = $2
-	`, installID, tenantID).Scan(&oauthEncrypted)
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT oauth_token_encrypted
+			FROM connector_installs
+			WHERE id = $1 AND tenant_id = $2
+		`, installID, tenantID).Scan(&oauthEncrypted)
+	})
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			h.logger().Warn("resolveConnectorOAuthRef: db error",
@@ -538,6 +545,10 @@ var terminalVMStates = []string{"terminated", "failed"}
 func (h *RuntimeSecretsHandler) checkVMBinding(ctx context.Context, vmID, tenantID string) error {
 	var rowTenantID string
 	var state string
+	// rls-exempt: service-to-service relay (runtime token, no JWT). Trust-boundary
+	// check that RESOLVES the VM's real owner by vm_id across tenants and compares
+	// to the body-claimed tenant — must NOT trust the body, so it runs on the
+	// privileged pool and verifies rowTenantID below.
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT tenant_id, state
 		FROM runtime_vms
@@ -601,6 +612,9 @@ func (h *RuntimeSecretsHandler) verifyInstanceToken(ctx context.Context, r *http
 	// sequential SELECTs (the row could change between them) and halves
 	// the DB load on the hot secret-resolve path.
 	var rowTenantID, rowVmID, rowState string
+	// rls-exempt: trust-boundary check — resolves the VM bound to this
+	// agent_instance_id across tenants (service token, no JWT) and verifies the
+	// tenant/vm match below; runs on the privileged pool.
 	dbErr := h.srv.Pool.QueryRow(ctx, `
 		SELECT tenant_id, vm_id, state
 		FROM runtime_vms
@@ -647,6 +661,9 @@ func (h *RuntimeSecretsHandler) auditVMBindingDenied(ctx context.Context, tenant
 	if vmID != "" {
 		vmIDArg = vmID
 	}
+	// rls-exempt: fires on a DENIED (binding-unverified) request — the tenant_id
+	// is the UNTRUSTED body claim, not yet verified against the VM, so this denial
+	// audit is written on the privileged pool rather than RLS-scoped to a claim.
 	if _, execErr := h.srv.Pool.Exec(ctx, `
 		INSERT INTO runtime_audit_events (tenant_id, vm_id, action, attrs)
 		VALUES ($1, $2, 'secret_resolve_denied', $3::jsonb)
@@ -680,10 +697,13 @@ func (h *RuntimeSecretsHandler) auditSecretResolve(ctx context.Context, tenantID
 	if agentInstanceID != "" {
 		instanceArg = agentInstanceID
 	}
-	if _, execErr := h.srv.Pool.Exec(ctx, `
-		INSERT INTO runtime_audit_events (tenant_id, vm_id, action, attrs, agent_instance_id)
-		VALUES ($1, $2, 'secret_resolve', $3::jsonb, $4)
-	`, tenantID, vmIDArg, attrsJSON, instanceArg); execErr != nil {
+	if execErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			INSERT INTO runtime_audit_events (tenant_id, vm_id, action, attrs, agent_instance_id)
+			VALUES ($1, $2, 'secret_resolve', $3::jsonb, $4)
+		`, tenantID, vmIDArg, attrsJSON, instanceArg)
+		return e
+	}); execErr != nil {
 		// Best-effort: log the failure but never abort the response.
 		h.logger().Warn("audit insert failed for secret_resolve",
 			zap.String("tenant_id", tenantID),
@@ -828,6 +848,11 @@ func (h *RuntimeSecretsHandler) ResolveSecrets(w http.ResponseWriter, r *http.Re
 		_, _ = w.Write(errVMBindingBody)
 		return
 	}
+
+	// The binding check above verified req.TenantID == the VM's real owner; inject
+	// it so the per-ref resolvers + the resolve audit run RLS-scoped to the
+	// verified tenant.
+	ctx = middleware.InjectTenantID(ctx, req.TenantID)
 
 	// Collect ref names for audit before resolution.
 	refNames := make([]string, len(req.Refs))

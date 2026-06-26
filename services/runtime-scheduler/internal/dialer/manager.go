@@ -23,6 +23,43 @@ import (
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 )
 
+// IsProd reports whether the scheduler is running in a production-like
+// environment. It mirrors the control-plane's IsProd() logic so the guard
+// rules are consistent across services.
+//
+// Dev (LANTERN_ENV unset) is the default so `make dev` / local runs work
+// without any configuration. Operators opt into prod behaviour by setting
+// LANTERN_ENV to "prod", "production", or "staging".
+func IsProd() bool {
+	e := strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_ENV")))
+	return e == "prod" || e == "production" || e == "staging"
+}
+
+// CheckManagerDialer evaluates whether the manager-dialer configuration is
+// safe for the current environment.
+//
+// It returns (fatal bool, message string). When fatal is true, the caller
+// (cmd/scheduler/main.go) should call logger.Fatal with message. This keeps
+// the function pure and testable without triggering os.Exit in tests.
+//
+// Rules:
+//   - prod (LANTERN_ENV=prod/production/staging): FATAL when defaultAddr is
+//     empty OR dialerOverride is "stub". The LogOnlyDialer spawns nothing and
+//     returns synthetic OK responses — in prod that is silent data loss.
+//   - dev (LANTERN_ENV unset): stub is intentional; returns fatal=false.
+func CheckManagerDialer(isProd bool, defaultAddr, dialerOverride string) (fatal bool, message string) {
+	if !isProd {
+		return false, ""
+	}
+	if dialerOverride == "stub" {
+		return true, "LANTERN_DIALER=stub is set — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); unset LANTERN_DIALER to use the real gRPC dialer"
+	}
+	if defaultAddr == "" {
+		return true, "LANTERN_DEFAULT_MANAGER_ADDR is unset — production refuses to start with the stub manager dialer (it spawns nothing and returns fake success); set LANTERN_DEFAULT_MANAGER_ADDR to the runtime-manager gRPC address"
+	}
+	return false, ""
+}
+
 // defaultManagerPort is the runtime-manager's default gRPC listen port.
 // See services/runtime-manager/src/config.rs.
 const defaultManagerPort = "50054"

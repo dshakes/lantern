@@ -43,6 +43,7 @@ import {
   Search,
   Server,
   Smartphone,
+  Zap,
 } from "lucide-react";
 import clsx from "clsx";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -264,6 +265,13 @@ export function Sidebar() {
           label="Personal"
           collapsed={collapsed}
           active={pathname === "/personal" || pathname.startsWith("/personal/")}
+        />
+        <SecondaryLink
+          href="/automations"
+          icon={Zap}
+          label="Automations"
+          collapsed={collapsed}
+          active={pathname === "/automations" || pathname.startsWith("/automations/")}
         />
         <SecondaryLink
           href="/runtime"

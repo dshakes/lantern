@@ -200,6 +200,9 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	// can validate the buyer's input before spending any resources. (M4)
 	var sellerTenant, agentName string
 	var manifestRaw []byte
+	// rls-exempt: marketplace commerce — resolves the SELLER tenant from a public
+	// catalog entry (marketplace_agents, RLS-exempt) for a BUYER caller; spans
+	// tenants by design (ADR 0011).
 	err = h.srv.Pool.QueryRow(ctx, `
 		SELECT m.source_tenant_id::text, COALESCE(a.name, m.slug),
 		       COALESCE(m.manifest, '{}'::jsonb)
@@ -235,6 +238,8 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	// pre-run); this detects exceeded daily/run count limits. If the seller
 	// has no budget configured, this is a no-op.
 	sellerBudgetCtx := context.Background() // seller-tenant context for budget check
+	// rls-exempt: shared budget helper (takes *Pool, self-scopes by sellerTenant);
+	// a BUYER request checks the SELLER's budget — cross-tenant by design.
 	sellerBudgetCheck := CheckBudget(sellerBudgetCtx, h.srv.Pool, sellerTenant, agentName, 0)
 	if !sellerBudgetCheck.Allowed && sellerBudgetCheck.HardFail {
 		writeJSON(w, http.StatusPaymentRequired, map[string]any{
@@ -248,6 +253,8 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	// mid-run leaves a forensic trail.
 	var invocationID string
 	inputJSON, _ := json.Marshal(body.Input)
+	// rls-exempt: marketplace_invocations spans buyer + seller tenants by design
+	// (commerce) and is on the RLS-exempt allowlist (ADR 0011).
 	err = h.srv.Pool.QueryRow(ctx, `
 		INSERT INTO marketplace_invocations
 			(buyer_tenant_id, seller_tenant_id, marketplace_slug, agent_name, input, status)
@@ -284,6 +291,7 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	})
 	if runErr != nil {
 		errMsg := runErr.Error()
+		// rls-exempt: marketplace_invocations (cross-tenant commerce, ADR 0011).
 		_, _ = h.srv.Pool.Exec(ctx, `
 			UPDATE marketplace_invocations
 			SET status = 'failed', error_message = $2, completed_at = now()
@@ -317,6 +325,11 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	var outputRaw, errRaw []byte
 	var costUsd float64
 	for time.Now().Before(deadline) {
+		// rls-exempt: marketplace commerce — a BUYER request polls the SELLER
+		// tenant's run state (scoped here by sellerTenant, not the buyer caller).
+		// Routing this through the buyer's RLS context would correctly hide the
+		// seller's run; reading the seller's run on the buyer's behalf is the
+		// intended cross-tenant commerce path (ADR 0011).
 		err = h.srv.Pool.QueryRow(ctx, `
 			SELECT status,
 			       COALESCE(output, 'null'::jsonb),
@@ -338,6 +351,7 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 		if len(errRaw) > 0 && string(errRaw) != "null" {
 			errMsg = string(errRaw)
 		}
+		// rls-exempt: marketplace_invocations (cross-tenant commerce, ADR 0011).
 		_, _ = h.srv.Pool.Exec(ctx, `
 			UPDATE marketplace_invocations
 			SET status = 'failed', error_message = $2, completed_at = now(),
@@ -368,6 +382,7 @@ func (h *MarketplaceHandler) Invoke(w http.ResponseWriter, r *http.Request) {
 	}
 	receiptJSON, _ := json.Marshal(receipt)
 
+	// rls-exempt: marketplace_invocations (cross-tenant commerce, ADR 0011).
 	_, _ = h.srv.Pool.Exec(ctx, `
 		UPDATE marketplace_invocations
 		SET status = 'succeeded',
@@ -428,6 +443,9 @@ func (h *MarketplaceHandler) ListInvocations(w http.ResponseWriter, r *http.Requ
 		arg = tenantID
 	}
 
+	// rls-exempt: marketplace_invocations spans buyer + seller tenants by design
+	// (commerce) and is on the RLS-exempt allowlist (ADR 0011); the buyer/seller
+	// predicate above scopes the listing to the caller's role.
 	rows, err := h.srv.Pool.Query(ctx, query, arg)
 	if err != nil {
 		h.logger().Error("list invocations", zap.Error(err))

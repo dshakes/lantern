@@ -170,6 +170,30 @@ impl From<HeartbeatRequest> for pb::HeartbeatRequest {
     }
 }
 
+impl From<HarnessReport> for pb::HarnessReport {
+    fn from(r: HarnessReport) -> Self {
+        use pb::harness_report::Body;
+        let body = match r {
+            HarnessReport::Log(l) => Body::Log(pb::RuntimeLogLine {
+                vm_id: l.vm_id,
+                at: Some(unix_ms_to_timestamp(l.at_unix_ms)),
+                stream: l.stream,
+                text: l.text,
+                attrs: l.attrs,
+            }),
+            HarnessReport::OtlpTraces { bytes } => Body::OtlpTraces(bytes),
+            HarnessReport::PrometheusMetrics { bytes } => Body::PrometheusMetrics(bytes),
+            HarnessReport::Audit(a) => Body::Audit(pb::AuditEvent {
+                vm_id: a.vm_id,
+                action: a.action,
+                at: Some(unix_ms_to_timestamp(a.at_unix_ms)),
+                attrs: a.attrs,
+            }),
+        };
+        pb::HarnessReport { body: Some(body) }
+    }
+}
+
 impl From<pb::HeartbeatAck> for HeartbeatAck {
     fn from(a: pb::HeartbeatAck) -> Self {
         HeartbeatAck {
@@ -208,4 +232,14 @@ pub fn now_unix_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Convert unix-ms to a protobuf Timestamp. Uses Euclidean div/rem so a
+/// negative `at_unix_ms` (pre-epoch / bug) still yields nanos in
+/// [0, 999_999_999] as the Timestamp contract requires.
+pub fn unix_ms_to_timestamp(at_unix_ms: i64) -> prost_types::Timestamp {
+    prost_types::Timestamp {
+        seconds: at_unix_ms.div_euclid(1_000),
+        nanos: (at_unix_ms.rem_euclid(1_000) * 1_000_000) as i32,
+    }
 }

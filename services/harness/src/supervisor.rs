@@ -8,23 +8,66 @@
 // child.
 
 use std::process::Stdio;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::sync::Mutex;
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{AuditEvent, HarnessReport, now_unix_ms};
+use crate::proto::{now_unix_ms, AuditEvent, HarnessReport};
 
 const DEFAULT_MAX_RESTARTS: i32 = 5;
+
+/// Localhost addresses + suffixes the workload must NOT proxy — the egress
+/// proxy itself, the secrets socket host, and link-local metadata are all
+/// reached (or blocked) directly, never through the CONNECT proxy.
+const DEFAULT_NO_PROXY: &str = "127.0.0.1,localhost,::1,169.254.169.254";
+
+/// Compute the proxy environment to inject into the workload, given the proxy
+/// endpoint host:port. Returns the `(KEY, VALUE)` pairs.
+///
+/// P2-B7 (2): the egress allowlist proxy (`egress.rs`) is only *advisory*
+/// unless traffic is forced through it. The harness forces it two ways:
+///   1. iptables REDIRECT in the VM image (true enforcement; see egress.rs
+///      header + the boot preflight in `main.rs`), and
+///   2. proxy env injection here, so well-behaved clients (most HTTP libs,
+///      curl, requests, openai-python) honor the allowlist even where the
+///      REDIRECT layer is absent (defence in depth, not a substitute).
+///
+/// We set both upper- and lower-case forms because libraries disagree on which
+/// they read (curl reads lower-case `http_proxy`; many read upper-case).
+#[must_use]
+pub fn proxy_env_pairs(proxy_addr: &str) -> Vec<(String, String)> {
+    let url = format!("http://{proxy_addr}");
+    let no_proxy =
+        std::env::var("LANTERN_NO_PROXY").unwrap_or_else(|_| DEFAULT_NO_PROXY.to_string());
+    let mut pairs = Vec::with_capacity(9);
+    for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
+        pairs.push((key.to_string(), url.clone()));
+        pairs.push((key.to_lowercase(), url.clone()));
+    }
+    pairs.push(("NO_PROXY".to_string(), no_proxy.clone()));
+    pairs.push(("no_proxy".to_string(), no_proxy));
+    pairs
+}
+
+/// The proxy address the workload should be pointed at — the same bind the
+/// egress proxy listens on (`LANTERN_EGRESS_BIND`, default `127.0.0.1:3128`).
+fn egress_proxy_addr() -> String {
+    std::env::var("LANTERN_EGRESS_BIND").unwrap_or_else(|_| "127.0.0.1:3128".to_string())
+}
 
 #[derive(Clone)]
 pub struct Supervisor {
     workload_cmd: Vec<String>,
     max_restarts: i32,
     manager: ManagerClient,
+    /// When true, inject HTTP(S)_PROXY/ALL_PROXY/NO_PROXY into the workload env
+    /// so its HTTP clients route through the egress allowlist proxy. Set when
+    /// the AgentSpec declares egress rules (P2-B7 fix #2).
+    inject_proxy_env: bool,
 
     restart_count: Arc<AtomicI32>,
     worker_pid: Arc<AtomicI32>,
@@ -56,11 +99,21 @@ impl Supervisor {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(DEFAULT_MAX_RESTARTS),
             manager,
+            inject_proxy_env: false,
             restart_count: Arc::new(AtomicI32::new(0)),
             worker_pid: Arc::new(AtomicI32::new(0)),
             draining: Arc::new(AtomicBool::new(false)),
             child: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Enable proxy-env injection into the workload. Call with `true` when the
+    /// AgentSpec declares egress rules so the workload's HTTP clients route
+    /// through the allowlist proxy (P2-B7 fix #2).
+    #[must_use]
+    pub fn with_proxy_env(mut self, enabled: bool) -> Self {
+        self.inject_proxy_env = enabled;
+        self
     }
 
     pub fn handles(&self) -> SupervisorHandles {
@@ -99,6 +152,21 @@ impl Supervisor {
                 .stderr(Stdio::piped())
                 .stdin(Stdio::null())
                 .kill_on_drop(true);
+
+            // P2-B7 (2): point the workload's HTTP clients at the egress
+            // allowlist proxy. Only when egress rules are declared — otherwise
+            // there's nothing to enforce and an unset proxy is correct.
+            if self.inject_proxy_env {
+                let addr = egress_proxy_addr();
+                for (k, v) in proxy_env_pairs(&addr) {
+                    cmd.env(k, v);
+                }
+                tracing::info!(
+                    proxy = %addr,
+                    "supervisor: injected HTTP(S)_PROXY/ALL_PROXY/NO_PROXY into workload env \
+                     (egress allowlist)"
+                );
+            }
 
             let mut child = cmd
                 .spawn()
@@ -170,5 +238,57 @@ impl Supervisor {
             let backoff_ms = (next as u64).saturating_mul(500).min(10_000);
             tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn proxy_env_sets_all_three_proxy_vars_both_cases() {
+        let pairs = proxy_env_pairs("127.0.0.1:3128");
+        let map: HashMap<_, _> = pairs.into_iter().collect();
+        let want = "http://127.0.0.1:3128";
+        for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
+            assert_eq!(
+                map.get(key).map(String::as_str),
+                Some(want),
+                "{key} must be set"
+            );
+            assert_eq!(
+                map.get(&key.to_lowercase()).map(String::as_str),
+                Some(want),
+                "{} (lower-case) must be set",
+                key.to_lowercase()
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_env_no_proxy_keeps_loopback_and_metadata_direct() {
+        let pairs = proxy_env_pairs("127.0.0.1:3128");
+        let map: HashMap<_, _> = pairs.into_iter().collect();
+        let no_proxy = map.get("NO_PROXY").expect("NO_PROXY must be set");
+        // Loopback + metadata must bypass the proxy so the secrets socket host,
+        // the proxy itself, and metadata-blocking stay direct.
+        assert!(no_proxy.contains("127.0.0.1"));
+        assert!(no_proxy.contains("169.254.169.254"));
+        assert_eq!(
+            map.get("no_proxy").map(String::as_str),
+            map.get("NO_PROXY").map(String::as_str),
+            "lower-case no_proxy must mirror NO_PROXY"
+        );
+    }
+
+    #[test]
+    fn proxy_env_uses_configured_bind() {
+        let pairs = proxy_env_pairs("10.0.0.5:8080");
+        let map: HashMap<_, _> = pairs.into_iter().collect();
+        assert_eq!(
+            map.get("HTTP_PROXY").map(String::as_str),
+            Some("http://10.0.0.5:8080")
+        );
     }
 }

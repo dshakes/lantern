@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
@@ -204,17 +205,19 @@ type historicalStats struct {
 
 func (h *ForecastHandler) historical(ctx context.Context, tenantID, agentName string) (historicalStats, error) {
 	var s historicalStats
-	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT
-			COUNT(*) AS runs,
-			COALESCE(AVG(tokens_in), 0)::bigint AS avg_in,
-			COALESCE(AVG(tokens_out), 0)::bigint AS avg_out,
-			COALESCE(AVG(cost_usd), 0) AS avg_cost
-		FROM runs r
-		JOIN agents a ON a.id = r.agent_id
-		WHERE r.tenant_id = $1 AND a.name = $2 AND r.status = 'completed'
-		  AND r.created_at > now() - INTERVAL '30 days'
-	`, tenantID, agentName).Scan(&s.runs, &s.avgTokensIn, &s.avgTokensOut, &s.avgCostUsd)
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT
+				COUNT(*) AS runs,
+				COALESCE(AVG(tokens_in), 0)::bigint AS avg_in,
+				COALESCE(AVG(tokens_out), 0)::bigint AS avg_out,
+				COALESCE(AVG(cost_usd), 0) AS avg_cost
+			FROM runs r
+			JOIN agents a ON a.id = r.agent_id
+			WHERE r.tenant_id = $1 AND a.name = $2 AND r.status = 'completed'
+			  AND r.created_at > now() - INTERVAL '30 days'
+		`, tenantID, agentName).Scan(&s.runs, &s.avgTokensIn, &s.avgTokensOut, &s.avgCostUsd)
+	})
 	if err != nil {
 		return s, err
 	}
@@ -239,16 +242,30 @@ func (h *ForecastHandler) loadBudget(ctx context.Context, tenantID, agentName st
 	var maxCostPerDayRaw, maxCostPerRunRaw *float64
 	var maxRunsPerDayRaw *int
 	var maxTokensPerDayRaw *int64
-	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT max_cost_usd_per_day, max_cost_usd_per_run, max_tokens_per_day, max_runs_per_day,
-		       tool_limits, hard_fail, notify_at_pct
-		FROM agent_budgets
-		WHERE tenant_id = $1 AND agent_name = $2
-	`, tenantID, agentName).Scan(
-		&maxCostPerDayRaw, &maxCostPerRunRaw, &maxTokensPerDayRaw, &maxRunsPerDayRaw,
-		&toolLimitsJSON, &b.HardFail, &b.NotifyAtPct,
-	)
-	if err != nil {
+	var spent float64
+	var runs int
+	today := time.Now().UTC().Format("2006-01-02")
+	budgetErr := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		if e := tx.QueryRow(ctx, `
+			SELECT max_cost_usd_per_day, max_cost_usd_per_run, max_tokens_per_day, max_runs_per_day,
+			       tool_limits, hard_fail, notify_at_pct
+			FROM agent_budgets
+			WHERE tenant_id = $1 AND agent_name = $2
+		`, tenantID, agentName).Scan(
+			&maxCostPerDayRaw, &maxCostPerRunRaw, &maxTokensPerDayRaw, &maxRunsPerDayRaw,
+			&toolLimitsJSON, &b.HardFail, &b.NotifyAtPct,
+		); e != nil {
+			return e
+		}
+		// Load today's usage from the daily rollup (same tx).
+		_ = tx.QueryRow(ctx, `
+			SELECT COALESCE(cost_usd, 0)::float8, COALESCE(runs_count, 0)
+			FROM agent_usage_daily
+			WHERE tenant_id = $1 AND agent_name = $2 AND usage_date = $3
+		`, tenantID, agentName, today).Scan(&spent, &runs)
+		return nil
+	})
+	if budgetErr != nil {
 		// No budget: return nil, no usage.
 		return nil, 0, 0, nil
 	}
@@ -267,28 +284,21 @@ func (h *ForecastHandler) loadBudget(ctx context.Context, tenantID, agentName st
 	if len(toolLimitsJSON) > 0 {
 		_ = json.Unmarshal(toolLimitsJSON, &b.ToolLimits)
 	}
-
-	// Load today's usage from the daily rollup.
-	var spent float64
-	var runs int
-	today := time.Now().UTC().Format("2006-01-02")
-	_ = h.srv.Pool.QueryRow(ctx, `
-		SELECT COALESCE(cost_usd, 0)::float8, COALESCE(runs_count, 0)
-		FROM agent_usage_daily
-		WHERE tenant_id = $1 AND agent_name = $2 AND usage_date = $3
-	`, tenantID, agentName, today).Scan(&spent, &runs)
 	return &b, spent, runs, nil
 }
 
 func (h *ForecastHandler) recordForecast(ctx context.Context, tenantID, agentName string, resp forecastResponse) {
 	reasoningJSON, _ := json.Marshal(resp.Reasoning)
-	_, err := h.srv.Pool.Exec(ctx, `
-		INSERT INTO cost_forecasts
-		  (tenant_id, agent_name, estimated_tokens_in, estimated_tokens_out,
-		   estimated_cost_usd, confidence, reasoning, blocked_by_budget)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-	`, tenantID, agentName, resp.EstimatedTokensIn, resp.EstimatedTokensOut,
-		resp.EstimatedCostUsd, resp.Confidence, reasoningJSON, resp.WouldExceedBudget)
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			INSERT INTO cost_forecasts
+			  (tenant_id, agent_name, estimated_tokens_in, estimated_tokens_out,
+			   estimated_cost_usd, confidence, reasoning, blocked_by_budget)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+		`, tenantID, agentName, resp.EstimatedTokensIn, resp.EstimatedTokensOut,
+			resp.EstimatedCostUsd, resp.Confidence, reasoningJSON, resp.WouldExceedBudget)
+		return e
+	})
 	if err != nil {
 		h.logger().Warn("record forecast failed", zap.Error(err))
 	}

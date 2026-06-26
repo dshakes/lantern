@@ -20,11 +20,13 @@ import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
   agentPersonaPrompt,
+  countTrailingUnanswered,
   defaultQuietHours,
   detectBotTells,
   detectEscalation,
   greetingReply,
   inferStyle,
+  isNoReplySentinel,
   isQuietHours,
   naturalize,
   shouldRespond,
@@ -49,13 +51,14 @@ import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@la
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
-import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
 import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
 import {
   ownerVoiceExemplars,
   formatOwnerVoiceBlock,
+  dedupeKey as ownerVoiceDedupeKey,
   type OwnerVoiceSample,
 } from "@lantern/bridge-core/owner-voice";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
@@ -216,6 +219,14 @@ function sleep(ms: number): Promise<void> {
     // can drop in-flight bursts safely; the next inbound retriggers.
     t.unref?.();
   });
+}
+
+// AUTO-ACT LADDER — END = START + 30 min, preserving the local-ISO shape.
+function localPlus30(startIso: string): string {
+  const d = new Date(startIso);
+  const e = new Date(d.getTime() + 30 * 60_000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${e.getFullYear()}-${p(e.getMonth() + 1)}-${p(e.getDate())}T${p(e.getHours())}:${p(e.getMinutes())}:00`;
 }
 
 // Should a 1:1 contact reply pull in the owner's device calendar? Gates the
@@ -1328,6 +1339,14 @@ export class WhatsAppSession {
   // Still bounded per-contact so total memory stays small (≤30 short
   // strings × #contacts).
   private static readonly OWNER_SENT_PER_CONTACT = 30;
+  // GLOBAL owner-voice pool mined from a DEEP, un-bucketed scan of the
+  // ~14-day wa-history.jsonl (all 1:1 fromMe entries, not capped per
+  // contact). Unioned into the persona voice block so a thin/new contact
+  // still hears the owner's real voice across hundreds of authentic
+  // samples. Dated by each entry's `ts` so recency ranking works. Capped
+  // at OWNER_VOICE_GLOBAL_CAP; bot-self lines filtered out.
+  private ownerVoiceGlobal: OwnerVoiceSample[] = [];
+  private static readonly OWNER_VOICE_GLOBAL_CAP = 600;
   // Ring buffer of the bot's own recent OUTBOUND replies per contact jid.
   // Fed to the persona prompt as an anti-repetition signal so the bot
   // never sends the same canned line three times in a thread. In-memory;
@@ -1341,6 +1360,12 @@ export class WhatsAppSession {
   // cold. In-memory only (a fresh thread after restart is fine). Parity
   // with the iMessage bridge — keep the wording + threshold identical.
   private lastInboundTs = new Map<string, number>();
+  // Per-jid count of consecutive inbound messages from this contact since the
+  // bridge last replied to them. Incremented on each 1:1 inbound, reset to 0
+  // after the bridge sends a reply. Feeds the unanswered-backlog persona hint
+  // so the model catches up on the whole run, not just the last line.
+  // In-memory only (a fresh thread after restart is fine).
+  private unansweredInbound = new Map<string, number>();
   // A turn within this window of the previous inbound is a continuation.
   private static readonly THREAD_CONTINUATION_MS = 6 * 60 * 60 * 1000;
   // Dedup guard for the bad-feedback retry. Both 👎 (record + retry) and
@@ -1695,15 +1720,22 @@ export class WhatsAppSession {
   // per-message timestamps, so samples are undated (recency falls back to
   // map/insertion order). For a Telugu inbound we also pass a Telugu-only
   // subset so the reply mimics the owner's actual Telangana phrasing.
-  private buildOwnerVoiceBlock(ownerName: string, teluguInbound: boolean): string {
+  private buildOwnerVoiceBlock(ownerName: string, teluguInbound: boolean, relevantTo?: string): string {
     const samples: OwnerVoiceSample[] = [];
     for (const msgs of this.ownerSentHistory.values()) {
       for (const m of msgs) samples.push({ text: m });
     }
+    // Union in the deep-scan global pool (dated, so recency ranking
+    // works). ownerVoiceExemplars dedupes so overlap with the per-contact
+    // buckets collapses; the global pool just widens reach + diversity.
+    for (const s of this.ownerVoiceGlobal) samples.push(s);
     if (samples.length === 0) return "";
-    const general = ownerVoiceExemplars(samples, { max: 12 });
+    // relevantTo (the current inbound) ranks exemplars by keyword overlap so
+    // the few-shot is shaped like the message being answered — recency is the
+    // tie-breaker / fallback when nothing overlaps.
+    const general = ownerVoiceExemplars(samples, { max: 12, relevantTo });
     const telugu = teluguInbound
-      ? ownerVoiceExemplars(samples, { max: 8, lang: "telugu" })
+      ? ownerVoiceExemplars(samples, { max: 8, lang: "telugu", relevantTo })
       : [];
     return formatOwnerVoiceBlock(ownerName, general, telugu);
   }
@@ -2988,15 +3020,30 @@ export class WhatsAppSession {
     }));
   }
 
-  // Proactive ingester for UNKNOWN-sender inbound. Appointment confirmation →
-  // DM the owner + arm a "yes" offer that adds it to the calendar (via the
-  // freeform-followup → [CALENDAR:] path). Marketing/spam → suppress. Returns
-  // "handled" to skip the auto-reply path. Best-effort + flag-gated.
+  // Proactive ingester for UNKNOWN-sender inbound. The LIFE-EVENT ENGINE runs
+  // FIRST: a transactional notice the bridge used to drop as "marketing/spam"
+  // (a GEICO bill, a UPS delivery window, an Amex fraud alert, an OTP) is now
+  // recognized as a TYPED life-event and surfaced to the OWNER (self-chat) —
+  // a real-time ping with a one-tap action, or a batched digest line. True
+  // promos are still suppressed; non-actionable text falls back to the legacy
+  // appointment/spam classifier. OWNER-FACING ONLY. Returns "handled" to skip
+  // the auto-reply path. Best-effort + flag-gated.
   private async maybeIngestUnknownInbound(from: string, text: string): Promise<"handled" | "pass"> {
     if ((process.env.LANTERN_APPT_INGEST || "on").toLowerCase() === "off") return "pass";
     if (!from || !text || this.isGroupJid(from)) return "pass";
     if (this.contactNames.has(from)) return "pass";
     if (this.ownerProfileStore.relationshipFor(from, undefined)) return "pass";
+
+    // ── LIFE-EVENT ENGINE (owner-facing) ──
+    if ((process.env.LANTERN_LIFE_EVENTS || "on").toLowerCase() !== "off") {
+      try {
+        const handled = await this.surfaceLifeEvent(from, text);
+        if (handled) return "handled";
+      } catch (err) {
+        this.logger.warn({ err }, "life-event surfacing failed — falling back to legacy classifier");
+      }
+    }
+
     let kind: "appointment" | "spam" | "other";
     let signals: string[];
     try {
@@ -3023,6 +3070,239 @@ export class WhatsAppSession {
       } as any);
     }
     return "handled";
+  }
+
+  // Classify an unknown-sender message as a typed life-event and route it to the
+  // owner self-chat. Returns true when the engine took ownership (ping/digest/
+  // suppress), false when it's not actionable (caller falls back to legacy).
+  private async surfaceLifeEvent(from: string, text: string): Promise<boolean> {
+    const { classifyLifeEvent, proactiveDecision, isActionableKind, autoActDecision } =
+      await import("@lantern/bridge-core/life-events");
+    const { loadLifeEventPrefs, isAutoActPaused } = await import("@lantern/bridge-core/life-events-store");
+
+    const event = await classifyLifeEvent(text, { channel: "WhatsApp" });
+    if (!isActionableKind(event.kind)) return false;
+
+    const prefs = loadLifeEventPrefs();
+    const ownJid = this.ownJid();
+
+    // ── AUTO-ACT LADDER ── safe+reversible (delivery→note, appointment/travel→
+    // calendar) fire automatically; money/fraud/OTP/sending never do. Kill
+    // switch (LANTERN_LIFE_EVENT_AUTOACT, default on) + persisted pause flag.
+    const autoEnabled =
+      (process.env.LANTERN_LIFE_EVENT_AUTOACT || "on").toLowerCase() !== "off" && !isAutoActPaused();
+    const auto = autoActDecision(event, prefs, { enabled: autoEnabled });
+    this.logger.info(
+      { kind: event.kind, urgency: event.urgency, conf: event.confidence, autoMode: auto.mode, reason: auto.reason },
+      "life-event classified",
+    );
+    if (auto.mode === "auto" && ownJid && this.macActions) {
+      await this.autoActLifeEvent(ownJid, event, auto.idempotencyKey, text);
+      return true;
+    }
+
+    const decision = proactiveDecision(event, prefs);
+
+    if (decision.route === "suppress") return true; // owned + dropped — do NOT emit
+    if (!ownJid) {
+      this.logActivity("attention_dm", decision.ownerMessage, { scope: "self" });
+      return true;
+    }
+    if (decision.route === "digest") {
+      this.lifeEventDigestQueue.push(decision.ownerMessage);
+      // Emit to Automations dashboard (best-effort, fire-and-forget).
+      void (async () => {
+        try {
+          const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+          await emitLifeEvent(event, "suggested", {
+            idempotencyKey: auto.idempotencyKey,
+            summary: decision.ownerMessage,
+            poster: authedFetch as any,
+            log: this.logger as any,
+          });
+        } catch { /* best-effort */ }
+      })();
+      return true;
+    }
+
+    // ping — DM the owner now + arm the one-tap offer for the top action.
+    await this.confirmToSelf(decision.ownerMessage).catch(() => {});
+    this.lastLifeEventKind = event.kind;
+    const top = decision.actions.find((a) => a.kind !== "snooze" && a.kind !== "none");
+    if (top && top.offerAction) {
+      this.pendingOffers.set(ownJid, {
+        kind: "freeform-followup",
+        freeformAction: top.offerAction + (top.url ? ` (relevant link: ${top.url})` : "") + (top.phone ? ` (callback number: ${top.phone})` : ""),
+        freeformInbound: text,
+        freeformPriorReply: decision.ownerMessage,
+        issuedAt: Date.now(),
+      } as any);
+    }
+    // Emit to Automations dashboard (best-effort, fire-and-forget).
+    void (async () => {
+      try {
+        const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+        await emitLifeEvent(event, "suggested", {
+          idempotencyKey: auto.idempotencyKey,
+          summary: decision.ownerMessage,
+          poster: authedFetch as any,
+          log: this.logger as any,
+        });
+      } catch { /* best-effort */ }
+    })();
+    return true;
+  }
+
+  // Owner-model-lite: persist the owner's accept/reject of the last life-event
+  // offer so the engine downgrades nagging kinds. Best-effort + one-shot.
+  private recordLifeEventOutcome(accepted: boolean): void {
+    const kind = this.lastLifeEventKind;
+    if (!kind) return;
+    this.lastLifeEventKind = null;
+    void (async () => {
+      try {
+        const { persistAccept, persistIgnore } = await import("@lantern/bridge-core/life-events-store");
+        if (accepted) persistAccept(kind); else persistIgnore(kind);
+      } catch { /* best-effort */ }
+    })();
+  }
+
+  // AUTO-ACT LADDER — execute a SAFE, REVERSIBLE action without asking, log it
+  // to self-chat with an undo, and arm the undo offer. Idempotent across
+  // restarts (hasActed/markActed). On error → suggest fallback (never silent).
+  private async autoActLifeEvent(
+    ownJid: string,
+    event: import("@lantern/bridge-core/life-events").LifeEvent,
+    idempotencyKey: string,
+    rawText: string,
+  ): Promise<void> {
+    if (!this.macActions) return;
+    const { hasActed, markActed } = await import("@lantern/bridge-core/life-events-store");
+    if (hasActed(idempotencyKey)) {
+      this.logger.info({ kind: event.kind, idempotencyKey }, "auto-act skipped — already acted (idempotent)");
+      return;
+    }
+    const { eventStartIso } = await import("@lantern/bridge-core/life-events");
+    try {
+      if (event.kind === "delivery") {
+        const f = event.fields;
+        const who = f.carrier || f.merchant || "package";
+        const line = `${who}${f.eta ? ` — ${f.eta}` : ""}${f.trackingNo ? ` (${f.trackingNo})` : ""} · logged ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+        const res = await this.macActions.appendToNote({ title: "Deliveries", line });
+        if (!res.ok) return void this.autoActFallbackToSuggest(ownJid, event, rawText, res.reason);
+        markActed(idempotencyKey);
+        const log = `📦 logged delivery — ${who}${f.eta ? ` ${f.eta.toLowerCase()}` : ""} (Deliveries note) · reply 'undo' to remove`;
+        await this.confirmToSelf(log).catch(() => {});
+        this.noteAutoAction(log);
+        this.armAutoActUndo(ownJid, event.kind, idempotencyKey, { undoTarget: "delivery-note", undoNoteLine: line }, log, rawText);
+        // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
+        void (async () => {
+          try {
+            const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+            await emitLifeEvent(event, "auto_acted", {
+              idempotencyKey,
+              actionTaken: "logged in Deliveries note",
+              summary: log,
+              poster: authedFetch as any,
+              log: this.logger as any,
+            });
+          } catch { /* best-effort */ }
+        })();
+        return;
+      }
+      const startIso = eventStartIso(event);
+      if (!startIso) return void this.autoActFallbackToSuggest(ownJid, event, rawText, "no concrete date/time");
+      const title = event.kind === "travel" ? `Travel${event.fields.place ? ` — ${event.fields.place}` : ""}` : `Appointment${event.fields.place ? ` — ${event.fields.place}` : ""}`;
+      const res = await this.macActions.createCalendarEvent({
+        title, start: startIso, end: localPlus30(startIso),
+        notes: `Auto-added by Lantern from: "${rawText.slice(0, 200)}"`,
+      });
+      if (!res.ok) return void this.autoActFallbackToSuggest(ownJid, event, rawText, res.reason);
+      markActed(idempotencyKey);
+      const friendly = new Date(startIso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      const log = `📅 added to your calendar — ${title} ${friendly} · reply 'undo' to remove`;
+      await this.confirmToSelf(log).catch(() => {});
+      this.noteAutoAction(log);
+      this.armAutoActUndo(ownJid, event.kind, idempotencyKey, { undoTarget: "calendar", undoTitle: title, undoStartIso: startIso }, log, rawText);
+      // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
+      void (async () => {
+        try {
+          const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+          await emitLifeEvent(event, "auto_acted", {
+            idempotencyKey,
+            actionTaken: `added to calendar — ${title}`,
+            summary: log,
+            poster: authedFetch as any,
+            log: this.logger as any,
+          });
+        } catch { /* best-effort */ }
+      })();
+    } catch (err) {
+      this.logger.error({ err, kind: event.kind }, "auto-act execution threw — falling back to suggest");
+      await this.autoActFallbackToSuggest(ownJid, event, rawText, "exception");
+    }
+  }
+
+  // Arm the one-shot UNDO offer for an auto-action.
+  private armAutoActUndo(
+    ownJid: string,
+    kind: string,
+    idempotencyKey: string,
+    fields: { undoTarget: "calendar" | "delivery-note"; undoTitle?: string; undoStartIso?: string; undoNoteLine?: string },
+    log: string,
+    rawText: string,
+  ): void {
+    this.pendingOffers.set(ownJid, {
+      kind: "auto-act-undo",
+      undoLifeEventKind: kind,
+      undoIdempotencyKey: idempotencyKey,
+      ...fields,
+      freeformPriorReply: log,
+      freeformInbound: rawText,
+      issuedAt: Date.now(),
+    } as any);
+  }
+
+  // Auto-act couldn't run cleanly — surface a suggest ping instead of dropping.
+  private async autoActFallbackToSuggest(
+    ownJid: string,
+    event: import("@lantern/bridge-core/life-events").LifeEvent,
+    rawText: string,
+    reason?: string,
+  ): Promise<void> {
+    this.logger.warn({ kind: event.kind, reason }, "auto-act fell back to suggest");
+    const { proactiveDecision } = await import("@lantern/bridge-core/life-events");
+    const decision = proactiveDecision(event);
+    await this.confirmToSelf(decision.ownerMessage).catch(() => {});
+    this.lastLifeEventKind = event.kind;
+    const top = decision.actions.find((a) => a.kind !== "snooze" && a.kind !== "none");
+    if (top && top.offerAction) {
+      this.pendingOffers.set(ownJid, {
+        kind: "freeform-followup",
+        freeformAction: top.offerAction + (top.url ? ` (relevant link: ${top.url})` : "") + (top.phone ? ` (callback number: ${top.phone})` : ""),
+        freeformInbound: rawText,
+        freeformPriorReply: decision.ownerMessage,
+        issuedAt: Date.now(),
+      } as any);
+    }
+  }
+
+  // Record an auto-action into the recap ring (last 24h, capped).
+  private noteAutoAction(text: string): void {
+    const now = Date.now();
+    this.autoActLog.push({ text, ts: now });
+    const since = now - 24 * 3_600_000;
+    this.autoActLog = this.autoActLog.filter((e) => e.ts >= since).slice(-50);
+  }
+
+  // "what did you do today" recap.
+  private autoActRecapBody(): string {
+    const since = Date.now() - 24 * 3_600_000;
+    const lines = this.autoActLog
+      .filter((e) => e.ts >= since)
+      .map((e) => `• ${e.text.replace(/\s*·\s*reply 'undo'.*$/i, "")}`);
+    if (lines.length === 0) return "🤖 nothing auto-handled today.";
+    return [`🤖 today i auto-handled ${lines.length}:`, ...lines].join("\n");
   }
 
   // Apply an owner presence/status command from self-chat (set place + timer,
@@ -3931,9 +4211,18 @@ export class WhatsAppSession {
     if (this.personalDocsEnabled && self && !group && this.docs && this.macActions) {
       this.gcPendingOffers();
       const cachedOffer = this.pendingOffers.get(jid);
+      // AUTO-ACT UNDO — bot already executed a safe action; "undo"/"remove"
+      // (or a plain "no") reverts it + records an autoUndo (trust downgrade).
+      if (cachedOffer && (cachedOffer as any).kind === "auto-act-undo" && (looksLikeUndo(text) || looksLikeRejection(text))) {
+        this.logger.info({ jid }, "reverting auto-action on undo");
+        this.pendingOffers.delete(jid);
+        void this.executeCachedOffer(jid, cachedOffer);
+        return;
+      }
       if (cachedOffer && looksLikeConfirmation(text)) {
         this.logger.info({ kind: cachedOffer.kind, jid }, "executing cached offer on confirmation");
         this.pendingOffers.delete(jid);
+        this.recordLifeEventOutcome(true);
         void this.executeCachedOffer(jid, cachedOffer);
         return;
       }
@@ -3943,6 +4232,7 @@ export class WhatsAppSession {
       if (cachedOffer && looksLikeRejection(text)) {
         this.logger.info({ kind: cachedOffer.kind, jid }, "dropping cached offer on rejection");
         this.pendingOffers.delete(jid);
+        this.recordLifeEventOutcome(false);
         void this.confirmToSelf("👍 no worries");
         return;
       }
@@ -4206,6 +4496,15 @@ export class WhatsAppSession {
   private escalationsToday = 0;
   private digestStopFn: (() => void) | null = null;
 
+  // LIFE-EVENT ENGINE: short owner-facing lines for 'digest'-routed events
+  // (deliveries, receipts, far-out bills) since the last digest. In-memory.
+  private lifeEventDigestQueue: string[] = [];
+  // Most-recent life-event kind surfaced — attributes a later accept/ignore to
+  // the right kind for the owner-model downgrade.
+  private lastLifeEventKind: import("@lantern/bridge-core/life-events").LifeEventKind | null = null;
+  // AUTO-ACT LADDER — in-memory ring of today's auto-actions for the recap.
+  private autoActLog: Array<{ text: string; ts: number }> = [];
+
   // Set to true once the bridge has been in `connected` state at least
   // once. OfflineMonitor uses this to distinguish first-boot idle
   // (expected, no alert) from post-disconnect idle (worth alerting on).
@@ -4249,9 +4548,11 @@ export class WhatsAppSession {
           monitoredChats: this.monitoredGroups.size,
           escalations: this.escalationsToday,
           channelLabel: "WhatsApp",
+          lifeEvents: [...this.lifeEventDigestQueue],
         };
         this.repliesSentToday = 0;
         this.escalationsToday = 0;
+        this.lifeEventDigestQueue = [];
         return data;
       },
       deliver: async (body) => {
@@ -4393,6 +4694,12 @@ export class WhatsAppSession {
       placeOutboundCall: async (req) => {
         return this.placeOutboundCallFromOwner(req);
       },
+      setAutoAct: async (enabled: boolean) => {
+        const { setAutoActPaused } = await import("@lantern/bridge-core/life-events-store");
+        setAutoActPaused(!enabled);
+        this.logActivity(enabled ? "bot_on" : "bot_off", `auto-act ladder ${enabled ? "RESUMED" : "PAUSED"}`, { scope: "self" });
+      },
+      autoActRecap: () => this.autoActRecapBody(),
     });
   }
 
@@ -5016,6 +5323,55 @@ export class WhatsAppSession {
   // Execute a cached offer (calendar reminder / save note / outbound call).
   // Deterministic, bypasses the LLM. Sends a natural confirmation.
   private async executeCachedOffer(jid: string, offer: PendingOffer): Promise<void> {
+    // AUTO-ACT UNDO — revert the auto-executed safe action, record an autoUndo
+    // (trust downgrade), and clear the acted key. Deterministic; no LLM.
+    if (offer.kind === "auto-act-undo") {
+      const { persistAutoUndo, unmarkActed } = await import("@lantern/bridge-core/life-events-store");
+      try {
+        let res: { ok: true; detail?: string } | { ok: false; reason: string };
+        if (offer.undoTarget === "calendar" && offer.undoTitle && offer.undoStartIso && this.macActions) {
+          res = await this.macActions.deleteCalendarEvent({ title: offer.undoTitle, start: offer.undoStartIso });
+        } else if (offer.undoTarget === "delivery-note" && offer.undoNoteLine && this.macActions) {
+          res = await this.macActions.removeNoteLine({ title: "Deliveries", line: offer.undoNoteLine });
+        } else {
+          res = { ok: false, reason: "nothing to undo" };
+        }
+        if (res.ok) {
+          await this.confirmToSelf("↩️ undone — removed it.").catch(() => {});
+          if (offer.undoIdempotencyKey) unmarkActed(offer.undoIdempotencyKey);
+          if (offer.undoLifeEventKind) persistAutoUndo(offer.undoLifeEventKind as any);
+          // Emit undone to Automations dashboard (best-effort, fire-and-forget).
+          void (async () => {
+            try {
+              const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+              await emitLifeEvent(
+                {
+                  kind: (offer.undoLifeEventKind || "other") as any,
+                  confidence: 1,
+                  urgency: "fyi",
+                  fields: {},
+                  rawText: offer.freeformInbound || "",
+                  channel: "WhatsApp",
+                },
+                "undone",
+                {
+                  idempotencyKey: offer.undoIdempotencyKey,
+                  summary: "↩️ undone — removed it.",
+                  poster: authedFetch as any,
+                  log: this.logger as any,
+                },
+              );
+            } catch { /* best-effort */ }
+          })();
+        } else {
+          await this.confirmToSelf(`(couldn't undo: ${res.reason})`).catch(() => {});
+        }
+      } catch (err) {
+        this.logger.error({ err }, "auto-act undo failed");
+        await this.confirmToSelf("(couldn't undo — try again)").catch(() => {});
+      }
+      return;
+    }
     // Outbound calls go through Twilio, NOT macActions — handle them before
     // the macActions guard so a "yes" can never be silently swallowed if
     // macActions is ever unavailable (e.g. a headless deployment).
@@ -6795,15 +7151,18 @@ export class WhatsAppSession {
     }
     // World-class authenticity blocks. Each best-effort with empty
     // fallback so cold contacts and groups keep prior behavior.
-    const contactStyleBlock = !opts.isGroup ? styleBlockFor(ownerSamples) : "";
+    // Relevance-rank the verbatim few-shot to the current inbound so examples
+    // are SHAPED like the message being answered (cheap token overlap; recency
+    // fallback). Backward-compatible — undefined relevantTo is pure recency.
+    const contactStyleBlock = !opts.isGroup ? styleBlockFor(ownerSamples, { relevantTo: text }) : "";
     // GLOBAL owner-voice corpus — aggregate the owner's OWN sent messages
     // across ALL contacts so even a brand-new/sparse contact (no
     // per-contact fingerprint above) still mimics the owner's REAL voice
     // instead of falling back to generic rules. For a Telugu inbound, also
     // surface the owner's real Telugu phrasing (beats the BAD→GOOD dialect
     // rules — the source of the "vazthani Meeru chustha?" garbage). Cheap
-    // pure function; recomputed per reply.
-    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu");
+    // pure function; recomputed per reply. relevantTo ranks by inbound overlap.
+    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu", text);
     // Compute the sync prerequisites for the reads up front so the reads
     // themselves can be issued concurrently below.
     const senderName = opts.senderName || this.contactNames.get(from);
@@ -6923,6 +7282,14 @@ export class WhatsAppSession {
         episodesBlock,
         relatedBlock,
         lowContext,
+        // Unanswered-backlog hint — count of consecutive inbounds from this
+        // contact with no reply between them. WhatsApp's rough transcript is
+        // NOT chronologically interleaved (it lists owner-sent first, then the
+        // contact's recent inbounds), so countTrailingUnanswered would
+        // over-count here. We derive it from the contact's inbound bucket vs.
+        // the replies we've sent: inbounds-since-last-reply ≈ how far they got
+        // ahead. Conservative — only hints when clearly > 1.
+        unansweredBacklog: opts.isGroup ? 0 : this.unansweredBacklogFor(from),
         // Learning flywheel: teach the persona the owner's distilled style
         // dislikes on every reply (refreshed by the flywheel scheduler).
         styleLessonsBlock: this.styleLessonsBlock || undefined,
@@ -7027,10 +7394,12 @@ export class WhatsAppSession {
     // by the time the read delay ends, the draft is usually already
     // available so we can switch on "composing" then.
     // turnHint pins a model FLOOR so the owner's outgoing texts are never
-    // drafted by the weakest (trivial-tier) model — "balanced" = Sonnet by
-    // default; set LANTERN_REPLY_MODEL_TIER=hard for Opus-grade replies.
+    // drafted by the weakest (trivial-tier) model. QUALITY LEVER: defaults to
+    // "hard" (frontier tier) so contact replies get the best model — set
+    // LANTERN_REPLY_MODEL_TIER=balanced to trade quality for cost.
+    const replyTier = process.env.LANTERN_REPLY_MODEL_TIER || "hard";
     const draftPromise = this.agent.respondTo(from, userText, systemHint, {
-      turnHint: process.env.LANTERN_REPLY_MODEL_TIER || "balanced",
+      turnHint: replyTier,
     });
 
     // Wait for draft + naturalize, but don't block on it during the
@@ -7046,6 +7415,14 @@ export class WhatsAppSession {
       if (!opts.isGroup) {
         this.notifyOwnerOfDrop({ jid: from, reason: "I couldn't generate a reply (LLM error)", text, senderName: opts.senderName });
       }
+      return;
+    }
+
+    // ABSTAIN SENTINEL — the model emitted [[NO_REPLY]] to deliberately signal
+    // "no reply warranted". Treat as silence so decision-prose never reaches
+    // the contact. Deterministic; no send, no greeting fallback.
+    if (draft && isNoReplySentinel(draft)) {
+      this.logger.debug({ from }, "model abstained ([[NO_REPLY]]) — staying silent");
       return;
     }
 
@@ -7072,28 +7449,56 @@ export class WhatsAppSession {
     // net AND the register-aware formal-"-andi" suppressor (spares elders).
     // Suppressed drafts log to the dashboard so the owner can see what was
     // almost sent.
-    const tellCheck = detectBotTells(draft, text, {
+    const botTellCtx = {
       contactName: opts.isGroup ? undefined : (opts.senderName ?? this.contactNames.get(from)),
       relationship,
-      audience: isOwnerChan ? "owner" : "contact",
-    });
+      audience: (isOwnerChan ? "owner" : "contact") as "owner" | "contact",
+    };
+    let tellCheck = detectBotTells(draft, text, botTellCtx);
     if (!tellCheck.ok) {
-      this.logger.info({ from, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft suppressed by bot-tell filter");
-      this.broadcast({
-        type: "activity",
-        data: {
-          kind: "agent_skipped",
-          summary: `draft suppressed — ${tellCheck.reason}`,
-          detail: draft.slice(0, 200),
-          jid: from,
-          timestamp: Date.now(),
-        },
-      });
-      // The classic case: a stranger texts "Hi", the model replies "Hey! How
-      // can I help you?", and the customer-service guard suppresses it →
-      // silence. For a pure greeting, fall back to a human opener instead.
-      if (!opts.isGroup) await this.sendGreetingFallback(from, text, `bot-tell: ${tellCheck.reason}`);
-      return;
+      // REGENERATE-ON-BOT-TELL (not drop). The first draft tripped a tell;
+      // give the model ONE more shot with a corrective hint before falling
+      // back to silence/greeting. Catches the common case where the model
+      // narrated a capability/verdict instead of just answering.
+      this.logger.info({ from, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft tripped bot-tell filter — regenerating once");
+      const correctiveHint =
+        systemHint +
+        `\n\n(Your previous draft was REJECTED — reason: ${tellCheck.reason}. Output ONLY the literal message text a real person would send — no meta-commentary, no capability statements ("I can't open links"), no narration that something is spam/marketing. If truly nothing warrants a reply, output ${"[[NO_REPLY]]"}.)`;
+      let retry: string | null = null;
+      try {
+        retry = await this.agent.respondTo(from, userText, correctiveHint, { turnHint: replyTier });
+      } catch (err) {
+        this.logger.warn({ err, from }, "bot-tell regeneration threw — falling back");
+      }
+      // A retry that abstains is a clean no-reply.
+      if (retry && isNoReplySentinel(retry)) {
+        this.logger.debug({ from }, "regeneration abstained ([[NO_REPLY]]) — staying silent");
+        return;
+      }
+      const retryCheck = retry ? detectBotTells(retry, text, botTellCtx) : { ok: false, reason: "empty regeneration" };
+      if (retry && retryCheck.ok) {
+        draft = retry;
+        tellCheck = retryCheck;
+      } else {
+        // SECOND draft also failed — fall back to silence/greeting and keep
+        // the owner heads-up so a suppressed-twice reply isn't invisible.
+        this.logger.info({ from, reason: retryCheck.reason, draftPreview: (retry ?? draft).slice(0, 120) }, "draft suppressed by bot-tell filter (after regeneration)");
+        this.broadcast({
+          type: "activity",
+          data: {
+            kind: "agent_skipped",
+            summary: `draft suppressed — ${retryCheck.reason ?? tellCheck.reason}`,
+            detail: (retry ?? draft).slice(0, 200),
+            jid: from,
+            timestamp: Date.now(),
+          },
+        });
+        // The classic case: a stranger texts "Hi", the model replies "Hey! How
+        // can I help you?", and the customer-service guard suppresses it →
+        // silence. For a pure greeting, fall back to a human opener instead.
+        if (!opts.isGroup) await this.sendGreetingFallback(from, text, `bot-tell: ${retryCheck.reason ?? tellCheck.reason}`);
+        return;
+      }
     }
 
     // CONFIDENCE GATE + VIP gate. Route to human approval instead of
@@ -7458,6 +7863,8 @@ export class WhatsAppSession {
         ring.splice(0, ring.length - WhatsAppSession.RECENT_BOT_REPLIES_PER_CONTACT);
       }
       this.recentBotReplies.set(from, ring);
+      // We just answered — clear the unanswered-backlog counter for this jid.
+      this.unansweredInbound.set(from, 0);
     }
 
     // MEDIUM-confidence audit ping for non-group sends.
@@ -7575,6 +7982,19 @@ export class WhatsAppSession {
   // WhatsApp has no chat.db, so we approximate from the captured inbound
   // (them) tail; for 1:1 we also weave in the owner-sent (you) tail so
   // the model sees both voices. Best-effort + bounded; "" when empty.
+  // Best-effort unanswered-backlog count for a 1:1 contact: how many
+  // messages they've sent since the bridge last replied. WhatsApp captures
+  // inbound + owner-sent into separate per-jid rings with NO interleaving
+  // timestamps, so we can't reconstruct a precise chronological run the way
+  // the iMessage chat.db transcript allows. We approximate with the per-jid
+  // counter the inbound handler maintains (incremented on inbound, reset when
+  // the bridge sends). Returns 0 when we have no reliable signal so the
+  // persona simply gets no hint (backward-compatible). Never throws.
+  private unansweredBacklogFor(from: string): number {
+    const n = this.unansweredInbound.get(from) ?? 0;
+    return n > 1 ? n : 0;
+  }
+
   private buildRecentTranscript(from: string, isGroup?: boolean): string {
     try {
       const key = isGroup ? `group:${from}` : from;
@@ -7619,6 +8039,13 @@ export class WhatsAppSession {
     if (bucket.length > WhatsAppSession.INBOUND_HISTORY_PER_CONTACT) {
       bucket.splice(0, bucket.length - WhatsAppSession.INBOUND_HISTORY_PER_CONTACT);
     }
+    // Track unanswered backlog (1:1 only) — incremented per inbound, reset to
+    // 0 once the bridge replies. Capped so a runaway thread can't grow it
+    // unbounded.
+    if (!this.isGroupJid(from)) {
+      const prev = this.unansweredInbound.get(from) ?? 0;
+      this.unansweredInbound.set(from, Math.min(prev + 1, 99));
+    }
   }
 
   // Cold-start voice corpus: pre-seed ownerSentHistory per JID from the
@@ -7636,6 +8063,10 @@ export class WhatsAppSession {
       // Group fromMe samples per jid, preserving file order (oldest →
       // newest, since history is appended chronologically).
       const byJid = new Map<string, string[]>();
+      // GLOBAL pool: every authentic 1:1 fromMe entry (un-bucketed,
+      // newest-first after sort), deduped by the shared key, dated by ts.
+      const globalSeen = new Set<string>();
+      const globalAll: OwnerVoiceSample[] = [];
       const raw = readFileSync(this.historyFile, "utf-8");
       for (const line of raw.split("\n")) {
         if (!line) continue;
@@ -7644,6 +8075,7 @@ export class WhatsAppSession {
           isGroup?: boolean;
           fromMe?: boolean;
           text?: string;
+          ts?: number;
         };
         try {
           e = JSON.parse(line);
@@ -7664,7 +8096,22 @@ export class WhatsAppSession {
           byJid.set(jid, arr);
         }
         arr.push(t);
+        // Feed the global pool (length-2 floor matches the iMessage corpus;
+        // upper bound already enforced above).
+        if (t.length >= 2) {
+          const key = ownerVoiceDedupeKey(t);
+          if (!key || !globalSeen.has(key)) {
+            if (key) globalSeen.add(key);
+            globalAll.push(typeof e.ts === "number" ? { text: t, ts: e.ts } : { text: t });
+          }
+        }
       }
+
+      // Keep the most-recent OWNER_VOICE_GLOBAL_CAP samples (dated newest
+      // first; undated sink last). ownerVoiceExemplars ranks/trims to the
+      // per-reply few-shot from here.
+      globalAll.sort((a, b) => (b.ts ?? -1) - (a.ts ?? -1));
+      this.ownerVoiceGlobal = globalAll.slice(0, WhatsAppSession.OWNER_VOICE_GLOBAL_CAP);
 
       let seededContacts = 0;
       let seededSamples = 0;
@@ -7697,11 +8144,16 @@ export class WhatsAppSession {
 
       if (seededSamples > 0) {
         this.saveState();
-        this.logger.info(
-          { seededContacts, seededSamples, cap },
-          "owner voice corpus seeded from wa-history",
-        );
       }
+      this.logger.info(
+        {
+          seededContacts,
+          seededSamples,
+          cap,
+          globalSamples: this.ownerVoiceGlobal.length,
+        },
+        "owner voice corpus seeded from wa-history",
+      );
     } catch (err) {
       this.logger.warn({ err }, "owner voice seed from wa-history failed (continuing)");
     }

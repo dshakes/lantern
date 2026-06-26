@@ -393,6 +393,14 @@ export interface PersonaOptions {
   // single ambiguous message — it should acknowledge only. Set by
   // the bridge after assembling the context blocks.
   lowContext?: boolean;
+  // Number of CONSECUTIVE unanswered inbound messages from this contact
+  // (i.e. how many they've sent in a row since the owner/bot last replied).
+  // When > 1, the persona is told "you have N unanswered messages from X"
+  // so the model addresses the whole backlog instead of only the last line
+  // — a real person catching up references everything they missed, not just
+  // the most recent text. 0/1/undefined → no hint (normal single-message
+  // reply). Set by the bridge from the recent transcript/store.
+  unansweredBacklog?: number;
   // Structured owner facts (from owner-profile.ts → factsBlock). One
   // ground-truth line: "Owner facts (TRUE — never deny…): married to
   // Maya; kids: …; wedding anniversary June 3, 2017." Injected for
@@ -541,6 +549,30 @@ function clampTranscript(transcript: string): string {
   return headNote ? `${headNote}\n\n${tail}` : tail;
 }
 
+/**
+ * Count the CONSECUTIVE unanswered inbound messages at the tail of a
+ * chronologically-ordered transcript — i.e. how many "them:" lines trail
+ * after the last "you:" line. Feeds PersonaOptions.unansweredBacklog so the
+ * model knows it's catching up on several messages, not answering one.
+ *
+ * Requires a transcript whose lines are in true chronological order with
+ * "you:" / "them:" speaker prefixes (the iMessage chat.db transcript is;
+ * the WhatsApp rough transcript is NOT interleaved, so callers there should
+ * not use this). Empty / unprefixed input → 0. Exported for tests.
+ */
+export function countTrailingUnanswered(transcript: string): number {
+  const lines = (transcript || "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => /^(you|them)\s*:/i.test(l));
+  let n = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^them\s*:/i.test(lines[i])) n++;
+    else break; // hit a "you:" line — the run of unanswered inbounds ends
+  }
+  return n;
+}
+
 export function agentPersonaPrompt(
   ownerName: string,
   style: StyleProfile,
@@ -627,11 +659,12 @@ export function agentPersonaPrompt(
     // "I can't see any text in your message — might be an issue with
     // how it sent. Try typing it out?" and immediately asked "Is this
     // really you?". Never compose any of these.
-    `- NEVER explain what you can or can't see / read / parse. If the inbound was an attachment, sticker, voice note, or unclear, the safest reply is to wait — return an empty string and the bridge will stay silent. Asking the contact to retype is a dead giveaway.`,
+    `- NEVER explain what you can or can't see / read / parse. If the inbound was an attachment, sticker, voice note, or unclear, the safest reply is to wait — output ${NO_REPLY_SENTINEL} and the bridge will stay silent. Asking the contact to retype is a dead giveaway.`,
     `- NEVER describe your own limitations or processing ("seems your message was empty", "looks like there might be an issue", "I didn't catch that"). A real human just doesn't reply, or asks "huh?" — they don't analyze the failure mode.`,
+    `- NEVER state a capability or limitation about yourself ("I can't open links", "I can't see images", "I'm not able to access that", "I don't have the ability to view attachments"). Respond as a person would to the CONTENT itself — react to what the message is about — or, if you genuinely have nothing to react to, abstain with ${NO_REPLY_SENTINEL}. And NEVER narrate that a message is spam / marketing / promotional / automated ("this is just marketing", "looks like spam") — a real person never types that; just abstain with ${NO_REPLY_SENTINEL}.`,
     `- NEVER use the structure "<action verb> <task>?" as a polite suggestion ("Try typing it out?", "Want me to look into that?", "Should I forward this?"). Real people make statements, not nudges.`,
-    `- If you have nothing to say, RETURN AN EMPTY STRING. The bridge will simply not reply — which is what a human distracted with their day does naturally. Forced replies are the worst possible failure mode.`,
-    `- OUTPUT ONLY THE LITERAL MESSAGE TEXT TO SEND — never your reasoning. Do NOT narrate your decision, describe the contact in the third person, or explain whether a reply is warranted ("the contact just said…", "nothing needs a reply here", "a real person wouldn't respond", "empty string is the right call"). If your decision is "don't reply", express that ONLY by returning an empty string — never by writing the decision out. Anything you type is sent verbatim to the contact.`,
+    `- If you have nothing to say, output the literal token ${NO_REPLY_SENTINEL} (and nothing else). The bridge will simply not reply — which is what a human distracted with their day does naturally. Forced replies are the worst possible failure mode. Do NOT write out your reasoning for not replying; emit ONLY ${NO_REPLY_SENTINEL}.`,
+    `- OUTPUT ONLY THE LITERAL MESSAGE TEXT TO SEND — never your reasoning. Do NOT narrate your decision, describe the contact in the third person, or explain whether a reply is warranted ("the contact just said…", "nothing needs a reply here", "a real person wouldn't respond", "empty string is the right call"). If your decision is "don't reply", express that ONLY by emitting the literal token ${NO_REPLY_SENTINEL} — never by writing the decision out. Anything else you type is sent verbatim to the contact.`,
     `- Mimic ${ownerName}'s rhythm: typo-tolerant, lowercase ok, sometimes one word, sometimes one short sentence. Never two paragraphs. Never a formal greeting + body + closing structure.`,
     `- ${isGroup ? "You are in a group chat — be brief and only reply when directly addressed." : "This is a 1-on-1 thread."}`,
     ``,
@@ -837,6 +870,19 @@ export function agentPersonaPrompt(
     lines.push(related);
   }
 
+  // Unanswered-backlog hint — when the contact has sent several messages in
+  // a row without a reply, tell the model so it answers the whole backlog
+  // (not just the last line) the way a person catching up would. Placed just
+  // before the transcript so it frames how to read the conversation below.
+  const backlog = opts.unansweredBacklog ?? 0;
+  if (backlog > 1 && !isGroup) {
+    const who = opts.contactName?.trim();
+    lines.push(``);
+    lines.push(
+      `You have ${backlog} unanswered messages from ${who ? who : "this contact"} (they texted several times in a row and you haven't replied yet). Reply once, naturally, addressing what actually matters across those messages — don't answer only the last line and don't send ${backlog} separate replies. A real person catching up acknowledges they went quiet without over-apologizing.`,
+    );
+  }
+
   // Recent conversation — placed LAST (freshest, closest to the reply
   // instruction) so the model grounds its answer in what's actually being
   // discussed: resolve "that"/"tomorrow"/names, match the live tone, and
@@ -992,13 +1038,67 @@ export interface BotTellVerdict {
   reason?: string;
 }
 
+// ABSTAIN SENTINEL — the literal token the persona is instructed to emit
+// when no reply is warranted (see agentPersonaPrompt). Treating it as a
+// deliberate, deterministic no-reply signal means the model's "should I
+// reply?" decision never leaks to a contact as decision-prose: the model
+// either sends a real message or emits exactly this token, which the
+// bridge maps to silence. Kept here (next to detectBotTells) so both
+// bridges import one definition.
+export const NO_REPLY_SENTINEL = "[[NO_REPLY]]";
+
+/**
+ * True when a draft is the deliberate abstain sentinel — i.e. the model
+ * decided not to reply. Tolerant of surrounding whitespace / wrapping
+ * punctuation / code fences so a model that pads the token ("`[[NO_REPLY]]`",
+ * "[[NO_REPLY]].") is still recognized. A normal sentence that merely
+ * contains other text alongside the token is NOT treated as abstain — the
+ * token must be the ENTIRE meaningful content (stripped). Exported for tests.
+ */
+export function isNoReplySentinel(draft: string): boolean {
+  const stripped = (draft || "")
+    .trim()
+    .replace(/^```[a-z]*\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .replace(/^[\s"'`*_~([{]+|[\s"'`*_~)\]}.!?:;,]+$/g, "")
+    .trim()
+    .toUpperCase();
+  return stripped === "[[NO_REPLY]]" || stripped === "NO_REPLY";
+}
+
 // Phrases that mean the LLM is META-COMMENTING on the message itself,
 // rather than just responding like a human. A real person doesn't
 // announce their parsing failure; they just don't reply.
 const META_PATTERNS: { re: RegExp; reason: string }[] = [
   {
-    re: /\b(?:can'?t|cannot|couldn'?t|didn'?t)\s+(?:see|read|view|parse|find|catch|access|open)\b/i,
+    // Allow an optional adverb/word between the modal and the verb so
+    // "can't actually open", "can't really see", "cannot even read" all
+    // match — the model slips an adverb in to soften the disclaimer and
+    // sidestepped the un-padded form. Up to two filler words.
+    re: /\b(?:can'?t|cannot|couldn'?t|didn'?t|unable to)\s+(?:\w+\s+){0,2}(?:see|read|view|parse|find|catch|access|open|click|browse|do|help)\b/i,
     reason: "explains a parse/view failure",
+  },
+  {
+    // CAPABILITY-DISCLAIMER class — a draft that tells a contact what the
+    // bot technically can't do with a link / image / attachment / external
+    // content. A real person doesn't narrate their tooling limits; they
+    // react to the content or stay quiet. Real leak: "i can't actually open
+    // external links".
+    re: /(?:can'?t|cannot|unable to|don'?t have (?:the )?ability to)\b.{0,40}\b(?:open|click|access|view|read|browse|see)\b.{0,20}\b(?:link|url|attachment|image|photo|external|website)\b/i,
+    reason: "capability disclaimer about links/images/external content",
+  },
+  {
+    // SELF-NARRATED VERDICT / spam class — the model classified the inbound
+    // out loud ("this is just marketing spam", "that's promotional") instead
+    // of simply not replying. Real leak: "This is just Best Buy marketing
+    // spam. No reply."
+    re: /\b(?:this is|that'?s|looks like|just)\b.{0,30}\b(?:spam|marketing|promotional|junk|automated)\b/i,
+    reason: "narrates that the inbound is spam/marketing",
+  },
+  {
+    // …or any draft that simply trails off into a no-reply verdict.
+    re: /\bno reply\b.{0,15}$/i,
+    reason: "narrates a 'no reply' verdict",
   },
   {
     re: /\b(?:seems|looks like|appears?)\b.{0,40}\b(?:empty|blank|missing|issue|problem|trouble|error|broken)\b/i,

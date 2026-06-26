@@ -132,6 +132,19 @@ func main() {
 	}
 	pl := &placement.Engine{Store: clusterStore, Weights: weights}
 
+	// R2 — Manager dialer guard.
+	// In prod the stub dialer logs a fake success and spawns nothing — that is
+	// silent data loss, not graceful degradation. Refuse to start.
+	// In dev the stub is intentional (no runtime-manager needed locally).
+	dialerFatal, dialerMsg := dialer.CheckManagerDialer(
+		dialer.IsProd(),
+		os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR"),
+		os.Getenv("LANTERN_DIALER"),
+	)
+	if dialerFatal {
+		logger.Fatal(dialerMsg)
+	}
+
 	var managerDialer dialer.ManagerDialer
 	if os.Getenv("LANTERN_DIALER") == "stub" || os.Getenv("LANTERN_DEFAULT_MANAGER_ADDR") == "" {
 		managerDialer = dialer.NewLogOnlyDialer(logger)

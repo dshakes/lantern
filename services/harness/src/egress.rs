@@ -37,7 +37,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{AuditEvent, EgressRule, HarnessReport, now_unix_ms};
+use crate::proto::{now_unix_ms, AuditEvent, EgressRule, HarnessReport};
 
 #[derive(Clone, Debug)]
 pub enum Decision {
@@ -371,6 +371,163 @@ pub fn pattern_matches(pattern: &str, host: &str) -> bool {
     } else {
         pattern == host
     }
+}
+
+// ---------------------------------------------------------------------------
+// P2-B7 (2): boot-time egress enforcement preflight.
+//
+// The CONNECT proxy is only advisory unless something FORCES the workload's
+// traffic through it. The two enforcement layers are:
+//   * proxy env injection (supervisor.rs) — honored by well-behaved clients,
+//   * iptables REDIRECT in the VM image — the only layer that catches a client
+//     that ignores proxy env (the real boundary).
+//
+// At boot, when egress rules are declared, we verify the REDIRECT layer is
+// present. If it is absent the workload could bypass the allowlist entirely, so
+// we either FAIL CLOSED (refuse to start; default in production) or log a
+// prominent SECURITY warning + audit event (dev override).
+// ---------------------------------------------------------------------------
+
+/// Outcome of the egress enforcement preflight.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PreflightOutcome {
+    /// Enforcement present, or no egress rules to enforce — safe to proceed.
+    Ok,
+    /// Enforcement absent but the operator opted to proceed (dev). Warn loudly.
+    WarnOnly,
+    /// Enforcement absent and fail-closed is required — refuse to start.
+    FailClosed,
+}
+
+/// Pure decision: given whether egress is configured, whether the iptables
+/// REDIRECT layer was detected, and the fail-closed policy, decide the outcome.
+///
+/// Separated from the syscall/exec so it is unit-testable.
+#[must_use]
+pub fn preflight_decision(
+    egress_configured: bool,
+    redirect_present: bool,
+    fail_closed: bool,
+) -> PreflightOutcome {
+    if !egress_configured || redirect_present {
+        return PreflightOutcome::Ok;
+    }
+    if fail_closed {
+        PreflightOutcome::FailClosed
+    } else {
+        PreflightOutcome::WarnOnly
+    }
+}
+
+/// Default fail-closed policy from the environment. Defaults to FALSE (warn
+/// only) so the dev path and images that haven't yet wired iptables keep
+/// booting; production images set `LANTERN_EGRESS_FAIL_CLOSED=1`.
+fn egress_fail_closed_from_env() -> bool {
+    std::env::var("LANTERN_EGRESS_FAIL_CLOSED")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Detect whether the in-VM iptables REDIRECT-to-proxy rule is present.
+///
+/// Linux: shell out to `iptables-save -t nat` and look for a REDIRECT rule
+/// targeting the proxy port. Best-effort: if iptables is missing or errors,
+/// we report `false` (treated as "enforcement absent"). Non-Linux dev hosts:
+/// always `false` (there's no microVM netfilter to inspect).
+#[cfg(target_os = "linux")]
+fn redirect_rule_present(proxy_port: u16) -> bool {
+    use std::process::Command as StdCommand;
+    let out = match StdCommand::new("iptables-save")
+        .arg("-t")
+        .arg("nat")
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!(error = %e, "egress: iptables-save not available for preflight");
+            return false;
+        }
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let needle = format!("--to-ports {proxy_port}");
+    text.lines()
+        .any(|l| l.contains("REDIRECT") && l.contains(&needle))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn redirect_rule_present(_proxy_port: u16) -> bool {
+    false
+}
+
+/// Run the boot-time egress enforcement preflight.
+///
+/// `egress_configured` is true when the AgentSpec declared any egress rules.
+/// Returns `Err` only in the FailClosed outcome, so the caller refuses to spawn
+/// the workload. Emits an audit event on every non-Ok outcome.
+pub async fn enforcement_preflight(
+    manager: &ManagerClient,
+    egress_configured: bool,
+) -> anyhow::Result<()> {
+    let proxy_port = std::env::var("LANTERN_EGRESS_BIND")
+        .ok()
+        .and_then(|b| b.rsplit(':').next().and_then(|p| p.parse::<u16>().ok()))
+        .unwrap_or(3128);
+    let redirect_present = redirect_rule_present(proxy_port);
+    let fail_closed = egress_fail_closed_from_env();
+    let outcome = preflight_decision(egress_configured, redirect_present, fail_closed);
+
+    match outcome {
+        PreflightOutcome::Ok => {
+            if egress_configured {
+                tracing::info!(
+                    proxy_port,
+                    "egress: enforcement preflight OK (iptables REDIRECT present)"
+                );
+            }
+        }
+        PreflightOutcome::WarnOnly => {
+            tracing::warn!(
+                proxy_port,
+                "egress: SECURITY — egress rules are declared but the iptables REDIRECT \
+                 enforcement layer was NOT detected. The allowlist is ADVISORY only: a workload \
+                 that ignores HTTP(S)_PROXY can bypass it. Install the REDIRECT rule in the VM \
+                 image (see egress.rs header) or set LANTERN_EGRESS_FAIL_CLOSED=1 to refuse to \
+                 start without it."
+            );
+            audit_preflight(manager, proxy_port, "warn_only").await;
+        }
+        PreflightOutcome::FailClosed => {
+            audit_preflight(manager, proxy_port, "fail_closed").await;
+            anyhow::bail!(
+                "egress: refusing to start — egress rules declared but iptables REDIRECT \
+                 enforcement absent and LANTERN_EGRESS_FAIL_CLOSED is set. Install the REDIRECT \
+                 rule in the VM image (see egress.rs header)."
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn audit_preflight(manager: &ManagerClient, proxy_port: u16, decision: &str) {
+    let mut attrs = std::collections::HashMap::new();
+    attrs.insert("decision".into(), "deny".into());
+    attrs.insert(
+        "reason".into(),
+        "iptables REDIRECT enforcement absent".into(),
+    );
+    attrs.insert("preflight".into(), decision.to_string());
+    attrs.insert("proxy_port".into(), proxy_port.to_string());
+    manager
+        .enqueue_report(HarnessReport::Audit(AuditEvent {
+            vm_id: manager.vm_id.clone(),
+            action: "egress_preflight".into(),
+            at_unix_ms: now_unix_ms(),
+            attrs,
+        }))
+        .await;
 }
 
 /// Run the HTTP CONNECT proxy. Binds to 127.0.0.1:3128.
@@ -1248,6 +1405,43 @@ mod tests {
         assert_eq!(
             parse_host_port_with_default("api.example.com", 80),
             ("api.example.com".to_string(), 80)
+        );
+    }
+
+    // ---- P2-B7 (2): egress enforcement preflight ----
+
+    #[test]
+    fn preflight_ok_when_no_egress_configured() {
+        // No rules → nothing to enforce, regardless of REDIRECT presence.
+        assert_eq!(preflight_decision(false, false, true), PreflightOutcome::Ok);
+        assert_eq!(
+            preflight_decision(false, false, false),
+            PreflightOutcome::Ok
+        );
+    }
+
+    #[test]
+    fn preflight_ok_when_redirect_present() {
+        // Egress configured AND enforcement present → safe.
+        assert_eq!(preflight_decision(true, true, true), PreflightOutcome::Ok);
+        assert_eq!(preflight_decision(true, true, false), PreflightOutcome::Ok);
+    }
+
+    #[test]
+    fn preflight_fails_closed_when_configured_but_enforcement_absent() {
+        // The scary case: rules declared, REDIRECT missing, fail-closed on.
+        assert_eq!(
+            preflight_decision(true, false, true),
+            PreflightOutcome::FailClosed
+        );
+    }
+
+    #[test]
+    fn preflight_warns_when_enforcement_absent_but_not_fail_closed() {
+        // Dev override: rules declared, REDIRECT missing, fail-closed off.
+        assert_eq!(
+            preflight_decision(true, false, false),
+            PreflightOutcome::WarnOnly
         );
     }
 }

@@ -5,7 +5,10 @@ package dispatcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"sync"
 
 	"go.opentelemetry.io/otel"
@@ -13,9 +16,18 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
+	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/data-plane-agent/internal/tunnel"
 )
+
+// tenantMetadataKey is the gRPC metadata key read by tenant interceptors.
+const tenantMetadataKey = "tenant_id"
+
+// serviceTokenMetadataKey mirrors control-plane middleware.ServiceTokenMetadataKey.
+// Kept local so the dispatcher does not take a build dep on the control-plane module.
+const serviceTokenMetadataKey = "x-lantern-service-token"
 
 var tracer = otel.Tracer("lantern.data-plane-agent.dispatcher")
 
@@ -23,6 +35,7 @@ var tracer = otel.Tracer("lantern.data-plane-agent.dispatcher")
 type Dispatcher struct {
 	workflowEngineAddr string
 	runtimeManagerAddr string
+	serviceToken       string // LANTERN_GRPC_SERVICE_TOKEN; empty means no token
 	logger             *zap.Logger
 
 	mu         sync.Mutex
@@ -38,14 +51,35 @@ type runState struct {
 	Status         string
 }
 
-// New creates a new Dispatcher.
-func New(workflowEngineAddr, runtimeManagerAddr string, logger *zap.Logger) *Dispatcher {
+// New creates a new Dispatcher. serviceToken is the value of
+// LANTERN_GRPC_SERVICE_TOKEN; pass an empty string in environments where the
+// workflow engine does not require the token (e.g. local dev).
+func New(workflowEngineAddr, runtimeManagerAddr, serviceToken string, logger *zap.Logger) *Dispatcher {
 	return &Dispatcher{
 		workflowEngineAddr: workflowEngineAddr,
 		runtimeManagerAddr: runtimeManagerAddr,
+		serviceToken:       serviceToken,
 		logger:             logger.Named("dispatcher"),
 		activeRuns:         make(map[string]*runState),
 	}
+}
+
+// NewFromEnv is a convenience constructor that reads LANTERN_GRPC_SERVICE_TOKEN
+// from the environment. Callers that read the token themselves should use New directly.
+func NewFromEnv(workflowEngineAddr, runtimeManagerAddr string, logger *zap.Logger) *Dispatcher {
+	return New(workflowEngineAddr, runtimeManagerAddr, os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"), logger)
+}
+
+// NewWithConn creates a Dispatcher using a pre-established gRPC connection to
+// the workflow engine. This is intended for testing; production callers use New.
+func NewWithConn(conn *grpc.ClientConn, serviceToken string, logger *zap.Logger) *Dispatcher {
+	d := &Dispatcher{
+		serviceToken: serviceToken,
+		logger:       logger.Named("dispatcher"),
+		activeRuns:   make(map[string]*runState),
+		weConn:       conn,
+	}
+	return d
 }
 
 // DispatchRun receives a run assignment from the control plane and dispatches
@@ -83,24 +117,132 @@ func (d *Dispatcher) DispatchRun(ctx context.Context, assignment *tunnel.RunAssi
 		return fmt.Errorf("connect to workflow engine: %w", err)
 	}
 
-	// In production, this calls the WorkflowEngine.ScheduleRun RPC:
-	//   resp, err := weClient.ScheduleRun(ctx, &pb.ScheduleRunRequest{
-	//       RunId:          assignment.RunID,
-	//       AgentVersionId: assignment.AgentVersionID,
-	//       TenantId:       assignment.TenantID,
-	//       Config:         assignment.Config,
-	//   })
-	//
-	// For the spike, we simulate acceptance.
-	_ = conn
-
-	d.updateRunStatus(assignment.RunID, "running")
-
-	d.logger.Info("run dispatched successfully",
-		zap.String("run_id", assignment.RunID),
-	)
+	// Dispatch and consume the run stream in a goroutine so DispatchRun
+	// returns quickly and the tunnel loop is not blocked.
+	go d.driveRun(ctx, conn, assignment)
 
 	return nil
+}
+
+// driveRun calls WorkflowEngineService.ExecuteRun, streams events until the
+// stream closes, and drives updateRunStatus based on the final outcome. It
+// marks the run failed if the engine returns an error, and completed/failed
+// according to the terminal StreamEnd event when the stream closes cleanly.
+func (d *Dispatcher) driveRun(ctx context.Context, conn *grpc.ClientConn, assignment *tunnel.RunAssignment) {
+	ctx, span := tracer.Start(ctx, "dispatcher.driveRun")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("run_id", assignment.RunID),
+		attribute.String("tenant_id", assignment.TenantID),
+	)
+
+	runID := assignment.RunID
+
+	weClient := lanternv1.NewWorkflowEngineServiceClient(conn)
+
+	req := &lanternv1.ExecuteRunRequest{
+		RunId:          runID,
+		AgentVersionId: assignment.AgentVersionID,
+	}
+
+	// Inject tenant_id into outgoing metadata (invariant #7). Attach service
+	// token when configured (additive — no-op when empty).
+	outCtx := d.outgoingContext(ctx, assignment.TenantID)
+
+	stream, err := weClient.ExecuteRun(outCtx, req)
+	if err != nil {
+		d.logger.Error("ExecuteRun RPC failed",
+			zap.String("run_id", runID),
+			zap.Error(err),
+		)
+		d.updateRunStatus(runID, "failed")
+		d.CompleteRun(runID, "failed")
+		return
+	}
+
+	d.updateRunStatus(runID, "running")
+	d.logger.Info("run dispatched to workflow engine",
+		zap.String("run_id", runID),
+	)
+
+	finalStatus := "completed"
+
+	for {
+		event, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				// Stream ended cleanly; finalStatus was set from StreamEnd event or
+				// defaults to "completed".
+				break
+			}
+			d.logger.Error("stream receive error",
+				zap.String("run_id", runID),
+				zap.Error(err),
+			)
+			finalStatus = "failed"
+			break
+		}
+
+		switch v := event.GetPayload().(type) {
+		case *lanternv1.StreamEvent_StepStarted:
+			d.logger.Debug("step started",
+				zap.String("run_id", runID),
+				zap.String("step_id", v.StepStarted.GetStepId()),
+				zap.String("kind", v.StepStarted.GetKind()),
+			)
+
+		case *lanternv1.StreamEvent_StepCompleted:
+			d.logger.Debug("step completed",
+				zap.String("run_id", runID),
+				zap.String("step_id", v.StepCompleted.GetStepId()),
+			)
+
+		case *lanternv1.StreamEvent_StepFailed:
+			d.logger.Warn("step failed",
+				zap.String("run_id", runID),
+				zap.String("step_id", v.StepFailed.GetStepId()),
+			)
+			// A step failure doesn't necessarily fail the whole run;
+			// wait for the StreamEnd event for the authoritative terminal status.
+
+		case *lanternv1.StreamEvent_End:
+			reason := v.End.GetReason()
+			d.logger.Debug("stream end",
+				zap.String("run_id", runID),
+				zap.String("reason", reason),
+			)
+			if reason == "failed" {
+				finalStatus = "failed"
+			}
+			// StreamEnd is followed by io.EOF on the next Recv; continue to drain.
+
+		default:
+			// Other event kinds (LlmDelta, ToolCall, Heartbeat, …) are informational.
+			// Log at debug level so they're visible without noise in prod.
+			d.logger.Debug("stream event",
+				zap.String("run_id", runID),
+				zap.String("event_type", fmt.Sprintf("%T", event.GetPayload())),
+			)
+		}
+	}
+
+	d.logger.Info("run finished",
+		zap.String("run_id", runID),
+		zap.String("status", finalStatus),
+	)
+	d.updateRunStatus(runID, finalStatus)
+	d.CompleteRun(runID, finalStatus)
+}
+
+// outgoingContext appends tenant_id (always) and x-lantern-service-token
+// (when non-empty) to the outgoing gRPC metadata on ctx.
+func (d *Dispatcher) outgoingContext(ctx context.Context, tenantID string) context.Context {
+	pairs := []string{tenantMetadataKey, tenantID}
+	if d.serviceToken != "" {
+		pairs = append(pairs, serviceTokenMetadataKey, d.serviceToken)
+	}
+	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }
 
 // ActiveRunCount returns the number of currently active runs.

@@ -116,6 +116,30 @@ const BOT_SELF_PREFIXES: string[] = [
   "📅 looks like an appointment", // appointment-detector heads-up
   "📍 got it",               // presence/status acks ("📍 got it — you're …")
   "🟡 medium-confidence",    // medium-confidence reply heads-up
+
+  // ── Life-event engine owner pings (self-chat) ──
+  // The LIFE-EVENT ENGINE surfaces typed transactional inbound (bill, delivery,
+  // fraud, OTP, receipt, travel) to the owner self-chat with one-tap actions.
+  // Without these prefixes the bot would re-ingest its OWN ping as an owner
+  // query once the recentBridgeSends window expires. Keep in sync with
+  // LIFE_EVENT_SELF_PREFIXES in life-events.ts.
+  "💸 ",                     // bill ping ("💸 GEICO $1,989.85 due Jun 30…")
+  "📦 ",                     // delivery ping + "📦 logged delivery" auto-act log
+  "⚠️ ",                     // fraud ping ("⚠️ Amex flagged a declined charge…")
+  "🔑 ",                     // OTP surface ("🔑 your code is 611586…")
+  "🧾 ",                     // receipt ("🧾 Amazon $35.99 — order confirmed.")
+  "✈️ ",                     // travel ("✈️ travel update …")
+
+  // ── AUTO-ACT LADDER (self-chat logs + acks) ──
+  // The bot auto-executes safe reversible actions and logs them with an undo.
+  // Without these prefixes it would re-ingest its own "📅 added to your
+  // calendar…" / "📦 logged delivery…" log as an owner query once the
+  // recentBridgeSends window expires. Keep in sync with LIFE_EVENT_SELF_PREFIXES.
+  "📅 ",                     // "📅 added to your calendar — …" auto-act log (+ "📅 added to calendar")
+  "🤖 ",                     // "🤖 today i auto-handled …" recap + auto-act acks
+  "↩️ ",                     // "↩️ undone — removed it." undo ack
+  "⏸ automation",            // "⏸ automation paused — …" command echo
+  "▶️ automation",           // "▶️ automation resumed — …" command echo
 ];
 
 // Common LLM-reply patterns we've ALSO observed leaking through as
