@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import {
   Radar,
   Brain,
@@ -26,7 +27,7 @@ function Cells({ items }: { items: Cell[] }) {
 
 type LayerProps = {
   tone: "sky" | "amber" | "violet" | "emerald";
-  icon: React.ReactNode;
+  icon: ReactNode;
   num: string;
   title: string;
   tagline: string;
