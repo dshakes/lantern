@@ -1772,7 +1772,7 @@ export class IMessageSession {
 
     const decision = proactiveDecision(event, prefs);
 
-    if (decision.route === "suppress") return true; // owned + dropped
+    if (decision.route === "suppress") return true; // owned + dropped — do NOT emit
 
     if (!owner) {
       // No self-chat target — surface to the dashboard feed so it isn't invisible.
@@ -1782,6 +1782,19 @@ export class IMessageSession {
 
     if (decision.route === "digest") {
       this.lifeEventDigestQueue.push(decision.ownerMessage);
+      // Emit to Automations dashboard (best-effort, fire-and-forget).
+      void (async () => {
+        try {
+          const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+          const { authedFetch } = await import("@lantern/bridge-core/auth");
+          await emitLifeEvent(event, "suggested", {
+            idempotencyKey: auto.idempotencyKey,
+            summary: decision.ownerMessage,
+            poster: authedFetch as any,
+            log: this.logger as any,
+          });
+        } catch { /* best-effort */ }
+      })();
       return true;
     }
 
@@ -1798,6 +1811,19 @@ export class IMessageSession {
         issuedAt: Date.now(),
       } as any);
     }
+    // Emit to Automations dashboard (best-effort, fire-and-forget).
+    void (async () => {
+      try {
+        const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+        const { authedFetch } = await import("@lantern/bridge-core/auth");
+        await emitLifeEvent(event, "suggested", {
+          idempotencyKey: auto.idempotencyKey,
+          summary: decision.ownerMessage,
+          poster: authedFetch as any,
+          log: this.logger as any,
+        });
+      } catch { /* best-effort */ }
+    })();
     return true;
   }
 
@@ -1846,6 +1872,20 @@ export class IMessageSession {
         await this.send(owner, log).catch(() => {});
         this.noteAutoAction(log);
         this.armAutoActUndo(owner, event.kind, idempotencyKey, { undoTarget: "delivery-note", undoNoteLine: line }, log, rawText);
+        // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
+        void (async () => {
+          try {
+            const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+            const { authedFetch } = await import("@lantern/bridge-core/auth");
+            await emitLifeEvent(event, "auto_acted", {
+              idempotencyKey,
+              actionTaken: "logged in Deliveries note",
+              summary: log,
+              poster: authedFetch as any,
+              log: this.logger as any,
+            });
+          } catch { /* best-effort */ }
+        })();
         return;
       }
 
@@ -1865,6 +1905,20 @@ export class IMessageSession {
       await this.send(owner, log).catch(() => {});
       this.noteAutoAction(log);
       this.armAutoActUndo(owner, event.kind, idempotencyKey, { undoTarget: "calendar", undoTitle: title, undoStartIso: startIso }, log, rawText);
+      // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
+      void (async () => {
+        try {
+          const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+          const { authedFetch } = await import("@lantern/bridge-core/auth");
+          await emitLifeEvent(event, "auto_acted", {
+            idempotencyKey,
+            actionTaken: `added to calendar — ${title}`,
+            summary: log,
+            poster: authedFetch as any,
+            log: this.logger as any,
+          });
+        } catch { /* best-effort */ }
+      })();
     } catch (err) {
       this.logger.error({ err, kind: event.kind }, "auto-act execution threw — falling back to suggest");
       await this.autoActFallbackToSuggest(owner, event, rawText, "exception");
@@ -4683,6 +4737,30 @@ export class IMessageSession {
           await this.send(jid, "↩️ undone — removed it.").catch(() => {});
           if (offer.undoIdempotencyKey) unmarkActed(offer.undoIdempotencyKey);
           if (offer.undoLifeEventKind) persistAutoUndo(offer.undoLifeEventKind as any);
+          // Emit undone to Automations dashboard (best-effort, fire-and-forget).
+          void (async () => {
+            try {
+              const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+              const { authedFetch } = await import("@lantern/bridge-core/auth");
+              await emitLifeEvent(
+                {
+                  kind: (offer.undoLifeEventKind || "other") as any,
+                  confidence: 1,
+                  urgency: "fyi",
+                  fields: {},
+                  rawText: offer.freeformInbound || "",
+                  channel: "iMessage",
+                },
+                "undone",
+                {
+                  idempotencyKey: offer.undoIdempotencyKey,
+                  summary: "↩️ undone — removed it.",
+                  poster: authedFetch as any,
+                  log: this.logger as any,
+                },
+              );
+            } catch { /* best-effort */ }
+          })();
         } else {
           await this.send(jid, `(couldn't undo: ${res.reason})`).catch(() => {});
         }

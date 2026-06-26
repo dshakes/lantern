@@ -3103,13 +3103,25 @@ export class WhatsAppSession {
 
     const decision = proactiveDecision(event, prefs);
 
-    if (decision.route === "suppress") return true;
+    if (decision.route === "suppress") return true; // owned + dropped — do NOT emit
     if (!ownJid) {
       this.logActivity("attention_dm", decision.ownerMessage, { scope: "self" });
       return true;
     }
     if (decision.route === "digest") {
       this.lifeEventDigestQueue.push(decision.ownerMessage);
+      // Emit to Automations dashboard (best-effort, fire-and-forget).
+      void (async () => {
+        try {
+          const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+          await emitLifeEvent(event, "suggested", {
+            idempotencyKey: auto.idempotencyKey,
+            summary: decision.ownerMessage,
+            poster: authedFetch as any,
+            log: this.logger as any,
+          });
+        } catch { /* best-effort */ }
+      })();
       return true;
     }
 
@@ -3126,6 +3138,18 @@ export class WhatsAppSession {
         issuedAt: Date.now(),
       } as any);
     }
+    // Emit to Automations dashboard (best-effort, fire-and-forget).
+    void (async () => {
+      try {
+        const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+        await emitLifeEvent(event, "suggested", {
+          idempotencyKey: auto.idempotencyKey,
+          summary: decision.ownerMessage,
+          poster: authedFetch as any,
+          log: this.logger as any,
+        });
+      } catch { /* best-effort */ }
+    })();
     return true;
   }
 
@@ -3171,6 +3195,19 @@ export class WhatsAppSession {
         await this.confirmToSelf(log).catch(() => {});
         this.noteAutoAction(log);
         this.armAutoActUndo(ownJid, event.kind, idempotencyKey, { undoTarget: "delivery-note", undoNoteLine: line }, log, rawText);
+        // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
+        void (async () => {
+          try {
+            const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+            await emitLifeEvent(event, "auto_acted", {
+              idempotencyKey,
+              actionTaken: "logged in Deliveries note",
+              summary: log,
+              poster: authedFetch as any,
+              log: this.logger as any,
+            });
+          } catch { /* best-effort */ }
+        })();
         return;
       }
       const startIso = eventStartIso(event);
@@ -3187,6 +3224,19 @@ export class WhatsAppSession {
       await this.confirmToSelf(log).catch(() => {});
       this.noteAutoAction(log);
       this.armAutoActUndo(ownJid, event.kind, idempotencyKey, { undoTarget: "calendar", undoTitle: title, undoStartIso: startIso }, log, rawText);
+      // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
+      void (async () => {
+        try {
+          const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+          await emitLifeEvent(event, "auto_acted", {
+            idempotencyKey,
+            actionTaken: `added to calendar — ${title}`,
+            summary: log,
+            poster: authedFetch as any,
+            log: this.logger as any,
+          });
+        } catch { /* best-effort */ }
+      })();
     } catch (err) {
       this.logger.error({ err, kind: event.kind }, "auto-act execution threw — falling back to suggest");
       await this.autoActFallbackToSuggest(ownJid, event, rawText, "exception");
@@ -5290,6 +5340,29 @@ export class WhatsAppSession {
           await this.confirmToSelf("↩️ undone — removed it.").catch(() => {});
           if (offer.undoIdempotencyKey) unmarkActed(offer.undoIdempotencyKey);
           if (offer.undoLifeEventKind) persistAutoUndo(offer.undoLifeEventKind as any);
+          // Emit undone to Automations dashboard (best-effort, fire-and-forget).
+          void (async () => {
+            try {
+              const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+              await emitLifeEvent(
+                {
+                  kind: (offer.undoLifeEventKind || "other") as any,
+                  confidence: 1,
+                  urgency: "fyi",
+                  fields: {},
+                  rawText: offer.freeformInbound || "",
+                  channel: "WhatsApp",
+                },
+                "undone",
+                {
+                  idempotencyKey: offer.undoIdempotencyKey,
+                  summary: "↩️ undone — removed it.",
+                  poster: authedFetch as any,
+                  log: this.logger as any,
+                },
+              );
+            } catch { /* best-effort */ }
+          })();
         } else {
           await this.confirmToSelf(`(couldn't undo: ${res.reason})`).catch(() => {});
         }

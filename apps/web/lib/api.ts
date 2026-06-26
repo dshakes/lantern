@@ -2034,6 +2034,46 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       body: JSON.stringify(body),
     });
   }
+
+  // ---- Life events (Automations feed) --------------------------------------
+
+  async listLifeEvents(params?: {
+    status?: string;
+    kind?: string;
+    limit?: number;
+  }): Promise<LifeEvent[]> {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.kind) qs.set("kind", params.kind);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const query = qs.toString();
+    return this.request<LifeEvent[]>(`/v1/life-events${query ? `?${query}` : ""}`);
+  }
+
+  async undoLifeEvent(id: string): Promise<{ id: string; status: string }> {
+    return this.request<{ id: string; status: string }>(
+      `/v1/life-events/${encodeURIComponent(id)}/undo`,
+      { method: "POST" },
+    );
+  }
+
+  async dismissLifeEvent(id: string): Promise<{ id: string; status: string }> {
+    return this.request<{ id: string; status: string }>(
+      `/v1/life-events/${encodeURIComponent(id)}/dismiss`,
+      { method: "POST" },
+    );
+  }
+
+  async getLifeEventPrefs(): Promise<LifeEventPref[]> {
+    return this.request<LifeEventPref[]>(`/v1/life-events/prefs`);
+  }
+
+  async setLifeEventPref(body: LifeEventPref): Promise<LifeEventPref> {
+    return this.request<LifeEventPref>(`/v1/life-events/prefs`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2244,3 +2284,45 @@ export interface RehearseResponse {
 }
 
 export const api = new LanternAPI();
+
+// ---------------------------------------------------------------------------
+// Life-event types (Automations feed)
+// ---------------------------------------------------------------------------
+
+export type LifeEventKind =
+  | "bill"
+  | "delivery"
+  | "appointment"
+  | "fraud_alert"
+  | "otp"
+  | "travel"
+  | "receipt"
+  | "promo";
+
+export type LifeEventStatus =
+  | "suggested"
+  | "auto-acted"
+  | "undone"
+  | "dismissed";
+
+export type LifeEventMode = "auto" | "ask" | "off";
+
+export interface LifeEvent {
+  id: string;
+  kind: LifeEventKind;
+  channel: string;
+  status: LifeEventStatus;
+  urgency?: string;
+  summary: string;
+  fields: Record<string, unknown>;
+  idempotencyKey?: string;
+  actionTaken?: string;
+  sourcePreview?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LifeEventPref {
+  kind: LifeEventKind;
+  mode: LifeEventMode;
+}
