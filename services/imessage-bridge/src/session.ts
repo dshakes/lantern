@@ -1360,6 +1360,22 @@ export class IMessageSession {
     return this.iphoneSignalsSummaryLine; // last-known, possibly ""
   }
 
+  // CONTACT-FACING availability derived from the iPhone signals (driving / Focus
+  // status / geofence), for the concierge. Unlike the owner summary this CAN
+  // reach a contact — it is availability-only and carries no place. Returns null
+  // when disabled or no usable signal (caller falls back to macOS Focus /
+  // calendar / free). Never throws.
+  private async contactIphonePresence(): Promise<import("@lantern/bridge-core/device-signals").SignalPresence | null> {
+    if ((process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() === "off") return null;
+    try {
+      const { readDevicePresence } = await import("./device-signals-reader.js");
+      return readDevicePresence(this.logger);
+    } catch (err) {
+      this.logger.debug({ err }, "iPhone presence read failed (no-op)");
+      return null;
+    }
+  }
+
   // Gather the signals available to this bridge for the nudge engine. All
   // best-effort — any sub-failure degrades to an empty slice, never throws.
   private async gatherProactiveSignals(now: number): Promise<{
@@ -3711,6 +3727,10 @@ export class IMessageSession {
     // are computed synchronously above, so we fan them out in parallel
     // instead of awaiting serially. allEpisodes/lowContext still merge them
     // afterward exactly as before.
+    // iPhone-signal availability (focus/device/location from the phone) for the
+    // contact-facing concierge — availability-only, never a place. Read fresh
+    // (sub-ms local file) so presence reflects the owner's CURRENT phone state.
+    const iphonePresence = !isGroup ? await this.contactIphonePresence() : null;
     const [dislikeEntries, episodes, mentionEpisodes, related, presenceSnap] = await Promise.all([
       !isGroup ? this.dislikeMemory.forJid(row.handle, 3) : Promise.resolve([]),
       !isGroup ? this.episodicMemory.forJid(row.handle, 5) : Promise.resolve([]),
@@ -3724,6 +3744,7 @@ export class IMessageSession {
         nextEvent: async () => {
           try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
         },
+        iphone: iphonePresence,
       }),
     ]);
     const dislikeBlock = formatDislikeBlock(dislikeEntries);

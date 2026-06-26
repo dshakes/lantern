@@ -27,7 +27,9 @@ import type { Logger } from "pino";
 import {
   parseSignals,
   summarizeDeviceSignals,
+  presenceFromSignals,
   type DeviceSummary,
+  type SignalPresence,
 } from "@lantern/bridge-core/device-signals";
 
 /** Default device-signals JSONL location for the current user. */
@@ -85,5 +87,32 @@ export function readDeviceSignalsSummary(
   } catch (err) {
     log.debug({ err: (err as Error).message }, "device-signals read failed (no-op, fails closed)");
     return empty;
+  }
+}
+
+/**
+ * Read the latest iPhone signals and derive owner AVAILABILITY for the
+ * contact-facing concierge (presence.ts source #1.5). Unlike the summary, this
+ * result IS allowed to reach a contact — it is availability-only and carries NO
+ * place/whereabouts (presenceFromSignals guarantees this). Fails closed: returns
+ * null on any error / missing file, and null when no focus/device/location
+ * signal is in-window (caller falls back to macOS Focus / calendar / free).
+ */
+export function readDevicePresence(
+  logger: Logger,
+  opts: ReadDeviceSignalsOpts = {},
+): SignalPresence | null {
+  const filePath = opts.filePath ?? defaultDeviceSignalsPath();
+  if (!existsSync(filePath)) return null;
+  try {
+    const lines = readFileSync(filePath, "utf8").split("\n").filter(Boolean);
+    const tail = lines.slice(-(opts.maxLines ?? DEFAULT_MAX_LINES));
+    return presenceFromSignals(parseSignals(tail), { nowMs: opts.nowMs, windowMs: opts.windowMs });
+  } catch (err) {
+    logger.child({ component: "device-signals-reader" }).debug(
+      { err: (err as Error).message },
+      "device presence read failed (no-op, fails closed)",
+    );
+    return null;
   }
 }
