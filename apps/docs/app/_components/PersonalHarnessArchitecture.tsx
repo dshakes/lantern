@@ -151,23 +151,23 @@ export function PersonalHarnessArchitecture() {
             ]}
           />
         </div>
-
-        {/* Cross-cutting safety & privacy rail */}
-        <Link href="#safety" className="harness-rail">
-          <div className="harness-rail-head">
-            <ShieldCheck className="h-4 w-4 text-rose-300" />
-            <span>Safety &amp; Privacy</span>
-            <span className="harness-rail-sub">runs alongside every layer</span>
-          </div>
-          <ul className="harness-rail-list">
-            <li>Owner-only enforcement</li>
-            <li>Location-leak guard</li>
-            <li>Kill switch</li>
-            <li>Local 0600 / path-restricted</li>
-            <li>Secrets never logged</li>
-          </ul>
-        </Link>
       </div>
+
+      {/* Safety & Privacy — full-width band, applies across every layer */}
+      <Link href="#safety" className="harness-rail">
+        <div className="harness-rail-head">
+          <ShieldCheck className="h-4 w-4 text-rose-300" />
+          <span>Safety &amp; Privacy</span>
+          <span className="harness-rail-sub">applies across every layer</span>
+        </div>
+        <ul className="harness-rail-list">
+          <li>Owner-only enforcement</li>
+          <li>Location-leak guard</li>
+          <li>Kill switch</li>
+          <li>Local 0600 / path-restricted</li>
+          <li>Secrets never logged</li>
+        </ul>
+      </Link>
 
       {/* Bottom substrate — control plane */}
       <div className="harness-base">
