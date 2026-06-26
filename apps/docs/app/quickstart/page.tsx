@@ -9,7 +9,13 @@ export default function QuickStartPage() {
       </p>
 
       <div className="callout callout-info">
-        <strong>Need the stack running first?</strong> Follow the <Link href="/installation">Installation guide</Link> (2 min), then return here.
+        <strong>Verify your stack first: <code>lantern doctor</code></strong>
+        <br />
+        Before running the steps below, confirm the stack is healthy:
+        <pre><code>{`# Build the CLI once, then run the readiness check:
+( cd packages/cli && go install ./cmd/lantern )
+lantern doctor`}</code></pre>
+        All checks must show ✓ before continuing. Need the stack running first? Follow the <Link href="/installation">Installation guide</Link> (2 min).
       </div>
 
       <div className="steps">
@@ -38,32 +44,33 @@ curl -s -X POST http://localhost:8080/v1/settings/llm-providers/anthropic/test \
   -H "Authorization: Bearer $LANTERN_TOKEN"
 # → {"ok":true}`}</code></pre>
           <div className="callout callout-tip">
-            <strong>OpenAI works too.</strong> Use <code>"provider":"openai"</code> with your OpenAI key. Any configured provider is available.
+            <strong>OpenAI works too.</strong> Use <code>&quot;provider&quot;:&quot;openai&quot;</code> with your OpenAI key. Any configured provider is available.
           </div>
         </div>
 
         <div className="step">
           <h3>Create an agent</h3>
+          <p>The system prompt field is <code>systemPrompt</code> — not <code>instructions</code>.</p>
           <pre><code>{`curl -s -X POST http://localhost:8080/v1/agents \\
   -H "Authorization: Bearer $LANTERN_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{
     "name": "my-first-agent",
-    "instructions": "Answer questions clearly and concisely.",
-    "model": "auto"
+    "systemPrompt": "Answer questions clearly and concisely."
   }' | jq .`}</code></pre>
           <div className="callout callout-tip">
-            <strong><code>"model":"auto"</code></strong> lets the router pick the best available model. Use <code>"reasoning-large"</code> or <code>"reasoning-small"</code> for capability tiers. Never hard-code vendor model names — the router handles that mapping.
+            <strong>Model routing is automatic.</strong> The router picks the best configured provider. Use <code>&quot;reasoning-large&quot;</code> or <code>&quot;reasoning-small&quot;</code> capability tiers in run input to influence routing. Never hard-code vendor model names.
           </div>
         </div>
 
         <div className="step">
           <h3>Run the agent</h3>
+          <p>The run body uses <code>agentName</code> (camelCase):</p>
           <pre><code>{`export RUN_ID=$(curl -s -X POST http://localhost:8080/v1/runs \\
   -H "Authorization: Bearer $LANTERN_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "agent_name": "my-first-agent",
+    "agentName": "my-first-agent",
     "input": {"message": "What are the three laws of thermodynamics?"}
   }' | jq -r '.id')
 
@@ -76,10 +83,15 @@ echo "Run ID: $RUN_ID"`}</code></pre>
           <pre><code>{`curl -N http://localhost:8080/v1/runs/$RUN_ID/events \\
   -H "Authorization: Bearer $LANTERN_TOKEN" \\
   -H "Accept: text/event-stream"`}</code></pre>
-          <pre><code>{`data: {"kind":"run_started","run_id":"...","seq":1}
-data: {"kind":"step_started","step_id":"...","seq":2}
-data: {"kind":"step_completed","step_id":"...","output":"...","seq":3}
-data: {"kind":"run_completed","cost_usd":0.0004,"tokens_in":45,"tokens_out":120,"seq":4}`}</code></pre>
+          <p>Example output (event kinds emitted by the plain-LLM path):</p>
+          <pre><code>{`event: step_started
+data: {"seq":1,"kind":"step_started","stepId":"llm:main","attempt":1,"payload":{"name":"llm:main"},"createdAt":"..."}
+
+event: step_completed
+data: {"seq":2,"kind":"step_completed","stepId":"llm:main","attempt":1,"payload":{"output":"The three laws..."},"createdAt":"..."}
+
+event: run_completed
+data: {"seq":3,"kind":"run_completed","attempt":0,"payload":{"cost_usd":0.0004,"tokens_in":45,"tokens_out":120},"createdAt":"..."}`}</code></pre>
           <div className="callout callout-tip">
             <strong>Dashboard view:</strong> open <a href="http://localhost:3001/runs" target="_blank" rel="noopener noreferrer">localhost:3001/runs</a> to see the waterfall timeline, cost breakdown, and full event log.
           </div>
@@ -91,7 +103,7 @@ data: {"kind":"run_completed","cost_usd":0.0004,"tokens_in":45,"tokens_out":120,
       <div className="card-grid">
         <Link href="/agents" className="card">
           <div className="card-title">Agents</div>
-          <div className="card-desc">Instructions, tools, visual editor, guardrails.</div>
+          <div className="card-desc">System prompts, tools, visual editor, guardrails.</div>
         </Link>
         <Link href="/connectors" className="card">
           <div className="card-title">Connectors</div>

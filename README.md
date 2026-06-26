@@ -216,6 +216,13 @@ make dev          # builds + starts the full stack
 
 Open **http://localhost:3001** · log in with **`admin@lantern.dev` / `lantern`** · run `make seed` for sample data.
 
+Verify the stack is ready before doing anything else:
+
+```bash
+( cd packages/cli && go install ./cmd/lantern )
+lantern doctor    # checks health, auth, LLM provider, and a live run
+```
+
 > The macOS WhatsApp/iMessage bridges need macOS Contacts/Calendar/chat.db — they are not part of the Linux `make dev` stack. Run them on a Mac with `lantern dev` or `make run-whatsapp-bridge` / `make run-imessage-bridge`. First time? `make bridge-setup` is an interactive wizard.
 
 <details>
