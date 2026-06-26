@@ -79,7 +79,7 @@ spec:
       <h2 id="run">3. Run it</h2>
       <p>The CLI schedules the spec and tails the logs:</p>
       <pre><code>{`lantern run examples/headless-agents/01-hello/agent.yaml \\
-  --input '{"name": "Shekhar"}'`}</code></pre>
+  --input '{"name": "Ada"}'`}</code></pre>
       <p>Or POST the spec directly to the control plane:</p>
       <pre><code>{`curl -X POST http://localhost:8080/v1/runtime/schedule \\
   -H "Authorization: Bearer $LANTERN_API_TOKEN" \\

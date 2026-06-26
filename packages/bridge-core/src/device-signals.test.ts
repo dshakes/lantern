@@ -339,7 +339,7 @@ test("deviceContextBlock accepts a full summary object", () => {
 });
 
 // ─── presenceFromSignals (contact-facing availability) ───────────────────────
-test("presenceFromSignals: device driving (CarPlay/Tesla) → driving, away", () => {
+test("presenceFromSignals: device driving (CarPlay / car Bluetooth) → driving, away", () => {
   const p = presenceFromSignals([sig("device", 5, { detail: "driving" })], { nowMs: NOW });
   assert.equal(p?.state, "driving");
   assert.equal(p?.away, true);

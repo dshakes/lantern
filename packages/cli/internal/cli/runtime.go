@@ -51,7 +51,7 @@ loaded from the YAML file at the given path and POSTed to /v1/runtime/schedule.
 The spawned VM's logs can be streamed in real-time with --follow.
 
 Examples:
-  lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name":"Shekhar"}'
+  lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name":"Ada"}'
   lantern run my-agent.yaml --follow`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

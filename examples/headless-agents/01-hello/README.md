@@ -13,7 +13,7 @@ loading, no external network. K8s Job backend, ~100ms warm start.
 docker build -t lantern/demos/hello:latest examples/headless-agents/01-hello
 
 # Schedule via CLI
-lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name": "Shekhar"}'
+lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name": "Ada"}'
 
 # Watch the live log in the dashboard
 open http://localhost:3000/runtime
