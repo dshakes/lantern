@@ -56,7 +56,10 @@ function wordCount(msg: string): number {
 
 // Comparison key for near-duplicate collapse: lowercased, emoji +
 // punctuation + whitespace stripped. "ok!", "Ok", "ok 👍" → "ok".
-function dedupeKey(msg: string): string {
+// Exported so the corpus miners (chat.db / wa-history) collapse
+// near-duplicates with the SAME rule the exemplar selector uses — a
+// single source of truth for "these two messages are the same voice".
+export function dedupeKey(msg: string): string {
   return msg
     .toLowerCase()
     .replace(/\p{Extended_Pictographic}|️|‍/gu, "")

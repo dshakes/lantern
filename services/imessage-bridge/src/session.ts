@@ -188,6 +188,7 @@ import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
 import {
   ownerVoiceExemplars,
   formatOwnerVoiceBlock,
+  dedupeKey as ownerVoiceDedupeKey,
   type OwnerVoiceSample,
 } from "@lantern/bridge-core/owner-voice";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
@@ -341,6 +342,12 @@ export class IMessageSession {
   // themselves (used as exemplars for "talk like Shekhar").
   private inboundHistory: Map<string, string[]> = new Map();
   private ownerSentHistory: Map<string, string[]> = new Map();
+  // GLOBAL owner-voice pool mined from a DEEP scan of chat.db (across all
+  // contacts, reaching past the bot-dominated recent rows). Unioned into
+  // the per-contact buckets when building the persona voice block so even
+  // a thin/new contact hears the owner's real voice from hundreds of
+  // authentic samples. Seeded once at boot; bot-self lines filtered out.
+  private ownerVoiceGlobal: string[] = [];
   private contactNames: Map<string, string> = new Map(); // handle -> display name
 
   // Last non-empty handle we saw on an isFromMe row. iMessage's
@@ -962,6 +969,10 @@ export class IMessageSession {
     for (const msgs of this.ownerSentHistory.values()) {
       for (const m of msgs) samples.push({ text: m });
     }
+    // Union in the deep-scan global pool. ownerVoiceExemplars dedupes
+    // (same key as the corpus miner) so per-contact + global overlap
+    // collapses; the global pool just widens reach + register diversity.
+    for (const m of this.ownerVoiceGlobal) samples.push({ text: m });
     if (samples.length === 0) return "";
     // relevantTo (the current inbound) ranks exemplars by keyword overlap so
     // the few-shot is shaped like the message being answered — recency is the
@@ -4626,6 +4637,30 @@ export class IMessageSession {
       this.logger.info(
         { contactsSeeded, samplesSeeded },
         "seeded owner-voice samples from chat.db history",
+      );
+
+      // GLOBAL pool: deep scan across all contacts, reaching past the
+      // bot-dominated recent rows into the owner's authentic pre-bot
+      // voice. Filter bot-self (essential — they'd poison the voice) and
+      // dedupe by the shared key. Capped at 600; ownerVoiceExemplars
+      // ranks/trims this to the few-shot per reply.
+      const corpus = this.db.ownerVoiceCorpus({ limit: 600 });
+      const globalSeen = new Set<string>();
+      const global: string[] = [];
+      for (const raw of corpus) {
+        const text = raw.trim();
+        if (!text || isBotSelfMessage(text)) continue;
+        const key = ownerVoiceDedupeKey(text);
+        if (key) {
+          if (globalSeen.has(key)) continue;
+          globalSeen.add(key);
+        }
+        global.push(text);
+      }
+      this.ownerVoiceGlobal = global;
+      this.logger.info(
+        { globalSamples: global.length, scanned: corpus.length },
+        "seeded global owner-voice corpus from chat.db",
       );
     } catch (err) {
       // Never let cold-start mining break the bridge.

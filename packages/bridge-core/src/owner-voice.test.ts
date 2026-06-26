@@ -10,6 +10,7 @@ import {
   ownerVoiceExemplars,
   isTeluguSample,
   formatOwnerVoiceBlock,
+  dedupeKey,
   type OwnerVoiceSample,
 } from "./owner-voice.ts";
 import { agentPersonaPrompt, inferStyle } from "./natural.ts";
@@ -124,6 +125,57 @@ test("persona prompt includes the global owner-voice block", () => {
   });
   assert.match(prompt, /HOW SHEKHAR ACTUALLY WRITES/);
   assert.match(prompt, /> lemme check/);
+});
+
+// ── dedupeKey (shared collapse rule used by the corpus miners) ────────
+
+test("dedupeKey: collapses case/emoji/punctuation variants to one key", () => {
+  assert.equal(dedupeKey("ok!"), dedupeKey("Ok"));
+  assert.equal(dedupeKey("ok 👍"), dedupeKey("ok"));
+  assert.equal(dedupeKey("on my way!!"), dedupeKey("On My Way"));
+  assert.notEqual(dedupeKey("yes"), dedupeKey("no"));
+});
+
+// ── Corpus miner pure pipeline (length gate + dedupe-by-key) ──────────
+// Mirrors ChatDB.ownerVoiceCorpus / WA seedOwnerSentFromHistory in-memory
+// logic: drop <2 or >280 chars, collapse near-dupes, cap at `limit`.
+function corpusFilter(rows: string[], limit: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of rows) {
+    const text = raw.trim();
+    if (text.length < 2 || text.length > 280) continue;
+    const key = dedupeKey(text);
+    if (key) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    out.push(text);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+test("corpus filter: drops too-short and too-long, dedupes, respects limit", () => {
+  const long = "x".repeat(281);
+  const rows = [
+    "k",                 // too short (1 char) → dropped
+    "ok cool",           // kept
+    "Ok cool!",          // dup of "ok cool" → dropped
+    "lemme check",       // kept
+    long,                // too long → dropped
+    "see you at 6",      // kept
+    "  on my way  ",     // kept (trimmed)
+    "On my way",         // dup → dropped
+  ];
+  const out = corpusFilter(rows, 600);
+  assert.deepEqual(out, ["ok cool", "lemme check", "see you at 6", "on my way"]);
+});
+
+test("corpus filter: caps at limit, newest-first preserved by caller order", () => {
+  const rows = ["one two", "three four", "five six", "seven eight"];
+  const out = corpusFilter(rows, 2);
+  assert.deepEqual(out, ["one two", "three four"]);
 });
 
 test("persona prompt: anti-repetition forbids reusing the same offer", () => {

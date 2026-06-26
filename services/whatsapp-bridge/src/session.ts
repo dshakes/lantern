@@ -58,6 +58,7 @@ import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
 import {
   ownerVoiceExemplars,
   formatOwnerVoiceBlock,
+  dedupeKey as ownerVoiceDedupeKey,
   type OwnerVoiceSample,
 } from "@lantern/bridge-core/owner-voice";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
@@ -1330,6 +1331,14 @@ export class WhatsAppSession {
   // Still bounded per-contact so total memory stays small (≤30 short
   // strings × #contacts).
   private static readonly OWNER_SENT_PER_CONTACT = 30;
+  // GLOBAL owner-voice pool mined from a DEEP, un-bucketed scan of the
+  // ~14-day wa-history.jsonl (all 1:1 fromMe entries, not capped per
+  // contact). Unioned into the persona voice block so a thin/new contact
+  // still hears the owner's real voice across hundreds of authentic
+  // samples. Dated by each entry's `ts` so recency ranking works. Capped
+  // at OWNER_VOICE_GLOBAL_CAP; bot-self lines filtered out.
+  private ownerVoiceGlobal: OwnerVoiceSample[] = [];
+  private static readonly OWNER_VOICE_GLOBAL_CAP = 600;
   // Ring buffer of the bot's own recent OUTBOUND replies per contact jid.
   // Fed to the persona prompt as an anti-repetition signal so the bot
   // never sends the same canned line three times in a thread. In-memory;
@@ -1708,6 +1717,10 @@ export class WhatsAppSession {
     for (const msgs of this.ownerSentHistory.values()) {
       for (const m of msgs) samples.push({ text: m });
     }
+    // Union in the deep-scan global pool (dated, so recency ranking
+    // works). ownerVoiceExemplars dedupes so overlap with the per-contact
+    // buckets collapses; the global pool just widens reach + diversity.
+    for (const s of this.ownerVoiceGlobal) samples.push(s);
     if (samples.length === 0) return "";
     // relevantTo (the current inbound) ranks exemplars by keyword overlap so
     // the few-shot is shaped like the message being answered — recency is the
@@ -7718,6 +7731,10 @@ export class WhatsAppSession {
       // Group fromMe samples per jid, preserving file order (oldest →
       // newest, since history is appended chronologically).
       const byJid = new Map<string, string[]>();
+      // GLOBAL pool: every authentic 1:1 fromMe entry (un-bucketed,
+      // newest-first after sort), deduped by the shared key, dated by ts.
+      const globalSeen = new Set<string>();
+      const globalAll: OwnerVoiceSample[] = [];
       const raw = readFileSync(this.historyFile, "utf-8");
       for (const line of raw.split("\n")) {
         if (!line) continue;
@@ -7726,6 +7743,7 @@ export class WhatsAppSession {
           isGroup?: boolean;
           fromMe?: boolean;
           text?: string;
+          ts?: number;
         };
         try {
           e = JSON.parse(line);
@@ -7746,7 +7764,22 @@ export class WhatsAppSession {
           byJid.set(jid, arr);
         }
         arr.push(t);
+        // Feed the global pool (length-2 floor matches the iMessage corpus;
+        // upper bound already enforced above).
+        if (t.length >= 2) {
+          const key = ownerVoiceDedupeKey(t);
+          if (!key || !globalSeen.has(key)) {
+            if (key) globalSeen.add(key);
+            globalAll.push(typeof e.ts === "number" ? { text: t, ts: e.ts } : { text: t });
+          }
+        }
       }
+
+      // Keep the most-recent OWNER_VOICE_GLOBAL_CAP samples (dated newest
+      // first; undated sink last). ownerVoiceExemplars ranks/trims to the
+      // per-reply few-shot from here.
+      globalAll.sort((a, b) => (b.ts ?? -1) - (a.ts ?? -1));
+      this.ownerVoiceGlobal = globalAll.slice(0, WhatsAppSession.OWNER_VOICE_GLOBAL_CAP);
 
       let seededContacts = 0;
       let seededSamples = 0;
@@ -7779,11 +7812,16 @@ export class WhatsAppSession {
 
       if (seededSamples > 0) {
         this.saveState();
-        this.logger.info(
-          { seededContacts, seededSamples, cap },
-          "owner voice corpus seeded from wa-history",
-        );
       }
+      this.logger.info(
+        {
+          seededContacts,
+          seededSamples,
+          cap,
+          globalSamples: this.ownerVoiceGlobal.length,
+        },
+        "owner voice corpus seeded from wa-history",
+      );
     } catch (err) {
       this.logger.warn({ err }, "owner voice seed from wa-history failed (continuing)");
     }
