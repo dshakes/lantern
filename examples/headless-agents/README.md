@@ -51,7 +51,7 @@ make run-api-runtime
 make -C examples/headless-agents build-all
 
 # Schedule + tail logs for one demo
-lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name": "Shekhar"}'
+lantern run examples/headless-agents/01-hello/agent.yaml --input '{"name": "Ada"}'
 
 # Or via REST directly
 curl -X POST http://localhost:8080/v1/runtime/schedule \

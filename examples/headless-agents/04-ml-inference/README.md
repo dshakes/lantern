@@ -35,7 +35,7 @@ Expected response (truncated):
 
 `localhost:3000/runtime/<vm_id>`:
 
-- **Resource panel**: vCPU, memory, **GPU=1 (Tesla T4)**, accumulated
+- **Resource panel**: vCPU, memory, **GPU=1 (NVIDIA L4)**, accumulated
   cost ticking up while the workload runs.
 - **Trace panel**: spans `model.load` → `inference.encode[0]` →
   `inference.encode[1]` with timings, all linked to the parent

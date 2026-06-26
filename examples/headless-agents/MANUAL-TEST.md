@@ -76,7 +76,7 @@ hacking on dashboard styling and don't need real placement.
 
 ```bash
 lantern run examples/headless-agents/01-hello/agent.yaml \
-  --input '{"name":"Shekhar"}'
+  --input '{"name":"Ada"}'
 ```
 
 Expected output:
