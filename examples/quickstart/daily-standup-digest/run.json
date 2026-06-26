@@ -1,0 +1,6 @@
+{
+  "agentName": "daily-standup-digest",
+  "input": {
+    "updates": "Priya: merged the rate-limiter PR, it's in staging. Today I'm picking up the OAuth token refresh bug.\nDan: still debugging the flaky checkout e2e test — it only fails in CI, not locally. Blocked on getting CI log access from infra.\nMaya: finished the new pricing page design, handed off to eng. Starting on the onboarding emails.\nLeo: deploy pipeline migration is 80% done. Need a decision on whether we keep the old blue/green path during cutover."
+  }
+}
