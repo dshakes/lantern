@@ -489,6 +489,27 @@ func executeGmail(config map[string]any, action string, params map[string]any) (
 		}
 		return nil, fmt.Errorf("no Gmail credentials configured. Provide email+appPassword or an OAuth token")
 
+	case "list_recent":
+		// Read-only poller action for the life-event engine. Returns recent
+		// messages FLATTENED with their `id` + `internalDate` preserved (unlike
+		// list_messages, which drops the id) so a caller can dedup on id and
+		// advance a high-water mark on internalDate. Optional `query` is a Gmail
+		// search expression (default "newer_than:1d"); supports "after:<epoch>".
+		// OAuth only — IMAP can't return Gmail message ids.
+		query := stringParam(params, "query")
+		if query == "" {
+			query = "newer_than:1d"
+		}
+		limit := intParam(params, "limit", 25)
+		if accessToken == "" {
+			return nil, fmt.Errorf("list_recent requires an OAuth access token (re-auth Google in the dashboard)")
+		}
+		messages, err := ListRecentGmailViaAPI(accessToken, query, limit)
+		if err != nil {
+			return nil, fmt.Errorf("Gmail list_recent failed: %w", err)
+		}
+		return map[string]any{"messages": messages, "count": len(messages), "source": "api"}, nil
+
 	case "send_message":
 		to := stringParam(params, "to")
 		subject := stringParam(params, "subject")
@@ -537,7 +558,7 @@ func executeGmail(config map[string]any, action string, params map[string]any) (
 		return nil, fmt.Errorf("search needs either an OAuth access token OR email+appPassword for IMAP fallback")
 
 	default:
-		return nil, fmt.Errorf("unknown Gmail action: %s (supported: list_messages, send_message, search)", action)
+		return nil, fmt.Errorf("unknown Gmail action: %s (supported: list_messages, list_recent, send_message, search)", action)
 	}
 }
 

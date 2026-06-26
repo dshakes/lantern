@@ -20,11 +20,13 @@ import (
 
 // GmailMessage represents a simplified email message.
 type GmailMessage struct {
-	From    string `json:"from"`
-	Subject string `json:"subject"`
-	Snippet string `json:"snippet"`
-	Date    string `json:"date"`
-	Body    string `json:"body"`
+	ID           string `json:"id,omitempty"`
+	InternalDate string `json:"internalDate,omitempty"`
+	From         string `json:"from"`
+	Subject      string `json:"subject"`
+	Snippet      string `json:"snippet"`
+	Date         string `json:"date"`
+	Body         string `json:"body"`
 }
 
 // FetchGmailMessages fetches recent emails using the Gmail API with an OAuth
@@ -125,6 +127,110 @@ func FetchGmailViaAPI(accessToken string, maxResults int) ([]GmailMessage, error
 		msgResp.Body.Close()
 
 		msg := GmailMessage{Snippet: msgData.Snippet}
+		for _, h := range msgData.Payload.Headers {
+			switch h.Name {
+			case "From":
+				msg.From = h.Value
+			case "Subject":
+				msg.Subject = h.Value
+			case "Date":
+				msg.Date = h.Value
+			}
+		}
+		messages = append(messages, msg)
+	}
+
+	return messages, nil
+}
+
+// ListRecentGmailViaAPI lists recent messages matching a Gmail search query
+// (e.g. "newer_than:1d", "after:1718000000") and returns them flattened with
+// the message ID + internalDate preserved. Unlike FetchGmailViaAPI (which
+// drops the ID), this is the read action the life-event poller consumes: the
+// caller dedups on `id` and advances its high-water mark on `internalDate`.
+// Read-only — never modifies the mailbox.
+func ListRecentGmailViaAPI(accessToken, query string, maxResults int) ([]GmailMessage, error) {
+	if accessToken == "" {
+		return nil, fmt.Errorf("no access token")
+	}
+	if query == "" {
+		query = "newer_than:1d"
+	}
+	if maxResults <= 0 {
+		maxResults = 25
+	}
+
+	listURL := fmt.Sprintf(
+		"https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=%d&q=%s",
+		maxResults, url.QueryEscape(query),
+	)
+	req, err := http.NewRequest("GET", listURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build list request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Gmail API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		// Preserve the upstream status (notably 401 for an expired token) in
+		// the error text so the caller can detect re-auth-needed conditions.
+		return nil, fmt.Errorf("Gmail API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var listResp struct {
+		Messages []struct {
+			ID string `json:"id"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		return nil, fmt.Errorf("decode list response: %w", err)
+	}
+
+	var messages []GmailMessage
+	for _, m := range listResp.Messages {
+		if len(messages) >= maxResults {
+			break
+		}
+		msgURL := fmt.Sprintf(
+			"https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date",
+			m.ID,
+		)
+		msgReq, err := http.NewRequest("GET", msgURL, nil)
+		if err != nil {
+			continue
+		}
+		msgReq.Header.Set("Authorization", "Bearer "+accessToken)
+		msgResp, err := http.DefaultClient.Do(msgReq)
+		if err != nil {
+			continue
+		}
+		var msgData struct {
+			ID           string `json:"id"`
+			InternalDate string `json:"internalDate"`
+			Snippet      string `json:"snippet"`
+			Payload      struct {
+				Headers []struct {
+					Name  string `json:"name"`
+					Value string `json:"value"`
+				} `json:"headers"`
+			} `json:"payload"`
+		}
+		if err := json.NewDecoder(msgResp.Body).Decode(&msgData); err != nil {
+			msgResp.Body.Close()
+			continue
+		}
+		msgResp.Body.Close()
+
+		msg := GmailMessage{ID: msgData.ID, InternalDate: msgData.InternalDate, Snippet: msgData.Snippet}
+		if msg.ID == "" {
+			msg.ID = m.ID
+		}
 		for _, h := range msgData.Payload.Headers {
 			switch h.Name {
 			case "From":
