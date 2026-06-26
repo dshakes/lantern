@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="864" viewBox="0 0 1240 864" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Personal harness layered architecture — surfaces ingress, then five layers (Sense, Remember, Reason, Sound-like-you, Act), a Safety and Privacy rail alongside, and the control-plane substrate underneath">
+  <defs>
+    <style>
+      .h{fill:#f8fafc;font-weight:700}
+      .sub{fill:#94a3b8;font-size:12.5px}
+      .band{font-size:13px;font-weight:700;letter-spacing:.04em}
+      .bandnum{font-size:10px;font-weight:700;letter-spacing:.06em}
+      .bandtag{fill:#71717a;font-size:10.5px;font-style:italic}
+      .cmp{fill:#ededf0;font-size:11.5px;font-weight:600}
+      .cs{fill:#8b93a1;font-size:9.5px}
+      .edge{fill:#d4d4d8;font-size:12px;font-weight:600}
+      .pill{fill:#120c04;font-size:9px;font-weight:700;letter-spacing:.05em}
+      .rail{fill:#fda4af;font-size:11.5px;font-weight:700}
+      .railitem{fill:#d4d4d8;font-size:10px}
+      .note{fill:#a98a4b;font-size:10px}
+    </style>
+  </defs>
+  <rect width="1240" height="864" rx="16" fill="#0b1120"/>
+  <rect width="1240" height="864" rx="16" fill="none" stroke="#1e293b"/>
+
+  <!-- title -->
+  <text x="32" y="42" class="h" font-size="20">Personal harness — layered architecture</text>
+  <text x="32" y="64" class="sub">sense → remember → reason → sound-like-you → act · owner-only · cross-app memory · privacy alongside every layer</text>
+
+  <!-- ── Surfaces edge ──────────────────────────────────────────── -->
+  <g transform="translate(32,84)">
+    <rect width="1176" height="52" rx="11" fill="#0d0d11" stroke="#232330"/>
+    <text x="16" y="21" fill="#7dd3fc" font-size="9.5px" font-weight="700" letter-spacing=".05em">SURFACES · INGRESS &amp; EGRESS</text>
+    <g font-size="11.5px" font-weight="600" fill="#d4d4d8">
+      <g><rect x="16" y="28" width="118" height="16" rx="6" fill="rgba(125,211,252,0.06)" stroke="#26303a"/><text x="75" y="40" text-anchor="middle">iMessage</text></g>
+      <g><rect x="146" y="28" width="118" height="16" rx="6" fill="rgba(125,211,252,0.06)" stroke="#26303a"/><text x="205" y="40" text-anchor="middle">WhatsApp</text></g>
+      <g><rect x="276" y="28" width="118" height="16" rx="6" fill="rgba(125,211,252,0.06)" stroke="#26303a"/><text x="335" y="40" text-anchor="middle">Voice</text></g>
+      <g><rect x="406" y="28" width="118" height="16" rx="6" fill="rgba(125,211,252,0.06)" stroke="#26303a"/><text x="465" y="40" text-anchor="middle">Email</text></g>
+      <g><rect x="536" y="28" width="118" height="16" rx="6" fill="rgba(125,211,252,0.06)" stroke="#26303a"/><text x="595" y="40" text-anchor="middle">Webchat</text></g>
+    </g>
+  </g>
+
+  <!-- ── Safety rail (runs alongside all layers) ───────────────── -->
+  <g transform="translate(1024,148)">
+    <rect width="184" height="510" rx="12" fill="rgba(244,63,94,0.05)" stroke="rgba(244,63,94,0.32)"/>
+    <text x="16" y="28" class="rail">Safety &amp; Privacy</text>
+    <text x="16" y="44" fill="#9b6b72" font-size="9.5px">runs alongside every layer</text>
+    <g>
+      <g transform="translate(14,60)"><rect width="156" height="40" rx="7" fill="rgba(255,255,255,0.02)" stroke="rgba(244,63,94,0.18)"/><text x="12" y="18" class="railitem" font-weight="600">Owner-only</text><text x="12" y="32" class="cs">non-owner DMs never reach it</text></g>
+      <g transform="translate(14,108)"><rect width="156" height="40" rx="7" fill="rgba(255,255,255,0.02)" stroke="rgba(244,63,94,0.18)"/><text x="12" y="18" class="railitem" font-weight="600">Location-leak guard</text><text x="12" y="32" class="cs">availability, never a place</text></g>
+      <g transform="translate(14,156)"><rect width="156" height="40" rx="7" fill="rgba(255,255,255,0.02)" stroke="rgba(244,63,94,0.18)"/><text x="12" y="18" class="railitem" font-weight="600">Kill switch</text><text x="12" y="32" class="cs">silence all inbound</text></g>
+      <g transform="translate(14,204)"><rect width="156" height="40" rx="7" fill="rgba(255,255,255,0.02)" stroke="rgba(244,63,94,0.18)"/><text x="12" y="18" class="railitem" font-weight="600">Local 0600</text><text x="12" y="32" class="cs">path-restricted reads</text></g>
+      <g transform="translate(14,252)"><rect width="156" height="40" rx="7" fill="rgba(255,255,255,0.02)" stroke="rgba(244,63,94,0.18)"/><text x="12" y="18" class="railitem" font-weight="600">Secrets never logged</text><text x="12" y="32" class="cs">not in logs / traces / state</text></g>
+    </g>
+    <text x="92" y="486" text-anchor="middle" fill="#9b6b72" font-size="9px">enforced at every hop</text>
+  </g>
+
+  <!-- ── L1 · Sense (sky) ──────────────────────────────────────── -->
+  <g transform="translate(32,148)">
+    <rect width="976" height="92" rx="12" fill="rgba(56,189,248,0.04)" stroke="#2a2a30"/>
+    <rect width="3.5" height="92" rx="2" fill="#38bdf8"/>
+    <text x="18" y="26" class="bandnum" fill="#7dd3fc">L1 · SENSE</text>
+    <text x="120" y="26" class="band" fill="#ededf0">Signals &amp; Ingestion</text>
+    <text x="960" y="26" class="bandtag" text-anchor="end">what's actually happening</text>
+    <g>
+      <g transform="translate(18,38)"><rect width="228" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#26303a"/><text x="12" y="19" class="cmp">Device signals</text><text x="12" y="34" class="cs">location · focus · driving · health · media</text></g>
+      <g transform="translate(258,38)"><rect width="228" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#26303a"/><text x="12" y="19" class="cmp">Screen &amp; app-usage</text><text x="12" y="34" class="cs">on-device · owner-only</text></g>
+      <g transform="translate(498,38)"><rect width="228" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#26303a"/><text x="12" y="19" class="cmp">Inbox ingestion</text><text x="12" y="34" class="cs">email → life-events</text></g>
+      <g transform="translate(738,38)"><rect width="220" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#26303a"/><text x="12" y="19" class="cmp">Inbound messages</text><text x="12" y="34" class="cs">every channel, every turn</text></g>
+    </g>
+  </g>
+
+  <!-- ── L2 · Remember (amber, emphasized) ─────────────────────── -->
+  <g transform="translate(32,252)">
+    <rect width="976" height="118" rx="12" fill="rgba(245,158,11,0.07)" stroke="rgba(245,158,11,0.45)"/>
+    <rect width="3.5" height="118" rx="2" fill="#f59e0b"/>
+    <text x="18" y="26" class="bandnum" fill="#fcd34d">L2 · REMEMBER</text>
+    <text x="150" y="26" class="band" fill="#fde68a">Cross-app Memory &amp; Identity</text>
+    <g transform="translate(388,15)"><rect width="108" height="16" rx="8" fill="#fcd34d"/><text x="54" y="12" class="pill" text-anchor="middle">CROSS-APP STORE</text></g>
+    <text x="958" y="26" class="bandtag" text-anchor="end">one self across every channel</text>
+    <g>
+      <g transform="translate(18,38)"><rect width="148" height="40" rx="8" fill="rgba(245,158,11,0.04)" stroke="rgba(245,158,11,0.25)"/><text x="11" y="18" class="cmp">Person graph</text><text x="11" y="32" class="cs">one canonical identity</text></g>
+      <g transform="translate(174,38)"><rect width="148" height="40" rx="8" fill="rgba(245,158,11,0.04)" stroke="rgba(245,158,11,0.25)"/><text x="11" y="18" class="cmp">Episodic memory</text><text x="11" y="32" class="cs">14-day · date·topic·outcome</text></g>
+      <g transform="translate(330,38)"><rect width="148" height="40" rx="8" fill="rgba(245,158,11,0.04)" stroke="rgba(245,158,11,0.25)"/><text x="11" y="18" class="cmp">Topic index</text><text x="11" y="32" class="cs">7-day cross-thread recall</text></g>
+      <g transform="translate(486,38)"><rect width="148" height="40" rx="8" fill="rgba(245,158,11,0.04)" stroke="rgba(245,158,11,0.25)"/><text x="11" y="18" class="cmp">Owner profile</text><text x="11" y="32" class="cs">facts · relationships · style</text></g>
+      <g transform="translate(642,38)"><rect width="148" height="40" rx="8" fill="rgba(245,158,11,0.04)" stroke="rgba(245,158,11,0.25)"/><text x="11" y="18" class="cmp">Presence</text><text x="11" y="32" class="cs">live availability · cross-bridge</text></g>
+      <g transform="translate(798,38)"><rect width="160" height="40" rx="8" fill="rgba(245,158,11,0.04)" stroke="rgba(245,158,11,0.25)"/><text x="11" y="18" class="cmp">Life-events ledger</text><text x="11" y="32" class="cs">bills·deliveries·travel·fraud</text></g>
+    </g>
+    <text x="18" y="106" class="note">Substrate: local 0600 JSONL on the Mac + control-plane Postgres (RLS, encrypted at rest) — a fact learned on one channel is recalled on the other.</text>
+  </g>
+
+  <!-- ── L3 · Reason (violet) ──────────────────────────────────── -->
+  <g transform="translate(32,382)">
+    <rect width="976" height="92" rx="12" fill="rgba(167,139,250,0.04)" stroke="#2a2a30"/>
+    <rect width="3.5" height="92" rx="2" fill="#a78bfa"/>
+    <text x="18" y="26" class="bandnum" fill="#c4b5fd">L3 · REASON</text>
+    <text x="130" y="26" class="band" fill="#ededf0">Decisioning &amp; Orchestration</text>
+    <text x="960" y="26" class="bandtag" text-anchor="end">decide what to do</text>
+    <g>
+      <g transform="translate(18,38)"><rect width="182" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#2e2740"/><text x="11" y="19" class="cmp">Life-event engine</text><text x="11" y="34" class="cs">classify + extract</text></g>
+      <g transform="translate(210,38)"><rect width="182" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#2e2740"/><text x="11" y="19" class="cmp">Auto-act ladder</text><text x="11" y="34" class="cs">safe-auto · ask · never</text></g>
+      <g transform="translate(402,38)"><rect width="182" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#2e2740"/><text x="11" y="19" class="cmp">Availability concierge</text><text x="11" y="34" class="cs">presence → contact replies</text></g>
+      <g transform="translate(594,38)"><rect width="182" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#2e2740"/><text x="11" y="19" class="cmp">Anticipation</text><text x="11" y="34" class="cs">proactive nudges</text></g>
+      <g transform="translate(786,38)"><rect width="172" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#2e2740"/><text x="11" y="19" class="cmp">Scheduling</text><text x="11" y="34" class="cs">propose · hold · confirm</text></g>
+    </g>
+  </g>
+
+  <!-- ── L4 · Sound like you (emerald) ─────────────────────────── -->
+  <g transform="translate(32,486)">
+    <rect width="976" height="92" rx="12" fill="rgba(52,211,153,0.04)" stroke="#2a2a30"/>
+    <rect width="3.5" height="92" rx="2" fill="#34d399"/>
+    <text x="18" y="26" class="bandnum" fill="#6ee7b7">L4 · SOUND LIKE YOU</text>
+    <text x="190" y="26" class="band" fill="#ededf0">Persona &amp; Authenticity</text>
+    <text x="960" y="26" class="bandtag" text-anchor="end">indistinguishable from you</text>
+    <g>
+      <g transform="translate(18,38)"><rect width="182" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#1f3a30"/><text x="11" y="19" class="cmp">Owner-voice</text><text x="11" y="34" class="cs">mined from real sent messages</text></g>
+      <g transform="translate(210,38)"><rect width="182" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#1f3a30"/><text x="11" y="19" class="cmp">Language &amp; dialect</text><text x="11" y="34" class="cs">your modality, never invented</text></g>
+      <g transform="translate(402,38)"><rect width="182" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#1f3a30"/><text x="11" y="19" class="cmp">Bot-tell guards</text><text x="11" y="34" class="cs">suppress + regenerate</text></g>
+      <g transform="translate(594,38)"><rect width="182" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#1f3a30"/><text x="11" y="19" class="cmp">Pacing</text><text x="11" y="34" class="cs">real per-contact latency</text></g>
+      <g transform="translate(786,38)"><rect width="172" height="42" rx="8" fill="rgba(255,255,255,0.02)" stroke="#1f3a30"/><text x="11" y="19" class="cmp">Draft-and-confirm</text><text x="11" y="34" class="cs">+ claim verifier</text></g>
+    </g>
+  </g>
+
+  <!-- ── L5 · Act (sky) ────────────────────────────────────────── -->
+  <g transform="translate(32,590)">
+    <rect width="976" height="68" rx="12" fill="rgba(56,189,248,0.04)" stroke="#2a2a30"/>
+    <rect width="3.5" height="68" rx="2" fill="#38bdf8"/>
+    <text x="18" y="26" class="bandnum" fill="#7dd3fc">L5 · ACT</text>
+    <text x="110" y="26" class="band" fill="#ededf0">Actions &amp; Delivery</text>
+    <text x="960" y="26" class="bandtag" text-anchor="end">follow through, for real</text>
+    <g>
+      <g transform="translate(18,36)"><rect width="228" height="24" rx="7" fill="rgba(255,255,255,0.02)" stroke="#26303a"/><text x="12" y="16" class="cmp">Reply send <tspan class="cs">· paced · per-channel</tspan></text></g>
+      <g transform="translate(258,36)"><rect width="228" height="24" rx="7" fill="rgba(255,255,255,0.02)" stroke="#26303a"/><text x="12" y="16" class="cmp">Mac actions <tspan class="cs">· Calendar · Notes · Mail</tspan></text></g>
+      <g transform="translate(498,36)"><rect width="228" height="24" rx="7" fill="rgba(255,255,255,0.02)" stroke="#26303a"/><text x="12" y="16" class="cmp">Connectors <tspan class="cs">· Gmail · Calendar · …</tspan></text></g>
+      <g transform="translate(738,36)"><rect width="220" height="24" rx="7" fill="rgba(255,255,255,0.02)" stroke="#26303a"/><text x="12" y="16" class="cmp">Voice calls <tspan class="cs">· Twilio · LiveKit</tspan></text></g>
+    </g>
+  </g>
+
+  <!-- ── Control-plane substrate ───────────────────────────────── -->
+  <g transform="translate(32,674)">
+    <rect width="1176" height="60" rx="12" fill="rgba(245,158,11,0.06)" stroke="rgba(245,158,11,0.3)"/>
+    <text x="18" y="24" fill="#fcd34d" font-size="9.5px" font-weight="700" letter-spacing=".05em">CONTROL PLANE · SUBSTRATE</text>
+    <g font-size="11px" font-weight="600" fill="#ededf0">
+      <g><rect x="18" y="32" width="232" height="18" rx="6" fill="rgba(255,255,255,0.025)" stroke="#2a2a30"/><text x="30" y="44">Model router <tspan fill="#71717a" font-size="9.5px">· capability-routed LLM</tspan></text></g>
+      <g><rect x="262" y="32" width="118" height="18" rx="6" fill="rgba(255,255,255,0.025)" stroke="#2a2a30"/><text x="321" y="44" text-anchor="middle">/v1/people</text></g>
+      <g><rect x="392" y="32" width="118" height="18" rx="6" fill="rgba(255,255,255,0.025)" stroke="#2a2a30"/><text x="451" y="44" text-anchor="middle">/v1/memory</text></g>
+      <g><rect x="522" y="32" width="118" height="18" rx="6" fill="rgba(255,255,255,0.025)" stroke="#2a2a30"/><text x="581" y="44" text-anchor="middle">/v1/signals</text></g>
+      <g><rect x="652" y="32" width="140" height="18" rx="6" fill="rgba(255,255,255,0.025)" stroke="#2a2a30"/><text x="722" y="44" text-anchor="middle">/v1/life-events</text></g>
+      <g><rect x="804" y="32" width="118" height="18" rx="6" fill="rgba(255,255,255,0.025)" stroke="#2a2a30"/><text x="863" y="44" text-anchor="middle">connectors</text></g>
+    </g>
+  </g>
+
+  <!-- footer -->
+  <text x="32" y="762" class="sub" font-size="11.5px">Surfaces feed the layers; the layers read and write the cross-app memory; the control plane is the shared substrate. Privacy is a rail, not a step — it holds at every hop.</text>
+  <text x="32" y="784" fill="#71717a" font-size="11px">Generic product architecture — owner-only, local-first, encrypted at rest. The interactive version lives at /personal on the docs site.</text>
+</svg>

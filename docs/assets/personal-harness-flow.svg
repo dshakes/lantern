@@ -21,7 +21,7 @@
     <g transform="translate(16,48)">
       <rect width="244" height="74" rx="9" fill="rgba(125,211,252,0.05)" stroke="#26303a"/>
       <text x="14" y="26" class="cmp">🚗 Drive</text>
-      <text x="14" y="46" class="cs">CarPlay (Odyssey) · Bluetooth (Tesla)</text>
+      <text x="14" y="46" class="cs">CarPlay / Bluetooth → driving</text>
       <text x="14" y="62" class="cs">→ device: driving</text>
     </g>
     <g transform="translate(16,134)">
