@@ -124,11 +124,22 @@ const BOT_SELF_PREFIXES: string[] = [
   // query once the recentBridgeSends window expires. Keep in sync with
   // LIFE_EVENT_SELF_PREFIXES in life-events.ts.
   "💸 ",                     // bill ping ("💸 GEICO $1,989.85 due Jun 30…")
-  "📦 ",                     // delivery ping ("📦 UPS — tomorrow 10:30…")
+  "📦 ",                     // delivery ping + "📦 logged delivery" auto-act log
   "⚠️ ",                     // fraud ping ("⚠️ Amex flagged a declined charge…")
   "🔑 ",                     // OTP surface ("🔑 your code is 611586…")
   "🧾 ",                     // receipt ("🧾 Amazon $35.99 — order confirmed.")
   "✈️ ",                     // travel ("✈️ travel update …")
+
+  // ── AUTO-ACT LADDER (self-chat logs + acks) ──
+  // The bot auto-executes safe reversible actions and logs them with an undo.
+  // Without these prefixes it would re-ingest its own "📅 added to your
+  // calendar…" / "📦 logged delivery…" log as an owner query once the
+  // recentBridgeSends window expires. Keep in sync with LIFE_EVENT_SELF_PREFIXES.
+  "📅 ",                     // "📅 added to your calendar — …" auto-act log (+ "📅 added to calendar")
+  "🤖 ",                     // "🤖 today i auto-handled …" recap + auto-act acks
+  "↩️ ",                     // "↩️ undone — removed it." undo ack
+  "⏸ automation",            // "⏸ automation paused — …" command echo
+  "▶️ automation",           // "▶️ automation resumed — …" command echo
 ];
 
 // Common LLM-reply patterns we've ALSO observed leaking through as

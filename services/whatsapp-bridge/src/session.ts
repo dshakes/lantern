@@ -51,7 +51,7 @@ import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@la
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
-import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
 import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
@@ -219,6 +219,14 @@ function sleep(ms: number): Promise<void> {
     // can drop in-flight bursts safely; the next inbound retriggers.
     t.unref?.();
   });
+}
+
+// AUTO-ACT LADDER — END = START + 30 min, preserving the local-ISO shape.
+function localPlus30(startIso: string): string {
+  const d = new Date(startIso);
+  const e = new Date(d.getTime() + 30 * 60_000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${e.getFullYear()}-${p(e.getMonth() + 1)}-${p(e.getDate())}T${p(e.getHours())}:${p(e.getMinutes())}:00`;
 }
 
 // Should a 1:1 contact reply pull in the owner's device calendar? Gates the
@@ -3068,21 +3076,32 @@ export class WhatsAppSession {
   // owner self-chat. Returns true when the engine took ownership (ping/digest/
   // suppress), false when it's not actionable (caller falls back to legacy).
   private async surfaceLifeEvent(from: string, text: string): Promise<boolean> {
-    const { classifyLifeEvent, proactiveDecision, isActionableKind } =
+    const { classifyLifeEvent, proactiveDecision, isActionableKind, autoActDecision } =
       await import("@lantern/bridge-core/life-events");
-    const { loadLifeEventPrefs } = await import("@lantern/bridge-core/life-events-store");
+    const { loadLifeEventPrefs, isAutoActPaused } = await import("@lantern/bridge-core/life-events-store");
 
     const event = await classifyLifeEvent(text, { channel: "WhatsApp" });
     if (!isActionableKind(event.kind)) return false;
 
     const prefs = loadLifeEventPrefs();
-    const decision = proactiveDecision(event, prefs);
     const ownJid = this.ownJid();
 
+    // ── AUTO-ACT LADDER ── safe+reversible (delivery→note, appointment/travel→
+    // calendar) fire automatically; money/fraud/OTP/sending never do. Kill
+    // switch (LANTERN_LIFE_EVENT_AUTOACT, default on) + persisted pause flag.
+    const autoEnabled =
+      (process.env.LANTERN_LIFE_EVENT_AUTOACT || "on").toLowerCase() !== "off" && !isAutoActPaused();
+    const auto = autoActDecision(event, prefs, { enabled: autoEnabled });
     this.logger.info(
-      { kind: event.kind, urgency: event.urgency, route: decision.route, conf: event.confidence },
+      { kind: event.kind, urgency: event.urgency, conf: event.confidence, autoMode: auto.mode, reason: auto.reason },
       "life-event classified",
     );
+    if (auto.mode === "auto" && ownJid && this.macActions) {
+      await this.autoActLifeEvent(ownJid, event, auto.idempotencyKey, text);
+      return true;
+    }
+
+    const decision = proactiveDecision(event, prefs);
 
     if (decision.route === "suppress") return true;
     if (!ownJid) {
@@ -3122,6 +3141,118 @@ export class WhatsAppSession {
         if (accepted) persistAccept(kind); else persistIgnore(kind);
       } catch { /* best-effort */ }
     })();
+  }
+
+  // AUTO-ACT LADDER — execute a SAFE, REVERSIBLE action without asking, log it
+  // to self-chat with an undo, and arm the undo offer. Idempotent across
+  // restarts (hasActed/markActed). On error → suggest fallback (never silent).
+  private async autoActLifeEvent(
+    ownJid: string,
+    event: import("@lantern/bridge-core/life-events").LifeEvent,
+    idempotencyKey: string,
+    rawText: string,
+  ): Promise<void> {
+    if (!this.macActions) return;
+    const { hasActed, markActed } = await import("@lantern/bridge-core/life-events-store");
+    if (hasActed(idempotencyKey)) {
+      this.logger.info({ kind: event.kind, idempotencyKey }, "auto-act skipped — already acted (idempotent)");
+      return;
+    }
+    const { eventStartIso } = await import("@lantern/bridge-core/life-events");
+    try {
+      if (event.kind === "delivery") {
+        const f = event.fields;
+        const who = f.carrier || f.merchant || "package";
+        const line = `${who}${f.eta ? ` — ${f.eta}` : ""}${f.trackingNo ? ` (${f.trackingNo})` : ""} · logged ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+        const res = await this.macActions.appendToNote({ title: "Deliveries", line });
+        if (!res.ok) return void this.autoActFallbackToSuggest(ownJid, event, rawText, res.reason);
+        markActed(idempotencyKey);
+        const log = `📦 logged delivery — ${who}${f.eta ? ` ${f.eta.toLowerCase()}` : ""} (Deliveries note) · reply 'undo' to remove`;
+        await this.confirmToSelf(log).catch(() => {});
+        this.noteAutoAction(log);
+        this.armAutoActUndo(ownJid, event.kind, idempotencyKey, { undoTarget: "delivery-note", undoNoteLine: line }, log, rawText);
+        return;
+      }
+      const startIso = eventStartIso(event);
+      if (!startIso) return void this.autoActFallbackToSuggest(ownJid, event, rawText, "no concrete date/time");
+      const title = event.kind === "travel" ? `Travel${event.fields.place ? ` — ${event.fields.place}` : ""}` : `Appointment${event.fields.place ? ` — ${event.fields.place}` : ""}`;
+      const res = await this.macActions.createCalendarEvent({
+        title, start: startIso, end: localPlus30(startIso),
+        notes: `Auto-added by Lantern from: "${rawText.slice(0, 200)}"`,
+      });
+      if (!res.ok) return void this.autoActFallbackToSuggest(ownJid, event, rawText, res.reason);
+      markActed(idempotencyKey);
+      const friendly = new Date(startIso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      const log = `📅 added to your calendar — ${title} ${friendly} · reply 'undo' to remove`;
+      await this.confirmToSelf(log).catch(() => {});
+      this.noteAutoAction(log);
+      this.armAutoActUndo(ownJid, event.kind, idempotencyKey, { undoTarget: "calendar", undoTitle: title, undoStartIso: startIso }, log, rawText);
+    } catch (err) {
+      this.logger.error({ err, kind: event.kind }, "auto-act execution threw — falling back to suggest");
+      await this.autoActFallbackToSuggest(ownJid, event, rawText, "exception");
+    }
+  }
+
+  // Arm the one-shot UNDO offer for an auto-action.
+  private armAutoActUndo(
+    ownJid: string,
+    kind: string,
+    idempotencyKey: string,
+    fields: { undoTarget: "calendar" | "delivery-note"; undoTitle?: string; undoStartIso?: string; undoNoteLine?: string },
+    log: string,
+    rawText: string,
+  ): void {
+    this.pendingOffers.set(ownJid, {
+      kind: "auto-act-undo",
+      undoLifeEventKind: kind,
+      undoIdempotencyKey: idempotencyKey,
+      ...fields,
+      freeformPriorReply: log,
+      freeformInbound: rawText,
+      issuedAt: Date.now(),
+    } as any);
+  }
+
+  // Auto-act couldn't run cleanly — surface a suggest ping instead of dropping.
+  private async autoActFallbackToSuggest(
+    ownJid: string,
+    event: import("@lantern/bridge-core/life-events").LifeEvent,
+    rawText: string,
+    reason?: string,
+  ): Promise<void> {
+    this.logger.warn({ kind: event.kind, reason }, "auto-act fell back to suggest");
+    const { proactiveDecision } = await import("@lantern/bridge-core/life-events");
+    const decision = proactiveDecision(event);
+    await this.confirmToSelf(decision.ownerMessage).catch(() => {});
+    this.lastLifeEventKind = event.kind;
+    const top = decision.actions.find((a) => a.kind !== "snooze" && a.kind !== "none");
+    if (top && top.offerAction) {
+      this.pendingOffers.set(ownJid, {
+        kind: "freeform-followup",
+        freeformAction: top.offerAction + (top.url ? ` (relevant link: ${top.url})` : "") + (top.phone ? ` (callback number: ${top.phone})` : ""),
+        freeformInbound: rawText,
+        freeformPriorReply: decision.ownerMessage,
+        issuedAt: Date.now(),
+      } as any);
+    }
+  }
+
+  // Record an auto-action into the recap ring (last 24h, capped).
+  private noteAutoAction(text: string): void {
+    const now = Date.now();
+    this.autoActLog.push({ text, ts: now });
+    const since = now - 24 * 3_600_000;
+    this.autoActLog = this.autoActLog.filter((e) => e.ts >= since).slice(-50);
+  }
+
+  // "what did you do today" recap.
+  private autoActRecapBody(): string {
+    const since = Date.now() - 24 * 3_600_000;
+    const lines = this.autoActLog
+      .filter((e) => e.ts >= since)
+      .map((e) => `• ${e.text.replace(/\s*·\s*reply 'undo'.*$/i, "")}`);
+    if (lines.length === 0) return "🤖 nothing auto-handled today.";
+    return [`🤖 today i auto-handled ${lines.length}:`, ...lines].join("\n");
   }
 
   // Apply an owner presence/status command from self-chat (set place + timer,
@@ -4030,6 +4161,14 @@ export class WhatsAppSession {
     if (this.personalDocsEnabled && self && !group && this.docs && this.macActions) {
       this.gcPendingOffers();
       const cachedOffer = this.pendingOffers.get(jid);
+      // AUTO-ACT UNDO — bot already executed a safe action; "undo"/"remove"
+      // (or a plain "no") reverts it + records an autoUndo (trust downgrade).
+      if (cachedOffer && (cachedOffer as any).kind === "auto-act-undo" && (looksLikeUndo(text) || looksLikeRejection(text))) {
+        this.logger.info({ jid }, "reverting auto-action on undo");
+        this.pendingOffers.delete(jid);
+        void this.executeCachedOffer(jid, cachedOffer);
+        return;
+      }
       if (cachedOffer && looksLikeConfirmation(text)) {
         this.logger.info({ kind: cachedOffer.kind, jid }, "executing cached offer on confirmation");
         this.pendingOffers.delete(jid);
@@ -4313,6 +4452,8 @@ export class WhatsAppSession {
   // Most-recent life-event kind surfaced — attributes a later accept/ignore to
   // the right kind for the owner-model downgrade.
   private lastLifeEventKind: import("@lantern/bridge-core/life-events").LifeEventKind | null = null;
+  // AUTO-ACT LADDER — in-memory ring of today's auto-actions for the recap.
+  private autoActLog: Array<{ text: string; ts: number }> = [];
 
   // Set to true once the bridge has been in `connected` state at least
   // once. OfflineMonitor uses this to distinguish first-boot idle
@@ -4503,6 +4644,12 @@ export class WhatsAppSession {
       placeOutboundCall: async (req) => {
         return this.placeOutboundCallFromOwner(req);
       },
+      setAutoAct: async (enabled: boolean) => {
+        const { setAutoActPaused } = await import("@lantern/bridge-core/life-events-store");
+        setAutoActPaused(!enabled);
+        this.logActivity(enabled ? "bot_on" : "bot_off", `auto-act ladder ${enabled ? "RESUMED" : "PAUSED"}`, { scope: "self" });
+      },
+      autoActRecap: () => this.autoActRecapBody(),
     });
   }
 
@@ -5126,6 +5273,32 @@ export class WhatsAppSession {
   // Execute a cached offer (calendar reminder / save note / outbound call).
   // Deterministic, bypasses the LLM. Sends a natural confirmation.
   private async executeCachedOffer(jid: string, offer: PendingOffer): Promise<void> {
+    // AUTO-ACT UNDO — revert the auto-executed safe action, record an autoUndo
+    // (trust downgrade), and clear the acted key. Deterministic; no LLM.
+    if (offer.kind === "auto-act-undo") {
+      const { persistAutoUndo, unmarkActed } = await import("@lantern/bridge-core/life-events-store");
+      try {
+        let res: { ok: true; detail?: string } | { ok: false; reason: string };
+        if (offer.undoTarget === "calendar" && offer.undoTitle && offer.undoStartIso && this.macActions) {
+          res = await this.macActions.deleteCalendarEvent({ title: offer.undoTitle, start: offer.undoStartIso });
+        } else if (offer.undoTarget === "delivery-note" && offer.undoNoteLine && this.macActions) {
+          res = await this.macActions.removeNoteLine({ title: "Deliveries", line: offer.undoNoteLine });
+        } else {
+          res = { ok: false, reason: "nothing to undo" };
+        }
+        if (res.ok) {
+          await this.confirmToSelf("↩️ undone — removed it.").catch(() => {});
+          if (offer.undoIdempotencyKey) unmarkActed(offer.undoIdempotencyKey);
+          if (offer.undoLifeEventKind) persistAutoUndo(offer.undoLifeEventKind as any);
+        } else {
+          await this.confirmToSelf(`(couldn't undo: ${res.reason})`).catch(() => {});
+        }
+      } catch (err) {
+        this.logger.error({ err }, "auto-act undo failed");
+        await this.confirmToSelf("(couldn't undo — try again)").catch(() => {});
+      }
+      return;
+    }
     // Outbound calls go through Twilio, NOT macActions — handle them before
     // the macActions guard so a "yes" can never be silently swallowed if
     // macActions is ever unavailable (e.g. a headless deployment).

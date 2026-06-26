@@ -181,7 +181,7 @@ export function humanizeReply(text: string): string {
 // marker. With this offer cache, the bridge fires the AppleScript
 // itself — no LLM round trip needed for the action.
 export interface PendingOffer {
-  kind: "calendar-reminder" | "save-note" | "freeform-followup" | "outbound-call";
+  kind: "calendar-reminder" | "save-note" | "freeform-followup" | "outbound-call" | "auto-act-undo";
   // For outbound-call: serialized OutboundCallRequest + the plan
   // summary the owner already saw. Bridge replays placeCallNow on
   // "yes" without any LLM round-trip.
@@ -203,6 +203,17 @@ export interface PendingOffer {
   freeformAction?: string;       // "attach the full receipt email or any details"
   freeformInbound?: string;      // the original user inbound that prompted the offer
   freeformPriorReply?: string;   // the bot's reply that contained the offer
+  // ── AUTO-ACT LADDER (kind: "auto-act-undo") ──
+  // The bot already EXECUTED a safe action (added a calendar event / logged a
+  // delivery to the Deliveries note) without asking, and armed this offer so
+  // "undo"/"remove" reverts it. The bridge replays the reversal deterministically
+  // — no LLM round trip.
+  undoTarget?: "calendar" | "delivery-note"; // what to revert
+  undoLifeEventKind?: string;    // the LifeEventKind, for trust downgrade (autoUndo)
+  undoIdempotencyKey?: string;   // so the package can be re-acted later if re-surfaced
+  undoTitle?: string;            // calendar event summary to delete
+  undoStartIso?: string;         // calendar event start (for the ±2min match)
+  undoNoteLine?: string;         // the exact line appended to the Deliveries note
   // When the offer was made (for window-based expiry).
   issuedAt: number;
 }
@@ -301,6 +312,16 @@ export function looksLikeRejection(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (t.length > 30) return false;
   return /^(no|nope|nah|not now|not really|skip|cancel|never mind|nvm|don'?t|do not|leave it)\b/i.test(t);
+}
+
+// AUTO-ACT LADDER — owner wants to REVERT the action the bot just auto-did.
+// Distinct from looksLikeRejection ("no" to a suggestion): here the action
+// already happened and "undo"/"remove"/"delete that" / "take it off" reverts
+// it. Short-message gated so it never trips on conversational text.
+export function looksLikeUndo(text: string): boolean {
+  const t = (text || "").trim().toLowerCase();
+  if (t.length > 30) return false;
+  return /^(undo|remove(?:\s+it|\s+that)?|delete(?:\s+it|\s+that)?|take\s+it\s+off|cancel\s+that|revert|unadd|un-?do)\b/i.test(t);
 }
 
 // Combined entry point: returns the polished reply AND the offer

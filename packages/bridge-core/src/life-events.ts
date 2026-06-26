@@ -84,9 +84,16 @@ export interface ProactiveDecision {
 // Per-kind owner preference, learned from accept/ignore history. The bridge
 // owns persistence (life-events-prefs.json); the module stays pure and takes
 // this as input. `accepts`/`ignores` are running counts.
+//
+// `autoAccept`/`autoUndo` are the AUTO-ACT LADDER counters: when the bot
+// auto-executed a safe action (no asking), did the owner leave it (autoAccept,
+// recorded lazily/optionally) or UNDO it (autoUndo). Net undos drive the
+// trust downgrade auto → suggest → none. Both default to 0 / undefined.
 export interface KindPref {
   accepts: number;
   ignores: number;
+  autoAccept?: number;
+  autoUndo?: number;
 }
 export type LifeEventPrefs = Partial<Record<LifeEventKind, KindPref>>;
 
@@ -574,14 +581,292 @@ export function recordIgnore(prefs: LifeEventPrefs, kind: LifeEventKind): LifeEv
   return { ...prefs, [kind]: { accepts: cur.accepts, ignores: cur.ignores + 1 } };
 }
 
+// Owner LEFT an auto-action in place (didn't undo within the window). Lifts
+// trust. Recorded optionally — the bridge can call this when the undo window
+// lapses, but the ladder is sound even if it never does (undo is what matters).
+export function recordAutoAccept(prefs: LifeEventPrefs, kind: LifeEventKind): LifeEventPrefs {
+  const cur = prefs[kind] || { accepts: 0, ignores: 0 };
+  return { ...prefs, [kind]: { ...cur, autoAccept: (cur.autoAccept || 0) + 1 } };
+}
+
+// Owner UNDID an auto-action ("undo"/"remove"). This is the strong negative
+// signal that drives the trust downgrade auto → suggest → none.
+export function recordAutoUndo(prefs: LifeEventPrefs, kind: LifeEventKind): LifeEventPrefs {
+  const cur = prefs[kind] || { accepts: 0, ignores: 0 };
+  return { ...prefs, [kind]: { ...cur, autoUndo: (cur.autoUndo || 0) + 1 } };
+}
+
+// ── AUTO-ACT LADDER ─────────────────────────────────────────────────────────
+//
+// The trust ladder: for SAFE, REVERSIBLE actions the bot stops asking and just
+// DOES them (then logs + offers undo). For risky actions it keeps the
+// suggest+one-tap path. The decision is PURE — the bridge owns execution,
+// persistence, and the kill-switch env read (passed in via opts).
+//
+// SAFE-AUTO MATRIX (the ONLY kinds + actions ever auto-executed):
+//   delivery     → NOTE   ("Deliveries" note; not calendar, to avoid clutter)
+//   appointment  → CALENDAR
+//   travel       → CALENDAR
+// All three are reversible (delete the event / remove the note line) and
+// low-risk. EVERYTHING ELSE is never auto:
+//   bill         → money. Always suggest (pay-link + reminder one-tap).
+//   fraud_alert  → needs human judgment. Always suggest.
+//   otp          → just surface the code (no action at all).
+//   receipt      → fyi only.
+//   promo/personal/other → not actionable.
+// Money, fraud, OTP, and sending are NEVER auto. This is the safety core.
+
+export type AutoActMode = "auto" | "suggest" | "none";
+
+export interface AutoActDecision {
+  mode: AutoActMode;
+  action?: ProactiveAction;     // the concrete safe-auto action (mode 'auto')
+  idempotencyKey: string;       // stable per package/appointment/trip identity
+  reason: string;               // why this mode (for logs + auditability)
+}
+
+export interface AutoActOpts {
+  // Global kill switch. When false, NO auto — every safe-auto kind falls back
+  // to 'suggest'. The bridge reads LANTERN_LIFE_EVENT_AUTOACT (default 'on')
+  // and passes the boolean here. Default true (owner asked for on-by-default).
+  enabled?: boolean;
+}
+
+// The conservative default-on set: safe kinds the bot auto-acts on out of the
+// box (before any earned-trust downgrade).
+const AUTO_DEFAULT_ON: ReadonlySet<LifeEventKind> = new Set<LifeEventKind>([
+  "delivery", "appointment", "travel",
+]);
+
+// Map a safe-auto kind to its single auto action (mirrors suggestedActionsFor
+// but pins the deterministic target: delivery→note, appt/travel→calendar).
+function safeAutoActionFor(event: LifeEvent): ProactiveAction | undefined {
+  switch (event.kind) {
+    case "delivery": {
+      const f = event.fields;
+      const who = f.carrier || f.merchant || "package";
+      return {
+        label: "log delivery",
+        kind: "track", // deterministic NOTE path in the bridge; not the LLM
+        offerAction: `Append "${who}${f.eta ? ` — ${f.eta}` : ""}${f.trackingNo ? ` (${f.trackingNo})` : ""}" to the Deliveries note.`,
+      };
+    }
+    case "appointment":
+    case "travel":
+      return suggestedActionsFor(event).find((a) => a.kind === "calendar");
+    default:
+      return undefined;
+  }
+}
+
+// Compute the net-negative trust signal for a kind. Undos (and ignores, which
+// also mean "stop bugging me") count against; auto-accepts + taps offset.
+function autoTrustNet(pref?: KindPref): number {
+  if (!pref) return 0;
+  const neg = (pref.autoUndo || 0) + (pref.ignores || 0);
+  const pos = (pref.autoAccept || 0) + (pref.accepts || 0);
+  return neg - pos;
+}
+
+/**
+ * Decide whether to AUTO-execute, SUGGEST (one-tap), or do NONE, for a
+ * classified life-event given the owner's learned prefs + the kill switch.
+ *
+ * Ladder:
+ *   1. Kill switch off            → never 'auto'. Safe kinds become 'suggest'.
+ *   2. Not a safe-auto kind       → 'suggest' if actionable, else 'none'
+ *      (the SUGGEST tier is the existing one-tap behavior; bill/fraud handled
+ *       there, otp/receipt surfaced fyi).
+ *   3. Confidence below floor     → 'suggest' (don't auto on a shaky read).
+ *   4. Safe-auto kind, trust OK   → 'auto'.
+ *   5. Earned-trust downgrade     → net autoUndo/ignore ≥ 2 → 'suggest';
+ *                                    ≥ 4 → 'none'.
+ */
+export function autoActDecision(
+  event: LifeEvent,
+  prefs: LifeEventPrefs = {},
+  opts: AutoActOpts = {},
+): AutoActDecision {
+  const key = idempotencyKeyFor(event);
+  const enabled = opts.enabled !== false; // default on
+  const isSafe = AUTO_DEFAULT_ON.has(event.kind);
+
+  // (2) Not a safe-auto kind → never auto. Actionable → suggest; else none.
+  if (!isSafe) {
+    return {
+      mode: isActionableKind(event.kind) ? "suggest" : "none",
+      idempotencyKey: key,
+      reason: isActionableKind(event.kind)
+        ? `${event.kind} is never auto (risk/judgment/fyi) — suggest+one-tap`
+        : `${event.kind} not actionable`,
+    };
+  }
+
+  // (3) Shaky classification → don't auto, but still offer.
+  if (event.confidence < CONFIDENCE_FLOOR) {
+    return { mode: "suggest", idempotencyKey: key, reason: `low confidence ${event.confidence.toFixed(2)} — suggest` };
+  }
+
+  // (5) Earned-trust downgrade from undo/ignore history.
+  const net = autoTrustNet(prefs[event.kind]);
+  if (net >= 4) {
+    return { mode: "none", idempotencyKey: key, reason: `owner net-rejected ${event.kind} ${net}× — silenced` };
+  }
+  if (net >= 2) {
+    return { mode: "suggest", idempotencyKey: key, reason: `owner net-rejected ${event.kind} ${net}× — downgraded to suggest` };
+  }
+
+  // (1) Kill switch off → safe kind, but no auto. Fall back to suggest.
+  if (!enabled) {
+    return { mode: "suggest", idempotencyKey: key, reason: "auto-act kill switch off — suggest" };
+  }
+
+  // (4) Auto.
+  const action = safeAutoActionFor(event);
+  if (!action) {
+    return { mode: "suggest", idempotencyKey: key, reason: `no safe-auto action resolved for ${event.kind} — suggest` };
+  }
+  return { mode: "auto", action, idempotencyKey: key, reason: `${event.kind} is default-on + trusted — auto` };
+}
+
+// Stable idempotency key for an event's IDENTITY (not its text). The same
+// package across "shipped" → "out for delivery" → "delivered" carrier updates
+// hashes to ONE key, so it is auto-acted at most once; a DIFFERENT package
+// (different tracking #) gets a different key.
+//
+//   delivery     → kind | carrier | trackingNo   (tracking # is the identity;
+//                  falls back to carrier+merchant when no tracking # parsed)
+//   appointment  → kind | place | time | dueDate
+//   travel       → kind | place | time
+//   <other>      → kind | payee | dueDate | amount  (best-effort; these aren't
+//                  auto-acted so collisions are harmless)
+//
+// All inputs are lowercased + whitespace-collapsed so trivial formatting
+// differences across carrier updates don't fork the key.
+export function idempotencyKeyFor(event: LifeEvent): string {
+  const f = event.fields;
+  const norm = (s?: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
+  let parts: string[];
+  switch (event.kind) {
+    case "delivery":
+      parts = f.trackingNo
+        ? [event.kind, norm(f.carrier), norm(f.trackingNo)]
+        : [event.kind, norm(f.carrier), norm(f.merchant)];
+      break;
+    case "appointment":
+      parts = [event.kind, norm(f.place), norm(f.time), norm(f.dueDate)];
+      break;
+    case "travel":
+      parts = [event.kind, norm(f.place), norm(f.time)];
+      break;
+    default:
+      parts = [event.kind, norm(f.payee), norm(f.dueDate), f.amount !== undefined ? String(f.amount) : ""];
+  }
+  return `lev_${event.kind}_${fnv1a(parts.join("|"))}`;
+}
+
+// Deterministically resolve a concrete START datetime (local-TZ ISO, no Z) for
+// an appointment / travel event from its rawText — so the AUTO-ACT LADDER can
+// add a calendar event WITHOUT an LLM round-trip. Returns undefined when no
+// concrete date+time can be parsed; the bridge then falls back to 'suggest'
+// rather than auto-booking a garbage date. `now` anchors the year for
+// year-less dates + resolves relative words (today/tomorrow/weekday).
+export function eventStartIso(event: LifeEvent, now: Date = new Date()): string | undefined {
+  const t = (event.rawText || "").replace(/\s+/g, " ");
+  const date = resolveDate(t, now);
+  if (!date) return undefined;
+  const time = resolveTime(t); // {h, m} or undefined
+  if (!time) return undefined; // a date with no time is too vague to auto-book
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate(), time.h, time.m, 0, 0);
+  return localIso(d);
+}
+
+const WEEKDAYS: Record<string, number> = {
+  sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
+};
+
+function resolveDate(t: string, now: Date): Date | undefined {
+  const lc = t.toLowerCase();
+  // Relative words first.
+  if (/\b(today|tonight)\b/.test(lc)) return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (/\btomorrow\b/.test(lc)) { const d = new Date(now); d.setDate(d.getDate() + 1); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  const wd = lc.match(/\b(sun|mon|tue|wed|thu|fri|sat)(?:day|nesday|rsday|urday)?\b/);
+  if (wd) {
+    const target = WEEKDAYS[wd[1]];
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    let delta = (target - d.getDay() + 7) % 7;
+    if (delta === 0) delta = 7; // next occurrence, not today
+    d.setDate(d.getDate() + delta);
+    return d;
+  }
+  // "Jun 30" / "June 30, 2026"
+  const named = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?/i);
+  if (named) {
+    const mo = MONTHS[named[1].slice(0, 3).toLowerCase()];
+    const day = parseInt(named[2], 10);
+    let year = named[3] ? parseInt(named[3], 10) : now.getFullYear();
+    if (mo !== undefined && day >= 1 && day <= 31) {
+      if (!named[3] && new Date(year, mo, day).getTime() < now.getTime() - 86_400_000) year += 1;
+      return new Date(year, mo, day);
+    }
+  }
+  // "6/30" / "06/30/2026"
+  const numeric = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+  if (numeric) {
+    const mo = parseInt(numeric[1], 10) - 1;
+    const day = parseInt(numeric[2], 10);
+    let year = numeric[3] ? (numeric[3].length === 2 ? 2000 + parseInt(numeric[3], 10) : parseInt(numeric[3], 10)) : now.getFullYear();
+    if (mo >= 0 && mo <= 11 && day >= 1 && day <= 31) {
+      if (!numeric[3] && new Date(year, mo, day).getTime() < now.getTime() - 86_400_000) year += 1;
+      return new Date(year, mo, day);
+    }
+  }
+  return undefined;
+}
+
+function resolveTime(t: string): { h: number; m: number } | undefined {
+  const m = t.match(/\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/i);
+  if (m) {
+    let h = parseInt(m[1], 10);
+    const min = m[2] ? parseInt(m[2], 10) : 0;
+    const mer = m[3].toLowerCase();
+    if (mer === "pm" && h < 12) h += 12;
+    if (mer === "am" && h === 12) h = 0;
+    if (h >= 0 && h < 24 && min >= 0 && min < 60) return { h, m: min };
+  }
+  // 24h "14:30"
+  const m24 = t.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  if (m24) return { h: parseInt(m24[1], 10), m: parseInt(m24[2], 10) };
+  return undefined;
+}
+
+function localIso(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:00`;
+}
+
+// FNV-1a 32-bit — small, dependency-free, stable across processes/restarts.
+// (Matches the determinism the rest of the bridge expects; no crypto needed
+// since this is an identity hash, not a security boundary.)
+function fnv1a(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
 // The owner-facing self-chat prefixes this module emits — exported so the
 // bridge's bot-self guard (bot-self.ts BOT_SELF_PREFIXES) stays in sync and the
 // bridge never replies to its own life-event pings.
 export const LIFE_EVENT_SELF_PREFIXES: string[] = [
   "💸 ",  // bill ping
-  "📦 ",  // delivery ping/digest
+  "📦 ",  // delivery ping/digest + "📦 logged delivery" auto-act log
   "⚠️ ",  // fraud ping (note: shared shape with other warnings)
   "🔑 ",  // otp surface
   "🧾 ",  // receipt
-  "✈️ ",  // travel
+  "✈️ ",  // travel ping/digest
+  "📅 ",  // auto-act calendar log ("📅 added to your calendar — …")
+  "🤖 ",  // auto-act activity replies ("🤖 today i auto-handled …", pause/resume)
 ];
