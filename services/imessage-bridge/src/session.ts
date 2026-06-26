@@ -717,21 +717,31 @@ export class IMessageSession {
       defaultScreenContextConfig(),
       this.logger,
       async (pngPath: string): Promise<string> => {
+        // On-device OCR via the macOS Vision framework
+        // (scripts/ocr/vision-ocr.py — Python + prebuilt pyobjc wheels).
+        // Local, free, NO API key, and the screen image NEVER leaves the
+        // Mac — strictly more private than the cloud /v1/vision/ocr path,
+        // and it works without an LLM vision key/credit. Overridable via
+        // LANTERN_OCR_PYTHON / LANTERN_OCR_SCRIPT.
         try {
-          const fs = await import("fs");
-          const { authedFetch } = await import("@lantern/bridge-core/auth");
-          const buf = fs.readFileSync(pngPath);
-          const res = await authedFetch("/v1/vision/ocr", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              imageDataUrl: `data:image/png;base64,${buf.toString("base64")}`,
-              prompt: "OCR this screen. Capture all visible text accurately. Skip pure decorative elements.",
-            }),
+          const { spawn } = await import("child_process");
+          const { fileURLToPath } = await import("url");
+          const here = fileURLToPath(import.meta.url);
+          const ocrScript =
+            process.env.LANTERN_OCR_SCRIPT ||
+            join(here, "..", "..", "..", "..", "scripts", "ocr", "vision-ocr.py");
+          const py = process.env.LANTERN_OCR_PYTHON || "/usr/bin/python3";
+          return await new Promise<string>((resolve) => {
+            const proc = spawn(py, [ocrScript, pngPath]);
+            let out = "";
+            const timer = setTimeout(() => {
+              try { proc.kill("SIGKILL"); } catch {}
+              resolve("");
+            }, 10000);
+            proc.stdout.on("data", (d) => (out += d.toString()));
+            proc.on("close", () => { clearTimeout(timer); resolve(out.trim()); });
+            proc.on("error", () => { clearTimeout(timer); resolve(""); });
           });
-          if (!res.ok) return "";
-          const data = (await res.json()) as { text?: string };
-          return (data.text || "").trim();
         } catch {
           return "";
         }
