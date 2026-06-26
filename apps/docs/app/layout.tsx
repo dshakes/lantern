@@ -10,7 +10,7 @@ import { Toc } from "./_components/Toc";
 import {
   BookOpen, Rocket, Bot, Plug, MessageSquare, Brain,
   Clock, Shield, Cloud, Code, FileCode, ExternalLink,
-  Store, BarChart3, Server, Download, Menu, X, Flame,
+  Store, BarChart3, Server, Download, Menu, X, Flame, Smartphone,
 } from "lucide-react";
 
 // The Lantern brand mark — a warm amber "lantern glow".
@@ -46,6 +46,9 @@ const sections: NavSection[] = [
     ]},
     { href: "/surfaces", label: "Surfaces", icon: MessageSquare, subs: [
       { href: "/surfaces#whatsapp", label: "WhatsApp" }, { href: "/surfaces#slack", label: "Slack" }, { href: "/surfaces#telegram", label: "Telegram" }, { href: "/surfaces#webchat", label: "Web Chat" },
+    ]},
+    { href: "/personal", label: "Personal harness", icon: Smartphone, subs: [
+      { href: "/personal#model", label: "The model" }, { href: "/personal#triggers", label: "iPhone triggers" }, { href: "/personal#pipeline", label: "Signal pipeline" }, { href: "/personal#bridge", label: "On-demand context" }, { href: "/personal#concierge", label: "Availability concierge" },
     ]},
     { href: "/models", label: "Models", icon: Brain, subs: [
       { href: "/models#providers", label: "Providers" }, { href: "/models#routing", label: "Capability routing" }, { href: "/models#auto", label: "Auto mode" }, { href: "/models#keys", label: "API keys" },

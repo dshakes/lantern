@@ -26,6 +26,7 @@ import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
+import type { SignalPresence } from "./device-signals";
 
 const execFileP = promisify(execFile);
 
@@ -50,7 +51,7 @@ export interface PresenceSnapshot {
   // When the snapshot was computed. Callers check this against TTL.
   capturedAt: number;
   // Optional source for debugging.
-  source: "override" | "focus" | "calendar" | "default";
+  source: "override" | "iphone" | "focus" | "calendar" | "default";
   // Free-text place the owner set ("the temple", "the gym"), if any.
   place?: string;
   // Owner wants the bot to offer to take a message while away.
@@ -69,6 +70,11 @@ export interface PresenceLookupOpts {
   // the bridge sets this, it wins over Focus + calendar until the
   // override expires.
   manualOverride?: ManualOverride | null;
+  // iPhone-signal-derived availability (focus/device/location from the owner's
+  // phone, via presenceFromSignals). Availability-only — never a place. Computed
+  // fresh per-call by the bridge; wins over macOS Focus + calendar (the phone
+  // reflects where the owner actually is), below a manual self-chat override.
+  iphone?: SignalPresence | null;
   logger?: Logger;
 }
 
@@ -198,7 +204,7 @@ export class PresenceTracker {
     // A cached "override" snapshot must NOT survive once the shared file is
     // gone (another bridge cleared the status) — else "I'm back" wouldn't
     // propagate for up to 60s.
-    if (!override && this.cache && this.cache.source !== "override" && now - this.cache.capturedAt < PresenceTracker.TTL_MS) {
+    if (!override && !opts.iphone && this.cache && this.cache.source !== "override" && now - this.cache.capturedAt < PresenceTracker.TTL_MS) {
       return this.cache;
     }
 
@@ -215,6 +221,20 @@ export class PresenceTracker {
       };
       this.cache = snap;
       return snap;
+    }
+
+    // 1.5 iPhone signal (focus/device/location from the phone). Fresher than the
+    // Mac's Focus — the owner carries the phone. Like the override it bypasses
+    // the 60s cache (passed in fresh each call) and is availability-only, so it's
+    // never cached as a stale Mac reading. No `place` — never leaks whereabouts.
+    if (opts.iphone) {
+      return {
+        line: opts.iphone.line,
+        state: opts.iphone.state,
+        capturedAt: now,
+        source: "iphone",
+        away: opts.iphone.away,
+      };
     }
 
     // 2. macOS Focus mode.

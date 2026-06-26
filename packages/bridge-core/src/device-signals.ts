@@ -273,6 +273,76 @@ export function summarizeDeviceSignals(
   return { topApps, recent, summaryLine };
 }
 
+// ─── Contact-facing availability ─────────────────────────────────────────────
+// Derive owner AVAILABILITY from the latest iPhone signals, for the
+// contact-facing concierge (presence.ts feeds this into "is he free?" replies).
+
+export type SignalPresenceState = "driving" | "dnd" | "sleep" | "busy" | "free";
+
+export interface SignalPresence {
+  state: SignalPresenceState;
+  /** Availability-only line for the prompt. CRITICAL: never contains a place or
+   *  whereabouts — safe to surface to a contact. */
+  line: string;
+  /** True when the owner is unavailable (contacts get "he'll get back"). */
+  away: boolean;
+}
+
+/**
+ * Map the latest in-window iPhone signals to owner AVAILABILITY — never a place.
+ *
+ * This is what lets the phone triggers (driving, Focus/status, geofences) reach
+ * the contact-facing concierge. A geofence like "Gym"/"Airport" maps to a coarse
+ * activity/away state, and the place name is NEVER echoed, so the result is safe
+ * to show a contact (the whereabouts guard in natural.ts is the second line of
+ * defense). Returns null when no focus/device/location signal is in-window — the
+ * caller then falls back to macOS Focus / calendar / free.
+ *
+ * Priority: driving (device) → Focus/status (focus) → geofence (location).
+ */
+export function presenceFromSignals(
+  signals: DeviceSignal[],
+  opts: { nowMs?: number; windowMs?: number } = {},
+): SignalPresence | null {
+  const nowMs = opts.nowMs ?? Date.now();
+  const windowMs = opts.windowMs ?? TWO_HOURS_MS;
+  const cutoff = nowMs - windowMs;
+  const recent = (signals || [])
+    .filter((s) => s && Number.isFinite(s.ts) && s.ts >= cutoff && s.ts <= nowMs)
+    .sort((a, b) => b.ts - a.ts);
+  const latest = (kind: SignalKind): DeviceSignal | undefined => recent.find((s) => s.kind === kind);
+
+  // 1. Driving — strongest, most time-sensitive (CarPlay / Tesla Bluetooth).
+  const dev = (latest("device")?.detail || "").trim().toLowerCase();
+  if (/carplay|driving/.test(dev)) {
+    return { state: "driving", line: "driving right now", away: true };
+  }
+
+  // 2. Focus / status button. Echo only the availability, never the raw name.
+  const f = (latest("focus")?.detail || "").trim().toLowerCase();
+  if (f) {
+    if (/dnd|do not disturb/.test(f)) return { state: "dnd", line: "on Do Not Disturb", away: true };
+    if (/sleep/.test(f)) return { state: "sleep", line: "asleep right now", away: true };
+    if (/available|free/.test(f)) return { state: "free", line: "free / available", away: false };
+    if (/busy|desk|work/.test(f)) return { state: "busy", line: "heads-down right now", away: true };
+    // Any other named Focus → busy, availability-only (never echo the name; it
+    // could be a place/whereabouts the owner named their Focus after).
+    return { state: "busy", line: "tied up right now", away: true };
+  }
+
+  // 3. Geofence → COARSE availability only. The place name is never returned.
+  const loc = (latest("location")?.detail || "").trim().toLowerCase();
+  if (loc) {
+    if (/gym|fitness|workout/.test(loc)) return { state: "busy", line: "working out right now", away: true };
+    if (/airport|travel|flight/.test(loc)) return { state: "busy", line: "away right now", away: true };
+    if (/office|work/.test(loc)) return { state: "busy", line: "heads-down right now", away: false };
+    // "Home" or any unknown place is NOT an availability signal — fall through.
+    return null;
+  }
+
+  return null;
+}
+
 interface BuildLineInput {
   topApps: AppCount[];
   windowMs: number;
