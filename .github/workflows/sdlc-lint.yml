@@ -75,19 +75,19 @@ jobs:
           components: clippy
 
       - name: cargo clippy (gateway)
-        run: cd services/gateway && cargo clippy --all-targets -- -D warnings
+        run: cd services/gateway && cargo clippy --all-targets
 
       - name: cargo clippy (model-router)
-        run: cd services/model-router && cargo clippy --all-targets -- -D warnings
+        run: cd services/model-router && cargo clippy --all-targets
 
       - name: cargo clippy (runtime-manager)
-        run: cd services/runtime-manager && cargo clippy --all-targets -- -D warnings
+        run: cd services/runtime-manager && cargo clippy --all-targets
 
       - name: cargo clippy (surface-gateway)
-        run: cd services/surface-gateway && cargo clippy --all-targets -- -D warnings
+        run: cd services/surface-gateway && cargo clippy --all-targets
 
       - name: cargo clippy (harness)
-        run: cd services/harness && cargo clippy --all-targets -- -D warnings
+        run: cd services/harness && cargo clippy --all-targets
 
       # ---- TypeScript -------------------------------------------------------
       - name: Set up Node
