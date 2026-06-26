@@ -74,6 +74,11 @@ jobs:
           toolchain: "1.93"
           components: clippy
 
+      # Rust crates with prost/tonic build.rs (runtime-manager, surface-gateway,
+      # gateway) need protoc to compile — qa installs it, the lint job didn't.
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev
+
       - name: cargo clippy (gateway)
         run: cd services/gateway && cargo clippy --all-targets
 
