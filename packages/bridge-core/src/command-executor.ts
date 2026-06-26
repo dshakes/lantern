@@ -73,6 +73,11 @@ export interface CommandContext {
   // Chat jid for the current command execution context. Passed to
   // placeOutboundCall so the bridge can key offers correctly.
   chatJid?: string;
+  // AUTO-ACT LADDER toggle. enabled=false pauses automation (safe actions
+  // become suggest-only); true resumes. The bridge persists the flag.
+  setAutoAct?: (enabled: boolean) => Promise<void> | void;
+  // "what did you do today" — returns a formatted recap of recent auto-actions.
+  autoActRecap?: () => Promise<string> | string;
   // Channel name shown in human replies ("iMessage" or "WhatsApp").
   channelLabel: string;
 }
@@ -184,6 +189,21 @@ export async function executeCommand(cmd: ParsedCommand, ctx: CommandContext): P
     case "pushover-off": {
       if (ctx.setPushover) await ctx.setPushover(false);
       await ctx.reply(`${cmd.echo}\nPushover siren disabled. other channels (WA/iM/email/voice/macOS) unchanged.`);
+      return;
+    }
+    case "autoact-on": {
+      if (ctx.setAutoAct) await ctx.setAutoAct(true);
+      await ctx.reply(`${cmd.echo}\ndeliveries → a Deliveries note; appointments + travel → your calendar. each one logs an *undo*.`);
+      return;
+    }
+    case "autoact-off": {
+      if (ctx.setAutoAct) await ctx.setAutoAct(false);
+      await ctx.reply(`${cmd.echo}\ni'll still flag bills/fraud/OTP and suggest the safe ones — just won't act on my own. say *resume automation* to turn it back on.`);
+      return;
+    }
+    case "autoact-recap": {
+      const body = ctx.autoActRecap ? await ctx.autoActRecap() : "🤖 no auto-action recap available on this channel";
+      await ctx.reply(body);
       return;
     }
     case "call-conference":

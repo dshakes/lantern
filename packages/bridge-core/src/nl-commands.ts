@@ -50,7 +50,10 @@ export type NLCommandAction =
   | "pushover-off"     // disable Pushover siren
   | "call-conference"  // dial X, ask if free, conference owner in
   | "call-voicemail"   // dial X, speak message, hang up
-  | "call-task";       // dial business/IVR with a one-shot task
+  | "call-task"        // dial business/IVR with a one-shot task
+  | "autoact-on"       // resume the AUTO-ACT LADDER (safe actions fire automatically)
+  | "autoact-off"      // pause automation — safe actions become suggest-only
+  | "autoact-recap";   // "what did you do today" — list recent auto-actions
 
 export interface ParsedCommand {
   action: NLCommandAction;
@@ -125,6 +128,17 @@ const PUSHOVER_ON_VERBS =
   /^(?:pushover|push)\s+(?:on|enable|enabled)$/i;
 const PUSHOVER_OFF_VERBS =
   /^(?:pushover|push)\s+(?:off|disable|disabled|mute)$/i;
+// AUTO-ACT LADDER toggle. Anchored so it never trips on plain chat. "pause
+// automation" / "stop auto" turns OFF auto-execution (safe actions become
+// suggest-only); "resume automation" turns it back on. These are SEPARATE
+// from mute (which silences ALL replies) — automation off still lets the bot
+// suggest, it just stops acting on its own.
+const AUTOACT_OFF_VERBS =
+  /^(?:pause|stop|disable|turn\s+off)\s+(?:the\s+)?(?:auto(?:mation|-?act|-?acting|-?actions?)?)$/i;
+const AUTOACT_ON_VERBS =
+  /^(?:resume|start|enable|turn\s+on)\s+(?:the\s+)?(?:auto(?:mation|-?act|-?acting|-?actions?)?)$/i;
+const AUTOACT_RECAP_VERBS =
+  /^(?:what\s+did\s+you\s+do(?:\s+today)?|what'?s?\s+(?:been\s+)?auto(?:mated|-?acted)?(?:\s+today)?|today'?s?\s+auto(?:-?actions?)?|recent\s+auto(?:-?actions?)?)$/i;
 
 // Parse a duration phrase like "for 2 hours", "for 30 min", "until 9am",
 // "for tonight", "for an hour". Returns ms, or undefined when none.
@@ -286,7 +300,7 @@ export function parseNLCommand(input: string): ParsedCommand | null {
     const wordCount = raw.split(/\s+/).length;
     if (wordCount > 8) return null;
     const startsWithVerb =
-      /^(pause|mute|stop|off|hush|quiet|silence|sleep|resume|unmute|wake|on|status|ping|help|what'?s|how'?s|how\s+are|list|show|approvals?|drafts?|queue|vips?|clear|reset|who'?s|escalations?|panic|sirens?|pushover|push|call|ring|dial|phone|conference|voicemail|leave|get|put|bridge|connect)\b/i.test(raw);
+      /^(pause|mute|stop|off|hush|quiet|silence|sleep|resume|unmute|wake|on|enable|disable|turn|start|today|recent|status|ping|help|what|what'?s|how'?s|how\s+are|list|show|approvals?|drafts?|queue|vips?|clear|reset|who'?s|escalations?|panic|sirens?|pushover|push|call|ring|dial|phone|conference|voicemail|leave|get|put|bridge|connect)\b/i.test(raw);
     if (!startsWithVerb) return null;
   }
 
@@ -328,6 +342,17 @@ export function parseNLCommand(input: string): ParsedCommand | null {
   }
   if (PUSHOVER_OFF_VERBS.test(body)) {
     return { action: "pushover-off", echo: "🔕 pushover siren DISABLED", explicit };
+  }
+  // AUTO-ACT toggle — BEFORE the generic mute/status verbs (which also match
+  // "pause"/"what's"). Anchored so only the exact automation phrasing fires.
+  if (AUTOACT_OFF_VERBS.test(body)) {
+    return { action: "autoact-off", echo: "⏸ automation paused — i'll suggest, not auto-act", explicit };
+  }
+  if (AUTOACT_ON_VERBS.test(body)) {
+    return { action: "autoact-on", echo: "▶️ automation resumed — safe actions fire automatically again", explicit };
+  }
+  if (AUTOACT_RECAP_VERBS.test(body)) {
+    return { action: "autoact-recap", echo: "recent auto-actions", explicit };
   }
   if (RESUME_ALL_VERBS.test(body)) {
     return { action: "resume-all", echo: "resumed all paused contacts", explicit };
