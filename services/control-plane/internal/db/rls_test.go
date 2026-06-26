@@ -381,6 +381,7 @@ var rlsTenantTables = []string{
 	"whatsapp_contact_facts", "whatsapp_vip_contacts", "whatsapp_pending_drafts",
 	"runtime_quotas", "runtime_audit_events", "runtime_vms", "people",
 	"person_handles", "memory_events", "runtime_vm_logs", "side_effect_receipts",
+	"life_events", "life_event_prefs",
 }
 
 // rlsExemptTables are intentionally NOT under RLS: no single owning tenant_id,

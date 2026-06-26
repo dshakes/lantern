@@ -620,6 +620,25 @@ env vars are unset, dashboard falls back to direct bridge probe.
 | `POST` | `/v1/surfaces/whatsapp/heartbeat` | Shared-token auth. Upserts pairing state per tenant          |
 | `GET`  | `/v1/surfaces/whatsapp/status`    | JWT auth. Returns last-known pairing state with `stale` flag |
 
+### Life-event engine (bridge "Automations" feed)
+
+The bridges classify inbound into typed life-events
+(`bill`/`delivery`/`appointment`/`fraud_alert`/`otp`/`travel`/`receipt`/`promo`)
+and either suggest one-tap actions or auto-act. These endpoints persist the
+events + their outcomes so the dashboard "Automations" view can render a feed
+and per-category trust toggles. Backed by `life_events` + `life_event_prefs`
+(both tenant-scoped, RLS-enforced). All JWT-authed, tenant-scoped via
+`WithTenant`. Re-emits dedup on `(tenant_id, idempotency_key)`.
+
+| Method | Path                              | Description                                                                                                                  |
+| ------ | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/v1/life-events`                 | Record a classified event `{kind, channel, status?, urgency?, summary, fields?, idempotencyKey?, actionTaken?, sourcePreview?}`. UPSERTs on idempotency key (re-emit updates status/action). Returns `{id}` |
+| `GET`  | `/v1/life-events`                 | Newest-first feed (`?status=`, `?kind=`, `?limit=` default 50 cap 200)                                                       |
+| `POST` | `/v1/life-events/{id}/undo`       | Mark `status='undone'` (records intent; bridge reverts the calendar/note). 404 cross-tenant                                 |
+| `POST` | `/v1/life-events/{id}/dismiss`    | Mark `status='dismissed'`. 404 cross-tenant                                                                                  |
+| `GET`  | `/v1/life-events/prefs`           | Per-kind trust modes (`auto`/`ask`/`off`); synthesizes default `ask` for kinds with no row                                  |
+| `PUT`  | `/v1/life-events/prefs`           | Upsert a per-kind toggle `{kind, mode}` on `(tenant_id, kind)`                                                              |
+
 ### MicroVM headless runtime (W12)
 
 Productionized headless agent execution: control-plane schedules a spec,

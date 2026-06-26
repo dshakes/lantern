@@ -253,6 +253,7 @@ func main() {
 	a2aHandler := handlers.NewA2AHandler(srv, authHandler)
 	gmailHandler := handlers.NewGmailHandler(srv, authHandler)
 	sessionHandler := handlers.NewSessionHandler(srv, authHandler, llmProxyHandler)
+	lifeEventHandler := handlers.NewLifeEventHandler(srv, authHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
 	restHandler.SetDataPlaneRouter(dpSvc)    // routes runs to a connected data plane when one is live
 
@@ -459,6 +460,14 @@ func main() {
 	httpMux.HandleFunc("POST /v1/sessions/{id}/stop", sessionHandler.StopSession)
 	httpMux.HandleFunc("DELETE /v1/sessions/{id}", sessionHandler.DeleteSession)
 	httpMux.HandleFunc("GET /v1/sessions/{id}", sessionHandler.GetSession)
+
+	// Life-event engine (bridges' "Automations" feed + per-category trust toggles).
+	httpMux.HandleFunc("POST /v1/life-events", lifeEventHandler.CreateLifeEvent)
+	httpMux.HandleFunc("GET /v1/life-events", lifeEventHandler.ListLifeEvents)
+	httpMux.HandleFunc("GET /v1/life-events/prefs", lifeEventHandler.ListLifeEventPrefs)
+	httpMux.HandleFunc("PUT /v1/life-events/prefs", lifeEventHandler.UpsertLifeEventPref)
+	httpMux.HandleFunc("POST /v1/life-events/{id}/undo", lifeEventHandler.UndoLifeEvent)
+	httpMux.HandleFunc("POST /v1/life-events/{id}/dismiss", lifeEventHandler.DismissLifeEvent)
 
 	// Pre-run cost forecaster.
 	httpMux.HandleFunc("POST /v1/runs/forecast", forecastHandler.Forecast)
