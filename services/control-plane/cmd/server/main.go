@@ -244,6 +244,7 @@ func main() {
 	smsHandler := handlers.NewSMSHandler(logger, srv.Pool, llmProxyHandler)
 	messagingHandler := handlers.NewMessagingHandler(logger, srv.Pool, llmProxyHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
+	signalHandler := handlers.NewSignalHandler(srv)
 	waPersonalHandler := handlers.NewWhatsAppPersonalHandler(srv, authHandler)
 	identityHandler := handlers.NewIdentityHandler(srv, authHandler, llmProxyHandler)
 	jarvisHandler := handlers.NewJarvisHandler(srv, authHandler, llmProxyHandler)
@@ -354,6 +355,13 @@ func main() {
 	// matchers so they're not shadowed.
 	httpMux.HandleFunc("POST /v1/surfaces/whatsapp/heartbeat", surfaceHandler.BridgeHeartbeat)
 	httpMux.HandleFunc("GET /v1/surfaces/whatsapp/status", surfaceHandler.WhatsAppStatus)
+
+	// Personal device signals — iPhone Shortcuts POST app-context here
+	// THROUGH the cloudflared tunnel (API :8080, not dashboard :3001). NO
+	// JWT/tenant scope; gated by the LANTERN_SIGNAL_TOKEN shared secret
+	// (fail-closed when unset), mirroring the bridge-heartbeat pattern.
+	httpMux.HandleFunc("POST /v1/signals", signalHandler.IngestSignal)
+	httpMux.HandleFunc("GET /v1/signals", signalHandler.ListSignals)
 
 	// Personal-assistant futuristic endpoints (VIP contacts, contact
 	// facts/memory, smart-draft VIP approval flow).
