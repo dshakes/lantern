@@ -8,10 +8,30 @@ export default function SecurityPage() {
         architecture, from the microVM runtime to the model router.
       </p>
 
-      <h2 id="privacy">Privacy levels</h2>
+      <div className="callout callout-warning">
+        <strong>Status note (2026-06-23):</strong> The controls described below
+        reflect what is shipped and what is planned. Items marked
+        <em> (planned)</em> are designed and documented but not yet implemented.
+        Do not rely on planned features for compliance decisions.
+      </div>
+
+      <h2 id="what-is-shipped">What is shipped today</h2>
+      <ul>
+        <li><strong>AES-256-GCM encryption at rest</strong> for connector credentials and LLM provider keys (<code>LANTERN_CREDENTIAL_KEY</code>).</li>
+        <li><strong>HttpOnly JWT cookies</strong> -- dashboard auth tokens are issued server-side and never exposed to client-side JavaScript.</li>
+        <li><strong>Row-Level Security (RLS)</strong> policies on all 34 tenant tables (<code>USING</code> + <code>WITH CHECK</code>). Enforcement is staged: policies are installed and tested, and will be activated per-environment via <code>LANTERN_RLS_ENFORCE=1</code> as handler cutovers complete.</li>
+        <li><strong>gRPC service-token auth</strong> on <code>:50051</code> -- constant-time check, runs before tenant extraction, fail-closed in production.</li>
+        <li><strong>A2A tenant isolation</strong> -- <code>GetAgentCard</code> / <code>InvokeAgent</code> gate on <code>is_public OR caller-tenant</code>; private agents return 404 to cross-tenant callers.</li>
+        <li><strong>Bridge retry + surface-gateway tenant resolution</strong> -- the surface gateway resolves a real Lantern <code>LANTERN_TENANT_ID</code> instead of using platform IDs; unknown installs are rejected.</li>
+        <li><strong>LLM idempotency keys</strong> on all provider calls -- derived from <code>(run_id, step_id, attempt)</code>, reused across same-provider retries.</li>
+        <li><strong>Dependency vuln gate</strong> -- <code>govulncheck</code>, <code>cargo-audit</code>, and <code>npm audit</code> run on every CI build.</li>
+        <li><strong>OTel traces with tenant_id</strong> -- every HTTP request and gRPC call carries a span enriched with <code>tenant_id</code>, <code>run_id</code>, and <code>step_id</code>.</li>
+      </ul>
+
+      <h2 id="privacy">Privacy levels <em style={{color: "#f59e0b", fontSize: "0.85em"}}>(planned)</em></h2>
       <p>
-        Every agent has a configurable <strong>privacy level</strong> that
-        controls how data is handled:
+        The following privacy levels are part of the architecture design and are
+        not yet implemented. They are documented here for reference.
       </p>
       <ul>
         <li>
@@ -20,12 +40,12 @@ export default function SecurityPage() {
           most use cases.
         </li>
         <li>
-          <strong>Strict</strong> -- inputs and outputs are not logged. PII is
+          <strong>Strict</strong> <em>(planned)</em> -- inputs and outputs are not logged. PII is
           automatically detected and redacted in traces. Audit log entries are
           created for all data access.
         </li>
         <li>
-          <strong>Paranoid</strong> -- end-to-end encryption. Data is encrypted
+          <strong>Paranoid</strong> <em>(planned)</em> -- end-to-end encryption. Data is encrypted
           before leaving the client and decrypted only inside the microVM. The
           control plane never sees plaintext data. Designed for healthcare,
           finance, and legal use cases.
@@ -34,11 +54,10 @@ export default function SecurityPage() {
 
       <div className="callout callout-info">
         <strong>Note:</strong> Privacy levels can be set per agent and per
-        connector. A strict agent with a standard connector will apply strict
-        rules to all data flowing through that connector.
+        connector once the feature ships.
       </div>
 
-      <h2 id="guardrails">Guardrails</h2>
+      <h2 id="guardrails">Guardrails <em style={{color: "#f59e0b", fontSize: "0.85em"}}>(partial)</em></h2>
       <p>
         Guardrails are rules that constrain what an agent can do. They are
         enforced at the runtime level, not by the LLM -- so they cannot be
@@ -86,7 +105,7 @@ export default function SecurityPage() {
 }`}</code>
       </pre>
 
-      <h2>PII blocking</h2>
+      <h2>PII blocking <em style={{color: "#f59e0b", fontSize: "0.85em"}}>(planned)</em></h2>
       <p>
         When <code>block_pii</code> is enabled, Lantern automatically detects
         and redacts personally identifiable information in agent inputs and
@@ -143,35 +162,38 @@ export default function SecurityPage() {
         </li>
       </ul>
 
-      <h3>Bring your own key (BYOK)</h3>
+      <h3>Bring your own key (BYOK) <em style={{color: "#f59e0b", fontSize: "0.85em"}}>(planned)</em></h3>
       <p>
-        Enterprise customers can provide their own encryption keys via AWS KMS,
-        Google Cloud KMS, or Azure Key Vault. Lantern wraps all data encryption
-        with your key, giving you full control over data access.
+        Enterprise customers will be able to provide their own encryption keys via AWS KMS,
+        Google Cloud KMS, or Azure Key Vault. This feature is on the roadmap and not yet
+        available.
       </p>
 
-      <h2 id="audit">Audit logging</h2>
+      <h2 id="audit">Audit logging <em style={{color: "#f59e0b", fontSize: "0.85em"}}>(partial)</em></h2>
       <p>
-        Every significant action is recorded in an immutable audit log:
+        Run-level events are recorded in <code>journal_events</code> (the run event journal).
+        A full immutable audit log covering secret access, role changes, and
+        dashboard actions is on the roadmap. The following are tracked today:
       </p>
       <ul>
-        <li>Agent creation, update, and deletion</li>
-        <li>Connector authorization and revocation</li>
-        <li>Run start, completion, and failure</li>
-        <li>Secret access and rotation</li>
-        <li>User login, logout, and permission changes</li>
+        <li>Run start, completion, and failure (via <code>journal_events</code>)</li>
+        <li>A2A agent card access (tenant-scoped, cross-tenant denials logged)</li>
       </ul>
       <p>
-        Audit logs are available in the dashboard under{" "}
-        <strong>Settings &gt; Audit Log</strong>. They can also be exported to
-        your SIEM (Splunk, Datadog, etc.) via webhook or S3 export.
+        SIEM export via webhook or S3 is planned but not yet available.
       </p>
 
-      <h2>MicroVM isolation</h2>
+      <h2>Isolation</h2>
       <p>
-        Every agent run executes inside its own{" "}
-        <strong>Firecracker microVM</strong>. This provides:
+        Agent runs execute inside isolated sandboxes. The isolation class depends
+        on the workload type. In local development, Docker containers are the
+        default backend (<code>RUNTIME_BACKEND=docker</code>). In production,
+        the runtime-manager supports gVisor (standard), Kata microVM (hostile),
+        and Firecracker-backed Kata for the highest isolation tier. Fail-closed:
+        untrusted/hostile workloads are refused unless the appropriate
+        RuntimeClass is configured -- never silently downgraded to a bare pod.
       </p>
+      <p>All isolation tiers provide:</p>
       <ul>
         <li>
           <strong>Process isolation</strong> -- each run has its own kernel,

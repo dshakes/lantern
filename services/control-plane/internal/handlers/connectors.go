@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
@@ -35,13 +36,15 @@ func (h *ConnectorHandler) logger() *zap.Logger {
 	return h.srv.Logger.Named("connectors")
 }
 
-// contextWithTenant extracts tenant from JWT for REST endpoints.
+// contextWithTenant extracts tenant from JWT for REST endpoints and injects it
+// into the returned context so s.srv.WithTenant can scope DB access under RLS.
 func (h *ConnectorHandler) contextWithTenant(r *http.Request) (context.Context, string, error) {
 	claims, err := h.auth.validateRequest(r)
 	if err != nil {
 		return nil, "", err
 	}
-	return r.Context(), claims.TenantID, nil
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	return ctx, claims.TenantID, nil
 }
 
 // ---------- Install connector ----------
@@ -80,17 +83,19 @@ func (h *ConnectorHandler) InstallConnector(w http.ResponseWriter, r *http.Reque
 	}
 
 	var id string
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO connector_installs (tenant_id, connector_id, display_name, status, config, scopes, installed_by)
-		VALUES ($1, $2, $3, 'connected', $4::jsonb, $5, $6)
-		ON CONFLICT (tenant_id, connector_id) DO UPDATE SET
-			display_name = EXCLUDED.display_name,
-			config = EXCLUDED.config,
-			scopes = EXCLUDED.scopes,
-			status = 'connected',
-			updated_at = now()
-		RETURNING id
-	`, tenantID, body.ConnectorID, body.DisplayName, encConfig, body.Scopes, tenantID).Scan(&id)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO connector_installs (tenant_id, connector_id, display_name, status, config, scopes, installed_by)
+			VALUES ($1, $2, $3, 'connected', $4::jsonb, $5, $6)
+			ON CONFLICT (tenant_id, connector_id) DO UPDATE SET
+				display_name = EXCLUDED.display_name,
+				config = EXCLUDED.config,
+				scopes = EXCLUDED.scopes,
+				status = 'connected',
+				updated_at = now()
+			RETURNING id
+		`, tenantID, body.ConnectorID, body.DisplayName, encConfig, body.Scopes, tenantID).Scan(&id)
+	})
 	if err != nil {
 		h.logger().Error("install connector failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to install connector"})
@@ -122,56 +127,65 @@ func (h *ConnectorHandler) ListConnectors(w http.ResponseWriter, r *http.Request
 	// We also pull oauth_token_encrypted (just whether it's non-null) so
 	// the read path can label each row's authMethod for the dashboard
 	// without leaking the actual credential payload.
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id, connector_id, display_name, status, config, scopes, installed_by, installed_at, updated_at,
-		       (oauth_token_encrypted IS NOT NULL) AS has_oauth_token
-		FROM connector_installs
-		WHERE tenant_id = $1
-		ORDER BY installed_at DESC
-	`, tenantID)
+	//
+	// Rows are drained inside the WithTenant closure: WithTenant commits (and
+	// closes the tx) before it returns, so we cannot iterate rows afterward.
+	result := make([]map[string]any, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id, connector_id, display_name, status, config, scopes, installed_by, installed_at, updated_at,
+			       (oauth_token_encrypted IS NOT NULL) AS has_oauth_token
+			FROM connector_installs
+			WHERE tenant_id = $1
+			ORDER BY installed_at DESC
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var (
+				id, connectorID, displayName, status string
+				config                               []byte
+				scopes                               []string
+				installedBy                          *string
+				installedAt, updatedAt               time.Time
+				hasOAuthToken                        bool
+			)
+			if err := rows.Scan(&id, &connectorID, &displayName, &status, &config, &scopes, &installedBy, &installedAt, &updatedAt, &hasOAuthToken); err != nil {
+				h.logger().Error("scan connector row failed", zap.Error(err))
+				continue
+			}
+
+			var configMap map[string]any
+			if dec, decErr := secrets.Decrypt(config); decErr == nil {
+				json.Unmarshal(dec, &configMap) //nolint:errcheck
+			}
+
+			entry := map[string]any{
+				"id":          id,
+				"tenantId":    tenantID,
+				"connectorId": connectorID,
+				"displayName": displayName,
+				"status":      status,
+				"config":      configMap,
+				"scopes":      scopes,
+				"installedAt": installedAt,
+				"updatedAt":   updatedAt,
+				"authMethod":  inferAuthMethod(hasOAuthToken, configMap),
+			}
+			if installedBy != nil {
+				entry["installedBy"] = *installedBy
+			}
+			result = append(result, entry)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("list connectors failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list connectors"})
 		return
-	}
-	defer rows.Close()
-
-	result := make([]map[string]any, 0)
-	for rows.Next() {
-		var (
-			id, connectorID, displayName, status string
-			config                               []byte
-			scopes                               []string
-			installedBy                          *string
-			installedAt, updatedAt               time.Time
-			hasOAuthToken                        bool
-		)
-		if err := rows.Scan(&id, &connectorID, &displayName, &status, &config, &scopes, &installedBy, &installedAt, &updatedAt, &hasOAuthToken); err != nil {
-			h.logger().Error("scan connector row failed", zap.Error(err))
-			continue
-		}
-
-		var configMap map[string]any
-		if dec, decErr := secrets.Decrypt(config); decErr == nil {
-			json.Unmarshal(dec, &configMap) //nolint:errcheck
-		}
-
-		entry := map[string]any{
-			"id":          id,
-			"tenantId":    tenantID,
-			"connectorId": connectorID,
-			"displayName": displayName,
-			"status":      status,
-			"config":      configMap,
-			"scopes":      scopes,
-			"installedAt": installedAt,
-			"updatedAt":   updatedAt,
-			"authMethod":  inferAuthMethod(hasOAuthToken, configMap),
-		}
-		if installedBy != nil {
-			entry["installedBy"] = *installedBy
-		}
-		result = append(result, entry)
 	}
 
 	writeJSON(w, http.StatusOK, result)
@@ -234,12 +248,14 @@ func (h *ConnectorHandler) GetConnector(w http.ResponseWriter, r *http.Request) 
 		installedAt, updatedAt           time.Time
 		hasOAuthToken                    bool
 	)
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT connector_id, display_name, status, config, scopes, installed_by, installed_at, updated_at,
-		       (oauth_token_encrypted IS NOT NULL) AS has_oauth_token
-		FROM connector_installs
-		WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&connectorID, &displayName, &status, &config, &scopes, &installedBy, &installedAt, &updatedAt, &hasOAuthToken)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT connector_id, display_name, status, config, scopes, installed_by, installed_at, updated_at,
+			       (oauth_token_encrypted IS NOT NULL) AS has_oauth_token
+			FROM connector_installs
+			WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID).Scan(&connectorID, &displayName, &status, &config, &scopes, &installedBy, &installedAt, &updatedAt, &hasOAuthToken)
+	})
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "connector not found"})
 		return
@@ -290,11 +306,13 @@ func (h *ConnectorHandler) TestConnector(w http.ResponseWriter, r *http.Request)
 
 	var status string
 	var oauthTokenEncrypted []byte
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT status, oauth_token_encrypted
-		FROM connector_installs
-		WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&status, &oauthTokenEncrypted)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT status, oauth_token_encrypted
+			FROM connector_installs
+			WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID).Scan(&status, &oauthTokenEncrypted)
+	})
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "connector not found"})
 		return
@@ -345,15 +363,23 @@ func (h *ConnectorHandler) UninstallConnector(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		DELETE FROM connector_installs WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, execErr := tx.Exec(ctx, `
+			DELETE FROM connector_installs WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID)
+		if execErr != nil {
+			return execErr
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		h.logger().Error("uninstall connector failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to uninstall connector"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "connector not found"})
 		return
 	}
@@ -498,15 +524,21 @@ func (h *ConnectorHandler) OAuthCallback(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	_, err = h.srv.Pool.Exec(ctx, `
-		INSERT INTO connector_installs (tenant_id, connector_id, display_name, status, oauth_token_encrypted, scopes, installed_by)
-		VALUES ($1, $2, $3, 'connected', $4::jsonb, $5, $6)
-		ON CONFLICT (tenant_id, connector_id) DO UPDATE SET
-			status = 'connected',
-			oauth_token_encrypted = EXCLUDED.oauth_token_encrypted,
-			scopes = EXCLUDED.scopes,
-			updated_at = now()
-	`, stateData.TenantID, stateData.ConnectorID, stateData.ConnectorID, encToken, provider.Scopes, stateData.TenantID)
+	// The tenant comes from the Redis-stored OAuth state (not a JWT), so inject
+	// it into the context before WithTenant scopes the upsert under RLS.
+	oauthCtx := middleware.InjectTenantID(ctx, stateData.TenantID)
+	err = h.srv.WithTenant(oauthCtx, func(tx pgx.Tx) error {
+		_, execErr := tx.Exec(ctx, `
+			INSERT INTO connector_installs (tenant_id, connector_id, display_name, status, oauth_token_encrypted, scopes, installed_by)
+			VALUES ($1, $2, $3, 'connected', $4::jsonb, $5, $6)
+			ON CONFLICT (tenant_id, connector_id) DO UPDATE SET
+				status = 'connected',
+				oauth_token_encrypted = EXCLUDED.oauth_token_encrypted,
+				scopes = EXCLUDED.scopes,
+				updated_at = now()
+		`, stateData.TenantID, stateData.ConnectorID, stateData.ConnectorID, encToken, provider.Scopes, stateData.TenantID)
+		return execErr
+	})
 	if err != nil {
 		h.logger().Error("failed to store connector token", zap.Error(err))
 		h.renderOAuthPopupClose(w, false, "Failed to save credentials")

@@ -236,7 +236,7 @@ A small Go service that runs as a single-replica deployment in the customer's cl
 **Responsibilities:**
 - Maintain the gRPC tunnel to the control plane
 - Register the data plane and report health via heartbeats
-- Receive run assignments from the control plane and dispatch them to the local workflow engine
+- Receive run assignments from the control plane and dispatch them to the local workflow engine via `WorkflowEngineService.ExecuteRun` (server-streaming gRPC); the dispatcher consumes the resulting `StreamEvent` stream and drives run-status transitions through to completion or failure
 - Report run status transitions and metering events back to the control plane
 - Cache configuration received from the control plane (routing rules, model policies)
 

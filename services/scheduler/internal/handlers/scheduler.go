@@ -12,7 +12,10 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/scheduler/internal/cron"
 	"github.com/dshakes/lantern/services/scheduler/internal/middleware"
 	"github.com/dshakes/lantern/services/scheduler/internal/server"
@@ -20,73 +23,13 @@ import (
 
 var tracer = otel.Tracer("lantern.scheduler")
 
-// RegisterScheduleRequest represents a request to register a cron schedule.
-type RegisterScheduleRequest struct {
-	TenantID      string          `json:"tenant_id"`
-	AgentName     string          `json:"agent_name"`
-	CronExpr      string          `json:"cron_expr"`
-	Timezone      string          `json:"timezone"`
-	InputTemplate json.RawMessage `json:"input_template"`
-}
-
-// RegisterScheduleResponse represents the result of registering a schedule.
-type RegisterScheduleResponse struct {
-	ScheduleID string    `json:"schedule_id"`
-	NextFireAt time.Time `json:"next_fire_at"`
-}
-
-// Schedule represents a cron schedule.
-type Schedule struct {
-	ID            string          `json:"id"`
-	TenantID      string          `json:"tenant_id"`
-	AgentName     string          `json:"agent_name"`
-	CronExpr      string          `json:"cron_expr"`
-	Timezone      string          `json:"timezone"`
-	InputTemplate json.RawMessage `json:"input_template"`
-	Enabled       bool            `json:"enabled"`
-	NextFireAt    *time.Time      `json:"next_fire_at"`
-	LastFireAt    *time.Time      `json:"last_fire_at"`
-	CreatedAt     time.Time       `json:"created_at"`
-}
-
-// ListSchedulesRequest represents a request to list schedules.
-type ListSchedulesRequest struct {
-	TenantID string `json:"tenant_id"`
-}
-
-// ListSchedulesResponse represents the result of listing schedules.
-type ListSchedulesResponse struct {
-	Schedules []*Schedule `json:"schedules"`
-}
-
-// DeleteScheduleRequest represents a request to delete a schedule.
-type DeleteScheduleRequest struct {
-	TenantID   string `json:"tenant_id"`
-	ScheduleID string `json:"schedule_id"`
-}
-
-// DeleteScheduleResponse represents the result of deleting a schedule.
-type DeleteScheduleResponse struct {
-	Deleted bool `json:"deleted"`
-}
-
-// TriggerRequest represents a request to trigger a one-shot run.
-type TriggerRequest struct {
-	TenantID  string          `json:"tenant_id"`
-	AgentName string          `json:"agent_name"`
-	Input     json.RawMessage `json:"input"`
-	Delay     time.Duration   `json:"delay"`
-}
-
-// TriggerResponse represents the result of a trigger.
-type TriggerResponse struct {
-	RunID        string    `json:"run_id,omitempty"`
-	DelayedRunID string    `json:"delayed_run_id,omitempty"`
-	FireAt       time.Time `json:"fire_at,omitempty"`
-}
-
-// SchedulerService implements the scheduler gRPC handlers.
+// SchedulerService implements the lantern.v1.SchedulerService gRPC server.
+// Wire types come from gen/go (the proto is the source of truth); tenant is
+// read from gRPC metadata (invariant #7), never the request body. A fired
+// schedule creates a run via the control-plane RunService (invariant #2).
 type SchedulerService struct {
+	lanternv1.UnimplementedSchedulerServiceServer
+
 	srv       *server.Server
 	createRun cron.RunCreator
 }
@@ -107,7 +50,7 @@ func setRLSTenantID(ctx context.Context, tx pgx.Tx, tenantID string) error {
 }
 
 // RegisterSchedule creates a new cron schedule.
-func (s *SchedulerService) RegisterSchedule(ctx context.Context, req *RegisterScheduleRequest) (*RegisterScheduleResponse, error) {
+func (s *SchedulerService) RegisterSchedule(ctx context.Context, req *lanternv1.RegisterScheduleRequest) (*lanternv1.RegisterScheduleResponse, error) {
 	ctx, span := tracer.Start(ctx, "SchedulerService.RegisterSchedule")
 	defer span.End()
 
@@ -149,9 +92,9 @@ func (s *SchedulerService) RegisterSchedule(ctx context.Context, req *RegisterSc
 	now := time.Now().In(loc)
 	nextFire := cron.NextFireTime(sched, now)
 
-	inputTemplate := req.InputTemplate
-	if inputTemplate == nil {
-		inputTemplate = json.RawMessage("{}")
+	inputTemplate, err := structToJSON(req.InputTemplate)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid input_template: %v", err)
 	}
 
 	tx, err := s.srv.Pool.Begin(ctx)
@@ -190,14 +133,14 @@ func (s *SchedulerService) RegisterSchedule(ctx context.Context, req *RegisterSc
 		zap.Time("next_fire_at", nextFire),
 	)
 
-	return &RegisterScheduleResponse{
-		ScheduleID: scheduleID,
-		NextFireAt: nextFire,
+	return &lanternv1.RegisterScheduleResponse{
+		ScheduleId: scheduleID,
+		NextFireAt: timestamppb.New(nextFire),
 	}, nil
 }
 
 // ListSchedules returns all schedules for a tenant.
-func (s *SchedulerService) ListSchedules(ctx context.Context, req *ListSchedulesRequest) (*ListSchedulesResponse, error) {
+func (s *SchedulerService) ListSchedules(ctx context.Context, _ *lanternv1.ListSchedulesRequest) (*lanternv1.ListSchedulesResponse, error) {
 	ctx, span := tracer.Start(ctx, "SchedulerService.ListSchedules")
 	defer span.End()
 
@@ -230,27 +173,50 @@ func (s *SchedulerService) ListSchedules(ctx context.Context, req *ListSchedules
 	}
 	defer rows.Close()
 
-	var schedules []*Schedule
+	var schedules []*lanternv1.Schedule
 	for rows.Next() {
-		var sched Schedule
+		var (
+			id, tenantIDCol, agentName, cronExpr, timezone string
+			inputTemplate                                  json.RawMessage
+			enabled                                        bool
+			nextFireAt, lastFireAt                         *time.Time
+			createdAt                                      time.Time
+		)
 		if err := rows.Scan(
-			&sched.ID, &sched.TenantID, &sched.AgentName, &sched.CronExpr,
-			&sched.Timezone, &sched.InputTemplate, &sched.Enabled,
-			&sched.NextFireAt, &sched.LastFireAt, &sched.CreatedAt,
+			&id, &tenantIDCol, &agentName, &cronExpr,
+			&timezone, &inputTemplate, &enabled,
+			&nextFireAt, &lastFireAt, &createdAt,
 		); err != nil {
 			return nil, status.Errorf(codes.Internal, "scan failed: %v", err)
 		}
-		schedules = append(schedules, &sched)
+
+		tmpl, err := jsonToStruct(inputTemplate)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "decode input_template: %v", err)
+		}
+
+		schedules = append(schedules, &lanternv1.Schedule{
+			Id:            id,
+			TenantId:      tenantIDCol,
+			AgentName:     agentName,
+			CronExpr:      cronExpr,
+			Timezone:      timezone,
+			InputTemplate: tmpl,
+			Enabled:       enabled,
+			NextFireAt:    timestampOrNil(nextFireAt),
+			LastFireAt:    timestampOrNil(lastFireAt),
+			CreatedAt:     timestamppb.New(createdAt),
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, status.Errorf(codes.Internal, "row iteration failed: %v", err)
 	}
 
-	return &ListSchedulesResponse{Schedules: schedules}, nil
+	return &lanternv1.ListSchedulesResponse{Schedules: schedules}, nil
 }
 
 // DeleteSchedule removes a schedule.
-func (s *SchedulerService) DeleteSchedule(ctx context.Context, req *DeleteScheduleRequest) (*DeleteScheduleResponse, error) {
+func (s *SchedulerService) DeleteSchedule(ctx context.Context, req *lanternv1.DeleteScheduleRequest) (*lanternv1.DeleteScheduleResponse, error) {
 	ctx, span := tracer.Start(ctx, "SchedulerService.DeleteSchedule")
 	defer span.End()
 
@@ -261,10 +227,10 @@ func (s *SchedulerService) DeleteSchedule(ctx context.Context, req *DeleteSchedu
 
 	span.SetAttributes(
 		attribute.String("tenant_id", tenantID),
-		attribute.String("schedule_id", req.ScheduleID),
+		attribute.String("schedule_id", req.ScheduleId),
 	)
 
-	if req.ScheduleID == "" {
+	if req.ScheduleId == "" {
 		return nil, status.Error(codes.InvalidArgument, "schedule_id is required")
 	}
 
@@ -281,13 +247,13 @@ func (s *SchedulerService) DeleteSchedule(ctx context.Context, req *DeleteSchedu
 	tag, err := tx.Exec(ctx, `
 		DELETE FROM schedules
 		WHERE id = $1 AND tenant_id = $2
-	`, req.ScheduleID, tenantID)
+	`, req.ScheduleId, tenantID)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "delete failed: %v", err)
 	}
 
 	if tag.RowsAffected() == 0 {
-		return nil, status.Errorf(codes.NotFound, "schedule %q not found", req.ScheduleID)
+		return nil, status.Errorf(codes.NotFound, "schedule %q not found", req.ScheduleId)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -296,14 +262,14 @@ func (s *SchedulerService) DeleteSchedule(ctx context.Context, req *DeleteSchedu
 
 	s.logger().Info("schedule deleted",
 		zap.String("tenant_id", tenantID),
-		zap.String("schedule_id", req.ScheduleID),
+		zap.String("schedule_id", req.ScheduleId),
 	)
 
-	return &DeleteScheduleResponse{Deleted: true}, nil
+	return &lanternv1.DeleteScheduleResponse{Deleted: true}, nil
 }
 
 // Trigger creates a one-shot trigger, optionally with a delay.
-func (s *SchedulerService) Trigger(ctx context.Context, req *TriggerRequest) (*TriggerResponse, error) {
+func (s *SchedulerService) Trigger(ctx context.Context, req *lanternv1.TriggerRequest) (*lanternv1.TriggerResponse, error) {
 	ctx, span := tracer.Start(ctx, "SchedulerService.Trigger")
 	defer span.End()
 
@@ -321,14 +287,14 @@ func (s *SchedulerService) Trigger(ctx context.Context, req *TriggerRequest) (*T
 		return nil, status.Error(codes.InvalidArgument, "agent_name is required")
 	}
 
-	input := req.Input
-	if input == nil {
-		input = json.RawMessage("{}")
+	input, err := structToJSON(req.Input)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid input: %v", err)
 	}
 
 	// If there's a delay, create a delayed run.
-	if req.Delay > 0 {
-		fireAt := time.Now().UTC().Add(req.Delay)
+	if req.DelayMs > 0 {
+		fireAt := time.Now().UTC().Add(time.Duration(req.DelayMs) * time.Millisecond)
 
 		tx, err := s.srv.Pool.Begin(ctx)
 		if err != nil {
@@ -361,9 +327,9 @@ func (s *SchedulerService) Trigger(ctx context.Context, req *TriggerRequest) (*T
 			zap.Time("fire_at", fireAt),
 		)
 
-		return &TriggerResponse{
-			DelayedRunID: delayedRunID,
-			FireAt:       fireAt,
+		return &lanternv1.TriggerResponse{
+			DelayedRunId: delayedRunID,
+			FireAt:       timestamppb.New(fireAt),
 		}, nil
 	}
 
@@ -383,5 +349,39 @@ func (s *SchedulerService) Trigger(ctx context.Context, req *TriggerRequest) (*T
 		zap.String("run_id", runID),
 	)
 
-	return &TriggerResponse{RunID: runID}, nil
+	return &lanternv1.TriggerResponse{RunId: runID}, nil
+}
+
+// structToJSON converts an optional protobuf Struct into the JSONB bytes the
+// schedules/delayed_runs tables store. A nil struct becomes an empty object.
+func structToJSON(s *structpb.Struct) (json.RawMessage, error) {
+	if s == nil {
+		return json.RawMessage("{}"), nil
+	}
+	b, err := s.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(b), nil
+}
+
+// jsonToStruct converts JSONB bytes from the DB back into a protobuf Struct.
+// Empty/NULL input yields a nil struct (omitted on the wire).
+func jsonToStruct(b json.RawMessage) (*structpb.Struct, error) {
+	if len(b) == 0 || string(b) == "{}" {
+		return nil, nil
+	}
+	s := &structpb.Struct{}
+	if err := s.UnmarshalJSON(b); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// timestampOrNil converts an optional time into a protobuf Timestamp.
+func timestampOrNil(t *time.Time) *timestamppb.Timestamp {
+	if t == nil {
+		return nil
+	}
+	return timestamppb.New(*t)
 }

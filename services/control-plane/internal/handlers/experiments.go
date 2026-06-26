@@ -21,9 +21,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -92,29 +94,31 @@ func (h *ExperimentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		evalSuiteID = body.EvalSuiteID
 	}
 	var id string
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO agent_experiments
-		  (tenant_id, agent_name, name, variant_a_version, variant_b_version,
-		   traffic_split_b, eval_suite_id, auto_promote, min_runs_to_promote)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT (tenant_id, agent_name, name) DO UPDATE SET
-		  variant_a_version   = EXCLUDED.variant_a_version,
-		  variant_b_version   = EXCLUDED.variant_b_version,
-		  traffic_split_b     = EXCLUDED.traffic_split_b,
-		  eval_suite_id       = EXCLUDED.eval_suite_id,
-		  auto_promote        = EXCLUDED.auto_promote,
-		  min_runs_to_promote = EXCLUDED.min_runs_to_promote,
-		  status              = 'running',
-		  started_at          = now(),
-		  concluded_at        = NULL,
-		  winner              = NULL,
-		  a_runs              = 0,
-		  b_runs              = 0,
-		  a_score             = NULL,
-		  b_score             = NULL
-		RETURNING id
-	`, tenantID, body.AgentName, body.Name, body.VariantAVersion, body.VariantBVersion,
-		body.TrafficSplitB, evalSuiteID, body.AutoPromote, body.MinRunsToPromote).Scan(&id)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO agent_experiments
+			  (tenant_id, agent_name, name, variant_a_version, variant_b_version,
+			   traffic_split_b, eval_suite_id, auto_promote, min_runs_to_promote)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			ON CONFLICT (tenant_id, agent_name, name) DO UPDATE SET
+			  variant_a_version   = EXCLUDED.variant_a_version,
+			  variant_b_version   = EXCLUDED.variant_b_version,
+			  traffic_split_b     = EXCLUDED.traffic_split_b,
+			  eval_suite_id       = EXCLUDED.eval_suite_id,
+			  auto_promote        = EXCLUDED.auto_promote,
+			  min_runs_to_promote = EXCLUDED.min_runs_to_promote,
+			  status              = 'running',
+			  started_at          = now(),
+			  concluded_at        = NULL,
+			  winner              = NULL,
+			  a_runs              = 0,
+			  b_runs              = 0,
+			  a_score             = NULL,
+			  b_score             = NULL
+			RETURNING id
+		`, tenantID, body.AgentName, body.Name, body.VariantAVersion, body.VariantBVersion,
+			body.TrafficSplitB, evalSuiteID, body.AutoPromote, body.MinRunsToPromote).Scan(&id)
+	})
 	if err != nil {
 		h.logger().Error("create experiment failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed: " + err.Error()})
@@ -141,22 +145,28 @@ func (h *ExperimentHandler) List(w http.ResponseWriter, r *http.Request) {
 		args = append(args, agentName)
 	}
 	sql += ` ORDER BY started_at DESC`
-	rows, err := h.srv.Pool.Query(ctx, sql, args...)
+	out := make([]experimentDTO, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, sql, args...)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var dto experimentDTO
+			if err := rows.Scan(&dto.ID, &dto.AgentName, &dto.Name, &dto.VariantAVersion,
+				&dto.VariantBVersion, &dto.TrafficSplitB, &dto.EvalSuiteID, &dto.AutoPromote,
+				&dto.MinRunsToPromote, &dto.Status, &dto.Winner, &dto.ARuns, &dto.BRuns,
+				&dto.AScore, &dto.BScore, &dto.StartedAt, &dto.ConcludedAt); err != nil {
+				continue
+			}
+			out = append(out, dto)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
 		return
-	}
-	defer rows.Close()
-	out := make([]experimentDTO, 0)
-	for rows.Next() {
-		var dto experimentDTO
-		if err := rows.Scan(&dto.ID, &dto.AgentName, &dto.Name, &dto.VariantAVersion,
-			&dto.VariantBVersion, &dto.TrafficSplitB, &dto.EvalSuiteID, &dto.AutoPromote,
-			&dto.MinRunsToPromote, &dto.Status, &dto.Winner, &dto.ARuns, &dto.BRuns,
-			&dto.AScore, &dto.BScore, &dto.StartedAt, &dto.ConcludedAt); err != nil {
-			continue
-		}
-		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -170,15 +180,17 @@ func (h *ExperimentHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var dto experimentDTO
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT id, agent_name, name, variant_a_version, variant_b_version,
-		       traffic_split_b, COALESCE(eval_suite_id::text,''), auto_promote, min_runs_to_promote,
-		       status, COALESCE(winner,''), a_runs, b_runs, a_score, b_score, started_at, concluded_at
-		FROM agent_experiments WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&dto.ID, &dto.AgentName, &dto.Name, &dto.VariantAVersion,
-		&dto.VariantBVersion, &dto.TrafficSplitB, &dto.EvalSuiteID, &dto.AutoPromote,
-		&dto.MinRunsToPromote, &dto.Status, &dto.Winner, &dto.ARuns, &dto.BRuns,
-		&dto.AScore, &dto.BScore, &dto.StartedAt, &dto.ConcludedAt)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT id, agent_name, name, variant_a_version, variant_b_version,
+			       traffic_split_b, COALESCE(eval_suite_id::text,''), auto_promote, min_runs_to_promote,
+			       status, COALESCE(winner,''), a_runs, b_runs, a_score, b_score, started_at, concluded_at
+			FROM agent_experiments WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID).Scan(&dto.ID, &dto.AgentName, &dto.Name, &dto.VariantAVersion,
+			&dto.VariantBVersion, &dto.TrafficSplitB, &dto.EvalSuiteID, &dto.AutoPromote,
+			&dto.MinRunsToPromote, &dto.Status, &dto.Winner, &dto.ARuns, &dto.BRuns,
+			&dto.AScore, &dto.BScore, &dto.StartedAt, &dto.ConcludedAt)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -226,7 +238,10 @@ func (h *ExperimentHandler) RecordOutcome(w http.ResponseWriter, r *http.Request
 		       END
 		WHERE id = $1 AND tenant_id = $2
 	`, countCol, countCol, scoreCol, scoreCol, scoreCol, countCol, countCol)
-	_, err = h.srv.Pool.Exec(ctx, sql, id, tenantID, body.Score)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, sql, id, tenantID, body.Score)
+		return e
+	})
 	if err != nil {
 		h.logger().Error("record outcome failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
@@ -265,11 +280,13 @@ func (h *ExperimentHandler) Conclude(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var agentName, aVer, bVer string
-	err = h.srv.Pool.QueryRow(ctx, `
-		UPDATE agent_experiments SET status = 'concluded', winner = $3, concluded_at = now()
-		WHERE id = $1 AND tenant_id = $2
-		RETURNING agent_name, variant_a_version, variant_b_version
-	`, id, tenantID, body.Winner).Scan(&agentName, &aVer, &bVer)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			UPDATE agent_experiments SET status = 'concluded', winner = $3, concluded_at = now()
+			WHERE id = $1 AND tenant_id = $2
+			RETURNING agent_name, variant_a_version, variant_b_version
+		`, id, tenantID, body.Winner).Scan(&agentName, &aVer, &bVer)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
@@ -279,6 +296,8 @@ func (h *ExperimentHandler) Conclude(w http.ResponseWriter, r *http.Request) {
 		if body.Winner == "b" {
 			winVer = bVer
 		}
+		// rls-exempt: promoteAgentVersion is a shared helper taking a *Pool and
+		// self-scoping by tenantID; reused identically across handlers.
 		if err := promoteAgentVersion(ctx, h.srv.Pool, tenantID, agentName, winVer); err != nil {
 			h.logger().Error("promote failed", zap.Error(err))
 		}
@@ -327,17 +346,23 @@ func promoteAgentVersion(ctx context.Context, pool *pgxpool.Pool, tenantID, agen
 }
 
 func (h *ExperimentHandler) maybeAutoPromote(ctx context.Context, tenantID, expID string) {
+	// Background goroutine (called via `go ...` from RecordOutcome) with a fresh
+	// context.Background() and an explicit tenantID — inject it so the WithTenant
+	// reads/writes below are RLS-scoped.
+	ctx = middleware.InjectTenantID(ctx, tenantID)
 	var autoPromote bool
 	var minRuns int
 	var aRuns, bRuns int
 	var aScore, bScore *float64
 	var agentName, aVer, bVer string
-	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT auto_promote, min_runs_to_promote, a_runs, b_runs, a_score, b_score,
-		       agent_name, variant_a_version, variant_b_version
-		FROM agent_experiments WHERE id = $1 AND tenant_id = $2 AND status = 'running'
-	`, expID, tenantID).Scan(&autoPromote, &minRuns, &aRuns, &bRuns, &aScore, &bScore,
-		&agentName, &aVer, &bVer)
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT auto_promote, min_runs_to_promote, a_runs, b_runs, a_score, b_score,
+			       agent_name, variant_a_version, variant_b_version
+			FROM agent_experiments WHERE id = $1 AND tenant_id = $2 AND status = 'running'
+		`, expID, tenantID).Scan(&autoPromote, &minRuns, &aRuns, &bRuns, &aScore, &bScore,
+			&agentName, &aVer, &bVer)
+	})
 	if err != nil || !autoPromote {
 		return
 	}
@@ -357,14 +382,18 @@ func (h *ExperimentHandler) maybeAutoPromote(ctx context.Context, tenantID, expI
 	default:
 		return
 	}
-	_, err = h.srv.Pool.Exec(ctx, `
-		UPDATE agent_experiments SET status = 'concluded', winner = $3, concluded_at = now()
-		WHERE id = $1 AND tenant_id = $2
-	`, expID, tenantID, winner)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			UPDATE agent_experiments SET status = 'concluded', winner = $3, concluded_at = now()
+			WHERE id = $1 AND tenant_id = $2
+		`, expID, tenantID, winner)
+		return e
+	})
 	if err != nil {
 		h.logger().Warn("auto-conclude failed", zap.Error(err))
 		return
 	}
+	// rls-exempt: shared promoteAgentVersion helper (takes *Pool, self-scopes by tenantID).
 	if err := promoteAgentVersion(ctx, h.srv.Pool, tenantID, agentName, winVer); err != nil {
 		h.logger().Warn("auto-promote failed", zap.Error(err))
 		return

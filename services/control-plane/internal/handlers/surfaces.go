@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -42,7 +43,8 @@ func (h *SurfaceHandler) contextWithTenant(r *http.Request) (context.Context, st
 	if err != nil {
 		return nil, "", err
 	}
-	return r.Context(), claims.TenantID, nil
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	return ctx, claims.TenantID, nil
 }
 
 // ---------- Configure surface ----------
@@ -74,18 +76,20 @@ func (h *SurfaceHandler) ConfigureSurface(w http.ResponseWriter, r *http.Request
 	configJSON, _ := json.Marshal(body.Config)
 
 	var id string
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO surface_configs (tenant_id, surface_id, display_name, status, config, webhook_url, connected_at)
-		VALUES ($1, $2, $3, 'connected', $4::jsonb, $5, now())
-		ON CONFLICT (tenant_id, surface_id) DO UPDATE SET
-			display_name = EXCLUDED.display_name,
-			config = EXCLUDED.config,
-			webhook_url = EXCLUDED.webhook_url,
-			status = 'connected',
-			connected_at = now(),
-			updated_at = now()
-		RETURNING id
-	`, tenantID, body.SurfaceID, body.DisplayName, string(configJSON), body.WebhookURL).Scan(&id)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO surface_configs (tenant_id, surface_id, display_name, status, config, webhook_url, connected_at)
+			VALUES ($1, $2, $3, 'connected', $4::jsonb, $5, now())
+			ON CONFLICT (tenant_id, surface_id) DO UPDATE SET
+				display_name = EXCLUDED.display_name,
+				config = EXCLUDED.config,
+				webhook_url = EXCLUDED.webhook_url,
+				status = 'connected',
+				connected_at = now(),
+				updated_at = now()
+			RETURNING id
+		`, tenantID, body.SurfaceID, body.DisplayName, string(configJSON), body.WebhookURL).Scan(&id)
+	})
 	if err != nil {
 		h.logger().Error("configure surface failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to configure surface"})
@@ -114,52 +118,57 @@ func (h *SurfaceHandler) ListSurfaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id, surface_id, display_name, status, config, webhook_url, connected_at, updated_at
-		FROM surface_configs
-		WHERE tenant_id = $1
-		ORDER BY connected_at DESC NULLS LAST
-	`, tenantID)
+	result := make([]map[string]any, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id, surface_id, display_name, status, config, webhook_url, connected_at, updated_at
+			FROM surface_configs
+			WHERE tenant_id = $1
+			ORDER BY connected_at DESC NULLS LAST
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				id, surfaceID, displayName, status string
+				config                             []byte
+				webhookURL                         *string
+				connectedAt                        *time.Time
+				updatedAt                          time.Time
+			)
+			if err := rows.Scan(&id, &surfaceID, &displayName, &status, &config, &webhookURL, &connectedAt, &updatedAt); err != nil {
+				h.logger().Error("scan surface row failed", zap.Error(err))
+				continue
+			}
+
+			var configMap map[string]any
+			json.Unmarshal(config, &configMap) //nolint:errcheck
+
+			entry := map[string]any{
+				"id":          id,
+				"tenantId":    tenantID,
+				"surfaceId":   surfaceID,
+				"displayName": displayName,
+				"status":      status,
+				"config":      configMap,
+				"updatedAt":   updatedAt,
+			}
+			if webhookURL != nil {
+				entry["webhookUrl"] = *webhookURL
+			}
+			if connectedAt != nil {
+				entry["connectedAt"] = *connectedAt
+			}
+			result = append(result, entry)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("list surfaces failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list surfaces"})
 		return
-	}
-	defer rows.Close()
-
-	result := make([]map[string]any, 0)
-	for rows.Next() {
-		var (
-			id, surfaceID, displayName, status string
-			config                             []byte
-			webhookURL                         *string
-			connectedAt                        *time.Time
-			updatedAt                          time.Time
-		)
-		if err := rows.Scan(&id, &surfaceID, &displayName, &status, &config, &webhookURL, &connectedAt, &updatedAt); err != nil {
-			h.logger().Error("scan surface row failed", zap.Error(err))
-			continue
-		}
-
-		var configMap map[string]any
-		json.Unmarshal(config, &configMap) //nolint:errcheck
-
-		entry := map[string]any{
-			"id":          id,
-			"tenantId":    tenantID,
-			"surfaceId":   surfaceID,
-			"displayName": displayName,
-			"status":      status,
-			"config":      configMap,
-			"updatedAt":   updatedAt,
-		}
-		if webhookURL != nil {
-			entry["webhookUrl"] = *webhookURL
-		}
-		if connectedAt != nil {
-			entry["connectedAt"] = *connectedAt
-		}
-		result = append(result, entry)
 	}
 
 	writeJSON(w, http.StatusOK, result)
@@ -194,15 +203,17 @@ func (h *SurfaceHandler) UpdateSurface(w http.ResponseWriter, r *http.Request) {
 	configJSON, _ := json.Marshal(body.Config)
 
 	var surfaceID, displayName, status string
-	err = h.srv.Pool.QueryRow(ctx, `
-		UPDATE surface_configs
-		SET display_name = COALESCE(NULLIF($3, ''), display_name),
-		    config = $4::jsonb,
-		    webhook_url = $5,
-		    updated_at = now()
-		WHERE id = $1 AND tenant_id = $2
-		RETURNING surface_id, display_name, status
-	`, id, tenantID, body.DisplayName, string(configJSON), body.WebhookURL).Scan(&surfaceID, &displayName, &status)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			UPDATE surface_configs
+			SET display_name = COALESCE(NULLIF($3, ''), display_name),
+			    config = $4::jsonb,
+			    webhook_url = $5,
+			    updated_at = now()
+			WHERE id = $1 AND tenant_id = $2
+			RETURNING surface_id, display_name, status
+		`, id, tenantID, body.DisplayName, string(configJSON), body.WebhookURL).Scan(&surfaceID, &displayName, &status)
+	})
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "surface not found"})
 		return
@@ -241,15 +252,23 @@ func (h *SurfaceHandler) RemoveSurface(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		DELETE FROM surface_configs WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, execErr := tx.Exec(ctx, `
+			DELETE FROM surface_configs WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID)
+		if execErr != nil {
+			return execErr
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		h.logger().Error("remove surface failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to remove surface"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "surface not found"})
 		return
 	}
@@ -274,11 +293,13 @@ func (h *SurfaceHandler) TestSurface(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var surfaceID, status string
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT surface_id, status
-		FROM surface_configs
-		WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&surfaceID, &status)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT surface_id, status
+			FROM surface_configs
+			WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID).Scan(&surfaceID, &status)
+	})
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "surface not found"})
 		return
@@ -341,6 +362,9 @@ func resolveTenantID(ctx context.Context, srv *server.Server, raw string) string
 	}
 	if _, err := uuid.Parse(raw); err == nil {
 		var id string
+		// rls-exempt: resolves the bridge's claimed tenant against the `tenants`
+		// registry (an RLS-exempt table keyed by id, not tenant_id) — runs before
+		// any tenant context exists, on the privileged pool.
 		err := srv.Pool.QueryRow(ctx, `SELECT id::text FROM tenants WHERE id = $1`, raw).Scan(&id)
 		if err == nil {
 			return id
@@ -348,6 +372,7 @@ func resolveTenantID(ctx context.Context, srv *server.Server, raw string) string
 	}
 	// Try as slug.
 	var id string
+	// rls-exempt: tenant-registry lookup by slug (exempt `tenants` table), pre-context.
 	err := srv.Pool.QueryRow(ctx, `SELECT id::text FROM tenants WHERE slug = $1`, raw).Scan(&id)
 	if err == nil {
 		return id
@@ -415,35 +440,41 @@ func (h *SurfaceHandler) BridgeHeartbeat(w http.ResponseWriter, r *http.Request)
 			connectedAt = &heartbeatAt
 		}
 
-		_, err := h.srv.Pool.Exec(ctx, `
-			INSERT INTO surface_configs (
-				tenant_id, surface_id, display_name, status,
-				phone_number, display_handle, bridge_state, bridge_version,
-				last_heartbeat_at, last_connection_event_at, last_error,
-				connected_at, updated_at
-			) VALUES (
-				$1, 'whatsapp', 'WhatsApp', $2,
-				$3, $4, $5, $6,
-				$7, $8, $9,
-				$10, now()
+		// The tenant was just resolved from the bridge's claimed id against the
+		// registry; inject it so the heartbeat upsert is RLS-scoped to that tenant.
+		hbCtx := middleware.InjectTenantID(ctx, tenantUUID)
+		err := h.srv.WithTenant(hbCtx, func(tx pgx.Tx) error {
+			_, e := tx.Exec(hbCtx, `
+				INSERT INTO surface_configs (
+					tenant_id, surface_id, display_name, status,
+					phone_number, display_handle, bridge_state, bridge_version,
+					last_heartbeat_at, last_connection_event_at, last_error,
+					connected_at, updated_at
+				) VALUES (
+					$1, 'whatsapp', 'WhatsApp', $2,
+					$3, $4, $5, $6,
+					$7, $8, $9,
+					$10, now()
+				)
+				ON CONFLICT (tenant_id, surface_id) DO UPDATE SET
+					status = EXCLUDED.status,
+					phone_number = COALESCE(EXCLUDED.phone_number, surface_configs.phone_number),
+					display_handle = COALESCE(EXCLUDED.display_handle, surface_configs.display_handle),
+					bridge_state = EXCLUDED.bridge_state,
+					bridge_version = EXCLUDED.bridge_version,
+					last_heartbeat_at = EXCLUDED.last_heartbeat_at,
+					last_connection_event_at = COALESCE(EXCLUDED.last_connection_event_at, surface_configs.last_connection_event_at),
+					last_error = EXCLUDED.last_error,
+					connected_at = COALESCE(EXCLUDED.connected_at, surface_configs.connected_at),
+					updated_at = now()
+			`,
+				tenantUUID, status,
+				s.PhoneNumber, s.DisplayName, s.State, payload.BridgeVersion,
+				heartbeatAt, lastEvent, s.LastError,
+				connectedAt,
 			)
-			ON CONFLICT (tenant_id, surface_id) DO UPDATE SET
-				status = EXCLUDED.status,
-				phone_number = COALESCE(EXCLUDED.phone_number, surface_configs.phone_number),
-				display_handle = COALESCE(EXCLUDED.display_handle, surface_configs.display_handle),
-				bridge_state = EXCLUDED.bridge_state,
-				bridge_version = EXCLUDED.bridge_version,
-				last_heartbeat_at = EXCLUDED.last_heartbeat_at,
-				last_connection_event_at = COALESCE(EXCLUDED.last_connection_event_at, surface_configs.last_connection_event_at),
-				last_error = EXCLUDED.last_error,
-				connected_at = COALESCE(EXCLUDED.connected_at, surface_configs.connected_at),
-				updated_at = now()
-		`,
-			tenantUUID, status,
-			s.PhoneNumber, s.DisplayName, s.State, payload.BridgeVersion,
-			heartbeatAt, lastEvent, s.LastError,
-			connectedAt,
-		)
+			return e
+		})
 		if err != nil {
 			h.logger().Warn(
 				"heartbeat upsert failed",
@@ -483,20 +514,22 @@ func (h *SurfaceHandler) WhatsAppStatus(w http.ResponseWriter, r *http.Request) 
 		phoneNumber, displayHandle, lastError               *string
 		lastHeartbeatAt, lastConnectionEventAt, connectedAt *time.Time
 	)
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT
-			COALESCE(status, 'disconnected'),
-			COALESCE(bridge_state, ''),
-			COALESCE(bridge_version, ''),
-			phone_number, display_handle, last_error,
-			last_heartbeat_at, last_connection_event_at, connected_at
-		FROM surface_configs
-		WHERE tenant_id = $1 AND surface_id = 'whatsapp'
-	`, tenantID).Scan(
-		&status, &bridgeState, &bridgeVersion,
-		&phoneNumber, &displayHandle, &lastError,
-		&lastHeartbeatAt, &lastConnectionEventAt, &connectedAt,
-	)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT
+				COALESCE(status, 'disconnected'),
+				COALESCE(bridge_state, ''),
+				COALESCE(bridge_version, ''),
+				phone_number, display_handle, last_error,
+				last_heartbeat_at, last_connection_event_at, connected_at
+			FROM surface_configs
+			WHERE tenant_id = $1 AND surface_id = 'whatsapp'
+		`, tenantID).Scan(
+			&status, &bridgeState, &bridgeVersion,
+			&phoneNumber, &displayHandle, &lastError,
+			&lastHeartbeatAt, &lastConnectionEventAt, &connectedAt,
+		)
+	})
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"tenantId": tenantID,

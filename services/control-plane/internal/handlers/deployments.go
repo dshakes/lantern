@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -51,7 +52,8 @@ func (h *DeploymentHandler) contextWithTenant(r *http.Request) (context.Context,
 	if err != nil {
 		return nil, "", err
 	}
-	return r.Context(), claims.TenantID, nil
+	ctx := middleware.InjectTenantID(r.Context(), claims.TenantID)
+	return ctx, claims.TenantID, nil
 }
 
 // ---------- Create deployment ----------
@@ -91,11 +93,13 @@ func (h *DeploymentHandler) CreateDeployment(w http.ResponseWriter, r *http.Requ
 
 	var id string
 	var createdAt time.Time
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO deployments (tenant_id, agent_name, version, environment, status, deployed_by, message, logs)
-		VALUES ($1, $2, $3, $4, 'deploying', $5, $6, $7::jsonb)
-		RETURNING id, created_at
-	`, tenantID, body.AgentName, body.Version, body.Environment, tenantID, body.Message, string(initialLogs)).Scan(&id, &createdAt)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO deployments (tenant_id, agent_name, version, environment, status, deployed_by, message, logs)
+			VALUES ($1, $2, $3, $4, 'deploying', $5, $6, $7::jsonb)
+			RETURNING id, created_at
+		`, tenantID, body.AgentName, body.Version, body.Environment, tenantID, body.Message, string(initialLogs)).Scan(&id, &createdAt)
+	})
 	if err != nil {
 		h.logger().Error("create deployment failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create deployment"})
@@ -124,58 +128,63 @@ func (h *DeploymentHandler) ListDeployments(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id, agent_name, version, environment, status, deployed_by, message, logs, created_at, finished_at
-		FROM deployments
-		WHERE tenant_id = $1
-		ORDER BY created_at DESC
-		LIMIT 100
-	`, tenantID)
+	result := make([]map[string]any, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id, agent_name, version, environment, status, deployed_by, message, logs, created_at, finished_at
+			FROM deployments
+			WHERE tenant_id = $1
+			ORDER BY created_at DESC
+			LIMIT 100
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				id, agentName, version, environment, status string
+				deployedBy                                  *string
+				message                                     *string
+				logs                                        []byte
+				createdAt                                   time.Time
+				finishedAt                                  *time.Time
+			)
+			if err := rows.Scan(&id, &agentName, &version, &environment, &status, &deployedBy, &message, &logs, &createdAt, &finishedAt); err != nil {
+				h.logger().Error("scan deployment row failed", zap.Error(err))
+				continue
+			}
+
+			var logEntries []string
+			json.Unmarshal(logs, &logEntries) //nolint:errcheck
+
+			entry := map[string]any{
+				"id":          id,
+				"tenantId":    tenantID,
+				"agentName":   agentName,
+				"version":     version,
+				"environment": environment,
+				"status":      status,
+				"logs":        logEntries,
+				"createdAt":   createdAt,
+			}
+			if deployedBy != nil {
+				entry["deployedBy"] = *deployedBy
+			}
+			if message != nil {
+				entry["message"] = *message
+			}
+			if finishedAt != nil {
+				entry["finishedAt"] = *finishedAt
+			}
+			result = append(result, entry)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("list deployments failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deployments"})
 		return
-	}
-	defer rows.Close()
-
-	result := make([]map[string]any, 0)
-	for rows.Next() {
-		var (
-			id, agentName, version, environment, status string
-			deployedBy                                  *string
-			message                                     *string
-			logs                                        []byte
-			createdAt                                   time.Time
-			finishedAt                                  *time.Time
-		)
-		if err := rows.Scan(&id, &agentName, &version, &environment, &status, &deployedBy, &message, &logs, &createdAt, &finishedAt); err != nil {
-			h.logger().Error("scan deployment row failed", zap.Error(err))
-			continue
-		}
-
-		var logEntries []string
-		json.Unmarshal(logs, &logEntries) //nolint:errcheck
-
-		entry := map[string]any{
-			"id":          id,
-			"tenantId":    tenantID,
-			"agentName":   agentName,
-			"version":     version,
-			"environment": environment,
-			"status":      status,
-			"logs":        logEntries,
-			"createdAt":   createdAt,
-		}
-		if deployedBy != nil {
-			entry["deployedBy"] = *deployedBy
-		}
-		if message != nil {
-			entry["message"] = *message
-		}
-		if finishedAt != nil {
-			entry["finishedAt"] = *finishedAt
-		}
-		result = append(result, entry)
 	}
 
 	writeJSON(w, http.StatusOK, result)
@@ -205,11 +214,13 @@ func (h *DeploymentHandler) GetDeployment(w http.ResponseWriter, r *http.Request
 		createdAt                               time.Time
 		finishedAt                              *time.Time
 	)
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT agent_name, version, environment, status, deployed_by, message, logs, created_at, finished_at
-		FROM deployments
-		WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&agentName, &version, &environment, &status, &deployedBy, &message, &logs, &createdAt, &finishedAt)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT agent_name, version, environment, status, deployed_by, message, logs, created_at, finished_at
+			FROM deployments
+			WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID).Scan(&agentName, &version, &environment, &status, &deployedBy, &message, &logs, &createdAt, &finishedAt)
+	})
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "deployment not found"})
 		return
@@ -285,11 +296,13 @@ func (h *DeploymentHandler) RegisterDataPlane(w http.ResponseWriter, r *http.Req
 
 	var id string
 	var createdAt time.Time
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO data_planes (tenant_id, name, cloud, region, cluster_name, status, config, last_heartbeat, reg_token_hash)
-		VALUES ($1, $2, $3, $4, $5, 'provisioning', $6::jsonb, now(), $7)
-		RETURNING id, created_at
-	`, tenantID, body.Name, body.Cloud, body.Region, body.ClusterName, string(configJSON), regTokenHash).Scan(&id, &createdAt)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			INSERT INTO data_planes (tenant_id, name, cloud, region, cluster_name, status, config, last_heartbeat, reg_token_hash)
+			VALUES ($1, $2, $3, $4, $5, 'provisioning', $6::jsonb, now(), $7)
+			RETURNING id, created_at
+		`, tenantID, body.Name, body.Cloud, body.Region, body.ClusterName, string(configJSON), regTokenHash).Scan(&id, &createdAt)
+	})
 	if err != nil {
 		h.logger().Error("register data plane failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to register data plane"})
@@ -323,55 +336,60 @@ func (h *DeploymentHandler) ListDataPlanes(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT id, name, cloud, region, cluster_name, status, agent_count, last_heartbeat, config, created_at
-		FROM data_planes
-		WHERE tenant_id = $1
-		ORDER BY created_at DESC
-	`, tenantID)
+	result := make([]map[string]any, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT id, name, cloud, region, cluster_name, status, agent_count, last_heartbeat, config, created_at
+			FROM data_planes
+			WHERE tenant_id = $1
+			ORDER BY created_at DESC
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				id, name, cloud, region, status string
+				clusterName                     *string
+				agentCount                      int
+				lastHeartbeat                   *time.Time
+				config                          []byte
+				createdAt                       time.Time
+			)
+			if err := rows.Scan(&id, &name, &cloud, &region, &clusterName, &status, &agentCount, &lastHeartbeat, &config, &createdAt); err != nil {
+				h.logger().Error("scan data plane row failed", zap.Error(err))
+				continue
+			}
+
+			var configMap map[string]any
+			json.Unmarshal(config, &configMap) //nolint:errcheck
+
+			entry := map[string]any{
+				"id":         id,
+				"tenantId":   tenantID,
+				"name":       name,
+				"cloud":      cloud,
+				"region":     region,
+				"status":     status,
+				"agentCount": agentCount,
+				"config":     configMap,
+				"createdAt":  createdAt,
+			}
+			if clusterName != nil {
+				entry["clusterName"] = *clusterName
+			}
+			if lastHeartbeat != nil {
+				entry["lastHeartbeat"] = *lastHeartbeat
+			}
+			result = append(result, entry)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("list data planes failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list data planes"})
 		return
-	}
-	defer rows.Close()
-
-	result := make([]map[string]any, 0)
-	for rows.Next() {
-		var (
-			id, name, cloud, region, status string
-			clusterName                     *string
-			agentCount                      int
-			lastHeartbeat                   *time.Time
-			config                          []byte
-			createdAt                       time.Time
-		)
-		if err := rows.Scan(&id, &name, &cloud, &region, &clusterName, &status, &agentCount, &lastHeartbeat, &config, &createdAt); err != nil {
-			h.logger().Error("scan data plane row failed", zap.Error(err))
-			continue
-		}
-
-		var configMap map[string]any
-		json.Unmarshal(config, &configMap) //nolint:errcheck
-
-		entry := map[string]any{
-			"id":         id,
-			"tenantId":   tenantID,
-			"name":       name,
-			"cloud":      cloud,
-			"region":     region,
-			"status":     status,
-			"agentCount": agentCount,
-			"config":     configMap,
-			"createdAt":  createdAt,
-		}
-		if clusterName != nil {
-			entry["clusterName"] = *clusterName
-		}
-		if lastHeartbeat != nil {
-			entry["lastHeartbeat"] = *lastHeartbeat
-		}
-		result = append(result, entry)
 	}
 
 	writeJSON(w, http.StatusOK, result)
@@ -393,15 +411,23 @@ func (h *DeploymentHandler) RemoveDataPlane(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		DELETE FROM data_planes WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, execErr := tx.Exec(ctx, `
+			DELETE FROM data_planes WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID)
+		if execErr != nil {
+			return execErr
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		h.logger().Error("remove data plane failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to remove data plane"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "data plane not found"})
 		return
 	}
@@ -428,51 +454,6 @@ func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Verify the agent exists.
-	var agentID string
-	var currentVersionID *string
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT id, current_version_id FROM agents
-		WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL
-	`, tenantID, name).Scan(&agentID, &currentVersionID)
-	if err == pgx.ErrNoRows {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
-		return
-	}
-	if err != nil {
-		h.logger().Error("lookup agent for deploy failed", zap.Error(err))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to look up agent"})
-		return
-	}
-
-	// Ensure the agent has a version (auto-create if needed).
-	if currentVersionID == nil {
-		var versionID string
-		err = h.srv.Pool.QueryRow(ctx, `
-			INSERT INTO agent_versions (agent_id, version, digest, bundle_uri, manifest, promoted_at)
-			VALUES ($1, '0.1.0', decode(md5($2), 'hex'), 'local://deployed', '{"entrypoint":"index.ts"}'::jsonb, now())
-			ON CONFLICT (agent_id, version) DO UPDATE SET promoted_at = now()
-			RETURNING id
-		`, agentID, agentID+"-deploy").Scan(&versionID)
-		if err != nil {
-			h.logger().Warn("auto-create version for deploy failed", zap.Error(err))
-		} else {
-			_, _ = h.srv.Pool.Exec(ctx, `UPDATE agents SET current_version_id = $1 WHERE id = $2`, versionID, agentID)
-		}
-	}
-
-	// Mark agent as deployed via labels.
-	_, _ = h.srv.Pool.Exec(ctx, `
-		UPDATE agents SET labels = labels || '{"deployed": "true"}'::jsonb
-		WHERE id = $1
-	`, agentID)
-
-	// Stop any existing live deployment for this agent before creating a new one.
-	_, _ = h.srv.Pool.Exec(ctx, `
-		UPDATE deployments SET status = 'replaced', finished_at = now()
-		WHERE tenant_id = $1 AND agent_name = $2 AND environment = 'cloud' AND status = 'live'
-	`, tenantID, name)
-
 	// Create a deployment record with status "live" for the cloud deploy.
 	initialLogs, _ := json.Marshal([]string{
 		"Deploying " + name + " to Lantern Cloud...",
@@ -482,13 +463,67 @@ func (h *DeploymentHandler) DeployAgent(w http.ResponseWriter, r *http.Request) 
 		"Agent deployed successfully",
 	})
 
-	var deployID string
-	var createdAt time.Time
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO deployments (tenant_id, agent_name, version, environment, status, deployed_by, message, logs)
-		VALUES ($1, $2, 'latest', 'cloud', 'live', $3, 'Deployed to Lantern Cloud', $4::jsonb)
-		RETURNING id, created_at
-	`, tenantID, name, tenantID, string(initialLogs)).Scan(&deployID, &createdAt)
+	// The whole deploy (agent lookup → version auto-create → label → replace old
+	// deployment → insert new) runs in one RLS-scoped transaction so it is atomic
+	// and tenant-isolated. agent_versions has no tenant_id (RLS-exempt table,
+	// child of agents) but is written here under the same tx via the parent FK.
+	var (
+		deployID     string
+		createdAt    time.Time
+		agentMissing bool
+	)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		var agentID string
+		var currentVersionID *string
+		lookupErr := tx.QueryRow(ctx, `
+			SELECT id, current_version_id FROM agents
+			WHERE tenant_id = $1 AND name = $2 AND archived_at IS NULL
+		`, tenantID, name).Scan(&agentID, &currentVersionID)
+		if lookupErr == pgx.ErrNoRows {
+			agentMissing = true
+			return nil
+		}
+		if lookupErr != nil {
+			return lookupErr
+		}
+
+		// Ensure the agent has a version (auto-create if needed).
+		if currentVersionID == nil {
+			var versionID string
+			if vErr := tx.QueryRow(ctx, `
+				INSERT INTO agent_versions (agent_id, version, digest, bundle_uri, manifest, promoted_at)
+				VALUES ($1, '0.1.0', decode(md5($2), 'hex'), 'local://deployed', '{"entrypoint":"index.ts"}'::jsonb, now())
+				ON CONFLICT (agent_id, version) DO UPDATE SET promoted_at = now()
+				RETURNING id
+			`, agentID, agentID+"-deploy").Scan(&versionID); vErr != nil {
+				h.logger().Warn("auto-create version for deploy failed", zap.Error(vErr))
+			} else {
+				_, _ = tx.Exec(ctx, `UPDATE agents SET current_version_id = $1 WHERE id = $2`, versionID, agentID)
+			}
+		}
+
+		// Mark agent as deployed via labels.
+		_, _ = tx.Exec(ctx, `
+			UPDATE agents SET labels = labels || '{"deployed": "true"}'::jsonb
+			WHERE id = $1
+		`, agentID)
+
+		// Stop any existing live deployment for this agent before creating a new one.
+		_, _ = tx.Exec(ctx, `
+			UPDATE deployments SET status = 'replaced', finished_at = now()
+			WHERE tenant_id = $1 AND agent_name = $2 AND environment = 'cloud' AND status = 'live'
+		`, tenantID, name)
+
+		return tx.QueryRow(ctx, `
+			INSERT INTO deployments (tenant_id, agent_name, version, environment, status, deployed_by, message, logs)
+			VALUES ($1, $2, 'latest', 'cloud', 'live', $3, 'Deployed to Lantern Cloud', $4::jsonb)
+			RETURNING id, created_at
+		`, tenantID, name, tenantID, string(initialLogs)).Scan(&deployID, &createdAt)
+	})
+	if agentMissing {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+		return
+	}
 	if err != nil {
 		h.logger().Error("create cloud deployment failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create deployment"})
@@ -532,16 +567,24 @@ func (h *DeploymentHandler) StopDeployment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	tag, err := h.srv.Pool.Exec(ctx, `
-		UPDATE deployments SET status = 'stopped', finished_at = now()
-		WHERE tenant_id = $1 AND agent_name = $2 AND environment = 'cloud' AND status = 'live'
-	`, tenantID, name)
+	var rowsAffected int64
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		tag, execErr := tx.Exec(ctx, `
+			UPDATE deployments SET status = 'stopped', finished_at = now()
+			WHERE tenant_id = $1 AND agent_name = $2 AND environment = 'cloud' AND status = 'live'
+		`, tenantID, name)
+		if execErr != nil {
+			return execErr
+		}
+		rowsAffected = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		h.logger().Error("stop deployment failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to stop deployment"})
 		return
 	}
-	if tag.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no active cloud deployment found"})
 		return
 	}
@@ -571,13 +614,15 @@ func (h *DeploymentHandler) GetCloudDeployment(w http.ResponseWriter, r *http.Re
 		createdAt  time.Time
 		finishedAt *time.Time
 	)
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT id, status, created_at, finished_at
-		FROM deployments
-		WHERE tenant_id = $1 AND agent_name = $2 AND environment = 'cloud'
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, tenantID, name).Scan(&deployID, &status, &createdAt, &finishedAt)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT id, status, created_at, finished_at
+			FROM deployments
+			WHERE tenant_id = $1 AND agent_name = $2 AND environment = 'cloud'
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, tenantID, name).Scan(&deployID, &status, &createdAt, &finishedAt)
+	})
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "not_deployed"})
 		return

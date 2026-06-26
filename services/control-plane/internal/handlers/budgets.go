@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
@@ -88,22 +89,25 @@ func (h *BudgetHandler) UpsertBudget(w http.ResponseWriter, r *http.Request) {
 		toolLimitsJSON = []byte("{}")
 	}
 
-	_, err = h.srv.Pool.Exec(ctx, `
-		INSERT INTO agent_budgets
-		  (tenant_id, agent_name, max_cost_usd_per_day, max_cost_usd_per_run,
-		   max_tokens_per_day, max_runs_per_day, tool_limits, hard_fail, notify_at_pct)
-		VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)
-		ON CONFLICT (tenant_id, agent_name) DO UPDATE SET
-		  max_cost_usd_per_day = EXCLUDED.max_cost_usd_per_day,
-		  max_cost_usd_per_run = EXCLUDED.max_cost_usd_per_run,
-		  max_tokens_per_day   = EXCLUDED.max_tokens_per_day,
-		  max_runs_per_day     = EXCLUDED.max_runs_per_day,
-		  tool_limits          = EXCLUDED.tool_limits,
-		  hard_fail            = EXCLUDED.hard_fail,
-		  notify_at_pct        = EXCLUDED.notify_at_pct,
-		  updated_at           = now()
-	`, tenantID, agentName, body.MaxCostUsdPerDay, body.MaxCostUsdPerRun,
-		body.MaxTokensPerDay, body.MaxRunsPerDay, toolLimitsJSON, body.HardFail, body.NotifyAtPct)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			INSERT INTO agent_budgets
+			  (tenant_id, agent_name, max_cost_usd_per_day, max_cost_usd_per_run,
+			   max_tokens_per_day, max_runs_per_day, tool_limits, hard_fail, notify_at_pct)
+			VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)
+			ON CONFLICT (tenant_id, agent_name) DO UPDATE SET
+			  max_cost_usd_per_day = EXCLUDED.max_cost_usd_per_day,
+			  max_cost_usd_per_run = EXCLUDED.max_cost_usd_per_run,
+			  max_tokens_per_day   = EXCLUDED.max_tokens_per_day,
+			  max_runs_per_day     = EXCLUDED.max_runs_per_day,
+			  tool_limits          = EXCLUDED.tool_limits,
+			  hard_fail            = EXCLUDED.hard_fail,
+			  notify_at_pct        = EXCLUDED.notify_at_pct,
+			  updated_at           = now()
+		`, tenantID, agentName, body.MaxCostUsdPerDay, body.MaxCostUsdPerRun,
+			body.MaxTokensPerDay, body.MaxRunsPerDay, toolLimitsJSON, body.HardFail, body.NotifyAtPct)
+		return e
+	})
 	if err != nil {
 		h.logger().Error("upsert budget failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save budget"})
@@ -125,15 +129,17 @@ func (h *BudgetHandler) GetBudget(w http.ResponseWriter, r *http.Request) {
 	var dto budgetDTO
 	dto.AgentName = agentName
 	var toolLimitsJSON []byte
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT max_cost_usd_per_day, max_cost_usd_per_run, max_tokens_per_day,
-		       max_runs_per_day, tool_limits, hard_fail, notify_at_pct, updated_at
-		FROM agent_budgets
-		WHERE tenant_id = $1 AND agent_name = $2
-	`, tenantID, agentName).Scan(
-		&dto.MaxCostUsdPerDay, &dto.MaxCostUsdPerRun, &dto.MaxTokensPerDay,
-		&dto.MaxRunsPerDay, &toolLimitsJSON, &dto.HardFail, &dto.NotifyAtPct, &dto.UpdatedAt,
-	)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT max_cost_usd_per_day, max_cost_usd_per_run, max_tokens_per_day,
+			       max_runs_per_day, tool_limits, hard_fail, notify_at_pct, updated_at
+			FROM agent_budgets
+			WHERE tenant_id = $1 AND agent_name = $2
+		`, tenantID, agentName).Scan(
+			&dto.MaxCostUsdPerDay, &dto.MaxCostUsdPerRun, &dto.MaxTokensPerDay,
+			&dto.MaxRunsPerDay, &toolLimitsJSON, &dto.HardFail, &dto.NotifyAtPct, &dto.UpdatedAt,
+		)
+	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no budget configured"})
 		return
@@ -152,9 +158,12 @@ func (h *BudgetHandler) DeleteBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agentName := r.PathValue("name")
-	_, err = h.srv.Pool.Exec(ctx,
-		`DELETE FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2`,
-		tenantID, agentName)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx,
+			`DELETE FROM agent_budgets WHERE tenant_id = $1 AND agent_name = $2`,
+			tenantID, agentName)
+		return e
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
 		return
@@ -169,29 +178,35 @@ func (h *BudgetHandler) ListBudgets(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT agent_name, max_cost_usd_per_day, max_cost_usd_per_run,
-		       max_tokens_per_day, max_runs_per_day, tool_limits, hard_fail, notify_at_pct, updated_at
-		FROM agent_budgets WHERE tenant_id = $1 ORDER BY agent_name
-	`, tenantID)
+	result := make([]budgetDTO, 0)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qErr := tx.Query(ctx, `
+			SELECT agent_name, max_cost_usd_per_day, max_cost_usd_per_run,
+			       max_tokens_per_day, max_runs_per_day, tool_limits, hard_fail, notify_at_pct, updated_at
+			FROM agent_budgets WHERE tenant_id = $1 ORDER BY agent_name
+		`, tenantID)
+		if qErr != nil {
+			return qErr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var dto budgetDTO
+			var toolLimitsJSON []byte
+			if err := rows.Scan(&dto.AgentName, &dto.MaxCostUsdPerDay, &dto.MaxCostUsdPerRun,
+				&dto.MaxTokensPerDay, &dto.MaxRunsPerDay, &toolLimitsJSON, &dto.HardFail,
+				&dto.NotifyAtPct, &dto.UpdatedAt); err != nil {
+				continue
+			}
+			if len(toolLimitsJSON) > 0 {
+				_ = json.Unmarshal(toolLimitsJSON, &dto.ToolLimits)
+			}
+			result = append(result, dto)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed"})
 		return
-	}
-	defer rows.Close()
-	result := make([]budgetDTO, 0)
-	for rows.Next() {
-		var dto budgetDTO
-		var toolLimitsJSON []byte
-		if err := rows.Scan(&dto.AgentName, &dto.MaxCostUsdPerDay, &dto.MaxCostUsdPerRun,
-			&dto.MaxTokensPerDay, &dto.MaxRunsPerDay, &toolLimitsJSON, &dto.HardFail,
-			&dto.NotifyAtPct, &dto.UpdatedAt); err != nil {
-			continue
-		}
-		if len(toolLimitsJSON) > 0 {
-			_ = json.Unmarshal(toolLimitsJSON, &dto.ToolLimits)
-		}
-		result = append(result, dto)
 	}
 	writeJSON(w, http.StatusOK, result)
 }

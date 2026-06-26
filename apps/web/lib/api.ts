@@ -414,19 +414,28 @@ class LanternAPI {
   setToken(token: string | null) {
     this._token = token;
     if (typeof window !== "undefined") {
-      // This cookie is set from JS so it can't be HttpOnly here — it exists
-      // only to feed the middleware's /auth/me check. Add Secure over HTTPS
-      // (so it's never sent in cleartext) and keep SameSite=Lax (CSRF
-      // hardening). Moving to a true HttpOnly cookie requires a server route
-      // to set it on login — tracked as a follow-up (see file header note).
-      const secure = window.location.protocol === "https:" ? "; Secure" : "";
+      // Persist token in localStorage for in-memory restoreToken() on page
+      // load (before the HttpOnly cookie is read server-side).
       if (token) {
         localStorage.setItem("lantern_token", token);
-        document.cookie = `lantern_token=${token}; path=/; max-age=${60 * 60 * 24 * 30}; SameSite=Lax${secure}`;
       } else {
         localStorage.removeItem("lantern_token");
-        document.cookie =
-          `lantern_token=; path=/; max-age=0; SameSite=Lax${secure}`;
+      }
+      // Set / clear the auth cookie as HttpOnly via the server-side Route
+      // Handler so XSS cannot read it.  Fire-and-forget: the cookie is only
+      // needed for the middleware's /auth/me check, and a failure here just
+      // means the next page load falls back to localStorage.
+      if (token) {
+        fetch("/api/auth/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        }).catch(() => {
+          // Non-blocking — in-memory token still works for API calls in
+          // this session even if the HttpOnly cookie write fails.
+        });
+      } else {
+        fetch("/api/auth/session", { method: "DELETE" }).catch(() => {});
       }
     }
   }
@@ -834,15 +843,12 @@ class LanternAPI {
   }
 
   async testConnector(id: string): Promise<{ success: boolean; message: string }> {
-    try {
-      return await this.request<{ success: boolean; message: string }>(
-        `/v1/connectors/${encodeURIComponent(id)}/test`,
-        { method: "POST" },
-      );
-    } catch (err) {
-      notifySimulated("testConnector", err);
-      return { success: true, message: "Connection verified (simulated)" };
-    }
+    // Surface the real error so operators know if the connector endpoint is
+    // unreachable, rather than silently claiming success.
+    return this.request<{ success: boolean; message: string }>(
+      `/v1/connectors/${encodeURIComponent(id)}/test`,
+      { method: "POST" },
+    );
   }
 
   async startOAuth(connectorId: string): Promise<{ redirectUrl: string; state: string }> {
@@ -872,25 +878,12 @@ class LanternAPI {
   }
 
   async configureSurface(data: ConfigureSurfaceInput): Promise<SurfaceConfigRecord> {
-    try {
-      return await this.request<SurfaceConfigRecord>("/v1/surfaces", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
-    } catch (err) {
-      notifySimulated("configureSurface", err);
-      return {
-        id: `sc_${Date.now()}`,
-        tenantId: DEMO_USER.tenantId,
-        surfaceId: data.surfaceId,
-        displayName: data.displayName,
-        status: "connected",
-        config: data.config ?? {},
-        webhookUrl: data.webhookUrl,
-        connectedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-    }
+    // Surface the real error so operators know the save failed, rather than
+    // silently returning a fabricated record that never persisted.
+    return this.request<SurfaceConfigRecord>("/v1/surfaces", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async updateSurface(id: string, data: UpdateSurfaceInput): Promise<SurfaceConfigRecord> {
@@ -928,15 +921,12 @@ class LanternAPI {
   }
 
   async testSurface(id: string): Promise<{ success: boolean; message: string }> {
-    try {
-      return await this.request<{ success: boolean; message: string }>(
-        `/v1/surfaces/${encodeURIComponent(id)}/test`,
-        { method: "POST" },
-      );
-    } catch (err) {
-      notifySimulated("testSurface", err);
-      return { success: true, message: "Test message sent (simulated)" };
-    }
+    // Surface the real error so operators know if the surface endpoint is
+    // unreachable, rather than silently claiming success.
+    return this.request<{ success: boolean; message: string }>(
+      `/v1/surfaces/${encodeURIComponent(id)}/test`,
+      { method: "POST" },
+    );
   }
 
   // ---- API Keys (real endpoints) -------------------------------------------
@@ -997,25 +987,12 @@ class LanternAPI {
   }
 
   async createDeployment(data: CreateDeploymentInput): Promise<Deployment> {
-    try {
-      return await this.request<Deployment>("/v1/deployments", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
-    } catch (err) {
-      notifySimulated("createDeployment", err);
-      return {
-        id: `dep_${Date.now()}`,
-        tenantId: DEMO_USER.tenantId,
-        agentName: data.agentName,
-        version: data.version,
-        environment: data.environment ?? "development",
-        status: "deploying",
-        message: data.message,
-        logs: ["Deployment initiated (simulated)"],
-        createdAt: new Date().toISOString(),
-      };
-    }
+    // Surface the real error so callers know the deployment was not created,
+    // rather than returning a fabricated record that never actually exists.
+    return this.request<Deployment>("/v1/deployments", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async getDeployment(id: string): Promise<Deployment> {
@@ -1032,25 +1009,12 @@ class LanternAPI {
   }
 
   async registerDataPlane(data: RegisterDataPlaneInput): Promise<DataPlane> {
-    try {
-      return await this.request<DataPlane>("/v1/data-planes", {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
-    } catch (err) {
-      notifySimulated("registerDataPlane", err);
-      return {
-        id: `dp_${Date.now()}`,
-        tenantId: DEMO_USER.tenantId,
-        name: data.name,
-        cloud: data.cloud,
-        region: data.region,
-        clusterName: data.clusterName,
-        status: "provisioning",
-        agentCount: 0,
-        createdAt: new Date().toISOString(),
-      };
-    }
+    // Surface the real error so the registration modal stays open with a real
+    // failure message, rather than silently returning a fabricated DataPlane row.
+    return this.request<DataPlane>("/v1/data-planes", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async removeDataPlane(id: string): Promise<void> {
@@ -2070,6 +2034,46 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       body: JSON.stringify(body),
     });
   }
+
+  // ---- Life events (Automations feed) --------------------------------------
+
+  async listLifeEvents(params?: {
+    status?: string;
+    kind?: string;
+    limit?: number;
+  }): Promise<LifeEvent[]> {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.kind) qs.set("kind", params.kind);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const query = qs.toString();
+    return this.request<LifeEvent[]>(`/v1/life-events${query ? `?${query}` : ""}`);
+  }
+
+  async undoLifeEvent(id: string): Promise<{ id: string; status: string }> {
+    return this.request<{ id: string; status: string }>(
+      `/v1/life-events/${encodeURIComponent(id)}/undo`,
+      { method: "POST" },
+    );
+  }
+
+  async dismissLifeEvent(id: string): Promise<{ id: string; status: string }> {
+    return this.request<{ id: string; status: string }>(
+      `/v1/life-events/${encodeURIComponent(id)}/dismiss`,
+      { method: "POST" },
+    );
+  }
+
+  async getLifeEventPrefs(): Promise<LifeEventPref[]> {
+    return this.request<LifeEventPref[]>(`/v1/life-events/prefs`);
+  }
+
+  async setLifeEventPref(body: LifeEventPref): Promise<LifeEventPref> {
+    return this.request<LifeEventPref>(`/v1/life-events/prefs`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2280,3 +2284,45 @@ export interface RehearseResponse {
 }
 
 export const api = new LanternAPI();
+
+// ---------------------------------------------------------------------------
+// Life-event types (Automations feed)
+// ---------------------------------------------------------------------------
+
+export type LifeEventKind =
+  | "bill"
+  | "delivery"
+  | "appointment"
+  | "fraud_alert"
+  | "otp"
+  | "travel"
+  | "receipt"
+  | "promo";
+
+export type LifeEventStatus =
+  | "suggested"
+  | "auto-acted"
+  | "undone"
+  | "dismissed";
+
+export type LifeEventMode = "auto" | "ask" | "off";
+
+export interface LifeEvent {
+  id: string;
+  kind: LifeEventKind;
+  channel: string;
+  status: LifeEventStatus;
+  urgency?: string;
+  summary: string;
+  fields: Record<string, unknown>;
+  idempotencyKey?: string;
+  actionTaken?: string;
+  sourcePreview?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LifeEventPref {
+  kind: LifeEventKind;
+  mode: LifeEventMode;
+}

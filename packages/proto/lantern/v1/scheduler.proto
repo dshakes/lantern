@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package lantern.v1;
+
+option go_package = "github.com/dshakes/lantern/gen/go/lantern/v1;lanternv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// ---------------------------------------------------------------------------
+// Scheduler
+//
+// Cron-based and one-shot agent execution. A fired schedule creates a run via
+// the control-plane RunService (invariant #2: only the run/workflow layer
+// mutates run state). Tenant is carried in gRPC metadata (invariant #7), not
+// in the request body.
+// ---------------------------------------------------------------------------
+
+service SchedulerService {
+  rpc RegisterSchedule(RegisterScheduleRequest) returns (RegisterScheduleResponse);
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesResponse);
+  rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse);
+  rpc Trigger(TriggerRequest) returns (TriggerResponse);
+}
+
+message RegisterScheduleRequest {
+  string agent_name = 1;
+  string cron_expr = 2;
+  string timezone = 3;
+  google.protobuf.Struct input_template = 4;
+}
+
+message RegisterScheduleResponse {
+  string schedule_id = 1;
+  google.protobuf.Timestamp next_fire_at = 2;
+}
+
+message Schedule {
+  string id = 1;
+  string tenant_id = 2;
+  string agent_name = 3;
+  string cron_expr = 4;
+  string timezone = 5;
+  google.protobuf.Struct input_template = 6;
+  bool enabled = 7;
+  google.protobuf.Timestamp next_fire_at = 8;
+  google.protobuf.Timestamp last_fire_at = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+message ListSchedulesRequest {}
+
+message ListSchedulesResponse {
+  repeated Schedule schedules = 1;
+}
+
+message DeleteScheduleRequest {
+  string schedule_id = 1;
+}
+
+message DeleteScheduleResponse {
+  bool deleted = 1;
+}
+
+message TriggerRequest {
+  string agent_name = 1;
+  google.protobuf.Struct input = 2;
+  // Optional delay in milliseconds before the run fires. Zero = immediate.
+  int64 delay_ms = 3;
+}
+
+message TriggerResponse {
+  string run_id = 1;
+  string delayed_run_id = 2;
+  google.protobuf.Timestamp fire_at = 3;
+}

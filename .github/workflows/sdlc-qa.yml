@@ -62,6 +62,11 @@ jobs:
       # vitest on the fly and fails to resolve `vitest/config`, breaking test-ts.
       - name: Install SDK-TS deps (test-ts runs vitest)
         run: cd packages/sdk-ts && npm ci
+      # `make test` -> `test-ts` also runs `npm test` in packages/bridge-core, which is
+      # `node --import=tsx/esm --test src/*.test.ts` and needs tsx (a devDependency).
+      # Without `npm ci` here, all 50+ bridge-core test files fail to load (ERR_MODULE_NOT_FOUND tsx).
+      - name: Install bridge-core deps (test-ts runs node --test via tsx)
+        run: cd packages/bridge-core && npm ci
       # `make test` -> `test-python` runs pytest in packages/sdk-python, but pytest is a
       # dev extra (pyproject [project.optional-dependencies].dev). Without installing the
       # package's dev deps, pytest is absent and test-python fails with "No module named

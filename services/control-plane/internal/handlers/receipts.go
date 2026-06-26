@@ -38,6 +38,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
@@ -233,6 +234,9 @@ func (h *ReceiptHandler) VerifyReceipt(w http.ResponseWriter, r *http.Request) {
 	// Strategy 1: re-fetch persisted signature from DB when run_id is known.
 	if runID != "" && h.srv != nil && h.srv.Pool != nil {
 		var storedSig string
+		// rls-exempt: PUBLIC receipt-verification endpoint (no auth, no tenant
+		// context). Re-fetches the issued signature by run_id to compare against
+		// the client-supplied one; the receipt is publicly verifiable by design.
 		err := h.srv.Pool.QueryRow(ctx,
 			`SELECT signature FROM run_receipts WHERE run_id = $1`,
 			runID,
@@ -337,27 +341,29 @@ var errRunNotFound = fmt.Errorf("run not found")
 func (h *ReceiptHandler) buildReceipt(ctx context.Context, tenantID, runID string) (*signedReceipt, error) {
 	var p receiptPayload
 	var versionDigest *string
-	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT
-		  r.id,
-		  r.tenant_id,
-		  COALESCE(a.name, ''),
-		  av.digest,
-		  COALESCE(r.model, ''),
-		  COALESCE(r.provider, ''),
-		  r.status,
-		  COALESCE(r.tokens_in, 0),
-		  COALESCE(r.tokens_out, 0),
-		  COALESCE(r.cost_usd, 0)
-		FROM runs r
-		LEFT JOIN agents a        ON a.id = r.agent_id AND a.tenant_id = r.tenant_id
-		LEFT JOIN agent_versions av ON av.id = a.current_version_id
-		WHERE r.id = $1 AND r.tenant_id = $2
-	`, runID, tenantID).Scan(
-		&p.RunID, &p.TenantID, &p.AgentName, &versionDigest,
-		&p.Model, &p.Provider, &p.Status,
-		&p.TokensIn, &p.TokensOut, &p.CostUsd,
-	)
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT
+			  r.id,
+			  r.tenant_id,
+			  COALESCE(a.name, ''),
+			  av.digest,
+			  COALESCE(r.model, ''),
+			  COALESCE(r.provider, ''),
+			  r.status,
+			  COALESCE(r.tokens_in, 0),
+			  COALESCE(r.tokens_out, 0),
+			  COALESCE(r.cost_usd, 0)
+			FROM runs r
+			LEFT JOIN agents a        ON a.id = r.agent_id AND a.tenant_id = r.tenant_id
+			LEFT JOIN agent_versions av ON av.id = a.current_version_id
+			WHERE r.id = $1 AND r.tenant_id = $2
+		`, runID, tenantID).Scan(
+			&p.RunID, &p.TenantID, &p.AgentName, &versionDigest,
+			&p.Model, &p.Provider, &p.Status,
+			&p.TokensIn, &p.TokensOut, &p.CostUsd,
+		)
+	})
 	if err != nil {
 		return nil, errRunNotFound
 	}
@@ -397,6 +403,9 @@ func (h *ReceiptHandler) buildReceipt(ctx context.Context, tenantID, runID strin
 }
 
 func (h *ReceiptHandler) hashJournal(ctx context.Context, runID string) (string, error) {
+	// rls-exempt: journal_events has no tenant_id (child of runs, PK run_id+seq)
+	// and is on the RLS-exempt allowlist per ADR 0011. The run's tenant ownership
+	// is verified by buildReceipt's tenant-scoped runs query before this is called.
 	rows, err := h.srv.Pool.Query(ctx, `
 		SELECT seq, kind, COALESCE(payload::text, '')
 		FROM journal_events
@@ -428,15 +437,17 @@ func (h *ReceiptHandler) persistReceipt(ctx context.Context, tenantID, runID str
 	if err != nil {
 		return err
 	}
-	_, err = h.srv.Pool.Exec(ctx, `
-		INSERT INTO run_receipts (tenant_id, run_id, signature, payload, issued_at)
-		VALUES ($1, $2, $3, $4::jsonb, $5)
-		ON CONFLICT (run_id) DO UPDATE
-		   SET signature = EXCLUDED.signature,
-		       payload   = EXCLUDED.payload,
-		       issued_at = EXCLUDED.issued_at
-	`, tenantID, runID, r.Signature, string(body), r.Payload.IssuedAt)
-	return err
+	return h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO run_receipts (tenant_id, run_id, signature, payload, issued_at)
+			VALUES ($1, $2, $3, $4::jsonb, $5)
+			ON CONFLICT (run_id) DO UPDATE
+			   SET signature = EXCLUDED.signature,
+			       payload   = EXCLUDED.payload,
+			       issued_at = EXCLUDED.issued_at
+		`, tenantID, runID, r.Signature, string(body), r.Payload.IssuedAt)
+		return err
+	})
 }
 
 // canonicalJSON serialises v to a canonical, deterministic JSON byte slice

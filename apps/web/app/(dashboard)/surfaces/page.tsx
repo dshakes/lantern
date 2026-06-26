@@ -317,15 +317,21 @@ export default function SurfacesPage() {
     setTestStatus("testing");
     setTestMessage("Testing connection...");
 
-    try {
-      const existing = configs[configModal.id];
-      if (usingApi && existing?.backendId) {
+    const existing = configs[configModal.id];
+    if (usingApi && existing?.backendId) {
+      try {
         const result = await api.testSurface(existing.backendId);
         setTestStatus(result.success ? "success" : "error");
         setTestMessage(result.message);
-        return;
+      } catch (e) {
+        // Surface real API/network errors rather than silently claiming success.
+        const msg = e instanceof Error ? e.message : String(e);
+        setTestStatus("error");
+        setTestMessage(`Test failed — ${msg}`);
+        toast.error(`Surface test failed — ${msg}`);
       }
-    } catch { /* fall back */ }
+      return;
+    }
 
     await new Promise((r) => setTimeout(r, 1500));
     const required = configModal.configFields.filter((f) => f.required);
@@ -348,8 +354,8 @@ export default function SurfacesPage() {
     if (hasRequired && testStatus !== "success") { toast.error("Please test the connection before saving"); return; }
 
     setSaving(true);
-    try {
-      if (usingApi) {
+    if (usingApi) {
+      try {
         const existing = configs[configModal.id];
         if (existing?.backendId) {
           await api.updateSurface(existing.backendId, { displayName: configModal.name, config: { ...formFields } });
@@ -360,9 +366,15 @@ export default function SurfacesPage() {
         setSaving(false);
         setConfigModal(null);
         toast.success(`${configModal.name} configured successfully`);
-        return;
+      } catch (e) {
+        // Surface real API/network errors so the operator knows the save failed,
+        // rather than silently marking the surface as configured when it isn't.
+        const msg = e instanceof Error ? e.message : String(e);
+        setSaving(false);
+        toast.error(`Failed to save ${configModal.name} — ${msg}`);
       }
-    } catch { /* fall back */ }
+      return;
+    }
 
     await new Promise((r) => setTimeout(r, 600));
     const updated = { ...configs, [configModal.id]: { connected: true, fields: { ...formFields } } };

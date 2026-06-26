@@ -22,6 +22,9 @@
     "./personal-docs": "./src/personal-docs.ts",
     "./mac-actions": "./src/mac-actions.ts",
     "./inbound-classifier": "./src/inbound-classifier.ts",
+    "./life-events": "./src/life-events.ts",
+    "./life-events-store": "./src/life-events-store.ts",
+    "./gmail-ingest": "./src/gmail-ingest.ts",
     "./humanize": "./src/humanize.ts",
     "./prefetch": "./src/prefetch.ts",
     "./owner-profile": "./src/owner-profile.ts",
@@ -53,14 +56,21 @@
     "./dislike-consolidator": "./src/dislike-consolidator.ts",
     "./contact-priority": "./src/contact-priority.ts",
     "./anticipation": "./src/anticipation.ts",
-    "./emotional-register": "./src/emotional-register.ts"
+    "./emotional-register": "./src/emotional-register.ts",
+    "./life-events-emit": "./src/life-events-emit.ts",
+    "./mac-usage": "./src/mac-usage.ts",
+    "./device-signals": "./src/device-signals.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
     "pdf-parse": "^2.4.5",
     "pino": "^9.14.0"
   },
+  "scripts": {
+    "test": "node --import=tsx/esm --test src/*.test.ts"
+  },
   "devDependencies": {
+    "tsx": "^4.22.4",
     "typescript": "^5.7.0"
   }
 }

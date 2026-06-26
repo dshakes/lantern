@@ -113,6 +113,10 @@ func (h *GDPRHandler) DeleteTenant(w http.ResponseWriter, r *http.Request) {
 	// step runs a parameterised DELETE and records the count in deleted.
 	// tableName and col are internal constants (safe for fmt.Sprintf).
 	deleted := make(map[string]int64)
+	// rls-exempt: admin/system GDPR erasure purges a whole tenant leaf-to-root
+	// (down to the tenants row itself). It must bypass RLS so the privileged
+	// pool can delete every tenant-scoped table; running under the app role
+	// would let RLS hide rows from the purge and leave PII behind.
 	tx, err := h.srv.Pool.Begin(ctx)
 	if err != nil {
 		log.Error("GDPR: failed to begin transaction", zap.Error(err))

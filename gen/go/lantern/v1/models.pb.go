@@ -184,8 +184,23 @@ type CompleteRequest struct {
 	Stop           []string               `protobuf:"bytes,33,rep,name=stop,proto3" json:"stop,omitempty"`
 	NoCache        bool                   `protobuf:"varint,40,opt,name=no_cache,json=noCache,proto3" json:"no_cache,omitempty"`
 	IdempotencyKey string                 `protobuf:"bytes,41,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Request-scoped provider credentials, keyed by provider id
+	// ("openai", "anthropic") -> API key. Supplied PER CALL by the
+	// control-plane, which resolves the tenant's AES-256-GCM-encrypted key
+	// at execution time (see services/control-plane resolveProviderKey).
+	//
+	// When present the router builds a per-REQUEST provider from these keys
+	// instead of the process-env provider it built at startup; this is what
+	// lets the single-process router carry multi-tenant traffic without a
+	// per-tenant key store of its own. When absent (single-tenant dev) the
+	// router falls back to its startup env provider.
+	//
+	// Invariant #10: these are secrets. They are NEVER logged, traced, or
+	// persisted by the router — only used to construct the outbound provider
+	// client for this one call.
+	ProviderCredentials map[string]string `protobuf:"bytes,42,rep,name=provider_credentials,json=providerCredentials,proto3" json:"provider_credentials,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *CompleteRequest) Reset() {
@@ -314,6 +329,13 @@ func (x *CompleteRequest) GetIdempotencyKey() string {
 		return x.IdempotencyKey
 	}
 	return ""
+}
+
+func (x *CompleteRequest) GetProviderCredentials() map[string]string {
+	if x != nil {
+		return x.ProviderCredentials
+	}
+	return nil
 }
 
 type Message struct {
@@ -1121,12 +1143,16 @@ func (x *ChunkDone) GetEscalated() bool {
 }
 
 type EmbedRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	Capability    Capability             `protobuf:"varint,2,opt,name=capability,proto3,enum=lantern.v1.Capability" json:"capability,omitempty"`
-	Texts         []string               `protobuf:"bytes,3,rep,name=texts,proto3" json:"texts,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	TenantId   string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Capability Capability             `protobuf:"varint,2,opt,name=capability,proto3,enum=lantern.v1.Capability" json:"capability,omitempty"`
+	Texts      []string               `protobuf:"bytes,3,rep,name=texts,proto3" json:"texts,omitempty"`
+	// Same request-scoped credential map as CompleteRequest.provider_credentials.
+	// provider id -> API key, supplied per-call by the control-plane; NEVER
+	// logged (invariant #10). Absent -> router uses its startup env provider.
+	ProviderCredentials map[string]string `protobuf:"bytes,4,rep,name=provider_credentials,json=providerCredentials,proto3" json:"provider_credentials,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *EmbedRequest) Reset() {
@@ -1176,6 +1202,13 @@ func (x *EmbedRequest) GetCapability() Capability {
 func (x *EmbedRequest) GetTexts() []string {
 	if x != nil {
 		return x.Texts
+	}
+	return nil
+}
+
+func (x *EmbedRequest) GetProviderCredentials() map[string]string {
+	if x != nil {
+		return x.ProviderCredentials
 	}
 	return nil
 }
@@ -1409,7 +1442,7 @@ var File_lantern_v1_models_proto protoreflect.FileDescriptor
 const file_lantern_v1_models_proto_rawDesc = "" +
 	"\n" +
 	"\x17lantern/v1/models.proto\x12\n" +
-	"lantern.v1\x1a\x1cgoogle/protobuf/struct.proto\"\x97\x04\n" +
+	"lantern.v1\x1a\x1cgoogle/protobuf/struct.proto\"\xc8\x05\n" +
 	"\x0fCompleteRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
 	"\astep_id\x18\x02 \x01(\tR\x06stepId\x12\x1b\n" +
@@ -1428,7 +1461,11 @@ const file_lantern_v1_models_proto_rawDesc = "" +
 	"\x05top_p\x18  \x01(\x01R\x04topP\x12\x12\n" +
 	"\x04stop\x18! \x03(\tR\x04stop\x12\x19\n" +
 	"\bno_cache\x18( \x01(\bR\anoCache\x12'\n" +
-	"\x0fidempotency_key\x18) \x01(\tR\x0eidempotencyKey\"\xd8\x01\n" +
+	"\x0fidempotency_key\x18) \x01(\tR\x0eidempotencyKey\x12g\n" +
+	"\x14provider_credentials\x18* \x03(\v24.lantern.v1.CompleteRequest.ProviderCredentialsEntryR\x13providerCredentials\x1aF\n" +
+	"\x18ProviderCredentialsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd8\x01\n" +
 	"\aMessage\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\x12\x12\n" +
@@ -1502,13 +1539,17 @@ const file_lantern_v1_models_proto_rawDesc = "" +
 	"cache_kind\x18\x04 \x01(\tR\tcacheKind\"N\n" +
 	"\tChunkDone\x12#\n" +
 	"\rfinish_reason\x18\x01 \x01(\tR\ffinishReason\x12\x1c\n" +
-	"\tescalated\x18\x02 \x01(\bR\tescalated\"y\n" +
+	"\tescalated\x18\x02 \x01(\bR\tescalated\"\xa7\x02\n" +
 	"\fEmbedRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x126\n" +
 	"\n" +
 	"capability\x18\x02 \x01(\x0e2\x16.lantern.v1.CapabilityR\n" +
 	"capability\x12\x14\n" +
-	"\x05texts\x18\x03 \x03(\tR\x05texts\"\xa3\x01\n" +
+	"\x05texts\x18\x03 \x03(\tR\x05texts\x12d\n" +
+	"\x14provider_credentials\x18\x04 \x03(\v21.lantern.v1.EmbedRequest.ProviderCredentialsEntryR\x13providerCredentials\x1aF\n" +
+	"\x18ProviderCredentialsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa3\x01\n" +
 	"\rEmbedResponse\x125\n" +
 	"\n" +
 	"embeddings\x18\x01 \x03(\v2\x15.lantern.v1.EmbeddingR\n" +
@@ -1575,7 +1616,7 @@ func file_lantern_v1_models_proto_rawDescGZIP() []byte {
 }
 
 var file_lantern_v1_models_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_lantern_v1_models_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_lantern_v1_models_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_lantern_v1_models_proto_goTypes = []any{
 	(Capability)(0),          // 0: lantern.v1.Capability
 	(OptimizeTarget)(0),      // 1: lantern.v1.OptimizeTarget
@@ -1595,38 +1636,42 @@ var file_lantern_v1_models_proto_goTypes = []any{
 	(*Embedding)(nil),        // 15: lantern.v1.Embedding
 	(*TokenizeRequest)(nil),  // 16: lantern.v1.TokenizeRequest
 	(*TokenizeResponse)(nil), // 17: lantern.v1.TokenizeResponse
-	(*structpb.Struct)(nil),  // 18: google.protobuf.Struct
+	nil,                      // 18: lantern.v1.CompleteRequest.ProviderCredentialsEntry
+	nil,                      // 19: lantern.v1.EmbedRequest.ProviderCredentialsEntry
+	(*structpb.Struct)(nil),  // 20: google.protobuf.Struct
 }
 var file_lantern_v1_models_proto_depIdxs = []int32{
 	0,  // 0: lantern.v1.CompleteRequest.capability:type_name -> lantern.v1.Capability
 	1,  // 1: lantern.v1.CompleteRequest.optimize:type_name -> lantern.v1.OptimizeTarget
 	3,  // 2: lantern.v1.CompleteRequest.messages:type_name -> lantern.v1.Message
 	8,  // 3: lantern.v1.CompleteRequest.tools:type_name -> lantern.v1.Tool
-	18, // 4: lantern.v1.CompleteRequest.response_format:type_name -> google.protobuf.Struct
-	7,  // 5: lantern.v1.Message.tool_calls:type_name -> lantern.v1.ToolCallMessage
-	4,  // 6: lantern.v1.Message.parts:type_name -> lantern.v1.ContentPart
-	5,  // 7: lantern.v1.ContentPart.image:type_name -> lantern.v1.ImagePart
-	6,  // 8: lantern.v1.ContentPart.file:type_name -> lantern.v1.FilePart
-	18, // 9: lantern.v1.Tool.parameters:type_name -> google.protobuf.Struct
-	3,  // 10: lantern.v1.CompleteResponse.message:type_name -> lantern.v1.Message
-	7,  // 11: lantern.v1.CompleteChunk.tool_call_delta:type_name -> lantern.v1.ToolCallMessage
-	11, // 12: lantern.v1.CompleteChunk.usage:type_name -> lantern.v1.ChunkUsage
-	12, // 13: lantern.v1.CompleteChunk.done:type_name -> lantern.v1.ChunkDone
-	0,  // 14: lantern.v1.EmbedRequest.capability:type_name -> lantern.v1.Capability
-	15, // 15: lantern.v1.EmbedResponse.embeddings:type_name -> lantern.v1.Embedding
-	2,  // 16: lantern.v1.ModelService.Complete:input_type -> lantern.v1.CompleteRequest
-	2,  // 17: lantern.v1.ModelService.CompleteStream:input_type -> lantern.v1.CompleteRequest
-	13, // 18: lantern.v1.ModelService.Embed:input_type -> lantern.v1.EmbedRequest
-	16, // 19: lantern.v1.ModelService.Tokenize:input_type -> lantern.v1.TokenizeRequest
-	9,  // 20: lantern.v1.ModelService.Complete:output_type -> lantern.v1.CompleteResponse
-	10, // 21: lantern.v1.ModelService.CompleteStream:output_type -> lantern.v1.CompleteChunk
-	14, // 22: lantern.v1.ModelService.Embed:output_type -> lantern.v1.EmbedResponse
-	17, // 23: lantern.v1.ModelService.Tokenize:output_type -> lantern.v1.TokenizeResponse
-	20, // [20:24] is the sub-list for method output_type
-	16, // [16:20] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	20, // 4: lantern.v1.CompleteRequest.response_format:type_name -> google.protobuf.Struct
+	18, // 5: lantern.v1.CompleteRequest.provider_credentials:type_name -> lantern.v1.CompleteRequest.ProviderCredentialsEntry
+	7,  // 6: lantern.v1.Message.tool_calls:type_name -> lantern.v1.ToolCallMessage
+	4,  // 7: lantern.v1.Message.parts:type_name -> lantern.v1.ContentPart
+	5,  // 8: lantern.v1.ContentPart.image:type_name -> lantern.v1.ImagePart
+	6,  // 9: lantern.v1.ContentPart.file:type_name -> lantern.v1.FilePart
+	20, // 10: lantern.v1.Tool.parameters:type_name -> google.protobuf.Struct
+	3,  // 11: lantern.v1.CompleteResponse.message:type_name -> lantern.v1.Message
+	7,  // 12: lantern.v1.CompleteChunk.tool_call_delta:type_name -> lantern.v1.ToolCallMessage
+	11, // 13: lantern.v1.CompleteChunk.usage:type_name -> lantern.v1.ChunkUsage
+	12, // 14: lantern.v1.CompleteChunk.done:type_name -> lantern.v1.ChunkDone
+	0,  // 15: lantern.v1.EmbedRequest.capability:type_name -> lantern.v1.Capability
+	19, // 16: lantern.v1.EmbedRequest.provider_credentials:type_name -> lantern.v1.EmbedRequest.ProviderCredentialsEntry
+	15, // 17: lantern.v1.EmbedResponse.embeddings:type_name -> lantern.v1.Embedding
+	2,  // 18: lantern.v1.ModelService.Complete:input_type -> lantern.v1.CompleteRequest
+	2,  // 19: lantern.v1.ModelService.CompleteStream:input_type -> lantern.v1.CompleteRequest
+	13, // 20: lantern.v1.ModelService.Embed:input_type -> lantern.v1.EmbedRequest
+	16, // 21: lantern.v1.ModelService.Tokenize:input_type -> lantern.v1.TokenizeRequest
+	9,  // 22: lantern.v1.ModelService.Complete:output_type -> lantern.v1.CompleteResponse
+	10, // 23: lantern.v1.ModelService.CompleteStream:output_type -> lantern.v1.CompleteChunk
+	14, // 24: lantern.v1.ModelService.Embed:output_type -> lantern.v1.EmbedResponse
+	17, // 25: lantern.v1.ModelService.Tokenize:output_type -> lantern.v1.TokenizeResponse
+	22, // [22:26] is the sub-list for method output_type
+	18, // [18:22] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_lantern_v1_models_proto_init() }
@@ -1651,7 +1696,7 @@ func file_lantern_v1_models_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lantern_v1_models_proto_rawDesc), len(file_lantern_v1_models_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   16,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

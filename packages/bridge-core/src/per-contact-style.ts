@@ -145,6 +145,28 @@ export interface ContactStyleOptions {
 
   // Reference "now" in epoch-ms (default Date.now()). Injectable for tests.
   now?: number;
+
+  // OPTIONAL: the current inbound text. When supplied, the verbatim few-shot
+  // samples are ranked by simple keyword/token overlap with this text so the
+  // examples are SHAPED like the message being answered — recency breaks ties
+  // and is the fallback when nothing overlaps. Cheap (token-set
+  // intersection, no embeddings). Omit for pure-recency (original behavior).
+  relevantTo?: string;
+}
+
+// Tokenize for relevance overlap: lowercased word tokens ≥3 chars across
+// Latin + Telugu letters, dropping high-frequency noise words.
+const RELEVANCE_STOPWORDS = new Set([
+  "the", "and", "you", "your", "for", "are", "was", "but", "not", "with",
+  "this", "that", "have", "has", "can", "will", "would", "what", "when",
+  "how", "why", "yeah", "got", "get", "out", "all",
+]);
+function relevanceTokens(s: string): Set<string> {
+  const out = new Set<string>();
+  for (const t of s.toLowerCase().split(/[^a-zఀ-౿]+/)) {
+    if (t.length >= 3 && !RELEVANCE_STOPWORDS.has(t)) out.add(t);
+  }
+  return out;
 }
 
 const DEFAULT_VERBATIM_WINDOW_DAYS = 180;
@@ -261,9 +283,16 @@ export function computeContactStyle(
   // conversational unit), most-recent first, dedup near-duplicates, and
   // (A5) skip anything older than the recency window so stale phrasings
   // don't get few-shot-mimicked. Statistics above already used the full set.
+  // When `relevantTo` is set we collect a wider candidate pool first, then
+  // re-rank by keyword overlap so the examples mirror the current inbound;
+  // otherwise we stop at the 10 most-recent (original behavior).
+  const VERBATIM_CAP = 10;
+  const rank = options.relevantTo ? relevanceTokens(options.relevantTo) : null;
+  const useRelevance = !!rank && rank.size > 0;
+  const candidateCap = useRelevance ? 40 : VERBATIM_CAP;
   const seen = new Set<string>();
-  const verbatim: string[] = [];
-  for (let i = samples.length - 1; i >= 0 && verbatim.length < 10; i--) {
+  const candidates: string[] = [];
+  for (let i = samples.length - 1; i >= 0 && candidates.length < candidateCap; i--) {
     if (!isRecentEnough(i)) continue;
     const m = samples[i].trim();
     const wc = tokenize(m).length;
@@ -271,7 +300,21 @@ export function computeContactStyle(
     const key = m.toLowerCase().replace(/\s+/g, " ").slice(0, 40);
     if (seen.has(key)) continue;
     seen.add(key);
-    verbatim.push(m);
+    candidates.push(m);
+  }
+  let verbatim = candidates;
+  if (useRelevance) {
+    const q = rank!;
+    verbatim = candidates
+      .map((m, idx) => {
+        let hits = 0;
+        for (const t of relevanceTokens(m)) if (q.has(t)) hits++;
+        return { m, idx, score: hits };
+      })
+      // Highest overlap first; recency (lower idx = newer) breaks ties.
+      .sort((a, b) => b.score - a.score || a.idx - b.idx)
+      .slice(0, VERBATIM_CAP)
+      .map((x) => x.m);
   }
 
   return {

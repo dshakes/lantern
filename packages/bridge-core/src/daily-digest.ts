@@ -40,6 +40,11 @@ export interface DigestData {
   escalations: number;
   // Bridge channel label ("WhatsApp" / "iMessage").
   channelLabel: string;
+  // Life-events queued for the batched briefing since the last digest
+  // (deliveries, receipts, far-out bills). Each is a short owner-facing line
+  // produced by the life-event engine's proactiveDecision. Best-effort; empty
+  // when nothing was queued.
+  lifeEvents?: string[];
 }
 
 export interface DigestConfig {
@@ -167,6 +172,15 @@ export async function buildDigest(data: DigestData): Promise<string> {
   const nextEv = await fetchNextEvent();
   if (nextEv) {
     lines.push(`• next: ${nextEv}`);
+  }
+
+  // Life-events the engine batched (deliveries / receipts / far-out bills).
+  const events = data.lifeEvents ?? [];
+  if (events.length > 0) {
+    lines.push(`• 📬 ${events.length} update${events.length === 1 ? "" : "s"}:`);
+    for (const ev of events.slice(0, 6)) {
+      lines.push(`   ${ev}`);
+    }
   }
 
   lines.push("");

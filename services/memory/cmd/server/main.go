@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -24,9 +22,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/dshakes/lantern/services/memory/internal/db"
-	"github.com/dshakes/lantern/services/memory/internal/handlers"
 	"github.com/dshakes/lantern/services/memory/internal/middleware"
-	"github.com/dshakes/lantern/services/memory/internal/server"
 )
 
 func main() {
@@ -69,19 +65,15 @@ func main() {
 	}
 	logger.Info("connected to redis")
 
-	// --- Server struct ---
-	srv := &server.Server{
-		Pool:   pool,
-		Redis:  rdb,
-		Logger: logger,
-	}
-
-	// --- Embedding function ---
-	// In production, this calls the model-router gRPC Embed RPC.
-	// For now, this creates a placeholder embedding via the configured endpoint.
-	embedFunc := newEmbedFunc(cfg.ModelRouterAddr, logger)
-
 	// --- gRPC server ---
+	//
+	// NOTE: memory is served over REST by the control-plane, not over gRPC.
+	// The canonical unified-memory + person-graph surface lives at
+	// /v1/memory/* and /v1/people/* (see control-plane handlers and CLAUDE.md
+	// "Cross-channel unified memory"). There is intentionally no
+	// lantern.v1.MemoryService proto: a gRPC MemoryService would duplicate
+	// that REST surface, so this process exposes only the gRPC health +
+	// reflection endpoints used for liveness probes, never a memory RPC.
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
 			middleware.UnaryTenantInterceptor(logger),
@@ -93,14 +85,12 @@ func main() {
 		),
 	)
 
-	// Register services.
-	memorySvc := handlers.NewMemoryService(srv, embedFunc)
-	_ = memorySvc // Registered via gRPC service descriptor when proto is generated.
-
-	// Health check.
+	// Health check. Only the overall server status is advertised; no
+	// per-service ("lantern.v1.MemoryService") status is set because no such
+	// gRPC service is registered (it would be a false SERVING claim).
 	healthSvc := health.NewServer()
 	healthpb.RegisterHealthServer(grpcServer, healthSvc)
-	healthSvc.SetServingStatus("lantern.v1.MemoryService", healthpb.HealthCheckResponse_SERVING)
+	healthSvc.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 
 	// Reflection for grpcurl / grpcui.
 	reflection.Register(grpcServer)
@@ -162,7 +152,7 @@ func main() {
 	}
 
 	// Graceful shutdown.
-	healthSvc.SetServingStatus("lantern.v1.MemoryService", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthSvc.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
 
 	grpcServer.GracefulStop()
 	logger.Info("gRPC server stopped")
@@ -180,22 +170,20 @@ func main() {
 
 // config holds values read from environment variables.
 type config struct {
-	DatabaseURL     string
-	RedisURL        string
-	ListenAddr      string
-	HTTPAddr        string
-	ModelRouterAddr string
-	LogLevel        string
+	DatabaseURL string
+	RedisURL    string
+	ListenAddr  string
+	HTTPAddr    string
+	LogLevel    string
 }
 
 func loadConfig() config {
 	return config{
-		DatabaseURL:     envOrDefault("DATABASE_URL", "postgres://localhost:5432/lantern?sslmode=disable"),
-		RedisURL:        envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
-		ListenAddr:      envOrDefault("LISTEN_ADDR", ":50055"),
-		HTTPAddr:        envOrDefault("HTTP_ADDR", ":8085"),
-		ModelRouterAddr: envOrDefault("MODEL_ROUTER_ADDR", "localhost:50053"),
-		LogLevel:        envOrDefault("LOG_LEVEL", "info"),
+		DatabaseURL: envOrDefault("DATABASE_URL", "postgres://localhost:5432/lantern?sslmode=disable"),
+		RedisURL:    envOrDefault("REDIS_URL", "redis://localhost:6379/0"),
+		ListenAddr:  envOrDefault("LISTEN_ADDR", ":50055"),
+		HTTPAddr:    envOrDefault("HTTP_ADDR", ":8085"),
+		LogLevel:    envOrDefault("LOG_LEVEL", "info"),
 	}
 }
 
@@ -222,61 +210,6 @@ func mustInitLogger(level string) *zap.Logger {
 		panic(fmt.Sprintf("failed to build logger: %v", err))
 	}
 	return logger
-}
-
-// newEmbedFunc creates an embedding function that calls the model-router's Embed endpoint.
-// In production, this would be a proper gRPC client call. For now, it makes an HTTP request
-// to the model-router embed endpoint.
-func newEmbedFunc(modelRouterAddr string, logger *zap.Logger) handlers.EmbeddingFunc {
-	client := &http.Client{Timeout: 30 * time.Second}
-
-	return func(ctx context.Context, text string) ([]float32, error) {
-		reqBody, err := json.Marshal(map[string]any{
-			"model": "embed-large",
-			"input": text,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal embed request: %w", err)
-		}
-
-		url := fmt.Sprintf("http://%s/v1/embeddings", modelRouterAddr)
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create embed request: %w", err)
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-
-		resp, err := client.Do(httpReq)
-		if err != nil {
-			logger.Warn("model-router embed call failed, using zero embedding", zap.Error(err))
-			// Return a zero embedding as fallback during development.
-			embedding := make([]float32, 1536)
-			return embedding, nil
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			logger.Warn("model-router embed returned non-200, using zero embedding",
-				zap.Int("status", resp.StatusCode))
-			embedding := make([]float32, 1536)
-			return embedding, nil
-		}
-
-		var embedResp struct {
-			Data []struct {
-				Embedding []float32 `json:"embedding"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&embedResp); err != nil {
-			return nil, fmt.Errorf("failed to decode embed response: %w", err)
-		}
-
-		if len(embedResp.Data) == 0 {
-			return nil, fmt.Errorf("empty embedding response")
-		}
-
-		return embedResp.Data[0].Embedding, nil
-	}
 }
 
 // unaryTracingInterceptor returns a gRPC unary interceptor that creates OTel spans.

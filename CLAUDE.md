@@ -8,7 +8,7 @@ If you are an AI assistant: read this top-to-bottom before your first edit. Then
 
 ## Project in one sentence
 
-Lantern is a **production runtime for AI agents** -- multi-LLM routing (4 strategies), managed sessions, 17 real connector APIs, MCP marketplace, A2A agent cards, agent marketplace, evaluations dashboard, visual workflow editor, cron scheduling, managed cloud hosting, Python SDK at full parity, and guardrails, with a control-plane/data-plane split for customer-cloud or managed-cloud deployments.
+Lantern is a **production runtime for AI agents** -- multi-LLM routing (4 strategies), managed sessions, 17 real connector APIs, MCP marketplace, A2A agent cards, agent marketplace, evaluations dashboard, visual workflow editor, cron scheduling, managed cloud hosting, Python SDK at management-surface parity with the Go SDK, and guardrails, with a control-plane/data-plane split for customer-cloud or managed-cloud deployments.
 
 For the full vision read `README.md`. For the architecture read `docs/architecture/01-overview.md`.
 
@@ -30,6 +30,17 @@ This is a **polyglot monorepo on purpose**. Pick the right tool for the layer; d
 
 **Do not introduce a new language without an ADR.** See `docs/adr/0001-language-stack.md`.
 
+### Python SDK parity status (`packages/sdk-python`)
+
+**Management surface** (`LanternClient` in `lantern/client.py`): at parity with `packages/sdk-go/client.go`.
+Covered namespaces: `agents`, `runs` (incl. `forecast`), `sessions`, `connectors`, `budgets`, `evals`, `experiments`, `marketplace`, `mcp`, `receipts`, `feedback`, `rehearsals`.
+
+**Runtime context** (`AgentContext` in `lantern/types.py`): partial — interface stubs exist (`llm`, `tools`, `mem`, `connectors`, `mcp`, `a2a`, `context`) but all raise `NotImplementedError`. Full runtime wiring is a separate effort.
+
+**Known endpoint fixes (2026-06)**:
+- `connectors.execute` — was `POST /v1/connectors/{id}/actions/{action}` (404). Fixed to `POST /v1/connectors/{id}/execute?action={action}` per Go handler.
+- `sessions.close` — was `POST /v1/sessions/{id}/close` (404). Fixed to `DELETE /v1/sessions/{id}`. `close()` kept as a backward-compat alias; `delete()` is canonical. `stop()` added for `POST /v1/sessions/{id}/stop`.
+
 ---
 
 ## Architectural invariants
@@ -42,9 +53,9 @@ These are **load-bearing**. Violating them silently will cause incidents. If you
 4. **Streaming is end-to-end.** Token streams flow runtime -> gateway -> SDK -> dashboard with no buffering points other than backpressure-aware channels. No service may collect a full response and then forward.
 5. **Untrusted code runs in a microVM.** User-supplied code, Python `exec`, browser automation, anything that loads packages from the internet -- Firecracker or Kata only. Never a bare pod.
 6. **Models are addressed by capability, not name.** SDK code says `model: "auto"` or `model: "reasoning-large"`. The model router maps to a concrete vendor model. Never hardcode `gpt-5` in service code.
-7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `lantern-t-<tenant_id>`. No cross-tenant joins, ever.
-8. **Idempotency is required for every external side-effect.** Webhook deliveries, model API calls, K8s create -- all carry an idempotency key derived from `(run_id, step_id, attempt)`.
-9. **Observability is not optional.** Every service emits OTel traces with `tenant_id`, `run_id`, `step_id`, `agent_version`. A service that can't be traced is broken.
+7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `lantern-t-<tenant_id>`. No cross-tenant joins, ever. The control-plane gRPC port (`:50051`) is a **trust boundary**: only callers presenting the shared service token (`x-lantern-service-token`, validated against `LANTERN_GRPC_SERVICE_TOKEN`) may set a `tenant_id`. Without that interceptor any caller reachable to `:50051` could spoof any tenant. See the wiring env vars below; mTLS is the stronger follow-up, the shared token is the pragmatic GA step.
+8. **Idempotency is required for every external side-effect.** Webhook deliveries, model API calls, K8s create -- all carry an idempotency key derived from `(run_id, step_id, attempt)`. LLM provider calls (OpenAI + Anthropic, in `internal/handlers/llm_proxy.go`) now send an `Idempotency-Key` header on every request builder: the inline executor stamps a run-scoped base (`WithLLMIdempotencyBase`, from `idempotencyKey(run_id, "llm:main", attempt)`) onto the ctx, so a rate-limit backoff retry to the same provider — or a crash-replay — dedups at the provider instead of double-billing; failover targets get a per-provider-suffixed key. Ad-hoc `/v1/completions` (no run) falls back to a deterministic hash of `(provider, model, messages)`. Key derivation lives in `internal/handlers/llm_idempotency.go`; it is a one-way hash of identifiers (never carries secret material).
+9. **Observability is not optional.** Every service emits OTel traces with `tenant_id`, `run_id`, `step_id`, `agent_version`. A service that can't be traced is broken. In the control-plane, **both entry points emit enriched spans**: HTTP requests are wrapped by `otelhttp.NewHandler` (span name = low-cardinality route template, e.g. `GET /v1/runs/{id}/events`), and gRPC methods get spans from the tracing interceptors. Both funnel through `internal/middleware.EnrichSpan` to stamp `lantern.tenant_id` / `lantern.user_id` / `lantern.run_id` / `lantern.step_id` — use that helper (and those exact keys) for any new span enrichment so HTTP/gRPC/step spans stay filterable by the same attributes. All of it is no-op-safe when telemetry is disabled (no OTLP endpoint / `LANTERN_OTEL_ENABLED` unset).
 10. **Secrets never appear in logs, traces, or run state.** Use the `lantern.secret/...` ref form; the runtime resolves at execution time.
 
 ---
@@ -218,7 +229,9 @@ Migrations live in `services/control-plane/internal/db/migrate.go` (idempotent `
 | `run_receipts`          | Ed25519-signed verifiable execution receipts (HMAC-SHA256 legacy/dev fallback)                                                                                                                  | `run_id` (PK), `tenant_id`, `signature`, `payload` (JSONB), `issued_at`                                                      |
 | `run_feedback`          | Per-run RLHF reactions                                                                                                                                                                           | `run_id`, `tenant_id`, `score` (1-5), `comment`, `preferred_output`, `source`                                                |
 
-Row-Level Security is enabled on `agents` and `runs` with tenant isolation policies.
+Row-Level Security now covers **all tenant-scoped tables** (migration `0003_rls_all_tenant_tables`), not just `agents`/`runs`. Each gets `ENABLE` + `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy with BOTH `USING` and `WITH CHECK` = `tenant_id::text = current_setting('app.tenant_id', true)`. The policies are inert until `LANTERN_RLS_ENFORCE=1` (the privileged `lantern` superuser pool bypasses RLS; `lantern_app` is subject to it). Use `Server.WithTenant(ctx, fn)` for tenant-scoped queries — it sets the `app.tenant_id` GUC so RLS admits the read/write. The exempt set (no single `tenant_id` or intentionally cross-tenant): `tenants`, `agent_versions`, `journal_events`, `run_locks`, `marketplace_agents`, `mcp_servers`, `marketplace_invocations`. `TestRLSEnforcement_AllTenantTables` is a permanent catalog gate-test: adding a new tenant table without RLS (or without an explicit exemption) fails it. See ADR 0011.
+
+**Handler cutover to `WithTenant` is staged by group.** The reusable enforcement-on test harness is `internal/handlers/rls_integration_test.go` — `newEnforcedServer(t)` builds a `Server` whose `TenantPool()` connects as the non-superuser `lantern_app` role over its own DSN, so RLS is *genuinely* enforced (not GUC-simulated like `internal/db/rls_test.go`). Every cutover batch reuses this harness to prove (a) same-tenant reads/writes still return rows and (b) cross-tenant is blocked. **Cut over:** sessions (P1.1) · connectors (P1.1b batch 1) · and the **P1.1b remainder, now complete**: identity/people/memory (`identity.go`, `memory_ingest.go`) · voice/runtime (`voice.go`, `runtime.go`, `runtime_report.go`, `runtime_secrets.go`) · evals/experiments/budgets (`evals.go`, `experiments.go`, `budgets.go`, `forecaster.go`) · surfaces/schedules/deployments/api_keys (`surfaces.go`, `schedules.go`, `deployments.go`, `api_keys.go`, `dataplane.go`) · whatsapp/feedback/receipts/takeover (`whatsapp_personal.go`, `feedback.go`, `receipts.go`, `takeover.go`, `rehearse.go`, `marketplace*.go`). Proven by the `RLS`-prefixed tests in `internal/handlers/*_rls_test.go`. **0 non-exempt tenant-scoped `srv.Pool.<method>` sites remain in those files** — each remaining `srv.Pool` call there carries a `// rls-exempt: <reason>` (auth/trust-boundary resolution, public marketplace/receipt-verify reads, RLS-exempt child tables like `journal_events`, background sweeps with no request tenant). Shared helpers that take a raw `*Pool` and self-scope by `tenant_id` (`CheckBudget`/`RecordUsage`/`AdjustUsageCost`, `compareToBaseline`, `PickVariant`/`promoteAgentVersion`, `executeConnectorAction`) stay on `Pool` by design. **The final batch (the last 12 files) is now CUTOVER COMPLETE:** `auth.go`, `gdpr.go`, `recovery.go`, `a2a.go`, `rest.go` (run executor + workflow interpreter), `runs.go`, `run_events.go`, `templates.go`, `mcp_registry.go`, `slack_command.go`, `jarvis.go`, `llm_proxy.go`. **The count of non-exempt tenant-scoped `srv.Pool.<method>` sites across the ENTIRE `internal/handlers` package is now 0** — every remaining `srv.Pool` site carries a `// rls-exempt: <reason>` (pre-auth tenant resolution in `auth.go`/`slack_command.go`; admin/system purge in `gdpr.go`; background recovery sweep; public `is_public`-gated A2A discovery/invoke; the detached inline run executor in `rest.go` whose `runs` writes are keyed by an already-authorized run id and whose safety-net writes use a tenant-less `context.Background()`; `resolveProviderKey`/`providerAvailable` in `llm_proxy.go` self-scoped by an explicit `tenant_id` arg deep in the LLM failover loop; global catalog `mcp_servers`; and RLS-exempt child tables `journal_events`/`run_locks`). Proven by `RLSRuns_*` (runs CRUD) + `RLSMCPAttachments_*` plus the full suite green and `go test -race ./internal/handlers/ -run RLS` clean. **`LANTERN_RLS_ENFORCE=1` is now safe to flip per-env** (set `LANTERN_APP_DB_PASSWORD` and run `ALTER ROLE lantern_app PASSWORD '<strong>'` first). Run a batch's tests with `DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern?sslmode=disable` (the harness sets the `lantern_app` password itself via `ALTER ROLE`).
 
 A dev tenant (`slug: dev`) and admin user (`admin@lantern.dev` / `lantern`) are seeded on startup.
 
@@ -295,6 +308,37 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 | ------ | ----------------- | ----------------------------------------------- |
 | `POST` | `/v1/completions` | LLM completion (routes to configured providers) |
 
+#### Model-router cutover (default OFF — ADR 0014)
+
+The control-plane can route PLAIN provider completions through the
+model-router service instead of calling OpenAI/Anthropic directly, gated by
+`LANTERN_USE_MODEL_ROUTER` (default OFF) and wired at the
+`callLLMWithFailover` seam in `internal/handlers/llm_proxy.go`.
+
+- **Default OFF.** Unset / `0` → existing direct path, exactly as before. This
+  is the LIVE path the WhatsApp/iMessage bridges use, so the change is opt-in.
+- **Automatic fallback.** When ON, ANY router error (dial / timeout / non-OK /
+  empty body) falls THROUGH to the direct provider chain — the router error is
+  never surfaced to the caller. `RecordUsage`/`CheckBudget` run on the returned
+  tuple regardless of path.
+- **Scope.** Only plain completions are offloaded. claude-code and the tool-use
+  loop stay on the direct path for now.
+- **Per-tenant key.** The control-plane resolves the tenant's AES-GCM key per
+  call and ships it in `CompleteRequest.provider_credentials` (proto field 42).
+  This is a SECRET — never logged/traced (invariant #10). New trust boundary:
+  for cross-trust-zone deployments this gRPC hop must run over mTLS.
+
+Env vars (control-plane):
+
+| Var                        | Default              | Purpose                                            |
+| -------------------------- | -------------------- | -------------------------------------------------- |
+| `LANTERN_USE_MODEL_ROUTER` | _(off)_              | `1`/`true`/`on` enables the cutover. Default OFF.  |
+| `LANTERN_MODEL_ROUTER_ADDR`| `model-router:50053` | gRPC address the control-plane dials.              |
+
+**Rollout (staged):** enable on a NON-bridge tenant first → watch traces
+(`gen_ai.*` + router spans) and error rate → only then enable on the bridge
+tenant. The fallback guarantee keeps the bridges safe at every step.
+
 ### Settings
 
 | Method | Path                                         | Description               |
@@ -317,10 +361,20 @@ The control-plane exposes REST on `:8080`. All authenticated endpoints require a
 
 ### A2A (Agent-to-Agent)
 
-| Method | Path                      | Description                       |
-| ------ | ------------------------- | --------------------------------- |
-| `GET`  | `/v1/agents/{name}/card`  | Get agent's A2A card              |
-| `GET`  | `/.well-known/agent.json` | Well-known A2A discovery endpoint |
+**Visibility (tenant isolation).** Agents are private by default
+(`agents.is_public` defaults to `false`). The card, the well-known directory,
+and A2A invoke only expose an agent to a **non-owner** when it is
+`is_public = true`. An authenticated caller always sees/cards/invokes its
+**own** agents (scoped to its auth-context `tenant_id`) regardless of
+visibility — never a tenant supplied in the body or path. A card or invoke for
+an agent that is neither public nor owned by the caller returns **404** (not
+403, to avoid leaking another tenant's private agent's existence); the
+directory lists only `is_public` agents.
+
+| Method | Path                      | Description                                                       |
+| ------ | ------------------------- | ----------------------------------------------------------------- |
+| `GET`  | `/v1/agents/{name}/card`  | Get agent's A2A card (own agent, or `is_public`; else 404)        |
+| `GET`  | `/.well-known/agent.json` | Well-known A2A discovery endpoint — lists only `is_public` agents |
 
 ### Cost forecast + budgets (wedge #1)
 
@@ -425,6 +479,76 @@ types: `trigger`, `ai-step`, `tool`, `connector`, `condition`, `approval`,
 emits `step_started` + `step_completed`/`step_failed` to `journal_events`
 so the run-detail waterfall renders the graph automatically.
 
+**Crash-resume from the journal (invariant #3).** The inline executor runs in
+a goroutine, so a process restart between `step_started` and `step_completed`
+must not lose the run or restart it from scratch (double-executing
+side-effecting steps). It doesn't. Two mechanisms cooperate, both reading the
+existing `journal_events` event log — no new store:
+
+- **Reclaim.** The recovery sweep (`internal/handlers/recovery.go`,
+  `RunRecoveryLoop`, default every 30s, `LANTERN_RECOVERY_INTERVAL`) finds
+  runs in `running`/`queued` whose `run_locks` row is absent or expired,
+  wins a fresh lock via `acquireRecoveryLock` (UPSERT that only steals an
+  expired lock — the distributed guard), and re-drives them through
+  `redriveRun` → `runWorkflowIfPresent` / `executeRunInlineSync`.
+- **Resume, not restart.** On re-drive the workflow interpreter walks the
+  graph from the trigger again, but for every side-effecting node type
+  (`ai-step`, `tool`, `connector`, `subagent`, `approval`) it first calls
+  `Deps.CompletedStep` — wired in `rest.go` to `RESTHandler.journalCompletedStep`,
+  which returns the cached output when a `step_completed` row already exists
+  for `(run_id, step_id)`. Completed nodes are skipped (dep never re-invoked);
+  the walk resumes at the first incomplete node. The plain-LLM path has the
+  analogous `checkCachedLLMStep` cache (`durable_replay.go`). External
+  deliveries additionally dedup via `claimSideEffect`'s
+  `(run:step:attempt)` idempotency key (invariant #8), so no double
+  side-effect even if a re-drive re-reaches a delivery. Tests:
+  `internal/handlers/workflow_resume_test.go` (DB-backed, multi-step graph
+  skip) + the `crash_replay_*`/`recovery_*` suites.
+
+The gRPC `RunService.StreamRunEvents` (`internal/handlers/runs.go`) replays
+those `journal_events` — it is no longer a heartbeat-only stub. On stream
+open it sends every row for the run in `(run_id, seq)` order mapped to the
+proto `StreamEvent` oneof (`step_started`/`step_completed`/`step_failed` →
+their dedicated messages; every other kind → a structured `Log` so nothing
+is dropped), then tails for `seq > last` until the run is terminal or the
+client cancels, with a `Heartbeat` keepalive between events. It mirrors the
+REST SSE path `GetRunEvents` (`internal/handlers/run_events.go`) exactly:
+same query, ordering, tenant-ownership gate, poll interval, and
+`isRunTerminal` stop condition.
+
+#### Durable workflow engine step dispatch (`services/workflow-engine`)
+
+The dormant durable engine's leaf executors
+(`internal/engine/step_executor.go`) now do real dispatch instead of
+returning placeholder strings:
+
+- **`llm_call` steps** dispatch through the **model router**
+  (`ModelService.Complete`), never to a provider directly (invariant #6).
+  The step builds a capability-addressed `CompleteRequest` (capability +
+  optimize selectors, messages/prompt, max_tokens, temperature) carrying
+  `tenant_id` and the idempotency key `run_id:step_id:attempt` (invariant
+  #8), and maps `model_used`/`tokens_in`/`tokens_out`/`cost_usd` from the
+  response into the step result. Dial address is
+  `LANTERN_MODEL_ROUTER_ADDR` (default `model-router:50053`). When unset,
+  llm_call steps fail with the typed `ErrModelRouterUnavailable` rather than
+  a fabricated completion.
+- **`tool_call` steps** dispatch to the **runtime-manager** via
+  `RuntimeManager.ExecTool` (microVM tool execution, invariant #5; see ADR
+  0015). The step builds an `ExecToolRequest` carrying `tool_name`, structured
+  `args` (`google.protobuf.Struct`), `run_id`/`step_id`/optional `vm_id`, the
+  step's remaining timeout, and the idempotency key `run_id:step_id:attempt`
+  (invariant #8). The response's typed `ToolStatus` is mapped: `OK` → step
+  output `{tool_name, result}`; `ERROR` → step failure with the manager's
+  detail; `UNAVAILABLE` → step failure wrapping `ErrRuntimeManagerUnavailable`.
+  Dial address is `LANTERN_RUNTIME_MANAGER_ADDR` (default
+  `runtime-manager:50054`); when unset, the client stays nil and tool_call
+  steps fail with the typed `ErrRuntimeManagerUnavailable` rather than faking
+  output. The runtime-manager side is honest-but-incomplete: there is no
+  in-guest tool-runner yet (the harness serves a raw `Exec` shell channel, not
+  a typed tool registry), so `exec_tool` validates the request and returns
+  `TOOL_STATUS_UNAVAILABLE` — never a fabricated success — until the in-VM
+  runner lands.
+
 ### Human takeover (W11a)
 
 Workflow `approval` nodes block on a `takeover_requests` row. Operators
@@ -496,6 +620,50 @@ env vars are unset, dashboard falls back to direct bridge probe.
 | `POST` | `/v1/surfaces/whatsapp/heartbeat` | Shared-token auth. Upserts pairing state per tenant          |
 | `GET`  | `/v1/surfaces/whatsapp/status`    | JWT auth. Returns last-known pairing state with `stale` flag |
 
+### Personal device signals (iPhone Shortcuts → tunnel)
+
+The owner's iPhone Shortcuts POST app-context signals (e.g. "Calendar
+opened") to the control-plane on `:8080` THROUGH the existing cloudflared
+tunnel (which fronts the API, not the dashboard on `:3001`). The bridge reads
+`~/.lantern/device-signals.jsonl` (one compact JSON object per line:
+`{app, kind, detail, ts}`) and summarizes it into owner context. A parallel
+dashboard route at `apps/web/app/api/signals/route.ts` writes the same
+contract on `:3001`; this endpoint is the tunnel-reachable twin.
+
+Single-owner PERSONAL endpoint — **NOT** JWT/tenant-scoped. Gated by the
+`LANTERN_SIGNAL_TOKEN` shared secret via a constant-time compare; **fails
+closed** (401) when the env var is unset or the `x-lantern-signal-token`
+header is missing/mismatched. The token is never logged. The JSONL file is
+mode 0600 and bounded (trimmed to the last 4000 lines past 5000).
+
+| Method | Path           | Description                                                                                                                                |
+| ------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST` | `/v1/signals`  | Shared-token auth. Body `{app (required, ≤100), kind (default "app_open"), detail (≤500), ts (ms, default now)}`. Appends one JSONL line     |
+| `GET`  | `/v1/signals`  | Shared-token auth. `?limit=N` (default 50, cap 500). Returns the last N parsed signals as a JSON array (debugging / future view)            |
+
+| Env var                 | Purpose                                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- |
+| `LANTERN_SIGNAL_TOKEN`  | Shared secret for `/v1/signals` (sent as `x-lantern-signal-token`). Unset → endpoint is 401 fail-closed |
+
+### Life-event engine (bridge "Automations" feed)
+
+The bridges classify inbound into typed life-events
+(`bill`/`delivery`/`appointment`/`fraud_alert`/`otp`/`travel`/`receipt`/`promo`)
+and either suggest one-tap actions or auto-act. These endpoints persist the
+events + their outcomes so the dashboard "Automations" view can render a feed
+and per-category trust toggles. Backed by `life_events` + `life_event_prefs`
+(both tenant-scoped, RLS-enforced). All JWT-authed, tenant-scoped via
+`WithTenant`. Re-emits dedup on `(tenant_id, idempotency_key)`.
+
+| Method | Path                              | Description                                                                                                                  |
+| ------ | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/v1/life-events`                 | Record a classified event `{kind, channel, status?, urgency?, summary, fields?, idempotencyKey?, actionTaken?, sourcePreview?}`. UPSERTs on idempotency key (re-emit updates status/action). Returns `{id}` |
+| `GET`  | `/v1/life-events`                 | Newest-first feed (`?status=`, `?kind=`, `?limit=` default 50 cap 200)                                                       |
+| `POST` | `/v1/life-events/{id}/undo`       | Mark `status='undone'` (records intent; bridge reverts the calendar/note). 404 cross-tenant                                 |
+| `POST` | `/v1/life-events/{id}/dismiss`    | Mark `status='dismissed'`. 404 cross-tenant                                                                                  |
+| `GET`  | `/v1/life-events/prefs`           | Per-kind trust modes (`auto`/`ask`/`off`); synthesizes default `ask` for kinds with no row                                  |
+| `PUT`  | `/v1/life-events/prefs`           | Upsert a per-kind toggle `{kind, mode}` on `(tenant_id, kind)`                                                              |
+
 ### MicroVM headless runtime (W12)
 
 Productionized headless agent execution: control-plane schedules a spec,
@@ -508,6 +676,41 @@ contract is in `packages/proto/lantern/v1/runtime.proto`; arch overview is
 `docs/architecture/04b-microvm-productionization.md`; rationale per
 component is in ADRs 0002–0008. Quota is per tenant; cap exceeded returns
 HTTP 402.
+
+**Harness security model (`services/harness/src`, P2-B7).** The in-VM harness
+is PID 1 and the last in-VM trust boundary around secrets + egress. Three
+controls, all fail-safe:
+
+- **Secrets socket peer auth.** `/run/lantern/secrets.sock` authenticates every
+  connecting peer with `SO_PEERCRED` (kernel-attested uid/pid, unspoofable). It
+  only vends to the workload uid the manager injects as `LANTERN_WORKLOAD_UID`
+  (plus the harness's own uid). Unset → dev path: a loud one-time WARN, allow.
+  **In production the manager MUST inject `LANTERN_WORKLOAD_UID`** so the socket
+  is fail-closed against any other in-VM process. Unauthorized attempts emit a
+  `secret_access_denied` audit event.
+- **Egress enforcement is two-layer, and the harness fails closed without the
+  enforcing layer.** The CONNECT allowlist proxy (`127.0.0.1:3128`) is only
+  advisory unless traffic is forced through it. The harness (a) injects
+  `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY`/`NO_PROXY` into the workload env when
+  egress rules are declared, and (b) runs a boot preflight that checks for the
+  **iptables REDIRECT-to-3128 rule**. **True enforcement requires the VM
+  host/image to install that REDIRECT rule** (see the header comment in
+  `services/harness/src/egress.rs`); env injection alone is bypassable by a
+  client that ignores proxy vars. When rules are declared but REDIRECT is
+  absent: `LANTERN_EGRESS_FAIL_CLOSED=1` → harness refuses to start the
+  workload; otherwise a prominent SECURITY WARN + `egress_preflight` audit.
+- **Security audits are never silently dropped.** The harness wires the real
+  `RuntimeHarness.Report` client-streaming RPC with reconnect. Security-critical
+  audits (`secret_vend`, egress `deny`, `secret_access_denied`,
+  `egress_preflight`) are logged locally at WARN *before* any forward attempt
+  and preserved across a transient manager outage (never dropped on a full
+  buffer); routine observability frames stay best-effort.
+
+Harness env vars: `LANTERN_WORKLOAD_UID` (workload uid for peer auth),
+`LANTERN_EGRESS_RULES` (JSON `[{pattern,http_methods,rate_bps}]`, declared
+egress at spawn), `LANTERN_EGRESS_FAIL_CLOSED=1` (refuse to boot without
+iptables REDIRECT when egress declared), `LANTERN_NO_PROXY` (override the
+injected `NO_PROXY`; defaults keep loopback + `169.254.169.254` direct).
 
 | Method   | Path                             | Description                                                                                             |
 | -------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -531,15 +734,29 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
 - `LANTERN_SCHEDULER_GRPC_ADDR=localhost:50055` — control-plane dials
   the scheduler. Unset → falls back to `stubSchedulerClient` (synthesizes
   vm-ids, returns `node-stub`/`az-stub`; useful for dashboard-only work).
+  **REQUIRED in production** (`LANTERN_ENV=prod/production/staging`): the
+  control-plane refuses to start when this is unset in prod because the stub
+  fabricates fake VM IDs and spawns nothing — silent data loss, not graceful
+  degradation. Guard: `handlers.CheckSchedulerAddr` called from `runStartupGuards`.
 - `LANTERN_DEFAULT_MANAGER_ADDR=localhost:50054` — scheduler dials this
   node when the placement chooses `node-local` / `node-stub` / empty.
   Also used by the control-plane's Logs SSE proxy to reach the manager
   directly. Unset → scheduler keeps the `LogOnlyDialer` stub.
+  **REQUIRED in production** (`LANTERN_ENV=prod/production/staging`): the
+  scheduler refuses to start when this is unset (or when `LANTERN_DIALER=stub`)
+  in prod because the stub logs a fake success and spawns nothing. Guard:
+  `dialer.CheckManagerDialer` called from `cmd/scheduler/main.go`.
+- `LANTERN_RUNTIME_MANAGER_ADDR=runtime-manager:50054` — the
+  **workflow-engine** dials this to dispatch `tool_call` steps via
+  `RuntimeManager.ExecTool` (ADR 0015). Unset → the engine's runtime client
+  stays nil and tool_call steps fail with the typed
+  `ErrRuntimeManagerUnavailable` rather than fabricating tool output.
 - `LANTERN_NODE_ADDR_<NODE>=host:port` — explicit per-node override
   when the scheduler picks a named node and its IP isn't discoverable
   via DNS.
 - `LANTERN_DIALER=stub` — force the stub dialer even when
-  `LANTERN_DEFAULT_MANAGER_ADDR` is set (debug aid).
+  `LANTERN_DEFAULT_MANAGER_ADDR` is set (debug aid). **Fatal in prod** — see
+  `LANTERN_DEFAULT_MANAGER_ADDR` above.
 - `LANTERN_RUNTIME_SECRET_TOKEN` — pre-shared token the runtime-manager sends
   as `X-Lantern-Runtime-Token` to `POST /v1/runtime/secrets/resolve`. Set on
   both the control-plane (to accept) and the manager (to send). When unset on
@@ -548,6 +765,17 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   relay endpoint (e.g. `http://control-plane:8080`). Must be set together with
   `LANTERN_RUNTIME_SECRET_TOKEN` to activate `RelaySecretResolver`; otherwise
   dev `EnvSecretResolver` is used.
+- `LANTERN_GRPC_SERVICE_TOKEN` — shared service token authenticating callers to
+  the control-plane gRPC port (`:50051`). Set on **both** the control-plane (to
+  accept) and the gateway (to send as `x-lantern-service-token`). A
+  `UnaryServiceAuthInterceptor`/`StreamServiceAuthInterceptor` runs **before**
+  the tenant-extraction interceptor and constant-time-compares the token, so only
+  authenticated callers may set `tenant_id`. **Fail-closed:** when
+  `LANTERN_ENV` is prod/production/staging and this is unset the control-plane
+  **refuses to start**. When unset in dev it warns and allows unauthenticated
+  calls (so `make dev` works). Health-check + `DataPlaneService` methods are
+  exempt (the latter has its own bootstrap-token + JWT auth). mTLS is the stronger
+  follow-up; the shared token is the GA step.
 
 Real protoc Go codegen at `gen/go/lantern/v1/` is hand-maintained stubs.
 These are **tracked in git** (NOT gitignored) — they are a build-critical Go
@@ -573,6 +801,7 @@ tonic-generated server.
 - Add an ADR (`docs/adr/NNNN-title.md`) for any decision that affects more than one service.
 - For UI changes, manually load the page in a browser before saying "done". Type checking and tests verify code, not UX.
 - Run `make ci-local` before committing -- it runs the same matrix as CI.
+- The `sdlc-lint` PR workflow (`.github/workflows/sdlc-lint.yml`) gates on golangci-lint, `cargo clippy -D warnings`, and eslint/tsc for all TS packages. This is a required check alongside `sdlc-qa`.
 
 ### DO NOT
 
@@ -792,6 +1021,32 @@ notify-third-party rewrite ("I let him know" → "I'll make sure he sees this")
 runs unconditionally because the bridge has no channel to truthfully complete
 it mid-thread.
 
+### Mac app-usage signal ("learn what the owner uses")
+
+OWNER-ONLY ambient signal that distills the owner's local macOS app-usage into
+ONE short "what you've been doing today" line, fed into the OWNER's self-chat
+assistant context for proactive awareness + better-grounded replies (Mac only;
+iPhone usage is deferred). Lives in `packages/bridge-core/src/mac-usage.ts`
+(pure parse + summarize, unit-tested with mock rows) and
+`services/imessage-bridge/src/mac-usage-reader.ts` (the knowledgeC.db reader).
+
+Privacy posture (HARD rules):
+
+- **OFF by default.** Requires `LANTERN_MAC_USAGE=on`. When off, nothing reads
+  knowledgeC.db and nothing is stored.
+- **Owner-only.** The summary is injected ONLY into the owner's self-chat
+  assistant prompt (`handleOwnerDocQuery`) — NEVER into a contact reply. A
+  contact must never learn what apps the owner uses.
+- **Summaries, not raw logs.** Only the distilled per-app rollup + one sentence
+  is kept; the rolling cache is `~/.lantern/mac-usage.json` (mode 0600). No raw
+  per-event log is persisted.
+- **Fails closed.** The reader copies `~/Library/Application Support/Knowledge/
+  knowledgeC.db` to a tempfile and opens it read-only; any failure (no Full
+  Disk Access, missing DB, schema drift, lock) → empty signal + one debug log,
+  never a throw/crash. Source rows: `ZOBJECT` where `ZSTREAMNAME` is
+  `/app/usage` or `/app/inFocus`; `ZVALUESTRING` = bundle id; `ZSTARTDATE`/
+  `ZENDDATE` are Mac-absolute-time seconds (Unix = mac + 978307200).
+
 ### Required env (bridge process)
 
 | Var                                   | Purpose                                                                                                                                                                                          |
@@ -803,6 +1058,8 @@ it mid-thread.
 | `LANTERN_WA_OWNER_JID`                | (Optional) Owner's primary WhatsApp JID — `15125551234` or `15125551234@s.whatsapp.net`. Same role as the iMessage env.                                                                          |
 | `LANTERN_PERSONAL_DOCS_ROOTS`         | Colon-separated allowed roots (default `~/Documents:~/Desktop:~/Library/Mobile Documents/com~apple~CloudDocs`)                                                                                   |
 | `LANTERN_PERSONAL_DOCS_OCR_MAX_PAGES` | Max PDF pages to render+OCR per file (default 3)                                                                                                                                                 |
+| `LANTERN_MAC_USAGE`                   | (Optional) `on` to enable the OWNER-ONLY Mac app-usage signal (reads knowledgeC.db, distills one "what you've been doing today" line into the owner's self-chat context). Default OFF. Summaries only; fails closed. |
+| `LANTERN_MAC_USAGE_SEC`               | (Optional) Mac app-usage refresh interval in seconds (min 60, default 1800 = 30 min).                                                                                                            |
 | `LANTERN_DEFAULT_CALENDAR`            | Calendar name to use when LLM doesn't specify (default tries `Home` / `Calendar` / `Personal` / `Work`)                                                                                         |
 | `LANTERN_QUIET_START`                 | Start of quiet-hours window, 24h integer (default `1` = 1 AM). No auto-reply; messages queued for morning replay.                                                                                |
 | `LANTERN_QUIET_END`                   | End of quiet-hours window, 24h integer (default `6` = 6 AM).                                                                                                                                    |
@@ -835,6 +1092,20 @@ is per-binary in macOS TCC — easiest path is to run it via Terminal
 `/Users/shakes/.nvm/.../node` for true always-on. See
 `docs/personal/BOT-SETUP.md`.
 
+### Transient-error retry (control-plane / LLM 429 / 503)
+
+`AgentClient` (`packages/bridge-core/src/agent.ts`) wraps every
+`authedFetch` for session create and message post with bounded exponential
+backoff via `packages/bridge-core/src/retry.ts`. HTTP 429 / 503 and
+network errors (ECONNREFUSED, socket hang-up, etc.) are retried up to
+`LANTERN_BRIDGE_RETRY_ATTEMPTS` times (default 3) with full-jitter
+backoff between `0` and `LANTERN_BRIDGE_RETRY_MAX_MS` (default 4000 ms,
+base step `LANTERN_BRIDGE_RETRY_BASE_MS` = 500 ms). 401 / 403 / 404 /
+409 are never retried — the existing dead-session 404/409 recovery path
+is preserved inside the outer loop. Note: `@lantern/retry` does not yet
+exist as a shared package; `retry.ts` is a local shim to be replaced
+when that canonical package ships.
+
 ### Self-heal (WhatsApp Signal protocol)
 
 The bridge hooks Baileys' logger and counts decrypt failures
@@ -864,7 +1135,9 @@ needs a one-time re-pair; `POST /session/:tenant/reset` wipes creds and
 
 ## Proto workflow
 
-Protos live in `packages/proto/lantern/v1/`. Four files: `agents.proto`, `runs.proto`, `models.proto`, `engine.proto`.
+Protos live in `packages/proto/lantern/v1/`. Core files: `agents.proto`, `runs.proto`, `models.proto`, `engine.proto`, plus per-service contracts such as `dataplane.proto`, `runtime.proto`, `billing.proto` (`lantern.v1.BillingService` — usage metering + budgets), and `scheduler.proto` (`lantern.v1.SchedulerService` — cron + one-shot triggers).
+
+Note: the `memory` service has **no** proto on purpose — memory is served over REST by the control-plane (`/v1/memory/*`, `/v1/people/*`); a gRPC MemoryService would duplicate that surface. See [ADR 0013](docs/adr/0013-billing-scheduler-grpc-memory-rest.md).
 
 ```bash
 make proto    # generates Go (gen/go/) and TypeScript (gen/ts/) from protos
@@ -908,8 +1181,10 @@ The four-Makefile-target dance below still works for power users, but
 | `make landing-dev`         | Landing page dev server                                   |
 | `make build`               | Compile Go + Rust + TypeScript                            |
 | `make proto`               | Regenerate from proto definitions                         |
-| `make test`                | All test suites                                           |
-| `make lint`                | All linters                                               |
+| `make test`                | All test suites (Go × 4 services, Rust × 3, TS × 2, Python × 1) |
+| `make test-go`             | Go tests — control-plane, workflow-engine, scheduler, **runtime-scheduler** |
+| `make test-ts`             | TS tests — sdk-ts (vitest) + **bridge-core** (node:test via tsx) |
+| `make lint`                | All linters (golangci-lint, clippy, eslint/tsc)           |
 | `make audit`               | Security audit (all languages)                            |
 | `make ci-local`            | Lint + test + audit (same as CI)                          |
 | `make clean`               | Remove artifacts + docker volumes                         |

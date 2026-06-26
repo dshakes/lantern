@@ -40,8 +40,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -105,6 +107,11 @@ func (h *SlackCommandHandler) HandleCommand(w http.ResponseWriter, r *http.Reque
 	// out of the box on the seeded data.
 	tenantID := h.resolveTenantFromSlackTeam(r.Context(), teamID)
 
+	// Now that the tenant is resolved, inject it into the context so the
+	// post-resolution reply handlers can route their tenant-scoped reads
+	// through WithTenant (RLS).
+	ctx := middleware.InjectTenantID(r.Context(), tenantID)
+
 	parts := strings.Fields(text)
 	sub := ""
 	if len(parts) > 0 {
@@ -117,9 +124,9 @@ func (h *SlackCommandHandler) HandleCommand(w http.ResponseWriter, r *http.Reque
 	case "ping":
 		writeJSON(w, http.StatusOK, slackReply(":table_tennis_paddle_and_ball: pong — control-plane is alive"))
 	case "status":
-		writeJSON(w, http.StatusOK, slackReply(h.statusReply(r.Context(), tenantID)))
+		writeJSON(w, http.StatusOK, slackReply(h.statusReply(ctx, tenantID)))
 	case "agents":
-		writeJSON(w, http.StatusOK, slackReply(h.agentsReply(r.Context(), tenantID)))
+		writeJSON(w, http.StatusOK, slackReply(h.agentsReply(ctx, tenantID)))
 	default:
 		writeJSON(w, http.StatusOK, slackReply(
 			fmt.Sprintf("Unknown subcommand `%s`. Try `/lantern help` for the list.", sub),
@@ -161,23 +168,28 @@ func (h *SlackCommandHandler) statusReply(ctx context.Context, tenantID string) 
 		runs24h          int
 		lastRunStartedAt *time.Time
 	)
-	_ = h.srv.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM surface_configs WHERE tenant_id = $1 AND status = 'connected'`,
-		tenantID,
-	).Scan(&surfaces)
-	_ = h.srv.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM connector_installs WHERE tenant_id = $1 AND status = 'connected'`,
-		tenantID,
-	).Scan(&connectors)
-	_ = h.srv.Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM agents WHERE tenant_id = $1 AND archived_at IS NULL`,
-		tenantID,
-	).Scan(&agents)
-	_ = h.srv.Pool.QueryRow(ctx,
-		`SELECT COUNT(*), MAX(started_at) FROM runs
-		 WHERE tenant_id = $1 AND started_at > now() - interval '24 hours'`,
-		tenantID,
-	).Scan(&runs24h, &lastRunStartedAt)
+	// Post-resolution tenant-scoped reads → WithTenant (RLS). Each scan ignores
+	// errors so a single DB hiccup degrades to "0" rather than aborting.
+	_ = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		_ = tx.QueryRow(ctx,
+			`SELECT COUNT(*) FROM surface_configs WHERE tenant_id = $1 AND status = 'connected'`,
+			tenantID,
+		).Scan(&surfaces)
+		_ = tx.QueryRow(ctx,
+			`SELECT COUNT(*) FROM connector_installs WHERE tenant_id = $1 AND status = 'connected'`,
+			tenantID,
+		).Scan(&connectors)
+		_ = tx.QueryRow(ctx,
+			`SELECT COUNT(*) FROM agents WHERE tenant_id = $1 AND archived_at IS NULL`,
+			tenantID,
+		).Scan(&agents)
+		_ = tx.QueryRow(ctx,
+			`SELECT COUNT(*), MAX(started_at) FROM runs
+			 WHERE tenant_id = $1 AND started_at > now() - interval '24 hours'`,
+			tenantID,
+		).Scan(&runs24h, &lastRunStartedAt)
+		return nil
+	})
 
 	lines := []string{
 		":green_circle: *Lantern is alive*",
@@ -195,26 +207,33 @@ func (h *SlackCommandHandler) agentsReply(ctx context.Context, tenantID string) 
 	if tenantID == "" {
 		return ":warning: This Slack workspace isn't linked to a Lantern tenant yet."
 	}
-	rows, err := h.srv.Pool.Query(ctx,
-		`SELECT name, COALESCE(model, 'auto') FROM agents
-		 WHERE tenant_id = $1 AND archived_at IS NULL
-		 ORDER BY updated_at DESC NULLS LAST
-		 LIMIT 15`,
-		tenantID,
-	)
-	if err != nil {
-		return ":x: Could not list agents."
-	}
-	defer rows.Close()
-
 	lines := []string{":scroll: *Agents*"}
 	count := 0
-	for rows.Next() {
-		var name, model string
-		if err := rows.Scan(&name, &model); err == nil {
-			lines = append(lines, fmt.Sprintf("• `%s` — %s", name, model))
-			count++
+	// Post-resolution tenant-scoped read → WithTenant (RLS). Rows are drained
+	// inside the closure before the tx commits.
+	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		rows, qerr := tx.Query(ctx,
+			`SELECT name, COALESCE(model, 'auto') FROM agents
+			 WHERE tenant_id = $1 AND archived_at IS NULL
+			 ORDER BY updated_at DESC NULLS LAST
+			 LIMIT 15`,
+			tenantID,
+		)
+		if qerr != nil {
+			return qerr
 		}
+		defer rows.Close()
+		for rows.Next() {
+			var name, model string
+			if err := rows.Scan(&name, &model); err == nil {
+				lines = append(lines, fmt.Sprintf("• `%s` — %s", name, model))
+				count++
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return ":x: Could not list agents."
 	}
 	if count == 0 {
 		return "No active agents in this tenant yet."
@@ -231,6 +250,9 @@ func (h *SlackCommandHandler) resolveTenantFromSlackTeam(ctx context.Context, te
 		return devTenantID
 	}
 	var tenantID string
+	// rls-exempt: pre-tenant-resolution lookup — maps a Slack workspace/team to
+	// its owning tenant across all surface_configs before any tenant context
+	// exists. The tenant is the OUTPUT of this query.
 	err := h.srv.Pool.QueryRow(ctx,
 		`SELECT tenant_id::text FROM surface_configs
 		 WHERE surface_id = 'slack' AND status = 'connected'

@@ -16,6 +16,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "fs";
 import type { Logger } from "pino";
 
 import { authedFetch, authEnabled } from "./auth.js";
+import { withRetry, isTransientError, TransientHttpError } from "./retry.js";
 
 // Tool-driven owner queries can chain search_personal_files →
 // read_personal_file (with OCR for scanned PDFs, 5-10s each) → maybe a
@@ -23,6 +24,12 @@ import { authedFetch, authEnabled } from "./auth.js";
 // headroom on multi-tool flows without leaving the user waiting
 // indefinitely on the rare runaway.
 const SSE_TIMEOUT_MS = Number(process.env.LANTERN_BRIDGE_AGENT_TIMEOUT_MS || "180000");
+
+// Transient-error retry config for agent HTTP calls (429, 503, ECONNREFUSED).
+// Override via env if needed; defaults are conservative for a chat bridge.
+const RETRY_MAX_ATTEMPTS = Number(process.env.LANTERN_BRIDGE_RETRY_ATTEMPTS || "3");
+const RETRY_BASE_DELAY_MS = Number(process.env.LANTERN_BRIDGE_RETRY_BASE_MS || "500");
+const RETRY_MAX_DELAY_MS = Number(process.env.LANTERN_BRIDGE_RETRY_MAX_MS || "4000");
 
 export interface AgentClientOptions {
   agentName: string;
@@ -98,11 +105,42 @@ export class AgentClient {
       // cheap auxiliary calls (episode extraction) which can use any tier.
       if (turnHint) postBody.turnHint = turnHint;
 
-      const postRes = await authedFetch(`/v1/sessions/${sessionId}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(postBody),
-      });
+      let postRes: Response;
+      try {
+        postRes = await withRetry(
+          async () => {
+            const r = await authedFetch(`/v1/sessions/${sessionId}/messages`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(postBody),
+            });
+            // Throw a sentinel so withRetry sees 429/503 as retryable.
+            if (r.status === 429 || r.status === 503) {
+              const errBody = await r.text().catch(() => "");
+              throw new TransientHttpError(r.status, errBody);
+            }
+            return r;
+          },
+          {
+            maxAttempts: RETRY_MAX_ATTEMPTS,
+            baseDelayMs: RETRY_BASE_DELAY_MS,
+            maxDelayMs: RETRY_MAX_DELAY_MS,
+            shouldRetry: isTransientError,
+          },
+        );
+      } catch (err) {
+        sseCtrl.abort();
+        if (err instanceof TransientHttpError) {
+          this.logger.error(
+            { status: err.status, body: err.body.slice(0, 300), sessionId, attempt },
+            "send message failed after retries",
+          );
+        } else {
+          this.logger.error({ err, sessionId, attempt }, "send message network error after retries");
+        }
+        return null;
+      }
+
       if (postRes.ok) {
         return await ssePromise;
       }
@@ -130,11 +168,39 @@ export class AgentClient {
   private async ensureSession(jid: string): Promise<string | null> {
     const existing = this.sessions.get(jid);
     if (existing) return existing;
-    const res = await authedFetch(`/v1/sessions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agentName: this.agentName }),
-    });
+    let res: Response;
+    try {
+      res = await withRetry(
+        async () => {
+          const r = await authedFetch(`/v1/sessions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agentName: this.agentName }),
+          });
+          if (r.status === 429 || r.status === 503) {
+            const errBody = await r.text().catch(() => "");
+            throw new TransientHttpError(r.status, errBody);
+          }
+          return r;
+        },
+        {
+          maxAttempts: RETRY_MAX_ATTEMPTS,
+          baseDelayMs: RETRY_BASE_DELAY_MS,
+          maxDelayMs: RETRY_MAX_DELAY_MS,
+          shouldRetry: isTransientError,
+        },
+      );
+    } catch (err) {
+      if (err instanceof TransientHttpError) {
+        this.logger.error(
+          { status: err.status, body: err.body.slice(0, 300), jid },
+          "create session failed after retries",
+        );
+      } else {
+        this.logger.error({ err, jid }, "create session network error after retries");
+      }
+      return null;
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       this.logger.error({ status: res.status, body: body.slice(0, 300), jid }, "create session failed");

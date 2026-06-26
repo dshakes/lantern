@@ -129,18 +129,24 @@ interface WhatsAppPairingProps {
 }
 
 // ---------------------------------------------------------------------------
-// Auth helpers
+// Proxy helpers
 // ---------------------------------------------------------------------------
+//
+// All REST calls to the bridge go through the server-side Route Handler at
+// /api/bridge/whatsapp/... which injects the LANTERN_BRIDGE_TOKEN server env
+// var.  The token never reaches the browser.
 
-// Optional shared token sent on every bridge request. The bridge enforces
-// it iff LANTERN_BRIDGE_TOKEN is set on its side; both must match. We do
-// NOT inline it into the WS URL when empty so the URL stays clean.
-const BRIDGE_TOKEN = process.env.NEXT_PUBLIC_LANTERN_BRIDGE_TOKEN || "";
+// Route all fetch calls through the same-origin proxy.
+const BRIDGE_PROXY = "/api/bridge/whatsapp";
+
+function proxyUrl(bridgeRelativePath: string): string {
+  // bridgeRelativePath is like "/session/abc/start"
+  return `${BRIDGE_PROXY}${bridgeRelativePath}`;
+}
 
 function authHeaders(extra?: HeadersInit): HeadersInit {
-  const h: Record<string, string> = { ...(extra as Record<string, string> | undefined) };
-  if (BRIDGE_TOKEN) h["Authorization"] = `Bearer ${BRIDGE_TOKEN}`;
-  return h;
+  // Token injection is handled server-side; no client-side auth headers needed.
+  return { ...(extra as Record<string, string> | undefined) };
 }
 
 // ---------------------------------------------------------------------------
@@ -578,7 +584,7 @@ export function WhatsAppPairing({
 
   const refreshBotState = useCallback(async () => {
     try {
-      const res = await fetch(`${bridgeUrl}/session/${tenantId}/bot`, {
+      const res = await fetch(proxyUrl(`/session/${tenantId}/bot`), {
         signal: AbortSignal.timeout(3000),
         headers: authHeaders(),
       });
@@ -588,15 +594,15 @@ export function WhatsAppPairing({
     } catch {
       // bridge unreachable — leave state as is, user can hit "refresh"
     }
-  }, [bridgeUrl, tenantId]);
+  }, [tenantId]);
 
   const refreshDiagnostics = useCallback(async () => {
     try {
       const [svc, sess] = await Promise.all([
-        fetch(`${bridgeUrl}/diagnostics`, {
+        fetch(proxyUrl("/diagnostics"), {
           signal: AbortSignal.timeout(3000),
         }).then((r) => (r.ok ? r.json() : null)),
-        fetch(`${bridgeUrl}/session/${tenantId}/diagnostics`, {
+        fetch(proxyUrl(`/session/${tenantId}/diagnostics`), {
           signal: AbortSignal.timeout(3000),
           headers: authHeaders(),
         }).then((r) => (r.ok ? r.json() : null)),
@@ -606,7 +612,7 @@ export function WhatsAppPairing({
     } catch {
       // best effort
     }
-  }, [bridgeUrl, tenantId]);
+  }, [tenantId]);
 
   // Probe the bridge on mount. Distinguishes:
   //   - bridge unreachable      → bridge_offline
@@ -616,7 +622,7 @@ export function WhatsAppPairing({
   const probeBridge = useCallback(async () => {
     setState("unknown");
     try {
-      const healthRes = await fetch(`${bridgeUrl}/health`, {
+      const healthRes = await fetch(proxyUrl("/health"), {
         signal: AbortSignal.timeout(3000),
       });
       if (!healthRes.ok) {
@@ -624,22 +630,21 @@ export function WhatsAppPairing({
         return;
       }
       const health = (await healthRes.json()) as { authRequired?: boolean };
-      if (health.authRequired && !BRIDGE_TOKEN) {
-        setState("auth_required");
-        setStateReason(
-          "Bridge requires NEXT_PUBLIC_LANTERN_BRIDGE_TOKEN to match its LANTERN_BRIDGE_TOKEN."
-        );
-        return;
+      if (health.authRequired) {
+        // The proxy will have injected the token; a 200 here means the
+        // server-side token matched.  If the proxy itself returns 401 we
+        // handle that in the !healthRes.ok branch above.
+        // For display purposes only — not a blocking error.
       }
 
       // Probe per-session status. Treat a 401 as auth_required (wrong token).
       const statusRes = await fetch(
-        `${bridgeUrl}/session/${tenantId}/status`,
+        proxyUrl(`/session/${tenantId}/status`),
         { signal: AbortSignal.timeout(3000), headers: authHeaders() }
       );
       if (statusRes.status === 401) {
         setState("auth_required");
-        setStateReason("Bridge rejected the shared token.");
+        setStateReason("Bridge rejected the shared token (check LANTERN_BRIDGE_TOKEN on the server).");
         return;
       }
       if (!statusRes.ok) {
@@ -668,7 +673,7 @@ export function WhatsAppPairing({
       // (idempotent /start that reuses existing creds — no scan).
       try {
         const credsRes = await fetch(
-          `${bridgeUrl}/session/${tenantId}/has-creds`,
+          proxyUrl(`/session/${tenantId}/has-creds`),
           { signal: AbortSignal.timeout(3000), headers: authHeaders() }
         );
         if (credsRes.ok) {
@@ -683,7 +688,7 @@ export function WhatsAppPairing({
     } catch {
       setState("bridge_offline");
     }
-  }, [bridgeUrl, tenantId, refreshBotState, refreshDiagnostics]);
+  }, [tenantId, refreshBotState, refreshDiagnostics]);
 
   useEffect(() => {
     probeBridge();
@@ -706,9 +711,12 @@ export function WhatsAppPairing({
       wsRef.current.close();
       wsRef.current = null;
     }
+    // WebSocket must connect directly to the bridge — Route Handlers cannot
+    // proxy WS connections.  The bridge URL (a localhost port) is not a
+    // secret; the token is intentionally omitted (it would be visible in
+    // devtools).  Bridge REST calls are secured via the server-side proxy.
     const wsUrl = bridgeUrl.replace(/^http/, "ws");
     const qs = new URLSearchParams({ tenantId });
-    if (BRIDGE_TOKEN) qs.set("token", BRIDGE_TOKEN);
     const ws = new WebSocket(`${wsUrl}/ws?${qs.toString()}`);
     wsRef.current = ws;
 
@@ -857,13 +865,13 @@ export function WhatsAppPairing({
     setStateReason(null);
     setQrDataUrl(null);
     try {
-      const res = await fetch(`${bridgeUrl}/session/${tenantId}/start`, {
+      const res = await fetch(proxyUrl(`/session/${tenantId}/start`), {
         method: "POST",
         headers: authHeaders(),
       });
       if (res.status === 401) {
         setState("auth_required");
-        setStateReason("Bridge rejected the shared token.");
+        setStateReason("Bridge rejected the shared token (check LANTERN_BRIDGE_TOKEN on the server).");
         return;
       }
       if (!res.ok) {
@@ -876,11 +884,11 @@ export function WhatsAppPairing({
       setState("error");
       setStateReason(err instanceof Error ? err.message : "Failed to start session");
     }
-  }, [bridgeUrl, tenantId, connectWebSocket]);
+  }, [tenantId, connectWebSocket]);
 
   const handleDisconnect = useCallback(async () => {
     try {
-      await fetch(`${bridgeUrl}/session/${tenantId}/disconnect`, {
+      await fetch(proxyUrl(`/session/${tenantId}/disconnect`), {
         method: "POST",
         headers: authHeaders(),
       });
@@ -898,7 +906,7 @@ export function WhatsAppPairing({
     setActivity([]);
     onDisconnected?.();
     toast.info("Disconnected from WhatsApp");
-  }, [bridgeUrl, tenantId, onDisconnected, toast]);
+  }, [tenantId, onDisconnected, toast]);
 
   // handleReset is "disconnect + wipe credentials so the next pair is
   // fresh". Without this the bridge silently reconnects to the previously
@@ -914,7 +922,7 @@ export function WhatsAppPairing({
       return;
     }
     try {
-      await fetch(`${bridgeUrl}/session/${tenantId}/reset`, {
+      await fetch(proxyUrl(`/session/${tenantId}/reset`), {
         method: "POST",
         headers: authHeaders(),
       });
@@ -932,7 +940,7 @@ export function WhatsAppPairing({
     setActivity([]);
     onDisconnected?.();
     toast.success("Device forgotten. Click Pair to start fresh.");
-  }, [bridgeUrl, tenantId, onDisconnected, toast]);
+  }, [tenantId, onDisconnected, toast]);
 
   const toggleMute = useCallback(async () => {
     if (!botState) return;
@@ -940,21 +948,21 @@ export function WhatsAppPairing({
     const path = botState.muted ? "unmute" : "mute";
     try {
       const res = await fetch(
-        `${bridgeUrl}/session/${tenantId}/bot/${path}`,
+        proxyUrl(`/session/${tenantId}/bot/${path}`),
         { method: "POST", headers: authHeaders() }
       );
       if (res.ok) setBotState(await res.json());
     } finally {
       setTogglingMute(false);
     }
-  }, [bridgeUrl, tenantId, botState]);
+  }, [tenantId, botState]);
 
   const clearAllPauses = useCallback(async () => {
     if (!botState || Object.keys(botState.paused).length === 0) return;
     setClearingPauses(true);
     try {
       const res = await fetch(
-        `${bridgeUrl}/session/${tenantId}/bot/resume-all`,
+        proxyUrl(`/session/${tenantId}/bot/resume-all`),
         { method: "POST", headers: authHeaders() }
       );
       if (res.ok) {
@@ -965,14 +973,14 @@ export function WhatsAppPairing({
     } finally {
       setClearingPauses(false);
     }
-  }, [bridgeUrl, tenantId, botState, toast]);
+  }, [tenantId, botState, toast]);
 
   const unmonitorGroup = useCallback(
     async (jid: string) => {
       setUnmonitoring(jid);
       try {
         const res = await fetch(
-          `${bridgeUrl}/session/${tenantId}/bot/group/unmonitor`,
+          proxyUrl(`/session/${tenantId}/bot/group/unmonitor`),
           {
             method: "POST",
             headers: authHeaders({ "Content-Type": "application/json" }),
@@ -984,7 +992,7 @@ export function WhatsAppPairing({
         setUnmonitoring(null);
       }
     },
-    [bridgeUrl, tenantId]
+    [tenantId]
   );
 
   // Monitor a group — same shape as unmonitor. Used by the searchable
@@ -996,7 +1004,7 @@ export function WhatsAppPairing({
       setUnmonitoring(jid); // reuse the spinner state — only one in flight at a time
       try {
         const res = await fetch(
-          `${bridgeUrl}/session/${tenantId}/bot/group/monitor`,
+          proxyUrl(`/session/${tenantId}/bot/group/monitor`),
           {
             method: "POST",
             headers: authHeaders({ "Content-Type": "application/json" }),
@@ -1008,7 +1016,7 @@ export function WhatsAppPairing({
         setUnmonitoring(null);
       }
     },
-    [bridgeUrl, tenantId]
+    [tenantId]
   );
 
   // All groups the bridge can see (not just the monitored ones), with
@@ -1022,7 +1030,7 @@ export function WhatsAppPairing({
     if (state !== "connected") return;
     setGroupsLoading(true);
     try {
-      const res = await fetch(`${bridgeUrl}/session/${tenantId}/groups`, {
+      const res = await fetch(proxyUrl(`/session/${tenantId}/groups`), {
         headers: authHeaders(),
       });
       if (res.ok) {
@@ -1034,7 +1042,7 @@ export function WhatsAppPairing({
     } finally {
       setGroupsLoading(false);
     }
-  }, [bridgeUrl, tenantId, state]);
+  }, [tenantId, state]);
   useEffect(() => {
     if (state !== "connected") return;
     void refreshAllGroups();
@@ -1051,7 +1059,7 @@ export function WhatsAppPairing({
       setPausingContact(jid);
       try {
         const res = await fetch(
-          `${bridgeUrl}/session/${tenantId}/bot/pause`,
+          proxyUrl(`/session/${tenantId}/bot/pause`),
           {
             method: "POST",
             headers: authHeaders({ "Content-Type": "application/json" }),
@@ -1066,7 +1074,7 @@ export function WhatsAppPairing({
         setPausingContact(null);
       }
     },
-    [bridgeUrl, tenantId, toast]
+    [tenantId, toast]
   );
 
   // ---- derived ----
@@ -1168,7 +1176,7 @@ export function WhatsAppPairing({
               <p className="text-[12px] leading-relaxed text-zinc-400">
                 {stateReason ?? "Add the token to your dashboard env and reload."}
               </p>
-              <CopyableCommand cmd="NEXT_PUBLIC_LANTERN_BRIDGE_TOKEN=<same as bridge LANTERN_BRIDGE_TOKEN>" />
+              <CopyableCommand cmd="LANTERN_BRIDGE_TOKEN=<same as bridge LANTERN_BRIDGE_TOKEN>" />
             </div>
           </div>
           <Button onClick={probeBridge} icon={<RefreshCw className="h-3 w-3" />} size="sm">
@@ -1485,7 +1493,7 @@ export function WhatsAppPairing({
             label="Token required"
             value={
               serviceDiagnostics?.authRequired
-                ? `yes ${BRIDGE_TOKEN ? "(configured)" : "(missing in dashboard)"}`
+                ? "yes (token injected server-side via LANTERN_BRIDGE_TOKEN)"
                 : "no"
             }
           />

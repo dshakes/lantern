@@ -27,6 +27,122 @@ use crate::proto::{AuditEvent, HarnessReport, SecretRef, VendSecretRequest, now_
 const REFRESH_LEAD_MS: i64 = 30_000; // refresh 30s before expiry
 const DEFAULT_TTL_SECS: i64 = 300;
 
+// ---------------------------------------------------------------------------
+// P2-B7 (1): peer authentication for the secrets socket.
+//
+// Threat model
+// ------------
+// The secrets socket at /run/lantern/secrets.sock vends short-TTL secret
+// material to the workload. Before this change ANY in-VM process that could
+// open the socket received whatever it asked for. Inside a microVM the workload
+// runs as PID 1's uid with no privilege drop, so a single compromised library /
+// subprocess in the workload's process tree could exfiltrate every declared
+// secret. The socket is the last in-VM trust boundary around secret material.
+//
+// Control
+// -------
+// We use SO_PEERCRED on the accepted UnixStream to read the connecting peer's
+// (uid, gid, pid) — kernel-attested, unspoofable by the peer. The harness only
+// vends to the *expected workload uid*, injected by the manager at spawn as
+// `LANTERN_WORKLOAD_UID`. The harness's own uid (its own process) is always
+// allowed so internal probes / health checks work.
+//
+// Fail-open vs fail-closed
+// ------------------------
+// When `LANTERN_WORKLOAD_UID` is UNSET we are in dev (no manager-injected
+// identity). We log a prominent SECURITY warning once and allow — the dev path
+// must keep working and there is no second identity to distinguish. In
+// production the manager MUST inject `LANTERN_WORKLOAD_UID` so this becomes
+// fail-closed against any other uid. The bootstrap-token alternative was
+// rejected: the workload binary is opaque (we don't control its source) so we
+// can't reliably hand it a token to present, whereas SO_PEERCRED needs zero
+// workload cooperation.
+
+/// The kernel-attested identity of a unix-socket peer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PeerIdentity {
+    pub uid: u32,
+    pub gid: u32,
+    pub pid: i32,
+}
+
+/// Read SO_PEERCRED from a connected `UnixStream`. Linux-only; on other hosts
+/// (macOS dev) the syscall shape differs, so we return `None` and the caller
+/// treats it as "cannot authenticate" (dev path). The returned identity is
+/// attested by the kernel and cannot be forged by the peer.
+#[cfg(target_os = "linux")]
+fn peer_identity(stream: &UnixStream) -> Option<PeerIdentity> {
+    use std::os::fd::AsRawFd;
+    let fd = stream.as_raw_fd();
+    // SAFETY: ucred is a plain POD struct; getsockopt fills it and reports the
+    // written length. We pass a correctly-sized buffer and check the return.
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            std::ptr::addr_of_mut!(cred).cast(),
+            &mut len,
+        )
+    };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        tracing::warn!(error = %err, "secrets: SO_PEERCRED getsockopt failed");
+        return None;
+    }
+    Some(PeerIdentity {
+        uid: cred.uid,
+        gid: cred.gid,
+        pid: cred.pid,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn peer_identity(_stream: &UnixStream) -> Option<PeerIdentity> {
+    None
+}
+
+/// The expected workload uid the manager injected at spawn, if any.
+fn expected_workload_uid() -> Option<u32> {
+    std::env::var("LANTERN_WORKLOAD_UID")
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+}
+
+/// Decide whether a peer is authorized to pull secrets.
+///
+/// Pure so it is unit-testable without a live socket:
+///  - `expected`: the configured workload uid (None = dev / unset).
+///  - `self_uid`: the harness's own uid (always allowed — internal probes).
+///  - `peer`: the SO_PEERCRED identity (None = couldn't read it).
+///
+/// Returns `Ok(())` to allow, `Err(reason)` to reject.
+fn authorize_peer(
+    expected: Option<u32>,
+    self_uid: u32,
+    peer: Option<PeerIdentity>,
+) -> Result<(), &'static str> {
+    match (expected, peer) {
+        // No expected uid configured → dev path: allow (warned once at serve()).
+        (None, _) => Ok(()),
+        // Couldn't read peer creds but an identity IS required → fail closed.
+        (Some(_), None) => Err("peer credentials unavailable (SO_PEERCRED failed)"),
+        (Some(want), Some(p)) => {
+            if p.uid == want || p.uid == self_uid {
+                Ok(())
+            } else {
+                Err("peer uid not authorized for secret access")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CacheEntry {
     pub value: String,
@@ -90,7 +206,26 @@ impl SecretCache {
 
         let listener = UnixListener::bind(&self.socket_path)
             .with_context(|| format!("bind {:?}", self.socket_path))?;
-        tracing::info!(path = ?self.socket_path, "secrets: socket listening");
+
+        // P2-B7 (1): announce the peer-auth posture once at startup.
+        match expected_workload_uid() {
+            Some(uid) => {
+                tracing::info!(
+                    path = ?self.socket_path,
+                    expected_workload_uid = uid,
+                    "secrets: socket listening (peer-auth ENFORCED — only the workload uid \
+                     and the harness uid may pull secrets)"
+                );
+            }
+            None => {
+                tracing::warn!(
+                    path = ?self.socket_path,
+                    "secrets: socket listening WITHOUT peer authentication — \
+                     LANTERN_WORKLOAD_UID unset (dev path). ANY in-VM process can pull secrets. \
+                     The manager MUST inject LANTERN_WORKLOAD_UID in production."
+                );
+            }
+        }
 
         loop {
             let (stream, _) = match listener.accept().await {
@@ -110,6 +245,43 @@ impl SecretCache {
     }
 
     async fn handle_conn(self: Arc<Self>, stream: UnixStream) -> Result<()> {
+        // P2-B7 (1): authenticate the peer BEFORE reading any request. An
+        // unauthorized peer is rejected with an error line and the connection
+        // is closed without ever consulting the cache or vending.
+        let peer = peer_identity(&stream);
+        // SAFETY: getuid() is always-succeeds and thread-safe.
+        let self_uid = unsafe { libc::getuid() };
+        if let Err(reason) = authorize_peer(expected_workload_uid(), self_uid, peer) {
+            tracing::warn!(
+                ?peer,
+                reason,
+                "secrets: REJECTED unauthorized peer attempting secret access"
+            );
+            // Audit the rejection so it leaves a forensic trail.
+            let mut attrs: HashMap<String, String> = HashMap::new();
+            attrs.insert("decision".into(), "deny".into());
+            attrs.insert("reason".into(), reason.to_string());
+            if let Some(p) = peer {
+                attrs.insert("peer_uid".into(), p.uid.to_string());
+                attrs.insert("peer_pid".into(), p.pid.to_string());
+            }
+            self.manager
+                .enqueue_report(HarnessReport::Audit(AuditEvent {
+                    vm_id: self.manager.vm_id.clone(),
+                    action: "secret_access_denied".into(),
+                    at_unix_ms: now_unix_ms(),
+                    attrs,
+                }))
+                .await;
+            let (_read_half, mut write_half) = stream.into_split();
+            let mut bytes = serde_json::to_vec(&SocketResp::Err {
+                error: "unauthorized: secret access denied".to_string(),
+            })?;
+            bytes.push(b'\n');
+            let _ = write_half.write_all(&bytes).await;
+            return Ok(());
+        }
+
         let (read_half, mut write_half) = stream.into_split();
         let mut reader = BufReader::new(read_half);
         let mut line = String::new();
@@ -211,5 +383,73 @@ impl SecretCache {
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests — peer-auth decision logic (pure; no live socket required).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WORKLOAD_UID: u32 = 1000;
+    const HARNESS_UID: u32 = 0;
+
+    fn peer(uid: u32) -> PeerIdentity {
+        PeerIdentity {
+            uid,
+            gid: uid,
+            pid: 42,
+        }
+    }
+
+    /// The expected workload uid is accepted.
+    #[test]
+    fn authorize_accepts_expected_workload_uid() {
+        assert!(
+            authorize_peer(Some(WORKLOAD_UID), HARNESS_UID, Some(peer(WORKLOAD_UID))).is_ok(),
+            "the configured workload uid must be allowed"
+        );
+    }
+
+    /// The harness's own uid is always accepted (internal probes).
+    #[test]
+    fn authorize_accepts_self_uid() {
+        assert!(
+            authorize_peer(Some(WORKLOAD_UID), HARNESS_UID, Some(peer(HARNESS_UID))).is_ok(),
+            "the harness's own uid must be allowed"
+        );
+    }
+
+    /// A different uid is REJECTED when an expected uid is configured.
+    #[test]
+    fn authorize_rejects_other_uid() {
+        let r = authorize_peer(Some(WORKLOAD_UID), HARNESS_UID, Some(peer(31337)));
+        assert!(r.is_err(), "an unexpected uid must be rejected");
+    }
+
+    /// Fail-closed: when an expected uid is configured but the peer creds could
+    /// not be read, the connection is rejected (not allowed by default).
+    #[test]
+    fn authorize_fails_closed_when_peercred_unavailable() {
+        let r = authorize_peer(Some(WORKLOAD_UID), HARNESS_UID, None);
+        assert!(
+            r.is_err(),
+            "missing peer creds with a required uid must fail closed"
+        );
+    }
+
+    /// Dev path: when no expected uid is configured, any peer is allowed (the
+    /// serve() warning covers the security posture). This keeps macOS dev and
+    /// manager-less local runs working.
+    #[test]
+    fn authorize_allows_when_no_expected_uid() {
+        assert!(authorize_peer(None, HARNESS_UID, Some(peer(31337))).is_ok());
+        assert!(
+            authorize_peer(None, HARNESS_UID, None).is_ok(),
+            "dev path: unset uid + no peer creds still allowed"
+        );
     }
 }

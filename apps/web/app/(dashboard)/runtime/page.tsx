@@ -33,12 +33,9 @@ export default function RuntimePage() {
   const [vms, setVms] = useState<VmRow[] | null>(null);
   const [cluster, setCluster] = useState<ClusterSummary | null>(null);
   const [usingDemo, setUsingDemo] = useState(false);
-  // Default to the demo fleet so the cockpit shows its full instrumentation
-  // (live sparklines, capacity map, cost) out of the box — local control-planes
-  // report no per-VM telemetry, so the honest live view is sparse. Flip to Live
-  // to see real workloads (metrics render "—" until a harness metrics endpoint
-  // lands; never fabricated).
-  const [demoMode, setDemoMode] = useState(true);
+  // Default to Live mode so operators see real workloads (or EmptyState) on
+  // first load. Use the Demo toggle to opt INTO the demo fleet for exploration.
+  const [demoMode, setDemoMode] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [drawerVm, setDrawerVm] = useState<VmRow | null>(null);
@@ -60,23 +57,18 @@ export default function RuntimePage() {
         runtimeApi.get<ClusterSummary>("/v1/runtime/cluster").catch(() => null),
       ]);
       const items = Array.isArray(vmRes) ? vmRes : (vmRes.items ?? []);
-      if (items.length === 0) {
-        // Live API reachable but no workloads — show the demo fleet.
-        setVms(DEMO_VMS);
-        setCluster(DEMO_CLUSTER);
-        setUsingDemo(true);
-      } else {
-        setVms(items);
-        setCluster(clRes ?? null);
-        setUsingDemo(false);
-      }
+      // Show real data (even if empty — EmptyState handles the zero-item case).
+      setVms(items);
+      setCluster(clRes ?? null);
+      setUsingDemo(false);
       lastErrorRef.current = "";
     } catch (err) {
       if (err instanceof UnauthorizedError) return;
-      // API unreachable — fall back to the demo fleet (don't blank the cockpit).
-      setVms(DEMO_VMS);
-      setCluster(DEMO_CLUSTER);
-      setUsingDemo(true);
+      // API unreachable — render EmptyState rather than fabricating demo data.
+      // The operator needs to know the API is down, not see a fake fleet.
+      setVms([]);
+      setCluster(null);
+      setUsingDemo(false);
       const msg = err instanceof Error ? err.message : String(err);
       if (msg !== lastErrorRef.current) {
         lastErrorRef.current = msg;

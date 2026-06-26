@@ -16,11 +16,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
@@ -31,6 +33,9 @@ import (
 type LlmProxyHandler struct {
 	srv  *server.Server
 	auth *AuthHandler
+	// router holds the model-router cutover wiring (task P2-B5/6). Default
+	// zero value = flag-driven, real gRPC dial. See llm_proxy_router.go.
+	router modelRouterDeps
 }
 
 // NewLlmProxyHandler creates a new LlmProxyHandler.
@@ -117,6 +122,13 @@ type providerConfig struct {
 func (h *LlmProxyHandler) resolveProviderKey(ctx context.Context, tenantID, provider string) (string, error) {
 	// 1. Check tenant-specific keys in DB.
 	var apiKeyEncrypted string
+	// rls-exempt: self-scoped by the explicit `tenant_id = $1` filter. This is a
+	// LIVE LLM hot path called from deep inside the provider-failover loop with
+	// tenantID passed as an ARG (not always present in ctx); the explicit filter
+	// is the authoritative tenant gate. Routing through WithTenant here would
+	// require every failover call site to carry an injected tenant in ctx — a
+	// risky change to the live path for no isolation the filter doesn't already
+	// give. See ADR 0011 "rls-exempt-by-arg".
 	err := h.srv.Pool.QueryRow(ctx, `
 		SELECT api_key_encrypted FROM llm_provider_configs
 		WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
@@ -150,6 +162,9 @@ func (h *LlmProxyHandler) resolveProviderKey(ctx context.Context, tenantID, prov
 // given provider (DB-configured in Settings, or in the process env as fallback).
 func (h *LlmProxyHandler) providerAvailable(ctx context.Context, tenantID, provider string) bool {
 	var count int
+	// rls-exempt: self-scoped by the explicit `tenant_id = $1` filter; called on
+	// the LIVE model-routing path with tenantID as an ARG (rls-exempt-by-arg,
+	// same rationale as resolveProviderKey).
 	_ = h.srv.Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM llm_provider_configs
 		WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
@@ -363,6 +378,10 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 		req, _ := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+		// Invariant #8: dedup token (run-scoped base when present, else payload hash).
+		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "openai", model, []map[string]any{
+			{"role": "user", "content": prompt},
+		}))
 
 		resp, httpErr := http.DefaultClient.Do(req)
 		if httpErr != nil {
@@ -426,6 +445,10 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
+		// Invariant #8: dedup token (run-scoped base when present, else payload hash).
+		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "anthropic", model, []map[string]any{
+			{"role": "user", "content": prompt},
+		}))
 
 		resp, httpErr := http.DefaultClient.Do(req)
 		if httpErr != nil {
@@ -748,6 +771,11 @@ func (h *LlmProxyHandler) callLLMStreamingNoTools(
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("Accept", "text/event-stream")
+		// Invariant #8: dedup token (run-scoped base when present, else payload hash).
+		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "openai", model, []map[string]any{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": userPrompt},
+		}))
 		resp, httpErr := http.DefaultClient.Do(req)
 		if httpErr != nil {
 			return "", 0, 0, httpErr
@@ -816,6 +844,11 @@ func (h *LlmProxyHandler) callLLMStreamingNoTools(
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
 		req.Header.Set("Accept", "text/event-stream")
+		// Invariant #8: dedup token (run-scoped base when present, else payload hash).
+		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "anthropic", model, []map[string]any{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": userPrompt},
+		}))
 		resp, httpErr := http.DefaultClient.Do(req)
 		if httpErr != nil {
 			return "", 0, 0, httpErr
@@ -1377,6 +1410,9 @@ func (h *LlmProxyHandler) proxyOpenAI(w http.ResponseWriter, ctx context.Context
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	// Invariant #8: ad-hoc completion has no run, so the dedup token is a
+	// deterministic hash of the request payload — identical requests collapse.
+	setLLMIdempotencyHeader(httpReq, llmIdempotencyKey(ctx, "openai", model, stringMessagesToAny(messages)))
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(httpReq)
@@ -1571,6 +1607,9 @@ func (h *LlmProxyHandler) proxyAnthropic(w http.ResponseWriter, ctx context.Cont
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	// Invariant #8: ad-hoc completion has no run, so the dedup token is a
+	// deterministic hash of the request payload — identical requests collapse.
+	setLLMIdempotencyHeader(httpReq, llmIdempotencyKey(ctx, "anthropic", model, stringMessagesToAny(anthropicMsgs)))
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(httpReq)
@@ -1751,12 +1790,17 @@ func (h *LlmProxyHandler) SaveLlmProvider(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to secure provider key"})
 		return
 	}
-	_, err = h.srv.Pool.Exec(ctx, `
-		INSERT INTO llm_provider_configs (tenant_id, provider, api_key_encrypted, status)
-		VALUES ($1, $2, $3, 'active')
-		ON CONFLICT (tenant_id, provider)
-		DO UPDATE SET api_key_encrypted = $3, status = 'active', updated_at = now()
-	`, tenantID, body.Provider, encKey)
+	// llm_provider_configs is tenant-scoped → write under WithTenant (RLS). This
+	// is a top-level Settings handler, so the tenant is injected here.
+	err = h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
+		_, e := tx.Exec(ctx, `
+			INSERT INTO llm_provider_configs (tenant_id, provider, api_key_encrypted, status)
+			VALUES ($1, $2, $3, 'active')
+			ON CONFLICT (tenant_id, provider)
+			DO UPDATE SET api_key_encrypted = $3, status = 'active', updated_at = now()
+		`, tenantID, body.Provider, encKey)
+		return e
+	})
 	if err != nil {
 		h.logger().Error("save llm provider config failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save provider config"})
@@ -1782,37 +1826,44 @@ func (h *LlmProxyHandler) ListLlmProviders(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT provider, status, created_at, updated_at
-		FROM llm_provider_configs
-		WHERE tenant_id = $1
-		ORDER BY provider
-	`, tenantID)
+	// llm_provider_configs is tenant-scoped → read under WithTenant (RLS). Rows
+	// are drained inside the closure before the tx commits.
+	result := make([]map[string]any, 0)
+	err = h.srv.WithTenant(middleware.InjectTenantID(ctx, tenantID), func(tx pgx.Tx) error {
+		rows, qerr := tx.Query(ctx, `
+			SELECT provider, status, created_at, updated_at
+			FROM llm_provider_configs
+			WHERE tenant_id = $1
+			ORDER BY provider
+		`, tenantID)
+		if qerr != nil {
+			return qerr
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				provider  string
+				status    string
+				createdAt time.Time
+				updatedAt time.Time
+			)
+			if err := rows.Scan(&provider, &status, &createdAt, &updatedAt); err != nil {
+				continue
+			}
+			result = append(result, map[string]any{
+				"provider":  provider,
+				"status":    status,
+				"keyMasked": "****configured****",
+				"createdAt": createdAt,
+				"updatedAt": updatedAt,
+			})
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		h.logger().Error("list llm providers failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list providers"})
 		return
-	}
-	defer rows.Close()
-
-	result := make([]map[string]any, 0)
-	for rows.Next() {
-		var (
-			provider  string
-			status    string
-			createdAt time.Time
-			updatedAt time.Time
-		)
-		if err := rows.Scan(&provider, &status, &createdAt, &updatedAt); err != nil {
-			continue
-		}
-		result = append(result, map[string]any{
-			"provider":  provider,
-			"status":    status,
-			"keyMasked": "****configured****",
-			"createdAt": createdAt,
-			"updatedAt": updatedAt,
-		})
 	}
 
 	// Also check for env var fallbacks.
@@ -2251,6 +2302,10 @@ func (h *LlmProxyHandler) callLLMWithTools(
 			"https://api.openai.com/v1/chat/completions", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+		// Invariant #8: dedup token so a rate-limit retry / crash-replay of
+		// this same logical call doesn't double-bill. Stable across turns of
+		// one logical call via the run-scoped ctx base.
+		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "openai", model, messages))
 
 		resp, httpErr := http.DefaultClient.Do(req)
 		if httpErr != nil {
@@ -2372,6 +2427,9 @@ func (h *LlmProxyHandler) callLLMWithTools(
 		"https://api.openai.com/v1/chat/completions", bytes.NewReader(finalBytes))
 	finalHTTPReq.Header.Set("Content-Type", "application/json")
 	finalHTTPReq.Header.Set("Authorization", "Bearer "+apiKey)
+	// Distinct sub-step of the same logical call (tools-disabled synthesis):
+	// suffix so it dedups on retry but doesn't collide with the loop turns.
+	setLLMIdempotencyHeader(finalHTTPReq, llmIdempotencyKey(ctx, "openai:final", model, msgs))
 	if resp, ferr := http.DefaultClient.Do(finalHTTPReq); ferr == nil {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
@@ -2525,6 +2583,9 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
+		// Invariant #8: dedup token so a rate-limit retry / crash-replay of
+		// this same logical call doesn't double-bill.
+		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "anthropic", model, messages))
 
 		resp, httpErr := http.DefaultClient.Do(req)
 		if httpErr != nil {
@@ -2646,6 +2707,8 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 	finalHTTPReq.Header.Set("Content-Type", "application/json")
 	finalHTTPReq.Header.Set("x-api-key", apiKey)
 	finalHTTPReq.Header.Set("anthropic-version", "2023-06-01")
+	// Distinct sub-step (tools-disabled synthesis) of the same logical call.
+	setLLMIdempotencyHeader(finalHTTPReq, llmIdempotencyKey(ctx, "anthropic:final", model, messages))
 	if resp, ferr := http.DefaultClient.Do(finalHTTPReq); ferr == nil {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
@@ -2829,6 +2892,30 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 	)
 	if len(chain) == 0 {
 		return "", nil, "", "", 0, 0, fmt.Errorf("no LLM provider configured for this tenant")
+	}
+
+	// Model-router cutover (P2-B5/6). Behind LANTERN_USE_MODEL_ROUTER
+	// (default OFF). When ON, offload PLAIN provider completions (no tools,
+	// real hosted provider at the head of the chain) to the model-router
+	// service. claude-code and the tool loop stay on the direct path for
+	// this batch.
+	//
+	// CRITICAL: on ANY router error (dial / timeout / non-OK / empty), we
+	// fall THROUGH to the direct chain below — the live bridges never see a
+	// router failure. RecordUsage/CheckBudget are unaffected: this function
+	// returns the same tuple the direct path returns, and callers run usage
+	// accounting on that tuple regardless of which path produced it.
+	if h.modelRouterEnabled() && len(tools) == 0 && chain[0].Provider != "claude-code" {
+		text, used, tin, tout, ok := h.tryModelRouter(ctx, tenantID, chain[0], messages)
+		if ok {
+			if onAttempt != nil {
+				onAttempt(candidateAttempt{Provider: used.Provider, Model: used.Model})
+			}
+			text = rewriteUnbackedClaims(text, nil, h.logger())
+			return text, nil, used.Provider, used.Model, tin, tout, nil
+		}
+		// ok==false → router unavailable or errored; fall through to the
+		// direct provider chain. tryModelRouter already logged a warn.
 	}
 	// The local `claude -p` CLI doesn't support OpenAI-style tools[]. If
 	// this run actually needs tool calling, drop claude-code from the

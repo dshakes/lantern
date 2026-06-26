@@ -1,2 +1,0 @@
-[console_scripts]
-lantern-runner = lantern.runtime.runner:main

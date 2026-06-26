@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
@@ -96,49 +97,60 @@ func (h *MarketplaceHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		body.Category = "general"
 	}
 
-	// Load the agent + tenant slug.
+	// Load the agent + tenant slug (the agents read is tenant-scoped → WithTenant;
+	// the marketplace_agents write is to an RLS-exempt catalog table, so it runs
+	// fine inside the same scoped tx — no tenant_isolation policy applies to it).
 	var agentID, tenantSlug string
 	var manifestJSON []byte
-	err = h.srv.Pool.QueryRow(ctx, `
-		SELECT a.id, t.slug, COALESCE(a.workflow, '{}'::jsonb)
-		FROM agents a
-		JOIN tenants t ON t.id = a.tenant_id
-		WHERE a.tenant_id = $1 AND a.name = $2
-	`, tenantID, body.AgentName).Scan(&agentID, &tenantSlug, &manifestJSON)
-	if err != nil {
+	var notFound bool
+	var id string
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		if e := tx.QueryRow(ctx, `
+			SELECT a.id, t.slug, COALESCE(a.workflow, '{}'::jsonb)
+			FROM agents a
+			JOIN tenants t ON t.id = a.tenant_id
+			WHERE a.tenant_id = $1 AND a.name = $2
+		`, tenantID, body.AgentName).Scan(&agentID, &tenantSlug, &manifestJSON); e == pgx.ErrNoRows {
+			notFound = true
+			return nil
+		} else if e != nil {
+			return e
+		}
+
+		slug := slugify(fmt.Sprintf("%s-%s", tenantSlug, body.AgentName))
+		cardJSON, _ := json.Marshal(map[string]any{
+			"name":        body.AgentName,
+			"description": body.Description,
+			"version":     "1.0.0",
+			"provider":    map[string]string{"name": tenantSlug},
+		})
+
+		return tx.QueryRow(ctx, `
+			INSERT INTO marketplace_agents
+			  (slug, source_tenant_id, source_agent_id, name, description, category, tags, manifest, card, readme)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10)
+			ON CONFLICT (slug) DO UPDATE SET
+			  description = EXCLUDED.description,
+			  category    = EXCLUDED.category,
+			  tags        = EXCLUDED.tags,
+			  manifest    = EXCLUDED.manifest,
+			  card        = EXCLUDED.card,
+			  readme      = EXCLUDED.readme,
+			  unpublished_at = NULL
+			RETURNING id
+		`, slug, tenantID, agentID, body.AgentName, body.Description, body.Category,
+			body.Tags, manifestJSON, cardJSON, body.Readme).Scan(&id)
+	})
+	if notFound {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
 	}
-
-	slug := slugify(fmt.Sprintf("%s-%s", tenantSlug, body.AgentName))
-	cardJSON, _ := json.Marshal(map[string]any{
-		"name":        body.AgentName,
-		"description": body.Description,
-		"version":     "1.0.0",
-		"provider":    map[string]string{"name": tenantSlug},
-	})
-
-	var id string
-	err = h.srv.Pool.QueryRow(ctx, `
-		INSERT INTO marketplace_agents
-		  (slug, source_tenant_id, source_agent_id, name, description, category, tags, manifest, card, readme)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10)
-		ON CONFLICT (slug) DO UPDATE SET
-		  description = EXCLUDED.description,
-		  category    = EXCLUDED.category,
-		  tags        = EXCLUDED.tags,
-		  manifest    = EXCLUDED.manifest,
-		  card        = EXCLUDED.card,
-		  readme      = EXCLUDED.readme,
-		  unpublished_at = NULL
-		RETURNING id
-	`, slug, tenantID, agentID, body.AgentName, body.Description, body.Category,
-		body.Tags, manifestJSON, cardJSON, body.Readme).Scan(&id)
 	if err != nil {
 		h.logger().Error("publish failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "publish failed"})
 		return
 	}
+	slug := slugify(fmt.Sprintf("%s-%s", tenantSlug, body.AgentName))
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"id":   id,
@@ -155,6 +167,8 @@ func (h *MarketplaceHandler) Unpublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := r.PathValue("slug")
+	// rls-exempt: marketplace_agents is an RLS-exempt public-catalog table (ADR
+	// 0011). Ownership is enforced here by the source_tenant_id predicate.
 	_, err = h.srv.Pool.Exec(ctx, `
 		UPDATE marketplace_agents SET unpublished_at = now()
 		WHERE slug = $1 AND source_tenant_id = $2
@@ -206,6 +220,8 @@ func (h *MarketplaceHandler) List(w http.ResponseWriter, r *http.Request) {
 	sql += fmt.Sprintf(" ORDER BY (m.stars_count * 2 + m.forks_count) DESC, m.published_at DESC LIMIT $%d", argIdx)
 	args = append(args, limit)
 
+	// rls-exempt: marketplace_agents + marketplace_stars are RLS-exempt public-
+	// catalog tables (ADR 0011) — this listing is cross-tenant readable by design.
 	rows, err := h.srv.Pool.Query(ctx, sql, args...)
 	if err != nil {
 		h.logger().Error("list failed", zap.Error(err))
@@ -240,6 +256,8 @@ func (h *MarketplaceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	var m marketplaceAgent
 	var manifestJSON, cardJSON []byte
+	// rls-exempt: marketplace_agents + marketplace_stars are RLS-exempt public-
+	// catalog tables (ADR 0011) — a marketplace entry is cross-tenant readable.
 	err = h.srv.Pool.QueryRow(ctx, `
 		SELECT m.id, m.slug, m.name, m.description, m.category, m.tags,
 		       m.manifest, m.card, COALESCE(m.readme,''), m.forks_count, m.stars_count, m.published_at,
@@ -282,6 +300,8 @@ func (h *MarketplaceHandler) Fork(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
 	// Load the marketplace entry.
+	// rls-exempt: marketplace_agents is the RLS-exempt public catalog (ADR 0011);
+	// forking reads ANY tenant's published entry by slug, by design.
 	var mkID, mkName, mkDesc string
 	var manifestJSON []byte
 	err = h.srv.Pool.QueryRow(ctx, `
@@ -298,35 +318,26 @@ func (h *MarketplaceHandler) Fork(w http.ResponseWriter, r *http.Request) {
 	}
 	name = uniqueAgentName(ctx, h.srv.Pool, tenantID, name)
 
-	// Create the forked agent record.
+	// Create the forked agent record. The agents INSERT is tenant-scoped (RLS
+	// WITH CHECK on the caller's tenant) so the whole fork runs under WithTenant;
+	// the marketplace_agents fork-counter UPDATE is on an exempt catalog table and
+	// runs fine inside the same scoped tx.
 	var newID string
-	tx, err := h.srv.Pool.Begin(ctx)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "tx failed"})
-		return
-	}
-	defer tx.Rollback(ctx)
-
-	err = tx.QueryRow(ctx, `
-		INSERT INTO agents (tenant_id, name, description, workflow, labels)
-		VALUES ($1, $2, $3, $4::jsonb, jsonb_build_object('forkedFrom', $5::text))
-		RETURNING id
-	`, tenantID, name, mkDesc, manifestJSON, slug).Scan(&newID)
+	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
+		if e := tx.QueryRow(ctx, `
+			INSERT INTO agents (tenant_id, name, description, workflow, labels)
+			VALUES ($1, $2, $3, $4::jsonb, jsonb_build_object('forkedFrom', $5::text))
+			RETURNING id
+		`, tenantID, name, mkDesc, manifestJSON, slug).Scan(&newID); e != nil {
+			return e
+		}
+		_, e := tx.Exec(ctx, `
+			UPDATE marketplace_agents SET forks_count = forks_count + 1 WHERE id = $1
+		`, mkID)
+		return e
+	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "fork failed: " + err.Error()})
-		return
-	}
-
-	_, err = tx.Exec(ctx, `
-		UPDATE marketplace_agents SET forks_count = forks_count + 1 WHERE id = $1
-	`, mkID)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "fork counter failed"})
-		return
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "commit failed"})
 		return
 	}
 
@@ -346,6 +357,9 @@ func (h *MarketplaceHandler) Star(w http.ResponseWriter, r *http.Request) {
 	}
 	slug := r.PathValue("slug")
 	var mkID string
+	// rls-exempt: marketplace_agents + marketplace_stars are RLS-exempt public-
+	// catalog tables (ADR 0011) — starring spans tenants by design. Star rows are
+	// keyed by (tenant_id, marketplace_id); ownership is enforced by the predicate.
 	if err := h.srv.Pool.QueryRow(ctx,
 		`SELECT id FROM marketplace_agents WHERE slug = $1 AND unpublished_at IS NULL`,
 		slug).Scan(&mkID); err != nil {
@@ -357,22 +371,22 @@ func (h *MarketplaceHandler) Star(w http.ResponseWriter, r *http.Request) {
 		_, _ = h.srv.Pool.Exec(ctx, `
 			INSERT INTO marketplace_stars (tenant_id, marketplace_id) VALUES ($1, $2)
 			ON CONFLICT DO NOTHING
-		`, tenantID, mkID)
+		`, tenantID, mkID) // rls-exempt: public-catalog star table (ADR 0011)
 		_, _ = h.srv.Pool.Exec(ctx, `
 			UPDATE marketplace_agents SET stars_count = (
 			  SELECT COUNT(*) FROM marketplace_stars WHERE marketplace_id = $1
 			) WHERE id = $1
-		`, mkID)
+		`, mkID) // rls-exempt: public-catalog tables (ADR 0011)
 		writeJSON(w, http.StatusOK, map[string]any{"starred": true})
 	case http.MethodDelete:
 		_, _ = h.srv.Pool.Exec(ctx,
 			`DELETE FROM marketplace_stars WHERE tenant_id = $1 AND marketplace_id = $2`,
-			tenantID, mkID)
+			tenantID, mkID) // rls-exempt: public-catalog star table (ADR 0011)
 		_, _ = h.srv.Pool.Exec(ctx, `
 			UPDATE marketplace_agents SET stars_count = (
 			  SELECT COUNT(*) FROM marketplace_stars WHERE marketplace_id = $1
 			) WHERE id = $1
-		`, mkID)
+		`, mkID) // rls-exempt: public-catalog tables (ADR 0011)
 		writeJSON(w, http.StatusOK, map[string]any{"starred": false})
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

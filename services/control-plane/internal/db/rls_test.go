@@ -365,6 +365,185 @@ func TestRLSEnforcement_Runs(t *testing.T) {
 	})
 }
 
+// rlsTenantTables is the canonical list of tenant-scoped tables that MUST carry
+// RLS (ENABLE + FORCE + a tenant_isolation policy referencing app.tenant_id).
+// It mirrors migration 0003 plus the baseline agents/runs. Adding a new
+// tenant table without RLS will make TestRLSEnforcement_AllTenantTables fail —
+// that is the intended permanent gate.
+var rlsTenantTables = []string{
+	"agents", "runs",
+	"users", "connector_installs", "surface_configs", "api_keys",
+	"deployments", "data_planes", "llm_provider_configs", "schedules",
+	"sessions", "agent_budgets", "cost_forecasts", "marketplace_stars",
+	"agent_mcp_attachments", "eval_suites", "eval_runs", "eval_baselines",
+	"agent_experiments", "agent_usage_daily", "run_receipts", "run_feedback",
+	"takeover_requests", "voice_numbers", "voice_calls",
+	"whatsapp_contact_facts", "whatsapp_vip_contacts", "whatsapp_pending_drafts",
+	"runtime_quotas", "runtime_audit_events", "runtime_vms", "people",
+	"person_handles", "memory_events", "runtime_vm_logs", "side_effect_receipts",
+	"life_events", "life_event_prefs",
+}
+
+// rlsExemptTables are intentionally NOT under RLS: no single owning tenant_id,
+// or deliberately cross-tenant. This is the allowlist the gate-test enforces.
+var rlsExemptTables = map[string]bool{
+	"tenants":                 true,
+	"agent_versions":          true,
+	"journal_events":          true,
+	"run_locks":               true,
+	"marketplace_agents":      true,
+	"mcp_servers":             true,
+	"marketplace_invocations": true,
+}
+
+// TestRLSEnforcement_AllTenantTables is the permanent catalog gate. For every
+// table in rlsTenantTables it asserts, directly against the Postgres catalogs:
+//   - pg_class.relrowsecurity  is true (RLS ENABLED)
+//   - pg_class.relforcerowsecurity is true (RLS FORCED — owner not exempt)
+//   - a pg_policies row exists whose USING (qual) AND WITH CHECK references
+//     current_setting('app.tenant_id') — i.e. a real tenant_isolation policy.
+//
+// It also re-asserts the exempt set is mutually exclusive with the enforced set,
+// so a table can't be silently both listed and allowlisted.
+//
+// This fails the moment a future tenant table is added without RLS, forcing the
+// author to either add the policy (migration) or justify an exemption.
+func TestRLSEnforcement_AllTenantTables(t *testing.T) {
+	superPool := openSuperPool(t)
+	ctx := context.Background()
+
+	if err := db.Migrate(ctx, superPool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Guard: no table is both enforced and exempt.
+	for _, tbl := range rlsTenantTables {
+		if rlsExemptTables[tbl] {
+			t.Errorf("table %q appears in BOTH the enforced and exempt sets — pick one", tbl)
+		}
+	}
+
+	for _, tbl := range rlsTenantTables {
+		tbl := tbl
+		t.Run(tbl, func(t *testing.T) {
+			var relRowsec, relForce bool
+			err := superPool.QueryRow(ctx, `
+				SELECT c.relrowsecurity, c.relforcerowsecurity
+				FROM pg_class c
+				JOIN pg_namespace n ON n.oid = c.relnamespace
+				WHERE n.nspname = 'public' AND c.relname = $1
+			`, tbl).Scan(&relRowsec, &relForce)
+			if err != nil {
+				t.Fatalf("catalog lookup for %q: %v (does the table exist?)", tbl, err)
+			}
+			if !relRowsec {
+				t.Errorf("table %q: ROW LEVEL SECURITY not ENABLED — tenant isolation backstop missing", tbl)
+			}
+			if !relForce {
+				t.Errorf("table %q: ROW LEVEL SECURITY not FORCED — owner role can bypass RLS", tbl)
+			}
+
+			// At least one policy on this table must reference app.tenant_id in
+			// BOTH its USING qual and its WITH CHECK expression.
+			var hasPolicy bool
+			err = superPool.QueryRow(ctx, `
+				SELECT EXISTS (
+					SELECT 1 FROM pg_policies
+					WHERE schemaname = 'public' AND tablename = $1
+					  AND qual       LIKE '%app.tenant_id%'
+					  AND with_check LIKE '%app.tenant_id%'
+				)
+			`, tbl).Scan(&hasPolicy)
+			if err != nil {
+				t.Fatalf("pg_policies lookup for %q: %v", tbl, err)
+			}
+			if !hasPolicy {
+				t.Errorf("table %q: no tenant_isolation policy with BOTH USING and WITH CHECK referencing app.tenant_id", tbl)
+			}
+		})
+	}
+}
+
+// TestRLSEnforcement_Sessions mirrors the agents/runs cross-tenant proof for the
+// 'sessions' table — the table cut over to s.srv.WithTenant in handlers/sessions.go.
+// Under the lantern_app (RLS-subject) role, a session owned by tenant B is
+// invisible to tenant A, and visible to tenant B. Seeded via the privileged pool.
+func TestRLSEnforcement_Sessions(t *testing.T) {
+	superPool := openSuperPool(t)
+	ctx := context.Background()
+
+	if err := db.Migrate(ctx, superPool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	tenantA := uuid.New().String()
+	tenantB := uuid.New().String()
+	seedRLSTenant(t, superPool, tenantA)
+	seedRLSTenant(t, superPool, tenantB)
+
+	// Seed a session owned by tenant B via the privileged pool (bypasses RLS).
+	sessionID := uuid.New().String()
+	_, err := superPool.Exec(ctx, `
+		INSERT INTO sessions (id, tenant_id, agent_name, status, messages)
+		VALUES ($1::uuid, $2::uuid, 'rls-session-agent', 'active', '[]'::jsonb)
+		ON CONFLICT (id) DO NOTHING
+	`, sessionID, tenantB)
+	if err != nil {
+		t.Fatalf("seed session for tenant B: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = superPool.Exec(context.Background(), "DELETE FROM sessions WHERE id = $1::uuid", sessionID)
+	})
+
+	// Tenant A (the non-owner) must NOT see tenant B's session.
+	t.Run("CrossTenant_DeniedByRLS", func(t *testing.T) {
+		count := querySessionCount(t, superPool, ctx, tenantA, sessionID)
+		if count != 0 {
+			t.Errorf("SECURITY VIOLATION: tenant A can see %d session row(s) belonging to tenant B — RLS not enforced on sessions", count)
+		}
+	})
+
+	// Tenant B (the owner) sees its own session.
+	t.Run("WithinTenantB_CanRead", func(t *testing.T) {
+		count := querySessionCount(t, superPool, ctx, tenantB, sessionID)
+		if count != 1 {
+			t.Errorf("tenant B: expected 1 visible session row for its own session, got %d", count)
+		}
+	})
+
+	// The privileged superuser pool bypasses RLS and sees the row regardless.
+	t.Run("PrivilegedPool_BypassesRLS", func(t *testing.T) {
+		var count int
+		if err := superPool.QueryRow(ctx,
+			"SELECT COUNT(*) FROM sessions WHERE id = $1::uuid", sessionID,
+		).Scan(&count); err != nil {
+			t.Fatalf("privileged pool query: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("privileged pool: expected 1 row (bypass RLS), got %d", count)
+		}
+	})
+}
+
+// querySessionCount opens a transaction as lantern_app, sets the tenant GUC, and
+// returns how many sessions with the given ID are visible.
+func querySessionCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenantID, sessionID string) int {
+	t.Helper()
+	var count int
+	err := runAsAppRole(pool, ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID); err != nil {
+			return fmt.Errorf("set_config: %w", err)
+		}
+		return tx.QueryRow(ctx,
+			"SELECT COUNT(*) FROM sessions WHERE id = $1::uuid", sessionID,
+		).Scan(&count)
+	})
+	if err != nil {
+		t.Fatalf("querySessionCount(tenant=%s): %v", tenantID, err)
+	}
+	return count
+}
+
 // queryRunCount opens a transaction as lantern_app, sets the tenant GUC, and
 // returns how many runs with the given ID are visible.
 func queryRunCount(t *testing.T, pool *pgxpool.Pool, ctx context.Context, tenantID, runID string) int {

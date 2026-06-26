@@ -9,11 +9,13 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -21,6 +23,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
@@ -164,12 +167,18 @@ func main() {
 	// server-side TLS credentials when configured; in prod require them, in dev
 	// fall back to plaintext with a WARN (mirrors runStartupGuards' fail-closed
 	// pattern).
+	// Service-token auth must run BEFORE tenant extraction: only callers holding
+	// the shared token may set a tenant_id. Empty token → pass-through (dev);
+	// runStartupGuards already refused to boot with an empty token in prod.
+	grpcServiceToken := os.Getenv("LANTERN_GRPC_SERVICE_TOKEN")
 	grpcOpts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(
+			middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
 			middleware.UnaryTenantInterceptor(logger),
 			unaryTracingInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
+			middleware.StreamServiceAuthInterceptor(logger, grpcServiceToken),
 			middleware.StreamTenantInterceptor(logger),
 			streamTracingInterceptor(),
 		),
@@ -235,6 +244,7 @@ func main() {
 	smsHandler := handlers.NewSMSHandler(logger, srv.Pool, llmProxyHandler)
 	messagingHandler := handlers.NewMessagingHandler(logger, srv.Pool, llmProxyHandler)
 	surfaceHandler := handlers.NewSurfaceHandler(srv, authHandler)
+	signalHandler := handlers.NewSignalHandler(srv)
 	waPersonalHandler := handlers.NewWhatsAppPersonalHandler(srv, authHandler)
 	identityHandler := handlers.NewIdentityHandler(srv, authHandler, llmProxyHandler)
 	jarvisHandler := handlers.NewJarvisHandler(srv, authHandler, llmProxyHandler)
@@ -244,6 +254,7 @@ func main() {
 	a2aHandler := handlers.NewA2AHandler(srv, authHandler)
 	gmailHandler := handlers.NewGmailHandler(srv, authHandler)
 	sessionHandler := handlers.NewSessionHandler(srv, authHandler, llmProxyHandler)
+	lifeEventHandler := handlers.NewLifeEventHandler(srv, authHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
 	restHandler.SetDataPlaneRouter(dpSvc)    // routes runs to a connected data plane when one is live
 
@@ -344,6 +355,13 @@ func main() {
 	// matchers so they're not shadowed.
 	httpMux.HandleFunc("POST /v1/surfaces/whatsapp/heartbeat", surfaceHandler.BridgeHeartbeat)
 	httpMux.HandleFunc("GET /v1/surfaces/whatsapp/status", surfaceHandler.WhatsAppStatus)
+
+	// Personal device signals — iPhone Shortcuts POST app-context here
+	// THROUGH the cloudflared tunnel (API :8080, not dashboard :3001). NO
+	// JWT/tenant scope; gated by the LANTERN_SIGNAL_TOKEN shared secret
+	// (fail-closed when unset), mirroring the bridge-heartbeat pattern.
+	httpMux.HandleFunc("POST /v1/signals", signalHandler.IngestSignal)
+	httpMux.HandleFunc("GET /v1/signals", signalHandler.ListSignals)
 
 	// Personal-assistant futuristic endpoints (VIP contacts, contact
 	// facts/memory, smart-draft VIP approval flow).
@@ -450,6 +468,14 @@ func main() {
 	httpMux.HandleFunc("POST /v1/sessions/{id}/stop", sessionHandler.StopSession)
 	httpMux.HandleFunc("DELETE /v1/sessions/{id}", sessionHandler.DeleteSession)
 	httpMux.HandleFunc("GET /v1/sessions/{id}", sessionHandler.GetSession)
+
+	// Life-event engine (bridges' "Automations" feed + per-category trust toggles).
+	httpMux.HandleFunc("POST /v1/life-events", lifeEventHandler.CreateLifeEvent)
+	httpMux.HandleFunc("GET /v1/life-events", lifeEventHandler.ListLifeEvents)
+	httpMux.HandleFunc("GET /v1/life-events/prefs", lifeEventHandler.ListLifeEventPrefs)
+	httpMux.HandleFunc("PUT /v1/life-events/prefs", lifeEventHandler.UpsertLifeEventPref)
+	httpMux.HandleFunc("POST /v1/life-events/{id}/undo", lifeEventHandler.UndoLifeEvent)
+	httpMux.HandleFunc("POST /v1/life-events/{id}/dismiss", lifeEventHandler.DismissLifeEvent)
 
 	// Pre-run cost forecaster.
 	httpMux.HandleFunc("POST /v1/runs/forecast", forecastHandler.Forecast)
@@ -602,9 +628,23 @@ func main() {
 	// (365d), agent_usage_daily (400d). Env-configurable; see retention_janitor.go.
 	go handlers.RunRetentionJanitor(ctx, pool, logger)
 
+	// Wrap the whole mux in otelhttp so EVERY HTTP request gets a server span
+	// (invariant #9). The span name is a low-cardinality route template
+	// ("GET /v1/runs/{id}") rather than the raw path, so traces group by route.
+	// Tenant/user/run identifiers are attached as span attributes inside the
+	// handlers (RESTHandler.contextWithTenant → middleware.EnrichSpan), where
+	// the JWT has already been validated — we never re-parse it here.
+	//
+	// Safe when telemetry is disabled: with the no-op global TracerProvider,
+	// otelhttp creates non-recording spans and adds negligible overhead.
+	tracedHTTP := otelhttp.NewHandler(
+		handlers.CORSMiddleware(httpMux),
+		"lantern.control-plane.http",
+		otelhttp.WithSpanNameFormatter(httpSpanName),
+	)
 	httpServer := &http.Server{
 		Addr:              ":8080",
-		Handler:           handlers.CORSMiddleware(httpMux),
+		Handler:           tracedHTTP,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -770,6 +810,28 @@ func runStartupGuards(logger *zap.Logger) {
 	if rlsMsg != "" {
 		logger.Warn(rlsMsg)
 	}
+
+	// gRPC service-token auth (trust boundary on :50051).
+	// Without a token, any caller reachable to :50051 can set an arbitrary
+	// tenant_id and read/write that tenant's data. Production must require it.
+	if prod && os.Getenv("LANTERN_GRPC_SERVICE_TOKEN") == "" {
+		logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is unset — the control-plane gRPC port (:50051) would accept any caller-supplied tenant_id; set a strong random shared token (also set it on the gateway)")
+	}
+	if !prod && os.Getenv("LANTERN_GRPC_SERVICE_TOKEN") == "" {
+		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — control-plane gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
+	}
+
+	// R1 — Runtime scheduler address (W12 microVM path).
+	// In prod the stub fabricates VM IDs and spawns nothing — that is silent
+	// data corruption, not a graceful degradation. Refuse to start.
+	// In dev the stub is intentional (no real scheduler needed).
+	schedulerFatal, schedulerMsg := handlers.CheckSchedulerAddr(prod, os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR"))
+	if schedulerFatal {
+		logger.Fatal(schedulerMsg)
+	}
+	if !prod && os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR") == "" {
+		logger.Warn("LANTERN_SCHEDULER_GRPC_ADDR is unset — using stub scheduler (acceptable in dev, required in production)")
+	}
 }
 
 // grpcTLSCreds resolves server-side TLS credentials for the gRPC server,
@@ -842,6 +904,11 @@ func mustInitLogger(level string) *zap.Logger {
 }
 
 // unaryTracingInterceptor returns a gRPC unary interceptor that creates OTel spans.
+//
+// It runs AFTER UnaryTenantInterceptor in the chain, so tenant_id is already in
+// the context; we stamp it (plus run_id/step_id when the caller supplies them in
+// metadata) onto the span. This satisfies invariant #9: a gRPC span is filterable
+// by tenant/run, not just method name.
 func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 	tracer := otel.Tracer("lantern.control-plane")
 	return func(
@@ -852,6 +919,7 @@ func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 	) (any, error) {
 		ctx, span := tracer.Start(ctx, info.FullMethod)
 		defer span.End()
+		enrichGRPCSpan(ctx)
 		return handler(ctx, req)
 	}
 }
@@ -867,9 +935,85 @@ func streamTracingInterceptor() grpc.StreamServerInterceptor {
 	) error {
 		ctx, span := tracer.Start(ss.Context(), info.FullMethod)
 		defer span.End()
+		enrichGRPCSpan(ctx)
 		wrapped := &wrappedStream{ServerStream: ss, ctx: ctx}
 		return handler(srv, wrapped)
 	}
+}
+
+// httpSpanName produces a low-cardinality span name from the request so traces
+// group by route rather than by concrete id. Path segments that look like ids
+// (UUIDs, hex digests, long numeric/opaque tokens) are collapsed to "{id}":
+//
+//	GET /v1/runs/9f3c.../events  ->  "GET /v1/runs/{id}/events"
+//
+// The concrete run/step id is preserved as a span ATTRIBUTE by the handlers,
+// not in the name, so cardinality stays bounded while traces remain filterable.
+func httpSpanName(_ string, r *http.Request) string {
+	return r.Method + " " + templatePath(r.URL.Path)
+}
+
+// templatePath replaces id-like path segments with "{id}".
+func templatePath(p string) string {
+	if p == "" || p == "/" {
+		return p
+	}
+	segs := strings.Split(p, "/")
+	for i, s := range segs {
+		if looksLikeID(s) {
+			segs[i] = "{id}"
+		}
+	}
+	return strings.Join(segs, "/")
+}
+
+// looksLikeID reports whether a path segment is a concrete identifier (UUID,
+// hex digest, or a long opaque/numeric token) rather than a static route word.
+func looksLikeID(s string) bool {
+	if len(s) < 8 {
+		return false
+	}
+	var digits, hyphens, hex, other int
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9':
+			digits++
+			hex++
+		case (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'):
+			hex++
+		case c == '-':
+			hyphens++
+		default:
+			other++
+		}
+	}
+	// UUID-shaped (hex + hyphens, nothing else) or all-hex digest.
+	if other == 0 && hex+hyphens == len(s) && (hyphens > 0 || hex == len(s)) {
+		return true
+	}
+	// Long mostly-numeric token (e.g. snowflake-style ids).
+	if other == 0 && digits >= 12 {
+		return true
+	}
+	return false
+}
+
+// enrichGRPCSpan stamps tenant_id (from the tenant interceptor's context) and,
+// when present in incoming metadata, run_id/step_id onto the active span. No-op
+// safe when telemetry is disabled (EnrichSpan guards on span.IsRecording()).
+func enrichGRPCSpan(ctx context.Context) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	var runID, stepID string
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if v := md.Get("run_id"); len(v) > 0 {
+			runID = v[0]
+		}
+		if v := md.Get("step_id"); len(v) > 0 {
+			stepID = v[0]
+		}
+	}
+	// gRPC callers don't carry an end-user id; user_id stays empty here.
+	middleware.EnrichSpan(ctx, tenantID, "", runID, stepID)
 }
 
 // wrappedStream overrides Context() to propagate the traced context.

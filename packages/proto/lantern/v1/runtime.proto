@@ -21,6 +21,7 @@ option go_package = "github.com/dshakes/lantern/services/control-plane/gen/go/la
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
 
 // ============================================================================
 // Enums
@@ -280,6 +281,14 @@ service RuntimeManager {
   // Live exec into a running VM (debugger).
   rpc Exec  (stream ExecRequest) returns (stream ExecResponse);
 
+  // Invoke a single named tool against a run's running workload and return
+  // its structured result. Unlike Exec (a raw, streaming shell into the VM),
+  // ExecTool is the unary, structured dispatch the workflow engine uses for
+  // tool_call steps: it carries a tool name + JSON args and gets back a JSON
+  // result + a typed status. The idempotency key (run:step:attempt) lets the
+  // manager de-duplicate retried side-effects (invariant #8).
+  rpc ExecTool (ExecToolRequest) returns (ExecToolResponse);
+
   // Live stats.
   rpc Stats (StatsRequest) returns (stream ResourceUsage);
 
@@ -338,6 +347,42 @@ message ExecResponse {
   bytes stderr    = 2;
   int32 exit_code = 3;
   bool  done      = 4;
+}
+
+// Typed outcome of an ExecTool call. The manager always sets one of these so
+// the caller can distinguish "the tool ran and succeeded", "the tool ran and
+// errored", and "tool execution is not wired in this build/backend" without
+// string-matching error messages.
+enum ToolStatus {
+  TOOL_STATUS_UNSPECIFIED = 0;
+  TOOL_STATUS_OK          = 1;   // tool ran; result is populated
+  TOOL_STATUS_ERROR       = 2;   // tool ran but failed; error is populated
+  TOOL_STATUS_UNAVAILABLE = 3;   // tool execution not wired (no harness/backend support yet)
+}
+
+message ExecToolRequest {
+  // Target workload — the run's VM. vm_id is the scheduler-issued wire id.
+  string vm_id    = 1;
+  // Run + step identity for correlation and idempotency.
+  string run_id   = 2;
+  string step_id  = 3;
+  // Tool to invoke (as registered in the agent's tool manifest).
+  string tool_name = 4;
+  // Structured tool arguments (the SDK's tool-call arguments object).
+  google.protobuf.Struct args = 5;
+  // Per-call timeout; manager may cap. Empty = manager default.
+  google.protobuf.Duration timeout = 6;
+  // Derived from (run_id, step_id, attempt) — the manager de-duplicates a
+  // retried tool side-effect against this key (invariant #8).
+  string idempotency_key = 7;
+}
+
+message ExecToolResponse {
+  ToolStatus status = 1;
+  // Structured tool result on TOOL_STATUS_OK; empty otherwise.
+  google.protobuf.Struct result = 2;
+  // Human-readable failure detail on TOOL_STATUS_ERROR / TOOL_STATUS_UNAVAILABLE.
+  string error      = 3;
 }
 
 message StatsRequest {

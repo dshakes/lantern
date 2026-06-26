@@ -1,0 +1,11 @@
+# golangci-lint v2 config (applies to every Go module — golangci searches up to
+# the repo root). This is a NEW lint gate; the codebase predates it and has many
+# pre-existing `errcheck` (unchecked Close/Fprintf/Setenv) and a few
+# `ineffassign` findings. Rather than block GA on a repo-wide cleanup, we start
+# with `govet` (catches real correctness bugs, already clean here) and expand
+# the linter set + fix the backlog in a focused follow-up.
+version: "2"
+linters:
+  default: none
+  enable:
+    - govet

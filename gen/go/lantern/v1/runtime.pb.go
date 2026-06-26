@@ -25,6 +25,7 @@ import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
+	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -213,6 +214,62 @@ func (x NetworkPolicy) Number() protoreflect.EnumNumber {
 // Deprecated: Use NetworkPolicy.Descriptor instead.
 func (NetworkPolicy) EnumDescriptor() ([]byte, []int) {
 	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{2}
+}
+
+// Typed outcome of an ExecTool call. The manager always sets one of these so
+// the caller can distinguish "the tool ran and succeeded", "the tool ran and
+// errored", and "tool execution is not wired in this build/backend" without
+// string-matching error messages.
+type ToolStatus int32
+
+const (
+	ToolStatus_TOOL_STATUS_UNSPECIFIED ToolStatus = 0
+	ToolStatus_TOOL_STATUS_OK          ToolStatus = 1 // tool ran; result is populated
+	ToolStatus_TOOL_STATUS_ERROR       ToolStatus = 2 // tool ran but failed; error is populated
+	ToolStatus_TOOL_STATUS_UNAVAILABLE ToolStatus = 3 // tool execution not wired (no harness/backend support yet)
+)
+
+// Enum value maps for ToolStatus.
+var (
+	ToolStatus_name = map[int32]string{
+		0: "TOOL_STATUS_UNSPECIFIED",
+		1: "TOOL_STATUS_OK",
+		2: "TOOL_STATUS_ERROR",
+		3: "TOOL_STATUS_UNAVAILABLE",
+	}
+	ToolStatus_value = map[string]int32{
+		"TOOL_STATUS_UNSPECIFIED": 0,
+		"TOOL_STATUS_OK":          1,
+		"TOOL_STATUS_ERROR":       2,
+		"TOOL_STATUS_UNAVAILABLE": 3,
+	}
+)
+
+func (x ToolStatus) Enum() *ToolStatus {
+	p := new(ToolStatus)
+	*p = x
+	return p
+}
+
+func (x ToolStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ToolStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_lantern_v1_runtime_proto_enumTypes[3].Descriptor()
+}
+
+func (ToolStatus) Type() protoreflect.EnumType {
+	return &file_lantern_v1_runtime_proto_enumTypes[3]
+}
+
+func (x ToolStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ToolStatus.Descriptor instead.
+func (ToolStatus) EnumDescriptor() ([]byte, []int) {
+	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{3}
 }
 
 type ResourceLimits struct {
@@ -2014,6 +2071,167 @@ func (x *ExecResponse) GetDone() bool {
 	return false
 }
 
+type ExecToolRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Target workload — the run's VM. vm_id is the scheduler-issued wire id.
+	VmId string `protobuf:"bytes,1,opt,name=vm_id,json=vmId,proto3" json:"vm_id,omitempty"`
+	// Run + step identity for correlation and idempotency.
+	RunId  string `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	StepId string `protobuf:"bytes,3,opt,name=step_id,json=stepId,proto3" json:"step_id,omitempty"`
+	// Tool to invoke (as registered in the agent's tool manifest).
+	ToolName string `protobuf:"bytes,4,opt,name=tool_name,json=toolName,proto3" json:"tool_name,omitempty"`
+	// Structured tool arguments (the SDK's tool-call arguments object).
+	Args *structpb.Struct `protobuf:"bytes,5,opt,name=args,proto3" json:"args,omitempty"`
+	// Per-call timeout; manager may cap. Empty = manager default.
+	Timeout *durationpb.Duration `protobuf:"bytes,6,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	// Derived from (run_id, step_id, attempt) — the manager de-duplicates a
+	// retried tool side-effect against this key (invariant #8).
+	IdempotencyKey string `protobuf:"bytes,7,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ExecToolRequest) Reset() {
+	*x = ExecToolRequest{}
+	mi := &file_lantern_v1_runtime_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecToolRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecToolRequest) ProtoMessage() {}
+
+func (x *ExecToolRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_lantern_v1_runtime_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecToolRequest.ProtoReflect.Descriptor instead.
+func (*ExecToolRequest) Descriptor() ([]byte, []int) {
+	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ExecToolRequest) GetVmId() string {
+	if x != nil {
+		return x.VmId
+	}
+	return ""
+}
+
+func (x *ExecToolRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ExecToolRequest) GetStepId() string {
+	if x != nil {
+		return x.StepId
+	}
+	return ""
+}
+
+func (x *ExecToolRequest) GetToolName() string {
+	if x != nil {
+		return x.ToolName
+	}
+	return ""
+}
+
+func (x *ExecToolRequest) GetArgs() *structpb.Struct {
+	if x != nil {
+		return x.Args
+	}
+	return nil
+}
+
+func (x *ExecToolRequest) GetTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.Timeout
+	}
+	return nil
+}
+
+func (x *ExecToolRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+type ExecToolResponse struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Status ToolStatus             `protobuf:"varint,1,opt,name=status,proto3,enum=lantern.v1.ToolStatus" json:"status,omitempty"`
+	// Structured tool result on TOOL_STATUS_OK; empty otherwise.
+	Result *structpb.Struct `protobuf:"bytes,2,opt,name=result,proto3" json:"result,omitempty"`
+	// Human-readable failure detail on TOOL_STATUS_ERROR / TOOL_STATUS_UNAVAILABLE.
+	Error         string `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExecToolResponse) Reset() {
+	*x = ExecToolResponse{}
+	mi := &file_lantern_v1_runtime_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExecToolResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExecToolResponse) ProtoMessage() {}
+
+func (x *ExecToolResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_lantern_v1_runtime_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExecToolResponse.ProtoReflect.Descriptor instead.
+func (*ExecToolResponse) Descriptor() ([]byte, []int) {
+	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ExecToolResponse) GetStatus() ToolStatus {
+	if x != nil {
+		return x.Status
+	}
+	return ToolStatus_TOOL_STATUS_UNSPECIFIED
+}
+
+func (x *ExecToolResponse) GetResult() *structpb.Struct {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+func (x *ExecToolResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 type StatsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VmId          string                 `protobuf:"bytes,1,opt,name=vm_id,json=vmId,proto3" json:"vm_id,omitempty"`
@@ -2024,7 +2242,7 @@ type StatsRequest struct {
 
 func (x *StatsRequest) Reset() {
 	*x = StatsRequest{}
-	mi := &file_lantern_v1_runtime_proto_msgTypes[26]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2036,7 +2254,7 @@ func (x *StatsRequest) String() string {
 func (*StatsRequest) ProtoMessage() {}
 
 func (x *StatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lantern_v1_runtime_proto_msgTypes[26]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2049,7 +2267,7 @@ func (x *StatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatsRequest.ProtoReflect.Descriptor instead.
 func (*StatsRequest) Descriptor() ([]byte, []int) {
-	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{26}
+	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *StatsRequest) GetVmId() string {
@@ -2080,7 +2298,7 @@ type HeartbeatRequest struct {
 
 func (x *HeartbeatRequest) Reset() {
 	*x = HeartbeatRequest{}
-	mi := &file_lantern_v1_runtime_proto_msgTypes[27]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2092,7 +2310,7 @@ func (x *HeartbeatRequest) String() string {
 func (*HeartbeatRequest) ProtoMessage() {}
 
 func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lantern_v1_runtime_proto_msgTypes[27]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2105,7 +2323,7 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{27}
+	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *HeartbeatRequest) GetVmId() string {
@@ -2159,7 +2377,7 @@ type HeartbeatAck struct {
 
 func (x *HeartbeatAck) Reset() {
 	*x = HeartbeatAck{}
-	mi := &file_lantern_v1_runtime_proto_msgTypes[28]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2171,7 +2389,7 @@ func (x *HeartbeatAck) String() string {
 func (*HeartbeatAck) ProtoMessage() {}
 
 func (x *HeartbeatAck) ProtoReflect() protoreflect.Message {
-	mi := &file_lantern_v1_runtime_proto_msgTypes[28]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2184,7 +2402,7 @@ func (x *HeartbeatAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatAck.ProtoReflect.Descriptor instead.
 func (*HeartbeatAck) Descriptor() ([]byte, []int) {
-	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{28}
+	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *HeartbeatAck) GetEgressOverrides() []*EgressRule {
@@ -2227,7 +2445,7 @@ type VendSecretRequest struct {
 
 func (x *VendSecretRequest) Reset() {
 	*x = VendSecretRequest{}
-	mi := &file_lantern_v1_runtime_proto_msgTypes[29]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2239,7 +2457,7 @@ func (x *VendSecretRequest) String() string {
 func (*VendSecretRequest) ProtoMessage() {}
 
 func (x *VendSecretRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_lantern_v1_runtime_proto_msgTypes[29]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2252,7 +2470,7 @@ func (x *VendSecretRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VendSecretRequest.ProtoReflect.Descriptor instead.
 func (*VendSecretRequest) Descriptor() ([]byte, []int) {
-	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{29}
+	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *VendSecretRequest) GetVmId() string {
@@ -2286,7 +2504,7 @@ type VendSecretResponse struct {
 
 func (x *VendSecretResponse) Reset() {
 	*x = VendSecretResponse{}
-	mi := &file_lantern_v1_runtime_proto_msgTypes[30]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2298,7 +2516,7 @@ func (x *VendSecretResponse) String() string {
 func (*VendSecretResponse) ProtoMessage() {}
 
 func (x *VendSecretResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_lantern_v1_runtime_proto_msgTypes[30]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2311,7 +2529,7 @@ func (x *VendSecretResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VendSecretResponse.ProtoReflect.Descriptor instead.
 func (*VendSecretResponse) Descriptor() ([]byte, []int) {
-	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{30}
+	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *VendSecretResponse) GetValue() string {
@@ -2343,7 +2561,7 @@ type HarnessReport struct {
 
 func (x *HarnessReport) Reset() {
 	*x = HarnessReport{}
-	mi := &file_lantern_v1_runtime_proto_msgTypes[31]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2355,7 +2573,7 @@ func (x *HarnessReport) String() string {
 func (*HarnessReport) ProtoMessage() {}
 
 func (x *HarnessReport) ProtoReflect() protoreflect.Message {
-	mi := &file_lantern_v1_runtime_proto_msgTypes[31]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2368,7 +2586,7 @@ func (x *HarnessReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HarnessReport.ProtoReflect.Descriptor instead.
 func (*HarnessReport) Descriptor() ([]byte, []int) {
-	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{31}
+	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *HarnessReport) GetBody() isHarnessReport_Body {
@@ -2453,7 +2671,7 @@ type HarnessAck struct {
 
 func (x *HarnessAck) Reset() {
 	*x = HarnessAck{}
-	mi := &file_lantern_v1_runtime_proto_msgTypes[32]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2465,7 +2683,7 @@ func (x *HarnessAck) String() string {
 func (*HarnessAck) ProtoMessage() {}
 
 func (x *HarnessAck) ProtoReflect() protoreflect.Message {
-	mi := &file_lantern_v1_runtime_proto_msgTypes[32]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2478,7 +2696,7 @@ func (x *HarnessAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HarnessAck.ProtoReflect.Descriptor instead.
 func (*HarnessAck) Descriptor() ([]byte, []int) {
-	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{32}
+	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *HarnessAck) GetOk() bool {
@@ -2500,7 +2718,7 @@ type AuditEvent struct {
 
 func (x *AuditEvent) Reset() {
 	*x = AuditEvent{}
-	mi := &file_lantern_v1_runtime_proto_msgTypes[33]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2512,7 +2730,7 @@ func (x *AuditEvent) String() string {
 func (*AuditEvent) ProtoMessage() {}
 
 func (x *AuditEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_lantern_v1_runtime_proto_msgTypes[33]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2525,7 +2743,7 @@ func (x *AuditEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditEvent.ProtoReflect.Descriptor instead.
 func (*AuditEvent) Descriptor() ([]byte, []int) {
-	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{33}
+	return file_lantern_v1_runtime_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *AuditEvent) GetVmId() string {
@@ -2569,7 +2787,7 @@ type ListResponse_Item struct {
 
 func (x *ListResponse_Item) Reset() {
 	*x = ListResponse_Item{}
-	mi := &file_lantern_v1_runtime_proto_msgTypes[37]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2581,7 +2799,7 @@ func (x *ListResponse_Item) String() string {
 func (*ListResponse_Item) ProtoMessage() {}
 
 func (x *ListResponse_Item) ProtoReflect() protoreflect.Message {
-	mi := &file_lantern_v1_runtime_proto_msgTypes[37]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2648,7 +2866,7 @@ type ClusterResponse_Node struct {
 
 func (x *ClusterResponse_Node) Reset() {
 	*x = ClusterResponse_Node{}
-	mi := &file_lantern_v1_runtime_proto_msgTypes[38]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2660,7 +2878,7 @@ func (x *ClusterResponse_Node) String() string {
 func (*ClusterResponse_Node) ProtoMessage() {}
 
 func (x *ClusterResponse_Node) ProtoReflect() protoreflect.Message {
-	mi := &file_lantern_v1_runtime_proto_msgTypes[38]
+	mi := &file_lantern_v1_runtime_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2737,7 +2955,7 @@ var File_lantern_v1_runtime_proto protoreflect.FileDescriptor
 const file_lantern_v1_runtime_proto_rawDesc = "" +
 	"\n" +
 	"\x18lantern/v1/runtime.proto\x12\n" +
-	"lantern.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\"\x84\x02\n" +
+	"lantern.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x84\x02\n" +
 	"\x0eResourceLimits\x12\x12\n" +
 	"\x04vcpu\x18\x01 \x01(\tR\x04vcpu\x12\x16\n" +
 	"\x06memory\x18\x02 \x01(\tR\x06memory\x12\x10\n" +
@@ -2908,7 +3126,19 @@ const file_lantern_v1_runtime_proto_rawDesc = "" +
 	"\x06stdout\x18\x01 \x01(\fR\x06stdout\x12\x16\n" +
 	"\x06stderr\x18\x02 \x01(\fR\x06stderr\x12\x1b\n" +
 	"\texit_code\x18\x03 \x01(\x05R\bexitCode\x12\x12\n" +
-	"\x04done\x18\x04 \x01(\bR\x04done\"Z\n" +
+	"\x04done\x18\x04 \x01(\bR\x04done\"\xfe\x01\n" +
+	"\x0fExecToolRequest\x12\x13\n" +
+	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x17\n" +
+	"\astep_id\x18\x03 \x01(\tR\x06stepId\x12\x1b\n" +
+	"\ttool_name\x18\x04 \x01(\tR\btoolName\x12+\n" +
+	"\x04args\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x04args\x123\n" +
+	"\atimeout\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12'\n" +
+	"\x0fidempotency_key\x18\a \x01(\tR\x0eidempotencyKey\"\x89\x01\n" +
+	"\x10ExecToolResponse\x12.\n" +
+	"\x06status\x18\x01 \x01(\x0e2\x16.lantern.v1.ToolStatusR\x06status\x12/\n" +
+	"\x06result\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06result\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"Z\n" +
 	"\fStatsRequest\x12\x13\n" +
 	"\x05vm_id\x18\x01 \x01(\tR\x04vmId\x125\n" +
 	"\binterval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\binterval\"\xc8\x01\n" +
@@ -2974,19 +3204,26 @@ const file_lantern_v1_runtime_proto_rawDesc = "" +
 	"\fNETWORK_NONE\x10\x01\x12\x1c\n" +
 	"\x18NETWORK_ALLOWLIST_DOMAIN\x10\x02\x12\x16\n" +
 	"\x12NETWORK_TENANT_VPC\x10\x03\x12\x10\n" +
-	"\fNETWORK_OPEN\x10\x042\xa1\x03\n" +
+	"\fNETWORK_OPEN\x10\x04*q\n" +
+	"\n" +
+	"ToolStatus\x12\x1b\n" +
+	"\x17TOOL_STATUS_UNSPECIFIED\x10\x00\x12\x12\n" +
+	"\x0eTOOL_STATUS_OK\x10\x01\x12\x15\n" +
+	"\x11TOOL_STATUS_ERROR\x10\x02\x12\x1b\n" +
+	"\x17TOOL_STATUS_UNAVAILABLE\x10\x032\xa1\x03\n" +
 	"\x10RuntimeScheduler\x12=\n" +
 	"\bSchedule\x12\x1b.lantern.v1.ScheduleRequest\x1a\x14.lantern.v1.VmHandle\x12>\n" +
 	"\x06Events\x12\x19.lantern.v1.EventsRequest\x1a\x17.lantern.v1.StatusEvent0\x01\x129\n" +
 	"\x04List\x12\x17.lantern.v1.ListRequest\x1a\x18.lantern.v1.ListResponse\x12H\n" +
 	"\tTerminate\x12\x1c.lantern.v1.TerminateRequest\x1a\x1d.lantern.v1.TerminateResponse\x12E\n" +
 	"\bSnapshot\x12\x1b.lantern.v1.SnapshotRequest\x1a\x1c.lantern.v1.SnapshotResponse\x12B\n" +
-	"\aCluster\x12\x1a.lantern.v1.ClusterRequest\x1a\x1b.lantern.v1.ClusterResponse2\x8e\x03\n" +
+	"\aCluster\x12\x1a.lantern.v1.ClusterRequest\x1a\x1b.lantern.v1.ClusterResponse2\xd5\x03\n" +
 	"\x0eRuntimeManager\x12<\n" +
 	"\x05Spawn\x12\x18.lantern.v1.SpawnRequest\x1a\x19.lantern.v1.SpawnResponse\x129\n" +
 	"\x04Stop\x12\x17.lantern.v1.StopRequest\x1a\x18.lantern.v1.StopResponse\x12=\n" +
 	"\x04Logs\x12\x17.lantern.v1.LogsRequest\x1a\x1a.lantern.v1.RuntimeLogLine0\x01\x12=\n" +
-	"\x04Exec\x12\x17.lantern.v1.ExecRequest\x1a\x18.lantern.v1.ExecResponse(\x010\x01\x12>\n" +
+	"\x04Exec\x12\x17.lantern.v1.ExecRequest\x1a\x18.lantern.v1.ExecResponse(\x010\x01\x12E\n" +
+	"\bExecTool\x12\x1b.lantern.v1.ExecToolRequest\x1a\x1c.lantern.v1.ExecToolResponse\x12>\n" +
 	"\x05Stats\x12\x18.lantern.v1.StatsRequest\x1a\x19.lantern.v1.ResourceUsage0\x01\x12E\n" +
 	"\bSnapshot\x12\x1b.lantern.v1.SnapshotRequest\x1a\x1c.lantern.v1.SnapshotResponse2\xa4\x02\n" +
 	"\x0eRuntimeHarness\x12G\n" +
@@ -3008,138 +3245,148 @@ func file_lantern_v1_runtime_proto_rawDescGZIP() []byte {
 	return file_lantern_v1_runtime_proto_rawDescData
 }
 
-var file_lantern_v1_runtime_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_lantern_v1_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
+var file_lantern_v1_runtime_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_lantern_v1_runtime_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_lantern_v1_runtime_proto_goTypes = []any{
 	(IsolationClass)(0),           // 0: lantern.v1.IsolationClass
 	(VmState)(0),                  // 1: lantern.v1.VmState
 	(NetworkPolicy)(0),            // 2: lantern.v1.NetworkPolicy
-	(*ResourceLimits)(nil),        // 3: lantern.v1.ResourceLimits
-	(*EgressRule)(nil),            // 4: lantern.v1.EgressRule
-	(*SecretRef)(nil),             // 5: lantern.v1.SecretRef
-	(*AgentSpec)(nil),             // 6: lantern.v1.AgentSpec
-	(*PlacementHint)(nil),         // 7: lantern.v1.PlacementHint
-	(*VmHandle)(nil),              // 8: lantern.v1.VmHandle
-	(*StatusEvent)(nil),           // 9: lantern.v1.StatusEvent
-	(*ResourceUsage)(nil),         // 10: lantern.v1.ResourceUsage
-	(*RuntimeLogLine)(nil),        // 11: lantern.v1.RuntimeLogLine
-	(*ScheduleRequest)(nil),       // 12: lantern.v1.ScheduleRequest
-	(*EventsRequest)(nil),         // 13: lantern.v1.EventsRequest
-	(*ListRequest)(nil),           // 14: lantern.v1.ListRequest
-	(*ListResponse)(nil),          // 15: lantern.v1.ListResponse
-	(*TerminateRequest)(nil),      // 16: lantern.v1.TerminateRequest
-	(*TerminateResponse)(nil),     // 17: lantern.v1.TerminateResponse
-	(*SnapshotRequest)(nil),       // 18: lantern.v1.SnapshotRequest
-	(*SnapshotResponse)(nil),      // 19: lantern.v1.SnapshotResponse
-	(*ClusterRequest)(nil),        // 20: lantern.v1.ClusterRequest
-	(*ClusterResponse)(nil),       // 21: lantern.v1.ClusterResponse
-	(*SpawnRequest)(nil),          // 22: lantern.v1.SpawnRequest
-	(*SpawnResponse)(nil),         // 23: lantern.v1.SpawnResponse
-	(*StopRequest)(nil),           // 24: lantern.v1.StopRequest
-	(*StopResponse)(nil),          // 25: lantern.v1.StopResponse
-	(*LogsRequest)(nil),           // 26: lantern.v1.LogsRequest
-	(*ExecRequest)(nil),           // 27: lantern.v1.ExecRequest
-	(*ExecResponse)(nil),          // 28: lantern.v1.ExecResponse
-	(*StatsRequest)(nil),          // 29: lantern.v1.StatsRequest
-	(*HeartbeatRequest)(nil),      // 30: lantern.v1.HeartbeatRequest
-	(*HeartbeatAck)(nil),          // 31: lantern.v1.HeartbeatAck
-	(*VendSecretRequest)(nil),     // 32: lantern.v1.VendSecretRequest
-	(*VendSecretResponse)(nil),    // 33: lantern.v1.VendSecretResponse
-	(*HarnessReport)(nil),         // 34: lantern.v1.HarnessReport
-	(*HarnessAck)(nil),            // 35: lantern.v1.HarnessAck
-	(*AuditEvent)(nil),            // 36: lantern.v1.AuditEvent
-	nil,                           // 37: lantern.v1.AgentSpec.LabelsEntry
-	nil,                           // 38: lantern.v1.AgentSpec.EnvEntry
-	nil,                           // 39: lantern.v1.RuntimeLogLine.AttrsEntry
-	(*ListResponse_Item)(nil),     // 40: lantern.v1.ListResponse.Item
-	(*ClusterResponse_Node)(nil),  // 41: lantern.v1.ClusterResponse.Node
-	nil,                           // 42: lantern.v1.ClusterResponse.Node.WarmPoolInventoryEntry
-	nil,                           // 43: lantern.v1.AuditEvent.AttrsEntry
-	(*durationpb.Duration)(nil),   // 44: google.protobuf.Duration
-	(*timestamppb.Timestamp)(nil), // 45: google.protobuf.Timestamp
+	(ToolStatus)(0),               // 3: lantern.v1.ToolStatus
+	(*ResourceLimits)(nil),        // 4: lantern.v1.ResourceLimits
+	(*EgressRule)(nil),            // 5: lantern.v1.EgressRule
+	(*SecretRef)(nil),             // 6: lantern.v1.SecretRef
+	(*AgentSpec)(nil),             // 7: lantern.v1.AgentSpec
+	(*PlacementHint)(nil),         // 8: lantern.v1.PlacementHint
+	(*VmHandle)(nil),              // 9: lantern.v1.VmHandle
+	(*StatusEvent)(nil),           // 10: lantern.v1.StatusEvent
+	(*ResourceUsage)(nil),         // 11: lantern.v1.ResourceUsage
+	(*RuntimeLogLine)(nil),        // 12: lantern.v1.RuntimeLogLine
+	(*ScheduleRequest)(nil),       // 13: lantern.v1.ScheduleRequest
+	(*EventsRequest)(nil),         // 14: lantern.v1.EventsRequest
+	(*ListRequest)(nil),           // 15: lantern.v1.ListRequest
+	(*ListResponse)(nil),          // 16: lantern.v1.ListResponse
+	(*TerminateRequest)(nil),      // 17: lantern.v1.TerminateRequest
+	(*TerminateResponse)(nil),     // 18: lantern.v1.TerminateResponse
+	(*SnapshotRequest)(nil),       // 19: lantern.v1.SnapshotRequest
+	(*SnapshotResponse)(nil),      // 20: lantern.v1.SnapshotResponse
+	(*ClusterRequest)(nil),        // 21: lantern.v1.ClusterRequest
+	(*ClusterResponse)(nil),       // 22: lantern.v1.ClusterResponse
+	(*SpawnRequest)(nil),          // 23: lantern.v1.SpawnRequest
+	(*SpawnResponse)(nil),         // 24: lantern.v1.SpawnResponse
+	(*StopRequest)(nil),           // 25: lantern.v1.StopRequest
+	(*StopResponse)(nil),          // 26: lantern.v1.StopResponse
+	(*LogsRequest)(nil),           // 27: lantern.v1.LogsRequest
+	(*ExecRequest)(nil),           // 28: lantern.v1.ExecRequest
+	(*ExecResponse)(nil),          // 29: lantern.v1.ExecResponse
+	(*ExecToolRequest)(nil),       // 30: lantern.v1.ExecToolRequest
+	(*ExecToolResponse)(nil),      // 31: lantern.v1.ExecToolResponse
+	(*StatsRequest)(nil),          // 32: lantern.v1.StatsRequest
+	(*HeartbeatRequest)(nil),      // 33: lantern.v1.HeartbeatRequest
+	(*HeartbeatAck)(nil),          // 34: lantern.v1.HeartbeatAck
+	(*VendSecretRequest)(nil),     // 35: lantern.v1.VendSecretRequest
+	(*VendSecretResponse)(nil),    // 36: lantern.v1.VendSecretResponse
+	(*HarnessReport)(nil),         // 37: lantern.v1.HarnessReport
+	(*HarnessAck)(nil),            // 38: lantern.v1.HarnessAck
+	(*AuditEvent)(nil),            // 39: lantern.v1.AuditEvent
+	nil,                           // 40: lantern.v1.AgentSpec.LabelsEntry
+	nil,                           // 41: lantern.v1.AgentSpec.EnvEntry
+	nil,                           // 42: lantern.v1.RuntimeLogLine.AttrsEntry
+	(*ListResponse_Item)(nil),     // 43: lantern.v1.ListResponse.Item
+	(*ClusterResponse_Node)(nil),  // 44: lantern.v1.ClusterResponse.Node
+	nil,                           // 45: lantern.v1.ClusterResponse.Node.WarmPoolInventoryEntry
+	nil,                           // 46: lantern.v1.AuditEvent.AttrsEntry
+	(*durationpb.Duration)(nil),   // 47: google.protobuf.Duration
+	(*timestamppb.Timestamp)(nil), // 48: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),       // 49: google.protobuf.Struct
 }
 var file_lantern_v1_runtime_proto_depIdxs = []int32{
-	44, // 0: lantern.v1.ResourceLimits.timeout:type_name -> google.protobuf.Duration
+	47, // 0: lantern.v1.ResourceLimits.timeout:type_name -> google.protobuf.Duration
 	0,  // 1: lantern.v1.AgentSpec.isolation:type_name -> lantern.v1.IsolationClass
-	3,  // 2: lantern.v1.AgentSpec.limits:type_name -> lantern.v1.ResourceLimits
+	4,  // 2: lantern.v1.AgentSpec.limits:type_name -> lantern.v1.ResourceLimits
 	2,  // 3: lantern.v1.AgentSpec.network:type_name -> lantern.v1.NetworkPolicy
-	4,  // 4: lantern.v1.AgentSpec.egress_rules:type_name -> lantern.v1.EgressRule
-	5,  // 5: lantern.v1.AgentSpec.secrets:type_name -> lantern.v1.SecretRef
-	37, // 6: lantern.v1.AgentSpec.labels:type_name -> lantern.v1.AgentSpec.LabelsEntry
-	38, // 7: lantern.v1.AgentSpec.env:type_name -> lantern.v1.AgentSpec.EnvEntry
-	45, // 8: lantern.v1.VmHandle.created_at:type_name -> google.protobuf.Timestamp
+	5,  // 4: lantern.v1.AgentSpec.egress_rules:type_name -> lantern.v1.EgressRule
+	6,  // 5: lantern.v1.AgentSpec.secrets:type_name -> lantern.v1.SecretRef
+	40, // 6: lantern.v1.AgentSpec.labels:type_name -> lantern.v1.AgentSpec.LabelsEntry
+	41, // 7: lantern.v1.AgentSpec.env:type_name -> lantern.v1.AgentSpec.EnvEntry
+	48, // 8: lantern.v1.VmHandle.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 9: lantern.v1.StatusEvent.state:type_name -> lantern.v1.VmState
-	45, // 10: lantern.v1.StatusEvent.at:type_name -> google.protobuf.Timestamp
-	10, // 11: lantern.v1.StatusEvent.usage:type_name -> lantern.v1.ResourceUsage
-	45, // 12: lantern.v1.RuntimeLogLine.at:type_name -> google.protobuf.Timestamp
-	39, // 13: lantern.v1.RuntimeLogLine.attrs:type_name -> lantern.v1.RuntimeLogLine.AttrsEntry
-	6,  // 14: lantern.v1.ScheduleRequest.spec:type_name -> lantern.v1.AgentSpec
-	7,  // 15: lantern.v1.ScheduleRequest.hint:type_name -> lantern.v1.PlacementHint
-	44, // 16: lantern.v1.ScheduleRequest.cold_start_budget:type_name -> google.protobuf.Duration
+	48, // 10: lantern.v1.StatusEvent.at:type_name -> google.protobuf.Timestamp
+	11, // 11: lantern.v1.StatusEvent.usage:type_name -> lantern.v1.ResourceUsage
+	48, // 12: lantern.v1.RuntimeLogLine.at:type_name -> google.protobuf.Timestamp
+	42, // 13: lantern.v1.RuntimeLogLine.attrs:type_name -> lantern.v1.RuntimeLogLine.AttrsEntry
+	7,  // 14: lantern.v1.ScheduleRequest.spec:type_name -> lantern.v1.AgentSpec
+	8,  // 15: lantern.v1.ScheduleRequest.hint:type_name -> lantern.v1.PlacementHint
+	47, // 16: lantern.v1.ScheduleRequest.cold_start_budget:type_name -> google.protobuf.Duration
 	1,  // 17: lantern.v1.ListRequest.states:type_name -> lantern.v1.VmState
-	40, // 18: lantern.v1.ListResponse.items:type_name -> lantern.v1.ListResponse.Item
-	44, // 19: lantern.v1.TerminateRequest.grace:type_name -> google.protobuf.Duration
-	41, // 20: lantern.v1.ClusterResponse.nodes:type_name -> lantern.v1.ClusterResponse.Node
-	6,  // 21: lantern.v1.SpawnRequest.spec:type_name -> lantern.v1.AgentSpec
-	8,  // 22: lantern.v1.SpawnRequest.handle:type_name -> lantern.v1.VmHandle
-	8,  // 23: lantern.v1.SpawnResponse.handle:type_name -> lantern.v1.VmHandle
-	44, // 24: lantern.v1.SpawnResponse.boot_duration:type_name -> google.protobuf.Duration
-	44, // 25: lantern.v1.StopRequest.grace:type_name -> google.protobuf.Duration
-	45, // 26: lantern.v1.LogsRequest.since:type_name -> google.protobuf.Timestamp
-	44, // 27: lantern.v1.StatsRequest.interval:type_name -> google.protobuf.Duration
-	45, // 28: lantern.v1.HeartbeatRequest.at:type_name -> google.protobuf.Timestamp
-	10, // 29: lantern.v1.HeartbeatRequest.usage:type_name -> lantern.v1.ResourceUsage
-	4,  // 30: lantern.v1.HeartbeatAck.egress_overrides:type_name -> lantern.v1.EgressRule
-	3,  // 31: lantern.v1.HeartbeatAck.limits_override:type_name -> lantern.v1.ResourceLimits
-	44, // 32: lantern.v1.VendSecretRequest.ttl:type_name -> google.protobuf.Duration
-	45, // 33: lantern.v1.VendSecretResponse.expires_at:type_name -> google.protobuf.Timestamp
-	11, // 34: lantern.v1.HarnessReport.log:type_name -> lantern.v1.RuntimeLogLine
-	36, // 35: lantern.v1.HarnessReport.audit:type_name -> lantern.v1.AuditEvent
-	45, // 36: lantern.v1.AuditEvent.at:type_name -> google.protobuf.Timestamp
-	43, // 37: lantern.v1.AuditEvent.attrs:type_name -> lantern.v1.AuditEvent.AttrsEntry
-	8,  // 38: lantern.v1.ListResponse.Item.handle:type_name -> lantern.v1.VmHandle
-	6,  // 39: lantern.v1.ListResponse.Item.spec:type_name -> lantern.v1.AgentSpec
-	1,  // 40: lantern.v1.ListResponse.Item.state:type_name -> lantern.v1.VmState
-	10, // 41: lantern.v1.ListResponse.Item.usage:type_name -> lantern.v1.ResourceUsage
-	45, // 42: lantern.v1.ListResponse.Item.last_heartbeat:type_name -> google.protobuf.Timestamp
-	42, // 43: lantern.v1.ClusterResponse.Node.warm_pool_inventory:type_name -> lantern.v1.ClusterResponse.Node.WarmPoolInventoryEntry
-	12, // 44: lantern.v1.RuntimeScheduler.Schedule:input_type -> lantern.v1.ScheduleRequest
-	13, // 45: lantern.v1.RuntimeScheduler.Events:input_type -> lantern.v1.EventsRequest
-	14, // 46: lantern.v1.RuntimeScheduler.List:input_type -> lantern.v1.ListRequest
-	16, // 47: lantern.v1.RuntimeScheduler.Terminate:input_type -> lantern.v1.TerminateRequest
-	18, // 48: lantern.v1.RuntimeScheduler.Snapshot:input_type -> lantern.v1.SnapshotRequest
-	20, // 49: lantern.v1.RuntimeScheduler.Cluster:input_type -> lantern.v1.ClusterRequest
-	22, // 50: lantern.v1.RuntimeManager.Spawn:input_type -> lantern.v1.SpawnRequest
-	24, // 51: lantern.v1.RuntimeManager.Stop:input_type -> lantern.v1.StopRequest
-	26, // 52: lantern.v1.RuntimeManager.Logs:input_type -> lantern.v1.LogsRequest
-	27, // 53: lantern.v1.RuntimeManager.Exec:input_type -> lantern.v1.ExecRequest
-	29, // 54: lantern.v1.RuntimeManager.Stats:input_type -> lantern.v1.StatsRequest
-	18, // 55: lantern.v1.RuntimeManager.Snapshot:input_type -> lantern.v1.SnapshotRequest
-	30, // 56: lantern.v1.RuntimeHarness.Heartbeat:input_type -> lantern.v1.HeartbeatRequest
-	32, // 57: lantern.v1.RuntimeHarness.VendSecret:input_type -> lantern.v1.VendSecretRequest
-	34, // 58: lantern.v1.RuntimeHarness.Report:input_type -> lantern.v1.HarnessReport
-	27, // 59: lantern.v1.RuntimeHarness.Exec:input_type -> lantern.v1.ExecRequest
-	8,  // 60: lantern.v1.RuntimeScheduler.Schedule:output_type -> lantern.v1.VmHandle
-	9,  // 61: lantern.v1.RuntimeScheduler.Events:output_type -> lantern.v1.StatusEvent
-	15, // 62: lantern.v1.RuntimeScheduler.List:output_type -> lantern.v1.ListResponse
-	17, // 63: lantern.v1.RuntimeScheduler.Terminate:output_type -> lantern.v1.TerminateResponse
-	19, // 64: lantern.v1.RuntimeScheduler.Snapshot:output_type -> lantern.v1.SnapshotResponse
-	21, // 65: lantern.v1.RuntimeScheduler.Cluster:output_type -> lantern.v1.ClusterResponse
-	23, // 66: lantern.v1.RuntimeManager.Spawn:output_type -> lantern.v1.SpawnResponse
-	25, // 67: lantern.v1.RuntimeManager.Stop:output_type -> lantern.v1.StopResponse
-	11, // 68: lantern.v1.RuntimeManager.Logs:output_type -> lantern.v1.RuntimeLogLine
-	28, // 69: lantern.v1.RuntimeManager.Exec:output_type -> lantern.v1.ExecResponse
-	10, // 70: lantern.v1.RuntimeManager.Stats:output_type -> lantern.v1.ResourceUsage
-	19, // 71: lantern.v1.RuntimeManager.Snapshot:output_type -> lantern.v1.SnapshotResponse
-	31, // 72: lantern.v1.RuntimeHarness.Heartbeat:output_type -> lantern.v1.HeartbeatAck
-	33, // 73: lantern.v1.RuntimeHarness.VendSecret:output_type -> lantern.v1.VendSecretResponse
-	35, // 74: lantern.v1.RuntimeHarness.Report:output_type -> lantern.v1.HarnessAck
-	28, // 75: lantern.v1.RuntimeHarness.Exec:output_type -> lantern.v1.ExecResponse
-	60, // [60:76] is the sub-list for method output_type
-	44, // [44:60] is the sub-list for method input_type
-	44, // [44:44] is the sub-list for extension type_name
-	44, // [44:44] is the sub-list for extension extendee
-	0,  // [0:44] is the sub-list for field type_name
+	43, // 18: lantern.v1.ListResponse.items:type_name -> lantern.v1.ListResponse.Item
+	47, // 19: lantern.v1.TerminateRequest.grace:type_name -> google.protobuf.Duration
+	44, // 20: lantern.v1.ClusterResponse.nodes:type_name -> lantern.v1.ClusterResponse.Node
+	7,  // 21: lantern.v1.SpawnRequest.spec:type_name -> lantern.v1.AgentSpec
+	9,  // 22: lantern.v1.SpawnRequest.handle:type_name -> lantern.v1.VmHandle
+	9,  // 23: lantern.v1.SpawnResponse.handle:type_name -> lantern.v1.VmHandle
+	47, // 24: lantern.v1.SpawnResponse.boot_duration:type_name -> google.protobuf.Duration
+	47, // 25: lantern.v1.StopRequest.grace:type_name -> google.protobuf.Duration
+	48, // 26: lantern.v1.LogsRequest.since:type_name -> google.protobuf.Timestamp
+	49, // 27: lantern.v1.ExecToolRequest.args:type_name -> google.protobuf.Struct
+	47, // 28: lantern.v1.ExecToolRequest.timeout:type_name -> google.protobuf.Duration
+	3,  // 29: lantern.v1.ExecToolResponse.status:type_name -> lantern.v1.ToolStatus
+	49, // 30: lantern.v1.ExecToolResponse.result:type_name -> google.protobuf.Struct
+	47, // 31: lantern.v1.StatsRequest.interval:type_name -> google.protobuf.Duration
+	48, // 32: lantern.v1.HeartbeatRequest.at:type_name -> google.protobuf.Timestamp
+	11, // 33: lantern.v1.HeartbeatRequest.usage:type_name -> lantern.v1.ResourceUsage
+	5,  // 34: lantern.v1.HeartbeatAck.egress_overrides:type_name -> lantern.v1.EgressRule
+	4,  // 35: lantern.v1.HeartbeatAck.limits_override:type_name -> lantern.v1.ResourceLimits
+	47, // 36: lantern.v1.VendSecretRequest.ttl:type_name -> google.protobuf.Duration
+	48, // 37: lantern.v1.VendSecretResponse.expires_at:type_name -> google.protobuf.Timestamp
+	12, // 38: lantern.v1.HarnessReport.log:type_name -> lantern.v1.RuntimeLogLine
+	39, // 39: lantern.v1.HarnessReport.audit:type_name -> lantern.v1.AuditEvent
+	48, // 40: lantern.v1.AuditEvent.at:type_name -> google.protobuf.Timestamp
+	46, // 41: lantern.v1.AuditEvent.attrs:type_name -> lantern.v1.AuditEvent.AttrsEntry
+	9,  // 42: lantern.v1.ListResponse.Item.handle:type_name -> lantern.v1.VmHandle
+	7,  // 43: lantern.v1.ListResponse.Item.spec:type_name -> lantern.v1.AgentSpec
+	1,  // 44: lantern.v1.ListResponse.Item.state:type_name -> lantern.v1.VmState
+	11, // 45: lantern.v1.ListResponse.Item.usage:type_name -> lantern.v1.ResourceUsage
+	48, // 46: lantern.v1.ListResponse.Item.last_heartbeat:type_name -> google.protobuf.Timestamp
+	45, // 47: lantern.v1.ClusterResponse.Node.warm_pool_inventory:type_name -> lantern.v1.ClusterResponse.Node.WarmPoolInventoryEntry
+	13, // 48: lantern.v1.RuntimeScheduler.Schedule:input_type -> lantern.v1.ScheduleRequest
+	14, // 49: lantern.v1.RuntimeScheduler.Events:input_type -> lantern.v1.EventsRequest
+	15, // 50: lantern.v1.RuntimeScheduler.List:input_type -> lantern.v1.ListRequest
+	17, // 51: lantern.v1.RuntimeScheduler.Terminate:input_type -> lantern.v1.TerminateRequest
+	19, // 52: lantern.v1.RuntimeScheduler.Snapshot:input_type -> lantern.v1.SnapshotRequest
+	21, // 53: lantern.v1.RuntimeScheduler.Cluster:input_type -> lantern.v1.ClusterRequest
+	23, // 54: lantern.v1.RuntimeManager.Spawn:input_type -> lantern.v1.SpawnRequest
+	25, // 55: lantern.v1.RuntimeManager.Stop:input_type -> lantern.v1.StopRequest
+	27, // 56: lantern.v1.RuntimeManager.Logs:input_type -> lantern.v1.LogsRequest
+	28, // 57: lantern.v1.RuntimeManager.Exec:input_type -> lantern.v1.ExecRequest
+	30, // 58: lantern.v1.RuntimeManager.ExecTool:input_type -> lantern.v1.ExecToolRequest
+	32, // 59: lantern.v1.RuntimeManager.Stats:input_type -> lantern.v1.StatsRequest
+	19, // 60: lantern.v1.RuntimeManager.Snapshot:input_type -> lantern.v1.SnapshotRequest
+	33, // 61: lantern.v1.RuntimeHarness.Heartbeat:input_type -> lantern.v1.HeartbeatRequest
+	35, // 62: lantern.v1.RuntimeHarness.VendSecret:input_type -> lantern.v1.VendSecretRequest
+	37, // 63: lantern.v1.RuntimeHarness.Report:input_type -> lantern.v1.HarnessReport
+	28, // 64: lantern.v1.RuntimeHarness.Exec:input_type -> lantern.v1.ExecRequest
+	9,  // 65: lantern.v1.RuntimeScheduler.Schedule:output_type -> lantern.v1.VmHandle
+	10, // 66: lantern.v1.RuntimeScheduler.Events:output_type -> lantern.v1.StatusEvent
+	16, // 67: lantern.v1.RuntimeScheduler.List:output_type -> lantern.v1.ListResponse
+	18, // 68: lantern.v1.RuntimeScheduler.Terminate:output_type -> lantern.v1.TerminateResponse
+	20, // 69: lantern.v1.RuntimeScheduler.Snapshot:output_type -> lantern.v1.SnapshotResponse
+	22, // 70: lantern.v1.RuntimeScheduler.Cluster:output_type -> lantern.v1.ClusterResponse
+	24, // 71: lantern.v1.RuntimeManager.Spawn:output_type -> lantern.v1.SpawnResponse
+	26, // 72: lantern.v1.RuntimeManager.Stop:output_type -> lantern.v1.StopResponse
+	12, // 73: lantern.v1.RuntimeManager.Logs:output_type -> lantern.v1.RuntimeLogLine
+	29, // 74: lantern.v1.RuntimeManager.Exec:output_type -> lantern.v1.ExecResponse
+	31, // 75: lantern.v1.RuntimeManager.ExecTool:output_type -> lantern.v1.ExecToolResponse
+	11, // 76: lantern.v1.RuntimeManager.Stats:output_type -> lantern.v1.ResourceUsage
+	20, // 77: lantern.v1.RuntimeManager.Snapshot:output_type -> lantern.v1.SnapshotResponse
+	34, // 78: lantern.v1.RuntimeHarness.Heartbeat:output_type -> lantern.v1.HeartbeatAck
+	36, // 79: lantern.v1.RuntimeHarness.VendSecret:output_type -> lantern.v1.VendSecretResponse
+	38, // 80: lantern.v1.RuntimeHarness.Report:output_type -> lantern.v1.HarnessAck
+	29, // 81: lantern.v1.RuntimeHarness.Exec:output_type -> lantern.v1.ExecResponse
+	65, // [65:82] is the sub-list for method output_type
+	48, // [48:65] is the sub-list for method input_type
+	48, // [48:48] is the sub-list for extension type_name
+	48, // [48:48] is the sub-list for extension extendee
+	0,  // [0:48] is the sub-list for field type_name
 }
 
 func init() { file_lantern_v1_runtime_proto_init() }
@@ -3147,7 +3394,7 @@ func file_lantern_v1_runtime_proto_init() {
 	if File_lantern_v1_runtime_proto != nil {
 		return
 	}
-	file_lantern_v1_runtime_proto_msgTypes[31].OneofWrappers = []any{
+	file_lantern_v1_runtime_proto_msgTypes[33].OneofWrappers = []any{
 		(*HarnessReport_Log)(nil),
 		(*HarnessReport_OtlpTraces)(nil),
 		(*HarnessReport_PrometheusMetrics)(nil),
@@ -3158,8 +3405,8 @@ func file_lantern_v1_runtime_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_lantern_v1_runtime_proto_rawDesc), len(file_lantern_v1_runtime_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   41,
+			NumEnums:      4,
+			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

@@ -158,6 +158,48 @@ end tell`;
     return { ok: true, detail: `"${spec.title}" → ${calName} · ${formatHuman(start)}` };
   }
 
+  // Delete a calendar event by its exact summary + start date. Backs the
+  // AUTO-ACT LADDER's "undo" — the bridge auto-added an event, the owner said
+  // "undo", and we revert it. Matches on (summary, start within ±2min) so a
+  // re-run with the same title/time targets the right event and not an
+  // unrelated one. Deletes ALL matches (idempotent: a prior delete leaves none
+  // → ok with deleted:0). `start` is an ISO datetime (local TZ assumed).
+  async deleteCalendarEvent(spec: { title: string; start: string }): Promise<ActionResult> {
+    if (!spec.title || !spec.start) return { ok: false, reason: "title + start required" };
+    const start = parseLocalDate(spec.start);
+    if (!start) return { ok: false, reason: `invalid start date: ${spec.start}` };
+    const aplStr = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "").replace(/\n/g, "\\n").replace(/\t/g, "\\t")}"`;
+    // Window: start ± 2 minutes (component-built date, locale-safe).
+    const dateBuilder = (varName: string, d: Date) => `
+    set ${varName} to current date
+    set year of ${varName} to ${d.getFullYear()}
+    set month of ${varName} to ${d.getMonth() + 1}
+    set day of ${varName} to ${d.getDate()}
+    set hours of ${varName} to ${d.getHours()}
+    set minutes of ${varName} to ${d.getMinutes()}
+    set seconds of ${varName} to ${d.getSeconds()}`;
+    const lo = new Date(start.getTime() - 120_000);
+    const hi = new Date(start.getTime() + 120_000);
+    const script = `
+${dateBuilder("loDate", lo)}
+${dateBuilder("hiDate", hi)}
+set deleted to 0
+tell application "Calendar"
+  repeat with c in calendars
+    try
+      repeat with ev in (every event of c whose summary is ${aplStr(spec.title)} and start date is greater than or equal to loDate and start date is less than or equal to hiDate)
+        delete ev
+        set deleted to deleted + 1
+      end repeat
+    end try
+  end repeat
+end tell
+return deleted as string`;
+    const res = await this.runOsascript(script);
+    if (!res.ok) return res;
+    return { ok: true, detail: `deleted ${(res.detail || "0").trim()} event(s)` };
+  }
+
   // ------- Notes -------
 
   async createNote(spec: NoteSpec): Promise<ActionResult> {
@@ -209,6 +251,86 @@ end tell`;
     const res = await this.runOsascript(script);
     if (!res.ok) return res;
     return { ok: true, detail: `note "${spec.title}"` };
+  }
+
+  // Append a line to a named note, creating the note if it doesn't exist.
+  // Backs the AUTO-ACT LADDER's delivery logging: one rolling "Deliveries"
+  // note the bot appends each delivery to (rather than a new note per package,
+  // which would clutter Notes.app). Idempotent at the bridge layer via the
+  // acted-keys store; this method itself just appends. `line` is plain text.
+  async appendToNote(spec: { title: string; line: string }): Promise<ActionResult> {
+    if (!spec.title || !spec.line) return { ok: false, reason: "title + line required" };
+    const aplStr = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "").replace(/\n/g, "\\n").replace(/\t/g, "\\t")}"`;
+    const lineHtml = `<div>${escapeHtml(spec.line)}</div>`;
+    const seedHtml = `<h3>${escapeHtml(spec.title)}</h3>` + lineHtml;
+    // Find the FIRST note named title across accounts; append the line to its
+    // body. If none exists, create it seeded with the title + first line.
+    const script = `
+tell application "Notes"
+  set theNote to missing value
+  repeat with anAccount in accounts
+    try
+      set theNote to first note of anAccount whose name is ${aplStr(spec.title)}
+      exit repeat
+    on error
+      -- keep looking
+    end try
+  end repeat
+  if theNote is missing value then
+    make new note with properties {name:${aplStr(spec.title)}, body:${aplStr(seedHtml)}}
+  else
+    set body of theNote to (body of theNote) & ${aplStr(lineHtml)}
+  end if
+end tell`;
+    const res = await this.runOsascript(script);
+    if (!res.ok) return res;
+    return { ok: true, detail: `appended to "${spec.title}"` };
+  }
+
+  // Remove the FIRST occurrence of an exact line from a named note. Backs the
+  // delivery-log undo: the bot appended `<div>line</div>`, the owner said
+  // "undo", and we strip that one div back out. No-op (ok) when the note or
+  // line isn't found, so undo is idempotent.
+  async removeNoteLine(spec: { title: string; line: string }): Promise<ActionResult> {
+    if (!spec.title || !spec.line) return { ok: false, reason: "title + line required" };
+    const aplStr = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "").replace(/\n/g, "\\n").replace(/\t/g, "\\t")}"`;
+    const lineHtml = `<div>${escapeHtml(spec.line)}</div>`;
+    // AppleScript text-item replace: split body on the line-div, rejoin with
+    // empty delimiter — drops the FIRST match. Guard with a contains check so a
+    // miss is a clean no-op.
+    const script = `
+tell application "Notes"
+  set theNote to missing value
+  repeat with anAccount in accounts
+    try
+      set theNote to first note of anAccount whose name is ${aplStr(spec.title)}
+      exit repeat
+    on error
+      -- keep looking
+    end try
+  end repeat
+  if theNote is not missing value then
+    set b to body of theNote
+    set needle to ${aplStr(lineHtml)}
+    if b contains needle then
+      set AppleScript's text item delimiters to needle
+      set theItems to text items of b
+      set AppleScript's text item delimiters to ""
+      -- drop only the FIRST occurrence: rejoin item 1 + needle-less remainder
+      if (count of theItems) > 1 then
+        set rebuilt to item 1 of theItems
+        repeat with i from 2 to count of theItems
+          set rebuilt to rebuilt & (item i of theItems)
+        end repeat
+        set body of theNote to rebuilt
+      end if
+    end if
+  end if
+end tell
+return "ok"`;
+    const res = await this.runOsascript(script);
+    if (!res.ok) return res;
+    return { ok: true, detail: `removed line from "${spec.title}"` };
   }
 
   // ------- Mail (draft only — owner reviews + sends manually) -------

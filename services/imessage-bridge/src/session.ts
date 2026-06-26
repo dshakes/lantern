@@ -33,10 +33,12 @@ import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
   agentPersonaPrompt,
   defaultQuietHours,
+  countTrailingUnanswered,
   detectBotTells,
   detectEscalation,
   greetingReply,
   inferStyle,
+  isNoReplySentinel,
   isQuietHours,
   naturalize,
   shouldRespond,
@@ -46,6 +48,8 @@ import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
+import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
+import { deviceContextBlock as iphoneContextBlock } from "@lantern/bridge-core/device-signals";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
   PersonalDocs,
@@ -179,13 +183,14 @@ export function shouldFireDropNotice(
   return true;
 }
 import { MacActions, extractActionMarkers, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
-import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
 import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
 import {
   ownerVoiceExemplars,
   formatOwnerVoiceBlock,
+  dedupeKey as ownerVoiceDedupeKey,
   type OwnerVoiceSample,
 } from "@lantern/bridge-core/owner-voice";
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
@@ -266,6 +271,14 @@ const POLL_INTERVAL_MS = 500;
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+// AUTO-ACT LADDER — derive an event END 30 min after a local-ISO START
+// ("2026-07-04T18:10:00"), preserving the same local-TZ ISO shape (no Z).
+function localPlus30(startIso: string): string {
+  const d = new Date(startIso);
+  const e = new Date(d.getTime() + 30 * 60_000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${e.getFullYear()}-${p(e.getMonth() + 1)}-${p(e.getDate())}T${p(e.getHours())}:${p(e.getMinutes())}:00`;
+}
 // Default 60 minutes; override via LANTERN_AGENT_PAUSE_MIN (matches the
 // WhatsApp bridge's env var so the owner sets it once in shared config).
 const PAUSE_DURATION_MS =
@@ -339,6 +352,12 @@ export class IMessageSession {
   // themselves (used as exemplars for "talk like Shekhar").
   private inboundHistory: Map<string, string[]> = new Map();
   private ownerSentHistory: Map<string, string[]> = new Map();
+  // GLOBAL owner-voice pool mined from a DEEP scan of chat.db (across all
+  // contacts, reaching past the bot-dominated recent rows). Unioned into
+  // the per-contact buckets when building the persona voice block so even
+  // a thin/new contact hears the owner's real voice from hundreds of
+  // authentic samples. Seeded once at boot; bot-self lines filtered out.
+  private ownerVoiceGlobal: string[] = [];
   private contactNames: Map<string, string> = new Map(); // handle -> display name
 
   // Last non-empty handle we saw on an isFromMe row. iMessage's
@@ -561,6 +580,31 @@ export class IMessageSession {
   private styleLessonsBlock = "";
   private flywheelTimer: ReturnType<typeof setInterval> | null = null;
   private nudgeTimer: ReturnType<typeof setInterval> | null = null;
+  // GMAIL INGESTION — poll the owner's mailbox and feed bills/deliveries/etc
+  // into the SAME life-event engine the texts use. Default OFF (until the owner
+  // re-auths Google). `gmailAuthWarned` gates the one-time re-auth warning so an
+  // expired token doesn't spam the log every tick.
+  private gmailIngestTimer: ReturnType<typeof setInterval> | null = null;
+  private gmailAuthWarned = false;
+  private static readonly GMAIL_INGEST_DEFAULT_SEC = 180;
+  // 4) MAC APP-USAGE. OWNER-ONLY ambient signal ("learn what the owner uses").
+  // Default OFF (LANTERN_MAC_USAGE=on). On a slow interval we distill the
+  // owner's local macOS app-usage into ONE short "what you've been doing" line
+  // and stash it here, then inject it ONLY into the OWNER's self-chat assistant
+  // context — never a contact reply. Summaries only; the reader fails closed.
+  private macUsageTimer: ReturnType<typeof setInterval> | null = null;
+  private macUsageSummaryLine = "";
+  private static readonly MAC_USAGE_DEFAULT_SEC = 30 * 60; // every 30 min
+  // 4b) iPHONE APP-CONTEXT. OWNER-ONLY ambient signal ("learn what the owner
+  // uses on his phone"). The owner's iOS Shortcuts automations POST events to
+  // the dashboard /api/signals route, which appends them to
+  // ~/.lantern/device-signals.jsonl. On a slow interval we tail + summarize and
+  // stash ONE short line here, injected ONLY into the OWNER's self-chat assistant
+  // context — never a contact reply. AUTO-ON when the file exists / has recent
+  // data; kill with LANTERN_IPHONE_SIGNALS=off. Reader fails closed.
+  private iphoneSignalsTimer: ReturnType<typeof setInterval> | null = null;
+  private iphoneSignalsSummaryLine = "";
+  private static readonly IPHONE_SIGNALS_DEFAULT_SEC = 10 * 60; // every 10 min
   // Fired-nudge dedupe keys persisted to disk (0600) so a launchd respawn
   // doesn't re-nag the owner with a nudge already surfaced today. Map of
   // dedupeKey -> epoch ms fired; GC'd on load past NUDGE_DEDUP_TTL_MS.
@@ -684,21 +728,31 @@ export class IMessageSession {
       defaultScreenContextConfig(),
       this.logger,
       async (pngPath: string): Promise<string> => {
+        // On-device OCR via the macOS Vision framework
+        // (scripts/ocr/vision-ocr.py — Python + prebuilt pyobjc wheels).
+        // Local, free, NO API key, and the screen image NEVER leaves the
+        // Mac — strictly more private than the cloud /v1/vision/ocr path,
+        // and it works without an LLM vision key/credit. Overridable via
+        // LANTERN_OCR_PYTHON / LANTERN_OCR_SCRIPT.
         try {
-          const fs = await import("fs");
-          const { authedFetch } = await import("@lantern/bridge-core/auth");
-          const buf = fs.readFileSync(pngPath);
-          const res = await authedFetch("/v1/vision/ocr", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              imageDataUrl: `data:image/png;base64,${buf.toString("base64")}`,
-              prompt: "OCR this screen. Capture all visible text accurately. Skip pure decorative elements.",
-            }),
+          const { spawn } = await import("child_process");
+          const { fileURLToPath } = await import("url");
+          const here = fileURLToPath(import.meta.url);
+          const ocrScript =
+            process.env.LANTERN_OCR_SCRIPT ||
+            join(here, "..", "..", "..", "..", "scripts", "ocr", "vision-ocr.py");
+          const py = process.env.LANTERN_OCR_PYTHON || "/usr/bin/python3";
+          return await new Promise<string>((resolve) => {
+            const proc = spawn(py, [ocrScript, pngPath]);
+            let out = "";
+            const timer = setTimeout(() => {
+              try { proc.kill("SIGKILL"); } catch {}
+              resolve("");
+            }, 10000);
+            proc.stdout.on("data", (d) => (out += d.toString()));
+            proc.on("close", () => { clearTimeout(timer); resolve(out.trim()); });
+            proc.on("error", () => { clearTimeout(timer); resolve(""); });
           });
-          if (!res.ok) return "";
-          const data = (await res.json()) as { text?: string };
-          return (data.text || "").trim();
         } catch {
           return "";
         }
@@ -754,6 +808,9 @@ export class IMessageSession {
     this.startQuietReplay();
     this.startLearningFlywheel();
     this.startAnticipationNudges();
+    this.startGmailIngest();
+    this.startMacUsage();
+    this.startIphoneSignals();
     this.logger.info("iMessage session ready");
   }
 
@@ -826,6 +883,19 @@ export class IMessageSession {
   private escalationsToday = 0;
   private digestStopFn: (() => void) | null = null;
 
+  // LIFE-EVENT ENGINE: short owner-facing lines for 'digest'-routed events
+  // (deliveries, receipts, far-out bills) accumulated since the last digest.
+  // Drained into the morning briefing. In-memory — a batched FYI lost on
+  // restart is acceptable (the source SMS is still in the user's Messages).
+  private lifeEventDigestQueue: string[] = [];
+  // Most-recent life-event surfaced per owner target — so a later "no"/ignore
+  // can be attributed to the right kind for the owner-model downgrade.
+  private lastLifeEventKind: import("@lantern/bridge-core/life-events").LifeEventKind | null = null;
+  // AUTO-ACT LADDER — in-memory ring of the auto-actions taken today (text +
+  // ts), backing the "what did you do today" recap. Bounded; reset is fine on
+  // restart (the source log lines are still in the owner's self-chat).
+  private autoActLog: Array<{ text: string; ts: number }> = [];
+
   private startDailyDigest(): void {
     this.digestStopFn?.();
     const handle = scheduleDigest({
@@ -841,10 +911,12 @@ export class IMessageSession {
           monitoredChats: this.monitoredChats.size,
           escalations: this.escalationsToday,
           channelLabel: "iMessage",
+          lifeEvents: [...this.lifeEventDigestQueue],
         };
         // Reset counters AFTER snapshotting so the next day starts fresh.
         this.repliesSentToday = 0;
         this.escalationsToday = 0;
+        this.lifeEventDigestQueue = [];
         return data;
       },
       deliver: async (body) => {
@@ -955,15 +1027,22 @@ export class IMessageSession {
   // cold-start fix: a contact with no per-contact history still hears the
   // owner's actual voice. For a Telugu inbound we also pass a Telugu-only
   // subset so the reply mimics the owner's real Telangana phrasing.
-  private buildOwnerVoiceBlock(ownerName: string, teluguInbound: boolean): string {
+  private buildOwnerVoiceBlock(ownerName: string, teluguInbound: boolean, relevantTo?: string): string {
     const samples: OwnerVoiceSample[] = [];
     for (const msgs of this.ownerSentHistory.values()) {
       for (const m of msgs) samples.push({ text: m });
     }
+    // Union in the deep-scan global pool. ownerVoiceExemplars dedupes
+    // (same key as the corpus miner) so per-contact + global overlap
+    // collapses; the global pool just widens reach + register diversity.
+    for (const m of this.ownerVoiceGlobal) samples.push({ text: m });
     if (samples.length === 0) return "";
-    const general = ownerVoiceExemplars(samples, { max: 12 });
+    // relevantTo (the current inbound) ranks exemplars by keyword overlap so
+    // the few-shot is shaped like the message being answered — recency is the
+    // tie-breaker / fallback when nothing overlaps.
+    const general = ownerVoiceExemplars(samples, { max: 12, relevantTo });
     const telugu = teluguInbound
-      ? ownerVoiceExemplars(samples, { max: 8, lang: "telugu" })
+      ? ownerVoiceExemplars(samples, { max: 8, lang: "telugu", relevantTo })
       : [];
     return formatOwnerVoiceBlock(ownerName, general, telugu);
   }
@@ -1062,6 +1141,198 @@ export class IMessageSession {
       }
     } catch (err) {
       this.logger.warn({ err }, "anticipation tick failed (non-fatal)");
+    }
+  }
+
+  // 3) GMAIL INGESTION. Poll the OWNER's mailbox via the control-plane Gmail
+  // connector (the OAuth token lives there, encrypted — the bridge never does
+  // OAuth) and feed each NEW email through the SAME life-event engine the texts
+  // use, so a bill / delivery / travel / fraud notice arriving by EMAIL gets the
+  // same proactive surface + auto-act path (including cross-channel idempotency
+  // with the SMS version — a UPS email + UPS text for one package surface once).
+  //
+  // Ships DARK: gated on LANTERN_GMAIL_INGEST=on (default off) until the owner
+  // re-auths Google in the dashboard. An expired/invalid token logs ONE clear
+  // re-auth warning then backs off (never spams); network blips retry next tick.
+  private startGmailIngest(): void {
+    if (this.gmailIngestTimer) return;
+    if ((process.env.LANTERN_GMAIL_INGEST || "off").toLowerCase() !== "on") {
+      this.logger.info("gmail ingestion disabled (set LANTERN_GMAIL_INGEST=on after re-authing Google)");
+      return;
+    }
+    const sec = Math.max(60, parseInt(process.env.LANTERN_GMAIL_POLL_SEC || "", 10) || IMessageSession.GMAIL_INGEST_DEFAULT_SEC);
+    const t = setInterval(() => {
+      void this.runGmailIngestTick();
+    }, sec * 1000);
+    t.unref?.();
+    this.gmailIngestTimer = t;
+    this.logger.info({ pollSec: sec }, "gmail ingestion enabled");
+    // First poll ~30s after boot so the connector client + auth are warm.
+    const kick = setTimeout(() => void this.runGmailIngestTick(), 30_000);
+    kick.unref?.();
+  }
+
+  private async runGmailIngestTick(): Promise<void> {
+    try {
+      const { pollGmailOnce } = await import("@lantern/bridge-core/gmail-ingest");
+      const { defaultConnectorClient } = await import("@lantern/bridge-core/prefetch");
+      const client = defaultConnectorClient(this.logger);
+      const execute = (connectorId: string, action: string, params: Record<string, string | number>) =>
+        client.execute(connectorId, action, params);
+
+      const outcome = await pollGmailOnce(execute, { limit: 25 });
+
+      if (outcome.status === "auth_expired") {
+        // ONE-TIME warning, then back off — don't spam every tick.
+        if (!this.gmailAuthWarned) {
+          this.gmailAuthWarned = true;
+          this.logger.warn(
+            { err: outcome.error },
+            "Gmail token expired — re-auth Google in the dashboard (/connectors). Gmail ingestion paused until then.",
+          );
+        }
+        return;
+      }
+      if (outcome.status === "error") {
+        // Transient (network / 5xx) — retry next tick, debug-level only.
+        this.logger.debug({ err: outcome.error }, "gmail ingest poll error — retrying next tick");
+        return;
+      }
+      // A successful poll means auth is healthy again — re-arm the warning so a
+      // future expiry warns once more.
+      this.gmailAuthWarned = false;
+      if (outcome.newMessages.length === 0) return;
+
+      this.logger.info({ count: outcome.newMessages.length }, "gmail ingest: new emails to classify");
+      for (const { message, text } of outcome.newMessages) {
+        try {
+          // Feed through the EXACT same engine as texts — surfaceLifeEvent
+          // classifies (channel:"email"), runs the auto-act ladder + proactive
+          // routing, and dedups cross-channel via the shared acted-keys store.
+          await this.surfaceLifeEvent(`email:${message.id}`, text, "email");
+        } catch (err) {
+          this.logger.warn({ err, id: message.id }, "gmail ingest: surfacing one email failed (non-fatal)");
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "gmail ingest tick failed (non-fatal)");
+    }
+  }
+
+  // 4) MAC APP-USAGE. OWNER-ONLY ambient signal: read the owner's local macOS
+  // app-usage (knowledgeC.db) on a slow interval, distill it to ONE short line,
+  // and stash it for injection into the OWNER's self-chat assistant context.
+  //
+  // Ships DARK: gated on LANTERN_MAC_USAGE=on (default off). The summary is
+  // injected ONLY into handleOwnerDocQuery (owner self-chat) — NEVER into a
+  // contact reply, so a contact can't learn what apps the owner uses. The
+  // reader fails closed (no FDA / missing DB / schema drift → empty, no crash).
+  private startMacUsage(): void {
+    if (this.macUsageTimer) return;
+    if ((process.env.LANTERN_MAC_USAGE || "off").toLowerCase() !== "on") {
+      this.logger.info("mac app-usage signal disabled (set LANTERN_MAC_USAGE=on to enable; owner-only)");
+      return;
+    }
+    const sec = Math.max(
+      60,
+      parseInt(process.env.LANTERN_MAC_USAGE_SEC || "", 10) || IMessageSession.MAC_USAGE_DEFAULT_SEC,
+    );
+    const t = setInterval(() => {
+      void this.runMacUsageTick();
+    }, sec * 1000);
+    t.unref?.();
+    this.macUsageTimer = t;
+    this.logger.info({ pollSec: sec }, "mac app-usage signal enabled (owner-only, summaries only)");
+    // First read ~20s after boot so the bridge is settled.
+    const kick = setTimeout(() => void this.runMacUsageTick(), 20_000);
+    kick.unref?.();
+  }
+
+  private async runMacUsageTick(): Promise<void> {
+    try {
+      const { readMacUsageSummary } = await import("./mac-usage-reader.js");
+      const summary = readMacUsageSummary(this.logger);
+      // Empty summaryLine == "no signal this tick" — keep the previous line so a
+      // transient empty read (e.g. early morning) doesn't blank the context.
+      if (summary.summaryLine) {
+        this.macUsageSummaryLine = summary.summaryLine;
+        await this.persistMacUsageCache(summary);
+        this.logger.debug({ summaryLine: summary.summaryLine }, "mac app-usage signal refreshed");
+      }
+    } catch (err) {
+      // Fails closed — never crash the bridge over an optional ambient signal.
+      this.logger.debug({ err }, "mac app-usage tick failed (non-fatal, no-op)");
+    }
+  }
+
+  // Persist ONLY the small rolling summary (mode 0600) — never raw per-event
+  // logs. PII-light (friendly app names + minutes), owner-machine-local.
+  private async persistMacUsageCache(summary: { summaryLine: string; topApps: Array<{ app: string; minutes: number }>; totalMinutes: number }): Promise<void> {
+    try {
+      const { homedir } = await import("node:os");
+      const dir = join(homedir(), ".lantern");
+      const file = join(dir, "mac-usage.json");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        file,
+        JSON.stringify(
+          { updatedAt: new Date().toISOString(), summaryLine: summary.summaryLine, topApps: summary.topApps, totalMinutes: summary.totalMinutes },
+          null,
+          0,
+        ),
+        { mode: 0o600 },
+      );
+      try { chmodSync(file, 0o600); } catch { /* best-effort */ }
+    } catch {
+      /* persistence is best-effort — never throw into the bridge */
+    }
+  }
+
+  // 4b) iPHONE APP-CONTEXT. OWNER-ONLY ambient signal: tail the device-signals
+  // JSONL the dashboard /api/signals route appends from the owner's iOS
+  // Shortcuts automations, distill it to ONE short "what you've been on your
+  // phone" line, and stash it for injection into the OWNER's self-chat assistant
+  // context — NEVER a contact reply.
+  //
+  // AUTO-ON: unlike mac-usage (which reads a sensitive system DB and ships
+  // dark), this only ever reads a file the owner themselves populates, so it
+  // enables itself whenever the signals file exists. Kill with
+  // LANTERN_IPHONE_SIGNALS=off. The reader fails closed (missing file → empty).
+  private startIphoneSignals(): void {
+    if (this.iphoneSignalsTimer) return;
+    if ((process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() === "off") {
+      this.logger.info("iPhone app-context signal disabled (LANTERN_IPHONE_SIGNALS=off)");
+      return;
+    }
+    const sec = Math.max(
+      60,
+      parseInt(process.env.LANTERN_IPHONE_SIGNALS_SEC || "", 10) ||
+        IMessageSession.IPHONE_SIGNALS_DEFAULT_SEC,
+    );
+    const t = setInterval(() => {
+      void this.runIphoneSignalsTick();
+    }, sec * 1000);
+    t.unref?.();
+    this.iphoneSignalsTimer = t;
+    this.logger.info({ pollSec: sec }, "iPhone app-context signal enabled (owner-only, summaries only)");
+    // First read ~25s after boot so the bridge is settled.
+    const kick = setTimeout(() => void this.runIphoneSignalsTick(), 25_000);
+    kick.unref?.();
+  }
+
+  private async runIphoneSignalsTick(): Promise<void> {
+    try {
+      const { readDeviceSignalsSummary } = await import("./device-signals-reader.js");
+      const summary = readDeviceSignalsSummary(this.logger);
+      // Empty summaryLine == "no signal this tick" — keep the previous line so a
+      // transient empty read (e.g. quiet stretch) doesn't blank the context.
+      if (summary.summaryLine) {
+        this.iphoneSignalsSummaryLine = summary.summaryLine;
+        this.logger.debug({ summaryLine: summary.summaryLine }, "iPhone app-context signal refreshed");
+      }
+    } catch (err) {
+      // Fails closed — never crash the bridge over an optional ambient signal.
+      this.logger.debug({ err }, "iPhone app-context tick failed (non-fatal, no-op)");
     }
   }
 
@@ -1554,16 +1825,32 @@ export class IMessageSession {
     }));
   }
 
-  // Proactive ingester for UNKNOWN-sender inbound. Appointment confirmation →
-  // DM the owner + arm a "yes" offer that adds it to the calendar (reusing the
-  // freeform-followup → [CALENDAR:] path). Marketing/spam → suppress. Returns
-  // "handled" to skip the normal auto-reply path. Best-effort + flag-gated.
+  // Proactive ingester for UNKNOWN-sender inbound. The LIFE-EVENT ENGINE runs
+  // FIRST: a transactional notice the bridge used to drop as "marketing/spam"
+  // (a GEICO bill, a UPS delivery window, an Amex fraud alert, an OTP) is now
+  // recognized as a TYPED life-event, its fields extracted, and surfaced to the
+  // OWNER (self-chat) — either a real-time ping with a one-tap action or a
+  // batched digest line. True promos (DSW sale) are still suppressed. Anything
+  // the engine deems non-actionable falls back to the legacy appointment/spam
+  // classifier. OWNER-FACING ONLY — never targets the third-party sender.
+  // Returns "handled" to skip the normal auto-reply path. Best-effort + flag-gated.
   private async maybeIngestUnknownInbound(handle: string, text: string): Promise<"handled" | "pass"> {
     if ((process.env.LANTERN_APPT_INGEST || "on").toLowerCase() === "off") return "pass";
     if (!handle || !text) return "pass";
     // Only UNKNOWN senders — never reclassify a saved contact / known person.
     if (this.contactNames.has(handle)) return "pass";
     if (this.ownerProfileStore.relationshipFor(handle, undefined)) return "pass";
+
+    // ── LIFE-EVENT ENGINE (owner-facing) ──
+    if ((process.env.LANTERN_LIFE_EVENTS || "on").toLowerCase() !== "off") {
+      try {
+        const handled = await this.surfaceLifeEvent(handle, text);
+        if (handled) return "handled";
+      } catch (err) {
+        this.logger.warn({ err }, "life-event surfacing failed — falling back to legacy classifier");
+      }
+    }
+
     let kind: "appointment" | "spam" | "other";
     let signals: string[];
     try {
@@ -1591,6 +1878,246 @@ export class IMessageSession {
       } as any);
     }
     return "handled"; // don't auto-reply to the unknown sender
+  }
+
+  // Classify an unknown-sender message as a typed life-event and route it to the
+  // owner self-chat. Returns true when the engine took ownership of the message
+  // (ping / digest / suppress), false when it's not an actionable life-event and
+  // the caller should fall through to the legacy classifier.
+  //
+  // Routes:
+  //   ping     → DM the owner NOW + arm a PendingOffer so "yes"/"do it" fires the
+  //              top suggested action via executeCachedOffer (calendar/reminder
+  //              via mac-actions; pay-link/track/fraud surface the URL/number).
+  //   digest   → queue the short owner line into the morning briefing.
+  //   suppress → drop (record kind for the owner model), as today.
+  private async surfaceLifeEvent(handle: string, text: string, channel = "iMessage"): Promise<boolean> {
+    const { classifyLifeEvent, proactiveDecision, isActionableKind, autoActDecision } =
+      await import("@lantern/bridge-core/life-events");
+    const { loadLifeEventPrefs, isAutoActPaused } = await import("@lantern/bridge-core/life-events-store");
+
+    const event = await classifyLifeEvent(text, { channel });
+    if (!isActionableKind(event.kind)) return false; // promo/personal/other → legacy path
+
+    const prefs = loadLifeEventPrefs();
+    const owner = (process.env.LANTERN_IMESSAGE_OWNER_HANDLE || "").trim() || this.ownerSelfChatTarget();
+
+    // ── AUTO-ACT LADDER ──
+    // For SAFE, REVERSIBLE kinds (delivery → Deliveries note; appointment /
+    // travel → calendar) the bot stops asking and just DOES it, then logs +
+    // arms an undo. Money/fraud/OTP/sending are NEVER auto. Kill switch
+    // (LANTERN_LIFE_EVENT_AUTOACT, default on) gates the whole ladder.
+    const autoEnabled =
+      (process.env.LANTERN_LIFE_EVENT_AUTOACT || "on").toLowerCase() !== "off" && !isAutoActPaused();
+    const auto = autoActDecision(event, prefs, { enabled: autoEnabled });
+    this.logger.info(
+      { kind: event.kind, urgency: event.urgency, conf: event.confidence, autoMode: auto.mode, reason: auto.reason },
+      "life-event classified",
+    );
+    if (auto.mode === "auto" && owner) {
+      await this.autoActLifeEvent(owner, event, auto.idempotencyKey, text);
+      return true;
+    }
+
+    const decision = proactiveDecision(event, prefs);
+
+    if (decision.route === "suppress") return true; // owned + dropped — do NOT emit
+
+    if (!owner) {
+      // No self-chat target — surface to the dashboard feed so it isn't invisible.
+      this.broadcast({ type: "activity", data: { kind: "system", summary: decision.ownerMessage, timestamp: Date.now() } });
+      return true;
+    }
+
+    if (decision.route === "digest") {
+      this.lifeEventDigestQueue.push(decision.ownerMessage);
+      // Emit to Automations dashboard (best-effort, fire-and-forget).
+      void (async () => {
+        try {
+          const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+          const { authedFetch } = await import("@lantern/bridge-core/auth");
+          await emitLifeEvent(event, "suggested", {
+            idempotencyKey: auto.idempotencyKey,
+            summary: decision.ownerMessage,
+            poster: authedFetch as any,
+            log: this.logger as any,
+          });
+        } catch { /* best-effort */ }
+      })();
+      return true;
+    }
+
+    // ping — DM the owner now + arm the one-tap offer for the top action.
+    await this.send(owner, decision.ownerMessage).catch(() => {});
+    this.lastLifeEventKind = event.kind;
+    const top = decision.actions.find((a) => a.kind !== "snooze" && a.kind !== "none");
+    if (top && top.offerAction) {
+      this.pendingOffers.set(owner, {
+        kind: "freeform-followup",
+        freeformAction: top.offerAction + (top.url ? ` (relevant link: ${top.url})` : "") + (top.phone ? ` (callback number: ${top.phone})` : ""),
+        freeformInbound: text,
+        freeformPriorReply: decision.ownerMessage,
+        issuedAt: Date.now(),
+      } as any);
+    }
+    // Emit to Automations dashboard (best-effort, fire-and-forget).
+    void (async () => {
+      try {
+        const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+        const { authedFetch } = await import("@lantern/bridge-core/auth");
+        await emitLifeEvent(event, "suggested", {
+          idempotencyKey: auto.idempotencyKey,
+          summary: decision.ownerMessage,
+          poster: authedFetch as any,
+          log: this.logger as any,
+        });
+      } catch { /* best-effort */ }
+    })();
+    return true;
+  }
+
+  // Owner-model-lite: when the owner accepts/rejects the most-recent life-event
+  // offer, persist that signal so the engine downgrades nagging kinds over time.
+  // Best-effort + one-shot (clears lastLifeEventKind).
+  private recordLifeEventOutcome(accepted: boolean): void {
+    const kind = this.lastLifeEventKind;
+    if (!kind) return;
+    this.lastLifeEventKind = null;
+    void (async () => {
+      try {
+        const { persistAccept, persistIgnore } = await import("@lantern/bridge-core/life-events-store");
+        if (accepted) persistAccept(kind); else persistIgnore(kind);
+      } catch { /* best-effort */ }
+    })();
+  }
+
+  // AUTO-ACT LADDER — execute a SAFE, REVERSIBLE action without asking, log it
+  // to the owner self-chat with an undo, and arm the undo PendingOffer.
+  // Idempotent across restarts via the acted-keys store (hasActed/markActed):
+  // repeated carrier updates for the SAME package never double-book. On
+  // execution error we fall back to a suggest ping — never silently fail.
+  private async autoActLifeEvent(
+    owner: string,
+    event: import("@lantern/bridge-core/life-events").LifeEvent,
+    idempotencyKey: string,
+    rawText: string,
+  ): Promise<void> {
+    const { hasActed, markActed } = await import("@lantern/bridge-core/life-events-store");
+    if (hasActed(idempotencyKey)) {
+      this.logger.info({ kind: event.kind, idempotencyKey }, "auto-act skipped — already acted (idempotent)");
+      return;
+    }
+    const { eventStartIso } = await import("@lantern/bridge-core/life-events");
+
+    try {
+      if (event.kind === "delivery") {
+        const f = event.fields;
+        const who = f.carrier || f.merchant || "package";
+        const line = `${who}${f.eta ? ` — ${f.eta}` : ""}${f.trackingNo ? ` (${f.trackingNo})` : ""} · logged ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+        const res = await this.macActions.appendToNote({ title: "Deliveries", line });
+        if (!res.ok) return void this.autoActFallbackToSuggest(owner, event, rawText, res.reason);
+        markActed(idempotencyKey);
+        const log = `📦 logged delivery — ${who}${f.eta ? ` ${f.eta.toLowerCase()}` : ""} (Deliveries note) · reply 'undo' to remove`;
+        await this.send(owner, log).catch(() => {});
+        this.noteAutoAction(log);
+        this.armAutoActUndo(owner, event.kind, idempotencyKey, { undoTarget: "delivery-note", undoNoteLine: line }, log, rawText);
+        // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
+        void (async () => {
+          try {
+            const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+            const { authedFetch } = await import("@lantern/bridge-core/auth");
+            await emitLifeEvent(event, "auto_acted", {
+              idempotencyKey,
+              actionTaken: "logged in Deliveries note",
+              summary: log,
+              poster: authedFetch as any,
+              log: this.logger as any,
+            });
+          } catch { /* best-effort */ }
+        })();
+        return;
+      }
+
+      // appointment / travel → calendar (deterministic ISO; suggest if vague).
+      const startIso = eventStartIso(event);
+      if (!startIso) return void this.autoActFallbackToSuggest(owner, event, rawText, "no concrete date/time");
+      const title = event.kind === "travel" ? `Travel${event.fields.place ? ` — ${event.fields.place}` : ""}` : `Appointment${event.fields.place ? ` — ${event.fields.place}` : ""}`;
+      const endIso = localPlus30(startIso);
+      const res = await this.macActions.createCalendarEvent({
+        title, start: startIso, end: endIso,
+        notes: `Auto-added by Lantern from: "${rawText.slice(0, 200)}"`,
+      });
+      if (!res.ok) return void this.autoActFallbackToSuggest(owner, event, rawText, res.reason);
+      markActed(idempotencyKey);
+      const friendly = new Date(startIso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      const log = `📅 added to your calendar — ${title} ${friendly} · reply 'undo' to remove`;
+      await this.send(owner, log).catch(() => {});
+      this.noteAutoAction(log);
+      this.armAutoActUndo(owner, event.kind, idempotencyKey, { undoTarget: "calendar", undoTitle: title, undoStartIso: startIso }, log, rawText);
+      // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
+      void (async () => {
+        try {
+          const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+          const { authedFetch } = await import("@lantern/bridge-core/auth");
+          await emitLifeEvent(event, "auto_acted", {
+            idempotencyKey,
+            actionTaken: `added to calendar — ${title}`,
+            summary: log,
+            poster: authedFetch as any,
+            log: this.logger as any,
+          });
+        } catch { /* best-effort */ }
+      })();
+    } catch (err) {
+      this.logger.error({ err, kind: event.kind }, "auto-act execution threw — falling back to suggest");
+      await this.autoActFallbackToSuggest(owner, event, rawText, "exception");
+    }
+  }
+
+  // Arm the one-shot UNDO offer for an auto-action. "undo"/"remove"/"no"
+  // reverts it via executeCachedOffer and records an autoUndo (trust downgrade).
+  private armAutoActUndo(
+    owner: string,
+    kind: string,
+    idempotencyKey: string,
+    fields: { undoTarget: "calendar" | "delivery-note"; undoTitle?: string; undoStartIso?: string; undoNoteLine?: string },
+    log: string,
+    rawText: string,
+  ): void {
+    this.pendingOffers.set(owner, {
+      kind: "auto-act-undo",
+      undoLifeEventKind: kind,
+      undoIdempotencyKey: idempotencyKey,
+      ...fields,
+      freeformPriorReply: log,
+      freeformInbound: rawText,
+      issuedAt: Date.now(),
+    } as any);
+  }
+
+  // Auto-act couldn't run cleanly (calendar/note error, vague date) — surface a
+  // suggest ping with the existing one-tap offer instead of silently dropping.
+  private async autoActFallbackToSuggest(
+    owner: string,
+    event: import("@lantern/bridge-core/life-events").LifeEvent,
+    rawText: string,
+    reason?: string,
+  ): Promise<void> {
+    this.logger.warn({ kind: event.kind, reason }, "auto-act fell back to suggest");
+    const { proactiveDecision } = await import("@lantern/bridge-core/life-events");
+    const decision = proactiveDecision(event); // no prefs → baseline route
+    await this.send(owner, decision.ownerMessage).catch(() => {});
+    this.lastLifeEventKind = event.kind;
+    const top = decision.actions.find((a) => a.kind !== "snooze" && a.kind !== "none");
+    if (top && top.offerAction) {
+      this.pendingOffers.set(owner, {
+        kind: "freeform-followup",
+        freeformAction: top.offerAction + (top.url ? ` (relevant link: ${top.url})` : "") + (top.phone ? ` (callback number: ${top.phone})` : ""),
+        freeformInbound: rawText,
+        freeformPriorReply: decision.ownerMessage,
+        issuedAt: Date.now(),
+      } as any);
+    }
   }
 
   // Apply an owner presence/status command from self-chat (set place + timer,
@@ -2192,15 +2719,25 @@ export class IMessageSession {
       }
       this.gcPendingOffers();
       const pending = this.pendingOffers.get(row.handle);
+      // AUTO-ACT UNDO — the bot already executed a safe action; "undo"/"remove"
+      // (or a plain "no") reverts it + records an autoUndo (trust downgrade).
+      if (pending && (pending as any).kind === "auto-act-undo" && (looksLikeUndo(text) || looksLikeRejection(text))) {
+        this.logger.info({ chat: row.handle }, "reverting auto-action on undo (early intercept)");
+        this.pendingOffers.delete(row.handle);
+        void this.executeCachedOffer(row.handle, pending);
+        return;
+      }
       if (pending && looksLikeConfirmation(text)) {
         this.logger.info({ kind: pending.kind, chat: row.handle }, "executing cached offer on confirmation (early intercept)");
         this.pendingOffers.delete(row.handle);
+        this.recordLifeEventOutcome(true);
         void this.executeCachedOffer(row.handle, pending);
         return;
       }
       if (pending && looksLikeRejection(text)) {
         this.logger.info({ kind: pending.kind, chat: row.handle }, "dropping cached offer on rejection (early intercept)");
         this.pendingOffers.delete(row.handle);
+        this.recordLifeEventOutcome(false);
         void this.send(row.handle, "👍 no worries");
         return;
       }
@@ -3119,14 +3656,18 @@ export class IMessageSession {
     // dislike memory, live presence, episodic memory, cross-contact
     // context. Each best-effort; empty block when data unavailable
     // (persona falls back to prior behavior).
-    const contactStyleBlock = !isGroup ? styleBlockFor(ownerSamples) : "";
+    // Relevance-rank the verbatim few-shot to the current inbound so the
+    // examples are SHAPED like the message being answered (cheap token
+    // overlap; recency fallback). Backward-compatible — undefined relevantTo
+    // is pure recency.
+    const contactStyleBlock = !isGroup ? styleBlockFor(ownerSamples, { relevantTo: text }) : "";
     // GLOBAL owner-voice corpus — aggregate the owner's OWN sent messages
     // across ALL contacts so even a brand-new/sparse contact (no
     // per-contact fingerprint above) still mimics the owner's REAL voice
     // instead of falling back to generic rules. For a Telugu inbound, also
     // surface the owner's real Telugu phrasing (beats the BAD→GOOD dialect
     // rules — the source of broken-Telangana output). Cheap pure function.
-    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu");
+    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu", text);
     // Cross-contact recall — episodes from other chats (self-chat
     // especially) that mention this contact by first name. Surfaces
     // "Sujith was here this weekend" when Sujith messages later.
@@ -3235,6 +3776,11 @@ export class IMessageSession {
       episodesBlock,
       relatedBlock,
       lowContext,
+      // Unanswered-backlog hint — how many messages this contact sent in a
+      // row without a reply (trailing "them:" run in the chronological chat.db
+      // transcript). Tells the model to catch up on the whole backlog, not
+      // just the last line. 0/1 → no hint.
+      unansweredBacklog: isGroup ? 0 : countTrailingUnanswered(recentTranscript),
       // Structured owner facts (ground truth) so the bot never denies a
       // known fact ("happy anniversary" gets a truthful reply).
       ownerFacts: this.ownerProfileStore.factsBlock(),
@@ -3306,12 +3852,21 @@ export class IMessageSession {
 
     // Call the agent. LLM keys + budgets live in the control-plane.
     // turnHint pins a model FLOOR so the owner's outgoing texts are never
-    // drafted by the weakest (trivial-tier) model — "balanced" = Sonnet by
-    // default; set LANTERN_REPLY_MODEL_TIER=hard for Opus-grade replies.
+    // drafted by the weakest (trivial-tier) model. QUALITY LEVER: defaults to
+    // "hard" (frontier tier) so contact replies get the best model — set
+    // LANTERN_REPLY_MODEL_TIER=balanced to trade quality for cost.
+    const replyTier = process.env.LANTERN_REPLY_MODEL_TIER || "hard";
     const userText = isGroup ? `[group message]\n${text}` : text;
-    const draft = await this.agent.respondTo(row.handle, userText, systemHint, {
-      turnHint: process.env.LANTERN_REPLY_MODEL_TIER || "balanced",
+    let draft = await this.agent.respondTo(row.handle, userText, systemHint, {
+      turnHint: replyTier,
     });
+    // ABSTAIN SENTINEL — the model emitted [[NO_REPLY]] to signal "no reply
+    // warranted". Treat as a deliberate silence so decision-prose never
+    // reaches the contact. Deterministic; no send.
+    if (draft && isNoReplySentinel(draft)) {
+      this.logger.debug({ from: row.handle }, "model abstained ([[NO_REPLY]]) — staying silent");
+      return;
+    }
     if (!draft) {
       // Don't vanish on a greeting just because the LLM round-trip returned
       // nothing — send a deterministic opener so "hi" always gets a reply.
@@ -3339,30 +3894,58 @@ export class IMessageSession {
     // a draft trips this, we STAY SILENT rather than send fiction.
     // (Real motivation: a friend got "I can't see any text in your
     // message - try typing it out?" and asked "Is this really you?".)
-    const tellCheck = detectBotTells(draft, text, {
+    const botTellCtx = {
       contactName: isGroup ? undefined : this.contactNames.get(row.handle),
       relationship: isGroup
         ? undefined
         : this.ownerProfileStore.relationshipFor(row.handle, this.contactNames.get(row.handle)),
-      audience: isOwnerChan ? "owner" : "contact",
-    });
+      audience: (isOwnerChan ? "owner" : "contact") as "owner" | "contact",
+    };
+    let tellCheck = detectBotTells(draft, text, botTellCtx);
     if (!tellCheck.ok) {
-      this.logger.info({ from: row.handle, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft suppressed by bot-tell filter");
-      this.broadcast({
-        type: "activity",
-        data: {
-          kind: "agent_skipped",
-          summary: `draft suppressed — ${tellCheck.reason}`,
-          detail: draft.slice(0, 200),
-          jid: row.handle,
-          timestamp: Date.now(),
-        },
-      });
-      // The classic case: a stranger texts "Hi", the model replies "Hey! How
-      // can I help you?", and the customer-service guard suppresses it →
-      // silence. For a pure greeting, fall back to a human opener instead.
-      if (!isGroup) await this.sendGreetingFallback(row.handle, text, `bot-tell: ${tellCheck.reason}`);
-      return;
+      // REGENERATE-ON-BOT-TELL (not drop). The first draft tripped a tell;
+      // give the model ONE more shot with a corrective hint before falling
+      // back to silence/greeting. Catches the common case where the model
+      // narrated a capability/verdict instead of just answering.
+      this.logger.info({ from: row.handle, reason: tellCheck.reason, draftPreview: draft.slice(0, 120) }, "draft tripped bot-tell filter — regenerating once");
+      const correctiveHint =
+        systemHint +
+        `\n\n(Your previous draft was REJECTED — reason: ${tellCheck.reason}. Output ONLY the literal message text a real person would send — no meta-commentary, no capability statements ("I can't open links"), no narration that something is spam/marketing. If truly nothing warrants a reply, output ${"[[NO_REPLY]]"}.)`;
+      let retry: string | null = null;
+      try {
+        retry = await this.agent.respondTo(row.handle, userText, correctiveHint, { turnHint: replyTier });
+      } catch (err) {
+        this.logger.warn({ err, from: row.handle }, "bot-tell regeneration threw — falling back");
+      }
+      // A retry that abstains is a clean no-reply.
+      if (retry && isNoReplySentinel(retry)) {
+        this.logger.debug({ from: row.handle }, "regeneration abstained ([[NO_REPLY]]) — staying silent");
+        return;
+      }
+      const retryCheck = retry ? detectBotTells(retry, text, botTellCtx) : { ok: false, reason: "empty regeneration" };
+      if (retry && retryCheck.ok) {
+        draft = retry;
+        tellCheck = retryCheck;
+      } else {
+        // SECOND draft also failed — now fall back to silence/greeting and
+        // keep the owner heads-up so a suppressed-twice reply isn't invisible.
+        this.logger.info({ from: row.handle, reason: retryCheck.reason, draftPreview: (retry ?? draft).slice(0, 120) }, "draft suppressed by bot-tell filter (after regeneration)");
+        this.broadcast({
+          type: "activity",
+          data: {
+            kind: "agent_skipped",
+            summary: `draft suppressed — ${retryCheck.reason ?? tellCheck.reason}`,
+            detail: (retry ?? draft).slice(0, 200),
+            jid: row.handle,
+            timestamp: Date.now(),
+          },
+        });
+        // The classic case: a stranger texts "Hi", the model replies "Hey! How
+        // can I help you?", and the customer-service guard suppresses it →
+        // silence. For a pure greeting, fall back to a human opener instead.
+        if (!isGroup) await this.sendGreetingFallback(row.handle, text, `bot-tell: ${retryCheck.reason ?? tellCheck.reason}`);
+        return;
+      }
     }
 
     // CONFIDENCE GATE + VIP gate. Both route the draft to human approval
@@ -4131,7 +4714,34 @@ export class IMessageSession {
         // + ElevenLabs voice clone hook (when configured).
         return this.placeOutboundCallFromOwner(jid, req);
       },
+      setAutoAct: async (enabled: boolean) => {
+        const { setAutoActPaused } = await import("@lantern/bridge-core/life-events-store");
+        setAutoActPaused(!enabled);
+        this.broadcast({
+          type: "activity",
+          data: { kind: "system", summary: `auto-act ladder ${enabled ? "RESUMED" : "PAUSED"}`, timestamp: Date.now() },
+        });
+      },
+      autoActRecap: () => this.autoActRecapBody(),
     });
+  }
+
+  // Record an auto-action into the in-memory recap ring (last 24h, capped).
+  private noteAutoAction(text: string): void {
+    const now = Date.now();
+    this.autoActLog.push({ text, ts: now });
+    const since = now - 24 * 3_600_000;
+    this.autoActLog = this.autoActLog.filter((e) => e.ts >= since).slice(-50);
+  }
+
+  // "what did you do today" — recap of the auto-actions taken in the last 24h.
+  private autoActRecapBody(): string {
+    const since = Date.now() - 24 * 3_600_000;
+    const lines = this.autoActLog
+      .filter((e) => e.ts >= since)
+      .map((e) => `• ${e.text.replace(/\s*·\s*reply 'undo'.*$/i, "")}`);
+    if (lines.length === 0) return "🤖 nothing auto-handled today.";
+    return [`🤖 today i auto-handled ${lines.length}:`, ...lines].join("\n");
   }
 
   // Owner-issued outbound call. Resolves target → phone, classifies
@@ -4258,6 +4868,57 @@ export class IMessageSession {
 
   // Sends a natural confirmation back to the chat.
   private async executeCachedOffer(jid: string, offer: PendingOffer): Promise<void> {
+    // AUTO-ACT UNDO — revert the safe action the bot auto-executed, record an
+    // autoUndo (trust downgrade auto→suggest→none), and clear the acted key so
+    // a re-surfaced package can be re-acted later. Deterministic; no LLM.
+    if (offer.kind === "auto-act-undo") {
+      const { persistAutoUndo, unmarkActed } = await import("@lantern/bridge-core/life-events-store");
+      try {
+        let res: { ok: true; detail?: string } | { ok: false; reason: string };
+        if (offer.undoTarget === "calendar" && offer.undoTitle && offer.undoStartIso) {
+          res = await this.macActions.deleteCalendarEvent({ title: offer.undoTitle, start: offer.undoStartIso });
+        } else if (offer.undoTarget === "delivery-note" && offer.undoNoteLine) {
+          res = await this.macActions.removeNoteLine({ title: "Deliveries", line: offer.undoNoteLine });
+        } else {
+          res = { ok: false, reason: "nothing to undo" };
+        }
+        if (res.ok) {
+          await this.send(jid, "↩️ undone — removed it.").catch(() => {});
+          if (offer.undoIdempotencyKey) unmarkActed(offer.undoIdempotencyKey);
+          if (offer.undoLifeEventKind) persistAutoUndo(offer.undoLifeEventKind as any);
+          // Emit undone to Automations dashboard (best-effort, fire-and-forget).
+          void (async () => {
+            try {
+              const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+              const { authedFetch } = await import("@lantern/bridge-core/auth");
+              await emitLifeEvent(
+                {
+                  kind: (offer.undoLifeEventKind || "other") as any,
+                  confidence: 1,
+                  urgency: "fyi",
+                  fields: {},
+                  rawText: offer.freeformInbound || "",
+                  channel: "iMessage",
+                },
+                "undone",
+                {
+                  idempotencyKey: offer.undoIdempotencyKey,
+                  summary: "↩️ undone — removed it.",
+                  poster: authedFetch as any,
+                  log: this.logger as any,
+                },
+              );
+            } catch { /* best-effort */ }
+          })();
+        } else {
+          await this.send(jid, `(couldn't undo: ${res.reason})`).catch(() => {});
+        }
+      } catch (err) {
+        this.logger.error({ err }, "auto-act undo failed");
+        await this.send(jid, "(couldn't undo — try again)").catch(() => {});
+      }
+      return;
+    }
     // Outbound call — owner approved the pre-flight plan. Fire the
     // dialer directly via the cached orchestrator deps.
     if (offer.kind === "outbound-call" && (offer as any).callRequest && (offer as any).callPlan) {
@@ -4575,6 +5236,30 @@ export class IMessageSession {
       this.logger.info(
         { contactsSeeded, samplesSeeded },
         "seeded owner-voice samples from chat.db history",
+      );
+
+      // GLOBAL pool: deep scan across all contacts, reaching past the
+      // bot-dominated recent rows into the owner's authentic pre-bot
+      // voice. Filter bot-self (essential — they'd poison the voice) and
+      // dedupe by the shared key. Capped at 600; ownerVoiceExemplars
+      // ranks/trims this to the few-shot per reply.
+      const corpus = this.db.ownerVoiceCorpus({ limit: 600 });
+      const globalSeen = new Set<string>();
+      const global: string[] = [];
+      for (const raw of corpus) {
+        const text = raw.trim();
+        if (!text || isBotSelfMessage(text)) continue;
+        const key = ownerVoiceDedupeKey(text);
+        if (key) {
+          if (globalSeen.has(key)) continue;
+          globalSeen.add(key);
+        }
+        global.push(text);
+      }
+      this.ownerVoiceGlobal = global;
+      this.logger.info(
+        { globalSamples: global.length, scanned: corpus.length },
+        "seeded global owner-voice corpus from chat.db",
       );
     } catch (err) {
       // Never let cold-start mining break the bridge.
@@ -5464,6 +6149,15 @@ export class IMessageSession {
       // Screen-context (opt-in, off by default). Adds recent
       // foreground-app OCR snippets the user might be referring to.
       this.screenContext.recentContext() ? "\n" + this.screenContext.recentContext() : "",
+      // Mac app-usage signal (opt-in, off by default). OWNER-ONLY — injected
+      // here (self-chat) and NOWHERE else so a contact never learns what apps
+      // the owner uses. One short "what you've been doing today" line.
+      this.macUsageSummaryLine ? "\n" + macUsageContextBlock(this.macUsageSummaryLine) : "",
+      // iPhone app-context signal (auto-on when ~/.lantern/device-signals.jsonl
+      // exists; LANTERN_IPHONE_SIGNALS=off to kill). OWNER-ONLY — injected here
+      // (self-chat) and NOWHERE else so a contact never learns what apps the
+      // owner uses on his phone. One short "what you've been on" line.
+      this.iphoneSignalsSummaryLine ? "\n" + iphoneContextBlock(this.iphoneSignalsSummaryLine) : "",
     ].filter(Boolean).join("\n");
 
     // First attempt. withTools=true so the agent has the personal-docs
