@@ -36,7 +36,7 @@ same network.
 If you run `lantern dev` or a reverse tunnel (ngrok, Cloudflare Tunnel, etc.),
 use the tunnel's public HTTPS URL:
 ```
-https://abc123.ngrok.io
+https://macbook-pro-2.tail0be192.ts.net
 ```
 The tunnel must forward to port `8080` (the control-plane REST port).
 

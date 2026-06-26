@@ -16,7 +16,7 @@
 // ┌─────────────────────────────────────────────────────────────────────────┐
 // │  CONFIG — edit these two lines, nothing else                            │
 // └─────────────────────────────────────────────────────────────────────────┘
-const API_BASE = "https://YOUR-TUNNEL-OR-LAN-IP:8080"; // e.g. https://abc.ngrok.io or http://10.0.0.185:8080
+const API_BASE = "https://macbook-pro-2.tail0be192.ts.net"; // e.g. https://abc.ngrok.io or http://10.0.0.185:8080
 const API_KEY  = "hlx_live_PASTE_YOUR_KEY_HERE";       // created in dashboard → Settings → API Keys
 
 // ─────────────────────────────────────────────────────────────────────────────
