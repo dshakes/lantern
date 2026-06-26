@@ -16,12 +16,52 @@ import {
   isActionableKind,
   LIFE_EVENT_SELF_PREFIXES,
   type LifeEventPrefs,
+  type LifeEvent,
 } from "./life-events.ts";
 import { isBotSelfMessage } from "./bot-self.ts";
 
 // Fixed clock so due-date / urgency math is deterministic.
 const NOW = new Date("2026-06-25T12:00:00Z");
 const opts = { now: NOW, channel: "iMessage" as const };
+
+describe("life-events — undated travel/appointment must NOT nudge (placeholder-nudge bug)", () => {
+  // Regression: the bot surfaced "✈️ travel update. add it to your calendar?"
+  // from an old flight email with no upcoming itinerary, then admitted it had
+  // nothing — a placeholder nudge. An undated travel/appointment has nothing to
+  // put on a calendar, so it must be suppressed, not offered.
+  const ev = (over: Partial<LifeEvent>): LifeEvent => ({
+    kind: "travel",
+    confidence: 0.85,
+    urgency: "fyi",
+    channel: "email",
+    fields: {},
+    rawText: "✈️ trip summary — flights 2024-2025, nothing upcoming",
+    ...over,
+  } as LifeEvent);
+
+  test("undated travel → no calendar action and route 'suppress'", () => {
+    const e = ev({ kind: "travel", fields: {} });
+    assert.equal(suggestedActionsFor(e).length, 0, "undated travel must offer no action");
+    assert.equal(proactiveDecision(e).route, "suppress");
+  });
+
+  test("undated appointment → route 'suppress'", () => {
+    const e = ev({ kind: "appointment", fields: {}, rawText: "we got your message" });
+    assert.equal(proactiveDecision(e).route, "suppress");
+  });
+
+  test("DATED travel still surfaces with a calendar action", () => {
+    const e = ev({ kind: "travel", urgency: "soon", fields: { time: "Jul 5 9:00 AM" }, rawText: "Flight UA123 departs Jul 5 9:00 AM" });
+    const d = proactiveDecision(e);
+    assert.notEqual(d.route, "suppress", "a dated trip is real — it should surface");
+    assert.equal(d.actions[0]?.kind, "calendar");
+  });
+
+  test("the travel gate does NOT affect otp (empty actions by design still surfaces)", () => {
+    const e = ev({ kind: "otp", urgency: "now", fields: { code: "123456" }, rawText: "Your verification code is 123456" });
+    assert.notEqual(proactiveDecision(e).route, "suppress", "otp must still surface");
+  });
+});
 
 describe("classifyLifeEvent — REAL owner examples", () => {
   test("GEICO → bill with amount + payee + due date", () => {
