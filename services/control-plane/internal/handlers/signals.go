@@ -29,6 +29,19 @@ import (
 // gated by a shared secret (LANTERN_SIGNAL_TOKEN), exactly like the bridge
 // heartbeat shared-token pattern in surfaces.go, and fails closed when the env
 // var is unset.
+//
+// Supported signal kinds (bridge reads all of these):
+//
+//	{kind:"app_open",  app:"YouTube",             ts}
+//	{kind:"location",  detail:"Home",              ts}
+//	{kind:"focus",     detail:"Work",              ts}
+//	{kind:"device",    detail:"CarPlay",           ts}   // also "charging", "AirPods", "Office WiFi"
+//	{kind:"health",    metric:"steps", value:6200, ts}   // metric in steps|sleep|workout
+//	{kind:"health",    detail:"ran 3mi",            ts}
+//	{kind:"now_playing", detail:"Song - Artist",   ts}
+//	{kind:"wake",                                   ts}
+//	{kind:"sleep",                                  ts}
+//	{kind:"screenshot",                             ts}
 type SignalHandler struct {
 	srv *server.Server
 }
@@ -43,18 +56,24 @@ func (h *SignalHandler) logger() *zap.Logger {
 }
 
 // signalEntry is one line in ~/.lantern/device-signals.jsonl. The on-disk
-// field names (app/kind/detail/ts) are the contract the bridge's
+// field names (app/kind/detail/metric/value/ts) are the contract the bridge's
 // device-signals reader expects — do not rename without updating the bridge.
+// omitempty keeps lines compact: app_open lines omit metric/value; health
+// lines omit app; bare wake/sleep lines omit app/detail/metric/value.
 type signalEntry struct {
-	App    string `json:"app"`
-	Kind   string `json:"kind"`
-	Detail string `json:"detail"`
-	TS     int64  `json:"ts"`
+	App    string   `json:"app,omitempty"`
+	Kind   string   `json:"kind"`
+	Detail string   `json:"detail,omitempty"`
+	Metric string   `json:"metric,omitempty"`
+	Value  *float64 `json:"value,omitempty"`
+	TS     int64    `json:"ts"`
 }
 
 const (
+	signalMaxKindLen   = 40
 	signalMaxAppLen    = 100
 	signalMaxDetailLen = 500
+	signalMaxMetricLen = 40
 	signalFileMaxLines = 5000
 	signalFileKeepLine = 4000
 )
@@ -86,45 +105,87 @@ func signalsFilePath() (dir, path string, err error) {
 }
 
 // IngestSignal handles POST /v1/signals.
+//
+// Validation rules:
+//   - kind is always required (non-empty, clamped to signalMaxKindLen).
+//   - For kind=="app_open": app is required (non-empty).
+//   - For all other kinds: at least one of app/detail/value must be present,
+//     so a fully-empty payload is rejected.
+//   - detail clamped to signalMaxDetailLen; app to signalMaxAppLen; metric to signalMaxMetricLen.
+//   - ts defaults to now (milliseconds) when zero or absent.
 func (h *SignalHandler) IngestSignal(w http.ResponseWriter, r *http.Request) {
 	if !h.authorize(w, r) {
 		return
 	}
 
 	var body struct {
-		App    string `json:"app"`
-		Kind   string `json:"kind"`
-		Detail string `json:"detail"`
-		TS     int64  `json:"ts"`
+		App    string   `json:"app"`
+		Kind   string   `json:"kind"`
+		Detail string   `json:"detail"`
+		Metric string   `json:"metric"`
+		Value  *float64 `json:"value"`
+		TS     int64    `json:"ts"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	app := strings.TrimSpace(body.App)
-	if app == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "app is required"})
+	// kind: required, clamped.
+	kind := strings.TrimSpace(body.Kind)
+	if kind == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind is required"})
 		return
 	}
+	if len(kind) > signalMaxKindLen {
+		kind = kind[:signalMaxKindLen]
+	}
+
+	// app: clamp.
+	app := strings.TrimSpace(body.App)
 	if len(app) > signalMaxAppLen {
 		app = app[:signalMaxAppLen]
 	}
 
-	kind := strings.TrimSpace(body.Kind)
-	if kind == "" {
-		kind = "app_open"
+	// For app_open, app is required.
+	if kind == "app_open" && app == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "app is required for kind=app_open"})
+		return
 	}
+
+	// detail: clamp.
 	detail := body.Detail
 	if len(detail) > signalMaxDetailLen {
 		detail = detail[:signalMaxDetailLen]
 	}
+
+	// metric: clamp.
+	metric := strings.TrimSpace(body.Metric)
+	if len(metric) > signalMaxMetricLen {
+		metric = metric[:signalMaxMetricLen]
+	}
+
+	value := body.Value
+
+	// For non-app_open kinds: at least one of app/detail/value must be present.
+	if kind != "app_open" && app == "" && strings.TrimSpace(detail) == "" && value == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one of app, detail, or value is required"})
+		return
+	}
+
 	ts := body.TS
 	if ts == 0 {
 		ts = time.Now().UnixMilli()
 	}
 
-	entry := signalEntry{App: app, Kind: kind, Detail: detail, TS: ts}
+	entry := signalEntry{
+		App:    app,
+		Kind:   kind,
+		Detail: detail,
+		Metric: metric,
+		Value:  value,
+		TS:     ts,
+	}
 	if err := appendSignal(entry); err != nil {
 		h.logger().Error("append signal failed", zap.Error(err))
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record signal"})

@@ -1,6 +1,12 @@
-// Read-only reader for the iPhone app-context signal stream — the I/O side of
-// the device-signals feature (the pure parsing/summarization lives in
+// Read-only reader for the iPhone device-context signal stream — the I/O side
+// of the device-signals feature (the pure parsing/summarization lives in
 // @lantern/bridge-core/device-signals).
+//
+// Rich signals (location, focus, device state, health steps/sleep/workout,
+// now-playing, wake/sleep/screenshot) flow straight through: this reader does
+// NOT shape or filter fields — it tails raw JSONL lines and hands them to
+// parseSignals, which preserves kind/app/detail/metric/value/ts for the
+// summarizer. Add no per-field logic here; keep the summarizer authoritative.
 //
 // The owner's iOS Shortcuts automations POST events to the dashboard's
 // /api/signals route, which appends them as JSON lines to

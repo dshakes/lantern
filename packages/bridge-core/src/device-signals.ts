@@ -1,5 +1,7 @@
-// iPhone APP-CONTEXT signal for the personal harness — "learn what the owner
-// uses on his phone".
+// iPhone DEVICE-CONTEXT signal for the personal harness — "learn what the owner
+// is doing on his phone", richly: not just app-opens, but location, focus mode,
+// device state (CarPlay/charging/AirPods), health (steps/sleep/workout),
+// now-playing media, and wake/sleep/screenshot rhythm.
 //
 // Sibling of mac-usage.ts (Mac knowledgeC.db slice). Where mac-usage distills
 // macOS foreground app-usage, this distills the iPhone activity stream that the
@@ -12,10 +14,9 @@
 //      iPhone→tunnel hop that delivers them. The file is owner-only (0600).
 //   2. OWNER-ONLY. The summary is injected ONLY into the owner's self-chat
 //      assistant context. It is NEVER added to a reply that goes to a contact —
-//      a contact must never learn what apps the owner uses on his phone.
+//      a contact must never learn what the owner is doing on his phone.
 //   3. SUMMARIES, NOT RAW LOGS, IN THE PROMPT. This module aggregates raw event
-//      lines into per-app counts + one sentence. Only that sentence reaches the
-//      LLM context.
+//      lines into one sentence. Only that sentence reaches the LLM context.
 //   4. FAILS CLOSED. The reader (device-signals-reader.ts) no-ops on any failure
 //      (missing file, garbage lines) — the bridge never crashes and simply has
 //      no iPhone signal that tick.
@@ -25,28 +26,80 @@
 // and is injected, so this logic is unit-testable with mock lines and no fs.
 
 // ─── Signal shape ────────────────────────────────────────────────────────────
-// One line of ~/.lantern/device-signals.jsonl, written by the dashboard
-// /api/signals route from an iPhone Shortcuts automation POST.
-export type SignalKind = "app_open" | "location" | "focus" | "now_playing" | "custom";
+// One line of ~/.lantern/device-signals.jsonl, written by the control-plane
+// /v1/signals route from an iPhone Shortcuts automation POST.
+//
+// SHARED CONTRACT (the receiver writes these; the bridge reads them):
+//   {kind:"app_open",    app:"YouTube", ts}
+//   {kind:"location",    detail:"Home", ts}
+//   {kind:"focus",       detail:"Work", ts}
+//   {kind:"device",      detail:"CarPlay", ts}   (or "charging", "AirPods", "Office WiFi")
+//   {kind:"health",      metric:"steps", value:6200, ts}   (metric in steps|sleep|workout)
+//   {kind:"health",      detail:"ran 3mi", ts}
+//   {kind:"now_playing", detail:"Song - Artist", ts}
+//   {kind:"wake"|"sleep"|"screenshot", ts}
+export type SignalKind =
+  | "app_open"
+  | "location"
+  | "focus"
+  | "device"
+  | "health"
+  | "now_playing"
+  | "wake"
+  | "sleep"
+  | "screenshot"
+  | "custom";
+
+/** A health metric category. */
+export type HealthMetric = "steps" | "sleep" | "workout";
 
 export interface DeviceSignal {
-  /** App / place / focus-mode name (e.g. "Instagram", "Home", "Work"). */
-  app: string;
   /** What kind of event this is. Defaults to "app_open". */
   kind: SignalKind;
-  /** Optional free-text detail (e.g. focus mode name, track title). */
+  /** App name for app_open / custom (e.g. "Instagram"). Optional for the
+   *  ambient kinds, which carry their payload in detail/metric/value. */
+  app?: string;
+  /** Free-text detail (focus mode, place, device state, track title, workout). */
   detail?: string;
+  /** Health metric category (steps | sleep | workout) when kind === "health". */
+  metric?: HealthMetric;
+  /** Numeric value for a health metric (steps count, sleep hours, etc.). */
+  value?: number;
   /** Unix epoch ms when the event happened. */
   ts: number;
 }
 
 // ─── Parsing ─────────────────────────────────────────────────────────────────
-const VALID_KINDS: ReadonlySet<string> = new Set([
+const VALID_KINDS: ReadonlySet<string> = new Set<SignalKind>([
   "app_open",
   "location",
   "focus",
+  "device",
+  "health",
   "now_playing",
+  "wake",
+  "sleep",
+  "screenshot",
   "custom",
+]);
+
+const VALID_HEALTH_METRICS: ReadonlySet<string> = new Set<HealthMetric>([
+  "steps",
+  "sleep",
+  "workout",
+]);
+
+/** Kinds that don't need an `app` — they carry meaning in detail/metric/value
+ *  (or are bare markers like wake/sleep/screenshot). */
+const APPLESS_KINDS: ReadonlySet<string> = new Set<SignalKind>([
+  "location",
+  "focus",
+  "device",
+  "health",
+  "now_playing",
+  "wake",
+  "sleep",
+  "screenshot",
 ]);
 
 /** Parse one JSONL line into a DeviceSignal, or null if malformed. Never
@@ -62,15 +115,41 @@ export function parseSignalLine(line: string): DeviceSignal | null {
   }
   if (!obj || typeof obj !== "object") return null;
   const o = obj as Record<string, unknown>;
-  const app = typeof o.app === "string" ? o.app.trim() : "";
-  if (!app) return null;
+
   const rawKind = typeof o.kind === "string" ? o.kind : "app_open";
   const kind: SignalKind = (VALID_KINDS.has(rawKind) ? rawKind : "app_open") as SignalKind;
+
   const ts =
     typeof o.ts === "number" && Number.isFinite(o.ts) && o.ts > 0 ? o.ts : NaN;
   if (!Number.isFinite(ts)) return null;
-  const detail = typeof o.detail === "string" && o.detail.trim() ? o.detail.trim() : undefined;
-  return { app, kind, detail, ts };
+
+  const app = typeof o.app === "string" && o.app.trim() ? o.app.trim() : undefined;
+  const detail =
+    typeof o.detail === "string" && o.detail.trim() ? o.detail.trim() : undefined;
+  const metric =
+    typeof o.metric === "string" && VALID_HEALTH_METRICS.has(o.metric)
+      ? (o.metric as HealthMetric)
+      : undefined;
+  const value =
+    typeof o.value === "number" && Number.isFinite(o.value) ? o.value : undefined;
+
+  // An app_open / custom line MUST name an app. The appless kinds need at least
+  // one meaningful payload field (detail, or metric/value for health) — except
+  // the bare rhythm markers (wake/sleep/screenshot) which are meaningful alone.
+  if (kind === "app_open" || kind === "custom") {
+    if (!app) return null;
+  } else if (kind === "wake" || kind === "sleep" || kind === "screenshot") {
+    // bare markers — no payload required
+  } else if (!detail && metric === undefined && value === undefined) {
+    return null;
+  }
+
+  const sig: DeviceSignal = { kind, ts };
+  if (app) sig.app = app;
+  if (detail) sig.detail = detail;
+  if (metric) sig.metric = metric;
+  if (value !== undefined) sig.value = value;
+  return sig;
 }
 
 /** Parse an array of JSONL lines into DeviceSignals, dropping malformed ones. */
@@ -131,8 +210,9 @@ function windowLabel(windowMs: number): string {
  * Distill iPhone activity signals into a short owner-facing line + structure.
  *
  * Filters to the lookback window, groups app_open events by app, notes the
- * most-recent, and folds in the latest focus / location / now_playing as a
- * trailing clause. Empty / all-stale input yields summaryLine "".
+ * most-recent, and folds in the latest location / focus / device / health /
+ * now_playing as trailing clauses (latest-wins per category). Empty / all-stale
+ * input yields summaryLine "".
  */
 export function summarizeDeviceSignals(
   signals: DeviceSignal[],
@@ -156,6 +236,7 @@ export function summarizeDeviceSignals(
   const byApp = new Map<string, AppCount>();
   for (const s of inWindow) {
     if (s.kind !== "app_open" && s.kind !== "custom") continue;
+    if (!s.app) continue;
     const existing = byApp.get(s.app);
     if (existing) {
       existing.opens += 1;
@@ -172,16 +253,21 @@ export function summarizeDeviceSignals(
   // Latest of each ambient kind (these don't count as app-opens but enrich the line).
   const latestOf = (kind: SignalKind): DeviceSignal | undefined =>
     recentSorted.find((s) => s.kind === kind);
-  const focus = latestOf("focus");
-  const location = latestOf("location");
-  const nowPlaying = latestOf("now_playing");
+  // Latest health signal per metric category (steps / sleep / workout).
+  const latestHealth = (pred: (s: DeviceSignal) => boolean): DeviceSignal | undefined =>
+    recentSorted.find((s) => s.kind === "health" && pred(s));
 
   const summaryLine = buildDeviceSummaryLine({
     topApps,
     windowMs,
-    focus,
-    location,
-    nowPlaying,
+    location: latestOf("location"),
+    focus: latestOf("focus"),
+    device: latestOf("device"),
+    steps: latestHealth((s) => s.metric === "steps"),
+    sleep: latestHealth((s) => s.metric === "sleep"),
+    // workout is metric:"workout" OR a detail-only health line (e.g. "ran 3mi").
+    workout: latestHealth((s) => s.metric === "workout" || (!s.metric && !!s.detail)),
+    nowPlaying: latestOf("now_playing"),
   });
 
   return { topApps, recent, summaryLine };
@@ -190,19 +276,51 @@ export function summarizeDeviceSignals(
 interface BuildLineInput {
   topApps: AppCount[];
   windowMs: number;
-  focus?: DeviceSignal;
   location?: DeviceSignal;
+  focus?: DeviceSignal;
+  device?: DeviceSignal;
+  steps?: DeviceSignal;
+  sleep?: DeviceSignal;
+  workout?: DeviceSignal;
   nowPlaying?: DeviceSignal;
 }
 
+/** Map a raw device-state detail to a natural verb/noun. CarPlay → "driving";
+ *  everything else passes through (lower-cased so it reads as a state). */
+function deviceStatePhrase(detail: string): string {
+  const d = detail.trim();
+  if (/carplay/i.test(d)) return "driving";
+  return d;
+}
+
+/** Compact health-steps phrasing: 6200 → "6.2k steps", 850 → "850 steps". */
+function stepsPhrase(value: number): string {
+  const n = Math.round(value);
+  if (n >= 1000) {
+    const k = n / 1000;
+    // one decimal, but drop a trailing ".0" (10000 → "10k", 6200 → "6.2k").
+    const label = k % 1 === 0 ? `${k}k` : `${k.toFixed(1)}k`;
+    return `${label} steps`;
+  }
+  return `${n} steps`;
+}
+
+/** Compact health-sleep phrasing: 6.5 → "slept 6.5h", 8 → "slept 8h". */
+function sleepPhrase(value: number): string {
+  const h = Math.round(value * 10) / 10;
+  const label = h % 1 === 0 ? `${h}` : `${h}`;
+  return `slept ${label}h`;
+}
+
 /** Build one short natural sentence from the device summary. Returns "" when
- *  there is no app activity AND no ambient signal (focus/location/now_playing). */
+ *  there is no app activity AND no ambient signal at all. */
 export function buildDeviceSummaryLine(input: BuildLineInput): string {
-  const { topApps, windowMs, focus, location, nowPlaying } = input;
+  const { topApps, windowMs, location, focus, device, steps, sleep, workout, nowPlaying } =
+    input;
   const when = windowLabel(windowMs);
 
-  const clauses: string[] = [];
-
+  // Lead sentence: app usage (existing behavior).
+  let lead = "";
   if (topApps.length > 0) {
     const names = topApps.map((a) => a.app);
     let appsPhrase: string;
@@ -213,33 +331,59 @@ export function buildDeviceSummaryLine(input: BuildLineInput): string {
     } else {
       appsPhrase = `${names.slice(0, -1).join(", ")} — ${names[names.length - 1]}`;
     }
-    let lead = `On iPhone (${when}): ${appsPhrase}`;
+    lead = `On iPhone (${when}): ${appsPhrase}`;
     // Note the dominant app if it clearly leads (more opens than #2).
     const top = topApps[0];
     const second = topApps[1];
     if (top && top.opens >= 2 && (!second || top.opens > second.opens)) {
       lead += `. Mostly ${top.app}`;
     }
-    clauses.push(lead);
   }
 
-  // Ambient enrichers.
-  if (location) {
-    clauses.push(location.detail ? `at ${location.detail}` : `at ${location.app}`);
+  // Trailing enricher clauses (latest-wins per category), in a stable order.
+  const enrichers: string[] = [];
+
+  if (location && (location.detail || location.app)) {
+    enrichers.push(`at ${location.detail || location.app}`);
   }
   if (focus) {
-    clauses.push(`${focus.detail || focus.app} focus on`);
+    const mode = (focus.detail || focus.app || "").trim();
+    // Skip "off" — a Focus turning off isn't worth surfacing.
+    if (mode && !/^off$/i.test(mode)) enrichers.push(`${mode} focus`);
+  }
+  if (device) {
+    const state = (device.detail || device.app || "").trim();
+    if (state) enrichers.push(deviceStatePhrase(state));
+  }
+  if (steps && typeof steps.value === "number") {
+    enrichers.push(stepsPhrase(steps.value));
+  }
+  if (sleep && typeof sleep.value === "number") {
+    enrichers.push(sleepPhrase(sleep.value));
+  }
+  if (workout) {
+    // metric:"workout" with a detail → use the detail ("ran 3mi"); else a
+    // bare workout marker → generic "worked out".
+    enrichers.push(workout.detail ? workout.detail : "worked out");
   }
   if (nowPlaying) {
-    clauses.push(nowPlaying.detail ? `playing ${nowPlaying.detail}` : `playing in ${nowPlaying.app}`);
+    enrichers.push(
+      nowPlaying.detail ? `playing ${nowPlaying.detail}` : `playing in ${nowPlaying.app}`,
+    );
   }
 
-  if (clauses.length === 0) return "";
-  // First clause is the full lead sentence; the rest are short trailing notes.
-  const [first, ...rest] = clauses;
-  if (rest.length === 0) return /[.!?]$/.test(first) ? first : `${first}.`;
-  const head = first.replace(/\.$/, "");
-  return `${head} — ${rest.join("; ")}.`;
+  // Compose. If there's no app lead, anchor the enrichers with the window label
+  // so an ambient-only summary still reads naturally.
+  if (!lead && enrichers.length === 0) return "";
+  if (!lead) {
+    const body = enrichers.join(", ");
+    return `On iPhone (${when}): ${body}.`;
+  }
+  if (enrichers.length === 0) {
+    return /[.!?]$/.test(lead) ? lead : `${lead}.`;
+  }
+  const head = lead.replace(/\.$/, "");
+  return `${head} — ${enrichers.join(", ")}.`;
 }
 
 // ─── Owner-context block ─────────────────────────────────────────────────────
@@ -251,7 +395,7 @@ export function deviceContextBlock(summary: DeviceSummary | string | null | unde
   if (!line) return "";
   return [
     "## Owner iPhone activity (local device signals — owner-only, never share with a contact)",
-    "Background signal about what the owner has been doing on his iPhone (apps opened, focus mode, location, now-playing). Use it only to ground a reply the owner could plausibly be asking about (\"what have I been on\", \"am I doomscrolling\", \"where am I\"). Do NOT volunteer it and NEVER reveal it to anyone but the owner.",
+    "Background signal about what the owner has been doing on his iPhone (apps opened, location, focus mode, device state, health, now-playing). Use it only to ground a reply the owner could plausibly be asking about (\"what have I been on\", \"am I doomscrolling\", \"where am I\", \"how many steps today\"). Do NOT volunteer it and NEVER reveal it to anyone but the owner.",
     line,
   ].join("\n");
 }
