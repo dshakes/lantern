@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PersonalHarnessArchitecture } from "../_components/PersonalHarnessArchitecture";
 import { PersonalHarnessDiagram } from "../_components/PersonalHarnessDiagram";
+import { AgentLoop } from "../_components/AgentLoop";
 
 export default function PersonalHarnessPage() {
   return (
@@ -106,6 +107,65 @@ export default function PersonalHarnessPage() {
         <code>LANTERN_CONCIERGE=on</code> (off by default). financial-sentinel
         acts on <code>life_events</code> bills already classified by the bridges.
       </p>
+
+      <h3>How each agent loops</h3>
+      <p>
+        Each diagram shows the stages of one agent&apos;s cycle — solid arrows
+        are the forward flow; the dashed arc loops from the last stage back to
+        the first. The two contact-facing agents are{" "}
+        <strong>rose-highlighted</strong> because they reply as you to real
+        people — they carry the full weight of impersonation.
+      </p>
+
+      <AgentLoop
+        title="concierge"
+        cadence="continuous"
+        stages={["Capture", "Research", "Nudge", "You act"]}
+        tone="sky"
+        ownerFacing
+      />
+      <AgentLoop
+        title="relationship-keeper"
+        cadence="weekly"
+        stages={["Scan people", "Gone quiet?", "Draft in your voice", "Nudge you", "You reach out"]}
+        tone="violet"
+        ownerFacing
+      />
+      <AgentLoop
+        title="financial-sentinel"
+        cadence="daily"
+        stages={["Scan bills", "Detect price hike", "Flag for review", "You review/cancel"]}
+        tone="amber"
+        ownerFacing
+      />
+      <AgentLoop
+        title="morning-brief"
+        cadence="daily 8am"
+        stages={["8am trigger", "Gather context", "Compose 3 bullets", "Text you"]}
+        tone="emerald"
+        ownerFacing
+      />
+      <AgentLoop
+        title="inbox-concierge"
+        cadence="daily AM"
+        stages={["Morning trigger", "Read Gmail", "Sort 3 buckets", "Text digest"]}
+        tone="sky"
+        ownerFacing
+      />
+      <AgentLoop
+        title="whatsapp-assistant"
+        cadence="reactive"
+        stages={["Contact messages", "Understand", "Draft in your voice", "Send to contact"]}
+        tone="rose"
+        ownerFacing={false}
+      />
+      <AgentLoop
+        title="imessage-assistant"
+        cadence="reactive"
+        stages={["Contact messages", "Understand", "Draft in your voice", "Send to contact"]}
+        tone="rose"
+        ownerFacing={false}
+      />
 
       <h2 id="signals">L1 · Sense — signals &amp; ingestion</h2>
       <p>

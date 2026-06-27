@@ -457,6 +457,39 @@ Seven agents make up the personal suite. The first five are **owner-facing** —
 
 The loop agents (concierge, relationship-keeper, financial-sentinel) run on the Lantern platform as scheduled agents — created via `POST /v1/agents/loop` and visible on the dashboard with runs and cost like any other agent. Bridge nudges require `LANTERN_CONCIERGE=on` (off by default). financial-sentinel acts on `life_events` bills already classified by the bridges.
 
+#### Owner-facing loops — nudge you in self-chat, never touch your contacts
+
+```mermaid
+flowchart LR
+  subgraph C["concierge · continuous"]
+    c1([Capture]) --> c2([Research]) --> c3([Nudge]) --> c4([You act]) --> c1
+  end
+  subgraph RK["relationship-keeper · weekly"]
+    r1([Scan people]) --> r2([Gone quiet?]) --> r3([Draft]) --> r4([Nudge you]) --> r5([You reach out]) --> r1
+  end
+  subgraph FS["financial-sentinel · daily"]
+    f1([Scan bills]) --> f2([Price hike?]) --> f3([Flag review]) --> f4([You decide]) --> f1
+  end
+  subgraph MB["morning-brief · daily 8am"]
+    m1([8am trigger]) --> m2([Gather context]) --> m3([3 bullets]) --> m4([Text you]) --> m1
+  end
+  subgraph IC["inbox-concierge · daily AM"]
+    i1([Morning trigger]) --> i2([Read Gmail]) --> i3([Sort buckets]) --> i4([Text digest]) --> i1
+  end
+```
+
+#### Contact-facing loops — reply AS YOU to real contacts ⚠
+
+```mermaid
+flowchart LR
+  subgraph WA["⚠ whatsapp-assistant · reactive · talks to your contacts"]
+    wa1([Contact messages]) --> wa2([Understand]) --> wa3([Draft in your voice]) --> wa4([Send to contact]) --> wa1
+  end
+  subgraph IM["⚠ imessage-assistant · reactive · talks to your contacts"]
+    im1([Contact messages]) --> im2([Understand]) --> im3([Draft in your voice]) --> im4([Send to contact]) --> im1
+  end
+```
+
 ### The harness, layer by layer
 
 <p align="center">

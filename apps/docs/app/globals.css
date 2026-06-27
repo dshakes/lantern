@@ -422,3 +422,17 @@ a, button, .card, .sys-comp, .sys-actor { transition: color .15s ease, backgroun
 @media (max-width: 640px) {
   .harness-layer-tag { margin-left: 0; flex-basis: 100%; }
 }
+
+/* ─── Agent loop cycle diagrams ──────────────────────────────────────────── */
+.agent-loop { margin: 0.65rem 0; border-radius: 12px; border: 1px solid #2a2a30; padding: 0.65rem 0.9rem 0.6rem; background: linear-gradient(160deg, rgba(255,255,255,0.015), rgba(255,255,255,0)); }
+.agent-loop-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.45rem; }
+.agent-loop-title { font-size: 0.82rem; font-weight: 650; color: #ededf0; }
+.agent-loop-cadence { font-size: 0.69rem; color: #71717a; }
+.agent-loop-contact-badge { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #12030a; background: #fb7185; border-radius: 999px; padding: 0.14rem 0.5rem; margin-left: auto; }
+/* Tone left borders — mirrors harness-{tone} pattern */
+.agent-loop-sky     { border-left: 3px solid rgba(56,189,248,0.55); }
+.agent-loop-amber   { border-left: 3px solid rgba(245,158,11,0.70); }
+.agent-loop-violet  { border-left: 3px solid rgba(167,139,250,0.55); }
+.agent-loop-emerald { border-left: 3px solid rgba(52,211,153,0.55); }
+/* Rose: contact-facing — visually distinct, matches harness-rail rose */
+.agent-loop-rose { border: 1px solid rgba(251,113,133,0.32); border-left: 3px solid rgba(251,113,133,0.80); background: linear-gradient(160deg, rgba(251,113,133,0.06), rgba(251,113,133,0.01)); }
