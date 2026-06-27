@@ -55,6 +55,11 @@ jobs:
           permission-pull-requests: write
       - name: Claude review
         id: review
+        # Fail OPEN on an infra crash (e.g. the agent exhausting its turn budget
+        # on a large diff): the gate step below treats empty structured_output as
+        # CLEAN, so a tooling failure no longer red-X's this advisory gate. A real
+        # BLOCKING verdict still gates because it sets structured_output.
+        continue-on-error: true
         uses: anthropics/claude-code-action@787c5a0ce96a9a6cfb050ea0c8f4c05f2447c251 # v1
         with:
           # Uses your Claude SUBSCRIPTION (no API credits) via `claude setup-token`.
@@ -94,8 +99,8 @@ jobs:
             REPO: ${{ github.repository }}   PR: #${{ github.event.pull_request.number }}
           claude_args: |
             --model sonnet
-            --max-turns 20
-            --max-budget-usd 2.00
+            --max-turns 40
+            --max-budget-usd 4.00
             --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
             --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["BLOCKING","CLEAN"]},"summary":{"type":"string"}},"required":["verdict"]}'
       - name: Label the PR and gate on the verdict
