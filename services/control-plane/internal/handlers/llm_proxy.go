@@ -483,7 +483,9 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 		result = antResp.Content[0].Text
 		tokensIn = tin
 		tokensOut = tout
-		costUsd = float64(tin)*3.0/1_000_000 + float64(tout)*15.0/1_000_000
+		// Use cache-aware cost: input_tokens excludes cache_read/cache_creation
+		// tokens; each is billed at its own rate. See estimateCostWithCache.
+		costUsd = estimateCostWithCache("anthropic", model, int(tin), int(detail.CacheReadTokens), int(detail.CacheWriteTokens), int(tout))
 		return
 
 	default:
@@ -1664,7 +1666,13 @@ func (h *LlmProxyHandler) handleAnthropicSyncResponse(w http.ResponseWriter, res
 		}
 	}
 
-	costUsd := estimateCost("anthropic", model, result.Usage.InputTokens, result.Usage.OutputTokens)
+	// Cache-aware cost: input_tokens is separate from cache_read/cache_creation
+	// tokens; each field is non-overlapping and billed at its own rate.
+	costUsd := estimateCostWithCache("anthropic", model,
+		result.Usage.InputTokens,
+		int(result.Usage.CacheReadInputTokens),
+		int(result.Usage.CacheCreationInputTokens),
+		result.Usage.OutputTokens)
 
 	writeJSON(w, http.StatusOK, completionResponse{
 		Model:            model,
@@ -2234,6 +2242,75 @@ func estimateCost(provider, model string, tokensIn, tokensOut int) float64 {
 	return (float64(tokensIn) * inPer1M / 1_000_000) + (float64(tokensOut) * outPer1M / 1_000_000)
 }
 
+// estimateCostWithCache computes the Anthropic cost when prompt-caching token
+// counts are available. For other providers it delegates to estimateCost.
+//
+// Anthropic field semantics (verified against API docs, 2026-06):
+//
+//	input_tokens                — new tokens processed, billed at full input rate.
+//	cache_read_input_tokens     — tokens served from the prompt cache, billed at 0.1× input rate.
+//	cache_creation_input_tokens — tokens written into the prompt cache, billed at 1.25× input rate.
+//	output_tokens               — generated tokens, billed at full output rate.
+//
+// All three input-side fields are NON-OVERLAPPING: the total tokens seen by the
+// model is input_tokens + cache_read_input_tokens + cache_creation_input_tokens.
+// Without this function, estimateCost bills everything at the full input rate,
+// over-estimating on cache-heavy loop agents.
+func estimateCostWithCache(provider, model string, tokensIn, cacheReadTokens, cacheWriteTokens, tokensOut int) float64 {
+	if provider != "anthropic" || (cacheReadTokens == 0 && cacheWriteTokens == 0) {
+		return estimateCost(provider, model, tokensIn, tokensOut)
+	}
+	var inPer1M, outPer1M float64
+	switch {
+	case strings.Contains(model, "opus"):
+		inPer1M, outPer1M = 15.00, 75.00
+	case strings.Contains(model, "sonnet"):
+		inPer1M, outPer1M = 3.00, 15.00
+	case strings.Contains(model, "haiku"):
+		inPer1M, outPer1M = 0.25, 1.25
+	default:
+		inPer1M, outPer1M = 5.00, 15.00
+	}
+	return (float64(tokensIn)*inPer1M +
+		float64(cacheReadTokens)*inPer1M*0.1 +
+		float64(cacheWriteTokens)*inPer1M*1.25 +
+		float64(tokensOut)*outPer1M) / 1_000_000
+}
+
+// anthropicSystemWithCache converts a system-prompt string to the Anthropic
+// block-array form and marks the block with cache_control:ephemeral so the
+// stable system prefix is cached across loop turns. Turn 0 writes the cache
+// (billed at 1.25× for cache_creation_input_tokens); turns 1+ read it at 0.1×.
+func anthropicSystemWithCache(prompt string) []map[string]any {
+	return []map[string]any{
+		{
+			"type":          "text",
+			"text":          prompt,
+			"cache_control": map[string]any{"type": "ephemeral"},
+		},
+	}
+}
+
+// withCacheOnLastTool returns a copy of the tools slice with cache_control:ephemeral
+// on the last entry. Anthropic caches from the start of the tools block up to and
+// including the marked definition, so marking the last one caches the entire prefix.
+// The original slice is never mutated.
+func withCacheOnLastTool(tools []map[string]any) []map[string]any {
+	if len(tools) == 0 {
+		return tools
+	}
+	out := make([]map[string]any, len(tools))
+	copy(out, tools)
+	last := len(out) - 1
+	marked := make(map[string]any, len(out[last])+1)
+	for k, v := range out[last] {
+		marked[k] = v
+	}
+	marked["cache_control"] = map[string]any{"type": "ephemeral"}
+	out[last] = marked
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // Tool-call loop (OpenAI only for now). Used by sessions.processMessage so
 // templated agents (Morning Brief, Inbox Concierge, …) can actually invoke
@@ -2564,6 +2641,10 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 		})
 	}
 
+	// Accumulate prompt-cache token counts across turns so we can log them
+	// for loop-agent observability after the call completes.
+	var totalCacheRead, totalCacheWrite int64
+
 	for turn := 0; turn < maxTurns; turn++ {
 		reqBody := map[string]any{
 			"model":      model,
@@ -2571,10 +2652,15 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 			"messages":   antMessages,
 		}
 		if systemPrompt != "" {
-			reqBody["system"] = systemPrompt
+			// Block-array form enables Anthropic prompt caching on the stable
+			// system prefix. Turn 0 writes the cache (1.25× for cache_creation
+			// tokens); turns 1+ read it at 0.1× — clear win for loop agents.
+			reqBody["system"] = anthropicSystemWithCache(systemPrompt)
 		}
 		if len(antTools) > 0 {
-			reqBody["tools"] = antTools
+			// Mark the last tool definition so Anthropic caches the entire
+			// tool-definitions prefix up to and including that entry.
+			reqBody["tools"] = withCacheOnLastTool(antTools)
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
@@ -2599,8 +2685,10 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 			Content    []map[string]any `json:"content"`
 			StopReason string           `json:"stop_reason"`
 			Usage      struct {
-				InputTokens  int64 `json:"input_tokens"`
-				OutputTokens int64 `json:"output_tokens"`
+				InputTokens              int64 `json:"input_tokens"`
+				OutputTokens             int64 `json:"output_tokens"`
+				CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 			Error *struct {
 				Message string `json:"message"`
@@ -2611,6 +2699,8 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 		}
 		tokensIn += antResp.Usage.InputTokens
 		tokensOut += antResp.Usage.OutputTokens
+		totalCacheRead += antResp.Usage.CacheReadInputTokens
+		totalCacheWrite += antResp.Usage.CacheCreationInputTokens
 
 		if antResp.Error != nil {
 			return "", invocations, tokensIn, tokensOut, fmt.Errorf("anthropic: %s", antResp.Error.Message)
@@ -2686,6 +2776,14 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 		})
 	}
 
+	// Log prompt-cache stats so loop-agent cache effectiveness is visible.
+	if totalCacheRead > 0 || totalCacheWrite > 0 {
+		h.logger().Debug("anthropic prompt cache stats (tool loop)",
+			zap.Int64("cache_read_tokens", totalCacheRead),
+			zap.Int64("cache_write_tokens", totalCacheWrite),
+		)
+	}
+
 	// Hit the turn budget. Force ONE final synthesis turn with tools
 	// disabled so the model produces a real answer from data it's
 	// already pulled — instead of dumping the boilerplate.
@@ -2699,7 +2797,8 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 		"messages":   antMessages,
 	}
 	if systemPrompt != "" {
-		finalReq["system"] = systemPrompt
+		// Reuse the cached system prefix for the synthesis turn too.
+		finalReq["system"] = anthropicSystemWithCache(systemPrompt)
 	}
 	finalBytes, _ := json.Marshal(finalReq)
 	finalHTTPReq, _ := http.NewRequestWithContext(ctx, "POST",

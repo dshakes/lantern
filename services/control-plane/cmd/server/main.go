@@ -96,6 +96,12 @@ func main() {
 	}
 	logger.Info("migrations complete")
 
+	// Seed the Concierge loop agent for the dev tenant (idempotent, no-op in prod
+	// because the dev tenant row doesn't exist there).
+	if seedDev {
+		handlers.SeedLoopAgents(ctx, pool, logger)
+	}
+
 	// --- Redis ---
 	redisOpts, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
@@ -255,6 +261,9 @@ func main() {
 	gmailHandler := handlers.NewGmailHandler(srv, authHandler)
 	sessionHandler := handlers.NewSessionHandler(srv, authHandler, llmProxyHandler)
 	lifeEventHandler := handlers.NewLifeEventHandler(srv, authHandler)
+	commitmentHandler := handlers.NewCommitmentHandler(srv, authHandler)
+	commitmentHandler.SetLlmProxy(llmProxyHandler) // enables ResearchCommitment
+	loopAgentHandler := handlers.NewLoopAgentHandler(srv, authHandler, llmProxyHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
 	restHandler.SetDataPlaneRouter(dpSvc)    // routes runs to a connected data plane when one is live
 
@@ -476,6 +485,21 @@ func main() {
 	httpMux.HandleFunc("PUT /v1/life-events/prefs", lifeEventHandler.UpsertLifeEventPref)
 	httpMux.HandleFunc("POST /v1/life-events/{id}/undo", lifeEventHandler.UndoLifeEvent)
 	httpMux.HandleFunc("POST /v1/life-events/{id}/dismiss", lifeEventHandler.DismissLifeEvent)
+
+	// Concierge agent commitment tracker.
+	httpMux.HandleFunc("POST /v1/commitments", commitmentHandler.CreateCommitment)
+	httpMux.HandleFunc("GET /v1/commitments", commitmentHandler.ListCommitments)
+	httpMux.HandleFunc("GET /v1/commitments/{id}", commitmentHandler.GetCommitment)
+	httpMux.HandleFunc("PUT /v1/commitments/{id}", commitmentHandler.UpdateCommitment)
+	httpMux.HandleFunc("POST /v1/commitments/{id}/snooze", commitmentHandler.SnoozeCommitment)
+	httpMux.HandleFunc("POST /v1/commitments/{id}/done", commitmentHandler.DoneCommitment)
+	httpMux.HandleFunc("POST /v1/commitments/{id}/dismiss", commitmentHandler.DismissCommitment)
+	// Stage 2: LLM-powered research + cited action plan.
+	httpMux.HandleFunc("POST /v1/commitments/{id}/research", commitmentHandler.ResearchCommitment)
+
+	// Loop-agent platform primitive (Stage 3).
+	// Must be registered before the generic /v1/agents/{name} patterns to avoid shadowing.
+	httpMux.HandleFunc("POST /v1/agents/loop", loopAgentHandler.CreateLoopAgent)
 
 	// Pre-run cost forecaster.
 	httpMux.HandleFunc("POST /v1/runs/forecast", forecastHandler.Forecast)

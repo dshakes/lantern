@@ -232,6 +232,14 @@ import {
 import { runDislikeConsolidation, formatStyleLessonsBlock, type StyleLesson } from "@lantern/bridge-core/dislike-consolidator";
 import { detectEmotionalRegister } from "@lantern/bridge-core/emotional-register";
 import type { ContactSignals } from "@lantern/bridge-core/contact-priority";
+import { authedFetch } from "@lantern/bridge-core/auth";
+import {
+  detectTaskCapture,
+  renderNudge,
+  resolveReply,
+  CommitmentsClient,
+  type PendingCommitmentNudge,
+} from "@lantern/bridge-core/commitments-edge";
 
 export type IMessageConnectionState =
   | "starting"
@@ -661,6 +669,22 @@ export class IMessageSession {
     (process.env.LANTERN_DRAFT_CONFIRM || "").toLowerCase() === "on" ||
     (process.env.LANTERN_DRAFT_CONFIRM || "").toLowerCase() === "1";
 
+  // 4) Concierge edge — task-capture + nudge + 1-click resolution.
+  //    DEFAULT OFF. Set LANTERN_CONCIERGE=on to enable.
+  // ponytail: ships dark; owner flips LANTERN_CONCIERGE=on to enable.
+  private static readonly CONCIERGE_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_CONCIERGE ?? "").toLowerCase());
+  private static readonly CONCIERGE_INTERVAL_MS = 35 * 60_000; // 35 min poll
+  private conciergeTimer: ReturnType<typeof setInterval> | null = null;
+  // Pending 1-click nudges: commitment id → nudge entry. Owner's reply within
+  // the TTL resolves the nudge (research/snooze/done/dismiss) without LLM.
+  private pendingConcierge = new Map<string, PendingCommitmentNudge>();
+  private static readonly CONCIERGE_NUDGE_TTL_MS = 30 * 60_000; // 30 min
+  // Commitment ids already nudged today (cleared on stop/restart).
+  private conciergeNudgedToday = new Set<string>();
+  // API client — same pattern as rest of the bridge.
+  private readonly commitments = new CommitmentsClient(authedFetch);
+
   // Futuristic helpers
   private agent: AgentClient;
   private media: MediaHandler;
@@ -810,6 +834,7 @@ export class IMessageSession {
     this.startQuietReplay();
     this.startLearningFlywheel();
     this.startAnticipationNudges();
+    this.startConcierge();
     this.startGmailIngest();
     this.startMacUsage();
     this.startIphoneSignals();
@@ -1102,6 +1127,19 @@ export class IMessageSession {
     this.nudgeTimer = t;
     // First tick a couple minutes after boot (after voice-seeding settles).
     const kick = setTimeout(() => void this.runAnticipationTick(), 120_000);
+    kick.unref?.();
+  }
+
+  private startConcierge(): void {
+    if (!IMessageSession.CONCIERGE_ENABLED) return;
+    const t = setInterval(
+      () => void this.runConciergeTick(),
+      IMessageSession.CONCIERGE_INTERVAL_MS,
+    );
+    t.unref?.();
+    this.conciergeTimer = t;
+    // Post-boot kick after 90s (after the session has time to settle).
+    const kick = setTimeout(() => void this.runConciergeTick(), 90_000);
     kick.unref?.();
   }
 
@@ -1680,6 +1718,13 @@ export class IMessageSession {
       clearInterval(this.nudgeTimer);
       this.nudgeTimer = null;
     }
+    if (this.conciergeTimer) {
+      clearInterval(this.conciergeTimer);
+      this.conciergeTimer = null;
+    }
+    // Clear per-session concierge state so a restart starts fresh.
+    this.pendingConcierge.clear();
+    this.conciergeNudgedToday.clear();
     this.screenContext?.stop();
     this.db.close();
     this.sockets.forEach((s) => {
@@ -1863,6 +1908,171 @@ export class IMessageSession {
       end: e.end ? e.end.toISOString() : null,
       calendar: e.calendar,
     }));
+  }
+
+  // ── Concierge edge — task capture + nudge poll + 1-click resolution ──────
+
+  /**
+   * Capture a task-assignment from a VIP/spouse contact into /v1/commitments.
+   * Only fires when LANTERN_CONCIERGE=on. Fire-and-forget; never throws.
+   */
+  private async maybeCaptureCommitment(
+    handle: string,
+    text: string,
+    displayName?: string,
+  ): Promise<void> {
+    try {
+      const rel = this.ownerProfileStore.relationshipFor(handle, displayName);
+      if (!rel) return; // not a known relationship — skip to avoid noise
+
+      const captured = detectTaskCapture(text, { relationship: rel });
+      if (!captured) return;
+
+      const source = /\b(?:wife|husband|spouse|partner)\b/i.test(rel) ? "spouse" : "vip";
+
+      const day = new Date().toISOString().slice(0, 10);
+      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "-").slice(0, 40);
+      const idempotencyKey = `cmt:${norm(handle)}:${norm(captured.title)}:${day}`;
+
+      const result = await this.commitments.create({
+        title: captured.title,
+        source,
+        assignedBy: displayName,
+        urgency: captured.urgency,
+        idempotencyKey,
+        sourcePreview: text.slice(0, 200),
+      });
+
+      if (result) {
+        this.logger.info(
+          { handle, title: captured.title, source, id: result.id },
+          "concierge: task captured",
+        );
+        // Ack to owner self-chat — skip during quiet hours.
+        if (!isQuietHours(new Date(), defaultQuietHours())) {
+          const owner = this.ownerSelfChatTarget();
+          if (owner) await this.send(owner, `📝 tracking: ${captured.title}`).catch(() => {});
+        }
+      }
+    } catch (err) {
+      this.logger.debug({ err, handle }, "concierge capture failed (continuing)");
+    }
+  }
+
+  /**
+   * Nudge poll tick — fetches open/suggested commitments and DMs the owner
+   * any not yet nudged today.
+   */
+  private async runConciergeTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      const owner = this.ownerSelfChatTarget();
+      if (!owner) return;
+      if (isQuietHours(new Date(), defaultQuietHours())) return;
+
+      const commitments = await this.commitments.list({ status: "open", limit: 10 });
+      const suggested = await this.commitments.list({ status: "suggested", limit: 10 });
+      const due = [...commitments, ...suggested].filter(
+        (c) => !this.conciergeNudgedToday.has(c.id),
+      );
+      if (due.length === 0) return;
+
+      // GC expired pending entries.
+      const cutoff = Date.now() - IMessageSession.CONCIERGE_NUDGE_TTL_MS;
+      for (const [k, v] of this.pendingConcierge) {
+        if (v.issuedAt < cutoff) this.pendingConcierge.delete(k);
+      }
+
+      let fired = 0;
+      for (const c of due.slice(0, 2)) { // cap at 2 per tick
+        try {
+          await this.send(owner, renderNudge(c));
+          this.conciergeNudgedToday.add(c.id);
+          this.pendingConcierge.set(c.id, {
+            id: c.id,
+            title: c.title,
+            assignedBy: c.assignedBy,
+            issuedAt: Date.now(),
+          });
+          fired += 1;
+        } catch (err) {
+          this.logger.debug({ err, id: c.id }, "concierge nudge send failed");
+        }
+      }
+      if (fired > 0) {
+        this.logger.info({ fired }, "concierge nudges fired");
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "concierge tick failed (continuing)");
+    }
+  }
+
+  /**
+   * Intercept owner self-chat reply if there is a pending commitment nudge and
+   * the reply text resolves to an action. Returns true when consumed.
+   */
+  private async maybeResolveConciergeReply(handle: string, text: string): Promise<boolean> {
+    // Find the most-recently-issued pending nudge (last-in-wins).
+    let newest: PendingCommitmentNudge | null = null;
+    let newestKey: string | null = null;
+    const cutoff = Date.now() - IMessageSession.CONCIERGE_NUDGE_TTL_MS;
+    for (const [k, v] of this.pendingConcierge) {
+      if (v.issuedAt < cutoff) { this.pendingConcierge.delete(k); continue; }
+      if (!newest || v.issuedAt > newest.issuedAt) { newest = v; newestKey = k; }
+    }
+    if (!newest || !newestKey) return false;
+
+    const action = resolveReply(text, newest);
+    if (!action) return false;
+
+    // Consume the pending nudge immediately (no double-fire).
+    this.pendingConcierge.delete(newestKey);
+    const { id, title } = newest;
+    const owner = this.ownerSelfChatTarget();
+
+    try {
+      switch (action.type) {
+        case "done":
+          await this.commitments.done(id);
+          if (owner) await this.send(owner, `✅ marked done: "${title}"`).catch(() => {});
+          break;
+
+        case "dismiss":
+          await this.commitments.dismiss(id);
+          if (owner) await this.send(owner, `👍 dismissed: "${title}"`).catch(() => {});
+          break;
+
+        case "snooze": {
+          const until = action.snoozeUntil ?? new Date(Date.now() + 3 * 60 * 60_000).toISOString();
+          await this.commitments.snooze(id, until);
+          if (owner) await this.send(owner, `⏰ snoozed: "${title}"`).catch(() => {});
+          break;
+        }
+
+        case "research": {
+          if (owner) await this.send(owner, `🔍 researching: "${title}" — one moment…`).catch(() => {});
+          const plan = await this.commitments.research(id);
+          if (plan && owner) {
+            const lines = [`📋 Plan for "${title}":`, `→ ${plan.summary}`];
+            for (const s of plan.steps.slice(0, 5)) {
+              lines.push(`• ${s.title}${s.detail ? ` — ${s.detail}` : ""}`);
+            }
+            if (plan.sources?.length) {
+              lines.push("Sources: " + plan.sources.map((s) => s.url).join(", "));
+            }
+            await this.send(owner, lines.join("\n")).catch(() => {});
+          } else if (owner) {
+            await this.send(owner, `⚠️ couldn't get a plan for "${title}" — try again later.`).catch(() => {});
+          }
+          break;
+        }
+      }
+      this.logger.info({ id, action: action.type, handle }, "concierge 1-click resolved");
+    } catch (err) {
+      this.logger.warn({ err, id, action: action.type }, "concierge resolve failed");
+    }
+
+    return true; // consumed — caller should return
   }
 
   // Proactive ingester for UNKNOWN-sender inbound. The LIFE-EVENT ENGINE runs
@@ -3207,6 +3417,13 @@ export class IMessageSession {
       }
     }
 
+    // CONCIERGE 1-CLICK RESOLUTION: before the draft-edit block so "done" /
+    // "research" / "snooze" from the owner don't accidentally fall through to
+    // draft-confirm logic. Mirrors the WhatsApp bridge exactly.
+    if (IMessageSession.CONCIERGE_ENABLED && !isGroup && this.isOwnerChatRow(row) && text) {
+      if (await this.maybeResolveConciergeReply(row.handle, text)) return;
+    }
+
     // B5 — INLINE DRAFT EDITING (parity with the WhatsApp bridge). When a
     // high-stakes / LOW-confidence reply was just drafted to this owner thread
     // for approval, the owner can react in self-chat. Reached ONLY AFTER the
@@ -3379,6 +3596,12 @@ export class IMessageSession {
     // suppresses the reply, deduped per (handle, ~10min).
     if (text && row.handle) {
       this.maybeNotifyUrgent(row.handle, text, isGroup);
+    }
+
+    // CONCIERGE CAPTURE: detect task-assignments from VIP/spouse contacts.
+    // Fire-and-forget — never delays the reply pipeline.
+    if (IMessageSession.CONCIERGE_ENABLED && !isGroup && row.handle && !this.killSwitch && text && !this.isOwnerChatRow(row)) {
+      void this.maybeCaptureCommitment(row.handle, text, this.contactNames.get(row.handle));
     }
 
     // PROACTIVE MEMORY. Scan every contact-inbound for high-confidence

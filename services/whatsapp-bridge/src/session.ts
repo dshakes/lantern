@@ -103,6 +103,14 @@ import {
   formatStyleLessonsBlock,
 } from "@lantern/bridge-core/dislike-consolidator";
 import { contactPriority, type ContactSignals } from "@lantern/bridge-core/contact-priority";
+import {
+  detectTaskCapture,
+  renderNudge,
+  resolveReply,
+  CommitmentsClient,
+  type Commitment,
+  type PendingCommitmentNudge,
+} from "@lantern/bridge-core/commitments-edge";
 import { extname } from "path";
 
 // MIME map for sendDocument — WhatsApp's UI shows a file-type icon
@@ -1429,6 +1437,21 @@ export class WhatsAppSession {
   private static readonly NUDGES_ENABLED =
     (process.env.LANTERN_PROACTIVE_NUDGES ?? "on").toLowerCase() !== "0" &&
     (process.env.LANTERN_PROACTIVE_NUDGES ?? "on").toLowerCase() !== "off";
+  // 4) Concierge edge — task-capture + nudge + 1-click resolution.
+  //    DEFAULT OFF. Set LANTERN_CONCIERGE=on to enable.
+  // ponytail: ships dark; owner flips LANTERN_CONCIERGE=on to enable.
+  private static readonly CONCIERGE_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_CONCIERGE ?? "").toLowerCase());
+  private static readonly CONCIERGE_INTERVAL_MS = 35 * 60_000; // 35 min poll
+  private conciergeTimer: ReturnType<typeof setInterval> | null = null;
+  // Pending 1-click nudges: commitment id → nudge entry. Owner's reply within
+  // the TTL resolves the nudge (research/snooze/done/dismiss) without LLM.
+  private pendingConcierge = new Map<string, PendingCommitmentNudge>();
+  private static readonly CONCIERGE_NUDGE_TTL_MS = 30 * 60_000; // 30 min
+  // Commitment ids already nudged today (cleared at midnight / on reconnect).
+  private conciergeNudgedToday = new Set<string>();
+  // API client — injected authedFetch; same pattern as the rest of the bridge.
+  private readonly commitments = new CommitmentsClient(authedFetch);
   // 3) Draft-and-confirm for LOW-confidence replies. OPT-IN
   //    (LANTERN_DRAFT_HIGH_STAKES=on) — default OFF. On-by-default silently
   //    drafted normal short/cold-contact family messages instead of replying
@@ -1576,6 +1599,17 @@ export class WhatsAppSession {
       // so sendSelf can land. Detached + caught + unref'd.
       const nudgeKick = setTimeout(() => void this.runNudgeTick(), 60_000);
       nudgeKick.unref?.();
+    }
+    // Concierge nudge poll (LANTERN_CONCIERGE=on only).
+    if (WhatsAppSession.CONCIERGE_ENABLED) {
+      this.conciergeTimer = setInterval(
+        () => void this.runConciergeTick(),
+        WhatsAppSession.CONCIERGE_INTERVAL_MS,
+      );
+      this.conciergeTimer.unref?.();
+      // Post-boot kick after 90s (after the socket has time to connect).
+      const conciergeKick = setTimeout(() => void this.runConciergeTick(), 90_000);
+      conciergeKick.unref?.();
     }
   }
 
@@ -2832,6 +2866,12 @@ export class WhatsAppSession {
           // for broadcast JIDs — auto-reply / monitor / store-history
           // make no sense for one-way Status posts.
           if (isBroadcast) continue;
+
+          // CONCIERGE CAPTURE: detect task-assignments from VIP/spouse contacts.
+          // Fire-and-forget — never delays the reply pipeline.
+          if (WhatsAppSession.CONCIERGE_ENABLED && !isGroup && !this.killSwitch && text) {
+            void this.maybeCaptureCommitment(from, text, senderName);
+          }
 
           if (!this.agent.enabled()) continue;
           // PROACTIVE INGESTER (unknown senders): appointment confirmations →
@@ -4146,6 +4186,13 @@ export class WhatsAppSession {
       }
     }
 
+    // CONCIERGE 1-CLICK RESOLUTION: before the draft-edit block so "done" /
+    // "research" / "snooze" from the owner don't accidentally fall through to
+    // draft-confirm logic. Mirrors the pendingDraftEdits pattern exactly.
+    if (WhatsAppSession.CONCIERGE_ENABLED && self && !group && trimmed) {
+      if (await this.maybeResolveConciergeReply(jid, text)) return;
+    }
+
     // B5 — INLINE DRAFT EDITING. When a high-stakes / LOW-confidence reply was
     // just drafted to this owner thread for approval, the owner can react in
     // self-chat. Reached only AFTER command + presence parsing (a real command
@@ -5208,7 +5255,16 @@ export class WhatsAppSession {
     }
     // Humanize: friendly dates + guaranteed offer + deterministic
     // execution path on next-turn confirmation.
-    const { reply: polished, offer } = humanizeWithOffer(finalText);
+    const { reply: polished0, offer } = humanizeWithOffer(finalText);
+    // The mac-action markers (notes/calendar/mail) extracted above execute
+    // AFTER this reply is sent (below) and can still FAIL — e.g. a cold
+    // Notes.app osascript timing out. So the visible reply must never
+    // pre-claim completion of a not-yet-run action. When any marker is
+    // pending, rewrite completed-action claims to intent ("saved it" → "I'll
+    // save it"); the deterministic per-action confirm (📅/🗒/✉️ or the failure
+    // line) is the single source of truth for the outcome.
+    const pendingMacAction = notes.length > 0 || calendarEvents.length > 0 || mailDrafts.length > 0;
+    const polished = pendingMacAction ? verifyClaims(polished0).text : polished0;
     if (polished) {
       await this.confirmToSelf(polished);
       // SELF-EVAL — record so 🔁 / 🤦 can re-prompt with critique.
@@ -8315,6 +8371,179 @@ export class WhatsAppSession {
     }
   }
 
+  // ── Concierge edge — task capture + nudge poll + 1-click resolution ──────
+
+  /**
+   * Capture a task-assignment from a VIP/spouse contact into /v1/commitments.
+   * Only fires when LANTERN_CONCIERGE=on. Fire-and-forget; never throws.
+   * Source mapping: relationship="spouse/wife/husband/partner" → "spouse";
+   * any other relationship label → "vip"; no label → skipped (not a VIP).
+   */
+  private async maybeCaptureCommitment(
+    jid: string,
+    text: string,
+    senderName?: string,
+  ): Promise<void> {
+    try {
+      // Determine the relationship label for this contact.
+      const displayName = this.contactNames.get(jid) || senderName;
+      const rel = this.ownerProfileStore.relationshipFor(jid, displayName);
+      if (!rel) return; // not a known relationship — skip to avoid noise
+
+      const captured = detectTaskCapture(text, { relationship: rel });
+      if (!captured) return;
+
+      // Determine source from relationship label.
+      const source = /\b(?:wife|husband|spouse|partner)\b/i.test(rel) ? "spouse" : "vip";
+
+      // Stable idempotency key: prevents double-capture of the same task on
+      // the same calendar day (e.g. if the message is replayed in history sync).
+      const day = new Date().toISOString().slice(0, 10);
+      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "-").slice(0, 40);
+      const idempotencyKey = `cmt:${norm(jid)}:${norm(captured.title)}:${day}`;
+
+      const result = await this.commitments.create({
+        title: captured.title,
+        source,
+        assignedBy: displayName,
+        urgency: captured.urgency,
+        idempotencyKey,
+        sourcePreview: text.slice(0, 200),
+      });
+
+      if (result) {
+        this.logger.info(
+          { jid, title: captured.title, source, id: result.id },
+          "concierge: task captured",
+        );
+        // Ack to owner self-chat (quiet-hours check: skip if in quiet window).
+        const hour = this.ownerLocalHour();
+        if (hour < WhatsAppSession.NUDGE_QUIET_START_HOUR || hour >= WhatsAppSession.NUDGE_QUIET_END_HOUR) {
+          await this.sendSelf(`📝 tracking: ${captured.title}`).catch(() => {});
+        }
+      }
+    } catch (err) {
+      this.logger.debug({ err, jid }, "concierge capture failed (continuing)");
+    }
+  }
+
+  /**
+   * Nudge poll tick — mirrors runNudgeTick. Fetches open/suggested commitments
+   * and DMs the owner any not yet nudged today. Persists the pending-nudge map
+   * so 1-click replies can resolve it.
+   */
+  private async runConciergeTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      if (!this.socket || !this.connected || !this.ownJid()) return;
+      const hour = this.ownerLocalHour();
+      if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
+
+      const commitments = await this.commitments.list({ status: "open", limit: 10 });
+      const suggested = await this.commitments.list({ status: "suggested", limit: 10 });
+      const due = [...commitments, ...suggested].filter(
+        (c) => !this.conciergeNudgedToday.has(c.id),
+      );
+      if (due.length === 0) return;
+
+      // GC expired pending entries.
+      const cutoff = Date.now() - WhatsAppSession.CONCIERGE_NUDGE_TTL_MS;
+      for (const [k, v] of this.pendingConcierge) {
+        if (v.issuedAt < cutoff) this.pendingConcierge.delete(k);
+      }
+
+      let fired = 0;
+      for (const c of due.slice(0, 2)) { // cap at 2 per tick
+        try {
+          await this.sendSelf(renderNudge(c));
+          this.conciergeNudgedToday.add(c.id);
+          this.pendingConcierge.set(c.id, {
+            id: c.id,
+            title: c.title,
+            assignedBy: c.assignedBy,
+            issuedAt: Date.now(),
+          });
+          fired += 1;
+        } catch (err) {
+          this.logger.debug({ err, id: c.id }, "concierge nudge send failed");
+        }
+      }
+      if (fired > 0) {
+        this.logger.info({ fired }, "concierge nudges fired");
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "concierge tick failed (continuing)");
+    }
+  }
+
+  /**
+   * Intercept owner self-chat reply if there is a pending commitment nudge and
+   * the reply text resolves to an action. Mirrors maybeResolveSelfChatDraft.
+   * Returns true when the reply was consumed (caller should return early).
+   */
+  private async maybeResolveConciergeReply(jid: string, text: string): Promise<boolean> {
+    // Find the most-recently-issued pending nudge (last-in-wins).
+    let newest: PendingCommitmentNudge | null = null;
+    let newestKey: string | null = null;
+    const cutoff = Date.now() - WhatsAppSession.CONCIERGE_NUDGE_TTL_MS;
+    for (const [k, v] of this.pendingConcierge) {
+      if (v.issuedAt < cutoff) { this.pendingConcierge.delete(k); continue; }
+      if (!newest || v.issuedAt > newest.issuedAt) { newest = v; newestKey = k; }
+    }
+    if (!newest || !newestKey) return false;
+
+    const action = resolveReply(text, newest);
+    if (!action) return false;
+
+    // Consume the pending nudge immediately (no double-fire).
+    this.pendingConcierge.delete(newestKey);
+    const { id, title } = newest;
+
+    try {
+      switch (action.type) {
+        case "done":
+          await this.commitments.done(id);
+          await this.sendSelf(`✅ marked done: "${title}"`).catch(() => {});
+          break;
+
+        case "dismiss":
+          await this.commitments.dismiss(id);
+          await this.sendSelf(`👍 dismissed: "${title}"`).catch(() => {});
+          break;
+
+        case "snooze": {
+          const until = action.snoozeUntil ?? new Date(Date.now() + 3 * 60 * 60_000).toISOString();
+          await this.commitments.snooze(id, until);
+          await this.sendSelf(`⏰ snoozed: "${title}"`).catch(() => {});
+          break;
+        }
+
+        case "research": {
+          await this.sendSelf(`🔍 researching: "${title}" — one moment…`).catch(() => {});
+          const plan = await this.commitments.research(id);
+          if (plan) {
+            const lines = [`📋 Plan for "${title}":`, `→ ${plan.summary}`];
+            for (const s of plan.steps.slice(0, 5)) {
+              lines.push(`• ${s.title}${s.detail ? ` — ${s.detail}` : ""}`);
+            }
+            if (plan.sources?.length) {
+              lines.push("Sources: " + plan.sources.map((s) => s.url).join(", "));
+            }
+            await this.sendSelf(lines.join("\n")).catch(() => {});
+          } else {
+            await this.sendSelf(`⚠️ couldn't get a plan for "${title}" — try again later.`).catch(() => {});
+          }
+          break;
+        }
+      }
+      this.logger.info({ id, action: action.type, jid }, "concierge 1-click resolved");
+    } catch (err) {
+      this.logger.warn({ err, id, action: action.type }, "concierge resolve failed");
+    }
+
+    return true; // consumed — caller should return
+  }
+
   // Gather "awaiting reply" signals: 1:1 contacts whose last inbound is older
   // than the overdue threshold AND who the owner/bot has not replied to since.
   // Attaches contact-priority signals so a high-priority person's overdue
@@ -8499,6 +8728,13 @@ export class WhatsAppSession {
       clearInterval(this.nudgesTimer);
       this.nudgesTimer = null;
     }
+    if (this.conciergeTimer) {
+      clearInterval(this.conciergeTimer);
+      this.conciergeTimer = null;
+    }
+    // Clear per-session concierge state so a reconnect starts fresh.
+    this.pendingConcierge.clear();
+    this.conciergeNudgedToday.clear();
     if (this.warningFlushTimer) {
       clearTimeout(this.warningFlushTimer);
       this.warningFlushTimer = null;

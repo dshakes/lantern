@@ -117,6 +117,12 @@ const BOT_SELF_PREFIXES: string[] = [
   "📍 got it",               // presence/status acks ("📍 got it — you're …")
   "🟡 medium-confidence",    // medium-confidence reply heads-up
 
+  // ── Concierge edge (LANTERN_CONCIERGE=on) ──
+  // Task-capture ack + commitment nudges. Keep in sync with
+  // CONCIERGE_SELF_PREFIXES in commitments-edge.ts.
+  "📝 tracking:",    // "📝 tracking: Apply for naturalization"
+  "📌 ",             // "📌 Apply for naturalization (from Manu) — reply: …"
+
   // ── Life-event engine owner pings (self-chat) ──
   // The LIFE-EVENT ENGINE surfaces typed transactional inbound (bill, delivery,
   // fraud, OTP, receipt, travel) to the owner self-chat with one-tap actions.

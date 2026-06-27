@@ -17,7 +17,12 @@
 import { spawn } from "child_process";
 import type { Logger } from "pino";
 
-const OSASCRIPT_TIMEOUT_MS = 12_000;
+const OSASCRIPT_TIMEOUT_MS = 20_000;
+// Notes/Calendar writes go through Notes.app/Calendar.app, which on a cold
+// launch or a busy iCloud account routinely take >12s for the FIRST scripting
+// call (app launch + account sync). 12s produced false "timed out" failures;
+// give the write-path apps a longer leash. Reads keep the default.
+const OSASCRIPT_APP_WRITE_TIMEOUT_MS = 30_000;
 
 export interface CalendarEventSpec {
   title: string;
@@ -151,7 +156,7 @@ tell application "Calendar"
     return (name of targetCal as string) & "|" & verifyDate
   end tell
 end tell`;
-    const res = await this.runOsascript(script);
+    const res = await this.runOsascript(script, OSASCRIPT_APP_WRITE_TIMEOUT_MS);
     if (!res.ok) return res;
     const parts = (res.detail || "").split("|");
     const calName = parts[0] || "Calendar";
@@ -195,7 +200,7 @@ tell application "Calendar"
   end repeat
 end tell
 return deleted as string`;
-    const res = await this.runOsascript(script);
+    const res = await this.runOsascript(script, OSASCRIPT_APP_WRITE_TIMEOUT_MS);
     if (!res.ok) return res;
     return { ok: true, detail: `deleted ${(res.detail || "0").trim()} event(s)` };
   }
@@ -248,7 +253,7 @@ tell application "Notes"
   make new note with properties {name:${aplStr(spec.title)}, body:${aplStr(bodyHtml)}}
 end tell`;
     }
-    const res = await this.runOsascript(script);
+    const res = await this.runOsascript(script, OSASCRIPT_APP_WRITE_TIMEOUT_MS);
     if (!res.ok) return res;
     return { ok: true, detail: `note "${spec.title}"` };
   }
@@ -282,7 +287,7 @@ tell application "Notes"
     set body of theNote to (body of theNote) & ${aplStr(lineHtml)}
   end if
 end tell`;
-    const res = await this.runOsascript(script);
+    const res = await this.runOsascript(script, OSASCRIPT_APP_WRITE_TIMEOUT_MS);
     if (!res.ok) return res;
     return { ok: true, detail: `appended to "${spec.title}"` };
   }
@@ -328,7 +333,7 @@ tell application "Notes"
   end if
 end tell
 return "ok"`;
-    const res = await this.runOsascript(script);
+    const res = await this.runOsascript(script, OSASCRIPT_APP_WRITE_TIMEOUT_MS);
     if (!res.ok) return res;
     return { ok: true, detail: `removed line from "${spec.title}"` };
   }
@@ -352,7 +357,7 @@ tell application "Mail"
   end tell
   return id of newDraft as string
 end tell`;
-    const res = await this.runOsascript(script);
+    const res = await this.runOsascript(script, OSASCRIPT_APP_WRITE_TIMEOUT_MS);
     if (!res.ok) return res;
     return { ok: true, detail: `draft to ${spec.to.join(", ")}: "${spec.subject}"` };
   }

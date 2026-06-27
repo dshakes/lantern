@@ -705,6 +705,120 @@ func TestHandleAnthropicSyncResponse_CacheTokens(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Prompt caching: estimateCostWithCache + helper functions
+// ---------------------------------------------------------------------------
+
+func TestEstimateCostWithCache_AnthropicCacheRates(t *testing.T) {
+	// Sonnet rates: $3/1M in, $15/1M out.
+	// 1000 regular in + 500 cache_read + 200 cache_creation + 100 out:
+	//   = 1000*3/1M + 500*(3*0.1)/1M + 200*(3*1.25)/1M + 100*15/1M
+	//   = 0.003 + 0.00015 + 0.00075 + 0.0015
+	//   = 0.00540
+	got := estimateCostWithCache("anthropic", "claude-sonnet-4-20250514", 1000, 500, 200, 100)
+	want := 0.003 + 500*3.0*0.1/1_000_000 + 200*3.0*1.25/1_000_000 + 100*15.0/1_000_000
+	if abs(got-want) > 1e-9 {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+func TestEstimateCostWithCache_HaikuRates(t *testing.T) {
+	// Haiku rates: $0.25/1M in, $1.25/1M out.
+	// 0 regular + 1M cache_read + 0 cache_creation + 0 out = 1M * 0.25 * 0.1 / 1M = $0.025
+	got := estimateCostWithCache("anthropic", "claude-haiku-4-5-20251001", 0, 1_000_000, 0, 0)
+	want := 1_000_000 * 0.25 * 0.1 / 1_000_000 // $0.025
+	if abs(got-want) > 1e-9 {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+func TestEstimateCostWithCache_NoCacheFallsBackToEstimateCost(t *testing.T) {
+	// Zero cache tokens → same result as estimateCost.
+	got := estimateCostWithCache("anthropic", "claude-sonnet-4-20250514", 1000, 0, 0, 100)
+	want := estimateCost("anthropic", "claude-sonnet-4-20250514", 1000, 100)
+	if abs(got-want) > 1e-9 {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+func TestEstimateCostWithCache_NonAnthropicPassthrough(t *testing.T) {
+	// Non-anthropic must ignore cache tokens and delegate to estimateCost.
+	got := estimateCostWithCache("openai", "gpt-4o", 1000, 500, 200, 100)
+	want := estimateCost("openai", "gpt-4o", 1000, 100)
+	if abs(got-want) > 1e-9 {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+func TestAnthropicSystemWithCache_Structure(t *testing.T) {
+	result := anthropicSystemWithCache("you are helpful")
+	if len(result) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(result))
+	}
+	block := result[0]
+	if block["type"] != "text" {
+		t.Errorf("type: got %v, want text", block["type"])
+	}
+	if block["text"] != "you are helpful" {
+		t.Errorf("text: got %v", block["text"])
+	}
+	cc, ok := block["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("cache_control missing or wrong type: %v", block["cache_control"])
+	}
+	if cc["type"] != "ephemeral" {
+		t.Errorf("cache_control.type: got %v, want ephemeral", cc["type"])
+	}
+}
+
+func TestWithCacheOnLastTool_MarksSingleAndLast(t *testing.T) {
+	tools := []map[string]any{
+		{"name": "search", "description": "search the web", "input_schema": map[string]any{}},
+		{"name": "fetch", "description": "fetch a URL", "input_schema": map[string]any{}},
+	}
+	result := withCacheOnLastTool(tools)
+	if len(result) != 2 {
+		t.Fatalf("length changed: got %d want 2", len(result))
+	}
+	// First tool must NOT have cache_control.
+	if _, has := result[0]["cache_control"]; has {
+		t.Error("first tool must not have cache_control")
+	}
+	// Last tool must have cache_control:ephemeral.
+	cc, ok := result[1]["cache_control"].(map[string]any)
+	if !ok {
+		t.Fatalf("last tool missing cache_control: %v", result[1])
+	}
+	if cc["type"] != "ephemeral" {
+		t.Errorf("last tool cache_control.type: got %v, want ephemeral", cc["type"])
+	}
+	// Original slice must not be mutated.
+	if _, has := tools[1]["cache_control"]; has {
+		t.Error("original tools slice was mutated")
+	}
+}
+
+func TestWithCacheOnLastTool_SingleTool(t *testing.T) {
+	tools := []map[string]any{{"name": "only", "input_schema": map[string]any{}}}
+	result := withCacheOnLastTool(tools)
+	if len(result) != 1 {
+		t.Fatalf("length: got %d want 1", len(result))
+	}
+	cc, ok := result[0]["cache_control"].(map[string]any)
+	if !ok || cc["type"] != "ephemeral" {
+		t.Errorf("single tool must have cache_control:ephemeral; got %v", result[0]["cache_control"])
+	}
+}
+
+func TestWithCacheOnLastTool_Empty(t *testing.T) {
+	if got := withCacheOnLastTool(nil); got != nil {
+		t.Errorf("nil input should return nil, got %v", got)
+	}
+	if got := withCacheOnLastTool([]map[string]any{}); len(got) != 0 {
+		t.Errorf("empty input should return empty, got len=%d", len(got))
+	}
+}
+
 func containsStr(s, sub string) bool {
 	return len(sub) > 0 && len(s) >= len(sub) &&
 		func() bool {
