@@ -1085,7 +1085,16 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	// version has {"type":"loop"} in its manifest, run the loop body
 	// (commitment scan + nudge) and short-circuit the plain LLM path.
 	// Mirrors the workflow hook: same location, same return convention.
-	if runLoopAgentIfPresent(ctx, h.srv.Pool, h.logger(), tenantID, agentName, runID) {
+	// Wire the LLM seam for loop bodies that need it (chief_of_staff brief).
+	// Nil when LLM is not configured — bodies fall back to their template path.
+	var loopCompleteFn researchCompleteFn
+	if h.llmProxy != nil {
+		p := h.llmProxy
+		loopCompleteFn = func(ctx context.Context, tenantID, system, user string) (string, error) {
+			return p.CompleteInternal(ctx, tenantID, system, user, 0)
+		}
+	}
+	if runLoopAgentIfPresent(ctx, h.srv.Pool, h.logger(), tenantID, agentName, runID, loopCompleteFn) {
 		var outputJSON []byte
 		// rls-exempt: inline executor — runs read keyed by id (authorized run).
 		_ = h.srv.Pool.QueryRow(ctx,
