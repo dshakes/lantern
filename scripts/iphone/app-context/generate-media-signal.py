@@ -79,8 +79,11 @@ def main() -> None:
     token = resolve_token()
     u = str(uuid.uuid4()).upper()
 
+    # "Get Current Song" — the real, current action id. The earlier
+    # `getnowplaying` id is not a valid action, so it imported as a broken
+    # (grayed-out) action and the shortcut never ran.
     get_now_playing = {
-        "WFWorkflowActionIdentifier": "is.workflow.actions.getnowplaying",
+        "WFWorkflowActionIdentifier": "is.workflow.actions.getcurrentsong",
         "WFWorkflowActionParameters": {"UUID": u},
     }
     json_items = [
@@ -92,7 +95,7 @@ def main() -> None:
         {
             "WFItemType": 0,
             "WFKey": text_token("detail"),
-            "WFValue": var_token(u, "Now Playing"),
+            "WFValue": var_token(u, "Current Song"),
         },
     ]
     post = {
@@ -157,7 +160,7 @@ def main() -> None:
         )
     finally:
         os.unlink(unsigned)
-    print("  ✓ Lantern-NowPlaying  (getnowplaying → POST now_playing:<track>)")
+    print("  ✓ Lantern-NowPlaying  (getcurrentsong → POST now_playing:<track>)")
     print(f"Signed → {out}")
     print(
         "Trigger: Automation → 'When I open/start playing' Music/Spotify → Run Lantern-NowPlaying."
