@@ -1080,6 +1080,19 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	// interpreter (W11b). Otherwise fall through to the simple single-LLM-
 	// call path below. Workflow execution emits journal_events per node so
 	// the RunWaterfall renders the full graph.
+	//
+	// 1b. Loop-agent dispatch (Stage 3 / Part B2): if the current agent
+	// version has {"type":"loop"} in its manifest, run the loop body
+	// (commitment scan + nudge) and short-circuit the plain LLM path.
+	// Mirrors the workflow hook: same location, same return convention.
+	if runLoopAgentIfPresent(ctx, h.srv.Pool, h.logger(), tenantID, agentName, runID) {
+		var outputJSON []byte
+		// rls-exempt: inline executor — runs read keyed by id (authorized run).
+		_ = h.srv.Pool.QueryRow(ctx,
+			`SELECT COALESCE(output, '{}'::jsonb)::text::bytea FROM runs WHERE id = $1`, runID,
+		).Scan(&outputJSON)
+		return "", resolvedTemplateID, nil
+	}
 	if h.runWorkflowIfPresent(ctx, runID, tenantID, agentName, input) {
 		// Workflow path: read the output back from the DB so the caller
 		// can return it. On workflow failure the DB already has an error row;
