@@ -312,10 +312,28 @@ export function presenceFromSignals(
     .sort((a, b) => b.ts - a.ts);
   const latest = (kind: SignalKind): DeviceSignal | undefined => recent.find((s) => s.kind === kind);
 
-  // 1. Driving — strongest, most time-sensitive (CarPlay / car Bluetooth).
-  const dev = (latest("device")?.detail || "").trim().toLowerCase();
-  if (/carplay|driving/.test(dev)) {
-    return { state: "driving", line: "driving right now", away: true };
+  // 1. Driving — strongest, BUT the most time-sensitive and the most damaging
+  //    to leak stale (telling a contact "driving rn" while you're home is a
+  //    blunder). A 'driving' signal (CarPlay / car Bluetooth) goes stale fast —
+  //    people park within minutes — so honor it ONLY when:
+  //      (a) it's FRESH (within DRIVING_FRESH_MS, not the full 2h window), AND
+  //      (b) no MORE-RECENT location or focus signal has superseded it. Arriving
+  //          home (location:Home) or tapping Parked/Available (focus:Available)
+  //          posts a newer signal → driving is no longer true → fall through.
+  const DRIVING_FRESH_MS = 30 * 60 * 1000; // 30 min backstop when no park/home signal fires
+  const devSig = latest("device");
+  const dev = (devSig?.detail || "").trim().toLowerCase();
+  if (devSig && /carplay|driving/.test(dev)) {
+    const fresh = devSig.ts >= nowMs - DRIVING_FRESH_MS;
+    const locSig = latest("location");
+    const focusSig = latest("focus");
+    const superseded =
+      (!!locSig && locSig.ts > devSig.ts) || (!!focusSig && focusSig.ts > devSig.ts);
+    if (fresh && !superseded) {
+      return { state: "driving", line: "driving right now", away: true };
+    }
+    // else: stale or superseded by a newer location/focus → fall through to the
+    // focus/geofence logic below (e.g. focus:Available → free; location:Home → null).
   }
 
   // 2. Focus / status button. Echo only the availability, never the raw name.
