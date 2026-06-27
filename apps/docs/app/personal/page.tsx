@@ -27,6 +27,86 @@ export default function PersonalHarnessPage() {
       </p>
       <PersonalHarnessArchitecture />
 
+      <h2 id="agents">Your agents</h2>
+      <p>
+        Seven agents make up the personal suite. The first five are{" "}
+        <strong>owner-facing</strong> — they nudge or brief you in your
+        self-chat and never touch your contacts. Only the two{" "}
+        <strong>assistant</strong> agents reply to contacts as you. This
+        distinction matters for trust: owner-facing agents can be aggressive and
+        proactive; assistant agents carry the weight of impersonation.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>What it does</th>
+            <th>Reactive / Proactive</th>
+            <th>Reaches you via</th>
+            <th>Touches your contacts?</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>concierge</strong></td>
+            <td>Captures tasks (from you or from what people message you), researches how to handle them, and nudges you with one-tap actions — reply / snooze / done — until handled.</td>
+            <td>Both</td>
+            <td>self-chat nudges</td>
+            <td><strong>No</strong> — private to-do layer</td>
+          </tr>
+          <tr>
+            <td><strong>relationship-keeper</strong></td>
+            <td>Each week finds people you&apos;ve gone quiet on (21+ days) and nudges you to reach out, with a draft in your voice if you want it.</td>
+            <td>Proactive (weekly)</td>
+            <td>self-chat</td>
+            <td><strong>No</strong> — you do the outreach</td>
+          </tr>
+          <tr>
+            <td><strong>financial-sentinel</strong></td>
+            <td>Watches bills and subscriptions. Flags price hikes and recurring charges, and drafts a review or cancel for your one-tap OK. Never moves money.</td>
+            <td>Proactive (daily)</td>
+            <td>self-chat</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>morning-brief</strong></td>
+            <td>Texts you ~3 bullets every weekday at 8am on what matters today.</td>
+            <td>Proactive (daily 8am)</td>
+            <td>self-chat</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>inbox-concierge</strong></td>
+            <td>Reads your Gmail each morning and texts a 3-bucket digest.</td>
+            <td>Proactive (daily)</td>
+            <td>self-chat</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>whatsapp-assistant</strong></td>
+            <td>Auto-replies to your WhatsApp contacts in your voice.</td>
+            <td>Reactive (on inbound)</td>
+            <td>replies to contacts</td>
+            <td><strong>Yes</strong> — talks to contacts as you</td>
+          </tr>
+          <tr>
+            <td><strong>imessage-assistant</strong></td>
+            <td>Auto-replies to your iMessage contacts in your voice.</td>
+            <td>Reactive (on inbound)</td>
+            <td>replies to contacts</td>
+            <td><strong>Yes</strong> — talks to contacts as you</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        The loop agents (concierge, relationship-keeper, financial-sentinel) run
+        on the Lantern platform as scheduled agents — created via{" "}
+        <code>POST /v1/agents/loop</code> and visible on the dashboard with runs
+        and cost like any other agent. Bridge nudges require{" "}
+        <code>LANTERN_CONCIERGE=on</code> (off by default). financial-sentinel
+        acts on <code>life_events</code> bills already classified by the bridges.
+      </p>
+
       <h2 id="signals">L1 · Sense — signals &amp; ingestion</h2>
       <p>
         The harness starts from real-world context. iPhone automations

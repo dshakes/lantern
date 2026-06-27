@@ -441,6 +441,22 @@ Two macOS bridges — **WhatsApp** and **iMessage** — turn an LLM into a perso
 
 Owner profile at `~/.lantern/owner-profile.md` — facts, per-contact rules, dialect, timezone — hot-reloaded every 30s. Copy the template at [`docs/personal/owner-profile.example.md`](docs/personal/owner-profile.example.md) (your real profile is gitignored). See [`docs/architecture/15-personal-workflows.md`](docs/architecture/).
 
+### Your agents
+
+Seven agents make up the personal suite. The first five are **owner-facing** — they nudge or brief you in your self-chat and never touch your contacts. Only the two **assistant** agents reply to contacts as you. This distinction matters: owner-facing agents can be aggressive and proactive; assistant agents carry trust.
+
+| Agent | What it does | Reactive / Proactive | Reaches you via | Touches your contacts? |
+|---|---|---|---|---|
+| **concierge** | Captures tasks (from you or from what people message you), researches how to handle them, and nudges you with one-tap actions — reply / snooze / done — until handled. | Both | self-chat nudges | No — private to-do layer |
+| **relationship-keeper** | Each week finds people you've gone quiet on (21+ days) and nudges you to reach out, with a draft in your voice if you want it. | Proactive (weekly) | self-chat | No — you do the outreach |
+| **financial-sentinel** | Watches bills and subscriptions. Flags price hikes and recurring charges, and drafts a review or cancel for your one-tap OK. Never moves money. | Proactive (daily) | self-chat | No |
+| **morning-brief** | Texts you ~3 bullets every weekday at 8am on what matters today. | Proactive (daily 8am) | self-chat | No |
+| **inbox-concierge** | Reads your Gmail each morning and texts a 3-bucket digest. | Proactive (daily) | self-chat | No |
+| **whatsapp-assistant** | Auto-replies to your WhatsApp contacts in your voice. | Reactive (on inbound) | replies to contacts | **Yes** — talks to contacts as you |
+| **imessage-assistant** | Auto-replies to your iMessage contacts in your voice. | Reactive (on inbound) | replies to contacts | **Yes** — talks to contacts as you |
+
+The loop agents (concierge, relationship-keeper, financial-sentinel) run on the Lantern platform as scheduled agents — created via `POST /v1/agents/loop` and visible on the dashboard with runs and cost like any other agent. Bridge nudges require `LANTERN_CONCIERGE=on` (off by default). financial-sentinel acts on `life_events` bills already classified by the bridges.
+
 ### The harness, layer by layer
 
 <p align="center">

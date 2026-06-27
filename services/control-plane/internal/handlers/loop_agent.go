@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,6 +56,15 @@ var tierCronDefault = map[string]string{
 	"macro": "0 8 * * *",
 	"mega":  "0 9 * * 1",
 }
+
+// finSentinel hike detection thresholds.
+// ponytail: named consts for tunability; upgrade to per-category config if
+// per-payee or per-kind thresholds matter in production.
+const (
+	finSentinelHikePct    = 0.10 // minimum relative increase to flag (10%)
+	finSentinelHikeDollar = 5.0  // minimum absolute increase to flag ($5)
+	finSentinelWindowDays = 90   // look-back window in days
+)
 
 // ---------- B1: LoopAgentHandler ----------
 
@@ -232,6 +242,7 @@ Valid roles (pick the one that best matches the description):
   chief_of_staff      → composes a concise morning brief (tier=macro)
   inbox_autopilot     → polls email for new actionable messages (tier=meso)
   relationship_keeper → surfaces stale VIP contacts for outreach (tier=mega)
+  financial_sentinel  → scans bill life-events for price hikes; creates a review commitment (tier=macro)
 
 Valid tiers and their default crons:
   nano   → no schedule (event-driven only); omit cron
@@ -405,6 +416,14 @@ func runLoopAgentIfPresent(
 				zap.String("run_id", runID), zap.Error(runErr))
 		}
 		outputJSON, _ = json.Marshal(map[string]any{"surfaced": surfaced})
+
+	case "financial_sentinel":
+		hikesN, runErr := runFinancialSentinel(ctx, pool, logger, tenantID, runID)
+		if runErr != nil {
+			logger.Error("loop-agent: financial_sentinel failed",
+				zap.String("run_id", runID), zap.Error(runErr))
+		}
+		outputJSON, _ = json.Marshal(map[string]any{"hikes": hikesN})
 
 	default: // "concierge" + any unrecognised role
 		surfaced := 0
@@ -946,6 +965,136 @@ func emitRelationshipSwept(ctx context.Context, pool *pgxpool.Pool, runID string
 	`, runID, payload)
 }
 
+// ---------- B3d: financial_sentinel body ----------
+
+// runFinancialSentinel scans the tenant's bill life-events from the last 90
+// days, groups them by payee, and creates a "Review <payee>" commitment for
+// every payee whose most-recent bill is higher than the prior bill by BOTH
+// more than 10% AND more than $5.  Idempotent within the calendar month via
+// an idempotency key of the form "finsentinel:<payee>:<YYYY-MM>".
+//
+// Graceful no-op (nil error, debug log) when there are no bills.
+//
+// rls-exempt: inline executor — life_events and commitments queries carry
+// explicit tenant_id; journal_events is RLS-exempt child table.
+func runFinancialSentinel(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	logger *zap.Logger,
+	tenantID, runID string,
+) (hikesN int, err error) {
+	// Fetch bills in the look-back window, ordered by payee + created_at so we
+	// can detect per-payee price movement in a single ascending-order pass.
+	rows, qErr := pool.Query(ctx, `
+		SELECT
+			fields->>'payee'  AS payee,
+			fields->>'amount' AS amount_text
+		FROM life_events
+		WHERE tenant_id = $1
+		  AND kind = 'bill'
+		  AND created_at >= now() - ($2 * interval '1 day')
+		  AND fields->>'payee'  IS NOT NULL AND fields->>'payee'  != ''
+		  AND fields->>'amount' IS NOT NULL
+		ORDER BY fields->>'payee' ASC, created_at ASC
+	`, tenantID, finSentinelWindowDays)
+	if qErr != nil {
+		return 0, fmt.Errorf("financial_sentinel: query bills: %w", qErr)
+	}
+
+	// Group consecutive rows by payee (already sorted).
+	type payeeGroup struct {
+		name    string
+		amounts []float64
+	}
+	var groups []payeeGroup
+	totalBills := 0
+	for rows.Next() {
+		var payee, amountText string
+		if sErr := rows.Scan(&payee, &amountText); sErr != nil {
+			logger.Warn("financial_sentinel: scan row failed", zap.Error(sErr))
+			continue
+		}
+		amount, parseErr := strconv.ParseFloat(amountText, 64)
+		if parseErr != nil {
+			logger.Debug("financial_sentinel: skip non-numeric amount",
+				zap.String("payee", payee), zap.String("raw", amountText))
+			continue
+		}
+		totalBills++
+		if len(groups) == 0 || groups[len(groups)-1].name != payee {
+			groups = append(groups, payeeGroup{name: payee})
+		}
+		groups[len(groups)-1].amounts = append(groups[len(groups)-1].amounts, amount)
+	}
+	rows.Close()
+	if rErr := rows.Err(); rErr != nil {
+		return 0, fmt.Errorf("financial_sentinel: rows: %w", rErr)
+	}
+
+	if totalBills == 0 {
+		logger.Debug("financial_sentinel: no bills found, skipping",
+			zap.String("tenant", tenantID))
+		emitFinancialSwept(ctx, pool, runID, 0, 0)
+		return 0, nil
+	}
+
+	// Detect hike: most-recent amount is higher than the prior amount by BOTH
+	// more than finSentinelHikePct AND more than finSentinelHikeDollar.
+	month := time.Now().Format("2006-01") // for idempotency key dedup within month
+	for _, g := range groups {
+		if len(g.amounts) < 2 {
+			continue
+		}
+		prev := g.amounts[len(g.amounts)-2]
+		curr := g.amounts[len(g.amounts)-1]
+		if prev <= 0 {
+			continue
+		}
+		pctIncrease := (curr - prev) / prev
+		dollarIncrease := curr - prev
+		if pctIncrease <= finSentinelHikePct || dollarIncrease <= finSentinelHikeDollar {
+			continue
+		}
+
+		title := clampRunes(
+			fmt.Sprintf("Review %s — $%.2f (up from $%.2f)", g.name, curr, prev),
+			500,
+		)
+		// Idempotency key deduplicates within the calendar month (invariant #8).
+		idemKey := fmt.Sprintf("finsentinel:%s:%s", g.name, month)
+
+		// rls-exempt: inline executor — explicit tenant_id; dedup on idemKey.
+		var insertedID string
+		insertErr := pool.QueryRow(ctx, `
+			INSERT INTO commitments (tenant_id, title, source, kind, idempotency_key, tier, urgency)
+			VALUES ($1, $2, 'bill', 'finance', $3, 'meso', 'soon')
+			ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+			DO NOTHING
+			RETURNING id
+		`, tenantID, title, idemKey).Scan(&insertedID)
+		if insertErr == nil {
+			hikesN++
+		} else if !errors.Is(insertErr, pgx.ErrNoRows) {
+			logger.Warn("financial_sentinel: insert commitment failed",
+				zap.String("payee", g.name), zap.Error(insertErr))
+		}
+	}
+
+	emitFinancialSwept(ctx, pool, runID, hikesN, totalBills)
+	return hikesN, nil
+}
+
+// emitFinancialSwept writes a financial_swept journal event.
+// rls-exempt: journal_events — RLS-exempt child table keyed by run_id.
+func emitFinancialSwept(ctx context.Context, pool *pgxpool.Pool, runID string, hikes, scanned int) {
+	payload, _ := json.Marshal(map[string]any{"hikes": hikes, "scanned": scanned})
+	_, _ = pool.Exec(ctx, `
+		INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
+		VALUES ($1, 1, 'financial_swept', 'finsentinel', 1, $2)
+		ON CONFLICT (run_id, seq) DO NOTHING
+	`, runID, payload)
+}
+
 // ---------- B4: seeding ----------
 
 // SeedLoopAgents idempotently creates all 4 built-in loop agents for the dev
@@ -979,6 +1128,17 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Tier:    "mega",
 			Cron:    tierCronDefault["mega"],
 			Sensors: []string{"people"},
+			Actions: []string{"create_commitment"},
+			Trust:   "ask",
+		},
+		{
+			Role:    "financial_sentinel",
+			Type:    "loop",
+			Name:    "financial-sentinel",
+			Goal:    "Watches your bills and subscriptions. Flags price hikes and recurring charges and drafts a review for your one-tap OK — never moves money on its own.",
+			Tier:    "macro",
+			Cron:    tierCronDefault["macro"],
+			Sensors: []string{"life_events"},
 			Actions: []string{"create_commitment"},
 			Trust:   "ask",
 		},
