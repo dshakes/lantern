@@ -5255,7 +5255,16 @@ export class WhatsAppSession {
     }
     // Humanize: friendly dates + guaranteed offer + deterministic
     // execution path on next-turn confirmation.
-    const { reply: polished, offer } = humanizeWithOffer(finalText);
+    const { reply: polished0, offer } = humanizeWithOffer(finalText);
+    // The mac-action markers (notes/calendar/mail) extracted above execute
+    // AFTER this reply is sent (below) and can still FAIL — e.g. a cold
+    // Notes.app osascript timing out. So the visible reply must never
+    // pre-claim completion of a not-yet-run action. When any marker is
+    // pending, rewrite completed-action claims to intent ("saved it" → "I'll
+    // save it"); the deterministic per-action confirm (📅/🗒/✉️ or the failure
+    // line) is the single source of truth for the outcome.
+    const pendingMacAction = notes.length > 0 || calendarEvents.length > 0 || mailDrafts.length > 0;
+    const polished = pendingMacAction ? verifyClaims(polished0).text : polished0;
     if (polished) {
       await this.confirmToSelf(polished);
       // SELF-EVAL — record so 🔁 / 🤦 can re-prompt with critique.
