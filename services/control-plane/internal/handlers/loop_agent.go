@@ -958,40 +958,24 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Role:    "concierge",
 			Type:    "loop",
 			Name:    "concierge",
-			Goal:    "Monitor open commitments and surface actionable items to the owner on a meso cadence",
+			Goal:    "Your task spine. Captures things you (or people who message you) say need doing, researches how to do them, and nudges you with one-tap actions — reply research / snooze / done — until they're handled.",
 			Tier:    "meso",
 			Cron:    tierCronDefault["meso"],
 			Sensors: []string{"commitments", "life_events"},
 			Actions: []string{"nudge", "research", "draft"},
 			Trust:   "ask",
 		},
-		{
-			Role:    "chief_of_staff",
-			Type:    "loop",
-			Name:    "chief-of-staff",
-			Goal:    "Compose and deliver a morning brief summarising open commitments and recent life events",
-			Tier:    "macro",
-			Cron:    tierCronDefault["macro"],
-			Sensors: []string{"commitments", "life_events"},
-			Actions: []string{"brief"},
-			Trust:   "ask",
-		},
-		{
-			Role:    "inbox_autopilot",
-			Type:    "loop",
-			Name:    "inbox-autopilot",
-			Goal:    "Poll Gmail for new actionable emails and create commitments",
-			Tier:    "meso",
-			Cron:    tierCronDefault["meso"],
-			Sensors: []string{"email"},
-			Actions: []string{"create_commitment"},
-			Trust:   "ask",
-		},
+		// NOTE: chief-of-staff (morning brief) and inbox-autopilot (Gmail →
+		// tasks) are intentionally NOT seeded — the owner already runs
+		// `morning-brief` and `inbox-concierge` which do the same job with real
+		// run history. Their loop bodies (runChiefOfStaffBrief / runInboxAutopilot)
+		// remain available via POST /v1/agents/loop if ever wanted, but seeding
+		// them duplicated existing agents on the dashboard.
 		{
 			Role:    "relationship_keeper",
 			Type:    "loop",
 			Name:    "relationship-keeper",
-			Goal:    "Surface VIP contacts who have not been contacted in 21+ days",
+			Goal:    "Keeps your relationships warm. Each week it finds people you care about who've gone quiet (21+ days) and nudges you to reach out — with a draft ready in your voice if you want it.",
 			Tier:    "mega",
 			Cron:    tierCronDefault["mega"],
 			Sensors: []string{"people"},
