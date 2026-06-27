@@ -87,6 +87,17 @@ func (h *SignalHandler) authorize(w http.ResponseWriter, r *http.Request) bool {
 	provided := r.Header.Get("x-lantern-signal-token")
 	if expected == "" || provided == "" ||
 		subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+		// Log the rejection (never the token) — a silent 401 is undebuggable.
+		// The "server token unset" case is the giveaway that the wrong API
+		// (one without LANTERN_SIGNAL_TOKEN) is serving this port.
+		reason := "token mismatch"
+		switch {
+		case expected == "":
+			reason = "LANTERN_SIGNAL_TOKEN unset on the server — this API instance cannot accept signals"
+		case provided == "":
+			reason = "request missing x-lantern-signal-token header"
+		}
+		h.logger().Warn("signal rejected (401)", zap.String("reason", reason), zap.String("from", r.RemoteAddr))
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return false
 	}
