@@ -360,12 +360,40 @@ test("presenceFromSignals: focus DND / Sleep / Available / Busy", () => {
   assert.equal(presenceFromSignals([sig("focus", 2, { detail: "Busy" })], { nowMs: NOW })?.state, "busy");
 });
 
-test("presenceFromSignals: driving (device) beats a focus signal", () => {
+test("presenceFromSignals: fresh driving beats an OLDER focus signal", () => {
+  // driving is the NEWER signal (1m) vs focus Busy (3m) → driving wins.
   const p = presenceFromSignals(
-    [sig("focus", 1, { detail: "Busy" }), sig("device", 3, { detail: "driving" })],
+    [sig("focus", 3, { detail: "Busy" }), sig("device", 1, { detail: "driving" })],
     { nowMs: NOW },
   );
   assert.equal(p?.state, "driving");
+});
+
+// ── Regression: the "I'm home but bot says driving" blunder ──────────────────
+test("presenceFromSignals: STALE driving (>30m, in 2h window) no longer says driving", () => {
+  // 45m-old driving signal, nothing newer → must NOT claim 'driving right now'.
+  const p = presenceFromSignals([sig("device", 45, { detail: "driving" })], { nowMs: NOW });
+  assert.notEqual(p?.state, "driving");
+});
+
+test("presenceFromSignals: arriving home (newer location) clears a recent driving", () => {
+  // drove 10m ago, then a location:Home signal 2m ago → home supersedes driving.
+  // location:Home maps to null (not an availability signal) — and crucially NOT driving.
+  const p = presenceFromSignals(
+    [sig("device", 10, { detail: "driving" }), sig("location", 2, { detail: "Home" })],
+    { nowMs: NOW },
+  );
+  assert.equal(p, null);
+});
+
+test("presenceFromSignals: Parked/Available (newer focus) clears driving → free", () => {
+  // drove 10m ago, then tapped Lantern-Parked (focus:Available) 1m ago.
+  const p = presenceFromSignals(
+    [sig("device", 10, { detail: "driving" }), sig("focus", 1, { detail: "Available" })],
+    { nowMs: NOW },
+  );
+  assert.equal(p?.state, "free");
+  assert.equal(p?.away, false);
 });
 
 test("presenceFromSignals: geofence maps to coarse availability and NEVER leaks the place", () => {
