@@ -177,12 +177,14 @@ Be specific, cite real URLs when you know them. Steps must be actionable in the 
 	// 4. Parse the response — strip code fences, tolerate extra prose.
 	plan, parseErr := parseActionPlan(rawText)
 	if parseErr != nil {
+		// Log a bounded, UTF-8-safe prefix server-side for debugging, but do
+		// NOT echo raw model output back to the caller (untrusted content +
+		// noise). The caller gets a generic error.
 		h.logger().Warn("research: bad LLM JSON — not storing garbage",
-			zap.String("id", id), zap.String("raw", rawText[:min(len(rawText), 200)]),
+			zap.String("id", id), zap.String("raw", clampRunes(rawText, 200)),
 			zap.Error(parseErr))
 		writeJSON(w, http.StatusBadGateway, map[string]string{
-			"error":  "LLM returned unparseable JSON: " + parseErr.Error(),
-			"detail": rawText[:min(len(rawText), 500)],
+			"error": "research failed: model returned unparseable output",
 		})
 		return
 	}

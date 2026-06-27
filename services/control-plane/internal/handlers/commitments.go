@@ -65,7 +65,23 @@ var (
 		"open": true, "researching": true, "suggested": true,
 		"in_progress": true, "snoozed": true, "done": true, "dismissed": true,
 	}
+	validSources = map[string]bool{
+		"spouse": true, "self": true, "vip": true, "bill": true,
+		"email": true, "appointment": true, "other": true,
+	}
 )
+
+// clampRunes truncates s to at most max runes, never splitting a multi-byte
+// UTF-8 codepoint. A naive s[:n] byte-slice corrupts non-ASCII text (Telugu,
+// emoji, accented Latin) by cutting mid-codepoint — these fields hold
+// user/contact-authored titles, so they are frequently non-ASCII.
+func clampRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
+}
 
 // ---------- JSON types ----------
 
@@ -128,10 +144,12 @@ func (h *CommitmentHandler) CreateCommitment(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title and source are required"})
 		return
 	}
-	// Clamp title to 500 chars.
-	if len(body.Title) > 500 {
-		body.Title = body.Title[:500]
+	if !validSources[body.Source] {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "source must be one of spouse, self, vip, bill, email, appointment, other"})
+		return
 	}
+	// Clamp title to 500 runes (UTF-8 safe).
+	body.Title = clampRunes(body.Title, 500)
 
 	// Apply enum defaults and validate.
 	if body.Tier == "" {
@@ -162,10 +180,7 @@ func (h *CommitmentHandler) CreateCommitment(w http.ResponseWriter, r *http.Requ
 		kind = &body.Kind
 	}
 	if body.SourcePreview != "" {
-		sp := body.SourcePreview
-		if len(sp) > 500 {
-			sp = sp[:500]
-		}
+		sp := clampRunes(body.SourcePreview, 500)
 		sourcePreview = &sp
 	}
 

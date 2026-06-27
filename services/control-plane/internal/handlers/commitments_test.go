@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -420,6 +421,7 @@ func TestCommitment_ValidationErrors(t *testing.T) {
 		{"missing source", map[string]any{"title": "x"}},
 		{"bad tier", map[string]any{"title": "x", "source": "self", "tier": "huge"}},
 		{"bad urgency", map[string]any{"title": "x", "source": "self", "urgency": "critical"}},
+		{"bad source", map[string]any{"title": "x", "source": "wat"}},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -429,5 +431,31 @@ func TestCommitment_ValidationErrors(t *testing.T) {
 				t.Errorf("%s: got %d, want 400; body: %s", tc.name, rr.Code, rr.Body.String())
 			}
 		})
+	}
+}
+
+// Regression (review finding): a title of multi-byte runes longer than the cap
+// must clamp on a RUNE boundary — a naive byte-slice corrupts non-ASCII text
+// (Telugu, emoji) by splitting a codepoint into garbage bytes.
+func TestCommitment_UTF8TitleClampNoCorruption(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	h := newTestCommitmentHandler(t, pool)
+	tenant := seedCommitmentTenant(t, pool)
+
+	long := strings.Repeat("🔥", 600) // 600 runes, 2400 bytes — over the 500 cap
+	rr := postCommitment(t, h, tenant, map[string]any{"title": long, "source": "self"})
+	_ = createdID(t, rr) // fails the test if not created
+
+	items := listCommitments(t, h, tenant, "")
+	if len(items) != 1 {
+		t.Fatalf("want 1 commitment, got %d", len(items))
+	}
+	got := items[0].Title
+	if !utf8.ValidString(got) {
+		t.Fatalf("title corrupted — not valid UTF-8 after clamp")
+	}
+	if n := utf8.RuneCountInString(got); n != 500 {
+		t.Errorf("clamped to %d runes, want 500", n)
 	}
 }
