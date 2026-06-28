@@ -66,7 +66,7 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
     <div className={`agent-loop agent-loop-${tone}`}>
       <div className="agent-loop-head">
         <span className="agent-loop-title">{title}</span>
-        <span className="agent-loop-cadence">{cadence}</span>
+        <span className="agent-loop-cadence" style={{ marginLeft: "0.1rem" }}>· {cadence}</span>
         {eb && (
           <span style={{ fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", background: eb.bg, color: eb.color, borderRadius: "999px", padding: "0.14rem 0.5rem" }}>
             {eb.label}
@@ -136,6 +136,11 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
           strokeDasharray="5 3"
           markerEnd={`url(#${mid})`}
         />
+        {/* Explicit loop label so the dashed arc reads clearly as "this repeats". */}
+        <g>
+          <rect x={(ax0 + ax1) / 2 - 34} y={ay - 9} width={68} height={18} rx={9} fill={c.fill} stroke={c.border} strokeWidth={1} />
+          <text x={(ax0 + ax1) / 2} y={ay + 1} textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight={700} fill={c.text} style={{ fontFamily: "inherit" }}>↻ repeats</text>
+        </g>
       </svg>
       {iface && (
         <p style={{ margin: "0.15rem 0 0", fontSize: "0.69rem", color: "#71717a" }}>

@@ -417,6 +417,12 @@ Seven agents make up the personal suite. The first five are **owner-facing** —
 
 The loop agents (concierge, relationship-keeper, financial-sentinel) run on the Lantern platform as scheduled agents — created via `POST /v1/agents/loop` and visible on the dashboard with runs and cost like any other agent. Bridge nudges require `LANTERN_CONCIERGE=on` (off by default). financial-sentinel acts on `life_events` bills already classified by the bridges.
 
+#### The five loop tiers — same engine, five clock speeds
+
+Every loop agent is created at one of five **tiers**. The tier is the only knob that sets cadence; the durable engine, budget cap, and signed receipt are identical across all of them. `POST /v1/agents/loop` takes `"tier": "nano|micro|meso|macro|mega"` and stamps the matching cron (nano is event-driven — no schedule row). See `loop_agent.go`.
+
+<img src="docs/assets/loop-tiers.svg" alt="The five loop tiers: nano (event-driven, no cron — bridge fires on a signal; commute-copilot, energy-guardian, health-coach, focus-guardian), micro (every 5 min, */5 * * * *), meso (every 45 min, */45 * * * *; inbox-autopilot), macro (daily 8am, 0 8 * * *; chief-of-staff, financial-sentinel, domain-tracker), mega (weekly Mon 9am, 0 9 * * 1; relationship-keeper). Top turns fastest, bottom slowest." width="100%">
+
 #### Owner-facing loops — nudge you in self-chat, never touch your contacts
 
 <img src="docs/assets/agent-loops-owner.svg" alt="Owner-facing agent loops — concierge (Capture→Research→Nudge→You act), relationship-keeper (Scan people→Gone quiet?→Draft→Nudge you→You reach out), financial-sentinel (Scan bills→Price hike?→Flag review→You decide), morning-brief (8am trigger→Gather context→3 bullets→Text you), inbox-concierge (Morning trigger→Read Gmail→Sort buckets→Text digest); each loop returns to its first step" width="100%">
