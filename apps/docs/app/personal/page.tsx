@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PersonalHarnessArchitecture } from "../_components/PersonalHarnessArchitecture";
 import { PersonalHarnessDiagram } from "../_components/PersonalHarnessDiagram";
+import { AgentLoop } from "../_components/AgentLoop";
 
 export default function PersonalHarnessPage() {
   return (
@@ -26,6 +27,145 @@ export default function PersonalHarnessPage() {
         and writes to.
       </p>
       <PersonalHarnessArchitecture />
+
+      <h2 id="agents">Your agents</h2>
+      <p>
+        Seven agents make up the personal suite. The first five are{" "}
+        <strong>owner-facing</strong> — they nudge or brief you in your
+        self-chat and never touch your contacts. Only the two{" "}
+        <strong>assistant</strong> agents reply to contacts as you. This
+        distinction matters for trust: owner-facing agents can be aggressive and
+        proactive; assistant agents carry the weight of impersonation.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>What it does</th>
+            <th>Reactive / Proactive</th>
+            <th>Reaches you via</th>
+            <th>Touches your contacts?</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>concierge</strong></td>
+            <td>Captures tasks (from you or from what people message you), researches how to handle them, and nudges you with one-tap actions — reply / snooze / done — until handled.</td>
+            <td>Both</td>
+            <td>self-chat nudges</td>
+            <td><strong>No</strong> — private to-do layer</td>
+          </tr>
+          <tr>
+            <td><strong>relationship-keeper</strong></td>
+            <td>Each week finds people you&apos;ve gone quiet on (21+ days) and nudges you to reach out, with a draft in your voice if you want it.</td>
+            <td>Proactive (weekly)</td>
+            <td>self-chat</td>
+            <td><strong>No</strong> — you do the outreach</td>
+          </tr>
+          <tr>
+            <td><strong>financial-sentinel</strong></td>
+            <td>Watches bills and subscriptions. Flags price hikes and recurring charges, and drafts a review or cancel for your one-tap OK. Never moves money.</td>
+            <td>Proactive (daily)</td>
+            <td>self-chat</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>morning-brief</strong></td>
+            <td>Texts you ~3 bullets every weekday at 8am on what matters today.</td>
+            <td>Proactive (daily 8am)</td>
+            <td>self-chat</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>inbox-concierge</strong></td>
+            <td>Reads your Gmail each morning and texts a 3-bucket digest.</td>
+            <td>Proactive (daily)</td>
+            <td>self-chat</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>whatsapp-assistant</strong></td>
+            <td>Auto-replies to your WhatsApp contacts in your voice.</td>
+            <td>Reactive (on inbound)</td>
+            <td>replies to contacts</td>
+            <td><strong>Yes</strong> — talks to contacts as you</td>
+          </tr>
+          <tr>
+            <td><strong>imessage-assistant</strong></td>
+            <td>Auto-replies to your iMessage contacts in your voice.</td>
+            <td>Reactive (on inbound)</td>
+            <td>replies to contacts</td>
+            <td><strong>Yes</strong> — talks to contacts as you</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        The loop agents (concierge, relationship-keeper, financial-sentinel) run
+        on the Lantern platform as scheduled agents — created via{" "}
+        <code>POST /v1/agents/loop</code> and visible on the dashboard with runs
+        and cost like any other agent. Bridge nudges require{" "}
+        <code>LANTERN_CONCIERGE=on</code> (off by default). financial-sentinel
+        acts on <code>life_events</code> bills already classified by the bridges.
+      </p>
+
+      <h3>How each agent loops</h3>
+      <p>
+        Each diagram shows the stages of one agent&apos;s cycle — solid arrows
+        are the forward flow; the dashed arc loops from the last stage back to
+        the first. The two contact-facing agents are{" "}
+        <strong>rose-highlighted</strong> because they reply as you to real
+        people — they carry the full weight of impersonation.
+      </p>
+
+      <AgentLoop
+        title="concierge"
+        cadence="continuous"
+        stages={["Capture", "Research", "Nudge", "You act"]}
+        tone="sky"
+        ownerFacing
+      />
+      <AgentLoop
+        title="relationship-keeper"
+        cadence="weekly"
+        stages={["Scan people", "Gone quiet?", "Draft in your voice", "Nudge you", "You reach out"]}
+        tone="violet"
+        ownerFacing
+      />
+      <AgentLoop
+        title="financial-sentinel"
+        cadence="daily"
+        stages={["Scan bills", "Detect price hike", "Flag for review", "You review/cancel"]}
+        tone="amber"
+        ownerFacing
+      />
+      <AgentLoop
+        title="morning-brief"
+        cadence="daily 8am"
+        stages={["8am trigger", "Gather context", "Compose 3 bullets", "Text you"]}
+        tone="emerald"
+        ownerFacing
+      />
+      <AgentLoop
+        title="inbox-concierge"
+        cadence="daily AM"
+        stages={["Morning trigger", "Read Gmail", "Sort 3 buckets", "Text digest"]}
+        tone="sky"
+        ownerFacing
+      />
+      <AgentLoop
+        title="whatsapp-assistant"
+        cadence="reactive"
+        stages={["Contact messages", "Understand", "Draft in your voice", "Send to contact"]}
+        tone="rose"
+        ownerFacing={false}
+      />
+      <AgentLoop
+        title="imessage-assistant"
+        cadence="reactive"
+        stages={["Contact messages", "Understand", "Draft in your voice", "Send to contact"]}
+        tone="rose"
+        ownerFacing={false}
+      />
 
       <h2 id="signals">L1 · Sense — signals &amp; ingestion</h2>
       <p>
