@@ -403,7 +403,7 @@ Owner profile at `~/.lantern/owner-profile.md` — facts, per-contact rules, dia
 
 ### Your agents
 
-Seven agents make up the personal suite. The first five are **owner-facing** — they nudge or brief you in your self-chat and never touch your contacts. Only the two **assistant** agents reply to contacts as you. This distinction matters: owner-facing agents can be aggressive and proactive; assistant agents carry trust.
+Eight agents make up the personal suite. The first six are **owner-facing** — they nudge or brief you in your self-chat and never touch your contacts. Only the two **assistant** agents reply to contacts as you. This distinction matters: owner-facing agents can be aggressive and proactive; assistant agents carry trust.
 
 | Agent | What it does | Reactive / Proactive | Reaches you via | Touches your contacts? |
 |---|---|---|---|---|
@@ -412,6 +412,7 @@ Seven agents make up the personal suite. The first five are **owner-facing** —
 | **financial-sentinel** | Watches bills and subscriptions. Flags price hikes and recurring charges, and drafts a review or cancel for your one-tap OK. Never moves money. | Proactive (daily) | self-chat | No |
 | **morning-brief** | Texts you ~3 bullets every weekday at 8am on what matters today. | Proactive (daily 8am) | self-chat | No |
 | **inbox-concierge** | Reads your Gmail each morning and texts a 3-bucket digest. | Proactive (daily) | self-chat | No |
+| **inbox-triage** | Polls Gmail every ~45 min, classifies each new message (action / FYI / noise), and for action items drafts a ready-to-send reply you confirm with one tap. | Proactive (meso) | self-chat + one-tap send | No — you confirm every send |
 | **whatsapp-assistant** | Auto-replies to your WhatsApp contacts in your voice. | Reactive (on inbound) | replies to contacts | **Yes** — talks to contacts as you |
 | **imessage-assistant** | Auto-replies to your iMessage contacts in your voice. | Reactive (on inbound) | replies to contacts | **Yes** — talks to contacts as you |
 
