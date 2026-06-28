@@ -364,6 +364,49 @@ func TestCrossApp_ExecuteAction_Executes(t *testing.T) {
 	}
 }
 
+// TestCrossApp_ExecuteAction_NonOwnerForbidden verifies the side-effect path is
+// OWNER-only: a non-owner tenant member gets 403 and the connector never fires.
+func TestCrossApp_ExecuteAction_NonOwnerForbidden(t *testing.T) {
+	pool := openTestPool(t)
+	tenantID := seedCrossAppTenant(t, pool)
+	tok := mintTestToken(t, tenantID, uuid.NewString(), "member") // NOT owner/admin
+
+	plan := crossAppPlan{
+		Goal: "schedule the meeting", ReadConnector: "gmail", ReadAction: "list_recent",
+		ProposedAction: crossAppProposed{Connector: "google-calendar", Action: "create_event", Params: map[string]any{"title": "M"}},
+	}
+	planJSON, _ := json.Marshal(plan)
+	ctx := context.Background()
+	var commitmentID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO commitments (tenant_id, title, source, kind, tier, urgency, status, action_plan)
+		VALUES ($1, 'Schedule meeting', 'self', 'cross_app', 'meso', 'normal', 'suggested', $2::jsonb)
+		RETURNING id`, tenantID, string(planJSON)).Scan(&commitmentID); err != nil {
+		t.Fatalf("seed commitment: %v", err)
+	}
+
+	h := newTestCrossAppHandler(t, pool)
+	connectorCalled := false
+	h.connectorFn = func(_ context.Context, _, _, _ string, _ map[string]any) (any, error) {
+		connectorCalled = true
+		return nil, nil
+	}
+	t.Setenv("LANTERN_CROSS_APP", "on")
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/commitments/"+commitmentID+"/execute-action", nil)
+	req.SetPathValue("id", commitmentID)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	w := httptest.NewRecorder()
+	h.ExecuteAction(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("non-owner: expected 403, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if connectorCalled {
+		t.Error("SECURITY: connector side-effect fired for a non-owner caller")
+	}
+}
+
 // TestCrossApp_ExecuteAction_RejectsNonCrossApp verifies that execute-action
 // refuses a commitment that is not kind='cross_app'.
 func TestCrossApp_ExecuteAction_RejectsNonCrossApp(t *testing.T) {

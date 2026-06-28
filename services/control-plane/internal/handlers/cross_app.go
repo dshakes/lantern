@@ -318,6 +318,12 @@ func (h *CrossAppHandler) ExecuteAction(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	// Review finding: the side-effect path must be OWNER-only — a non-owner tenant
+	// member must not be able to trigger a real connector write (send/book/etc.).
+	if claims.Role != "owner" && claims.Role != "admin" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "only the owner can execute a cross-app action"})
+		return
+	}
 	tenantID := claims.TenantID
 	ctx := middleware.InjectTenantID(r.Context(), tenantID)
 
