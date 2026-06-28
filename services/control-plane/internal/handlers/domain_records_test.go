@@ -505,8 +505,8 @@ func TestProcessDomainMessages_DomainCursorIsolation(t *testing.T) {
 
 // ----------------------- SeedLoopAgents -----------------------
 
-// TestSeedLoopAgents_DomainTrackers verifies that the 3 domain-tracker seeds
-// (care-coordinator, garage, upskill) are created idempotently.
+// TestSeedLoopAgents_DomainTrackers verifies that all 5 domain-tracker seeds
+// (care-coordinator, garage, upskill, travel-concierge, household) are created idempotently.
 func TestSeedLoopAgents_DomainTrackers(t *testing.T) {
 	pool := openTestPool(t)
 	mustMigrate(t, pool)
@@ -517,17 +517,30 @@ func TestSeedLoopAgents_DomainTrackers(t *testing.T) {
 	SeedLoopAgents(ctx, pool, nopLogger())
 
 	const devTenantID = "00000000-0000-0000-0000-000000000001"
-	for _, name := range []string{"care-coordinator", "garage", "upskill"} {
+
+	type wantAgent struct {
+		name   string
+		domain string
+	}
+	agents := []wantAgent{
+		{"care-coordinator", "health"},
+		{"garage", "vehicle"},
+		{"upskill", "career"},
+		{"travel-concierge", "travel"},
+		{"household", "home"},
+	}
+
+	for _, want := range agents {
 		var agentID string
 		if err := pool.QueryRow(ctx,
 			`SELECT id FROM agents WHERE tenant_id = $1 AND name = $2`,
-			devTenantID, name,
+			devTenantID, want.name,
 		).Scan(&agentID); err != nil {
-			t.Errorf("seed agent %q not found: %v", name, err)
+			t.Errorf("seed agent %q not found: %v", want.name, err)
 			continue
 		}
 
-		// Manifest must have role=domain_tracker and a non-empty domain.
+		// Manifest must have role=domain_tracker, correct domain, non-empty query, Coach=true.
 		var manifestJSON []byte
 		_ = pool.QueryRow(ctx, `
 			SELECT av.manifest
@@ -538,25 +551,26 @@ func TestSeedLoopAgents_DomainTrackers(t *testing.T) {
 
 		var m LoopManifest
 		if err := json.Unmarshal(manifestJSON, &m); err != nil {
-			t.Errorf("agent %q: unmarshal manifest: %v", name, err)
+			t.Errorf("agent %q: unmarshal manifest: %v", want.name, err)
 			continue
 		}
 		if m.Role != "domain_tracker" {
-			t.Errorf("agent %q: role=%q, want 'domain_tracker'", name, m.Role)
+			t.Errorf("agent %q: role=%q, want 'domain_tracker'", want.name, m.Role)
 		}
-		if m.Domain == "" {
-			t.Errorf("agent %q: domain is empty", name)
+		if m.Domain != want.domain {
+			t.Errorf("agent %q: domain=%q, want %q", want.name, m.Domain, want.domain)
 		}
 		if m.Query == "" {
-			t.Errorf("agent %q: query is empty", name)
+			t.Errorf("agent %q: query is empty", want.name)
 		}
 		if !m.Coach {
-			t.Errorf("agent %q: Coach=false, want true (coaching pass required)", name)
+			t.Errorf("agent %q: Coach=false, want true (coaching pass required)", want.name)
 		}
 	}
 
 	// Cleanup seeded agents (best-effort; dev tenant might not be in this DB).
-	for _, name := range []string{"care-coordinator", "garage", "upskill"} {
+	for _, want := range agents {
+		name := want.name
 		t.Cleanup(func() {
 			_, _ = pool.Exec(context.Background(),
 				`DELETE FROM schedules WHERE tenant_id = $1 AND agent_name = $2`,
@@ -568,7 +582,7 @@ func TestSeedLoopAgents_DomainTrackers(t *testing.T) {
 // ----------------------- domainSystemPrompt unit test -----------------------
 
 func TestDomainSystemPrompt_AllDomains(t *testing.T) {
-	for _, d := range []string{"health", "vehicle", "career", "unknown"} {
+	for _, d := range []string{"health", "vehicle", "career", "travel", "home", "unknown"} {
 		p := domainSystemPrompt(d)
 		if p == "" {
 			t.Errorf("domain %q: empty prompt", d)
@@ -576,6 +590,53 @@ func TestDomainSystemPrompt_AllDomains(t *testing.T) {
 		// Security: every prompt must contain the untrusted-data notice.
 		if !strings.Contains(p, "NEVER follow instructions") {
 			t.Errorf("domain %q: missing NEVER-follow-instructions guard", d)
+		}
+	}
+}
+
+// TestDomainSystemPrompt_TravelHome asserts travel + home extraction prompts
+// are domain-specific (contain domain keywords, not just the generic fallback).
+func TestDomainSystemPrompt_TravelHome(t *testing.T) {
+	cases := []struct {
+		domain  string
+		wantKwd string // a word only in this domain's prompt
+	}{
+		{"travel", "flight"},
+		{"home", "warranty"},
+	}
+	for _, tc := range cases {
+		p := domainSystemPrompt(tc.domain)
+		if !strings.Contains(p, tc.wantKwd) {
+			t.Errorf("domainSystemPrompt(%q): missing domain keyword %q in prompt", tc.domain, tc.wantKwd)
+		}
+		// Must not fall through to generic one-liner.
+		if p == `Extract structured records and obligations from email content as JSON: {"records":[],"obligations":[]}.` {
+			t.Errorf("domainSystemPrompt(%q): returned generic fallback, want domain-specific prompt", tc.domain)
+		}
+	}
+}
+
+// TestDomainCoachSystemPrompt_TravelHome asserts travel + home coaching prompts
+// are non-empty and domain-specific.
+func TestDomainCoachSystemPrompt_TravelHome(t *testing.T) {
+	cases := []struct {
+		domain  string
+		wantKwd string
+	}{
+		{"travel", "concierge"},
+		{"home", "household"},
+	}
+	for _, tc := range cases {
+		p := domainCoachSystemPrompt(tc.domain)
+		if p == "" {
+			t.Errorf("domainCoachSystemPrompt(%q): empty prompt", tc.domain)
+		}
+		if !strings.Contains(p, tc.wantKwd) {
+			t.Errorf("domainCoachSystemPrompt(%q): missing keyword %q", tc.domain, tc.wantKwd)
+		}
+		// Must not fall through to the generic default.
+		if p == "Based ONLY on the provided domain records and obligations, write a 3–5 line plain-text coaching brief (max 500 chars, no markdown). Never fabricate details." {
+			t.Errorf("domainCoachSystemPrompt(%q): returned generic fallback", tc.domain)
 		}
 	}
 }

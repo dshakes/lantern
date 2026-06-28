@@ -70,6 +70,7 @@ var (
 		"email": true, "appointment": true, "other": true,
 		// Domain-tracker sources (one per life domain).
 		"health": true, "vehicle": true, "career": true,
+		"travel": true, "home": true,
 	}
 )
 
@@ -147,7 +148,7 @@ func (h *CommitmentHandler) CreateCommitment(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if !validSources[body.Source] {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "source must be one of spouse, self, vip, bill, email, appointment, other"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "source is invalid"})
 		return
 	}
 	// Clamp title to 500 runes (UTF-8 safe).
