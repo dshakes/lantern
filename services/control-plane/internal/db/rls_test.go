@@ -384,6 +384,7 @@ var rlsTenantTables = []string{
 	"life_events", "life_event_prefs",
 	"commitments",
 	"gmail_poll_cursors",
+	"domain_records",
 }
 
 // rlsExemptTables are intentionally NOT under RLS: no single owning tenant_id,
