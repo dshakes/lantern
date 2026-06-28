@@ -2074,6 +2074,32 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
       body: JSON.stringify(body),
     });
   }
+
+  // ---- Commitments ----------------------------------------------------------
+
+  async listCommitments(params?: { status?: string; tier?: string; limit?: number }): Promise<Commitment[]> {
+    const q = new URLSearchParams();
+    if (params?.status) q.set("status", params.status);
+    if (params?.tier) q.set("tier", params.tier);
+    if (params?.limit) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    try {
+      return await this.request<Commitment[]>(`/v1/commitments${qs ? `?${qs}` : ""}`);
+    } catch {
+      return [];
+    }
+  }
+
+  // ---- Domain Records -------------------------------------------------------
+
+  async listDomainRecords(params?: { domain?: string }): Promise<DomainRecord[]> {
+    const qs = params?.domain ? `?domain=${encodeURIComponent(params.domain)}` : "";
+    try {
+      return await this.request<DomainRecord[]>(`/v1/domain-records${qs}`);
+    } catch {
+      return [];
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2325,4 +2351,38 @@ export interface LifeEvent {
 export interface LifeEventPref {
   kind: LifeEventKind;
   mode: LifeEventMode;
+}
+
+// ---------------------------------------------------------------------------
+// Commitment types
+// ---------------------------------------------------------------------------
+
+export interface Commitment {
+  id: string;
+  title: string;
+  source: string;
+  assignedBy?: string;
+  kind?: string;
+  status: string;
+  tier: string;
+  urgency: string;
+  deadline?: string;
+  sourcePreview?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Domain record types
+// ---------------------------------------------------------------------------
+
+export interface DomainRecord {
+  id: string;
+  domain: string;
+  kind: string;
+  title: string;
+  source?: string;
+  validUntil?: string;
+  createdAt: string;
+  updatedAt: string;
 }
