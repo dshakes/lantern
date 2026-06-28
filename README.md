@@ -66,25 +66,7 @@ Lantern is a **production runtime for AI agents** with a control-plane / data-pl
 
 Every run passes through the same path — budget gate → durable step execution → capability-based LLM routing → isolated execution → signed receipt. Doesn't matter if it started as a WhatsApp message or a backend job.
 
-```mermaid
-flowchart TB
-  subgraph CP["Control Plane · SaaS"]
-    A[Auth · RBAC scopes] --> B[Quota + Budget gate]
-    B --> C[Identity issuer<br/>per-instance token]
-    C --> D[Scheduler dispatch]
-    R[Receipt signer · Ed25519]
-    AU[(Audit · journal_events)]
-  end
-  subgraph DP["Data Plane · your VPC / K8s"]
-    S[runtime-scheduler<br/>placement] --> M[runtime-manager<br/>RuntimeClass tiering]
-    M --> H[in-VM harness<br/>egress deny · secret vend]
-  end
-  D -->|gRPC · tenant metadata| S
-  H -->|mTLS heartbeat · vend| CP
-  D -.-> AU
-  H -.-> AU
-  AU --> R
-```
+<img src="docs/assets/cp-dp-architecture.svg" alt="Control-plane / data-plane architecture — Auth → Budget → Identity → Scheduler dispatch in the SaaS control plane; runtime-scheduler → runtime-manager → in-VM harness in the data plane; gRPC tenant metadata flows down, mTLS heartbeat and audit events flow back up to the receipt signer" width="100%">
 
 ---
 
@@ -375,33 +357,11 @@ SDKs: **TypeScript** (primary), **Python**, **Go**.
 - OTel traces carrying `tenant_id` / `run_id` / `step_id` / `agent_instance_id` · W3C `traceparent` propagated CP → scheduler → manager → harness (one trace per spawn); gateway and model-router now emit their own OTLP spans (gateway: OTLP/HTTP `:4318`; model-router: OTLP/gRPC `:4317`) tagged with `tenant_id` and, on the model-router, `run_id` / `step_id` / `model_used` / `cost_usd` — env-gated via `OTEL_EXPORTER_OTLP_ENDPOINT` or `LANTERN_OTEL_ENABLED=1`, no-op when unset
 - Production alert rules (13 rules, 3 groups), 2 Grafana dashboards, and 8 operator runbooks in [`infra/monitoring/`](infra/monitoring/) and [`docs/runbooks/`](docs/runbooks/)
 
-```mermaid
-sequenceDiagram
-  participant U as Caller (JWT)
-  participant CP as Control Plane
-  participant DP as Data Plane (agent instance)
-  U->>CP: schedule (RBAC: runtime:write)
-  CP->>CP: quota + budget gate
-  CP->>CP: mint per-instance identity
-  CP->>DP: spawn (authenticated tenant, injected identity)
-  DP->>CP: vend secret (mTLS + instance token)
-  DP-->>CP: audit events (agent_instance_id)
-  CP->>U: Ed25519-signed receipt (verify offline at /proof)
-```
+<img src="docs/assets/security-sequence.svg" alt="Security sequence — JWT caller schedules via RBAC; control plane runs quota+budget gate and mints a per-instance identity; spawns the data-plane agent; harness vends secrets over mTLS; audit events stream back; caller receives an Ed25519-signed receipt verifiable offline at /proof" width="100%">
 
 **Headless agent runtime** · Kubernetes-default substrate; isolation as a RuntimeClass tier; durable crash-replay; one trace per spawn:
 
-```mermaid
-flowchart LR
-  T[TRUSTED] --> runc[runc<br/>shared node]
-  ST[STANDARD] --> gv[gVisor]
-  U[UNTRUSTED] --> gv2[gVisor + egress-deny]
-  HO[HOSTILE] --> kata[Kata microVM<br/>dedicated pool]
-  classDef hard fill:#1f2937,stroke:#10b981,color:#fff;
-  class gv,gv2,kata hard;
-  U -. "no gVisor configured" .-> X[refuse · fail closed]
-  HO -. "no Kata configured" .-> X
-```
+<img src="docs/assets/runtime-dispatch.svg" alt="Runtime dispatch — TRUSTED maps to runc, STANDARD to gVisor, UNTRUSTED to gVisor+egress-deny, HOSTILE to Kata microVM dedicated pool; if gVisor or Kata is not configured the request is refused fail-closed, never downgraded to runc" width="100%">
 
 In-VM Rust harness enforces an egress allowlist, vends short-TTL secrets over mTLS, and streams a bidirectional heartbeat. Per-tenant quota (HTTP 402 over cap). Scheduler HA via Postgres advisory-lock leader election. Per-tenant spawn rate limiting (token bucket, 429 before work side-effects). Demos in [`examples/headless-agents/`](examples/headless-agents/). User guides in [`docs/guides/`](docs/guides/).
 
@@ -459,36 +419,11 @@ The loop agents (concierge, relationship-keeper, financial-sentinel) run on the 
 
 #### Owner-facing loops — nudge you in self-chat, never touch your contacts
 
-```mermaid
-flowchart LR
-  subgraph C["concierge · continuous"]
-    c1([Capture]) --> c2([Research]) --> c3([Nudge]) --> c4([You act]) --> c1
-  end
-  subgraph RK["relationship-keeper · weekly"]
-    r1([Scan people]) --> r2([Gone quiet?]) --> r3([Draft]) --> r4([Nudge you]) --> r5([You reach out]) --> r1
-  end
-  subgraph FS["financial-sentinel · daily"]
-    f1([Scan bills]) --> f2([Price hike?]) --> f3([Flag review]) --> f4([You decide]) --> f1
-  end
-  subgraph MB["morning-brief · daily 8am"]
-    m1([8am trigger]) --> m2([Gather context]) --> m3([3 bullets]) --> m4([Text you]) --> m1
-  end
-  subgraph IC["inbox-concierge · daily AM"]
-    i1([Morning trigger]) --> i2([Read Gmail]) --> i3([Sort buckets]) --> i4([Text digest]) --> i1
-  end
-```
+<img src="docs/assets/agent-loops-owner.svg" alt="Owner-facing agent loops — concierge (Capture→Research→Nudge→You act), relationship-keeper (Scan people→Gone quiet?→Draft→Nudge you→You reach out), financial-sentinel (Scan bills→Price hike?→Flag review→You decide), morning-brief (8am trigger→Gather context→3 bullets→Text you), inbox-concierge (Morning trigger→Read Gmail→Sort buckets→Text digest); each loop returns to its first step" width="100%">
 
 #### Contact-facing loops — reply AS YOU to real contacts ⚠
 
-```mermaid
-flowchart LR
-  subgraph WA["⚠ whatsapp-assistant · reactive · talks to your contacts"]
-    wa1([Contact messages]) --> wa2([Understand]) --> wa3([Draft in your voice]) --> wa4([Send to contact]) --> wa1
-  end
-  subgraph IM["⚠ imessage-assistant · reactive · talks to your contacts"]
-    im1([Contact messages]) --> im2([Understand]) --> im3([Draft in your voice]) --> im4([Send to contact]) --> im1
-  end
-```
+<img src="docs/assets/agent-loops-contact.svg" alt="Contact-facing agent loops — whatsapp-assistant and imessage-assistant both follow the same reactive loop: Contact messages → Understand → Draft in your voice → Send to contact → repeat; these agents reply as you to real contacts" width="100%">
 
 ### The harness, layer by layer
 
