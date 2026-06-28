@@ -19,6 +19,7 @@
 //   - Persisted state in bridge_state/<tenant>/
 
 import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, chmodSync } from "fs";
+import { homedir } from "os";
 import { basename, join } from "path";
 import type { Logger } from "pino";
 import type { WebSocket } from "ws";
@@ -49,7 +50,8 @@ import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
 import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
-import { deviceContextBlock as iphoneContextBlock } from "@lantern/bridge-core/device-signals";
+import { deviceContextBlock as iphoneContextBlock, parseSignals } from "@lantern/bridge-core/device-signals";
+import { computeCommuteSurface, computeEnergyNudge } from "@lantern/bridge-core/proactive-loops";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
   PersonalDocs,
@@ -684,6 +686,21 @@ export class IMessageSession {
   private conciergeNudgedToday = new Set<string>();
   // API client — same pattern as rest of the bridge.
   private readonly commitments = new CommitmentsClient(authedFetch);
+  // ── Commute copilot (LANTERN_COMMUTE=on, default OFF) ──────────────────────
+  // ponytail: ships dark; owner flips LANTERN_COMMUTE=on to enable.
+  private static readonly COMMUTE_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_COMMUTE ?? "").toLowerCase());
+  private static readonly COMMUTE_INTERVAL_MS = 5 * 60_000; // 5 min
+  private commuteTimer: ReturnType<typeof setInterval> | null = null;
+  private commuteDriveFired = false;
+  private commuteWasLastDriving = false;
+  // ── Energy guardian (LANTERN_ENERGY=on, default OFF) ───────────────────────
+  // ponytail: ships dark; owner flips LANTERN_ENERGY=on to enable.
+  private static readonly ENERGY_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_ENERGY ?? "").toLowerCase());
+  private static readonly ENERGY_INTERVAL_MS = 30 * 60_000; // 30 min
+  private energyTimer: ReturnType<typeof setInterval> | null = null;
+  private energyNudgedDate = ""; // YYYY-MM-DD
 
   // Futuristic helpers
   private agent: AgentClient;
@@ -835,6 +852,8 @@ export class IMessageSession {
     this.startLearningFlywheel();
     this.startAnticipationNudges();
     this.startConcierge();
+    this.startCommuteLoop();
+    this.startEnergyLoop();
     this.startGmailIngest();
     this.startMacUsage();
     this.startIphoneSignals();
@@ -1141,6 +1160,100 @@ export class IMessageSession {
     // Post-boot kick after 90s (after the session has time to settle).
     const kick = setTimeout(() => void this.runConciergeTick(), 90_000);
     kick.unref?.();
+  }
+
+  private startCommuteLoop(): void {
+    if (!IMessageSession.COMMUTE_ENABLED) return;
+    const t = setInterval(() => void this.runCommuteTick(), IMessageSession.COMMUTE_INTERVAL_MS);
+    t.unref?.();
+    this.commuteTimer = t;
+    this.logger.info("commute-copilot enabled (LANTERN_COMMUTE=on)");
+  }
+
+  private startEnergyLoop(): void {
+    if (!IMessageSession.ENERGY_ENABLED) return;
+    const t = setInterval(() => void this.runEnergyTick(), IMessageSession.ENERGY_INTERVAL_MS);
+    t.unref?.();
+    this.energyTimer = t;
+    this.logger.info("energy-guardian enabled (LANTERN_ENERGY=on)");
+  }
+
+  /**
+   * Commute copilot tick (~5 min). Surfaces due commitments hands-free when
+   * driving; sends a parked recap on the transition back.
+   * OWNER-ONLY: sends to ownerSelfChatTarget(); gated on killSwitch + quiet hours.
+   */
+  private async runCommuteTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      const target = this.ownerSelfChatTarget();
+      if (!target) return;
+      if (isQuietHours(new Date(), defaultQuietHours())) return;
+
+      const { readDevicePresence } = await import("./device-signals-reader.js");
+      const presence = readDevicePresence(this.logger);
+      const isDriving = presence?.state === "driving";
+
+      const [open, suggested] = await Promise.all([
+        this.commitments.list({ status: "open", limit: 10 }),
+        this.commitments.list({ status: "suggested", limit: 10 }),
+      ]);
+      const dueCommitments = [...open, ...suggested];
+
+      const result = computeCommuteSurface(presence, dueCommitments, {
+        alreadyFiredThisDrive: this.commuteDriveFired,
+        lastWasDriving: this.commuteWasLastDriving,
+      });
+
+      if (result) {
+        await this.send(target, result.text).catch(() => {});
+        if (result.kind === "drive") this.commuteDriveFired = true;
+        this.logger.info({ kind: result.kind }, "commute-copilot fired");
+      }
+
+      if (!isDriving && this.commuteDriveFired) this.commuteDriveFired = false;
+      this.commuteWasLastDriving = isDriving;
+    } catch (err) {
+      this.logger.debug({ err }, "commute tick failed (non-fatal)");
+    }
+  }
+
+  /**
+   * Energy guardian tick (~30 min). Nudges the owner once per day when
+   * last-night's sleep was below 6h.
+   * OWNER-ONLY: sends to ownerSelfChatTarget(); gated on killSwitch + quiet hours.
+   */
+  private async runEnergyTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      const target = this.ownerSelfChatTarget();
+      if (!target) return;
+      if (isQuietHours(new Date(), defaultQuietHours())) return;
+
+      const today = new Date().toISOString().slice(0, 10);
+      if (this.energyNudgedDate === today) return;
+
+      // Read raw signals inline — same file the dashboard /api/signals route writes.
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+      const signals = parseSignals(tail);
+
+      const result = computeEnergyNudge(signals, { alreadyNudgedToday: false, nowMs: Date.now() });
+      if (!result) return;
+
+      await this.send(target, result.text).catch(() => {});
+      this.energyNudgedDate = today;
+      // Persist so a launchd restart doesn't re-nudge today.
+      try {
+        const nudgeFile = join(this.stateDir, "energy-nudge.json");
+        writeFileSync(nudgeFile, JSON.stringify({ date: today }), { mode: 0o600 });
+        try { chmodSync(nudgeFile, 0o600); } catch {}
+      } catch { /* non-fatal */ }
+      this.logger.info("energy-guardian nudge fired");
+    } catch (err) {
+      this.logger.debug({ err }, "energy tick failed (non-fatal)");
+    }
   }
 
   private async runAnticipationTick(): Promise<void> {
@@ -1722,6 +1835,14 @@ export class IMessageSession {
       clearInterval(this.conciergeTimer);
       this.conciergeTimer = null;
     }
+    if (this.commuteTimer) {
+      clearInterval(this.commuteTimer);
+      this.commuteTimer = null;
+    }
+    if (this.energyTimer) {
+      clearInterval(this.energyTimer);
+      this.energyTimer = null;
+    }
     // Clear per-session concierge state so a restart starts fresh.
     this.pendingConcierge.clear();
     this.conciergeNudgedToday.clear();
@@ -2109,8 +2230,16 @@ export class IMessageSession {
     } catch { return "pass"; }
     if (kind === "other") return "pass";
     if (kind === "spam") {
-      this.logger.info({ handle, signals }, "ingest: suppressed marketing/spam from unknown sender");
-      return "handled"; // marketing from a stranger → silence
+      // Owner directive: respond to EVERYBODY. A real new customer's opener can
+      // trip the spam heuristic (a shortlink, the word "deal"), and silencing
+      // them is exactly the live-demo failure. Default = fall through to a
+      // normal auto-reply. Set LANTERN_SUPPRESS_SPAM=on to restore silencing.
+      if (["on", "1"].includes((process.env.LANTERN_SUPPRESS_SPAM ?? "").toLowerCase())) {
+        this.logger.warn({ handle, signals }, "ingest: NO reply — marketing/spam suppressed from unknown sender (LANTERN_SUPPRESS_SPAM on)");
+        return "handled";
+      }
+      this.logger.warn({ handle, signals }, "ingest: spam heuristic matched unknown sender — replying anyway (respond-to-everybody default; set LANTERN_SUPPRESS_SPAM=on to silence)");
+      return "pass";
     }
     // appointment
     this.logger.info({ handle, signals }, "ingest: appointment confirmation from unknown sender");
@@ -3634,7 +3763,13 @@ export class IMessageSession {
     // surface to the owner + offer to add to the calendar; marketing/spam →
     // suppress (no auto-reply). Behind LANTERN_APPT_INGEST (default on).
     const ingest = await this.maybeIngestUnknownInbound(row.handle, text).catch(() => "pass" as const);
-    if (ingest === "handled") return;
+    if (ingest === "handled") {
+      // No silent drops: an unknown-inbound message owned by the life-event /
+      // appointment ingester means the CONTACT got no auto-reply. Leave a trace
+      // so a silent demo never recurs.
+      this.logger.warn({ handle: row.handle }, "contact reply suppressed — unknown-inbound owned by life-event/appointment ingestion (no auto-reply sent to contact)");
+      return;
+    }
 
     // NOTE: no hard allow-list gate here (removed — it was an
     // over-correction that silenced every contact). The real spam
@@ -4197,7 +4332,7 @@ export class IMessageSession {
       } else {
         // SECOND draft also failed — now fall back to silence/greeting and
         // keep the owner heads-up so a suppressed-twice reply isn't invisible.
-        this.logger.info({ from: row.handle, reason: retryCheck.reason, draftPreview: (retry ?? draft).slice(0, 120) }, "draft suppressed by bot-tell filter (after regeneration)");
+        this.logger.warn({ from: row.handle, reason: retryCheck.reason, draftPreview: (retry ?? draft).slice(0, 120) }, "NO reply — draft suppressed by bot-tell filter twice; falling back to greeting/owner heads-up");
         this.broadcast({
           type: "activity",
           data: {
@@ -4258,7 +4393,7 @@ export class IMessageSession {
 
     if (isVIP) {
       if (!draftApprovalsOn) {
-        this.logger.info({ from: row.handle }, "auto-reply suppressed — VIP (drafts off)");
+        this.logger.warn({ from: row.handle }, "NO reply — auto-reply suppressed for VIP (drafts off); owner heads-up sent");
         this.broadcast({
           type: "activity",
           data: {
@@ -4269,6 +4404,12 @@ export class IMessageSession {
             timestamp: Date.now(),
           },
         });
+        // Parity with WhatsApp: a VIP message went unanswered because the owner
+        // flagged them sensitive. One deduped heads-up so it isn't invisible.
+        this.notifyOwnerOfDrop(
+          `${this.contactLabel(row.handle)} (VIP) messaged but auto-reply is off for them — reply yourself.`,
+          `vip-silent:${row.handle}`,
+        );
         return;
       }
       const queued = await this.personal.queueDraft(

@@ -17,6 +17,7 @@ import { authedFetch } from "@lantern/bridge-core/auth";
 import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
 import { parseSignals, presenceFromSignals, type SignalPresence } from "@lantern/bridge-core/device-signals";
+import { computeCommuteSurface, computeEnergyNudge } from "@lantern/bridge-core/proactive-loops";
 import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
@@ -1452,6 +1453,24 @@ export class WhatsAppSession {
   private conciergeNudgedToday = new Set<string>();
   // API client — injected authedFetch; same pattern as the rest of the bridge.
   private readonly commitments = new CommitmentsClient(authedFetch);
+  // ── Commute copilot (LANTERN_COMMUTE=on, default OFF) ──────────────────────
+  // Ships dark. Fires hands-free commitment surface once per drive + park recap.
+  // ponytail: ships dark; owner flips LANTERN_COMMUTE=on to enable.
+  private static readonly COMMUTE_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_COMMUTE ?? "").toLowerCase());
+  private static readonly COMMUTE_INTERVAL_MS = 5 * 60_000; // 5 min
+  private commuteTimer: ReturnType<typeof setInterval> | null = null;
+  private commuteDriveFired = false;   // reset on park transition
+  private commuteWasLastDriving = false;
+  // ── Energy guardian (LANTERN_ENERGY=on, default OFF) ───────────────────────
+  // Ships dark. Nudges once per day when last-night's sleep < 6h.
+  // ponytail: ships dark; owner flips LANTERN_ENERGY=on to enable.
+  private static readonly ENERGY_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_ENERGY ?? "").toLowerCase());
+  private static readonly ENERGY_INTERVAL_MS = 30 * 60_000; // 30 min
+  private energyTimer: ReturnType<typeof setInterval> | null = null;
+  private energyNudgedDate = ""; // YYYY-MM-DD — set after sending, reset on new date
+  private readonly energyNudgeFile = join(homedir(), ".lantern", "whatsapp-energy-nudge.json");
   // 3) Draft-and-confirm for LOW-confidence replies. OPT-IN
   //    (LANTERN_DRAFT_HIGH_STAKES=on) — default OFF. On-by-default silently
   //    drafted normal short/cold-contact family messages instead of replying
@@ -1610,6 +1629,23 @@ export class WhatsAppSession {
       // Post-boot kick after 90s (after the socket has time to connect).
       const conciergeKick = setTimeout(() => void this.runConciergeTick(), 90_000);
       conciergeKick.unref?.();
+    }
+    // Commute copilot (LANTERN_COMMUTE=on only).
+    if (WhatsAppSession.COMMUTE_ENABLED) {
+      this.commuteTimer = setInterval(
+        () => void this.runCommuteTick(),
+        WhatsAppSession.COMMUTE_INTERVAL_MS,
+      );
+      this.commuteTimer.unref?.();
+    }
+    // Energy guardian (LANTERN_ENERGY=on only).
+    if (WhatsAppSession.ENERGY_ENABLED) {
+      this.loadEnergyNudgeState();
+      this.energyTimer = setInterval(
+        () => void this.runEnergyTick(),
+        WhatsAppSession.ENERGY_INTERVAL_MS,
+      );
+      this.energyTimer.unref?.();
     }
   }
 
@@ -2878,7 +2914,13 @@ export class WhatsAppSession {
           // surface + offer to add to calendar; marketing/spam → suppress.
           if (text && !this.isGroupJid(from)) {
             const ingest = await this.maybeIngestUnknownInbound(from, text).catch(() => "pass" as const);
-            if (ingest === "handled") continue;
+            if (ingest === "handled") {
+              // No silent drops: an unknown-inbound message owned by the
+              // life-event / appointment ingester means the CONTACT got no
+              // auto-reply. Leave a trace so a silent demo never recurs.
+              this.logger.warn({ from }, "contact reply suppressed — unknown-inbound owned by life-event/appointment ingestion (no auto-reply sent to contact)");
+              continue;
+            }
           }
           // OPERATIONAL drops below (muted / paused) silence a message that
           // WOULD otherwise be auto-replied. Gate the owner heads-up on the
@@ -3093,8 +3135,16 @@ export class WhatsAppSession {
     } catch { return "pass"; }
     if (kind === "other") return "pass";
     if (kind === "spam") {
-      this.logger.info({ from, signals }, "ingest: suppressed marketing/spam from unknown sender");
-      return "handled";
+      // Owner directive: respond to EVERYBODY. A real new customer's opener can
+      // trip the spam heuristic (a shortlink, the word "deal"), and silencing
+      // them is exactly the live-demo failure. Default = fall through to a
+      // normal auto-reply. Set LANTERN_SUPPRESS_SPAM=on to restore silencing.
+      if (["on", "1"].includes((process.env.LANTERN_SUPPRESS_SPAM ?? "").toLowerCase())) {
+        this.logger.warn({ from, signals }, "ingest: NO reply — marketing/spam suppressed from unknown sender (LANTERN_SUPPRESS_SPAM on)");
+        return "handled";
+      }
+      this.logger.warn({ from, signals }, "ingest: spam heuristic matched unknown sender — replying anyway (respond-to-everybody default; set LANTERN_SUPPRESS_SPAM=on to silence)");
+      return "pass";
     }
     this.logger.info({ from, signals }, "ingest: appointment confirmation from unknown sender");
     const ownJid = this.ownJid();
@@ -7540,7 +7590,7 @@ export class WhatsAppSession {
       } else {
         // SECOND draft also failed — fall back to silence/greeting and keep
         // the owner heads-up so a suppressed-twice reply isn't invisible.
-        this.logger.info({ from, reason: retryCheck.reason, draftPreview: (retry ?? draft).slice(0, 120) }, "draft suppressed by bot-tell filter (after regeneration)");
+        this.logger.warn({ from, reason: retryCheck.reason, draftPreview: (retry ?? draft).slice(0, 120) }, "NO reply — draft suppressed by bot-tell filter twice; falling back to greeting/owner heads-up");
         this.broadcast({
           type: "activity",
           data: {
@@ -7598,7 +7648,7 @@ export class WhatsAppSession {
     // VIP: always-special. Either queue-for-approval or stay silent.
     if (isVIP) {
       if (!draftApprovalsOn) {
-        this.logger.info({ from }, "auto-reply suppressed — VIP (drafts off)");
+        this.logger.warn({ from }, "NO reply — auto-reply suppressed for VIP (drafts off); owner heads-up sent");
         this.broadcast({
           type: "activity",
           data: {
@@ -8476,6 +8526,101 @@ export class WhatsAppSession {
     }
   }
 
+  /** Persist energyNudgedDate so a launchd restart doesn't re-nudge today. */
+  private loadEnergyNudgeState(): void {
+    try {
+      if (!existsSync(this.energyNudgeFile)) return;
+      const raw = readFileSync(this.energyNudgeFile, "utf-8");
+      const data = JSON.parse(raw) as { date?: string };
+      if (typeof data.date === "string") this.energyNudgedDate = data.date;
+    } catch { /* non-fatal */ }
+  }
+
+  private saveEnergyNudgeState(date: string): void {
+    try {
+      mkdirSync(dirname(this.energyNudgeFile), { recursive: true });
+      writeFileSync(this.energyNudgeFile, JSON.stringify({ date }), { mode: 0o600 });
+      try { chmodSync(this.energyNudgeFile, 0o600); } catch {}
+    } catch { /* non-fatal */ }
+  }
+
+  /**
+   * Commute copilot tick (~5 min). Surfaces due commitments hands-free when
+   * driving; sends a parked recap on the transition back.
+   * OWNER-ONLY: sends via sendSelf; gated on killSwitch + quiet hours + socket.
+   */
+  private async runCommuteTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      if (!this.socket || !this.connected || !this.ownJid()) return;
+      const hour = this.ownerLocalHour();
+      if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
+
+      // Read signals inline — same path as contactIphonePresence().
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+      const signals = parseSignals(tail);
+      const presence = presenceFromSignals(signals);
+      const isDriving = presence?.state === "driving";
+
+      const [open, suggested] = await Promise.all([
+        this.commitments.list({ status: "open", limit: 10 }),
+        this.commitments.list({ status: "suggested", limit: 10 }),
+      ]);
+      const dueCommitments = [...open, ...suggested];
+
+      const result = computeCommuteSurface(presence, dueCommitments, {
+        alreadyFiredThisDrive: this.commuteDriveFired,
+        lastWasDriving: this.commuteWasLastDriving,
+      });
+
+      if (result) {
+        await this.sendSelf(result.text).catch(() => {});
+        if (result.kind === "drive") this.commuteDriveFired = true;
+        this.logger.info({ kind: result.kind }, "commute-copilot fired");
+      }
+
+      // Update presence state for the next tick.
+      if (!isDriving && this.commuteDriveFired) this.commuteDriveFired = false;
+      this.commuteWasLastDriving = isDriving;
+    } catch (err) {
+      this.logger.debug({ err }, "commute tick failed (non-fatal)");
+    }
+  }
+
+  /**
+   * Energy guardian tick (~30 min). Nudges the owner once per day when
+   * last-night's sleep was below 6h.
+   * OWNER-ONLY: sends via sendSelf; gated on killSwitch + quiet hours + socket.
+   */
+  private async runEnergyTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      if (!this.socket || !this.connected || !this.ownJid()) return;
+      const hour = this.ownerLocalHour();
+      if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
+
+      const today = new Date().toISOString().slice(0, 10);
+      if (this.energyNudgedDate === today) return;
+
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+      const signals = parseSignals(tail);
+
+      const result = computeEnergyNudge(signals, { alreadyNudgedToday: false, nowMs: Date.now() });
+      if (!result) return;
+
+      await this.sendSelf(result.text).catch(() => {});
+      this.energyNudgedDate = today;
+      this.saveEnergyNudgeState(today);
+      this.logger.info("energy-guardian nudge fired");
+    } catch (err) {
+      this.logger.debug({ err }, "energy tick failed (non-fatal)");
+    }
+  }
+
   /**
    * Intercept owner self-chat reply if there is a pending commitment nudge and
    * the reply text resolves to an action. Mirrors maybeResolveSelfChatDraft.
@@ -8731,6 +8876,14 @@ export class WhatsAppSession {
     if (this.conciergeTimer) {
       clearInterval(this.conciergeTimer);
       this.conciergeTimer = null;
+    }
+    if (this.commuteTimer) {
+      clearInterval(this.commuteTimer);
+      this.commuteTimer = null;
+    }
+    if (this.energyTimer) {
+      clearInterval(this.energyTimer);
+      this.energyTimer = null;
     }
     // Clear per-session concierge state so a reconnect starts fresh.
     this.pendingConcierge.clear();
