@@ -14,11 +14,14 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 
 	"go.uber.org/zap"
@@ -816,6 +819,342 @@ func TestWithCacheOnLastTool_Empty(t *testing.T) {
 	}
 	if got := withCacheOnLastTool([]map[string]any{}); len(got) != 0 {
 		t.Errorf("empty input should return empty, got len=%d", len(got))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isOversizedInputError
+// ---------------------------------------------------------------------------
+
+func TestIsOversizedInputError_Matches(t *testing.T) {
+	cases := []struct {
+		errStr string
+		want   bool
+	}{
+		// OpenAI context length
+		{"openai: This model's maximum context length is 128000 tokens. However, your messages resulted in 130000 tokens.", true},
+		{"openai: context_length_exceeded", true},
+		// Anthropic too long
+		{"anthropic: prompt is too long: 200001 tokens > 200000 maximum", true},
+		// Generic markers
+		{"request too large for this model", true},
+		{"413", true},
+		{"string too long", true},
+		{"exceeds the model's maximum context", true},
+		{"reduce your prompt", true},
+		// Non-oversize — must NOT match
+		{"openai: invalid_api_key", false},
+		{"openai: 429 rate limit exceeded", false},
+		{"anthropic: 500 internal server error", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.errStr, func(t *testing.T) {
+			got := isOversizedInputError(tc.errStr)
+			if got != tc.want {
+				t.Errorf("isOversizedInputError(%q) = %v, want %v", tc.errStr, got, tc.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// truncateMessagesForOversize
+// ---------------------------------------------------------------------------
+
+func TestTruncateMessagesForOversize_NoopWhenSmall(t *testing.T) {
+	msgs := []map[string]any{
+		{"role": "system", "content": "You are helpful."},
+		{"role": "user", "content": "Hello"},
+	}
+	out, dropped := truncateMessagesForOversize(msgs)
+	if dropped != 0 {
+		t.Errorf("small input: expected 0 chars dropped, got %d", dropped)
+	}
+	if len(out) != 2 {
+		t.Errorf("small input: expected 2 messages, got %d", len(out))
+	}
+}
+
+func TestTruncateMessagesForOversize_SystemPreserved(t *testing.T) {
+	// Build a big history that exceeds the budget.
+	bigContent := make([]byte, oversizeInputBudgetChars+1000)
+	for i := range bigContent {
+		bigContent[i] = 'x'
+	}
+	msgs := []map[string]any{
+		{"role": "system", "content": "system prompt stays"},
+		{"role": "user", "content": string(bigContent)},
+	}
+	out, dropped := truncateMessagesForOversize(msgs)
+	if dropped == 0 {
+		t.Error("expected chars to be dropped from oversized input")
+	}
+	// System message must remain.
+	found := false
+	for _, m := range out {
+		if r, _ := m["role"].(string); r == "system" {
+			if c, _ := m["content"].(string); c == "system prompt stays" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("system message was not preserved after truncation")
+	}
+}
+
+func TestTruncateMessagesForOversize_OldestDroppedFirst(t *testing.T) {
+	// 3 large conversation messages, total > budget; oldest should go first.
+	chunk := make([]byte, oversizeInputBudgetChars/2+1)
+	for i := range chunk {
+		chunk[i] = 'y'
+	}
+	msgs := []map[string]any{
+		{"role": "user", "content": "oldest"},
+		{"role": "assistant", "content": "middle"},
+		{"role": "user", "content": string(chunk)},
+	}
+	out, dropped := truncateMessagesForOversize(msgs)
+	if dropped == 0 {
+		t.Error("expected drops for oversized multi-message history")
+	}
+	// The last (newest) message must survive.
+	last := out[len(out)-1]
+	if c, _ := last["content"].(string); len(c) == 0 {
+		t.Error("newest message should survive truncation")
+	}
+}
+
+func TestTruncateMessagesForOversize_SingleMessageCapped(t *testing.T) {
+	huge := make([]byte, singleMessageMaxChars+5000)
+	for i := range huge {
+		huge[i] = 'z'
+	}
+	msgs := []map[string]any{
+		{"role": "user", "content": string(huge)},
+	}
+	out, dropped := truncateMessagesForOversize(msgs)
+	if dropped == 0 {
+		t.Error("expected drops for single huge message")
+	}
+	content, _ := out[len(out)-1]["content"].(string)
+	if len(content) > singleMessageMaxChars {
+		t.Errorf("single-message cap: content len=%d, want ≤%d", len(content), singleMessageMaxChars)
+	}
+}
+
+func TestTruncateMessagesForOversize_DoesNotMutateOriginal(t *testing.T) {
+	orig := "original content"
+	msgs := []map[string]any{
+		{"role": "user", "content": orig},
+	}
+	_, _ = truncateMessagesForOversize(msgs)
+	// The original slice/map must be unchanged.
+	if c, _ := msgs[0]["content"].(string); c != orig {
+		t.Errorf("original message was mutated: got %q", c)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// callLLMWithFailover — oversize retry via stub HTTP transport
+//
+// These tests use a fake RoundTripper so they can run without a real
+// Postgres DB or live LLM endpoint.  The stub intercepts provider HTTP
+// calls by driving responses from a queue.
+// ---------------------------------------------------------------------------
+
+// stubRoundTripper is a configurable fake HTTP transport.  Each RoundTrip
+// call pops the next response off the queue; remaining calls return an error.
+type stubRoundTripper struct {
+	mu        sync.Mutex
+	calls     int
+	responses []func(*http.Request) (*http.Response, error)
+	lastReqs  []*http.Request
+}
+
+func (s *stubRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	// clone the request body so we can inspect it later
+	body, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	clone := r.Clone(r.Context())
+	clone.Body = io.NopCloser(bytes.NewReader(body))
+	s.lastReqs = append(s.lastReqs, clone)
+	if len(s.responses) == 0 {
+		return nil, fmt.Errorf("stub: no more responses configured")
+	}
+	resp := s.responses[0]
+	s.responses = s.responses[1:]
+	return resp(r)
+}
+
+func (s *stubRoundTripper) callCount() int { s.mu.Lock(); defer s.mu.Unlock(); return s.calls }
+func (s *stubRoundTripper) req(i int) *http.Request {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if i < len(s.lastReqs) {
+		return s.lastReqs[i]
+	}
+	return nil
+}
+
+// anthropicOKResponse returns a stub Anthropic success response with the
+// given text so we don't have to repeat this JSON in every test.
+func anthropicOKResponse(text string) func(*http.Request) (*http.Response, error) {
+	return func(_ *http.Request) (*http.Response, error) {
+		body := map[string]any{
+			"content":     []any{map[string]any{"type": "text", "text": text}},
+			"stop_reason": "end_turn",
+			"usage":       map[string]any{"input_tokens": 10, "output_tokens": 5},
+		}
+		b, _ := json.Marshal(body)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(b)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}, nil
+	}
+}
+
+// anthropicOversizeResponse returns a stub 400 with a context_length_exceeded message.
+func anthropicOversizeResponse() func(*http.Request) (*http.Response, error) {
+	return func(_ *http.Request) (*http.Response, error) {
+		body := map[string]any{
+			"error": map[string]any{
+				"type":    "invalid_request_error",
+				"message": "prompt is too long: 250000 tokens > 200000 maximum",
+			},
+		}
+		b, _ := json.Marshal(body)
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(bytes.NewReader(b)),
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+		}, nil
+	}
+}
+
+// newTestProxyWithStub builds an LlmProxyHandler with a stub HTTP transport
+// and env-var-configured Anthropic "availability".  Pool is nil — both
+// providerAvailable and resolveProviderKey guard against nil pool and fall
+// through to env-var lookup, which is sufficient for these unit tests.
+func newTestProxyWithStub(t *testing.T, stub *stubRoundTripper) *LlmProxyHandler {
+	t.Helper()
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
+	t.Setenv("OPENAI_API_KEY", "") // ensure only Anthropic is "available" via env
+	logger, _ := zap.NewDevelopment()
+	srv := &server.Server{Logger: logger} // Pool intentionally nil; env fallback used
+	h := NewLlmProxyHandler(srv, NewAuthHandler(srv, testJWTSecret))
+	h.httpClient = &http.Client{Transport: stub}
+	return h
+}
+
+func TestOversizeRetry_SucceedsAfterTruncation(t *testing.T) {
+	stub := &stubRoundTripper{
+		responses: []func(*http.Request) (*http.Response, error){
+			anthropicOversizeResponse(), // first call → context too large
+			anthropicOKResponse("done"), // second call (truncated) → success
+		},
+	}
+	h := newTestProxyWithStub(t, stub)
+
+	// Build a message that's within individual-message cap but triggers oversize on provider.
+	msgs := []map[string]any{
+		{"role": "system", "content": "you are helpful"},
+		{"role": "user", "content": "oldest message"},
+		{"role": "user", "content": "newest message"},
+	}
+
+	text, _, _, _, _, _, err := h.callLLMWithFailover(
+		context.Background(), "00000000-0000-0000-0000-000000000001",
+		msgs, nil, nil, nil, nil, 1, true,
+	)
+	if err != nil {
+		t.Fatalf("expected success after truncation, got err: %v", err)
+	}
+	if text != "done" {
+		t.Errorf("expected 'done', got %q", text)
+	}
+	if stub.callCount() != 2 {
+		t.Errorf("expected exactly 2 provider calls (first oversize, second truncated), got %d", stub.callCount())
+	}
+	// Verify the second request body is parseable and has messages.
+	req2 := stub.req(1)
+	if req2 == nil {
+		t.Fatal("second request was not recorded")
+	}
+	var body2 map[string]any
+	b2, _ := io.ReadAll(req2.Body)
+	if err := json.Unmarshal(b2, &body2); err != nil {
+		t.Fatalf("second request body not valid JSON: %v", err)
+	}
+	// The system prompt and newest message must survive truncation.
+	msgs2, _ := body2["messages"].([]any)
+	if len(msgs2) == 0 {
+		t.Error("second request must have at least one message")
+	}
+}
+
+func TestHappyPath_NoTruncationNoExtraCall(t *testing.T) {
+	stub := &stubRoundTripper{
+		responses: []func(*http.Request) (*http.Response, error){
+			anthropicOKResponse("hello"), // succeeds first try
+		},
+	}
+	h := newTestProxyWithStub(t, stub)
+
+	msgs := []map[string]any{
+		{"role": "user", "content": "hi"},
+	}
+	text, _, _, _, _, _, err := h.callLLMWithFailover(
+		context.Background(), "00000000-0000-0000-0000-000000000001",
+		msgs, nil, nil, nil, nil, 1, true,
+	)
+	if err != nil {
+		t.Fatalf("happy path: unexpected error: %v", err)
+	}
+	if text != "hello" {
+		t.Errorf("happy path: got %q, want %q", text, "hello")
+	}
+	if stub.callCount() != 1 {
+		t.Errorf("happy path: provider should be called exactly once, got %d", stub.callCount())
+	}
+}
+
+func TestOversizePersistent_FailsCleanly(t *testing.T) {
+	// Anthropic candidate chain with env key: opus (primary) + haiku (cheaper fallback).
+	// Oversize handling adds one truncation-retry per candidate. Maximum calls:
+	//   (initial + truncation-retry) × candidates = 2 × 2 = 4.
+	// Providing only 2 oversize responses lets the remaining candidates exhaust
+	// the stub (network error → non-retryable → break), guaranteeing termination.
+	stub := &stubRoundTripper{
+		responses: []func(*http.Request) (*http.Response, error){
+			anthropicOversizeResponse(), // opus initial call → oversize
+			anthropicOversizeResponse(), // opus truncation retry → still oversize
+			// haiku candidate will exhaust the stub (no more responses →
+			// non-retryable error → loop breaks without infinite retry).
+		},
+	}
+	h := newTestProxyWithStub(t, stub)
+
+	msgs := []map[string]any{
+		{"role": "user", "content": "some content"},
+	}
+	_, _, _, _, _, _, err := h.callLLMWithFailover(
+		context.Background(), "00000000-0000-0000-0000-000000000001",
+		msgs, nil, nil, nil, nil, 1, true,
+	)
+	if err == nil {
+		t.Fatal("persistent oversize: expected an error, got nil")
+	}
+	// Call count must be bounded: ≤ 2 attempts per candidate × number of candidates.
+	// With opus+haiku that is ≤ 4. The exact count depends on which errors happen
+	// to be classified as retryable; the key invariant is "no infinite loop".
+	if stub.callCount() > 4 {
+		t.Errorf("persistent oversize: provider called %d times, want ≤ 4 (no infinite loop)", stub.callCount())
 	}
 }
 
