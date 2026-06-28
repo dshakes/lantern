@@ -1087,19 +1087,23 @@ func (h *RESTHandler) executeRunInlineSync(ctx context.Context, runID, tenantID,
 	// Mirrors the workflow hook: same location, same return convention.
 	// Wire the LLM seam for loop bodies that need it (chief_of_staff brief).
 	// Nil when LLM is not configured — bodies fall back to their template path.
+	// loopUsage accumulates token/cost across all LLM calls the loop body makes.
+	// The closure below adds each call's counts; finalizeLoopRun reads the total.
+	var lu loopUsage
 	var loopCompleteFn researchCompleteFn
 	if h.llmProxy != nil {
 		p := h.llmProxy
 		loopCompleteFn = func(ctx context.Context, tenantID, system, user string) (string, error) {
-			return p.CompleteInternal(ctx, tenantID, system, user, 0)
+			text, tIn, tOut, cost, err := p.CompleteInternalWithUsage(ctx, tenantID, system, user)
+			lu.TokensIn += tIn
+			lu.TokensOut += tOut
+			lu.CostUsd += cost
+			return text, err
 		}
 	}
 	if runLoopAgentIfPresent(ctx, h.srv.Pool, h.logger(), tenantID, agentName, runID, loopCompleteFn) {
-		var outputJSON []byte
-		// rls-exempt: inline executor — runs read keyed by id (authorized run).
-		_ = h.srv.Pool.QueryRow(ctx,
-			`SELECT COALESCE(output, '{}'::jsonb)::text::bytea FROM runs WHERE id = $1`, runID,
-		).Scan(&outputJSON)
+		// Finalize: mark succeeded + record usage — mirrors the normal path (~rest.go:1502).
+		finalizeLoopRun(ctx, h.srv.Pool, h.logger(), runID, tenantID, agentName, lu)
 		return "", resolvedTemplateID, nil
 	}
 	if h.runWorkflowIfPresent(ctx, runID, tenantID, agentName, input) {
