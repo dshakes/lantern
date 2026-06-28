@@ -5,6 +5,7 @@
 // scales down correctly on mobile via width="100%".
 
 type Tone = "sky" | "amber" | "violet" | "emerald" | "rose";
+type ExecModel = "scheduled" | "bridge" | "reactive";
 
 export type AgentLoopProps = {
   title: string;
@@ -12,6 +13,10 @@ export type AgentLoopProps = {
   stages: string[];
   tone: Tone;
   ownerFacing: boolean;
+  /** Optional execution-model badge shown in the header. */
+  execModel?: ExecModel;
+  /** Optional one-liner shown below the diagram: where the owner sees output. */
+  interface?: string;
 };
 
 const COLORS: Record<Tone, { stroke: string; fill: string; text: string; border: string }> = {
@@ -22,6 +27,13 @@ const COLORS: Record<Tone, { stroke: string; fill: string; text: string; border:
   rose:    { stroke: "#fb7185", fill: "rgba(251,113,133,0.13)",  text: "#fda4af", border: "rgba(251,113,133,0.50)" },
 };
 
+// ponytail: inline styles so no CSS change needed for the new badges
+const EXEC_BADGE: Record<ExecModel, { bg: string; color: string; label: string }> = {
+  scheduled: { bg: "rgba(56,189,248,0.15)",  color: "#7dd3fc", label: "scheduled"  },
+  bridge:    { bg: "rgba(167,139,250,0.15)", color: "#c4b5fd", label: "bridge loop" },
+  reactive:  { bg: "rgba(52,211,153,0.15)",  color: "#6ee7b7", label: "reactive"    },
+};
+
 const NW  = 110; // node width
 const NH  = 42;  // node height
 const GAP = 32;  // gap between nodes
@@ -29,7 +41,7 @@ const PX  = 16;  // horizontal padding (each side)
 const PT  = 18;  // top padding
 const DIP = 26;  // loop arc dip below node bottom
 
-export function AgentLoop({ title, cadence, stages, tone, ownerFacing }: AgentLoopProps) {
+export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel, interface: iface }: AgentLoopProps) {
   const c = COLORS[tone];
   const n = stages.length;
   const svgW = PX + n * (NW + GAP) - GAP + PX;
@@ -48,11 +60,18 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing }: AgentLo
   const ay  = PT + NH + DIP;
   const loopPath = `M ${ax0} ${midY} C ${ax0 + 14} ${ay}, ${ax1 - 14} ${ay}, ${ax1} ${midY}`;
 
+  const eb = execModel ? EXEC_BADGE[execModel] : null;
+
   return (
     <div className={`agent-loop agent-loop-${tone}`}>
       <div className="agent-loop-head">
         <span className="agent-loop-title">{title}</span>
         <span className="agent-loop-cadence">{cadence}</span>
+        {eb && (
+          <span style={{ fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", background: eb.bg, color: eb.color, borderRadius: "999px", padding: "0.14rem 0.5rem" }}>
+            {eb.label}
+          </span>
+        )}
         {!ownerFacing && (
           <span className="agent-loop-contact-badge">talks to your contacts</span>
         )}
@@ -118,6 +137,11 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing }: AgentLo
           markerEnd={`url(#${mid})`}
         />
       </svg>
+      {iface && (
+        <p style={{ margin: "0.15rem 0 0", fontSize: "0.69rem", color: "#71717a" }}>
+          {iface}
+        </p>
+      )}
     </div>
   );
 }
