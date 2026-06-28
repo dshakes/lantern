@@ -146,6 +146,10 @@ const BOT_SELF_PREFIXES: string[] = [
   "🧾 ",                     // receipt ("🧾 Amazon $35.99 — order confirmed.")
   "✈️ ",                     // travel ("✈️ travel update …")
 
+  // ── Mac-file doc-ingest ack (LANTERN_DOC_INGEST=on) ──
+  // Keep in sync with DOC_INGEST_SELF_PREFIX in doc-ingest.ts.
+  "📄 filed",          // "📄 filed N health docs"
+
   // ── AUTO-ACT LADDER (self-chat logs + acks) ──
   // The bot auto-executes safe reversible actions and logs them with an undo.
   // Without these prefixes it would re-ingest its own "📅 added to your
