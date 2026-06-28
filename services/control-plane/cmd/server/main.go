@@ -263,6 +263,7 @@ func main() {
 	lifeEventHandler := handlers.NewLifeEventHandler(srv, authHandler)
 	commitmentHandler := handlers.NewCommitmentHandler(srv, authHandler)
 	commitmentHandler.SetLlmProxy(llmProxyHandler) // enables ResearchCommitment
+	domainRecordHandler := handlers.NewDomainRecordHandler(srv, authHandler)
 	loopAgentHandler := handlers.NewLoopAgentHandler(srv, authHandler, llmProxyHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
 	restHandler.SetDataPlaneRouter(dpSvc)    // routes runs to a connected data plane when one is live
@@ -496,6 +497,12 @@ func main() {
 	httpMux.HandleFunc("POST /v1/commitments/{id}/dismiss", commitmentHandler.DismissCommitment)
 	// Stage 2: LLM-powered research + cited action plan.
 	httpMux.HandleFunc("POST /v1/commitments/{id}/research", commitmentHandler.ResearchCommitment)
+
+	// Domain-tracker agents: encrypted PII store for health / vehicle / career records.
+	httpMux.HandleFunc("POST /v1/domain-records", domainRecordHandler.CreateDomainRecord)
+	httpMux.HandleFunc("GET /v1/domain-records", domainRecordHandler.ListDomainRecords)
+	httpMux.HandleFunc("PUT /v1/domain-records/{id}", domainRecordHandler.UpdateDomainRecord)
+	httpMux.HandleFunc("DELETE /v1/domain-records/{id}", domainRecordHandler.DeleteDomainRecord)
 
 	// Loop-agent platform primitive (Stage 3).
 	// Must be registered before the generic /v1/agents/{name} patterns to avoid shadowing.

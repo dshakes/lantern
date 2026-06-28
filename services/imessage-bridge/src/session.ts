@@ -52,8 +52,8 @@ import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-
 import { composeDigestNarrative } from "@lantern/bridge-core/digest-compose";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
 import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
-import { deviceContextBlock as iphoneContextBlock, parseSignals } from "@lantern/bridge-core/device-signals";
-import { computeCommuteSurface, computeEnergyNudge } from "@lantern/bridge-core/proactive-loops";
+import { deviceContextBlock as iphoneContextBlock, parseSignals, presenceFromSignals } from "@lantern/bridge-core/device-signals";
+import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
   PersonalDocs,
@@ -703,6 +703,22 @@ export class IMessageSession {
   private static readonly ENERGY_INTERVAL_MS = 30 * 60_000; // 30 min
   private energyTimer: ReturnType<typeof setInterval> | null = null;
   private energyNudgedDate = ""; // YYYY-MM-DD
+  // ── Health coach (LANTERN_HEALTH=on, default OFF) ──────────────────────────
+  // ponytail: ships dark; owner flips LANTERN_HEALTH=on to enable.
+  private static readonly HEALTH_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_HEALTH ?? "").toLowerCase());
+  private static readonly HEALTH_INTERVAL_MS = 60 * 60_000; // 60 min
+  private healthTimer: ReturnType<typeof setInterval> | null = null;
+  private healthNudgedDate = ""; // YYYY-MM-DD
+  private healthWeeklyFiredWeek = ""; // "YYYY-WNN" — weekly summary dedup
+  // ── Focus guardian (LANTERN_FOCUS=on, default OFF) ─────────────────────────
+  // ponytail: ships dark; owner flips LANTERN_FOCUS=on to enable.
+  // Holds non-urgent owner nudges during heads-down focus; recaps on release.
+  private static readonly FOCUS_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_FOCUS ?? "").toLowerCase());
+  private focusWasActive = false; // updated each health + anticipation tick
+  private focusHeldItems: string[] = []; // nudge texts buffered during focus
+  private focusActiveStartMs: number | null = null; // for duration calc
 
   // Futuristic helpers
   private agent: AgentClient;
@@ -856,6 +872,7 @@ export class IMessageSession {
     this.startConcierge();
     this.startCommuteLoop();
     this.startEnergyLoop();
+    this.startHealthLoop();
     this.startGmailIngest();
     this.startMacUsage();
     this.startIphoneSignals();
@@ -1232,6 +1249,14 @@ export class IMessageSession {
     this.logger.info("energy-guardian enabled (LANTERN_ENERGY=on)");
   }
 
+  private startHealthLoop(): void {
+    if (!IMessageSession.HEALTH_ENABLED) return;
+    const t = setInterval(() => void this.runHealthCoachTick(), IMessageSession.HEALTH_INTERVAL_MS);
+    t.unref?.();
+    this.healthTimer = t;
+    this.logger.info("health-coach enabled (LANTERN_HEALTH=on)");
+  }
+
   /**
    * Commute copilot tick (~5 min). Surfaces due commitments hands-free when
    * driving; sends a parked recap on the transition back.
@@ -1310,6 +1335,115 @@ export class IMessageSession {
     }
   }
 
+  /**
+   * Health coach tick (~60 min). Nudges the owner when today's steps are below
+   * goal (once per day); acks a logged workout; sends a weekly trend summary.
+   * Also updates the focus guardian state so the anticipation tick can hold
+   * non-urgent nudges during the owner's heads-down blocks.
+   * OWNER-ONLY: sends to ownerSelfChatTarget(); gated on killSwitch + quiet hours.
+   */
+  private async runHealthCoachTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      const target = this.ownerSelfChatTarget();
+      if (!target) return;
+      if (isQuietHours(new Date(), defaultQuietHours())) return;
+
+      const nowMs = Date.now();
+      const today = new Date(nowMs).toISOString().slice(0, 10);
+      const hour = new Date(nowMs).getHours();
+
+      // Read device signals (shared file with commute / energy ticks).
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+      const signals = parseSignals(tail);
+
+      // ── Focus guardian state update ─────────────────────────────────────────
+      if (IMessageSession.FOCUS_ENABLED) {
+        const presence = presenceFromSignals(signals, { nowMs });
+        const presenceState = presence?.state ?? null;
+        const isFocused = presenceState === "dnd" || presenceState === "busy";
+        const focusResult = computeFocusGuardian(presenceState, this.focusHeldItems, {
+          wasFocused: this.focusWasActive,
+          durationMs:
+            isFocused && this.focusActiveStartMs ? nowMs - this.focusActiveStartMs : undefined,
+        });
+        if (focusResult?.action === "release") {
+          const releaseText = (focusResult as { action: "release"; text: string }).text;
+          await this.send(target, releaseText).catch(() => {});
+          this.focusHeldItems = [];
+          this.saveFocusHeldItems();
+          this.logger.info("focus-guardian: released held items");
+        }
+        if (isFocused && !this.focusWasActive) this.focusActiveStartMs = nowMs;
+        else if (!isFocused) this.focusActiveStartMs = null;
+        this.focusWasActive = isFocused;
+      }
+
+      // ── Daily step-goal / workout nudge ───────────────────────────────────
+      const stepGoal = parseInt(process.env.LANTERN_STEP_GOAL || "", 10) || 8000;
+      const nudge = computeHealthCoachNudge(signals, {
+        alreadyNudgedToday: this.healthNudgedDate === today,
+        hour,
+        stepGoal,
+        nowMs,
+      });
+      if (nudge) {
+        if (IMessageSession.FOCUS_ENABLED && this.focusWasActive) {
+          // Hold during focus — release recap will include it.
+          this.focusHeldItems.push(nudge.text);
+          this.saveFocusHeldItems();
+          this.logger.debug("health-coach: nudge held during focus");
+        } else {
+          await this.send(target, nudge.text).catch(() => {});
+          this.healthNudgedDate = today;
+          this.saveHealthNudgeState(today);
+          this.logger.info("health-coach nudge fired");
+        }
+      }
+
+      // ── Weekly summary (Mondays) ───────────────────────────────────────────
+      const d = new Date(nowMs);
+      if (d.getDay() === 1) {
+        const jan1 = new Date(d.getFullYear(), 0, 1);
+        const weekNum = Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7);
+        const weekKey = `${d.getFullYear()}-W${weekNum}`;
+        if (this.healthWeeklyFiredWeek !== weekKey) {
+          const weeklySummary = computeWeeklyHealthSummary(signals, { nowMs });
+          if (weeklySummary) {
+            if (IMessageSession.FOCUS_ENABLED && this.focusWasActive) {
+              this.focusHeldItems.push(weeklySummary.text);
+              this.saveFocusHeldItems();
+            } else {
+              await this.send(target, weeklySummary.text).catch(() => {});
+            }
+          }
+          this.healthWeeklyFiredWeek = weekKey;
+          this.logger.info({ weekKey }, "health-coach weekly summary tick");
+        }
+      }
+    } catch (err) {
+      this.logger.debug({ err }, "health-coach tick failed (non-fatal)");
+    }
+  }
+
+  private saveHealthNudgeState(date: string): void {
+    try {
+      const f = join(this.stateDir, "health-nudge.json");
+      writeFileSync(f, JSON.stringify({ date }), { mode: 0o600 });
+      try { chmodSync(f, 0o600); } catch {}
+    } catch { /* non-fatal */ }
+  }
+
+  private saveFocusHeldItems(): void {
+    try {
+      const f = join(this.stateDir, "focus-held.json");
+      writeFileSync(f, JSON.stringify({ items: this.focusHeldItems }), { mode: 0o600 });
+      try { chmodSync(f, 0o600); } catch {}
+    } catch { /* non-fatal */ }
+  }
+
   private async runAnticipationTick(): Promise<void> {
     try {
       // Killswitch — never nudge when the owner has muted everything.
@@ -1330,6 +1464,17 @@ export class IMessageSession {
       for (const n of nudges) {
         if (fired >= IMessageSession.NUDGE_MAX_PER_TICK) break;
         if (this.firedNudges.has(n.dedupeKey)) continue;
+
+        // Focus guardian: hold non-urgent nudges (priority < 80) during heads-down.
+        // URGENT (pre-meeting, relationship-date priority ≥ 80) always sends.
+        // ponytail: focusWasActive is updated by runHealthCoachTick; at most 60 min lag.
+        if (IMessageSession.FOCUS_ENABLED && this.focusWasActive && n.priority < 80) {
+          this.focusHeldItems.push(formatNudgeForOwner(n));
+          this.saveFocusHeldItems();
+          this.firedNudges.set(n.dedupeKey, now); // prevent re-queue on next tick
+          continue;
+        }
+
         const ok = await this.send(target, formatNudgeForOwner(n)).then(
           (r) => r.ok,
           () => false,
@@ -1896,6 +2041,10 @@ export class IMessageSession {
     if (this.energyTimer) {
       clearInterval(this.energyTimer);
       this.energyTimer = null;
+    }
+    if (this.healthTimer) {
+      clearInterval(this.healthTimer);
+      this.healthTimer = null;
     }
     // Clear per-session concierge state so a restart starts fresh.
     this.pendingConcierge.clear();
