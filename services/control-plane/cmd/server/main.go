@@ -263,6 +263,8 @@ func main() {
 	lifeEventHandler := handlers.NewLifeEventHandler(srv, authHandler)
 	commitmentHandler := handlers.NewCommitmentHandler(srv, authHandler)
 	commitmentHandler.SetLlmProxy(llmProxyHandler) // enables ResearchCommitment
+	crossAppHandler := handlers.NewCrossAppHandler(srv, authHandler)
+	crossAppHandler.SetLlmProxy(llmProxyHandler) // enables cross-app LLM composition
 	domainRecordHandler := handlers.NewDomainRecordHandler(srv, authHandler)
 	loopAgentHandler := handlers.NewLoopAgentHandler(srv, authHandler, llmProxyHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
@@ -498,6 +500,11 @@ func main() {
 	httpMux.HandleFunc("POST /v1/commitments/{id}/dismiss", commitmentHandler.DismissCommitment)
 	// Stage 2: LLM-powered research + cited action plan.
 	httpMux.HandleFunc("POST /v1/commitments/{id}/research", commitmentHandler.ResearchCommitment)
+	// Cross-app workflows (LANTERN_CROSS_APP=on, default OFF).
+	// Propose: autonomous read + LLM compose → stored proposal (no side-effect).
+	// Execute-action: SOLE side-effect path; requires explicit owner confirm.
+	httpMux.HandleFunc("POST /v1/cross-app/propose", crossAppHandler.Propose)
+	httpMux.HandleFunc("POST /v1/commitments/{id}/execute-action", crossAppHandler.ExecuteAction)
 
 	// Domain-tracker agents: encrypted PII store for health / vehicle / career records.
 	httpMux.HandleFunc("POST /v1/domain-records", domainRecordHandler.CreateDomainRecord)
