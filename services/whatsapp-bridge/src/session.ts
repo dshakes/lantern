@@ -26,6 +26,7 @@ import {
   defaultQuietHours,
   detectBotTells,
   detectEscalation,
+  formatNowContext,
   greetingReply,
   inferStyle,
   isNoReplySentinel,
@@ -67,7 +68,7 @@ import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-
 import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
 import { computeHoldFromSamples, type LatencySample } from "@lantern/bridge-core/pacing";
-import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode } from "@lantern/bridge-core/episodic-memory";
+import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
 import { detectEmotionalRegister } from "@lantern/bridge-core/emotional-register";
@@ -5204,9 +5205,22 @@ export class WhatsAppSession {
     const langHint = detectLanguageHints(query);
     const nativity = this.ownerProfileStore.nativity();
     const languageModality = languageModalityHint(langHint, { nativity });
+    // #3 — owner self-chat grounding: a CLOCK ("am I free right now") + the
+    // fused presence snapshot (same source the contact path uses).
+    const ownerTz = process.env.LANTERN_OWNER_TIMEZONE || undefined;
+    const nowLine = formatNowContext(new Date(), ownerTz);
+    const selfPresence = await this.presence.current({
+      nextEvent: async () => {
+        try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
+      },
+      iphone: this.contactIphonePresence(),
+    }).catch(() => null);
+    const presenceLine = selfPresence?.line ? `Right now you are: ${selfPresence.line}.` : "";
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his WhatsApp self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
+      nowLine,
+      presenceLine,
       ``,
       ownerProfile ? `# Who you are\n${ownerProfile}` : "",
       relationshipsBlock ? `\n# Your people\n${relationshipsBlock}` : "",
@@ -7293,7 +7307,8 @@ export class WhatsAppSession {
     const [dislikeEntries, episodes, mentionEpisodes, related, presenceSnap] =
       await Promise.all([
         !opts.isGroup ? this.dislikeMemory.forJid(from, 3) : Promise.resolve([]),
-        !opts.isGroup ? this.episodicMemory.forJid(from, 5) : Promise.resolve([]),
+        // #5 — rank episodes by topic-overlap with the inbound (recency tiebreak).
+        !opts.isGroup ? this.episodicMemory.forJid(from, 5, text) : Promise.resolve([]),
         !opts.isGroup && contactFirstNames.length > 0
           ? this.episodicMemory.forMentions(contactFirstNames, { excludeJid: from, limit: 3, maxAgeDays: 30 })
           : Promise.resolve([]),
@@ -7309,10 +7324,12 @@ export class WhatsAppSession {
       ]);
 
     const dislikeBlock = formatDislikeBlock(dislikeEntries);
-    const allEpisodes = [...episodes, ...mentionEpisodes]
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, 6);
+    // #5 — rank the merged (jid + mention) episode set by relevance to the
+    // inbound, recency as the tiebreak, before slicing for the prompt.
+    const allEpisodes = rankEpisodesByRelevance([...episodes, ...mentionEpisodes], text, 6);
     const episodesBlock = formatEpisodesBlock(allEpisodes);
+    // #2 — does the inbound read as urgent? Bends the reply + pacing hold.
+    const inboundUrgent = !opts.isGroup && detectUrgency(text) !== null;
     // Ambiguity-guardrail signal: if the inbound is short AND we have
     // no recent context for this contact, the persona prompt should
     // suppress speculative forward commitments. We pass this as a
@@ -7422,6 +7439,8 @@ export class WhatsAppSession {
         // already passed ("after 6pm today" at 8:19pm). Owner-local clock.
         now: new Date(),
         ownerTimezone: process.env.LANTERN_OWNER_TIMEZONE || undefined,
+        // #2 — urgent inbound: acknowledge + fast concrete promise, no scheduling.
+        inboundUrgent,
       }
     );
 
@@ -7506,8 +7525,13 @@ export class WhatsAppSession {
     // "hard" (frontier tier) so contact replies get the best model — set
     // LANTERN_REPLY_MODEL_TIER=balanced to trade quality for cost.
     const replyTier = process.env.LANTERN_REPLY_MODEL_TIER || "hard";
+    // #7 — clearly-logistics inbound gets READ-only tools so the reply can
+    // ground on Calendar/Gmail reads; the control plane filters out every
+    // write action, so a contact's message can never drive a connector write.
+    const logisticsRead = !opts.isGroup && (needsCalendar(text) || looksLikeAppointmentQuery(text));
     const draftPromise = this.agent.respondTo(from, userText, systemHint, {
       turnHint: replyTier,
+      readOnlyTools: logisticsRead,
     });
 
     // Wait for draft + naturalize, but don't block on it during the
@@ -7842,6 +7866,8 @@ export class WhatsAppSession {
           : 24 * 60 * 60_000, // cold restart
         isActiveBurst: paceIsActiveBurst,
         localHour: this.ownerLocalHour(),
+        // #2 — urgent inbound collapses the pre-send hold to the floor.
+        urgent: inboundUrgent,
       });
       paceHoldMs = verdict.holdMs;
       this.logger.debug(

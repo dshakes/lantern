@@ -37,6 +37,7 @@ import {
   countTrailingUnanswered,
   detectBotTells,
   detectEscalation,
+  formatNowContext,
   greetingReply,
   inferStyle,
   isNoReplySentinel,
@@ -199,7 +200,7 @@ import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-
 import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
 import { computeHoldFromSamples } from "@lantern/bridge-core/pacing";
-import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode } from "@lantern/bridge-core/episodic-memory";
+import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
 import {
@@ -4091,7 +4092,10 @@ export class IMessageSession {
     const iphonePresence = !isGroup ? await this.contactIphonePresence() : null;
     const [dislikeEntries, episodes, mentionEpisodes, related, presenceSnap] = await Promise.all([
       !isGroup ? this.dislikeMemory.forJid(row.handle, 3) : Promise.resolve([]),
-      !isGroup ? this.episodicMemory.forJid(row.handle, 5) : Promise.resolve([]),
+      // #5 — rank this contact's episodes by topic-overlap with the inbound
+      // (recency tiebreak) so an on-topic older episode isn't dropped for newer
+      // irrelevant ones.
+      !isGroup ? this.episodicMemory.forJid(row.handle, 5, text) : Promise.resolve([]),
       !isGroup && senderFirstNames.length > 0
         ? this.episodicMemory.forMentions(senderFirstNames, { excludeJid: row.handle, limit: 3, maxAgeDays: 30 })
         : Promise.resolve([]),
@@ -4106,10 +4110,14 @@ export class IMessageSession {
       }),
     ]);
     const dislikeBlock = formatDislikeBlock(dislikeEntries);
-    const allEpisodes = [...episodes, ...mentionEpisodes]
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, 6);
+    // #5 — rank the merged (jid + mention) episode set by relevance to the
+    // inbound, recency as the tiebreak, before slicing for the prompt.
+    const allEpisodes = rankEpisodesByRelevance([...episodes, ...mentionEpisodes], text, 6);
     const episodesBlock = formatEpisodesBlock(allEpisodes);
+    // #2 — does the inbound read as urgent? Bends BOTH the reply (persona
+    // addendum) and the pre-send pacing hold. Deterministic, same detector the
+    // owner heads-up uses.
+    const inboundUrgent = !isGroup && detectUrgency(text) !== null;
     const imWordCount = text.trim().split(/\s+/).filter(Boolean).length;
     const lowContext =
       !isGroup &&
@@ -4202,6 +4210,8 @@ export class IMessageSession {
       // already passed ("after 6pm today" at 8:19pm). Owner-local clock.
       now: new Date(),
       ownerTimezone: process.env.LANTERN_OWNER_TIMEZONE || undefined,
+      // #2 — urgent inbound: acknowledge + fast concrete promise, no scheduling.
+      inboundUrgent,
     });
     // Per-contact memory: UNIFIED cross-channel view — facts learned on
     // ANY channel (WhatsApp, iMessage, SMS, voice, email) + a 14-day
@@ -4260,8 +4270,15 @@ export class IMessageSession {
     // LANTERN_REPLY_MODEL_TIER=balanced to trade quality for cost.
     const replyTier = process.env.LANTERN_REPLY_MODEL_TIER || "hard";
     const userText = isGroup ? `[group message]\n${text}` : text;
+    // #7 — for clearly-logistics inbound ("did you get my email?", "what time
+    // did we say?") allow READ-only tools so the reply can ground on
+    // Calendar/Gmail reads. The control plane filters the catalog to read
+    // actions only — a contact's message can never drive a connector write.
+    // Everything else stays noTools (the default).
+    const logisticsRead = !isGroup && (needsCalendar(text) || looksLikeAppointmentQuery(text));
     let draft = await this.agent.respondTo(row.handle, userText, systemHint, {
       turnHint: replyTier,
+      readOnlyTools: logisticsRead,
     });
     // ABSTAIN SENTINEL — the model emitted [[NO_REPLY]] to signal "no reply
     // warranted". Treat as a deliberate silence so decision-prose never
@@ -4576,6 +4593,8 @@ export class IMessageSession {
         msSinceLastInbound: paceMsSinceLastInbound,
         isActiveBurst: paceIsActiveBurst,
         localHour: new Date().getHours(),
+        // #2 — urgent inbound collapses the pre-send hold to the floor.
+        urgent: inboundUrgent,
       });
       paceHoldMs = verdict.holdMs;
     }
@@ -6483,9 +6502,23 @@ export class IMessageSession {
     // self-chat context reflects signals the instant they land — no 10-min
     // poll lag. Falls back to the last-known cached line on any failure.
     const iphoneLine = await this.freshIphoneSignalsLine();
+    // #3 — owner self-chat grounding: a CLOCK (so "am I free right now" has a
+    // reference) + the fused presence snapshot (the contact path already uses
+    // this; the owner asking himself "where am I / am I free" deserves it too).
+    const ownerTz = process.env.LANTERN_OWNER_TIMEZONE || undefined;
+    const nowLine = formatNowContext(new Date(), ownerTz);
+    const presenceSnap = await this.presence.current({
+      nextEvent: async () => {
+        try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
+      },
+      iphone: await this.contactIphonePresence(),
+    }).catch(() => null);
+    const presenceLine = presenceSnap?.line ? `Right now you are: ${presenceSnap.line}.` : "";
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his iMessage self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
+      nowLine,
+      presenceLine,
       "",
       ownerProfile ? `# Who you are\n${ownerProfile}` : "",
       ownerFactsBlock ? `\n${ownerFactsBlock}` : "",
