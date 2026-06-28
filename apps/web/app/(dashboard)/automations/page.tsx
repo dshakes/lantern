@@ -74,14 +74,14 @@ const KIND_EMOJI: Record<LifeEventKind, string> = {
 
 const STATUS_LABELS: Record<string, string> = {
   suggested: "Suggested",
-  "auto-acted": "Auto-acted",
+  auto_acted: "Auto-acted",
   undone: "Undone",
   dismissed: "Dismissed",
 };
 
 const STATUS_COLORS: Record<string, string> = {
   suggested: "bg-lantern-500/15 text-lantern-300",
-  "auto-acted": "bg-emerald-500/15 text-emerald-300",
+  auto_acted: "bg-emerald-500/15 text-emerald-300",
   undone: "bg-zinc-700/40 text-zinc-400",
   dismissed: "bg-zinc-700/30 text-zinc-500",
 };
@@ -224,7 +224,7 @@ interface SummaryItem {
 
 function buildSummaryItems(events: LifeEvent[]): SummaryItem[] {
   const active = events.filter(
-    (e) => e.status === "suggested" || e.status === "auto-acted",
+    (e) => e.status === "suggested" || e.status === "auto_acted",
   );
 
   const kindCounts: Partial<Record<LifeEventKind, number>> = {};
@@ -491,7 +491,7 @@ function EventCard({
       </div>
 
       {/* Auto-acted detail */}
-      {event.status === "auto-acted" && event.actionTaken && (
+      {event.status === "auto_acted" && event.actionTaken && (
         <p className="mt-2.5 rounded-lg bg-emerald-500/8 px-3 py-2 text-[12px] text-emerald-300/90">
           {event.actionTaken}
         </p>
@@ -503,7 +503,7 @@ function EventCard({
       {/* Action buttons — large tap targets for mobile */}
       {!isDone && (
         <div className="mt-3 flex gap-2">
-          {event.status === "auto-acted" && (
+          {event.status === "auto_acted" && (
             <Button
               variant="ghost"
               size="sm"
@@ -704,7 +704,7 @@ export default function AutomationsPage() {
 
   // Within the filtered view, active events first, then terminal
   const activeEvents = filteredEvents.filter(
-    (e) => e.status === "suggested" || e.status === "auto-acted",
+    (e) => e.status === "suggested" || e.status === "auto_acted",
   );
   const terminalEvents = filteredEvents.filter(
     (e) => e.status === "undone" || e.status === "dismissed",

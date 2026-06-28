@@ -86,7 +86,7 @@ export default function PersonalOverview() {
       try {
         const [agentList, coms, recs, connectors] = await Promise.all([
           api.listAgents(),
-          api.listCommitments({ status: "open", limit: 20 }),
+          api.listCommitments({ status: "open", limit: 200 }),
           api.listDomainRecords(),
           api.listConnectors(),
         ]);

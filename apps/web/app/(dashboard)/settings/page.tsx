@@ -25,6 +25,7 @@ import { ApiKeyModal, type CreatedApiKey } from "@/components/settings/api-key-m
 import { InviteModal, type InvitedMember } from "@/components/settings/invite-modal";
 import { ConfirmDialog } from "@/components/settings/confirm-dialog";
 import { api } from "@/lib/api";
+import type { FleetUsage } from "@/lib/api";
 import { useToast } from "@/components/settings/toast";
 import { PageHeader } from "@/components/page-header";
 import { Tabs } from "@/components/tabs";
@@ -140,6 +141,7 @@ export default function SettingsPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<StoredMember | null>(null);
   const [billing, setBilling] = useState<BillingSettings>(defaultBilling);
+  const [fleetUsage, setFleetUsage] = useState<FleetUsage | null>(null);
 
   // Load from real API with localStorage fallback
   useEffect(() => {
@@ -159,6 +161,11 @@ export default function SettingsPage() {
         }
         setProviders(newState);
       } catch { setProviders(loadLS("providers", defaultProviders)); }
+    })();
+
+    (async () => {
+      const u = await api.getFleetUsage();
+      if (u) setFleetUsage(u);
     })();
 
     (async () => {
@@ -348,7 +355,7 @@ export default function SettingsPage() {
           {activeTab === "api-keys" && <ApiKeysTab keys={keys} copiedKeyId={copiedKeyId} onCreateClick={() => setShowCreateKey(true)} onCopyPrefix={handleCopyPrefix} onRevokeClick={setRevokeTarget} />}
           {activeTab === "providers" && <ProvidersTab providers={providers} saving={providersSaving} onKeyChange={updateProvider} onTest={testProvider} onSave={handleSaveProviders} />}
           {activeTab === "team" && <TeamTab members={members} onInviteClick={() => setShowInvite(true)} onChangeRole={handleChangeRole} onRemoveClick={setRemoveTarget} />}
-          {activeTab === "billing" && <BillingTab billing={billing} setBilling={setBilling} onSetBudget={handleSetBudget} onToggleHardLimit={handleToggleHardLimit} />}
+          {activeTab === "billing" && <BillingTab billing={billing} setBilling={setBilling} onSetBudget={handleSetBudget} onToggleHardLimit={handleToggleHardLimit} fleetUsage={fleetUsage} />}
         </div>
       </div>
 
@@ -673,7 +680,7 @@ const costByAgent = [
   { agent: "data-pipeline", runs: 22, tokens: "40k", cost: "$0.84" },
 ];
 
-function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit }: { billing: BillingSettings; setBilling: (b: BillingSettings) => void; onSetBudget: () => void; onToggleHardLimit: () => void }) {
+function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleetUsage }: { billing: BillingSettings; setBilling: (b: BillingSettings) => void; onSetBudget: () => void; onToggleHardLimit: () => void; fleetUsage: FleetUsage | null }) {
   const plans = [
     { name: "Personal", price: "$0/mo", features: ["1 user", "100 runs/mo", "1M tokens/mo"], current: billing.plan === "Personal" },
     { name: "Team", price: "$49/mo", features: ["5 users", "1,000 runs/mo", "5M tokens/mo"], current: billing.plan === "Team" },
@@ -723,15 +730,43 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit }: { b
 
       {/* Cost breakdown */}
       <div>
-        <h3 className="mb-4 text-sm font-semibold text-zinc-100">Cost Breakdown by Agent</h3>
+        <div className="mb-4 flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-zinc-100">Cost Breakdown by Agent</h3>
+          {!fleetUsage && <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">Sample data</span>}
+        </div>
         <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
-          <table className="data-table">
-            <thead><tr><th>Agent</th><th>Runs</th><th>Tokens</th><th>Cost</th></tr></thead>
-            <tbody>
-              {costByAgent.map((row) => <tr key={row.agent}><td className="font-medium text-zinc-300">{row.agent}</td><td className="text-zinc-400">{row.runs}</td><td className="text-zinc-400">{row.tokens}</td><td className="font-medium text-zinc-200">{row.cost}</td></tr>)}
-              <tr className="border-t border-zinc-700"><td className="font-semibold text-zinc-100">Total</td><td className="text-zinc-400">348</td><td className="text-zinc-400">2.1M</td><td className="font-semibold text-lantern-400">$12.47</td></tr>
-            </tbody>
-          </table>
+          {fleetUsage ? (
+            <table className="data-table">
+              <thead><tr><th>Agent</th><th>Runs</th><th>Cost</th></tr></thead>
+              <tbody>
+                {fleetUsage.byAgent.sort((a, b) => b.costUsd - a.costUsd).map((row) => (
+                  <tr key={row.agentName}>
+                    <td className="font-medium text-zinc-300">{row.agentName}</td>
+                    <td className="text-zinc-400">{row.runs}</td>
+                    <td className="font-medium text-zinc-200">${row.costUsd.toFixed(2)}</td>
+                  </tr>
+                ))}
+                {fleetUsage.byAgent.length === 0 && (
+                  <tr><td colSpan={3} className="text-center text-zinc-500">No agent cost data yet</td></tr>
+                )}
+                {fleetUsage.byAgent.length > 0 && (
+                  <tr className="border-t border-zinc-700">
+                    <td className="font-semibold text-zinc-100">Total</td>
+                    <td className="text-zinc-400">{fleetUsage.periods.total.runs}</td>
+                    <td className="font-semibold text-lantern-400">${fleetUsage.periods.total.costUsd.toFixed(2)}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          ) : (
+            <table className="data-table">
+              <thead><tr><th>Agent</th><th>Runs</th><th>Tokens</th><th>Cost</th></tr></thead>
+              <tbody>
+                {costByAgent.map((row) => <tr key={row.agent}><td className="font-medium text-zinc-300">{row.agent}</td><td className="text-zinc-400">{row.runs}</td><td className="text-zinc-400">{row.tokens}</td><td className="font-medium text-zinc-200">{row.cost}</td></tr>)}
+                <tr className="border-t border-zinc-700"><td className="font-semibold text-zinc-100">Total</td><td className="text-zinc-400">348</td><td className="text-zinc-400">2.1M</td><td className="font-semibold text-lantern-400">$12.47</td></tr>
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
