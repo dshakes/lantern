@@ -7,7 +7,7 @@ import makeWASocket, {
 import { Boom } from "@hapi/boom";
 import { WebSocket } from "ws";
 import * as QRCode from "qrcode";
-import { join, dirname } from "path";
+import { join, dirname, basename } from "path";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, appendFileSync, statSync, chmodSync } from "fs";
 import { homedir } from "os";
 import type { Logger } from "pino";
@@ -114,6 +114,16 @@ import {
   type Commitment,
   type PendingCommitmentNudge,
 } from "@lantern/bridge-core/commitments-edge";
+import {
+  classifyDocForDomain,
+  DomainRecordsClient,
+  buildDocExtractPrompt,
+  parseDocExtraction,
+  loadDocIngestState,
+  saveDocIngestState,
+  getAllowedRoots,
+  findDocFiles,
+} from "@lantern/bridge-core/doc-ingest";
 import { extname } from "path";
 
 // MIME map for sendDocument — WhatsApp's UI shows a file-type icon
@@ -1492,6 +1502,15 @@ export class WhatsAppSession {
   private focusHeldItems: string[] = []; // nudge texts buffered during focus
   private focusActiveStartMs: number | null = null;
   private readonly focusHeldFile = join(homedir(), ".lantern", "whatsapp-focus-held.json");
+  // ── Doc ingest (LANTERN_DOC_INGEST=on, default OFF) ───────────────────────
+  // Ships dark. Scans allowed-root docs daily, classifies by domain, files
+  // structured records to /v1/domain-records. Owner-only; path-gated.
+  // ponytail: ships dark; owner flips LANTERN_DOC_INGEST=on to enable.
+  private static readonly DOC_INGEST_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_DOC_INGEST ?? "").toLowerCase());
+  private static readonly DOC_INGEST_INTERVAL_MS = 24 * 60 * 60_000; // 24h
+  private docIngestTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly docIngestClient = new DomainRecordsClient(authedFetch);
   // 3) Draft-and-confirm for LOW-confidence replies. OPT-IN
   //    (LANTERN_DRAFT_HIGH_STAKES=on) — default OFF. On-by-default silently
   //    drafted normal short/cold-contact family messages instead of replying
@@ -1677,6 +1696,17 @@ export class WhatsAppSession {
         WhatsAppSession.HEALTH_INTERVAL_MS,
       );
       this.healthTimer.unref?.();
+    }
+    // Doc ingest (LANTERN_DOC_INGEST=on only).
+    if (WhatsAppSession.DOC_INGEST_ENABLED) {
+      this.docIngestTimer = setInterval(
+        () => void this.runDocIngestTick(),
+        WhatsAppSession.DOC_INGEST_INTERVAL_MS,
+      );
+      this.docIngestTimer.unref?.();
+      // Boot kick after ~2 min so the socket has time to connect.
+      const docKick = setTimeout(() => void this.runDocIngestTick(), 2 * 60_000);
+      docKick.unref?.();
     }
   }
 
@@ -8871,6 +8901,103 @@ export class WhatsAppSession {
   }
 
   /**
+   * Doc ingest tick (~daily). Scans allowed roots for new/changed doc files,
+   * classifies them by domain, reads/OCRs via PersonalDocs, extracts structured
+   * records via LLM, and posts to /v1/domain-records + /v1/commitments.
+   * OWNER-ONLY. NEVER logs doc content, OCR text, or extracted fields (PII).
+   */
+  private async runDocIngestTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      if (!this.docs) return;
+
+      const stateFile = join(homedir(), ".lantern", "whatsapp-doc-ingest-state.json");
+      const state = loadDocIngestState(stateFile);
+      const roots = getAllowedRoots();
+      const CAP = 10; // ponytail: cap per tick to avoid first-run storm
+      let processed = 0;
+      const domainsSeen = new Set<string>();
+
+      for (const root of roots) {
+        if (processed >= CAP) break;
+        const remaining = CAP - processed;
+        // Fetch extra candidates — security gate + classification will filter
+        const files = await findDocFiles(root, remaining * 4);
+        for (const { path: filePath, mtime } of files) {
+          if (processed >= CAP) break;
+          // Security: every file MUST pass isAllowedPath before read
+          if (!this.docs.isAllowedPath(filePath)) continue;
+          // Skip if already ingested with same mtime (path+mtime idempotency)
+          if (state[filePath] === mtime) continue;
+
+          const base = basename(filePath);
+          const classification = classifyDocForDomain(base);
+          if (!classification) {
+            // Mark seen-but-unclassified so we skip on future ticks
+            state[filePath] = mtime;
+            continue;
+          }
+
+          // Read + OCR via PersonalDocs (reuses OCR cache; path gate is inside)
+          const readResult = await this.docs.read(filePath).catch(() => null);
+          if (!readResult?.ok || readResult.content.trim().length < 30) {
+            state[filePath] = mtime;
+            continue;
+          }
+
+          // LLM extraction via dedicated session key — never pollutes contact sessions
+          const prompt = buildDocExtractPrompt(classification.domain, readResult.content);
+          const rawLlm = await this.agent
+            .respondTo("doc-ingest::extract", prompt, "Return only valid JSON. No prose.", { withTools: false })
+            .catch(() => null);
+
+          const extraction = rawLlm ? parseDocExtraction(rawLlm) : null;
+          if (extraction) {
+            for (const rec of extraction.records) {
+              await this.docIngestClient.create({
+                domain: classification.domain,
+                kind: rec.kind,
+                title: rec.title,
+                fields: rec.fields,
+                source: "file",
+                sourceRef: filePath,
+                validUntil: rec.validUntil,
+                idempotencyKey: `${filePath}|${rec.title}`,
+              });
+            }
+            for (const ob of extraction.obligations) {
+              await this.commitments.create({
+                title: ob.title,
+                source: classification.domain,
+                idempotencyKey: `doc-ingest|${filePath}|${ob.title}`,
+              });
+            }
+            if (extraction.records.length > 0) domainsSeen.add(classification.domain);
+            // ponytail: debug-only — no doc content, OCR text, or fields logged
+            this.logger.debug(
+              { domain: classification.domain, base, records: extraction.records.length },
+              "doc-ingest: filed",
+            );
+          }
+
+          state[filePath] = mtime;
+          processed++;
+        }
+      }
+
+      saveDocIngestState(state, stateFile);
+      if (processed > 0) {
+        this.logger.info({ count: processed, domains: [...domainsSeen] }, "doc-ingest tick complete");
+        // Minimal owner-facing ack so the feature is observable (owner-only)
+        const label = domainsSeen.size > 0 ? [...domainsSeen].join(", ") : "docs";
+        await this.sendSelf(`📄 filed ${processed} ${label} doc${processed === 1 ? "" : "s"}`).catch(() => {});
+      }
+    } catch (err) {
+      this.logger.debug({ err }, "doc-ingest tick failed (non-fatal)");
+    }
+  }
+
+  /**
    * Intercept owner self-chat reply if there is a pending commitment nudge and
    * the reply text resolves to an action. Mirrors maybeResolveSelfChatDraft.
    * Returns true when the reply was consumed (caller should return early).
@@ -9137,6 +9264,10 @@ export class WhatsAppSession {
     if (this.healthTimer) {
       clearInterval(this.healthTimer);
       this.healthTimer = null;
+    }
+    if (this.docIngestTimer) {
+      clearInterval(this.docIngestTimer);
+      this.docIngestTimer = null;
     }
     // Clear per-session concierge state so a reconnect starts fresh.
     this.pendingConcierge.clear();

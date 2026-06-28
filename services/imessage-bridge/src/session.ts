@@ -244,6 +244,16 @@ import {
   CommitmentsClient,
   type PendingCommitmentNudge,
 } from "@lantern/bridge-core/commitments-edge";
+import {
+  classifyDocForDomain,
+  DomainRecordsClient,
+  buildDocExtractPrompt,
+  parseDocExtraction,
+  loadDocIngestState,
+  saveDocIngestState,
+  getAllowedRoots,
+  findDocFiles,
+} from "@lantern/bridge-core/doc-ingest";
 
 export type IMessageConnectionState =
   | "starting"
@@ -720,6 +730,16 @@ export class IMessageSession {
   private focusHeldItems: string[] = []; // nudge texts buffered during focus
   private focusActiveStartMs: number | null = null; // for duration calc
 
+  // ── Doc ingest (LANTERN_DOC_INGEST=on, default OFF) ───────────────────────
+  // Ships dark. Scans allowed-root docs daily, classifies by domain, files
+  // structured records to /v1/domain-records. Owner-only; path-gated.
+  // ponytail: ships dark; owner flips LANTERN_DOC_INGEST=on to enable.
+  private static readonly DOC_INGEST_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_DOC_INGEST ?? "").toLowerCase());
+  private static readonly DOC_INGEST_INTERVAL_MS = 24 * 60 * 60_000; // 24h
+  private docIngestTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly docIngestClient = new DomainRecordsClient(authedFetch);
+
   // Futuristic helpers
   private agent: AgentClient;
   private media: MediaHandler;
@@ -876,6 +896,7 @@ export class IMessageSession {
     this.startGmailIngest();
     this.startMacUsage();
     this.startIphoneSignals();
+    this.startDocIngest();
     this.logger.info("iMessage session ready");
   }
 
@@ -1640,6 +1661,117 @@ export class IMessageSession {
     }
   }
 
+  // 5) DOC INGEST. OWNER-ONLY daily scan of allowed-root docs → classify by
+  // domain → read/OCR via PersonalDocs → extract via LLM → POST to
+  // /v1/domain-records + /v1/commitments. Ships dark (LANTERN_DOC_INGEST=on).
+  // State persisted to ~/.lantern/imessage-doc-ingest-state.json (0600).
+  private startDocIngest(): void {
+    if (this.docIngestTimer) return;
+    if (!IMessageSession.DOC_INGEST_ENABLED) {
+      this.logger.info("doc ingest disabled (set LANTERN_DOC_INGEST=on to enable; owner-only)");
+      return;
+    }
+    const t = setInterval(
+      () => void this.runDocIngestTick(),
+      IMessageSession.DOC_INGEST_INTERVAL_MS,
+    );
+    t.unref?.();
+    this.docIngestTimer = t;
+    this.logger.info({ intervalH: 24 }, "doc ingest enabled (LANTERN_DOC_INGEST=on)");
+    // Boot kick after ~2 min so the session is fully ready.
+    const kick = setTimeout(() => void this.runDocIngestTick(), 2 * 60_000);
+    kick.unref?.();
+  }
+
+  private async runDocIngestTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      if (!this.docs) return;
+
+      const stateFile = join(homedir(), ".lantern", "imessage-doc-ingest-state.json");
+      const state = loadDocIngestState(stateFile);
+      const roots = getAllowedRoots();
+      const CAP = 10; // ponytail: cap per tick to avoid first-run storm
+      let processed = 0;
+      const domainsSeen = new Set<string>();
+
+      for (const root of roots) {
+        if (processed >= CAP) break;
+        const remaining = CAP - processed;
+        const files = await findDocFiles(root, remaining * 4);
+        for (const { path: filePath, mtime } of files) {
+          if (processed >= CAP) break;
+          // Security: every file MUST pass isAllowedPath before read
+          if (!this.docs.isAllowedPath(filePath)) continue;
+          // Skip if already ingested with same mtime (path+mtime idempotency)
+          if (state[filePath] === mtime) continue;
+
+          const base = basename(filePath);
+          const classification = classifyDocForDomain(base);
+          if (!classification) {
+            state[filePath] = mtime;
+            continue;
+          }
+
+          // Read + OCR via PersonalDocs (reuses OCR cache; path gate is inside)
+          const readResult = await this.docs.read(filePath).catch(() => null);
+          if (!readResult?.ok || readResult.content.trim().length < 30) {
+            state[filePath] = mtime;
+            continue;
+          }
+
+          // LLM extraction via dedicated session key — never pollutes contact sessions
+          const prompt = buildDocExtractPrompt(classification.domain, readResult.content);
+          const rawLlm = await this.agent
+            .respondTo("doc-ingest::extract", prompt, "Return only valid JSON. No prose.", { withTools: false })
+            .catch(() => null);
+
+          const extraction = rawLlm ? parseDocExtraction(rawLlm) : null;
+          if (extraction) {
+            for (const rec of extraction.records) {
+              await this.docIngestClient.create({
+                domain: classification.domain,
+                kind: rec.kind,
+                title: rec.title,
+                fields: rec.fields,
+                source: "file",
+                sourceRef: filePath,
+                validUntil: rec.validUntil,
+                idempotencyKey: `${filePath}|${rec.title}`,
+              });
+            }
+            for (const ob of extraction.obligations) {
+              await this.commitments.create({
+                title: ob.title,
+                source: classification.domain,
+                idempotencyKey: `doc-ingest|${filePath}|${ob.title}`,
+              });
+            }
+            if (extraction.records.length > 0) domainsSeen.add(classification.domain);
+            // ponytail: debug-only — no doc content, OCR text, or fields logged
+            this.logger.debug(
+              { domain: classification.domain, base, records: extraction.records.length },
+              "doc-ingest: filed",
+            );
+          }
+
+          state[filePath] = mtime;
+          processed++;
+        }
+      }
+
+      saveDocIngestState(state, stateFile);
+      if (processed > 0) {
+        this.logger.info({ count: processed, domains: [...domainsSeen] }, "doc-ingest tick complete");
+        const label = domainsSeen.size > 0 ? [...domainsSeen].join(", ") : "docs";
+        const owner = this.ownerSelfChatTarget();
+        await this.send(owner, `📄 filed ${processed} ${label} doc${processed === 1 ? "" : "s"}`).catch(() => {});
+      }
+    } catch (err) {
+      this.logger.debug({ err }, "doc-ingest tick failed (non-fatal)");
+    }
+  }
+
   // 4b) iPHONE APP-CONTEXT. OWNER-ONLY ambient signal: tail the device-signals
   // JSONL the dashboard /api/signals route appends from the owner's iOS
   // Shortcuts automations, distill it to ONE short "what you've been on your
@@ -2045,6 +2177,10 @@ export class IMessageSession {
     if (this.healthTimer) {
       clearInterval(this.healthTimer);
       this.healthTimer = null;
+    }
+    if (this.docIngestTimer) {
+      clearInterval(this.docIngestTimer);
+      this.docIngestTimer = null;
     }
     // Clear per-session concierge state so a restart starts fresh.
     this.pendingConcierge.clear();
