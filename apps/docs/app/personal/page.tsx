@@ -13,7 +13,7 @@ export default function PersonalHarnessPage() {
         <strong>senses</strong> what&apos;s happening, <strong>remembers</strong>{" "}
         you and the people you talk to across every channel,{" "}
         <strong>reasons</strong> about what to do, makes the reply{" "}
-        <strong>sound like you</strong>, and then <strong>acts</strong> — all{" "}
+        <strong>sound like you</strong>, and then <strong>acts</strong> — all
         owner-only and local, with nothing about your whereabouts ever revealed
         to a contact.
       </p>
@@ -30,141 +30,322 @@ export default function PersonalHarnessPage() {
 
       <h2 id="agents">Your agents</h2>
       <p>
-        Seven agents make up the personal suite. The first five are{" "}
-        <strong>owner-facing</strong> — they nudge or brief you in your
+        Fifteen agents make up the personal suite across three execution models.
+        Ten are <strong>owner-facing</strong> — they nudge or brief you in your
         self-chat and never touch your contacts. Only the two{" "}
-        <strong>assistant</strong> agents reply to contacts as you. This
-        distinction matters for trust: owner-facing agents can be aggressive and
-        proactive; assistant agents carry the weight of impersonation.
+        <strong>assistant</strong> agents reply to contacts as you. Four{" "}
+        <strong>bridge-signal</strong> agents react to device signals on your Mac.
+        This distinction matters for trust: owner-facing agents can be aggressive
+        and proactive; assistant agents carry the weight of impersonation.
       </p>
       <table>
         <thead>
           <tr>
             <th>Agent</th>
             <th>What it does</th>
-            <th>Reactive / Proactive</th>
-            <th>Reaches you via</th>
-            <th>Touches your contacts?</th>
+            <th>Runs</th>
+            <th>You see it</th>
+            <th>Touches contacts?</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td><strong>concierge</strong></td>
-            <td>Captures tasks (from you or from what people message you), researches how to handle them, and nudges you with one-tap actions — reply / snooze / done — until handled.</td>
-            <td>Both</td>
-            <td>self-chat nudges</td>
-            <td><strong>No</strong> — private to-do layer</td>
-          </tr>
-          <tr>
-            <td><strong>relationship-keeper</strong></td>
-            <td>Each week finds people you&apos;ve gone quiet on (21+ days) and nudges you to reach out, with a draft in your voice if you want it.</td>
-            <td>Proactive (weekly)</td>
-            <td>self-chat</td>
-            <td><strong>No</strong> — you do the outreach</td>
-          </tr>
-          <tr>
-            <td><strong>financial-sentinel</strong></td>
-            <td>Watches bills and subscriptions. Flags price hikes and recurring charges, and drafts a review or cancel for your one-tap OK. Never moves money.</td>
-            <td>Proactive (daily)</td>
+            <td>Captures tasks, researches how, nudges with 1-click actions — reply / snooze / done.</td>
+            <td>~45m cron</td>
             <td>self-chat</td>
             <td><strong>No</strong></td>
           </tr>
           <tr>
+            <td><strong>care-coordinator</strong></td>
+            <td>Health email → meds/doctors/appts records + refill/appt reminders + coaching.</td>
+            <td>daily 8am</td>
+            <td>/personal Health</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>garage</strong></td>
+            <td>Tesla + Odyssey service/insurance/DMV → records + renewal reminders.</td>
+            <td>daily</td>
+            <td>/personal Vehicle</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>upskill</strong></td>
+            <td>Job/learning email → skill records + career coaching nudges.</td>
+            <td>daily</td>
+            <td>/personal Career</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>travel-concierge</strong></td>
+            <td>Flights/hotels → itinerary records + check-in reminders.</td>
+            <td>daily</td>
+            <td>/personal Travel</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>household</strong></td>
+            <td>Utilities/warranties/services → records + renewal reminders.</td>
+            <td>daily</td>
+            <td>/personal Home</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>financial-sentinel</strong></td>
+            <td>Watches bills for price hikes → review reminders. Never moves money.</td>
+            <td>daily</td>
+            <td>/personal Finance</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>relationship-keeper</strong></td>
+            <td>Finds people gone quiet (21d+) → reach-out reminders + draft in your voice.</td>
+            <td>weekly</td>
+            <td>self-chat</td>
+            <td><strong>No</strong> — you do the outreach</td>
+          </tr>
+          <tr>
             <td><strong>morning-brief</strong></td>
             <td>Texts you ~3 bullets every weekday at 8am on what matters today.</td>
-            <td>Proactive (daily 8am)</td>
+            <td>daily 8am</td>
             <td>self-chat</td>
             <td><strong>No</strong></td>
           </tr>
           <tr>
             <td><strong>inbox-concierge</strong></td>
             <td>Reads your Gmail each morning and texts a 3-bucket digest.</td>
-            <td>Proactive (daily)</td>
+            <td>daily AM</td>
             <td>self-chat</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>commute-copilot</strong></td>
+            <td>Driving signal → hands-free task surface + parked recap.</td>
+            <td>bridge interval</td>
+            <td>self-chat · LANTERN_COMMUTE</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>energy-guardian</strong></td>
+            <td>Short sleep → offer to lighten the day&apos;s load.</td>
+            <td>bridge interval</td>
+            <td>self-chat · LANTERN_ENERGY</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>health-coach</strong></td>
+            <td>Steps/sleep/workout nudges toward a daily goal.</td>
+            <td>bridge interval</td>
+            <td>self-chat · LANTERN_HEALTH</td>
+            <td><strong>No</strong></td>
+          </tr>
+          <tr>
+            <td><strong>focus-guardian</strong></td>
+            <td>Holds non-urgent nudges during Focus mode, recaps after.</td>
+            <td>bridge interval</td>
+            <td>self-chat · LANTERN_FOCUS</td>
             <td><strong>No</strong></td>
           </tr>
           <tr>
             <td><strong>whatsapp-assistant</strong></td>
             <td>Auto-replies to your WhatsApp contacts in your voice.</td>
-            <td>Reactive (on inbound)</td>
+            <td>reactive</td>
             <td>replies to contacts</td>
             <td><strong>Yes</strong> — talks to contacts as you</td>
           </tr>
           <tr>
             <td><strong>imessage-assistant</strong></td>
             <td>Auto-replies to your iMessage contacts in your voice.</td>
-            <td>Reactive (on inbound)</td>
+            <td>reactive</td>
             <td>replies to contacts</td>
             <td><strong>Yes</strong> — talks to contacts as you</td>
           </tr>
         </tbody>
       </table>
-      <p>
-        The loop agents (concierge, relationship-keeper, financial-sentinel) run
-        on the Lantern platform as scheduled agents — created via{" "}
-        <code>POST /v1/agents/loop</code> and visible on the dashboard with runs
-        and cost like any other agent. Bridge nudges require{" "}
-        <code>LANTERN_CONCIERGE=on</code> (off by default). financial-sentinel
-        acts on <code>life_events</code> bills already classified by the bridges.
-      </p>
 
       <h3>How each agent loops</h3>
       <p>
         Each diagram shows the stages of one agent&apos;s cycle — solid arrows
         are the forward flow; the dashed arc loops from the last stage back to
-        the first. The two contact-facing agents are{" "}
-        <strong>rose-highlighted</strong> because they reply as you to real
-        people — they carry the full weight of impersonation.
+        the first. Agents are grouped by how they execute. The two contact-facing
+        agents are <strong>rose-highlighted</strong> because they reply as you to
+        real people — they carry the full weight of impersonation.
+      </p>
+
+      <h4 id="scheduled-agents">Scheduled — runs as a Lantern agent on a cron timer</h4>
+      <p>
+        These agents are created via <code>POST /v1/agents</code> and run on the
+        Lantern platform on a cron schedule — visible in the dashboard with runs,
+        cost, and history like any other agent. Gmail-reading agents need the
+        Gmail connector installed. <code>LANTERN_CONCIERGE=on</code> enables bridge
+        nudges from concierge; the rest are always-on once scheduled.
       </p>
 
       <AgentLoop
         title="concierge"
-        cadence="continuous"
-        stages={["Capture", "Research", "Nudge", "You act"]}
+        cadence="~45m cron"
+        execModel="scheduled"
+        stages={["Capture task", "Research how", "Nudge you", "You act"]}
         tone="sky"
         ownerFacing
+        interface="runs: ~45m · you see it: self-chat (reply / snooze / done)"
       />
       <AgentLoop
-        title="relationship-keeper"
-        cadence="weekly"
-        stages={["Scan people", "Gone quiet?", "Draft in your voice", "Nudge you", "You reach out"]}
+        title="care-coordinator"
+        cadence="daily 8am"
+        execModel="scheduled"
+        stages={["Morning scan", "Health records", "Refill/appt alert", "You act"]}
+        tone="emerald"
+        ownerFacing
+        interface="runs: daily 8am · you see it: /personal Health · needs Gmail"
+      />
+      <AgentLoop
+        title="garage"
+        cadence="daily"
+        execModel="scheduled"
+        stages={["Gmail scan", "Vehicle records", "Renewal alert", "You act"]}
+        tone="amber"
+        ownerFacing
+        interface="runs: daily · you see it: /personal Vehicle · needs Gmail"
+      />
+      <AgentLoop
+        title="upskill"
+        cadence="daily"
+        execModel="scheduled"
+        stages={["Gmail scan", "Skill records", "Career nudge", "You act"]}
         tone="violet"
         ownerFacing
+        interface="runs: daily · you see it: /personal Career · needs Gmail"
+      />
+      <AgentLoop
+        title="travel-concierge"
+        cadence="daily"
+        execModel="scheduled"
+        stages={["Gmail scan", "Trip records", "Check-in alert", "You act"]}
+        tone="sky"
+        ownerFacing
+        interface="runs: daily · you see it: /personal Travel · needs Gmail"
+      />
+      <AgentLoop
+        title="household"
+        cadence="daily"
+        execModel="scheduled"
+        stages={["Gmail scan", "Home records", "Renewal alert", "You act"]}
+        tone="amber"
+        ownerFacing
+        interface="runs: daily · you see it: /personal Home · needs Gmail"
       />
       <AgentLoop
         title="financial-sentinel"
         cadence="daily"
-        stages={["Scan bills", "Detect price hike", "Flag for review", "You review/cancel"]}
+        execModel="scheduled"
+        stages={["Scan bills", "Detect price hike", "Flag for review", "You review"]}
         tone="amber"
         ownerFacing
+        interface="runs: daily · you see it: /personal Finance · needs Gmail"
+      />
+      <AgentLoop
+        title="relationship-keeper"
+        cadence="weekly"
+        execModel="scheduled"
+        stages={["Scan people", "Gone quiet?", "Draft in your voice", "Nudge you", "You reach out"]}
+        tone="violet"
+        ownerFacing
+        interface="runs: weekly · you see it: self-chat"
       />
       <AgentLoop
         title="morning-brief"
         cadence="daily 8am"
+        execModel="scheduled"
         stages={["8am trigger", "Gather context", "Compose 3 bullets", "Text you"]}
         tone="emerald"
         ownerFacing
+        interface="runs: daily 8am weekdays · you see it: self-chat"
       />
       <AgentLoop
         title="inbox-concierge"
         cadence="daily AM"
+        execModel="scheduled"
         stages={["Morning trigger", "Read Gmail", "Sort 3 buckets", "Text digest"]}
         tone="sky"
         ownerFacing
+        interface="runs: daily AM · you see it: self-chat · needs Gmail"
       />
+
+      <h4 id="bridge-agents">Bridge loops — runs on your Mac, driven by device signals</h4>
+      <p>
+        These agents run inside the bridge process at a short interval and react
+        to iPhone signals (driving state, sleep data, step count, Focus mode).
+        Each is opt-in via its env var — set the var and the loop activates on
+        the next bridge restart. They never leave a message if the signal
+        threshold isn&apos;t met, so they stay silent when there&apos;s nothing
+        actionable.
+      </p>
+
+      <AgentLoop
+        title="commute-copilot"
+        cadence="bridge interval"
+        execModel="bridge"
+        stages={["Drive signal", "Task surface", "Parked recap", "You act"]}
+        tone="amber"
+        ownerFacing
+        interface="runs: bridge interval · you see it: self-chat · LANTERN_COMMUTE=on"
+      />
+      <AgentLoop
+        title="energy-guardian"
+        cadence="bridge interval"
+        execModel="bridge"
+        stages={["Sleep signal", "Assess energy", "Lighten day", "You act"]}
+        tone="rose"
+        ownerFacing
+        interface="runs: bridge interval · you see it: self-chat · LANTERN_ENERGY=on"
+      />
+      <AgentLoop
+        title="health-coach"
+        cadence="bridge interval"
+        execModel="bridge"
+        stages={["Step/sleep data", "Track goal", "Nudge you", "You act"]}
+        tone="emerald"
+        ownerFacing
+        interface="runs: bridge interval · you see it: self-chat · LANTERN_HEALTH=on"
+      />
+      <AgentLoop
+        title="focus-guardian"
+        cadence="bridge interval"
+        execModel="bridge"
+        stages={["Focus signal", "Hold nudges", "Focus ends", "Recap to you"]}
+        tone="violet"
+        ownerFacing
+        interface="runs: bridge interval · you see it: self-chat · LANTERN_FOCUS=on"
+      />
+
+      <h4 id="reactive-agents">Reactive — fires on every inbound message</h4>
+      <p>
+        The two assistant agents sit in the bridge&apos;s message handler and
+        fire on every inbound message from a contact. They carry the full weight
+        of impersonation — everything in the harness (owner voice, bot-tell
+        guards, pacing, draft-and-confirm, claim verifier) exists to keep them
+        indistinguishable from you.
+      </p>
+
       <AgentLoop
         title="whatsapp-assistant"
         cadence="reactive"
+        execModel="reactive"
         stages={["Contact messages", "Understand", "Draft in your voice", "Send to contact"]}
         tone="rose"
         ownerFacing={false}
+        interface="fires: per inbound · you see it: replies to contacts"
       />
       <AgentLoop
         title="imessage-assistant"
         cadence="reactive"
+        execModel="reactive"
         stages={["Contact messages", "Understand", "Draft in your voice", "Send to contact"]}
         tone="rose"
         ownerFacing={false}
+        interface="fires: per inbound · you see it: replies to contacts"
       />
 
       <h2 id="signals">L1 · Sense — signals &amp; ingestion</h2>
