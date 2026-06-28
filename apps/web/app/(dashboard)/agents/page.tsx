@@ -20,6 +20,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import clsx from "clsx";
 import { api } from "@/lib/api";
+import type { FleetUsage } from "@/lib/api";
 import { useAgents, useRuns } from "@/lib/hooks";
 import { useToast } from "@/components/toast";
 import { EmptyState } from "@/components/empty-state";
@@ -74,6 +75,11 @@ export default function AgentsPage() {
 
   const [search, setSearch] = useState("");
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [fleetUsage, setFleetUsage] = useState<FleetUsage | null>(null);
+
+  useEffect(() => {
+    api.getFleetUsage().then(setFleetUsage).catch(() => {});
+  }, []);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   // Holds the agent the user has clicked "Delete" on. We hold the agent
   // in state (not just id) so the modal can render the agent's name in
@@ -97,14 +103,32 @@ export default function AgentsPage() {
     return result;
   }, [agents, search]);
 
-  // Aggregate stats strip — totals across every agent. Computed in one
-  // pass so we don't loop runs N times per card.
+  // Aggregate stats strip — totals across every agent. The real numbers come
+  // from /v1/usage (agent_usage_daily, includes bridge spend the run list
+  // misses). Fall back to summing the capped run list when usage is unavailable.
   const aggregate = useMemo(() => {
+    // Live count is always from the real-time run list.
+    const live = runs.filter((r) => r.status === "running" || r.status === "paused").length;
+
+    const p = fleetUsage?.periods.today;
+    if (p) {
+      // Terminal-only success rate excludes in-flight runs.
+      const terminal = p.succeeded + p.failed;
+      return {
+        total: agents.length,
+        live,
+        runsToday: p.runs,
+        failedToday: p.failed,
+        totalCostToday: p.costUsd,
+        successRateToday: terminal > 0 ? Math.round((p.succeeded / terminal) * 100) : null,
+      };
+    }
+
+    // Fallback: derive from the capped run list.
     const today = Date.now() - 24 * 3600_000;
     const runsToday = runs.filter((r) => new Date(r.createdAt).getTime() >= today);
     const succeededToday = runsToday.filter((r) => r.status === "succeeded").length;
     const failedToday = runsToday.filter((r) => r.status === "failed").length;
-    const live = runs.filter((r) => r.status === "running" || r.status === "paused").length;
     const totalCostToday = runsToday.reduce((s, r) => s + (r.costUsd ?? 0), 0);
     const successRateToday =
       runsToday.length > 0 ? Math.round((succeededToday / runsToday.length) * 100) : null;
@@ -116,7 +140,7 @@ export default function AgentsPage() {
       totalCostToday,
       successRateToday,
     };
-  }, [agents, runs]);
+  }, [agents, runs, fleetUsage]);
 
   // `/` keyboard shortcut focuses the search input — Linear/GitHub-style.
   // The global KeyboardShortcuts handler skips when focus is in an input,
@@ -256,11 +280,7 @@ export default function AgentsPage() {
               />
               <Stat
                 label="Cost today"
-                value={
-                  aggregate.totalCostToday > 0
-                    ? `$${aggregate.totalCostToday.toFixed(2)}`
-                    : "$0"
-                }
+                value={`$${aggregate.totalCostToday.toFixed(2)}`}
                 hint={
                   aggregate.runsToday > 0
                     ? `~$${(aggregate.totalCostToday / aggregate.runsToday).toFixed(4)}/run`

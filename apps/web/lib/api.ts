@@ -202,6 +202,38 @@ export interface UsageData {
   paymentMethod: string;
 }
 
+// ---------------------------------------------------------------------------
+// Fleet usage — GET /v1/usage (true numbers from agent_usage_daily)
+// ---------------------------------------------------------------------------
+
+export interface FleetUsagePeriod {
+  costUsd: number;
+  runs: number;
+  succeeded: number;
+  failed: number;
+  running: number;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+export interface FleetUsageByAgent {
+  agentName: string;
+  costUsd: number;
+  runs: number;
+  succeeded: number;
+  failed: number;
+}
+
+export interface FleetUsage {
+  periods: {
+    today: FleetUsagePeriod;
+    week: FleetUsagePeriod;
+    month: FleetUsagePeriod;
+    total: FleetUsagePeriod;
+  };
+  byAgent: FleetUsageByAgent[];
+}
+
 export interface SettingsInput {
   openaiApiKey?: string;
   anthropicApiKey?: string;
@@ -797,6 +829,17 @@ class LanternAPI {
       return await this.request<UsageData>("/v1/settings/usage");
     } catch (err) {
       notifySimulated("getUsage", err);
+      return null;
+    }
+  }
+
+  async getFleetUsage(): Promise<FleetUsage | null> {
+    // True cost + success counts from agent_usage_daily. Returns null on failure
+    // so callers fall back to run-list estimates rather than showing wrong numbers.
+    try {
+      return await this.request<FleetUsage>("/v1/usage");
+    } catch (err) {
+      notifySimulated("getFleetUsage", err);
       return null;
     }
   }
@@ -2327,7 +2370,7 @@ export type LifeEventKind =
 
 export type LifeEventStatus =
   | "suggested"
-  | "auto-acted"
+  | "auto_acted"
   | "undone"
   | "dismissed";
 
