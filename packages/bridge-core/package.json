@@ -63,7 +63,8 @@
     "./commitments-edge": "./src/commitments-edge.ts",
     "./proactive-loops": "./src/proactive-loops.ts",
     "./digest-compose": "./src/digest-compose.ts",
-    "./doc-ingest": "./src/doc-ingest.ts"
+    "./doc-ingest": "./src/doc-ingest.ts",
+    "./recall": "./src/recall.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
