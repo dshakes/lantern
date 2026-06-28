@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -326,6 +328,7 @@ func TestCrossApp_ExecuteAction_Executes(t *testing.T) {
 		executedAction = action
 		return map[string]any{"event_id": "evt-123"}, nil
 	}
+	t.Setenv("LANTERN_CROSS_APP", "on")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/commitments/"+commitmentID+"/execute-action", nil)
 	req.SetPathValue("id", commitmentID)
@@ -380,6 +383,8 @@ func TestCrossApp_ExecuteAction_RejectsNonCrossApp(t *testing.T) {
 	}
 
 	h := newTestCrossAppHandler(t, pool)
+	t.Setenv("LANTERN_CROSS_APP", "on")
+
 	req := httptest.NewRequest(http.MethodPost, "/v1/commitments/"+commitmentID+"/execute-action", nil)
 	req.SetPathValue("id", commitmentID)
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -418,6 +423,7 @@ func TestCrossApp_ExecuteAction_RejectsAlreadyDone(t *testing.T) {
 		called = true
 		return nil, nil
 	}
+	t.Setenv("LANTERN_CROSS_APP", "on")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/commitments/"+commitmentID+"/execute-action", nil)
 	req.SetPathValue("id", commitmentID)
@@ -455,6 +461,8 @@ func TestCrossApp_ExecuteAction_CrossTenant(t *testing.T) {
 	}
 
 	h := newTestCrossAppHandler(t, pool)
+	t.Setenv("LANTERN_CROSS_APP", "on")
+
 	// Authenticate as tenant B — should not see tenant A's commitment.
 	tokB := mintTestToken(t, tenantB, uuid.NewString(), "owner")
 	req := httptest.NewRequest(http.MethodPost, "/v1/commitments/"+commitmentID+"/execute-action", nil)
@@ -465,6 +473,91 @@ func TestCrossApp_ExecuteAction_CrossTenant(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404 for cross-tenant, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestCrossApp_ExecuteAction_ConcurrentExactlyOnce fires N concurrent goroutines
+// at ExecuteAction for the SAME suggested cross_app commitment. It asserts that
+// the connector side-effect runs EXACTLY ONCE and that all other requests get 409.
+//
+// This is the safety gate for the TOCTOU fix (finding #1): the atomic
+// UPDATE ... WHERE status='suggested' RETURNING claim means only ONE goroutine
+// can proceed to the connector call; all others lose the race and return 409.
+func TestCrossApp_ExecuteAction_ConcurrentExactlyOnce(t *testing.T) {
+	pool := openTestPool(t)
+	tenantID := seedCrossAppTenant(t, pool)
+	tok := mintTestToken(t, tenantID, uuid.NewString(), "owner")
+
+	// Seed one 'suggested' cross_app commitment.
+	plan := crossAppPlan{
+		Goal: "send reply",
+		ProposedAction: crossAppProposed{
+			Connector: "gmail",
+			Action:    "send_message",
+			Params:    map[string]any{"to": "x@y.com"},
+		},
+	}
+	planJSON, _ := json.Marshal(plan)
+	ctx := context.Background()
+	var commitmentID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO commitments (tenant_id, title, source, kind, tier, urgency, status, action_plan)
+		VALUES ($1, 'Concurrent test', 'self', 'cross_app', 'meso', 'normal', 'suggested', $2::jsonb)
+		RETURNING id
+	`, tenantID, string(planJSON)).Scan(&commitmentID); err != nil {
+		t.Fatalf("seed commitment: %v", err)
+	}
+
+	// Stub connector: counts invocations atomically. Must be called exactly once.
+	var connectorCalls int64
+	h := newTestCrossAppHandler(t, pool)
+	h.connectorFn = func(_ context.Context, _, _, _ string, _ map[string]any) (any, error) {
+		atomic.AddInt64(&connectorCalls, 1)
+		return map[string]any{"ok": true}, nil
+	}
+	t.Setenv("LANTERN_CROSS_APP", "on")
+
+	// Launch N goroutines all hitting ExecuteAction on the same commitment.
+	const N = 10
+	codes := make([]int, N)
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/v1/commitments/"+commitmentID+"/execute-action", nil)
+			req.SetPathValue("id", commitmentID)
+			req.Header.Set("Authorization", "Bearer "+tok)
+			w := httptest.NewRecorder()
+			h.ExecuteAction(w, req)
+			codes[i] = w.Code
+		}()
+	}
+	wg.Wait()
+
+	// Connector must have been called exactly once.
+	if got := atomic.LoadInt64(&connectorCalls); got != 1 {
+		t.Errorf("connector called %d times, want exactly 1 (TOCTOU fix broken)", got)
+	}
+
+	// Exactly one 200; the rest must all be 409.
+	var okCount, conflictCount int
+	for _, c := range codes {
+		switch c {
+		case http.StatusOK:
+			okCount++
+		case http.StatusConflict:
+			conflictCount++
+		default:
+			t.Errorf("unexpected status code %d (want 200 or 409)", c)
+		}
+	}
+	if okCount != 1 {
+		t.Errorf("expected 1 success (200), got %d", okCount)
+	}
+	if conflictCount != N-1 {
+		t.Errorf("expected %d conflicts (409), got %d", N-1, conflictCount)
 	}
 }
 
