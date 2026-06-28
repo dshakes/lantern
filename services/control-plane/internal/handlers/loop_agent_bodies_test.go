@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -614,6 +615,170 @@ func TestLoopDispatch_Role(t *testing.T) {
 	_ = json.Unmarshal(payload, &p)
 	if _, ok := p["brief_chars"]; !ok {
 		t.Errorf("loop_complete payload missing 'brief_chars' for chief_of_staff: %v", p)
+	}
+}
+
+// ---------- TestFinancialSentinel ----------
+
+// seedBill inserts a life_event with kind='bill' for the tenant.
+func seedBill(t *testing.T, pool *pgxpool.Pool, tenantID, payee string, amount float64, daysAgo int) {
+	t.Helper()
+	ctx := context.Background()
+	fieldsJSON := fmt.Sprintf(`{"payee":%q,"amount":%g}`, payee, amount)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO life_events (tenant_id, kind, channel, summary, fields, created_at)
+		VALUES ($1::uuid, 'bill', 'test', 'Test bill', $2::jsonb, now() - ($3 * interval '1 day'))
+	`, tenantID, fieldsJSON, daysAgo); err != nil {
+		t.Fatalf("seedBill: %v", err)
+	}
+}
+
+// TestFinancialSentinel_DetectsHike seeds two bills for the same payee
+// ($100 old, $130 new = 30% hike, $30 absolute) and asserts one commitment is
+// created with the payee + both amounts in the title.
+func TestFinancialSentinel_DetectsHike(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedBodyTenant(t, pool)
+	runID := insertBodyRun(t, pool, tenant, "finsentinel-hike")
+
+	// Older bill first (higher daysAgo = earlier), newer bill second.
+	seedBill(t, pool, tenant, "Netflix", 100.00, 45)
+	seedBill(t, pool, tenant, "Netflix", 130.00, 5)
+
+	hikesN, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID)
+	if err != nil {
+		t.Fatalf("runFinancialSentinel: %v", err)
+	}
+	if hikesN != 1 {
+		t.Errorf("hikesN=%d, want 1", hikesN)
+	}
+
+	// Assert commitment title contains the payee and both amounts.
+	var title string
+	if err := pool.QueryRow(ctx, `
+		SELECT title FROM commitments
+		WHERE tenant_id = $1::uuid AND kind = 'finance'
+	`, tenant).Scan(&title); err != nil {
+		t.Fatalf("read commitment: %v", err)
+	}
+	if !strings.Contains(title, "Netflix") {
+		t.Errorf("title=%q — missing payee", title)
+	}
+	if !strings.Contains(title, "130.00") || !strings.Contains(title, "100.00") {
+		t.Errorf("title=%q — missing amount(s)", title)
+	}
+
+	// Assert financial_swept journal event was emitted.
+	var payload []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT payload FROM journal_events WHERE run_id = $1 AND kind = 'financial_swept'
+	`, runID).Scan(&payload); err != nil {
+		t.Fatalf("financial_swept event: %v", err)
+	}
+	var p map[string]any
+	_ = json.Unmarshal(payload, &p)
+	if p["hikes"].(float64) != 1 {
+		t.Errorf("event.hikes=%v, want 1", p["hikes"])
+	}
+}
+
+// TestFinancialSentinel_Idempotent verifies that running twice in the same
+// calendar month creates no duplicate commitment.
+func TestFinancialSentinel_Idempotent(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedBodyTenant(t, pool)
+	runID1 := insertBodyRun(t, pool, tenant, "finsentinel-idem-1")
+	runID2 := insertBodyRun(t, pool, tenant, "finsentinel-idem-2")
+
+	seedBill(t, pool, tenant, "Hulu", 100.00, 50)
+	seedBill(t, pool, tenant, "Hulu", 125.00, 3)
+
+	h1, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID1)
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if h1 != 1 {
+		t.Fatalf("first run hikesN=%d, want 1", h1)
+	}
+
+	h2, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID2)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if h2 != 0 {
+		t.Errorf("second run hikesN=%d, want 0 (idempotent within month)", h2)
+	}
+
+	// Exactly 1 commitment in the DB, not 2.
+	var count int
+	_ = pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM commitments WHERE tenant_id = $1::uuid AND kind = 'finance'
+	`, tenant).Scan(&count)
+	if count != 1 {
+		t.Errorf("commitment count=%d, want 1", count)
+	}
+}
+
+// TestFinancialSentinel_BelowThreshold verifies that a small increase (3%,
+// below the 10% threshold) creates no commitment.
+func TestFinancialSentinel_BelowThreshold(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedBodyTenant(t, pool)
+	runID := insertBodyRun(t, pool, tenant, "finsentinel-threshold")
+
+	seedBill(t, pool, tenant, "Spotify", 100.00, 45)
+	seedBill(t, pool, tenant, "Spotify", 103.00, 5) // +3%, +$3 — below both thresholds
+
+	hikesN, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID)
+	if err != nil {
+		t.Fatalf("runFinancialSentinel: %v", err)
+	}
+	if hikesN != 0 {
+		t.Errorf("hikesN=%d, want 0 (below threshold)", hikesN)
+	}
+
+	var count int
+	_ = pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM commitments WHERE tenant_id = $1::uuid AND kind = 'finance'
+	`, tenant).Scan(&count)
+	if count != 0 {
+		t.Errorf("commitment count=%d, want 0", count)
+	}
+}
+
+// TestFinancialSentinel_NoBills verifies graceful no-op when there are no bills.
+func TestFinancialSentinel_NoBills(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedBodyTenant(t, pool)
+	runID := insertBodyRun(t, pool, tenant, "finsentinel-nobills")
+
+	hikesN, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID)
+	if err != nil {
+		t.Fatalf("runFinancialSentinel on empty tenant: %v", err)
+	}
+	if hikesN != 0 {
+		t.Errorf("hikesN=%d, want 0", hikesN)
+	}
+
+	// financial_swept event still emitted.
+	var count int
+	_ = pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM journal_events WHERE run_id = $1 AND kind = 'financial_swept'
+	`, runID).Scan(&count)
+	if count != 1 {
+		t.Errorf("financial_swept event count=%d, want 1", count)
 	}
 }
 
