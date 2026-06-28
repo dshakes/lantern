@@ -74,6 +74,8 @@ import { type SubAgentLink, getSubAgents, addSubAgent, removeSubAgent } from "@/
 import { type MemoryEntry, getAgentMemory, addMemoryEntry, removeMemoryEntry, memoryToContext } from "@/lib/agent-memory";
 import { getAgentInstructions, saveAgentInstructions, mergeInstructionsAndPrompt } from "@/lib/agent-instructions";
 import { type CodeLanguage, runCode, extractCodeBlocks } from "@/lib/code-runner";
+import { AgentLoop } from "@/components/agent-loop";
+import { AGENT_CATALOG } from "@/lib/agent-catalog";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1089,6 +1091,26 @@ export default function AgentDetailPage() {
         {/* BUILD TAB */}
         {activeTab === "build" && (
           <div className="space-y-6">
+            {/* Personal-suite catalog card — only for known agents */}
+            {(() => {
+              const entry = AGENT_CATALOG[name];
+              if (!entry) return null;
+              const execLabels: Record<string, string> = { scheduled: "Scheduled", bridge: "Bridge", reactive: "Reactive" };
+              const execColors: Record<string, string> = { scheduled: "text-sky-300 bg-sky-500/10 border-sky-500/20", bridge: "text-violet-300 bg-violet-500/10 border-violet-500/20", reactive: "text-emerald-300 bg-emerald-500/10 border-emerald-500/20" };
+              return (
+                <div className="rounded-xl border border-zinc-800 bg-surface-1 px-5 py-4">
+                  <p className="mb-3 text-sm text-zinc-300">{entry.whatItDoes}</p>
+                  <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                    <span className={clsx("rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", execColors[entry.execModel ?? "scheduled"])}>
+                      {execLabels[entry.execModel ?? "scheduled"]}
+                    </span>
+                    <span>runs: <span className="text-zinc-300">{entry.cadence}</span></span>
+                    {entry.interface && <span>· you see it: <span className="text-zinc-300">{entry.interface.split("·")[1]?.replace("you see it:", "").trim() ?? entry.interface}</span></span>}
+                  </div>
+                  <AgentLoop title={name} cadence={entry.cadence} stages={entry.stages} tone={entry.tone} ownerFacing={entry.ownerFacing} execModel={entry.execModel} interface={entry.interface} />
+                </div>
+              );
+            })()}
             {/* Gap 2: Managed environment header */}
             <div className="flex items-center justify-between rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-5 py-3">
               <div className="flex items-center gap-3">
