@@ -243,6 +243,8 @@ Valid roles (pick the one that best matches the description):
   inbox_autopilot     → polls email for new actionable messages (tier=meso)
   relationship_keeper → surfaces stale VIP contacts for outreach (tier=mega)
   financial_sentinel  → scans bill life-events for price hikes; creates a review commitment (tier=macro)
+  commute_copilot     → bridge-side only; surfaces due tasks during drives and recaps on park (tier=nano)
+  energy_guardian     → bridge-side only; protects focus when sleep/step signals show low energy (tier=nano)
 
 Valid tiers and their default crons:
   nano   → no schedule (event-driven only); omit cron
@@ -425,6 +427,15 @@ func runLoopAgentIfPresent(
 		}
 		outputJSON, _ = json.Marshal(map[string]any{"hikes": hikesN})
 
+	case "commute_copilot", "energy_guardian":
+		// Bridge-side loops: execution happens entirely in the macOS bridge.
+		// The server emits a single journal event to record the dispatch
+		// attempt but performs no server-side work. Tier=nano means no
+		// schedule fires, so this path is only reached if someone manually
+		// triggers a run.
+		runBridgeSideLoopNoop(ctx, pool, logger, runID, role)
+		outputJSON, _ = json.Marshal(map[string]any{"bridge_side": true})
+
 	default: // "concierge" + any unrecognised role
 		surfaced := 0
 		for _, sensor := range m.Sensors {
@@ -573,6 +584,26 @@ func nextNudgeAt(lastNudge *time.Time, createdAt, now time.Time) time.Time {
 	default:
 		return now.Add(24 * time.Hour)
 	}
+}
+
+// runBridgeSideLoopNoop is the server-side stub for bridge-executed loop roles
+// (commute_copilot, energy_guardian). These agents need iPhone signals that
+// only the macOS bridge can see, so all real execution happens there. The
+// server emits one journal event to record the dispatch attempt and returns.
+// Tier=nano means no schedule fires; this is only reachable via a manual run.
+// rls-exempt: journal_events is RLS-exempt child table keyed by run_id.
+func runBridgeSideLoopNoop(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, runID, role string) {
+	logger.Info("loop-agent: bridge-side loop — noop on server",
+		zap.String("role", role), zap.String("run_id", runID))
+	payload, _ := json.Marshal(map[string]any{
+		"note": "executes in the macOS bridge",
+		"role": role,
+	})
+	_, _ = pool.Exec(ctx, `
+		INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
+		VALUES ($1, 1, 'bridge_side_loop', $2, 1, $3)
+		ON CONFLICT (run_id, seq) DO NOTHING
+	`, runID, role, payload)
 }
 
 // ---------- B3a: chief_of_staff body ----------
@@ -1140,6 +1171,28 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Cron:    tierCronDefault["macro"],
 			Sensors: []string{"life_events"},
 			Actions: []string{"create_commitment"},
+			Trust:   "ask",
+		},
+		// Bridge-side agents: tier=nano → no schedule, no server-side run.
+		// Execution happens entirely in the macOS bridge using iPhone signals.
+		{
+			Role:    "commute_copilot",
+			Type:    "loop",
+			Name:    "commute-copilot",
+			Goal:    "Hands-free mode for the road. When you're driving, surfaces your due tasks so you can deal with them when you stop — and recaps what came in once you park. Runs in the macOS bridge.",
+			Tier:    "nano",
+			Sensors: []string{"signals"},
+			Actions: []string{"nudge"},
+			Trust:   "ask",
+		},
+		{
+			Role:    "energy_guardian",
+			Type:    "loop",
+			Name:    "energy-guardian",
+			Goal:    "Protects your energy. When you've slept short, it offers to lighten your afternoon or defend a focus block — grounded in your iPhone sleep/step signals. Runs in the macOS bridge.",
+			Tier:    "nano",
+			Sensors: []string{"signals"},
+			Actions: []string{"nudge"},
 			Trust:   "ask",
 		},
 	} {

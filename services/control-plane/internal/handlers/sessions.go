@@ -183,6 +183,14 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		// connectors installed. Without this guard, the LLM call fails
 		// with "Request too large" and the contact never gets a reply.
 		NoTools bool `json:"noTools,omitempty"`
+		// ReadOnlyTools, when true, loads the tool catalog but filters it to
+		// READ-only actions (list/get/search/read/find/...). The personal
+		// bridges set this on the CONTACT reply path for clearly-logistics
+		// inbound ("did you get my email?", "what time did we say?") so the
+		// assistant can GROUND the answer in Calendar/Gmail reads without ever
+		// exposing a state-modifying connector action to a contact's message.
+		// Ignored when NoTools is true (no catalog at all).
+		ReadOnlyTools bool `json:"readOnlyTools,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -267,7 +275,7 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	// Kick off LLM response in background. The systemHint (if any) is passed
 	// through so it can override the agent's stored system prompt for this
 	// turn only — see processMessage.
-	go h.processMessage(sessionID, tenantID, agentName, messages, body.SystemHint, body.TurnHint, body.NoTools)
+	go h.processMessage(sessionID, tenantID, agentName, messages, body.SystemHint, body.TurnHint, body.NoTools, body.ReadOnlyTools)
 }
 
 // processMessage calls the LLM with the full message history and appends the
@@ -279,7 +287,7 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 //
 // turnHint is the optional G1 complexity hint ("trivial"|"hard"|""). When
 // LANTERN_COMPLEXITY_ROUTING=1 this overrides the server-side classifier.
-func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage, systemHint, turnHint string, noTools bool) {
+func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage, systemHint, turnHint string, noTools, readOnlyTools bool) {
 	ctx := context.Background()
 	ctx = middleware.InjectTenantID(ctx, tenantID)
 
@@ -427,6 +435,13 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 		if toolsErr != nil {
 			h.logger().Warn("session: tool catalog lookup failed", zap.Error(toolsErr))
 			tools = nil
+		}
+		// Contact reply path: keep ONLY read-only tools so a contact's message
+		// can ground on Calendar/Gmail reads but can never drive a connector
+		// write (send/create/delete). Trust boundary — see ReadOnlyTools above.
+		if readOnlyTools {
+			tools = filterReadOnlyTools(tools)
+			h.logger().Debug("session: readOnlyTools=true — filtered to read-only catalog", zap.Int("tools", len(tools)))
 		}
 	}
 

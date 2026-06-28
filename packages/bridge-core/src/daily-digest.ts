@@ -45,6 +45,23 @@ export interface DigestData {
   // produced by the life-event engine's proactiveDecision. Best-effort; empty
   // when nothing was queued.
   lifeEvents?: string[];
+
+  // ── Narrative enrichment (optional; populated by bridges that support it) ──
+  // Pre-fetched next calendar event string (e.g. "1:1 with Raju in 45 min").
+  // When present, composeDigestNarrative uses it directly without a re-fetch.
+  nextEvent?: string | null;
+  // Pre-fetched VIP draft count + sample name.
+  drafts?: { count: number; sample?: string };
+  // Top open commitments (tasks on the owner's plate).
+  commitments?: Array<{ title: string; urgency?: string; assignedBy?: string }>;
+  // Contacts with unanswered messages older than the overdue threshold.
+  overdueContacts?: Array<{ displayName?: string; daysOverdue: number }>;
+  // Sleep hours from the most-recent health signal in the overnight window.
+  // null when no signal found; undefined when not yet gathered.
+  sleepHours?: number | null;
+  // Owner-voice exemplar block (from formatOwnerVoiceBlock). Injected into
+  // the LLM system prompt so the narrative matches the owner's actual tone.
+  ownerVoiceBlock?: string;
 }
 
 export interface DigestConfig {
@@ -195,6 +212,10 @@ export function scheduleDigest(opts: {
   cfg: DigestConfig;
   collectData: () => DigestData | Promise<DigestData>;
   deliver: (body: string) => Promise<void> | void;
+  // Optional narrative composer. When provided, used instead of buildDigest.
+  // Falls back to buildDigest on any error. Passes the full DigestData so the
+  // composer can use the enrichment fields the bridge pre-fetched.
+  compose?: (data: DigestData) => Promise<string>;
 }): { stop: () => void } {
   const log = opts.logger.child({ component: "daily-digest" });
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -209,7 +230,17 @@ export function scheduleDigest(opts: {
     timer = setTimeout(async () => {
       try {
         const data = await opts.collectData();
-        const body = await buildDigest(data);
+        let body: string;
+        if (opts.compose) {
+          try {
+            body = await opts.compose(data);
+          } catch (composeErr) {
+            log.warn({ err: composeErr }, "digest compose failed — falling back to buildDigest");
+            body = await buildDigest(data);
+          }
+        } else {
+          body = await buildDigest(data);
+        }
         await opts.deliver(body);
         log.info({ replies: data.repliesSent, paused: data.pausedContacts.length }, "digest delivered");
       } catch (err) {
