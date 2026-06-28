@@ -325,3 +325,197 @@ func TestParseLoopManifest_CodeFence(t *testing.T) {
 		t.Errorf("name=%q, want 'fence-test'", m.Name)
 	}
 }
+
+// ---------- Loop-run finalization tests ----------
+//
+// These tests verify the bug-fix: loop runs must be finalized to
+// status='succeeded' with correct token/cost attribution, and
+// re-driven runs must not re-execute the body (idempotency guard).
+
+// insertLoopTestRun creates an agent with a loop manifest and an in-progress
+// run. Returns the run ID. Cleans up agent/version/run on t.Cleanup.
+func insertLoopTestRun(t *testing.T, tenantID, agentName, role string) string {
+	t.Helper()
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	var agentID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO agents (tenant_id, name, description)
+		VALUES ($1, $2, 'finalize-test')
+		ON CONFLICT (tenant_id, name) DO UPDATE SET description = EXCLUDED.description
+		RETURNING id
+	`, tenantID, agentName).Scan(&agentID); err != nil {
+		t.Fatalf("insertLoopTestRun: insert agent: %v", err)
+	}
+
+	manifestJSON, _ := json.Marshal(LoopManifest{
+		Type:  "loop",
+		Role:  role,
+		Name:  agentName,
+		Tier:  "meso",
+		Trust: "ask",
+	})
+	var versionID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO agent_versions (agent_id, version, digest, bundle_uri, manifest)
+		VALUES ($1, 'loop-fin-v1', decode(md5($2), 'hex'), 'local://test', $3::jsonb)
+		ON CONFLICT (agent_id, version) DO UPDATE SET manifest = EXCLUDED.manifest
+		RETURNING id
+	`, agentID, agentName+"-fin", string(manifestJSON)).Scan(&versionID); err != nil {
+		t.Fatalf("insertLoopTestRun: insert version: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE agents SET current_version_id = $1 WHERE id = $2`, versionID, agentID); err != nil {
+		t.Fatalf("insertLoopTestRun: promote version: %v", err)
+	}
+
+	var runID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO runs (tenant_id, agent_id, agent_version_id, status, trigger_kind, input)
+		VALUES ($1, $2, $3, 'running', 'schedule', '{}'::jsonb)
+		RETURNING id
+	`, tenantID, agentID, versionID).Scan(&runID); err != nil {
+		t.Fatalf("insertLoopTestRun: insert run: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, "DELETE FROM journal_events WHERE run_id = $1", runID)
+		_, _ = pool.Exec(ctx, "DELETE FROM runs WHERE id = $1", runID)
+		_, _ = pool.Exec(ctx, "UPDATE agents SET current_version_id = NULL WHERE id = $1", agentID)
+		_, _ = pool.Exec(ctx, "DELETE FROM agent_versions WHERE id = $1", versionID)
+		_, _ = pool.Exec(ctx, "DELETE FROM agents WHERE id = $1", agentID)
+	})
+	return runID
+}
+
+// TestLoopRunFinalize_Succeeded: a chief_of_staff loop run (which calls
+// completeFn) is finalized with status='succeeded', tokens > 0, cost > 0,
+// and RecordUsage writes to agent_usage_daily.
+func TestLoopRunFinalize_Succeeded(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedBodyTenant(t, pool)
+	agentName := "cos-finalize-" + tenant[:8]
+	runID := insertLoopTestRun(t, tenant, agentName, "chief_of_staff")
+
+	// Stub completeFn with known usage so we can assert attribution.
+	const stubIn int64 = 100
+	const stubOut int64 = 50
+	const stubCost = 0.001
+	var lu loopUsage
+	completeFn := func(ctx context.Context, _ string, _, _ string) (string, error) {
+		lu.TokensIn += stubIn
+		lu.TokensOut += stubOut
+		lu.CostUsd += stubCost
+		return "good morning brief", nil
+	}
+
+	if !runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, completeFn) {
+		t.Fatal("expected runLoopAgentIfPresent to return true")
+	}
+	finalizeLoopRun(ctx, pool, nopLogger(), runID, tenant, agentName, lu)
+
+	var status string
+	var tokensIn, tokensOut int64
+	var costUsd float64
+	if err := pool.QueryRow(ctx, `
+		SELECT status, COALESCE(tokens_in,0), COALESCE(tokens_out,0), COALESCE(cost_usd,0)
+		FROM runs WHERE id = $1
+	`, runID).Scan(&status, &tokensIn, &tokensOut, &costUsd); err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	if status != "succeeded" {
+		t.Errorf("status=%q, want 'succeeded'", status)
+	}
+	if tokensIn != stubIn {
+		t.Errorf("tokens_in=%d, want %d", tokensIn, stubIn)
+	}
+	if tokensOut != stubOut {
+		t.Errorf("tokens_out=%d, want %d", tokensOut, stubOut)
+	}
+	if costUsd != stubCost {
+		t.Errorf("cost_usd=%f, want %f", costUsd, stubCost)
+	}
+
+	// RecordUsage must have updated agent_usage_daily.
+	var dailyCost float64
+	_ = pool.QueryRow(ctx, `
+		SELECT COALESCE(cost_usd,0) FROM agent_usage_daily
+		WHERE tenant_id = $1 AND agent_name = $2 AND usage_date = CURRENT_DATE
+	`, tenant, agentName).Scan(&dailyCost)
+	if dailyCost == 0 {
+		t.Error("agent_usage_daily.cost_usd=0 — RecordUsage was not called")
+	}
+}
+
+// TestLoopRunFinalize_NoLLM: when completeFn is nil (no LLM configured),
+// the run is still finalized to 'succeeded' with zero tokens/cost.
+func TestLoopRunFinalize_NoLLM(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedBodyTenant(t, pool)
+	agentName := "cos-nollm-" + tenant[:8]
+	runID := insertLoopTestRun(t, tenant, agentName, "chief_of_staff")
+
+	if !runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, nil) {
+		t.Fatal("expected runLoopAgentIfPresent to return true")
+	}
+	finalizeLoopRun(ctx, pool, nopLogger(), runID, tenant, agentName, loopUsage{})
+
+	var status string
+	var tokensIn, tokensOut int64
+	var costUsd float64
+	if err := pool.QueryRow(ctx, `
+		SELECT status, COALESCE(tokens_in,0), COALESCE(tokens_out,0), COALESCE(cost_usd,0)
+		FROM runs WHERE id = $1
+	`, runID).Scan(&status, &tokensIn, &tokensOut, &costUsd); err != nil {
+		t.Fatalf("read run: %v", err)
+	}
+	if status != "succeeded" {
+		t.Errorf("status=%q, want 'succeeded'", status)
+	}
+	if tokensIn != 0 || tokensOut != 0 || costUsd != 0 {
+		t.Errorf("expected zero tokens/cost for no-LLM run, got in=%d out=%d cost=%f", tokensIn, tokensOut, costUsd)
+	}
+}
+
+// TestLoopRunFinalize_Idempotent: a second call to runLoopAgentIfPresent on a
+// run that already has a loop_complete journal event must return true immediately
+// without re-executing the loop body (LLM call count stays unchanged).
+func TestLoopRunFinalize_Idempotent(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedBodyTenant(t, pool)
+	agentName := "cos-idem-" + tenant[:8]
+	runID := insertLoopTestRun(t, tenant, agentName, "chief_of_staff")
+
+	var callCount int
+	completeFn := func(ctx context.Context, _ string, _, _ string) (string, error) {
+		callCount++
+		return "morning brief", nil
+	}
+
+	// First call: body runs, loop_complete event is written.
+	if !runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, completeFn) {
+		t.Fatal("first call: expected true")
+	}
+	after1 := callCount
+	if after1 == 0 {
+		t.Fatal("completeFn was never called on the first dispatch")
+	}
+
+	// Second call (simulates crash-recovery re-drive): idempotency guard fires.
+	if !runLoopAgentIfPresent(ctx, pool, nopLogger(), tenant, agentName, runID, completeFn) {
+		t.Fatal("second call: expected true")
+	}
+	if callCount != after1 {
+		t.Errorf("idempotency guard failed: completeFn called again (count=%d, want %d)", callCount, after1)
+	}
+}

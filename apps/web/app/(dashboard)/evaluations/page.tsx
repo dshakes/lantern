@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
+import type { FleetUsage } from "@/lib/api";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
 import { PageHeader } from "@/components/page-header";
 import { LineChart, type LineSeries } from "@/components/charts/line-chart";
@@ -212,6 +213,7 @@ function MiniBar({ value, max, color }: { value: number; max: number; color: str
 export default function EvaluationsPage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [fleetUsage, setFleetUsage] = useState<FleetUsage | null>(null);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<"7d" | "30d" | "all">("7d");
 
@@ -219,10 +221,15 @@ export default function EvaluationsPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [runData, agentData] = await Promise.all([api.listRuns(), api.listAgents()]);
+        const [runData, agentData, usageData] = await Promise.all([
+          api.listRuns(),
+          api.listAgents(),
+          api.getFleetUsage(),
+        ]);
         if (!cancelled) {
           setRuns(runData ?? []);
           setAgents(agentData ?? []);
+          setFleetUsage(usageData);
         }
       } catch {
         // API unavailable -- show empty state
@@ -242,6 +249,27 @@ export default function EvaluationsPage() {
 
   const agentMetrics = useMemo(() => computeAgentMetrics(filteredRuns, agents), [filteredRuns, agents]);
   const modelMetrics = useMemo(() => computeModelMetrics(filteredRuns), [filteredRuns]);
+
+  // Merge per-agent accurate counts from /v1/usage (includes bridge spend, full history).
+  const mergedAgentMetrics = useMemo(() => {
+    if (!fleetUsage) return agentMetrics;
+    const byName = new Map(fleetUsage.byAgent.map((a) => [a.agentName, a]));
+    return agentMetrics.map((m) => {
+      const u = byName.get(m.name);
+      if (!u) return m;
+      const terminal = u.succeeded + u.failed;
+      return {
+        ...m,
+        totalRuns: u.runs,
+        succeeded: u.succeeded,
+        failed: u.failed,
+        totalCost: u.costUsd,
+        avgCost: u.runs > 0 ? u.costUsd / u.runs : 0,
+        successRate: terminal > 0 ? u.succeeded / terminal : 0,
+        errorRate: terminal > 0 ? u.failed / terminal : 0,
+      };
+    });
+  }, [agentMetrics, fleetUsage]);
 
   // Daily aggregates for the trend chart. Buckets each run by UTC date,
   // then walks forward over the chosen window so empty days render as zero.
@@ -288,13 +316,21 @@ export default function EvaluationsPage() {
     };
   }, [filteredRuns, timeRange]);
 
-  // Global stats
-  const totalRuns = filteredRuns.length;
-  const totalSucceeded = filteredRuns.filter((r) => r.status === "succeeded").length;
-  const totalFailed = filteredRuns.filter((r) => r.status === "failed").length;
-  const totalCost = filteredRuns.reduce((s, r) => s + (r.costUsd ?? 0), 0);
+  // Global stats — prefer /v1/usage (accurate, full history) over the capped run list.
+  // Period mapping: 7d → week, 30d → month, all → total.
+  const usagePeriod = fleetUsage?.periods[
+    timeRange === "7d" ? "week" : timeRange === "30d" ? "month" : "total"
+  ] ?? null;
+
+  const totalRuns = usagePeriod?.runs ?? filteredRuns.length;
+  const totalSucceeded = usagePeriod?.succeeded ?? filteredRuns.filter((r) => r.status === "succeeded").length;
+  const totalFailed = usagePeriod?.failed ?? filteredRuns.filter((r) => r.status === "failed").length;
+  const totalCost = usagePeriod?.costUsd ?? filteredRuns.reduce((s, r) => s + (r.costUsd ?? 0), 0);
   const avgCost = totalRuns > 0 ? totalCost / totalRuns : 0;
-  const successRate = totalRuns > 0 ? totalSucceeded / totalRuns : 0;
+  // Terminal-only success rate: excludes in-flight runs so an active run doesn't
+  // dilute the rate.
+  const terminalTotal = totalSucceeded + totalFailed;
+  const successRate = terminalTotal > 0 ? totalSucceeded / terminalTotal : 0;
 
   const latencies = filteredRuns
     .filter((r) => r.startedAt && r.finishedAt)
@@ -303,7 +339,7 @@ export default function EvaluationsPage() {
 
   const totalTokens = filteredRuns.reduce((s, r) => s + (r.tokensIn ?? 0) + (r.tokensOut ?? 0), 0);
 
-  const maxCostAgent = agentMetrics.reduce<AgentMetrics | null>((max, a) => (!max || a.totalCost > max.totalCost ? a : max), null);
+  const maxCostAgent = mergedAgentMetrics.reduce<AgentMetrics | null>((max, a) => (!max || a.totalCost > max.totalCost ? a : max), null);
 
   if (loading) {
     return (
@@ -358,7 +394,7 @@ export default function EvaluationsPage() {
           <StatCard
             label="Success rate"
             value={pct(successRate)}
-            subValue={`${totalSucceeded} succeeded / ${totalRuns} total`}
+            subValue={`${totalSucceeded} succeeded / ${terminalTotal} terminal`}
             icon={CheckCircle2}
             iconColor="text-emerald-400"
             iconBg="bg-emerald-500/10"
@@ -419,7 +455,7 @@ export default function EvaluationsPage() {
             <Bot className="h-4 w-4 text-zinc-500" />
             Agent Performance
           </h2>
-          {agentMetrics.length === 0 ? (
+          {mergedAgentMetrics.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-800 bg-surface-1 py-12">
               <BarChart3 className="mb-3 h-8 w-8 text-zinc-600" />
               <p className="text-sm text-zinc-500">No agent data yet. Run some agents to see metrics.</p>
@@ -439,7 +475,7 @@ export default function EvaluationsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/50">
-                  {agentMetrics.map((a) => (
+                  {mergedAgentMetrics.map((a) => (
                     <tr key={a.name} className="bg-surface-0 transition-colors hover:bg-surface-1">
                       <td className="px-4 py-3">
                         <span className="font-medium text-zinc-200">{a.name}</span>
@@ -489,7 +525,7 @@ export default function EvaluationsPage() {
             <DollarSign className="h-4 w-4 text-zinc-500" />
             Cost Attribution
           </h2>
-          {agentMetrics.length === 0 ? (
+          {mergedAgentMetrics.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-zinc-800 bg-surface-1 py-12">
               <DollarSign className="mb-3 h-8 w-8 text-zinc-600" />
               <p className="text-sm text-zinc-500">No cost data available yet.</p>
@@ -500,7 +536,7 @@ export default function EvaluationsPage() {
               <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
                 <h3 className="mb-4 text-xs font-medium text-zinc-500 uppercase tracking-wide">Cost by agent</h3>
                 <div className="space-y-3">
-                  {agentMetrics
+                  {mergedAgentMetrics
                     .filter((a) => a.totalCost > 0)
                     .slice(0, 8)
                     .map((a) => (
@@ -516,7 +552,7 @@ export default function EvaluationsPage() {
                         />
                       </div>
                     ))}
-                  {agentMetrics.filter((a) => a.totalCost > 0).length === 0 && (
+                  {mergedAgentMetrics.filter((a) => a.totalCost > 0).length === 0 && (
                     <p className="py-4 text-center text-xs text-zinc-600">No cost data</p>
                   )}
                 </div>
@@ -547,7 +583,7 @@ export default function EvaluationsPage() {
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-zinc-400">Active agents</span>
                     <span className="text-sm font-medium text-zinc-200">
-                      {agentMetrics.filter((a) => a.totalRuns > 0).length}
+                      {mergedAgentMetrics.filter((a) => a.totalRuns > 0).length}
                     </span>
                   </div>
                 </div>
@@ -646,7 +682,7 @@ export default function EvaluationsPage() {
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
               <h3 className="mb-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">Error rates</h3>
               <div className="space-y-2">
-                {agentMetrics
+                {mergedAgentMetrics
                   .filter((a) => a.totalRuns > 0)
                   .sort((a, b) => b.errorRate - a.errorRate)
                   .slice(0, 5)
@@ -667,7 +703,7 @@ export default function EvaluationsPage() {
                       </span>
                     </div>
                   ))}
-                {agentMetrics.filter((a) => a.totalRuns > 0).length === 0 && (
+                {mergedAgentMetrics.filter((a) => a.totalRuns > 0).length === 0 && (
                   <p className="py-4 text-center text-xs text-zinc-600">No data</p>
                 )}
               </div>

@@ -270,6 +270,7 @@ func main() {
 
 	// Futuristic surface: cost forecasting, policy budgets, marketplace,
 	// MCP registry, eval-in-CI, A/B experiments.
+	usageHandler := handlers.NewUsageHandler(srv, authHandler)
 	forecastHandler := handlers.NewForecastHandler(srv, authHandler)
 	budgetHandler := handlers.NewBudgetHandler(srv, authHandler)
 	marketplaceHandler := handlers.NewMarketplaceHandler(srv, authHandler)
@@ -510,6 +511,9 @@ func main() {
 
 	// Pre-run cost forecaster.
 	httpMux.HandleFunc("POST /v1/runs/forecast", forecastHandler.Forecast)
+
+	// Accurate spend + run-health aggregation (agent_usage_daily + runs).
+	httpMux.HandleFunc("GET /v1/usage", usageHandler.GetUsage)
 
 	// Policy-as-code budgets (per-agent cost + per-tool rate limits).
 	httpMux.HandleFunc("PUT /v1/agents/{name}/budget", budgetHandler.UpsertBudget)

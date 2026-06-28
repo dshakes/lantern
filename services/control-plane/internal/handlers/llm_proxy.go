@@ -3104,6 +3104,26 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 	return "", nil, "", "", 0, 0, fmt.Errorf("all configured providers failed: %w", lastErr)
 }
 
+// CompleteInternalWithUsage is the cost-aware in-process entry point for
+// one-shot completions. It returns the LLM text together with token counts
+// and estimated cost so callers can attribute spend to a run.
+//
+// userFacing=true is hardcoded (see CompleteInternal for rationale).
+func (h *LlmProxyHandler) CompleteInternalWithUsage(ctx context.Context, tenantID, system, user string) (text string, tokensIn, tokensOut int64, costUsd float64, err error) {
+	messages := []map[string]any{
+		{"role": "system", "content": system},
+		{"role": "user", "content": user},
+	}
+	const userFacing = true
+	var provider, model string
+	text, _, provider, model, tokensIn, tokensOut, err = h.callLLMWithFailover(ctx, tenantID, messages, nil, nil, nil, nil, 1, userFacing)
+	if err != nil {
+		return "", 0, 0, 0, err
+	}
+	costUsd = estimateCost(provider, model, int(tokensIn), int(tokensOut))
+	return strings.TrimSpace(text), tokensIn, tokensOut, costUsd, nil
+}
+
 // CompleteInternal is the in-process entry point for one-shot
 // completions issued by other Go handlers (SMS, voice, escalation).
 // It reuses callLLMWithFailover so the same provider chain + retry
@@ -3114,16 +3134,8 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 // that reaches a real end-user, so the local claude-code CLI must never
 // be in the provider chain.
 func (h *LlmProxyHandler) CompleteInternal(ctx context.Context, tenantID, system, user string, _ int) (string, error) {
-	messages := []map[string]any{
-		{"role": "system", "content": system},
-		{"role": "user", "content": user},
-	}
-	const userFacing = true
-	text, _, _, _, _, _, err := h.callLLMWithFailover(ctx, tenantID, messages, nil, nil, nil, nil, 1, userFacing)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(text), nil
+	text, _, _, _, err := h.CompleteInternalWithUsage(ctx, tenantID, system, user)
+	return text, err
 }
 
 // ---------- OCR / Vision endpoint ----------

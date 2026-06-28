@@ -32,6 +32,42 @@ import (
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
+// ---------- loopUsage ----------
+
+// loopUsage accumulates token/cost counts across all LLM calls in one loop run.
+// The completeFn wrapper in rest.go adds into it; finalizeLoopRun reads it.
+type loopUsage struct {
+	TokensIn  int64
+	TokensOut int64
+	CostUsd   float64
+}
+
+// finalizeLoopRun marks the run succeeded and records usage in the daily rollup.
+// Called from executeRunInlineSync immediately after runLoopAgentIfPresent
+// returns true, mirroring the normal-path finalization at rest.go ~1502.
+//
+// rls-exempt: inline executor — runs write keyed by id (authorized run);
+// journal_events is RLS-exempt child table; RecordUsage scopes by tenant_id.
+func finalizeLoopRun(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, runID, tenantID, agentName string, u loopUsage) {
+	// Use the loop_complete journal event as the run's output document.
+	var outPayload []byte
+	_ = pool.QueryRow(ctx,
+		`SELECT payload FROM journal_events WHERE run_id = $1 AND kind = 'loop_complete' LIMIT 1`, runID,
+	).Scan(&outPayload)
+	if len(outPayload) == 0 {
+		outPayload = []byte(`{}`)
+	}
+	// rls-exempt: inline executor — runs write keyed by id (authorized run).
+	_, _ = pool.Exec(ctx,
+		`UPDATE runs SET status = 'succeeded', finished_at = now(), output = $2::jsonb, tokens_in = $3, tokens_out = $4, cost_usd = $5 WHERE id = $1`,
+		runID, string(outPayload), u.TokensIn, u.TokensOut, u.CostUsd,
+	)
+	if recErr := RecordUsage(ctx, pool, tenantID, agentName, u.TokensIn, u.TokensOut, u.CostUsd, map[string]int{}); recErr != nil {
+		logger.Warn("loop-agent: RecordUsage failed",
+			zap.String("run_id", runID), zap.Error(recErr))
+	}
+}
+
 // ---------- LoopManifest ----------
 
 // LoopManifest is the agent_versions.manifest shape for loop agents.
@@ -398,6 +434,22 @@ func runLoopAgentIfPresent(
 	role := m.Role
 	if role == "" {
 		role = "concierge"
+	}
+
+	// Idempotency guard: if a loop_complete event already exists for this run,
+	// the body executed in a prior process that crashed before the run row was
+	// finalized. Skip re-execution so commitments/cursors are not double-advanced;
+	// the caller's finalizeLoopRun will finalize the run from the existing event.
+	// rls-exempt: journal_events — RLS-exempt child table keyed by run_id.
+	var prevComplete int
+	_ = pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM journal_events WHERE run_id = $1 AND kind = 'loop_complete'`,
+		runID,
+	).Scan(&prevComplete)
+	if prevComplete > 0 {
+		logger.Info("loop-agent: loop_complete already present — skipping re-run (idempotent)",
+			zap.String("run_id", runID), zap.String("role", role))
+		return true
 	}
 
 	logger.Info("loop-agent: dispatching loop run",

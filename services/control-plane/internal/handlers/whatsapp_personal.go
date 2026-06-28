@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
@@ -338,7 +339,7 @@ func (h *WhatsAppPersonalHandler) ListDrafts(w http.ResponseWriter, r *http.Requ
 		defer rows.Close()
 		for rows.Next() {
 			var id, jid, displayName, inbound, draft, st, final, channel string
-			var createdAt string
+			var createdAt time.Time
 			if e := rows.Scan(&id, &jid, &displayName, &inbound, &draft, &st, &final, &createdAt, &channel); e != nil {
 				continue
 			}
@@ -351,7 +352,7 @@ func (h *WhatsAppPersonalHandler) ListDrafts(w http.ResponseWriter, r *http.Requ
 				"status":      st,
 				"finalText":   final,
 				"channel":     channel,
-				"createdAt":   createdAt,
+				"createdAt":   createdAt.Format(time.RFC3339),
 			})
 		}
 		return rows.Err()

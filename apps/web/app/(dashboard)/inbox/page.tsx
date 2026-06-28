@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
+import type { FleetUsage } from "@/lib/api";
 import type { Run, RunStatus } from "@/lib/mock-data";
 import {
   groupRunsBySession,
@@ -92,6 +93,8 @@ export default function MissionControlPage() {
   const [section, setSection] = useState<Section>("fleet");
   const [sort, setSort] = useState<FleetSort>("health");
   const [lastUpdated, setLastUpdated] = useState<number>(Date.now());
+  const [fleetUsage, setFleetUsage] = useState<FleetUsage | null>(null);
+  const [agentTotal, setAgentTotal] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,10 +121,29 @@ export default function MissionControlPage() {
     };
   }, []);
 
+  // Fetch accurate cost + agent count once. The runs poll handles liveness;
+  // this corrects the two summary fields that the capped run list gets wrong.
+  useEffect(() => {
+    Promise.all([api.getFleetUsage(), api.listAgents()])
+      .then(([u, agents]) => {
+        setFleetUsage(u);
+        setAgentTotal(agents.length);
+      })
+      .catch(() => {});
+  }, []);
+
   const fleet = useMemo(() => computeFleetHealth(runs ?? []), [runs]);
   const alerts = useMemo(() => computeAlerts(fleet), [fleet]);
   const summary = useMemo(() => summarizeFleet(fleet, alerts), [fleet, alerts]);
   const sortedFleet = useMemo(() => sortFleet(fleet, sort), [fleet, sort]);
+
+  // Override the two fields that the capped run list gets wrong: spend and
+  // agent count. Per-agent success rates come from fleet-health (correct).
+  const displaySummary = useMemo(() => ({
+    ...summary,
+    agentCount: agentTotal ?? summary.agentCount,
+    costTodayUsd: fleetUsage?.periods.today.costUsd ?? summary.costTodayUsd,
+  }), [summary, agentTotal, fleetUsage]);
 
   const queue = useMemo(() => {
     const list = runs ?? [];
@@ -139,7 +161,7 @@ export default function MissionControlPage() {
         description="Fleet-wide operations across every agent — health, spend, live work, and what needs you. All metrics derived from real runs."
       />
 
-      <CommandStrip summary={summary} lastUpdated={lastUpdated} loading={loading} />
+      <CommandStrip summary={displaySummary} lastUpdated={lastUpdated} loading={loading} />
 
       <div className="flex-1 px-6 pb-10 pt-6 md:px-8">
         {/* Section switch — fleet is primary, activity feed preserved behind a tab. */}
@@ -167,7 +189,7 @@ export default function MissionControlPage() {
               </div>
               {/* Secondary column — alerts + compact queues. */}
               <aside className="flex flex-col gap-6">
-                <AlertsPanel alerts={alerts} fleet={fleet} totalCostToday={summary.costTodayUsd} />
+                <AlertsPanel alerts={alerts} fleet={fleet} totalCostToday={displaySummary.costTodayUsd} />
                 <ActionQueue title="Live now" tone="info" runs={queue.live} emptyHint="No runs in flight." icon={<Play className="h-3.5 w-3.5" />} />
                 <ActionQueue title="Needs review" tone="warn" runs={queue.needsReview} emptyHint="Nothing to review." icon={<AlertTriangle className="h-3.5 w-3.5" />} />
               </aside>
