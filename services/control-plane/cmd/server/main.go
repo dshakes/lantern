@@ -625,6 +625,15 @@ func main() {
 	gdprHandler := handlers.NewGDPRHandler(srv, authHandler)
 	httpMux.HandleFunc("DELETE /v1/tenants/{id}", gdprHandler.DeleteTenant)
 
+	// Errand-runner v1: owner-confirmed outbound AI calls (FCC/TCPA compliant).
+	// Gated by LANTERN_ERRAND=1/true/on; all endpoints 404 when off (default).
+	// confirm-and-call is the SOLE dial path and requires owner/admin role.
+	errandHandler := handlers.NewErrandHandler(srv, authHandler)
+	httpMux.HandleFunc("POST /v1/errands", errandHandler.Propose)
+	httpMux.HandleFunc("GET /v1/errands", errandHandler.List)
+	httpMux.HandleFunc("POST /v1/errands/{id}/confirm-and-call", errandHandler.ConfirmAndCall)
+	httpMux.HandleFunc("POST /v1/errands/{id}/opt-out", errandHandler.OptOut)
+
 	// Headless-agent runtime governance — REST surface in front of the
 	// Firecracker-backed RuntimeScheduler at :50055. Quota-gated,
 	// tenant-scoped, audit-logged.
