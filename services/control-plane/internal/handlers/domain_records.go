@@ -44,7 +44,7 @@ func (h *DomainRecordHandler) logger() *zap.Logger {
 
 // valid enum values for domain and source.
 var (
-	validDomains       = map[string]bool{"health": true, "vehicle": true, "career": true}
+	validDomains       = map[string]bool{"health": true, "vehicle": true, "career": true, "travel": true, "home": true}
 	validRecordSources = map[string]bool{"gmail": true, "file": true, "web": true, "manual": true}
 )
 
@@ -108,7 +108,7 @@ func (h *DomainRecordHandler) CreateDomainRecord(w http.ResponseWriter, r *http.
 		return
 	}
 	if !validDomains[body.Domain] {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "domain must be one of health, vehicle, career"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "domain must be one of health, vehicle, career, travel, home"})
 		return
 	}
 	if body.Kind == "" {
