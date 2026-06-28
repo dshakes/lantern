@@ -782,5 +782,236 @@ func TestFinancialSentinel_NoBills(t *testing.T) {
 	}
 }
 
+// ---------- TestDomainCoach ----------
+
+// seedDomainRecord inserts a domain_records row directly (bypassing the handler).
+// fields_encrypted is stored as plain JSON because secrets.EncryptString is a
+// pass-through in tests (no LANTERN_CREDENTIAL_KEY set).
+func seedDomainRecord(t *testing.T, pool *pgxpool.Pool, tenantID, domain, kind, title, fields string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO domain_records (tenant_id, domain, kind, title, fields_encrypted, source)
+		VALUES ($1::uuid, $2, $3, $4, $5, 'gmail')
+	`, tenantID, domain, kind, title, fields); err != nil {
+		t.Fatalf("seedDomainRecord: %v", err)
+	}
+}
+
+// seedDomainObligation inserts a commitment with source=domain and status='open'.
+func seedDomainObligation(t *testing.T, pool *pgxpool.Pool, tenantID, domain, title string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO commitments (tenant_id, title, source, kind, tier, urgency, status)
+		VALUES ($1::uuid, $2, $3, $3, 'meso', 'normal', 'open')
+	`, tenantID, title, domain); err != nil {
+		t.Fatalf("seedDomainObligation: %v", err)
+	}
+}
+
+// TestDomainCoach_CreatesCommitment seeds 2 health records + 1 open obligation,
+// stubs the LLM, and asserts a single coaching commitment (kind='coaching') plus
+// a domain_coached journal event are created.
+func TestDomainCoach_CreatesCommitment(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedBodyTenant(t, pool)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM domain_records WHERE tenant_id = $1::uuid", tenant)
+	})
+	runID := insertBodyRun(t, pool, tenant, "coach-test-create")
+
+	// Seed health records (fields stored as plain JSON — pass-through in test).
+	seedDomainRecord(t, pool, tenant, "health", "lab_result", "Cholesterol panel", `{"value":"195 mg/dL","status":"normal"}`)
+	seedDomainRecord(t, pool, tenant, "health", "appointment", "Annual physical", `{"date":"2026-05-10"}`)
+
+	// Seed one open obligation from the health domain.
+	seedDomainObligation(t, pool, tenant, "health", "Schedule follow-up with PCP")
+
+	stubBrief := "Your cholesterol is normal. Annual physical done. Schedule the PCP follow-up soon."
+	completeFn := func(_ context.Context, _, _, _ string) (string, error) {
+		return stubBrief, nil
+	}
+
+	manifest := LoopManifest{Role: "domain_tracker", Domain: "health", Coach: true}
+	err := runDomainCoach(ctx, pool, nopLogger(), tenant, runID, manifest, completeFn)
+	if err != nil {
+		t.Fatalf("runDomainCoach: %v", err)
+	}
+
+	// Assert coaching commitment exists with kind='coaching'.
+	var title, kind string
+	if err := pool.QueryRow(ctx, `
+		SELECT title, kind FROM commitments
+		WHERE tenant_id = $1::uuid AND source = 'health' AND kind = 'coaching'
+	`, tenant).Scan(&title, &kind); err != nil {
+		t.Fatalf("read coaching commitment: %v", err)
+	}
+	if title != stubBrief {
+		t.Errorf("title=%q, want %q", title, stubBrief)
+	}
+	if kind != "coaching" {
+		t.Errorf("kind=%q, want 'coaching'", kind)
+	}
+
+	// Assert domain_coached journal event emitted (seq=2).
+	var payload []byte
+	if err := pool.QueryRow(ctx,
+		`SELECT payload FROM journal_events WHERE run_id = $1 AND kind = 'domain_coached'`, runID,
+	).Scan(&payload); err != nil {
+		t.Fatalf("read domain_coached event: %v", err)
+	}
+	var p map[string]any
+	_ = json.Unmarshal(payload, &p)
+	if p["domain"] != "health" {
+		t.Errorf("event domain=%v, want 'health'", p["domain"])
+	}
+	if int(p["brief_chars"].(float64)) != len(stubBrief) {
+		t.Errorf("event brief_chars=%v, want %d", p["brief_chars"], len(stubBrief))
+	}
+}
+
+// TestDomainCoach_Idempotent verifies that running twice in the same ISO week
+// produces exactly ONE commitment row (the second run updates the title, not
+// inserts a duplicate).
+func TestDomainCoach_Idempotent(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedBodyTenant(t, pool)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM domain_records WHERE tenant_id = $1::uuid", tenant)
+	})
+	runID1 := insertBodyRun(t, pool, tenant, "coach-idem-1")
+	runID2 := insertBodyRun(t, pool, tenant, "coach-idem-2")
+
+	seedDomainRecord(t, pool, tenant, "vehicle", "service", "Oil change", `{"mileage":"35000"}`)
+
+	call := 0
+	briefs := []string{"First brief.", "Updated brief."}
+	completeFn := func(_ context.Context, _, _, _ string) (string, error) {
+		b := briefs[call]
+		if call < len(briefs)-1 {
+			call++
+		}
+		return b, nil
+	}
+
+	manifest := LoopManifest{Role: "domain_tracker", Domain: "vehicle", Coach: true}
+
+	if err := runDomainCoach(ctx, pool, nopLogger(), tenant, runID1, manifest, completeFn); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if err := runDomainCoach(ctx, pool, nopLogger(), tenant, runID2, manifest, completeFn); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	// Exactly 1 commitment row in the DB.
+	var count int
+	_ = pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM commitments
+		WHERE tenant_id = $1::uuid AND source = 'vehicle' AND kind = 'coaching'
+	`, tenant).Scan(&count)
+	if count != 1 {
+		t.Errorf("commitment count=%d, want 1 (idempotent within ISO week)", count)
+	}
+
+	// Title updated to the second brief.
+	var title string
+	_ = pool.QueryRow(ctx, `
+		SELECT title FROM commitments
+		WHERE tenant_id = $1::uuid AND source = 'vehicle' AND kind = 'coaching'
+	`, tenant).Scan(&title)
+	if title != "Updated brief." {
+		t.Errorf("title=%q, want 'Updated brief.' (second run should update)", title)
+	}
+}
+
+// TestDomainCoach_LLMFallback verifies that when the LLM fails the function
+// still creates a commitment using the deterministic template brief.
+func TestDomainCoach_LLMFallback(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedBodyTenant(t, pool)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM domain_records WHERE tenant_id = $1::uuid", tenant)
+	})
+	runID := insertBodyRun(t, pool, tenant, "coach-fallback")
+
+	seedDomainRecord(t, pool, tenant, "career", "certification", "AWS Cloud Practitioner", `{}`)
+	seedDomainObligation(t, pool, tenant, "career", "Renew AWS cert by Aug 2026")
+
+	failFn := func(_ context.Context, _, _, _ string) (string, error) {
+		return "", fmt.Errorf("LLM unavailable")
+	}
+
+	manifest := LoopManifest{Role: "domain_tracker", Domain: "career", Coach: true}
+	if err := runDomainCoach(ctx, pool, nopLogger(), tenant, runID, manifest, failFn); err != nil {
+		t.Fatalf("runDomainCoach should not error on LLM failure: %v", err)
+	}
+
+	// Commitment must exist with non-empty title (template brief).
+	var title string
+	if err := pool.QueryRow(ctx, `
+		SELECT title FROM commitments
+		WHERE tenant_id = $1::uuid AND source = 'career' AND kind = 'coaching'
+	`, tenant).Scan(&title); err != nil {
+		t.Fatalf("coaching commitment not created on LLM failure: %v", err)
+	}
+	if title == "" {
+		t.Error("template brief is empty")
+	}
+	if !strings.Contains(title, "career") {
+		t.Errorf("template brief=%q — missing domain name", title)
+	}
+
+	// domain_coached journal event still emitted.
+	var eventCount int
+	_ = pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM journal_events WHERE run_id = $1 AND kind = 'domain_coached'
+	`, runID).Scan(&eventCount)
+	if eventCount != 1 {
+		t.Errorf("domain_coached event count=%d, want 1", eventCount)
+	}
+}
+
+// TestDomainCoach_EmptyDomain verifies graceful no-op when the domain has
+// neither records nor obligations: no commitment created, no journal event.
+func TestDomainCoach_EmptyDomain(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	tenant := seedBodyTenant(t, pool)
+	runID := insertBodyRun(t, pool, tenant, "coach-empty")
+
+	manifest := LoopManifest{Role: "domain_tracker", Domain: "health", Coach: true}
+	if err := runDomainCoach(ctx, pool, nopLogger(), tenant, runID, manifest, nil); err != nil {
+		t.Fatalf("runDomainCoach on empty domain: %v", err)
+	}
+
+	var count int
+	_ = pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM commitments WHERE tenant_id = $1::uuid AND kind = 'coaching'
+	`, tenant).Scan(&count)
+	if count != 0 {
+		t.Errorf("commitment count=%d, want 0 (empty domain → no-op)", count)
+	}
+
+	var eventCount int
+	_ = pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM journal_events WHERE run_id = $1 AND kind = 'domain_coached'
+	`, runID).Scan(&eventCount)
+	if eventCount != 0 {
+		t.Errorf("domain_coached event count=%d, want 0 (no-op)", eventCount)
+	}
+}
+
 // Ensure the test file compiles even when time is unused directly.
 var _ = time.Now

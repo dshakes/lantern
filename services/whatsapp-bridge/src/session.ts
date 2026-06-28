@@ -17,7 +17,7 @@ import { authedFetch } from "@lantern/bridge-core/auth";
 import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
 import { parseSignals, presenceFromSignals, type SignalPresence } from "@lantern/bridge-core/device-signals";
-import { computeCommuteSurface, computeEnergyNudge } from "@lantern/bridge-core/proactive-loops";
+import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
@@ -1473,6 +1473,25 @@ export class WhatsAppSession {
   private energyTimer: ReturnType<typeof setInterval> | null = null;
   private energyNudgedDate = ""; // YYYY-MM-DD — set after sending, reset on new date
   private readonly energyNudgeFile = join(homedir(), ".lantern", "whatsapp-energy-nudge.json");
+  // ── Health coach (LANTERN_HEALTH=on, default OFF) ──────────────────────────
+  // Ships dark. Nudges daily on step goal + acks workouts + weekly trend.
+  // ponytail: ships dark; owner flips LANTERN_HEALTH=on to enable.
+  private static readonly HEALTH_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_HEALTH ?? "").toLowerCase());
+  private static readonly HEALTH_INTERVAL_MS = 60 * 60_000; // 60 min
+  private healthTimer: ReturnType<typeof setInterval> | null = null;
+  private healthNudgedDate = ""; // YYYY-MM-DD
+  private healthWeeklyFiredWeek = ""; // "YYYY-WNN" — weekly summary dedup
+  private readonly healthNudgeFile = join(homedir(), ".lantern", "whatsapp-health-nudge.json");
+  // ── Focus guardian (LANTERN_FOCUS=on, default OFF) ─────────────────────────
+  // Ships dark. Holds non-urgent nudges during heads-down; recaps on release.
+  // ponytail: ships dark; owner flips LANTERN_FOCUS=on to enable.
+  private static readonly FOCUS_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_FOCUS ?? "").toLowerCase());
+  private focusWasActive = false; // updated each health tick
+  private focusHeldItems: string[] = []; // nudge texts buffered during focus
+  private focusActiveStartMs: number | null = null;
+  private readonly focusHeldFile = join(homedir(), ".lantern", "whatsapp-focus-held.json");
   // 3) Draft-and-confirm for LOW-confidence replies. OPT-IN
   //    (LANTERN_DRAFT_HIGH_STAKES=on) — default OFF. On-by-default silently
   //    drafted normal short/cold-contact family messages instead of replying
@@ -1648,6 +1667,16 @@ export class WhatsAppSession {
         WhatsAppSession.ENERGY_INTERVAL_MS,
       );
       this.energyTimer.unref?.();
+    }
+    // Health coach (LANTERN_HEALTH=on only).
+    if (WhatsAppSession.HEALTH_ENABLED) {
+      this.loadHealthNudgeState();
+      this.loadFocusHeldItems();
+      this.healthTimer = setInterval(
+        () => void this.runHealthCoachTick(),
+        WhatsAppSession.HEALTH_INTERVAL_MS,
+      );
+      this.healthTimer.unref?.();
     }
   }
 
@@ -8474,6 +8503,18 @@ export class WhatsAppSession {
       for (const n of nudges) {
         if (firedThisTick >= WhatsAppSession.NUDGE_MAX_PER_TICK) break;
         if (this.firedNudgeKeys.has(n.dedupeKey)) continue;
+
+        // Focus guardian: hold non-urgent nudges (priority < 80) when heads-down.
+        // URGENT (pre-meeting, relationship-date priority ≥ 80) always sends.
+        // ponytail: focusWasActive is updated by runHealthCoachTick; at most 60 min lag.
+        if (WhatsAppSession.FOCUS_ENABLED && this.focusWasActive && n.priority < 80) {
+          this.focusHeldItems.push(formatNudgeForOwner(n));
+          this.saveFocusHeldItems();
+          this.firedNudgeKeys.add(n.dedupeKey); // prevent re-queue on next tick
+          mutated = true;
+          continue;
+        }
+
         const ok = await this.fireNudge(n);
         // Mark fired even on send failure: a partial WA outage shouldn't make
         // us re-nag the same thing every 45 min once it recovers.
@@ -8698,6 +8739,134 @@ export class WhatsAppSession {
       this.logger.info("energy-guardian nudge fired");
     } catch (err) {
       this.logger.debug({ err }, "energy tick failed (non-fatal)");
+    }
+  }
+
+  private loadHealthNudgeState(): void {
+    try {
+      if (!existsSync(this.healthNudgeFile)) return;
+      const raw = readFileSync(this.healthNudgeFile, "utf-8");
+      const data = JSON.parse(raw) as { date?: string; weekKey?: string };
+      if (typeof data.date === "string") this.healthNudgedDate = data.date;
+      if (typeof data.weekKey === "string") this.healthWeeklyFiredWeek = data.weekKey;
+    } catch { /* non-fatal */ }
+  }
+
+  private saveHealthNudgeState(date: string, weekKey?: string): void {
+    try {
+      mkdirSync(dirname(this.healthNudgeFile), { recursive: true });
+      const payload: Record<string, string> = { date };
+      if (weekKey) payload.weekKey = weekKey;
+      writeFileSync(this.healthNudgeFile, JSON.stringify(payload), { mode: 0o600 });
+      try { chmodSync(this.healthNudgeFile, 0o600); } catch {}
+    } catch { /* non-fatal */ }
+  }
+
+  private loadFocusHeldItems(): void {
+    try {
+      if (!existsSync(this.focusHeldFile)) return;
+      const raw = readFileSync(this.focusHeldFile, "utf-8");
+      const data = JSON.parse(raw) as { items?: string[] };
+      if (Array.isArray(data.items)) this.focusHeldItems = data.items;
+    } catch { /* non-fatal */ }
+  }
+
+  private saveFocusHeldItems(): void {
+    try {
+      mkdirSync(dirname(this.focusHeldFile), { recursive: true });
+      writeFileSync(this.focusHeldFile, JSON.stringify({ items: this.focusHeldItems }), { mode: 0o600 });
+      try { chmodSync(this.focusHeldFile, 0o600); } catch {}
+    } catch { /* non-fatal */ }
+  }
+
+  /**
+   * Health coach tick (~60 min). Nudges once per day when steps are below goal;
+   * acks a logged workout; sends a weekly trend on Mondays.
+   * Also updates focus guardian state so runNudgeTick can hold non-urgent nudges.
+   * OWNER-ONLY: sends via sendSelf; gated on killSwitch + quiet hours + socket.
+   */
+  private async runHealthCoachTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      if (!this.socket || !this.connected || !this.ownJid()) return;
+      const hour = this.ownerLocalHour();
+      if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
+
+      const nowMs = Date.now();
+      const today = new Date(nowMs).toISOString().slice(0, 10);
+
+      // Read device signals (shared path with commute / energy ticks).
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+      const signals = parseSignals(tail);
+
+      // ── Focus guardian state update ─────────────────────────────────────────
+      if (WhatsAppSession.FOCUS_ENABLED) {
+        const presence = presenceFromSignals(signals, { nowMs });
+        const presenceState = presence?.state ?? null;
+        const isFocused = presenceState === "dnd" || presenceState === "busy";
+        const focusResult = computeFocusGuardian(presenceState, this.focusHeldItems, {
+          wasFocused: this.focusWasActive,
+          durationMs:
+            isFocused && this.focusActiveStartMs ? nowMs - this.focusActiveStartMs : undefined,
+        });
+        if (focusResult?.action === "release") {
+          const releaseText = (focusResult as { action: "release"; text: string }).text;
+          await this.sendSelf(releaseText).catch(() => {});
+          this.focusHeldItems = [];
+          this.saveFocusHeldItems();
+          this.logger.info("focus-guardian: released held items");
+        }
+        if (isFocused && !this.focusWasActive) this.focusActiveStartMs = nowMs;
+        else if (!isFocused) this.focusActiveStartMs = null;
+        this.focusWasActive = isFocused;
+      }
+
+      // ── Daily step-goal / workout nudge ───────────────────────────────────
+      const stepGoal = parseInt(process.env.LANTERN_STEP_GOAL || "", 10) || 8000;
+      const nudge = computeHealthCoachNudge(signals, {
+        alreadyNudgedToday: this.healthNudgedDate === today,
+        hour,
+        stepGoal,
+        nowMs,
+      });
+      if (nudge) {
+        if (WhatsAppSession.FOCUS_ENABLED && this.focusWasActive) {
+          this.focusHeldItems.push(nudge.text);
+          this.saveFocusHeldItems();
+          this.logger.debug("health-coach: nudge held during focus");
+        } else {
+          await this.sendSelf(nudge.text).catch(() => {});
+          this.healthNudgedDate = today;
+          this.saveHealthNudgeState(today, this.healthWeeklyFiredWeek || undefined);
+          this.logger.info("health-coach nudge fired");
+        }
+      }
+
+      // ── Weekly summary (Mondays) ───────────────────────────────────────────
+      const d = new Date(nowMs);
+      if (d.getDay() === 1) {
+        const jan1 = new Date(d.getFullYear(), 0, 1);
+        const weekNum = Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7);
+        const weekKey = `${d.getFullYear()}-W${weekNum}`;
+        if (this.healthWeeklyFiredWeek !== weekKey) {
+          const weeklySummary = computeWeeklyHealthSummary(signals, { nowMs });
+          if (weeklySummary) {
+            if (WhatsAppSession.FOCUS_ENABLED && this.focusWasActive) {
+              this.focusHeldItems.push(weeklySummary.text);
+              this.saveFocusHeldItems();
+            } else {
+              await this.sendSelf(weeklySummary.text).catch(() => {});
+            }
+          }
+          this.healthWeeklyFiredWeek = weekKey;
+          this.saveHealthNudgeState(this.healthNudgedDate || today, weekKey);
+          this.logger.info({ weekKey }, "health-coach weekly summary tick");
+        }
+      }
+    } catch (err) {
+      this.logger.debug({ err }, "health-coach tick failed (non-fatal)");
     }
   }
 
@@ -8964,6 +9133,10 @@ export class WhatsAppSession {
     if (this.energyTimer) {
       clearInterval(this.energyTimer);
       this.energyTimer = null;
+    }
+    if (this.healthTimer) {
+      clearInterval(this.healthTimer);
+      this.healthTimer = null;
     }
     // Clear per-session concierge state so a reconnect starts fresh.
     this.pendingConcierge.clear();

@@ -68,6 +68,8 @@ var (
 	validSources = map[string]bool{
 		"spouse": true, "self": true, "vip": true, "bill": true,
 		"email": true, "appointment": true, "other": true,
+		// Domain-tracker sources (one per life domain).
+		"health": true, "vehicle": true, "career": true,
 	}
 )
 
