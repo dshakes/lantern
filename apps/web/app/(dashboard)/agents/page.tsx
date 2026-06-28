@@ -46,6 +46,26 @@ const statusConfig: Record<AgentDisplayStatus, { label: string; dot: string; bg:
   error: { label: "Error", dot: "bg-red-400", bg: "bg-red-500/10", text: "text-red-400" },
 };
 
+// ponytail: static lookup for personal suite agents — shows "how it runs" on the card
+const PERSONAL_RUN_META: Record<string, { runs: string; via: string }> = {
+  "concierge":           { runs: "~45m cron",  via: "self-chat" },
+  "care-coordinator":    { runs: "daily 8am",   via: "/personal Health" },
+  "garage":              { runs: "daily",        via: "/personal Vehicle" },
+  "upskill":             { runs: "daily",        via: "/personal Career" },
+  "travel-concierge":    { runs: "daily",        via: "/personal Travel" },
+  "household":           { runs: "daily",        via: "/personal Home" },
+  "financial-sentinel":  { runs: "daily",        via: "/personal Finance" },
+  "relationship-keeper": { runs: "weekly",       via: "self-chat" },
+  "morning-brief":       { runs: "daily 8am",   via: "self-chat" },
+  "inbox-concierge":     { runs: "daily AM",    via: "self-chat" },
+  "commute-copilot":     { runs: "bridge",       via: "self-chat · LANTERN_COMMUTE" },
+  "energy-guardian":     { runs: "bridge",       via: "self-chat · LANTERN_ENERGY" },
+  "health-coach":        { runs: "bridge",       via: "self-chat · LANTERN_HEALTH" },
+  "focus-guardian":      { runs: "bridge",       via: "self-chat · LANTERN_FOCUS" },
+  "whatsapp-assistant":  { runs: "reactive",     via: "your contacts" },
+  "imessage-assistant":  { runs: "reactive",     via: "your contacts" },
+};
+
 function deriveStatus(agent: Agent, agentRuns: Run[]): AgentDisplayStatus {
   if (agent.status === "archived") return "draft";
   const recent = agentRuns.filter((r) => r.agentName === agent.name);
@@ -301,6 +321,24 @@ export default function AgentsPage() {
               />
             </div>
 
+            {/* Execution model legend — three chips explaining how agents run.
+                Skimmable context for personal suite agents. */}
+            <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[11px] text-zinc-500">
+              <span className="font-semibold uppercase tracking-wider text-[10px] text-zinc-600">Runs as</span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+                Scheduled · Lantern cron
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
+                Bridge loop · on your Mac
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                Reactive · per inbound message
+              </span>
+            </div>
+
             {/* Search — polished input with `/` shortcut + focus glow. */}
             <div className="mb-5">
               <div className="relative max-w-md">
@@ -361,6 +399,12 @@ export default function AgentsPage() {
                     <p className="mt-3 line-clamp-2 text-[11px] leading-relaxed text-zinc-400">
                       {agent.description}
                     </p>
+                    {/* Personal suite meta — runs/cadence + where the owner sees it */}
+                    {PERSONAL_RUN_META[agent.name] && (
+                      <p className="mt-1 text-[11px] text-zinc-600">
+                        {PERSONAL_RUN_META[agent.name].runs} · {PERSONAL_RUN_META[agent.name].via}
+                      </p>
+                    )}
 
                     {/* Stats footer — pinned right after description, not the
                         card bottom. Dimmer separator + inline stats. */}
