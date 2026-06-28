@@ -36,6 +36,19 @@ type LlmProxyHandler struct {
 	// router holds the model-router cutover wiring (task P2-B5/6). Default
 	// zero value = flag-driven, real gRPC dial. See llm_proxy_router.go.
 	router modelRouterDeps
+	// httpClient is the HTTP client used for LLM provider API calls.
+	// Nil means http.DefaultClient. Tests inject a stub transport here.
+	// ponytail: test seam; zero-cost nil-check in hot path, never set in prod.
+	httpClient *http.Client
+}
+
+// llmHTTPClient returns the HTTP client for provider calls.
+// Falls back to http.DefaultClient when no test client is injected.
+func (h *LlmProxyHandler) llmHTTPClient() *http.Client {
+	if h.httpClient != nil {
+		return h.httpClient
+	}
+	return http.DefaultClient
 }
 
 // NewLlmProxyHandler creates a new LlmProxyHandler.
@@ -129,10 +142,14 @@ func (h *LlmProxyHandler) resolveProviderKey(ctx context.Context, tenantID, prov
 	// require every failover call site to carry an injected tenant in ctx — a
 	// risky change to the live path for no isolation the filter doesn't already
 	// give. See ADR 0011 "rls-exempt-by-arg".
-	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT api_key_encrypted FROM llm_provider_configs
-		WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
-	`, tenantID, provider).Scan(&apiKeyEncrypted)
+	// Pool may be nil in unit tests; skip the DB lookup and fall through to env.
+	var err error
+	if h.srv.Pool != nil {
+		err = h.srv.Pool.QueryRow(ctx, `
+			SELECT api_key_encrypted FROM llm_provider_configs
+			WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
+		`, tenantID, provider).Scan(&apiKeyEncrypted)
+	}
 	if err == nil && apiKeyEncrypted != "" {
 		// Decrypt at rest (internal/secrets). Legacy plaintext keys pass
 		// through unchanged; encrypted keys are AES-256-GCM enveloped.
@@ -165,10 +182,13 @@ func (h *LlmProxyHandler) providerAvailable(ctx context.Context, tenantID, provi
 	// rls-exempt: self-scoped by the explicit `tenant_id = $1` filter; called on
 	// the LIVE model-routing path with tenantID as an ARG (rls-exempt-by-arg,
 	// same rationale as resolveProviderKey).
-	_ = h.srv.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM llm_provider_configs
-		WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
-	`, tenantID, provider).Scan(&count)
+	// Pool may be nil in unit tests; skip the DB lookup and rely on env fallback.
+	if h.srv.Pool != nil {
+		_ = h.srv.Pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM llm_provider_configs
+			WHERE tenant_id = $1 AND provider = $2 AND status = 'active'
+		`, tenantID, provider).Scan(&count)
+	}
 	if count > 0 {
 		return true
 	}
@@ -2384,7 +2404,7 @@ func (h *LlmProxyHandler) callLLMWithTools(
 		// one logical call via the run-scoped ctx base.
 		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "openai", model, messages))
 
-		resp, httpErr := http.DefaultClient.Do(req)
+		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
 			return "", invocations, tokensIn, tokensOut, httpErr
 		}
@@ -2507,7 +2527,7 @@ func (h *LlmProxyHandler) callLLMWithTools(
 	// Distinct sub-step of the same logical call (tools-disabled synthesis):
 	// suffix so it dedups on retry but doesn't collide with the loop turns.
 	setLLMIdempotencyHeader(finalHTTPReq, llmIdempotencyKey(ctx, "openai:final", model, msgs))
-	if resp, ferr := http.DefaultClient.Do(finalHTTPReq); ferr == nil {
+	if resp, ferr := h.llmHTTPClient().Do(finalHTTPReq); ferr == nil {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var parsed struct {
@@ -2673,7 +2693,7 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 		// this same logical call doesn't double-bill.
 		setLLMIdempotencyHeader(req, llmIdempotencyKey(ctx, "anthropic", model, messages))
 
-		resp, httpErr := http.DefaultClient.Do(req)
+		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
 			return "", invocations, tokensIn, tokensOut, httpErr
 		}
@@ -2808,7 +2828,7 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 	finalHTTPReq.Header.Set("anthropic-version", "2023-06-01")
 	// Distinct sub-step (tools-disabled synthesis) of the same logical call.
 	setLLMIdempotencyHeader(finalHTTPReq, llmIdempotencyKey(ctx, "anthropic:final", model, messages))
-	if resp, ferr := http.DefaultClient.Do(finalHTTPReq); ferr == nil {
+	if resp, ferr := h.llmHTTPClient().Do(finalHTTPReq); ferr == nil {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		var parsed struct {
@@ -2871,6 +2891,122 @@ func truncateToolResult(s string) string {
 		return s
 	}
 	return s[:toolResultMaxChars] + toolResultTruncSuffix
+}
+
+// oversizeInputBudgetChars is the target total char budget for all non-system
+// messages after truncation. ~80k chars ≈ 20k tokens at 4 chars/token — well
+// under GPT-4o (128k) and Claude (200k) context limits, leaving head-room for
+// the system prompt and the max_tokens output budget.
+// ponytail: char heuristic; upgrade to provider tokenizer if false positives appear.
+const oversizeInputBudgetChars = 80_000
+
+// singleMessageMaxChars caps the content of a single conversation message.
+// Protects against one huge paste / doc overwhelming the context.
+const singleMessageMaxChars = 40_000
+
+// isOversizedInputError returns true when the error indicates the request
+// body was too large for the provider's context window. These errors are
+// recoverable by truncating the input (unlike 401/403 which indicate
+// auth problems that won't be fixed by a smaller payload).
+func isOversizedInputError(errStr string) bool {
+	if errStr == "" {
+		return false
+	}
+	s := strings.ToLower(errStr)
+	markers := []string{
+		"context_length_exceeded",
+		"maximum context length",
+		"request too large",
+		"string too long",
+		"413",
+		"prompt is too long",
+		"tokens > ", // anthropic: "200001 tokens > 200000 maximum"
+		"exceeds the model",
+		"reduce your prompt",
+	}
+	for _, m := range markers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// truncateMessagesForOversize trims the conversation to fit within
+// oversizeInputBudgetChars. Strategy (in order):
+//  1. All system messages are preserved intact — they carry the persona,
+//     tools, and owner-profile context that must not be dropped.
+//  2. Any single non-system message whose content exceeds singleMessageMaxChars
+//     is hard-capped (head kept, tail dropped).
+//  3. If total non-system content still exceeds the budget, oldest non-system
+//     messages are dropped first until the total is within budget.
+//
+// Returns the trimmed slice and the total chars dropped (logged, never the content).
+func truncateMessagesForOversize(messages []map[string]any) ([]map[string]any, int) {
+	if len(messages) == 0 {
+		return messages, 0
+	}
+
+	// Measure total before any change.
+	beforeChars := 0
+	for _, m := range messages {
+		if c, ok := m["content"].(string); ok {
+			beforeChars += len(c)
+		}
+	}
+
+	// Separate system from conversation messages.
+	var system, convo []map[string]any
+	for _, m := range messages {
+		if r, _ := m["role"].(string); r == "system" {
+			system = append(system, m)
+		} else {
+			convo = append(convo, m)
+		}
+	}
+
+	// Step 1: hard-cap individual message content (shallow copy to avoid
+	// mutating the caller's slice — the original messages must be unchanged
+	// so the successful path stays byte-identical).
+	capped := make([]map[string]any, len(convo))
+	for i, m := range convo {
+		if content, ok := m["content"].(string); ok && len(content) > singleMessageMaxChars {
+			mc := make(map[string]any, len(m))
+			for k, v := range m {
+				mc[k] = v
+			}
+			mc["content"] = content[:singleMessageMaxChars]
+			capped[i] = mc
+		} else {
+			capped[i] = m
+		}
+	}
+
+	// Step 2: drop oldest non-system messages until total chars ≤ budget.
+	total := 0
+	for _, m := range capped {
+		if c, ok := m["content"].(string); ok {
+			total += len(c)
+		}
+	}
+	for total > oversizeInputBudgetChars && len(capped) > 1 {
+		if c, ok := capped[0]["content"].(string); ok {
+			total -= len(c)
+		}
+		capped = capped[1:]
+	}
+
+	out := make([]map[string]any, 0, len(system)+len(capped))
+	out = append(out, system...)
+	out = append(out, capped...)
+
+	afterChars := 0
+	for _, m := range out {
+		if c, ok := m["content"].(string); ok {
+			afterChars += len(c)
+		}
+	}
+	return out, beforeChars - afterChars
 }
 
 // Retryable:
@@ -3055,6 +3191,21 @@ func (h *LlmProxyHandler) callLLMWithFailover(
 		text, invs, tin, tout, callErr := h.callLLMWithTools(
 			ctx, cand.Provider, cand.Model, apiKey, messages, tools, dispatch, onToolCall, maxTurns,
 		)
+		// Oversized input: truncate + retry the SAME provider ONCE.
+		// Runs only on error — the success path is never touched.
+		// If truncation doesn't help (still oversized or different error),
+		// fall through to the normal failover / non-retryable break below.
+		if callErr != nil && isOversizedInputError(callErr.Error()) {
+			truncated, charsDropped := truncateMessagesForOversize(messages)
+			h.logger().Warn("LLM input oversized — truncating and retrying same provider",
+				zap.String("provider", cand.Provider),
+				zap.String("model", cand.Model),
+				zap.Int("chars_dropped", charsDropped),
+			)
+			text, invs, tin, tout, callErr = h.callLLMWithTools(
+				ctx, cand.Provider, cand.Model, apiKey, truncated, tools, dispatch, onToolCall, maxTurns,
+			)
+		}
 		// Transient rate-limit: wait the provider-suggested time and retry the
 		// SAME provider ONCE before failing over. TPM limits (OpenAI) clear in
 		// seconds; this turns "Sorry, rate limit" into a brief pause + success.
