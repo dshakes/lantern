@@ -175,7 +175,7 @@ export function OneClickTemplates() {
               {/* Required connectors with live install state. */}
               <div className="mt-4 flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px] text-zinc-600">needs:</span>
-                {t.connectors.map((c) => {
+                {(t.connectors ?? []).map((c) => {
                   const ok = installed.has(c);
                   return (
                     <span
@@ -192,7 +192,7 @@ export function OneClickTemplates() {
                     </span>
                   );
                 })}
-                {t.surfaces.map((s) => (
+                {(t.surfaces ?? []).map((s) => (
                   <span
                     key={s}
                     className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-zinc-400"
