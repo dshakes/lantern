@@ -241,6 +241,20 @@ func (h *RESTHandler) redriveRun(ctx context.Context, run orphanedRun) error {
 		input = map[string]any{}
 	}
 
+	// A loop-agent run that already emitted its loop_complete event has done its
+	// work and merely never finalized (orphaned mid-finalize). Reconcile it to
+	// succeeded WITHOUT re-driving — BEFORE the llmProxy guard, so a momentary
+	// nil-llmProxy window can never spuriously fail already-completed work (the
+	// cause of the historical "llmProxy not wired" loop-run failures).
+	var loopDone int
+	_ = h.srv.Pool.QueryRow(runCtx,
+		`SELECT COUNT(*) FROM journal_events WHERE run_id = $1 AND kind = 'loop_complete'`, run.runID,
+	).Scan(&loopDone)
+	if loopDone > 0 {
+		finalizeLoopRun(runCtx, h.srv.Pool, h.logger(), run.runID, run.tenantID, run.agentName, loopUsage{})
+		return nil
+	}
+
 	if h.llmProxy == nil {
 		return fmt.Errorf("llmProxy not wired — cannot re-drive run %s", run.runID)
 	}
