@@ -96,11 +96,20 @@ export class EpisodicMemory {
     }
   }
 
-  /** Newest-first episodes for a jid (default cap 5). */
-  async forJid(jid: string, limit = 5): Promise<Episode[]> {
+  /**
+   * Episodes for a jid (default cap 5). Newest-first by default; when
+   * `relevantTo` (the inbound text) is supplied, rank by topic-overlap with
+   * the inbound over a WIDER candidate window so an on-topic but older
+   * episode isn't dropped for newer irrelevant ones (recency tiebreak).
+   */
+  async forJid(jid: string, limit = 5, relevantTo?: string): Promise<Episode[]> {
     await this.refreshIfStale();
     const bucket = this.cache?.get(canonicalHandle(jid)) ?? [];
-    return bucket.slice(0, limit);
+    if (!relevantTo?.trim()) return bucket.slice(0, limit);
+    // Rank over a wider pool than `limit` so a relevant older episode can
+    // surface; bucket is already newest-first, so the head is the recent window.
+    const pool = bucket.slice(0, Math.max(limit * 4, 24));
+    return rankEpisodesByRelevance(pool, relevantTo, limit);
   }
 
   /**
@@ -167,6 +176,48 @@ export class EpisodicMemory {
     }
     for (const b of this.cache.values()) b.sort((a, b) => b.ts - a.ts);
   }
+}
+
+// Token-overlap relevance — mirrors owner-voice.ts:overlapScore. Lets an
+// on-topic but older episode beat newer irrelevant ones. Pure + cheap.
+const EP_STOPWORDS = new Set([
+  "the", "and", "you", "your", "for", "are", "was", "but", "not", "with",
+  "this", "that", "have", "has", "can", "will", "would", "what", "when",
+  "how", "why", "yeah", "ok", "okay", "lol", "got", "get", "out", "all",
+]);
+function epTokens(s: string): Set<string> {
+  const out = new Set<string>();
+  for (const t of (s || "").toLowerCase().split(/[^a-zఀ-౿]+/)) {
+    if (t.length >= 3 && !EP_STOPWORDS.has(t)) out.add(t);
+  }
+  return out;
+}
+
+/**
+ * Rank episodes by topic-overlap with the inbound text, newest-first as the
+ * tiebreak. When the inbound has no usable tokens, falls back to pure
+ * recency (the original behavior). Pure; exported so the bridges can rank the
+ * merged (jid + mention) set before slicing for the prompt.
+ */
+export function rankEpisodesByRelevance<T extends Episode>(
+  episodes: T[],
+  inboundText: string,
+  limit: number,
+): T[] {
+  if (episodes.length <= 1) return episodes.slice(0, limit);
+  const q = epTokens(inboundText);
+  if (q.size === 0) {
+    return [...episodes].sort((a, b) => b.ts - a.ts).slice(0, limit);
+  }
+  const scored = episodes.map((ep) => {
+    let hits = 0;
+    for (const t of epTokens(`${ep.topic ?? ""} ${ep.outcome}`)) if (q.has(t)) hits++;
+    return { ep, score: hits };
+  });
+  // Relevance desc; recency (newest ts) desc as the tiebreak — so off-topic
+  // (score 0) episodes still order newest-first among themselves.
+  scored.sort((a, b) => b.score - a.score || b.ep.ts - a.ep.ts);
+  return scored.slice(0, limit).map((x) => x.ep);
 }
 
 /**

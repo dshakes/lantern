@@ -19,6 +19,7 @@
 //   - Persisted state in bridge_state/<tenant>/
 
 import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, chmodSync } from "fs";
+import { homedir } from "os";
 import { basename, join } from "path";
 import type { Logger } from "pino";
 import type { WebSocket } from "ws";
@@ -36,6 +37,7 @@ import {
   countTrailingUnanswered,
   detectBotTells,
   detectEscalation,
+  formatNowContext,
   greetingReply,
   inferStyle,
   isNoReplySentinel,
@@ -47,9 +49,11 @@ import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type Presence
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
+import { composeDigestNarrative } from "@lantern/bridge-core/digest-compose";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
 import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
-import { deviceContextBlock as iphoneContextBlock } from "@lantern/bridge-core/device-signals";
+import { deviceContextBlock as iphoneContextBlock, parseSignals } from "@lantern/bridge-core/device-signals";
+import { computeCommuteSurface, computeEnergyNudge } from "@lantern/bridge-core/proactive-loops";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
   PersonalDocs,
@@ -197,7 +201,7 @@ import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-
 import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
 import { computeHoldFromSamples } from "@lantern/bridge-core/pacing";
-import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode } from "@lantern/bridge-core/episodic-memory";
+import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
 import {
@@ -684,6 +688,21 @@ export class IMessageSession {
   private conciergeNudgedToday = new Set<string>();
   // API client — same pattern as rest of the bridge.
   private readonly commitments = new CommitmentsClient(authedFetch);
+  // ── Commute copilot (LANTERN_COMMUTE=on, default OFF) ──────────────────────
+  // ponytail: ships dark; owner flips LANTERN_COMMUTE=on to enable.
+  private static readonly COMMUTE_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_COMMUTE ?? "").toLowerCase());
+  private static readonly COMMUTE_INTERVAL_MS = 5 * 60_000; // 5 min
+  private commuteTimer: ReturnType<typeof setInterval> | null = null;
+  private commuteDriveFired = false;
+  private commuteWasLastDriving = false;
+  // ── Energy guardian (LANTERN_ENERGY=on, default OFF) ───────────────────────
+  // ponytail: ships dark; owner flips LANTERN_ENERGY=on to enable.
+  private static readonly ENERGY_ENABLED =
+    ["on", "1"].includes((process.env.LANTERN_ENERGY ?? "").toLowerCase());
+  private static readonly ENERGY_INTERVAL_MS = 30 * 60_000; // 30 min
+  private energyTimer: ReturnType<typeof setInterval> | null = null;
+  private energyNudgedDate = ""; // YYYY-MM-DD
 
   // Futuristic helpers
   private agent: AgentClient;
@@ -835,6 +854,8 @@ export class IMessageSession {
     this.startLearningFlywheel();
     this.startAnticipationNudges();
     this.startConcierge();
+    this.startCommuteLoop();
+    this.startEnergyLoop();
     this.startGmailIngest();
     this.startMacUsage();
     this.startIphoneSignals();
@@ -928,10 +949,25 @@ export class IMessageSession {
     const handle = scheduleDigest({
       logger: this.logger,
       cfg: defaultDigestConfig(),
-      collectData: () => {
+      collectData: async () => {
+        const now = Date.now();
         const pausedContacts = [...this.pausedUntil.entries()]
-          .filter(([, t]) => t > Date.now())
+          .filter(([, t]) => t > now)
           .map(([h, t]) => ({ label: this.contactLabel(h), resumesAtMs: t }));
+
+        // Gather enrichment fields in parallel, each best-effort with 5s timeout.
+        const tout = <T>(p: Promise<T>, fallback: T): Promise<T> =>
+          Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), 5000))]);
+
+        const [commitmentRows, sleepHours] = await Promise.all([
+          tout(this.commitments.list({ status: "open", limit: 3 }), []),
+          tout(this.digestReadSleepHours(), null),
+        ]);
+
+        const overdue = this.gatherAwaitingReply(now);
+        const ownerName = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0] || "the owner";
+        const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, false);
+
         const data = {
           repliesSent: this.repliesSentToday,
           pausedContacts,
@@ -939,6 +975,17 @@ export class IMessageSession {
           escalations: this.escalationsToday,
           channelLabel: "iMessage",
           lifeEvents: [...this.lifeEventDigestQueue],
+          commitments: commitmentRows.map((c) => ({
+            title: c.title,
+            urgency: c.urgency ?? undefined,
+            assignedBy: c.assignedBy,
+          })),
+          overdueContacts: overdue.map((r) => ({
+            displayName: r.displayName || r.handle,
+            daysOverdue: (now - r.lastInboundAt) / (24 * 60 * 60_000),
+          })),
+          sleepHours,
+          ownerVoiceBlock,
         };
         // Reset counters AFTER snapshotting so the next day starts fresh.
         this.repliesSentToday = 0;
@@ -946,6 +993,13 @@ export class IMessageSession {
         this.lifeEventDigestQueue = [];
         return data;
       },
+      compose: (data) =>
+        composeDigestNarrative(data, {
+          // ponytail: dedicated 'digest::compose' session key — never pollutes the
+          // owner's live reply key (see bridge-respondto-session-pollution memory).
+          llmCompose: (sys, user) =>
+            this.agent.respondTo("digest::compose", user, sys, { withTools: false }),
+        }),
       deliver: async (body) => {
         const own = this.ownHandleGuess() || this.lastSelfHandle;
         if (!own) {
@@ -956,6 +1010,25 @@ export class IMessageSession {
       },
     });
     this.digestStopFn = handle.stop;
+  }
+
+  // Read last-night's sleep hours from device-signals.jsonl. Shared with
+  // the WA bridge — both read the same file on the owner's Mac. Never throws.
+  private async digestReadSleepHours(): Promise<number | null> {
+    try {
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return null;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+      const signals = parseSignals(tail);
+      const windowMs = 12 * 60 * 60_000; // 12h — cover overnight
+      const cutoff = Date.now() - windowMs;
+      const sleepSig = signals
+        .filter((s) => s.kind === "health" && s.metric === "sleep" && s.ts >= cutoff)
+        .sort((a, b) => b.ts - a.ts)[0];
+      return sleepSig && typeof sleepSig.value === "number" ? sleepSig.value : null;
+    } catch {
+      return null;
+    }
   }
 
   // ── PROACTIVE INTELLIGENCE ──────────────────────────────────────────
@@ -1141,6 +1214,100 @@ export class IMessageSession {
     // Post-boot kick after 90s (after the session has time to settle).
     const kick = setTimeout(() => void this.runConciergeTick(), 90_000);
     kick.unref?.();
+  }
+
+  private startCommuteLoop(): void {
+    if (!IMessageSession.COMMUTE_ENABLED) return;
+    const t = setInterval(() => void this.runCommuteTick(), IMessageSession.COMMUTE_INTERVAL_MS);
+    t.unref?.();
+    this.commuteTimer = t;
+    this.logger.info("commute-copilot enabled (LANTERN_COMMUTE=on)");
+  }
+
+  private startEnergyLoop(): void {
+    if (!IMessageSession.ENERGY_ENABLED) return;
+    const t = setInterval(() => void this.runEnergyTick(), IMessageSession.ENERGY_INTERVAL_MS);
+    t.unref?.();
+    this.energyTimer = t;
+    this.logger.info("energy-guardian enabled (LANTERN_ENERGY=on)");
+  }
+
+  /**
+   * Commute copilot tick (~5 min). Surfaces due commitments hands-free when
+   * driving; sends a parked recap on the transition back.
+   * OWNER-ONLY: sends to ownerSelfChatTarget(); gated on killSwitch + quiet hours.
+   */
+  private async runCommuteTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      const target = this.ownerSelfChatTarget();
+      if (!target) return;
+      if (isQuietHours(new Date(), defaultQuietHours())) return;
+
+      const { readDevicePresence } = await import("./device-signals-reader.js");
+      const presence = readDevicePresence(this.logger);
+      const isDriving = presence?.state === "driving";
+
+      const [open, suggested] = await Promise.all([
+        this.commitments.list({ status: "open", limit: 10 }),
+        this.commitments.list({ status: "suggested", limit: 10 }),
+      ]);
+      const dueCommitments = [...open, ...suggested];
+
+      const result = computeCommuteSurface(presence, dueCommitments, {
+        alreadyFiredThisDrive: this.commuteDriveFired,
+        lastWasDriving: this.commuteWasLastDriving,
+      });
+
+      if (result) {
+        await this.send(target, result.text).catch(() => {});
+        if (result.kind === "drive") this.commuteDriveFired = true;
+        this.logger.info({ kind: result.kind }, "commute-copilot fired");
+      }
+
+      if (!isDriving && this.commuteDriveFired) this.commuteDriveFired = false;
+      this.commuteWasLastDriving = isDriving;
+    } catch (err) {
+      this.logger.debug({ err }, "commute tick failed (non-fatal)");
+    }
+  }
+
+  /**
+   * Energy guardian tick (~30 min). Nudges the owner once per day when
+   * last-night's sleep was below 6h.
+   * OWNER-ONLY: sends to ownerSelfChatTarget(); gated on killSwitch + quiet hours.
+   */
+  private async runEnergyTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      const target = this.ownerSelfChatTarget();
+      if (!target) return;
+      if (isQuietHours(new Date(), defaultQuietHours())) return;
+
+      const today = new Date().toISOString().slice(0, 10);
+      if (this.energyNudgedDate === today) return;
+
+      // Read raw signals inline — same file the dashboard /api/signals route writes.
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+      const signals = parseSignals(tail);
+
+      const result = computeEnergyNudge(signals, { alreadyNudgedToday: false, nowMs: Date.now() });
+      if (!result) return;
+
+      await this.send(target, result.text).catch(() => {});
+      this.energyNudgedDate = today;
+      // Persist so a launchd restart doesn't re-nudge today.
+      try {
+        const nudgeFile = join(this.stateDir, "energy-nudge.json");
+        writeFileSync(nudgeFile, JSON.stringify({ date: today }), { mode: 0o600 });
+        try { chmodSync(nudgeFile, 0o600); } catch {}
+      } catch { /* non-fatal */ }
+      this.logger.info("energy-guardian nudge fired");
+    } catch (err) {
+      this.logger.debug({ err }, "energy tick failed (non-fatal)");
+    }
   }
 
   private async runAnticipationTick(): Promise<void> {
@@ -1722,6 +1889,14 @@ export class IMessageSession {
       clearInterval(this.conciergeTimer);
       this.conciergeTimer = null;
     }
+    if (this.commuteTimer) {
+      clearInterval(this.commuteTimer);
+      this.commuteTimer = null;
+    }
+    if (this.energyTimer) {
+      clearInterval(this.energyTimer);
+      this.energyTimer = null;
+    }
     // Clear per-session concierge state so a restart starts fresh.
     this.pendingConcierge.clear();
     this.conciergeNudgedToday.clear();
@@ -2109,8 +2284,16 @@ export class IMessageSession {
     } catch { return "pass"; }
     if (kind === "other") return "pass";
     if (kind === "spam") {
-      this.logger.info({ handle, signals }, "ingest: suppressed marketing/spam from unknown sender");
-      return "handled"; // marketing from a stranger → silence
+      // Owner directive: respond to EVERYBODY. A real new customer's opener can
+      // trip the spam heuristic (a shortlink, the word "deal"), and silencing
+      // them is exactly the live-demo failure. Default = fall through to a
+      // normal auto-reply. Set LANTERN_SUPPRESS_SPAM=on to restore silencing.
+      if (["on", "1"].includes((process.env.LANTERN_SUPPRESS_SPAM ?? "").toLowerCase())) {
+        this.logger.warn({ handle, signals }, "ingest: NO reply — marketing/spam suppressed from unknown sender (LANTERN_SUPPRESS_SPAM on)");
+        return "handled";
+      }
+      this.logger.warn({ handle, signals }, "ingest: spam heuristic matched unknown sender — replying anyway (respond-to-everybody default; set LANTERN_SUPPRESS_SPAM=on to silence)");
+      return "pass";
     }
     // appointment
     this.logger.info({ handle, signals }, "ingest: appointment confirmation from unknown sender");
@@ -3634,7 +3817,13 @@ export class IMessageSession {
     // surface to the owner + offer to add to the calendar; marketing/spam →
     // suppress (no auto-reply). Behind LANTERN_APPT_INGEST (default on).
     const ingest = await this.maybeIngestUnknownInbound(row.handle, text).catch(() => "pass" as const);
-    if (ingest === "handled") return;
+    if (ingest === "handled") {
+      // No silent drops: an unknown-inbound message owned by the life-event /
+      // appointment ingester means the CONTACT got no auto-reply. Leave a trace
+      // so a silent demo never recurs.
+      this.logger.warn({ handle: row.handle }, "contact reply suppressed — unknown-inbound owned by life-event/appointment ingestion (no auto-reply sent to contact)");
+      return;
+    }
 
     // NOTE: no hard allow-list gate here (removed — it was an
     // over-correction that silenced every contact). The real spam
@@ -3956,7 +4145,10 @@ export class IMessageSession {
     const iphonePresence = !isGroup ? await this.contactIphonePresence() : null;
     const [dislikeEntries, episodes, mentionEpisodes, related, presenceSnap] = await Promise.all([
       !isGroup ? this.dislikeMemory.forJid(row.handle, 3) : Promise.resolve([]),
-      !isGroup ? this.episodicMemory.forJid(row.handle, 5) : Promise.resolve([]),
+      // #5 — rank this contact's episodes by topic-overlap with the inbound
+      // (recency tiebreak) so an on-topic older episode isn't dropped for newer
+      // irrelevant ones.
+      !isGroup ? this.episodicMemory.forJid(row.handle, 5, text) : Promise.resolve([]),
       !isGroup && senderFirstNames.length > 0
         ? this.episodicMemory.forMentions(senderFirstNames, { excludeJid: row.handle, limit: 3, maxAgeDays: 30 })
         : Promise.resolve([]),
@@ -3971,10 +4163,14 @@ export class IMessageSession {
       }),
     ]);
     const dislikeBlock = formatDislikeBlock(dislikeEntries);
-    const allEpisodes = [...episodes, ...mentionEpisodes]
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, 6);
+    // #5 — rank the merged (jid + mention) episode set by relevance to the
+    // inbound, recency as the tiebreak, before slicing for the prompt.
+    const allEpisodes = rankEpisodesByRelevance([...episodes, ...mentionEpisodes], text, 6);
     const episodesBlock = formatEpisodesBlock(allEpisodes);
+    // #2 — does the inbound read as urgent? Bends BOTH the reply (persona
+    // addendum) and the pre-send pacing hold. Deterministic, same detector the
+    // owner heads-up uses.
+    const inboundUrgent = !isGroup && detectUrgency(text) !== null;
     const imWordCount = text.trim().split(/\s+/).filter(Boolean).length;
     const lowContext =
       !isGroup &&
@@ -4067,6 +4263,8 @@ export class IMessageSession {
       // already passed ("after 6pm today" at 8:19pm). Owner-local clock.
       now: new Date(),
       ownerTimezone: process.env.LANTERN_OWNER_TIMEZONE || undefined,
+      // #2 — urgent inbound: acknowledge + fast concrete promise, no scheduling.
+      inboundUrgent,
     });
     // Per-contact memory: UNIFIED cross-channel view — facts learned on
     // ANY channel (WhatsApp, iMessage, SMS, voice, email) + a 14-day
@@ -4125,8 +4323,15 @@ export class IMessageSession {
     // LANTERN_REPLY_MODEL_TIER=balanced to trade quality for cost.
     const replyTier = process.env.LANTERN_REPLY_MODEL_TIER || "hard";
     const userText = isGroup ? `[group message]\n${text}` : text;
+    // #7 — for clearly-logistics inbound ("did you get my email?", "what time
+    // did we say?") allow READ-only tools so the reply can ground on
+    // Calendar/Gmail reads. The control plane filters the catalog to read
+    // actions only — a contact's message can never drive a connector write.
+    // Everything else stays noTools (the default).
+    const logisticsRead = !isGroup && (needsCalendar(text) || looksLikeAppointmentQuery(text));
     let draft = await this.agent.respondTo(row.handle, userText, systemHint, {
       turnHint: replyTier,
+      readOnlyTools: logisticsRead,
     });
     // ABSTAIN SENTINEL — the model emitted [[NO_REPLY]] to signal "no reply
     // warranted". Treat as a deliberate silence so decision-prose never
@@ -4197,7 +4402,7 @@ export class IMessageSession {
       } else {
         // SECOND draft also failed — now fall back to silence/greeting and
         // keep the owner heads-up so a suppressed-twice reply isn't invisible.
-        this.logger.info({ from: row.handle, reason: retryCheck.reason, draftPreview: (retry ?? draft).slice(0, 120) }, "draft suppressed by bot-tell filter (after regeneration)");
+        this.logger.warn({ from: row.handle, reason: retryCheck.reason, draftPreview: (retry ?? draft).slice(0, 120) }, "NO reply — draft suppressed by bot-tell filter twice; falling back to greeting/owner heads-up");
         this.broadcast({
           type: "activity",
           data: {
@@ -4258,7 +4463,7 @@ export class IMessageSession {
 
     if (isVIP) {
       if (!draftApprovalsOn) {
-        this.logger.info({ from: row.handle }, "auto-reply suppressed — VIP (drafts off)");
+        this.logger.warn({ from: row.handle }, "NO reply — auto-reply suppressed for VIP (drafts off); owner heads-up sent");
         this.broadcast({
           type: "activity",
           data: {
@@ -4269,6 +4474,12 @@ export class IMessageSession {
             timestamp: Date.now(),
           },
         });
+        // Parity with WhatsApp: a VIP message went unanswered because the owner
+        // flagged them sensitive. One deduped heads-up so it isn't invisible.
+        this.notifyOwnerOfDrop(
+          `${this.contactLabel(row.handle)} (VIP) messaged but auto-reply is off for them — reply yourself.`,
+          `vip-silent:${row.handle}`,
+        );
         return;
       }
       const queued = await this.personal.queueDraft(
@@ -4435,6 +4646,8 @@ export class IMessageSession {
         msSinceLastInbound: paceMsSinceLastInbound,
         isActiveBurst: paceIsActiveBurst,
         localHour: new Date().getHours(),
+        // #2 — urgent inbound collapses the pre-send hold to the floor.
+        urgent: inboundUrgent,
       });
       paceHoldMs = verdict.holdMs;
     }
@@ -6342,9 +6555,23 @@ export class IMessageSession {
     // self-chat context reflects signals the instant they land — no 10-min
     // poll lag. Falls back to the last-known cached line on any failure.
     const iphoneLine = await this.freshIphoneSignalsLine();
+    // #3 — owner self-chat grounding: a CLOCK (so "am I free right now" has a
+    // reference) + the fused presence snapshot (the contact path already uses
+    // this; the owner asking himself "where am I / am I free" deserves it too).
+    const ownerTz = process.env.LANTERN_OWNER_TIMEZONE || undefined;
+    const nowLine = formatNowContext(new Date(), ownerTz);
+    const presenceSnap = await this.presence.current({
+      nextEvent: async () => {
+        try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
+      },
+      iphone: await this.contactIphonePresence(),
+    }).catch(() => null);
+    const presenceLine = presenceSnap?.line ? `Right now you are: ${presenceSnap.line}.` : "";
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his iMessage self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
+      nowLine,
+      presenceLine,
       "",
       ownerProfile ? `# Who you are\n${ownerProfile}` : "",
       ownerFactsBlock ? `\n${ownerFactsBlock}` : "",

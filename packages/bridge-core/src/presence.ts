@@ -228,6 +228,29 @@ export class PresenceTracker {
     // the 60s cache (passed in fresh each call) and is availability-only, so it's
     // never cached as a stale Mac reading. No `place` — never leaks whereabouts.
     if (opts.iphone) {
+      // A "driving" signal (CarPlay/Bluetooth) lingers after the owner parks
+      // and walks into a meeting. If the calendar says we're INSIDE a meeting
+      // right now, that wins over driving (you can't be driving while sitting
+      // in a meeting). Other iphone states (free/dnd/busy) are trusted as-is.
+      if (opts.iphone.state === "driving" && opts.nextEvent) {
+        try {
+          const ev = await opts.nextEvent();
+          if (ev?.summary && ev.startMs && ev.endMs && ev.startMs - now <= 0 && ev.endMs - now > 0) {
+            const endTime = new Date(ev.endMs).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+            const snap: PresenceSnapshot = {
+              line: `in a meeting until ${endTime}`,
+              state: "meeting",
+              capturedAt: now,
+              source: "calendar",
+              away: true,
+            };
+            this.cache = snap;
+            return snap;
+          }
+        } catch (err) {
+          this.logger?.debug({ err }, "driving-vs-meeting calendar probe failed");
+        }
+      }
       return {
         line: opts.iphone.line,
         state: opts.iphone.state,

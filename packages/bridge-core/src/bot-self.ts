@@ -123,6 +123,12 @@ const BOT_SELF_PREFIXES: string[] = [
   "📝 tracking:",    // "📝 tracking: Apply for naturalization"
   "📌 ",             // "📌 Apply for naturalization (from Manu) — reply: …"
 
+  // ── Proactive loops (LANTERN_COMMUTE=on / LANTERN_ENERGY=on) ──
+  // Keep in sync with PROACTIVE_LOOP_SELF_PREFIXES in proactive-loops.ts.
+  "🚗 driving",      // "🚗 driving — N things when you stop: …"
+  "🅿️ parked",       // "🅿️ parked — still on your list: …" / "🅿️ parked — all clear."
+  "😴 ~",            // "😴 ~5.2h last night — want me to …"
+
   // ── Life-event engine owner pings (self-chat) ──
   // The LIFE-EVENT ENGINE surfaces typed transactional inbound (bill, delivery,
   // fraud, OTP, receipt, travel) to the owner self-chat with one-tap actions.

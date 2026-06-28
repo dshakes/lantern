@@ -39,6 +39,10 @@ export interface PaceContext {
   // overnight-replay queue; this multiplier only shapes non-quiet hours
   // (and applies a higher floor to the 00:00-01:00 / 06:00-10:00 edges).
   localHour?: number;
+  // OPTIONAL. The inbound tripped the urgency detector ("URGENT", "asap
+  // please", "on priority"). A real person answers an urgent ping fast — so
+  // we collapse the hold to the floor rather than the usual cadence delay.
+  urgent?: boolean;
 }
 
 export interface PaceVerdict {
@@ -116,6 +120,11 @@ export function timeOfDayMultiplier(localHour?: number): number {
  *   4. Clamp to [FLOOR, CEILING].
  */
 export function computeHold(ctx: PaceContext): PaceVerdict {
+  // Urgent inbound — answer fast. Collapse to the floor (still jittered so
+  // it's not a robotic exact value); skip the cadence math entirely.
+  if (ctx.urgent) {
+    return jitter(FLOOR_MS, "urgent — minimal hold", FLOOR_MS);
+  }
   const todMult = timeOfDayMultiplier(ctx.localHour);
   // Higher floor at the overnight edges (waking up / late-night tail) so a
   // pre-quiet or just-woken reply doesn't land implausibly fast.

@@ -16,6 +16,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -502,6 +503,35 @@ func toolsForTenant(ctx context.Context, pool *pgxpool.Pool, tenantID string) ([
 	// which then asks the user instead of failing the run.
 	out = append(out, personalDocsTools()...)
 	return out, nil
+}
+
+// readOnlyActionRe matches tool ACTION names that only READ state — the
+// contact reply path is allowed to ground on these but never on writes. The
+// action is the part after "<connector>__"; built-in personal-docs tools
+// (search_personal_files / read_personal_file) are reads too. Conservative:
+// an action must clearly be a read verb, else it's dropped from the contact
+// catalog. Adding a new read action? Add its verb here.
+var readOnlyActionRe = regexp.MustCompile(`(?i)(^|_)(list|get|search|read|find|lookup|fetch|view|show|query|count|check)(_|$)`)
+
+// filterReadOnlyTools keeps only tools whose action name is a read. Used on
+// the CONTACT reply path so a contact's inbound can't drive a connector write.
+func filterReadOnlyTools(tools []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
+		fn, _ := t["function"].(map[string]any)
+		name, _ := fn["name"].(string)
+		if name == "" {
+			continue
+		}
+		action := name
+		if i := strings.Index(name, "__"); i >= 0 {
+			action = name[i+2:]
+		}
+		if readOnlyActionRe.MatchString(action) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // dispatchTool maps an OpenAI tool name back to the right executor.

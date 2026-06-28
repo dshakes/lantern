@@ -61,10 +61,14 @@ export class AgentClient {
   // and is wrong for personal-docs replies where the prompt is
   // already large with OCR context. The bridges' natural-chat path
   // sets this to true so the bot can actually use Gmail when asked.
-  async respondTo(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; turnHint?: string }): Promise<string | null> {
+  async respondTo(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; turnHint?: string }): Promise<string | null> {
     if (!this.enabled()) return null;
+    // readOnlyTools implies the catalog loads (withTools), but the control
+    // plane filters it to read-only actions. Used on the contact reply path
+    // for logistics inbound so a contact can't drive a connector write.
+    const withTools = opts?.withTools === true || opts?.readOnlyTools === true;
     const prev = this.inflight.get(jid) ?? Promise.resolve<string | null>(null);
-    const next = prev.then(() => this.runTurn(jid, userText, systemHint, opts?.withTools === true, opts?.turnHint)).catch((err) => {
+    const next = prev.then(() => this.runTurn(jid, userText, systemHint, withTools, opts?.turnHint, opts?.readOnlyTools === true)).catch((err) => {
       this.logger.error({ err, jid }, "turn errored");
       return null;
     });
@@ -74,7 +78,7 @@ export class AgentClient {
     return reply;
   }
 
-  private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false, turnHint?: string): Promise<string | null> {
+  private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false, turnHint?: string, readOnlyTools = false): Promise<string | null> {
     // Up to ONE retry on dead-session errors. A prior turn that got
     // SSE-aborted (timeout, network hiccup) leaves the control-plane
     // session in "ended" state — the next POST then 409s with
@@ -98,6 +102,9 @@ export class AgentClient {
         // Gmail / Calendar / etc. when the owner asks.
         noTools: !withTools,
       };
+      // Contact logistics path: load the catalog but ask the control plane to
+      // keep only read-only actions (Calendar/Gmail reads) — never writes.
+      if (readOnlyTools) postBody.readOnlyTools = true;
       if (systemHint) postBody.systemHint = systemHint;
       // Optional complexity floor. The personal-chat reply path passes
       // "balanced" so the owner's outgoing texts are never drafted by the
