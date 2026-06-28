@@ -1518,6 +1518,50 @@ Output ONLY valid JSON:
   ]
 }` + shared
 
+	case "travel":
+		return `You are a travel-record extraction assistant. Parse email content and extract travel reservation and itinerary information.
+
+Output ONLY valid JSON:
+{
+  "records": [
+    {
+      "kind": "flight|hotel|reservation|rental|cruise|transfer",
+      "title": "concise descriptive title (max 100 chars)",
+      "fields": {"date": "YYYY-MM-DD", "time": "HH:MM", "confirmation": "code", "from": "origin", "to": "destination"},
+      "validUntil": "YYYY-MM-DD (check-out or return date if applicable)"
+    }
+  ],
+  "obligations": [
+    {
+      "title": "specific action, e.g. 'Check in for United flight UA123'",
+      "dueDate": "YYYY-MM-DD (omit if unknown)",
+      "kind": "checkin|departure|confirmation|booking|reminder"
+    }
+  ]
+}` + shared
+
+	case "home":
+		return `You are a household-record extraction assistant. Parse email content and extract home management information (utilities, warranties, services, insurance, HOA, leases).
+
+Output ONLY valid JSON:
+{
+  "records": [
+    {
+      "kind": "utility|warranty|service|policy|lease|hoa|tax|permit",
+      "title": "concise descriptive title (max 100 chars)",
+      "fields": {"key": "value"},
+      "validUntil": "YYYY-MM-DD (expiry or renewal date if applicable)"
+    }
+  ],
+  "obligations": [
+    {
+      "title": "specific action, e.g. 'Renew home insurance policy'",
+      "dueDate": "YYYY-MM-DD (omit if unknown)",
+      "kind": "renewal|payment|service|inspection|filing"
+    }
+  ]
+}` + shared
+
 	default:
 		return `Extract structured records and obligations from email content as JSON: {"records":[],"obligations":[]}.` + shared
 	}
@@ -1724,6 +1768,10 @@ func domainCoachSystemPrompt(domain string) string {
 		return `You are a personal vehicle advisor assistant. Based ONLY on the owner's stored vehicle records and open obligations (provided below), write a 3–5 line plain-text coaching brief (no markdown, no bullets, max 500 chars). Cover: recent service, what is coming due (registration, insurance renewal, service interval), and one practical tip. Be concise. Never fabricate details not present in the data.`
 	case "career":
 		return `You are a personal career coach assistant. Based ONLY on the owner's stored career records and open obligations (provided below), write a 3–5 line plain-text coaching brief (no markdown, no bullets, max 500 chars). Cover: skills and certifications on file, pending applications or interviews, and one learning suggestion. Be encouraging. Never fabricate details not present in the data.`
+	case "travel":
+		return `You are a personal travel concierge assistant. Based ONLY on the owner's stored travel records and open obligations (provided below), write a 3–5 line plain-text coaching brief (no markdown, no bullets, max 500 chars). Cover: upcoming trips and reservations on file, what needs to be done before departure (check-in windows, confirmations), and one practical heads-up for the next leg. Be concise. Never fabricate details not present in the data.`
+	case "home":
+		return `You are a personal household manager assistant. Based ONLY on the owner's stored home records and open obligations (provided below), write a 3–5 line plain-text coaching brief (no markdown, no bullets, max 500 chars). Cover: what is expiring or renewing soon (warranties, insurance, utilities, leases), any services scheduled or overdue, and one reminder to act on before something lapses. Be direct. Never fabricate details not present in the data.`
 	default:
 		return `Based ONLY on the provided domain records and obligations, write a 3–5 line plain-text coaching brief (max 500 chars, no markdown). Never fabricate details.`
 	}
@@ -1858,6 +1906,34 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			// Career web/LinkedIn ingestion is a later increment; Gmail covers job/learning email today.
 			Query: `from:(linkedin OR greenhouse OR lever OR workday OR coursera OR udemy OR edx OR pluralsight) OR subject:(interview OR "job offer" OR "application received" OR "next steps" OR certificate OR "course completion" OR deadline OR assessment)`,
 			Coach: true,
+		},
+		{
+			Role:    "domain_tracker",
+			Type:    "loop",
+			Name:    "travel-concierge",
+			Goal:    "Your travel concierge. Reads trip email (flights, hotels, rentals) into a clear itinerary and reminds you of check-ins, departures, and what to do before you go. Runs on the Lantern platform.",
+			Tier:    "macro",
+			Cron:    tierCronDefault["macro"],
+			Sensors: []string{"email"},
+			Actions: []string{"create_commitment", "record"},
+			Trust:   "ask",
+			Domain:  "travel",
+			Query:   `from:(united OR delta OR aa.com OR airbnb OR booking OR marriott OR hilton OR expedia OR southwest OR jetblue OR hyatt OR hertz OR enterprise OR lyft OR uber) OR subject:(itinerary OR "boarding pass" OR reservation OR "flight confirmation" OR "check-in" OR "hotel confirmation" OR "car rental")`,
+			Coach:   true,
+		},
+		{
+			Role:    "domain_tracker",
+			Type:    "loop",
+			Name:    "household",
+			Goal:    "Your household manager. Tracks utilities, warranties, home services, and renewals from your email and reminds you before anything lapses or expires. Runs on the Lantern platform.",
+			Tier:    "macro",
+			Cron:    tierCronDefault["macro"],
+			Sensors: []string{"email"},
+			Actions: []string{"create_commitment", "record"},
+			Trust:   "ask",
+			Domain:  "home",
+			Query:   `subject:(warranty OR utility OR "service appointment" OR HOA OR lease OR rent OR "home insurance" OR "property tax") OR from:(xfinity OR comcast OR pge OR adt OR homedepot OR lowes)`,
+			Coach:   true,
 		},
 		// Bridge-side agents: tier=nano → no schedule, no server-side run.
 		// Execution happens entirely in the macOS bridge using iPhone signals.
