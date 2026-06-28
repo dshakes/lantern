@@ -460,6 +460,12 @@ func (h *RESTHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	if sid := r.URL.Query().Get("sessionId"); sid != "" {
 		req.SessionId = sid
 	}
+	// Honor the status filter the client sends — maps the URL string to the
+	// proto enum. parseRunStatus returns UNSPECIFIED for unknown strings, which
+	// the underlying ListRuns treats as "no filter" (safe no-op).
+	if statusStr := r.URL.Query().Get("status"); statusStr != "" {
+		req.StatusFilter = parseRunStatus(statusStr)
+	}
 
 	resp, err := h.runSvc.ListRuns(ctx, req)
 	if err != nil {
