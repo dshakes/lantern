@@ -550,6 +550,9 @@ func TestSeedLoopAgents_DomainTrackers(t *testing.T) {
 		if m.Query == "" {
 			t.Errorf("agent %q: query is empty", name)
 		}
+		if !m.Coach {
+			t.Errorf("agent %q: Coach=false, want true (coaching pass required)", name)
+		}
 	}
 
 	// Cleanup seeded agents (best-effort; dev tenant might not be in this DB).

@@ -49,6 +49,9 @@ type LoopManifest struct {
 	// Domain and Query are specific to the domain_tracker role.
 	Domain string `json:"domain,omitempty"` // health|vehicle|career
 	Query  string `json:"query,omitempty"`  // Gmail search expression scoped to this domain
+	// Coach, when true on a domain_tracker agent, runs the coaching pass
+	// (runDomainCoach) after each tracker sweep to synthesise a weekly brief.
+	Coach bool `json:"coach,omitempty"`
 }
 
 // tierCronDefault maps tier to the canonical 5-field cron expression.
@@ -440,6 +443,14 @@ func runLoopAgentIfPresent(
 		if runErr != nil {
 			logger.Error("loop-agent: domain_tracker failed",
 				zap.String("run_id", runID), zap.String("domain", m.Domain), zap.Error(runErr))
+		}
+		// Coach pass: tracker runs first to refresh data, then coach synthesises
+		// the weekly brief from whatever is already stored.
+		if m.Coach {
+			if coachErr := runDomainCoach(ctx, pool, logger, tenantID, runID, m, completeFn); coachErr != nil {
+				logger.Error("loop-agent: domain_coach failed",
+					zap.String("run_id", runID), zap.String("domain", m.Domain), zap.Error(coachErr))
+			}
 		}
 		outputJSON, _ = json.Marshal(map[string]any{"records": recN, "obligations": oblN, "domain": m.Domain})
 
@@ -1527,6 +1538,233 @@ func emitDomainSwept(ctx context.Context, pool *pgxpool.Pool, runID, domain stri
 	`, runID, "domain-tracker:"+domain, payload)
 }
 
+// ---------- B3f: domain_coach body ----------
+
+// runDomainCoach synthesises a short (≤500 char) plain-text coaching brief
+// from the domain's persisted domain_records + open obligations. It surfaces
+// the brief as a single UPSERT "coaching" commitment that refreshes weekly
+// (idempotency key = coach:<domain>:<YYYY>-W<ww>), and emits a
+// domain_coached journal event.
+//
+// Graceful no-op (nil return) when the domain has neither records nor
+// obligations yet. LLM error falls back to a deterministic template brief so
+// the run never fails due to a missing model.
+//
+// SECURITY: domain_records.fields hold PII (medical/insurance/career). Fields
+// are decrypted in-memory for the LLM prompt and stored in the brief the
+// owner reads; they are NEVER logged (invariant #10). LLM brief = data, never
+// executed.
+//
+// rls-exempt: inline executor — domain_records and commitments carry explicit
+// tenant_id; journal_events is RLS-exempt child table.
+func runDomainCoach(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	logger *zap.Logger,
+	tenantID, runID string,
+	manifest LoopManifest,
+	completeFn researchCompleteFn,
+) error {
+	domain := manifest.Domain
+	if domain == "" {
+		domain = "health"
+	}
+
+	// Compute ISO week once — used for LLM idempotency key and commitment key.
+	year, week := time.Now().ISOWeek()
+
+	// 1. Read top-10 domain_records, newest first.
+	// Decrypt fields in-memory; NEVER log decrypted content (invariant #10).
+	type recRow struct{ kind, title, fields string }
+	var recs []recRow
+	recDBRows, qErr := pool.Query(ctx, `
+		SELECT kind, title, COALESCE(fields_encrypted, '')
+		FROM domain_records
+		WHERE tenant_id = $1 AND domain = $2
+		ORDER BY created_at DESC
+		LIMIT 10
+	`, tenantID, domain)
+	if qErr != nil {
+		return fmt.Errorf("domain-coach: query records: %w", qErr)
+	}
+	for recDBRows.Next() {
+		var r recRow
+		if sErr := recDBRows.Scan(&r.kind, &r.title, &r.fields); sErr != nil {
+			logger.Warn("domain-coach: scan record", zap.Error(sErr))
+			continue
+		}
+		if r.fields != "" {
+			plain, decErr := secrets.Decrypt([]byte(r.fields))
+			if decErr == nil && len(plain) > 0 {
+				r.fields = string(plain)
+			} else {
+				r.fields = ""
+			}
+		}
+		recs = append(recs, r)
+	}
+	recDBRows.Close()
+	if rErr := recDBRows.Err(); rErr != nil {
+		logger.Warn("domain-coach: records rows error", zap.Error(rErr))
+	}
+
+	// 2. Read open obligations for this domain (top 5, soonest deadline first).
+	type oblRow struct{ title, deadline string }
+	var obls []oblRow
+	oblDBRows, qErr := pool.Query(ctx, `
+		SELECT title, COALESCE(deadline::text, '')
+		FROM commitments
+		WHERE tenant_id = $1 AND source = $2
+		  AND status IN ('open', 'suggested', 'in_progress')
+		ORDER BY deadline NULLS LAST, created_at DESC
+		LIMIT 5
+	`, tenantID, domain)
+	if qErr != nil {
+		return fmt.Errorf("domain-coach: query obligations: %w", qErr)
+	}
+	for oblDBRows.Next() {
+		var o oblRow
+		if sErr := oblDBRows.Scan(&o.title, &o.deadline); sErr == nil {
+			obls = append(obls, o)
+		}
+	}
+	oblDBRows.Close()
+	if rErr := oblDBRows.Err(); rErr != nil {
+		logger.Warn("domain-coach: obligations rows error", zap.Error(rErr))
+	}
+
+	// 3. Graceful no-op when the domain has no data at all.
+	if len(recs) == 0 && len(obls) == 0 {
+		logger.Debug("domain-coach: no data yet, skipping",
+			zap.String("tenant", tenantID), zap.String("domain", domain))
+		return nil
+	}
+
+	// 4. Compose coaching brief — LLM first, deterministic template on failure.
+	var brief string
+	if completeFn != nil {
+		// Build LLM context — contains decrypted PII; NEVER log this buffer.
+		var ctxBuf strings.Builder
+		ctxBuf.WriteString(fmt.Sprintf("Domain: %s\nRecords on file (%d):\n", domain, len(recs)))
+		for _, r := range recs {
+			fi := clampRunes(r.fields, 200)
+			if fi != "" {
+				ctxBuf.WriteString(fmt.Sprintf("  - [%s] %s — %s\n", r.kind, r.title, fi))
+			} else {
+				ctxBuf.WriteString(fmt.Sprintf("  - [%s] %s\n", r.kind, r.title))
+			}
+		}
+		if len(obls) > 0 {
+			ctxBuf.WriteString(fmt.Sprintf("Open obligations (%d):\n", len(obls)))
+			for _, o := range obls {
+				if o.deadline != "" {
+					ctxBuf.WriteString(fmt.Sprintf("  - %s (due %s)\n", o.title, o.deadline))
+				} else {
+					ctxBuf.WriteString(fmt.Sprintf("  - %s\n", o.title))
+				}
+			}
+		} else {
+			ctxBuf.WriteString("Open obligations: none\n")
+		}
+		ctxBuf.WriteString("Write the brief now.")
+
+		// Idempotency key scoped to (domain, tenant, ISO-week) — invariant #8.
+		idemBase := fmt.Sprintf("coach-brief:%s:%s:%d-W%02d", domain, tenantID, year, week)
+		llmCtx := WithLLMIdempotencyBase(ctx, idemBase)
+		rawText, llmErr := completeFn(llmCtx, tenantID, domainCoachSystemPrompt(domain), ctxBuf.String())
+		if llmErr != nil {
+			logger.Warn("domain-coach: LLM call failed — using template brief",
+				zap.String("tenant", tenantID), zap.String("domain", domain), zap.Error(llmErr))
+		} else {
+			brief = strings.TrimSpace(rawText)
+		}
+	}
+
+	// Template fallback — always succeeds.
+	if brief == "" {
+		var topTitle, topDeadline string
+		if len(obls) > 0 {
+			topTitle = obls[0].title
+			topDeadline = obls[0].deadline
+		}
+		brief = domainCoachTemplateBrief(domain, len(recs), len(obls), topTitle, topDeadline)
+	}
+	brief = clampRunes(brief, 500)
+
+	// 5. UPSERT coaching commitment — one per domain per ISO-week (invariant #8).
+	// Re-run within the same week updates the title to the freshest brief.
+	idemKey := fmt.Sprintf("coach:%s:%d-W%02d", domain, year, week)
+	// rls-exempt: inline executor — explicit tenant_id; weekly dedup on idemKey.
+	_, upsertErr := pool.Exec(ctx, `
+		INSERT INTO commitments (tenant_id, title, source, kind, idempotency_key, tier, urgency)
+		VALUES ($1, $2, $3, 'coaching', $4, 'meso', 'fyi')
+		ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+		DO UPDATE SET title = EXCLUDED.title, updated_at = now()
+	`, tenantID, brief, domain, idemKey)
+	if upsertErr != nil {
+		// Non-fatal: still emit the journal event.
+		logger.Warn("domain-coach: upsert commitment failed",
+			zap.String("domain", domain), zap.Error(upsertErr))
+	}
+
+	// 6. Emit domain_coached journal event — brief_chars only, no PII (invariant #10).
+	emitDomainCoached(ctx, pool, runID, domain, len(brief))
+	return nil
+}
+
+// domainCoachSystemPrompt returns the coaching synthesis prompt for the given
+// domain. Unlike domainSystemPrompt (which extracts from raw email), this
+// prompt synthesises a brief from already-structured records.
+// ponytail: one prompt per domain; sub-kind variants when accuracy warrants.
+func domainCoachSystemPrompt(domain string) string {
+	switch domain {
+	case "health":
+		return `You are a personal health coach assistant. Based ONLY on the owner's stored health records and open obligations (provided below), write a 3–5 line plain-text coaching brief (no markdown, no bullets, max 500 chars). Cover: what was done recently (last appointment/lab/prescription), what is coming due (refills, follow-ups, renewals), and one gentle suggestion for what to prioritize. Be warm but direct. Never fabricate details not present in the data.`
+	case "vehicle":
+		return `You are a personal vehicle advisor assistant. Based ONLY on the owner's stored vehicle records and open obligations (provided below), write a 3–5 line plain-text coaching brief (no markdown, no bullets, max 500 chars). Cover: recent service, what is coming due (registration, insurance renewal, service interval), and one practical tip. Be concise. Never fabricate details not present in the data.`
+	case "career":
+		return `You are a personal career coach assistant. Based ONLY on the owner's stored career records and open obligations (provided below), write a 3–5 line plain-text coaching brief (no markdown, no bullets, max 500 chars). Cover: skills and certifications on file, pending applications or interviews, and one learning suggestion. Be encouraging. Never fabricate details not present in the data.`
+	default:
+		return `Based ONLY on the provided domain records and obligations, write a 3–5 line plain-text coaching brief (max 500 chars, no markdown). Never fabricate details.`
+	}
+}
+
+// domainCoachTemplateBrief produces a deterministic fallback brief from counts
+// and the soonest obligation. Used when completeFn is nil or the LLM fails.
+func domainCoachTemplateBrief(domain string, recCount, oblCount int, topTitle, topDeadline string) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%d %s record(s) on file.", recCount, domain))
+	if oblCount > 0 {
+		sb.WriteString(fmt.Sprintf(" %d open obligation(s).", oblCount))
+		if topTitle != "" {
+			if topDeadline != "" {
+				sb.WriteString(fmt.Sprintf(" Soonest: %s (due %s).", clampRunes(topTitle, 100), topDeadline))
+			} else {
+				sb.WriteString(fmt.Sprintf(" Next up: %s.", clampRunes(topTitle, 100)))
+			}
+		}
+	} else {
+		sb.WriteString(" No open obligations.")
+	}
+	return sb.String()
+}
+
+// emitDomainCoached writes a domain_coached journal event.
+// Only brief_chars is in the payload — no PII (invariant #10).
+// Uses seq=2 so it co-exists with the domain_swept event at seq=1 in the same run.
+// rls-exempt: journal_events — RLS-exempt child table keyed by run_id.
+func emitDomainCoached(ctx context.Context, pool *pgxpool.Pool, runID, domain string, briefChars int) {
+	payload, _ := json.Marshal(map[string]any{
+		"domain":      domain,
+		"brief_chars": briefChars,
+	})
+	_, _ = pool.Exec(ctx, `
+		INSERT INTO journal_events (run_id, seq, kind, step_id, attempt, payload)
+		VALUES ($1, 2, 'domain_coached', $2, 1, $3)
+		ON CONFLICT (run_id, seq) DO NOTHING
+	`, runID, "domain-coach:"+domain, payload)
+}
+
 // ---------- B4: seeding ----------
 
 // SeedLoopAgents idempotently creates all 4 built-in loop agents for the dev
@@ -1590,6 +1828,7 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Trust:   "ask",
 			Domain:  "health",
 			Query:   `from:(labcorp OR quest OR myhealth OR clinic OR kaiser OR anthem OR cigna OR aetna OR CVS OR walgreens) OR subject:(appointment OR "lab result" OR "test result" OR prescription OR "explanation of benefits" OR "prior authorization" OR refill OR "medical record")`,
+			Coach:   true,
 		},
 		{
 			Role:    "domain_tracker",
@@ -1603,6 +1842,7 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Trust:   "ask",
 			Domain:  "vehicle",
 			Query:   `from:(tesla OR honda OR toyota OR dmv OR "state.gov" OR geico OR progressive OR allstate OR statefarm) OR subject:(registration OR recall OR "oil change" OR "service due" OR "vehicle inspection" OR "insurance renewal" OR "policy renewal")`,
+			Coach:   true,
 		},
 		{
 			Role:    "domain_tracker",
@@ -1617,6 +1857,7 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Domain:  "career",
 			// Career web/LinkedIn ingestion is a later increment; Gmail covers job/learning email today.
 			Query: `from:(linkedin OR greenhouse OR lever OR workday OR coursera OR udemy OR edx OR pluralsight) OR subject:(interview OR "job offer" OR "application received" OR "next steps" OR certificate OR "course completion" OR deadline OR assessment)`,
+			Coach: true,
 		},
 		// Bridge-side agents: tier=nano → no schedule, no server-side run.
 		// Execution happens entirely in the macOS bridge using iPhone signals.
