@@ -49,6 +49,7 @@ import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type Presence
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
+import { composeDigestNarrative } from "@lantern/bridge-core/digest-compose";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
 import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
 import { deviceContextBlock as iphoneContextBlock, parseSignals } from "@lantern/bridge-core/device-signals";
@@ -948,10 +949,25 @@ export class IMessageSession {
     const handle = scheduleDigest({
       logger: this.logger,
       cfg: defaultDigestConfig(),
-      collectData: () => {
+      collectData: async () => {
+        const now = Date.now();
         const pausedContacts = [...this.pausedUntil.entries()]
-          .filter(([, t]) => t > Date.now())
+          .filter(([, t]) => t > now)
           .map(([h, t]) => ({ label: this.contactLabel(h), resumesAtMs: t }));
+
+        // Gather enrichment fields in parallel, each best-effort with 5s timeout.
+        const tout = <T>(p: Promise<T>, fallback: T): Promise<T> =>
+          Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), 5000))]);
+
+        const [commitmentRows, sleepHours] = await Promise.all([
+          tout(this.commitments.list({ status: "open", limit: 3 }), []),
+          tout(this.digestReadSleepHours(), null),
+        ]);
+
+        const overdue = this.gatherAwaitingReply(now);
+        const ownerName = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0] || "the owner";
+        const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, false);
+
         const data = {
           repliesSent: this.repliesSentToday,
           pausedContacts,
@@ -959,6 +975,17 @@ export class IMessageSession {
           escalations: this.escalationsToday,
           channelLabel: "iMessage",
           lifeEvents: [...this.lifeEventDigestQueue],
+          commitments: commitmentRows.map((c) => ({
+            title: c.title,
+            urgency: c.urgency ?? undefined,
+            assignedBy: c.assignedBy,
+          })),
+          overdueContacts: overdue.map((r) => ({
+            displayName: r.displayName || r.handle,
+            daysOverdue: (now - r.lastInboundAt) / (24 * 60 * 60_000),
+          })),
+          sleepHours,
+          ownerVoiceBlock,
         };
         // Reset counters AFTER snapshotting so the next day starts fresh.
         this.repliesSentToday = 0;
@@ -966,6 +993,13 @@ export class IMessageSession {
         this.lifeEventDigestQueue = [];
         return data;
       },
+      compose: (data) =>
+        composeDigestNarrative(data, {
+          // ponytail: dedicated 'digest::compose' session key — never pollutes the
+          // owner's live reply key (see bridge-respondto-session-pollution memory).
+          llmCompose: (sys, user) =>
+            this.agent.respondTo("digest::compose", user, sys, { withTools: false }),
+        }),
       deliver: async (body) => {
         const own = this.ownHandleGuess() || this.lastSelfHandle;
         if (!own) {
@@ -976,6 +1010,25 @@ export class IMessageSession {
       },
     });
     this.digestStopFn = handle.stop;
+  }
+
+  // Read last-night's sleep hours from device-signals.jsonl. Shared with
+  // the WA bridge — both read the same file on the owner's Mac. Never throws.
+  private async digestReadSleepHours(): Promise<number | null> {
+    try {
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return null;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+      const signals = parseSignals(tail);
+      const windowMs = 12 * 60 * 60_000; // 12h — cover overnight
+      const cutoff = Date.now() - windowMs;
+      const sleepSig = signals
+        .filter((s) => s.kind === "health" && s.metric === "sleep" && s.ts >= cutoff)
+        .sort((a, b) => b.ts - a.ts)[0];
+      return sleepSig && typeof sleepSig.value === "number" ? sleepSig.value : null;
+    } catch {
+      return null;
+    }
   }
 
   // ── PROACTIVE INTELLIGENCE ──────────────────────────────────────────

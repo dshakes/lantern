@@ -39,6 +39,7 @@ import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { reactionToAction, dispatchReaction } from "@lantern/bridge-core/reaction-commands";
 import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
+import { composeDigestNarrative } from "@lantern/bridge-core/digest-compose";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
@@ -4633,7 +4634,7 @@ export class WhatsAppSession {
     const handle = scheduleDigest({
       logger: this.logger,
       cfg: defaultDigestConfig(),
-      collectData: () => {
+      collectData: async () => {
         const now = Date.now();
         const pausedContacts = [...this.pausedUntil.entries()]
           .filter(([, e]) => e.until > now)
@@ -4641,6 +4642,21 @@ export class WhatsAppSession {
             label: e.pushName || this.contactNames.get(j) || j.split("@")[0],
             resumesAtMs: e.until,
           }));
+
+        // Gather enrichment fields in parallel, each best-effort with 5s timeout.
+        // ponytail: Promise.race for the timeout; no new dep.
+        const tout = <T>(p: Promise<T>, fallback: T): Promise<T> =>
+          Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fallback), 5000))]);
+
+        const [commitmentRows, sleepHours] = await Promise.all([
+          tout(this.commitments.list({ status: "open", limit: 3 }), []),
+          tout(this.digestReadSleepHours(), null),
+        ]);
+
+        const overdue = this.gatherAwaitingReply(now);
+        const ownerName = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0] || "the owner";
+        const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, false);
+
         const data = {
           repliesSent: this.repliesSentToday,
           pausedContacts,
@@ -4648,17 +4664,55 @@ export class WhatsAppSession {
           escalations: this.escalationsToday,
           channelLabel: "WhatsApp",
           lifeEvents: [...this.lifeEventDigestQueue],
+          commitments: commitmentRows.map((c) => ({
+            title: c.title,
+            urgency: c.urgency ?? undefined,
+            assignedBy: c.assignedBy,
+          })),
+          overdueContacts: overdue.map((r) => ({
+            displayName: r.displayName || r.handle.split("@")[0],
+            daysOverdue: (now - r.lastInboundAt) / (24 * 60 * 60_000),
+          })),
+          sleepHours,
+          ownerVoiceBlock,
         };
         this.repliesSentToday = 0;
         this.escalationsToday = 0;
         this.lifeEventDigestQueue = [];
         return data;
       },
+      compose: (data) =>
+        composeDigestNarrative(data, {
+          // ponytail: dedicated 'digest::compose' session key — never pollutes the
+          // owner's live reply key (see bridge-respondto-session-pollution memory).
+          llmCompose: (sys, user) =>
+            this.agent.respondTo("digest::compose", user, sys, { withTools: false }),
+        }),
       deliver: async (body) => {
         await this.confirmToSelf(body);
       },
     });
     this.digestStopFn = handle.stop;
+  }
+
+  // Read last-night's sleep hours from device-signals.jsonl (same file the
+  // energy guardian reads). Returns null when the file is absent or no
+  // sleep signal is in the overnight window. Never throws.
+  private async digestReadSleepHours(): Promise<number | null> {
+    try {
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return null;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+      const signals = parseSignals(tail);
+      const windowMs = 12 * 60 * 60_000; // 12h — cover overnight
+      const cutoff = Date.now() - windowMs;
+      const sleepSig = signals
+        .filter((s) => s.kind === "health" && s.metric === "sleep" && s.ts >= cutoff)
+        .sort((a, b) => b.ts - a.ts)[0];
+      return sleepSig && typeof sleepSig.value === "number" ? sleepSig.value : null;
+    } catch {
+      return null;
+    }
   }
 
   // Dispatch a parsed NL command from self-chat through the shared

@@ -61,7 +61,8 @@
     "./mac-usage": "./src/mac-usage.ts",
     "./device-signals": "./src/device-signals.ts",
     "./commitments-edge": "./src/commitments-edge.ts",
-    "./proactive-loops": "./src/proactive-loops.ts"
+    "./proactive-loops": "./src/proactive-loops.ts",
+    "./digest-compose": "./src/digest-compose.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
