@@ -245,6 +245,8 @@ Valid roles (pick the one that best matches the description):
   financial_sentinel  → scans bill life-events for price hikes; creates a review commitment (tier=macro)
   commute_copilot     → bridge-side only; surfaces due tasks during drives and recaps on park (tier=nano)
   energy_guardian     → bridge-side only; protects focus when sleep/step signals show low energy (tier=nano)
+  health_coach        → bridge-side only; nudges daily step goal + acks workouts + weekly trend (tier=nano)
+  focus_guardian      → bridge-side only; holds non-urgent nudges during heads-down focus blocks and recaps on release (tier=nano)
 
 Valid tiers and their default crons:
   nano   → no schedule (event-driven only); omit cron
@@ -427,7 +429,7 @@ func runLoopAgentIfPresent(
 		}
 		outputJSON, _ = json.Marshal(map[string]any{"hikes": hikesN})
 
-	case "commute_copilot", "energy_guardian":
+	case "commute_copilot", "energy_guardian", "health_coach", "focus_guardian":
 		// Bridge-side loops: execution happens entirely in the macOS bridge.
 		// The server emits a single journal event to record the dispatch
 		// attempt but performs no server-side work. Tier=nano means no
@@ -1190,6 +1192,26 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Type:    "loop",
 			Name:    "energy-guardian",
 			Goal:    "Protects your energy. When you've slept short, it offers to lighten your afternoon or defend a focus block — grounded in your iPhone sleep/step signals. Runs in the macOS bridge.",
+			Tier:    "nano",
+			Sensors: []string{"signals"},
+			Actions: []string{"nudge"},
+			Trust:   "ask",
+		},
+		{
+			Role:    "health_coach",
+			Type:    "loop",
+			Name:    "health-coach",
+			Goal:    "Your health coach. Tracks steps, sleep, and workouts from your iPhone and nudges you toward your daily goal — plus a weekly trend. Runs in the macOS bridge.",
+			Tier:    "nano",
+			Sensors: []string{"signals"},
+			Actions: []string{"nudge"},
+			Trust:   "ask",
+		},
+		{
+			Role:    "focus_guardian",
+			Type:    "loop",
+			Name:    "focus-guardian",
+			Goal:    "Protects your deep work. While you're in Focus it holds non-urgent nudges and hands you a tidy recap when you surface. Runs in the macOS bridge.",
 			Tier:    "nano",
 			Sensors: []string{"signals"},
 			Actions: []string{"nudge"},
