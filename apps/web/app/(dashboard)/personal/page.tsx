@@ -1,19 +1,24 @@
 "use client";
 
-// /personal — overview. Glance-friendly tiles + quick actions.
-// Designed so a returning user can see "is my assistant alive, did
-// anything happen, what's monitored" in one screen and drill into a
-// sub-page only when they want to change something.
+// /personal — overview. Glance-friendly tiles + quick actions + "Your Life"
+// domain summary. Designed so a returning user can see "is my assistant alive,
+// did anything happen, what's monitored, what's on my plate" in one screen.
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   Activity,
   ArrowRight,
+  Briefcase,
+  Building2,
+  Car,
   CheckCircle2,
   Crown,
+  DollarSign,
   FileText,
+  Heart,
   Phone,
+  Plane,
   Smartphone,
   Users,
   UserMinus,
@@ -23,6 +28,9 @@ import {
 import { useBridge } from "@/components/personal/bridge-context";
 import type { ActivityEvent, ConnectionState } from "@/lib/bridge-types";
 import { listDrafts, listVIPs } from "@/lib/whatsapp-personal-client";
+import { api } from "@/lib/api";
+import type { Commitment, DomainRecord } from "@/lib/api";
+import type { Agent } from "@/lib/mock-data";
 
 export default function PersonalOverview() {
   const {
@@ -65,8 +73,39 @@ export default function PersonalOverview() {
     return () => { cancelled = true; clearInterval(t); };
   }, []);
 
+  // "Your Life" data — agents, open commitments, domain records, gmail check.
+  // ponytail: single load, no polling (this data is slow-changing)
+  const [lifeAgents, setLifeAgents] = useState<Agent[]>([]);
+  const [commitments, setCommitments] = useState<Commitment[]>([]);
+  const [domainRecords, setDomainRecords] = useState<DomainRecord[]>([]);
+  const [hasGmail, setHasGmail] = useState<boolean | null>(null);
+  const [loadingLife, setLoadingLife] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [agentList, coms, recs, connectors] = await Promise.all([
+          api.listAgents(),
+          api.listCommitments({ status: "open", limit: 20 }),
+          api.listDomainRecords(),
+          api.listConnectors(),
+        ]);
+        if (cancelled) return;
+        setLifeAgents(agentList);
+        setCommitments(coms);
+        setDomainRecords(recs);
+        setHasGmail(connectors.some((c) => c.connectorId === "gmail" && c.status === "active"));
+      } catch {
+        // silent — each sub-section shows its own empty state
+      } finally {
+        if (!cancelled) setLoadingLife(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {!isLive && <NotLiveBanner state={state} reason={reason} pairing={busy.pairing} onStart={startPairing} />}
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -198,6 +237,94 @@ export default function PersonalOverview() {
             </ul>
           </Panel>
         </div>
+      </section>
+
+      {/* ── Your Life ── */}
+      <section className="space-y-4">
+        <div className="flex items-baseline justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-100">Your life</h2>
+            <p className="mt-0.5 text-xs text-zinc-500">What your personal agents are handling across every domain.</p>
+          </div>
+          <Link href="/agents" className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200">
+            All agents <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
+
+        {/* Activation hint — shown when Gmail isn't connected and load is done */}
+        {!loadingLife && !hasGmail && (
+          <Banner tone="info" title="Connect Gmail to bring this to life">
+            <p className="mt-1 text-sm text-zinc-400">
+              Your agents can track bills, renewals, appointments, and commitments — but they need access to your inbox first.
+            </p>
+            <div className="mt-3 flex gap-2">
+              <Link
+                href="/connectors"
+                className="rounded-lg bg-violet-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-violet-400"
+              >
+                Connect Gmail
+              </Link>
+              <Link
+                href="/agents"
+                className="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:bg-zinc-800"
+              >
+                Enable agents
+              </Link>
+            </div>
+          </Banner>
+        )}
+
+        {/* Life domains grid */}
+        {loadingLife ? (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-24 animate-pulse rounded-xl border border-zinc-800/80 bg-surface-1" />
+            ))}
+          </div>
+        ) : (
+          <LifeDomainsGrid
+            agents={lifeAgents}
+            commitments={commitments}
+            domainRecords={domainRecords}
+          />
+        )}
+
+        {/* On your plate */}
+        <Panel
+          title="On your plate"
+          description="Open commitments surfaced by your agents."
+          action={
+            commitments.length > 0 ? (
+              <span className="inline-flex h-5 items-center justify-center rounded-full bg-amber-500/15 px-2 text-[11px] font-medium text-amber-300">
+                {commitments.length}
+              </span>
+            ) : undefined
+          }
+        >
+          {loadingLife ? (
+            <div className="space-y-3 py-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="h-10 animate-pulse rounded-lg bg-surface-3/40" />
+              ))}
+            </div>
+          ) : commitments.length === 0 ? (
+            <EmptyRow
+              icon={CheckCircle2}
+              label="Nothing on your plate"
+              hint={
+                hasGmail
+                  ? "Your agents will surface tasks as they find them."
+                  : "Connect Gmail so your agents can start tracking bills, appointments, and renewals."
+              }
+            />
+          ) : (
+            <ul className="divide-y divide-zinc-800/60">
+              {commitments.slice(0, 8).map((c) => (
+                <CommitmentRow key={c.id} commitment={c} />
+              ))}
+            </ul>
+          )}
+        </Panel>
       </section>
     </div>
   );
@@ -454,6 +581,139 @@ function Banner({
       <h2 className="text-sm font-medium text-zinc-100">{title}</h2>
       {children}
     </div>
+  );
+}
+
+// -------------------------------------------------------------------- life domains
+
+interface LifeDomain {
+  id: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  agentNames: string[];
+  hint: string;
+}
+
+const LIFE_DOMAINS: LifeDomain[] = [
+  { id: "health",        label: "Health",        icon: Heart,     agentNames: ["health-coach"],                                               hint: "Health records & wellness" },
+  { id: "vehicle",       label: "Vehicle",        icon: Car,       agentNames: ["garage"],                                                     hint: "Maintenance & renewals" },
+  { id: "career",        label: "Career",         icon: Briefcase, agentNames: ["upskill"],                                                    hint: "Skills & career growth" },
+  { id: "travel",        label: "Travel",         icon: Plane,     agentNames: ["travel-concierge"],                                           hint: "Trips & travel docs" },
+  { id: "home",          label: "Home",           icon: Building2, agentNames: ["household", "energy-guardian"],                               hint: "Warranties & utilities" },
+  { id: "finance",       label: "Finance",        icon: DollarSign,agentNames: ["financial-sentinel"],                                         hint: "Bills & subscriptions" },
+  { id: "relationships", label: "Relationships",  icon: Users,     agentNames: ["relationship-keeper"],                                        hint: "Important contacts" },
+  { id: "productivity",  label: "Productivity",   icon: Zap,       agentNames: ["focus-guardian", "morning-brief", "inbox-concierge", "commute-copilot"], hint: "Focus & routines" },
+];
+
+// source → domain mapping for coloring commitment rows
+const SOURCE_TO_DOMAIN: Record<string, string> = {
+  health: "health", vehicle: "vehicle", career: "career", travel: "travel",
+  home: "home", bill: "finance", email: "productivity",
+  spouse: "relationships", vip: "relationships",
+};
+
+function LifeDomainsGrid({
+  agents,
+  commitments,
+  domainRecords,
+}: {
+  agents: Agent[];
+  commitments: Commitment[];
+  domainRecords: DomainRecord[];
+}) {
+  const agentByName = new Map(agents.map((a) => [a.name, a]));
+  // count open commitments per domain (by source mapping)
+  const commitCountByDomain: Record<string, number> = {};
+  for (const c of commitments) {
+    const d = SOURCE_TO_DOMAIN[c.source] ?? c.kind ?? "productivity";
+    commitCountByDomain[d] = (commitCountByDomain[d] ?? 0) + 1;
+  }
+  // count records per domain
+  const recordCountByDomain: Record<string, number> = {};
+  for (const r of domainRecords) {
+    recordCountByDomain[r.domain] = (recordCountByDomain[r.domain] ?? 0) + 1;
+  }
+
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {LIFE_DOMAINS.map((domain) => {
+        const domainAgents = domain.agentNames
+          .map((n) => agentByName.get(n))
+          .filter(Boolean) as Agent[];
+        const active = domainAgents.some((a) => a.status === "active");
+        const deployed = domainAgents.length > 0;
+        const openCount = commitCountByDomain[domain.id] ?? 0;
+        const recordCount = recordCountByDomain[domain.id] ?? 0;
+        const Icon = domain.icon;
+
+        const statusDot = !deployed
+          ? "bg-zinc-700"
+          : active
+            ? "bg-emerald-400"
+            : "bg-zinc-500";
+        const statusLabel = !deployed ? "Not set up" : active ? "Active" : "Idle";
+
+        return (
+          <Link
+            key={domain.id}
+            href={`/agents?q=${encodeURIComponent(domain.agentNames[0] ?? "")}`}
+            className="group block rounded-xl border border-zinc-800/80 bg-surface-1 p-4 transition-colors hover:border-zinc-700"
+          >
+            <div className="flex items-center justify-between">
+              <Icon className="h-4 w-4 text-zinc-500 group-hover:text-zinc-300" />
+              <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-600">
+                <span className={`h-1.5 w-1.5 rounded-full ${statusDot}`} />
+                {statusLabel}
+              </span>
+            </div>
+            <div className="mt-2 text-sm font-medium text-zinc-200">{domain.label}</div>
+            <div className="mt-0.5 text-[11px] text-zinc-500">{domain.hint}</div>
+            {(openCount > 0 || recordCount > 0) && (
+              <div className="mt-2 flex gap-2">
+                {openCount > 0 && (
+                  <span className="inline-flex items-center rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                    {openCount} open
+                  </span>
+                )}
+                {recordCount > 0 && (
+                  <span className="inline-flex items-center rounded-full bg-zinc-700/40 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+                    {recordCount} records
+                  </span>
+                )}
+              </div>
+            )}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+function CommitmentRow({ commitment: c }: { commitment: Commitment }) {
+  const urgencyDot: Record<string, string> = {
+    now: "bg-rose-400",
+    soon: "bg-amber-400",
+    normal: "bg-zinc-500",
+    fyi: "bg-zinc-700",
+  };
+  const deadlineStr = c.deadline ? new Date(c.deadline).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : null;
+
+  return (
+    <li className="flex items-start gap-3 py-3">
+      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${urgencyDot[c.urgency] ?? "bg-zinc-600"}`} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm text-zinc-200">{c.title}</p>
+        <div className="mt-0.5 flex items-center gap-2 text-[11px] text-zinc-500">
+          <span className="capitalize">{c.source}</span>
+          {deadlineStr && (
+            <>
+              <span className="text-zinc-700">·</span>
+              <span>{deadlineStr}</span>
+            </>
+          )}
+        </div>
+      </div>
+    </li>
   );
 }
 
