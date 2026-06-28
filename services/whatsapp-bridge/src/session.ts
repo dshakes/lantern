@@ -71,6 +71,7 @@ import { PresenceTracker } from "@lantern/bridge-core/presence";
 import { computeHoldFromSamples, type LatencySample } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
+import { assembleRelevantRecall } from "@lantern/bridge-core/recall";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
 import { detectEmotionalRegister } from "@lantern/bridge-core/emotional-register";
 import {
@@ -7498,6 +7499,13 @@ export class WhatsAppSession {
             return v.register !== "neutral" && v.confidence >= 0.4 ? v.register : undefined;
           })()
         : undefined;
+    // Proactive recall — gate on LANTERN_PROACTIVE_RECALL (default OFF).
+    // Reuses already-loaded allEpisodes + related; no new network calls.
+    const proactiveRecallBlock =
+      !opts.isGroup &&
+      ["1", "true", "on"].includes((process.env.LANTERN_PROACTIVE_RECALL ?? "").toLowerCase())
+        ? assembleRelevantRecall(text, { episodes: allEpisodes, topics: related }) ?? undefined
+        : undefined;
     let systemHint = agentPersonaPrompt(
       ownerName,
       style,
@@ -7554,6 +7562,9 @@ export class WhatsAppSession {
         ownerTimezone: process.env.LANTERN_OWNER_TIMEZONE || undefined,
         // #2 — urgent inbound: acknowledge + fast concrete promise, no scheduling.
         inboundUrgent,
+        // Proactive recall — the top-ranked relevant memory for this inbound.
+        // undefined when LANTERN_PROACTIVE_RECALL is off (default) — prompt identical to today.
+        proactiveRecallBlock,
       }
     );
 

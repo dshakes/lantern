@@ -380,6 +380,15 @@ export interface PersonaOptions {
   // crossing tenant boundaries. The block tells the LLM not to
   // volunteer cross-thread details unless asked.
   relatedBlock?: string;
+  // Proactive recall block (from recall.ts → assembleRelevantRecall).
+  // The single most-relevant memory — an episode, a cross-thread topic,
+  // an open commitment — selected by token-overlap with the current
+  // inbound. Present only when LANTERN_PROACTIVE_RECALL=1 AND at least
+  // one item clears the relevance threshold. When absent (the default),
+  // the reply prompt is byte-identical to today — zero behavior change.
+  // The block header tells the LLM to weave it in ONLY when it fits
+  // naturally, and to ignore it otherwise (never volunteer unprompted).
+  proactiveRecallBlock?: string;
   // Pre-formatted language-modality block (from
   // bridge-core/language.ts → languageModalityHint). When the inbound
   // is in a non-English language, this tells the model to reply in
@@ -844,6 +853,17 @@ export function agentPersonaPrompt(
   if (related) {
     lines.push(``);
     lines.push(related);
+  }
+
+  // Proactive recall — the single most-relevant memory for this inbound.
+  // Present only when LANTERN_PROACTIVE_RECALL=1 and a relevant item was found;
+  // null/absent → prompt is identical to today (additive, never changes default).
+  // The block header already tells the LLM to weave it in ONLY when it fits,
+  // so no extra wrapper instruction is needed here.
+  const proactiveRecall = opts.proactiveRecallBlock?.trim();
+  if (proactiveRecall) {
+    lines.push(``);
+    lines.push(proactiveRecall);
   }
 
   // Unanswered-backlog hint — when the contact has sent several messages in
