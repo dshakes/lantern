@@ -255,6 +255,14 @@ import {
   getAllowedRoots,
   findDocFiles,
 } from "@lantern/bridge-core/doc-ingest";
+import {
+  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews,
+  type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite,
+} from "@lantern/bridge-core/command-center";
+import {
+  getCenterItems, setCenterItems, isRealTimeNudge, fetchBriefInput, parseSnoozeMs,
+  type CenterStateEntry,
+} from "@lantern/bridge-core/command-center-executor";
 
 export type IMessageConnectionState =
   | "starting"
@@ -699,6 +707,8 @@ export class IMessageSession {
   private conciergeNudgedToday = new Set<string>();
   // API client — same pattern as rest of the bridge.
   private readonly commitments = new CommitmentsClient(authedFetch);
+  // Per-chat numbered state for the command center (TTL 15 min).
+  private readonly centerState = new Map<string, CenterStateEntry>();
   // ── Commute copilot (LANTERN_COMMUTE=on, default OFF) ──────────────────────
   // ponytail: ships dark; owner flips LANTERN_COMMUTE=on to enable.
   private static readonly COMMUTE_ENABLED =
@@ -1486,6 +1496,13 @@ export class IMessageSession {
       for (const n of nudges) {
         if (fired >= IMessageSession.NUDGE_MAX_PER_TICK) break;
         if (this.firedNudges.has(n.dedupeKey)) continue;
+
+        // Hybrid proactive gate: only pre-meeting + bill/price-hike commitments fire
+        // in real-time. Everything else (overdue-reply, relationship-date, dormant-vip)
+        // surfaces in "?" / Brief on demand. Don't mark as fired — re-evaluated next
+        // tick (gated silently, not spammy).
+        // ponytail: isRealTimeNudge from command-center-executor.
+        if (!isRealTimeNudge(n)) continue;
 
         // Focus guardian: hold non-urgent nudges (priority < 80) during heads-down.
         // URGENT (pre-meeting, relationship-date priority ≥ 80) always sends.
@@ -2369,6 +2386,147 @@ export class IMessageSession {
       end: e.end ? e.end.toISOString() : null,
       calendar: e.calendar,
     }));
+  }
+
+  // ── Command center ────────────────────────────────────────────────────────
+
+  /**
+   * Execute a numbered action reply from the command center.
+   * Routes to commitment done/snooze/dismiss, draft send/edit, or auto-action undo.
+   * All execution reuses existing bridge rails — no new send paths.
+   */
+  private async executeCenterAction(handle: string, action: ParsedAction): Promise<void> {
+    const { item } = action;
+    const ack = (msg: string) => this.send(handle, msg).catch(() => {});
+    try {
+      if (item.ref === "commitment") {
+        if (action.action === "done") {
+          await this.commitments.done(item.id);
+          await ack(`✅ done — "${item.label}"`);
+        } else if (action.action === "snooze") {
+          const until = new Date(Date.now() + parseSnoozeMs(action.arg)).toISOString();
+          await this.commitments.snooze(item.id, until);
+          await ack(`⏰ snoozed ${action.arg ?? "3h"} — "${item.label}"`);
+        } else if (action.action === "skip") {
+          await this.commitments.dismiss(item.id);
+          await ack(`👍 skipped — "${item.label}"`);
+        } else {
+          await ack(`"${item.n} done" · "${item.n} snooze 2h" · "${item.n} skip"`);
+        }
+      } else if (item.ref === "draft") {
+        // item.id = pendingDraftEdits map key set during handleCenterCommand.
+        const pending = this.pendingDraftEdits.get(item.id);
+        if (!pending) { await ack("⚠️ that draft expired or was already sent."); return; }
+        const { target, targetLabel, draft } = pending;
+        if (action.action === "send" || action.action === "act") {
+          this.pendingDraftEdits.delete(item.id);
+          const res = await this.send(target, draft);
+          if (res.ok) this.repliesSentToday += 1;
+          await ack(res.ok ? `✅ sent to ${targetLabel}.` : `⚠️ couldn't send to ${targetLabel}.`);
+        } else if (action.action === "edit" || action.action === "custom") {
+          const replacement = action.arg ?? "";
+          if (!replacement) { await ack(`type your version: "${item.n} edit <your text>"`); return; }
+          this.pendingDraftEdits.delete(item.id);
+          const res = await this.send(target, replacement);
+          if (res.ok) this.repliesSentToday += 1;
+          await ack(res.ok ? `✅ sent your version to ${targetLabel}.` : `⚠️ couldn't send to ${targetLabel}.`);
+        } else if (action.action === "skip") {
+          this.pendingDraftEdits.delete(item.id);
+          await ack(`👍 dropped draft to ${targetLabel}.`);
+        } else {
+          await ack(`draft to ${targetLabel}: "${draft.slice(0, 40)}…"\n"${item.n} send" / "${item.n} edit <text>"`);
+        }
+      } else if (item.ref === "auto_action") {
+        // Route to existing auto-action undo rail (pendingOffers kind=auto-act-undo).
+        const cachedOffer = this.pendingOffers.get(handle);
+        if (cachedOffer && (cachedOffer as any).kind === "auto-act-undo") {
+          this.pendingOffers.delete(handle);
+          void this.executeCachedOffer(handle, cachedOffer);
+          await ack("↩️ reverting…");
+        } else {
+          await ack("⚠️ that action can't be undone (no undo cached).");
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err, action: action.action, ref: item.ref }, "im center action execute failed");
+      await ack("⚠️ something went wrong — try again.");
+    }
+  }
+
+  /**
+   * Render and send a command-center view (brief / plate / agents / domain / did).
+   * Fetches commitments + life-events, builds the view, stores numbered state.
+   */
+  private async handleCenterCommand(handle: string, cmd: CenterCommand): Promise<void> {
+    const send = (msg: string) => this.send(handle, msg).catch(() => {});
+    try {
+      const all = await this.commitments.list();
+      const allOpen = all.filter((c) => c.status === "open" || c.status === "suggested");
+
+      // Collect still-valid pending drafts from the B5 map.
+      this.gcPendingDraftEdits();
+      const drafts: DraftWaiting[] = [];
+      for (const [key, pending] of this.pendingDraftEdits) {
+        if (Date.now() - pending.issuedAt <= IMessageSession.DRAFT_EDIT_TTL_MS) {
+          drafts.push({
+            id: key, // use map key as stable Draft id for executeCenterAction lookup
+            to: pending.targetLabel,
+            preview: pending.draft.slice(0, 60),
+          });
+        }
+      }
+
+      let text: string;
+      let items: BriefItem[] = [];
+
+      if (cmd === "brief") {
+        const input = await fetchBriefInput(authedFetch, allOpen, drafts);
+        const view = buildBrief(input);
+        text = view.text; items = view.items;
+      } else if (cmd === "plate") {
+        const view = buildPlate(allOpen, drafts);
+        text = view.text; items = view.items;
+      } else if (cmd === "agents") {
+        // Best-effort: list agents from the control plane.
+        const agentStats: AgentStat[] = [];
+        try {
+          const r = await authedFetch("/v1/agents");
+          if (r.ok) {
+            const data = (await r.json()) as { agents?: Array<{ name: string; status?: string }> };
+            for (const a of data.agents ?? []) {
+              agentStats.push({ name: a.name, health: a.status ?? "idle" });
+            }
+          }
+        } catch { /* best-effort */ }
+        text = buildAgents(agentStats);
+      } else if (cmd === "did") {
+        // ponytail: auto-actions not yet sourced from an API; shows "nothing auto-handled"
+        const view = buildDid([]);
+        text = view.text; items = view.items;
+      } else if (cmd === "news") {
+        // AI Radar feed (links included). Best-effort; endpoint 404s if radar not yet run.
+        const news: NewsItemLite[] = [];
+        try {
+          const r = await authedFetch("/v1/news?limit=20");
+          if (r.ok) {
+            const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
+            for (const it of data ?? []) news.push({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score });
+          }
+        } catch { /* best-effort */ }
+        text = buildNews(news);
+      } else {
+        // Domain drill-down.
+        // ponytail: domain records not sourced yet; shows "nothing tracked yet"
+        const domain = (cmd as { domain: string }).domain;
+        text = buildDomain({ domain, recordCount: 0, recent: [], obligations: [] });
+      }
+
+      setCenterItems(this.centerState, handle, items);
+      await send(text);
+    } catch (err) {
+      this.logger.warn({ err }, "im center command failed");
+      await send("⚠️ couldn't load your brief right now — try again.");
+    }
   }
 
   // ── Concierge edge — task capture + nudge poll + 1-click resolution ──────
@@ -3882,6 +4040,28 @@ export class IMessageSession {
       const parsed = parseNLCommand(text);
       if (parsed) {
         void this.handleOwnerCommand(row.handle, parsed);
+        return;
+      }
+    }
+
+    // COMMAND CENTER: "?" / "brief" / "plate" / "agents" / "did" / "<domain>"
+    // and numbered-action replies against the last Brief/plate/did shown.
+    // Owner-only gate (isOwnerChatRow). Runs BEFORE concierge so "1 done" on a
+    // Brief item is handled by the command center, not concierge resolution.
+    if (text && !isGroup && this.isOwnerChatRow(row)) {
+      const lastItems = getCenterItems(this.centerState, row.handle);
+      if (lastItems) {
+        const action = parseActionReply(text, lastItems);
+        if (action) {
+          void this.executeCenterAction(row.handle, action).catch((err) =>
+            this.logger.warn({ err }, "im center action execute failed"));
+          return;
+        }
+      }
+      const cmd = parseCenterCommand(text);
+      if (cmd) {
+        void this.handleCenterCommand(row.handle, cmd).catch((err) =>
+          this.logger.warn({ err }, "im center command failed"));
         return;
       }
     }

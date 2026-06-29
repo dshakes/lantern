@@ -98,7 +98,7 @@ export function parseActionReply(text: string, items: BriefItem[]): ParsedAction
 
 // ── Command recognition (which surface to render) ───────────────────────────
 
-export type CenterCommand = "brief" | "plate" | "agents" | "did" | { domain: string };
+export type CenterCommand = "brief" | "plate" | "agents" | "did" | "news" | { domain: string };
 
 const DOMAINS = ["health", "vehicle", "car", "money", "finance", "home", "household", "career", "work", "travel"];
 const DOMAIN_ALIAS: Record<string, string> = {
@@ -128,6 +128,9 @@ export function parseCenterCommand(text: string): CenterCommand | null {
   }
   if (t === "did" || t === "recap" || t === "what did you do" || t === "what did you do today" || t === "auto" || t === "auto-actions") {
     return "did";
+  }
+  if (t === "news" || t === "radar" || t === "ai news" || t === "ai radar" || t === "ai" || t === "latest" || t === "what's new" || t === "whats new") {
+    return "news";
   }
   if (DOMAINS.includes(t)) return { domain: DOMAIN_ALIAS[t] ?? t };
   // "health?" / "show health" / "status health"
@@ -405,4 +408,39 @@ export function buildDid(actions: AutoAction[]): CenterView {
   }
   if (items.length) lines.push(`\nreply "<n> undo" to revert any of these`);
   return { text: lines.join("\n"), items };
+}
+
+// ── news / radar: AI Radar feed (links included) ────────────────────────────
+
+export interface NewsItemLite {
+  source: string;
+  category?: string;
+  title: string;
+  url: string;
+  summary?: string;
+  score?: number;
+}
+
+const NEWS_CAT_ICON: Record<string, string> = {
+  labs: "🧪",
+  people: "✍️",
+  "coding-tools": "🛠",
+  aggregators: "📰",
+  podcasts: "🎙",
+};
+
+/** Render the AI Radar feed — ranked by score, grouped lightly, links included
+ *  (the owner taps them in the message). Pure. */
+export function buildNews(items: NewsItemLite[]): string {
+  if (!items.length) return "📡 AI Radar — nothing fresh yet (scans every ~5 min). Try again shortly.";
+  const ranked = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 12);
+  const lines: string[] = [`📡 AI Radar · ${items.length} recent · ≤5-min fresh`, ""];
+  for (const it of ranked) {
+    const icon = (it.category && NEWS_CAT_ICON[it.category]) || "•";
+    lines.push(`${icon} ${clip(it.title, 72)} — ${clip(it.source, 22)}`);
+    if (it.url) lines.push(`   ${it.url}`);
+  }
+  lines.push("");
+  lines.push(`"news labs" / "news coding-tools" to filter · pulls the latest scan`);
+  return lines.join("\n");
 }
