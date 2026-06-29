@@ -17,6 +17,7 @@ import { authedFetch } from "@lantern/bridge-core/auth";
 import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
 import { parseSignals, presenceFromSignals, type SignalPresence } from "@lantern/bridge-core/device-signals";
+import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
@@ -4360,6 +4361,12 @@ export class WhatsAppSession {
           this.logger.warn({ err }, "wa center command failed"));
         return;
       }
+      // "what did I watch / browse" — Mac browser history + iPhone signals.
+      if (isWatchQuery(text)) {
+        void this.handleWatchQuery(jid, text).catch((err) =>
+          this.logger.warn({ err }, "wa watch query failed"));
+        return;
+      }
     }
 
     // CONCIERGE 1-CLICK RESOLUTION: before the draft-edit block so "done" /
@@ -8566,7 +8573,7 @@ export class WhatsAppSession {
     try {
       // Killswitch: when engaged the bridge is fully silent — no proactive DMs.
       if (this.killSwitch) return;
-      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
+      if (this.proactivePaused()) return; // muted ("quiet Nh"), quiet-hours, or "quiet [Nh]" window
       // Only fire when paired + connected so sendSelf can land.
       if (!this.socket || !this.connected || !this.ownJid()) return;
       // Quiet hours (01:00–06:00 owner-local): defer — don't ping overnight.
@@ -8853,6 +8860,28 @@ export class WhatsAppSession {
     }
   }
 
+  /** Answer "what did I watch / browse" from Mac browser history (YouTube titles
+   *  live there) + iPhone media/app signals. Owner-only (caller-gated). */
+  private async handleWatchQuery(_jid: string, query = ""): Promise<void> {
+    try {
+      const askedYouTube = /\b(youtube|yt)\b/i.test(query);
+      const items = await readWatchHistory({ windowHours: 168, logger: this.logger });
+      let text = watchSummary(items, Date.now(), askedYouTube);
+      try {
+        const file = join(homedir(), ".lantern", "device-signals.jsonl");
+        if (existsSync(file)) {
+          const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+          const phone = iphoneUsageBlock(parseSignals(tail), Date.now());
+          if (phone) text += (text ? "\n\n" : "") + phone;
+        }
+      } catch { /* best-effort */ }
+      await this.sendSelf(text);
+    } catch (err) {
+      this.logger.warn({ err }, "watch query failed");
+      await this.sendSelf("couldn't pull your watch/browse history right now.").catch(() => {});
+    }
+  }
+
   // ── Concierge edge — task capture + nudge poll + 1-click resolution ──────
 
   /**
@@ -8984,7 +9013,7 @@ export class WhatsAppSession {
   private async runCommuteTick(): Promise<void> {
     try {
       if (this.killSwitch) return;
-      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
+      if (this.proactivePaused()) return; // muted ("quiet Nh"), quiet-hours, or "quiet [Nh]" window
       if (!this.socket || !this.connected || !this.ownJid()) return;
       const hour = this.ownerLocalHour();
       if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
@@ -9022,9 +9051,11 @@ export class WhatsAppSession {
     }
   }
 
-  /** True while quiet-hours OR an owner "quiet [Nh]" window is active — gates every proactive push. */
+  /** True while the bot is muted ("quiet/pause Nh"), in quiet-hours, OR inside an
+   *  owner "quiet [Nh]" window — gates every proactive push so a global mute also
+   *  silences proactive bloat, not just contact replies. */
   private proactivePaused(): boolean {
-    return isQuietHours(new Date(), defaultQuietHours()) || Date.now() < this.proactiveMuteUntil;
+    return this.muted || isQuietHours(new Date(), defaultQuietHours()) || Date.now() < this.proactiveMuteUntil;
   }
 
   /** Push only high-signal NEW AI news to self-chat. Deduped + quiet-hours aware. */
@@ -9091,7 +9122,7 @@ export class WhatsAppSession {
   private async runEnergyTick(): Promise<void> {
     try {
       if (this.killSwitch) return;
-      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
+      if (this.proactivePaused()) return; // muted ("quiet Nh"), quiet-hours, or "quiet [Nh]" window
       if (!this.socket || !this.connected || !this.ownJid()) return;
       const hour = this.ownerLocalHour();
       if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
@@ -9162,7 +9193,7 @@ export class WhatsAppSession {
   private async runHealthCoachTick(): Promise<void> {
     try {
       if (this.killSwitch) return;
-      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
+      if (this.proactivePaused()) return; // muted ("quiet Nh"), quiet-hours, or "quiet [Nh]" window
       if (!this.socket || !this.connected || !this.ownJid()) return;
       const hour = this.ownerLocalHour();
       if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
