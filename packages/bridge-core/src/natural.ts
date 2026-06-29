@@ -1933,10 +1933,13 @@ const ESCALATION_PATTERNS: { pattern: RegExp; reason: string }[] = [
       /\b(hospital|ER|ambulance|police|accident|hurt|injured|crashed?)\b/i,
     reason: "safety/health",
   },
-  // Direct asks for the human
+  // Direct asks for the human. NOTE: these only PAGE the owner (a heads-up) —
+  // they NEVER suppress the reply (see the session escalation gate). Normal
+  // conversational questions ("where are you", "are you ok/home", "call me")
+  // were removed: they are answerable by the bot and must not be treated as
+  // human-only escalations that silence it.
   {
-    pattern:
-      /\b(call me|pick up|where are you|need (you|to talk)|are you (ok|okay|alright|home))\b/i,
+    pattern: /\b(call me back|pick up the phone|need to talk to you)\b/i,
     reason: "needs you specifically",
   },
   // Money / legal — these are never the assistant's call
