@@ -106,17 +106,17 @@ export default function PersonalHarnessPage() {
             <td><strong>No</strong> — you do the outreach</td>
           </tr>
           <tr>
-            <td><strong>morning-brief</strong></td>
-            <td>Texts you ~3 bullets every weekday at 8am on what matters today.</td>
-            <td>daily 8am</td>
-            <td>self-chat</td>
-            <td><strong>No</strong></td>
+            <td><strong>inbox-triage</strong></td>
+            <td>Every ~45 min reads Gmail, classifies each message action/FYI/noise, and queues a one-tap draft for anything needing a reply.</td>
+            <td>~45m</td>
+            <td>self-chat · needs Gmail</td>
+            <td><strong>No</strong> — you confirm every send</td>
           </tr>
           <tr>
-            <td><strong>inbox-concierge</strong></td>
-            <td>Reads your Gmail each morning and texts a 3-bucket digest.</td>
-            <td>daily AM</td>
-            <td>self-chat</td>
+            <td><strong>ai-radar</strong></td>
+            <td>Every ~5 min scans Anthropic/OpenAI/DeepMind/HuggingFace/Simon Willison/GitHub releases/HN/Reddit/podcasts, dedupes, and surfaces genuinely new AI developments. Pull anytime with &quot;news&quot;.</td>
+            <td>~5m</td>
+            <td>self-chat (&quot;news&quot;)</td>
             <td><strong>No</strong></td>
           </tr>
           <tr>
@@ -255,22 +255,22 @@ export default function PersonalHarnessPage() {
         interface="runs: weekly · you see it: self-chat"
       />
       <AgentLoop
-        title="morning-brief"
-        cadence="daily 8am"
+        title="inbox-triage"
+        cadence="~45m cron"
         execModel="scheduled"
-        stages={["8am trigger", "Gather context", "Compose 3 bullets", "Text you"]}
-        tone="emerald"
-        ownerFacing
-        interface="runs: daily 8am weekdays · you see it: self-chat"
-      />
-      <AgentLoop
-        title="inbox-concierge"
-        cadence="daily AM"
-        execModel="scheduled"
-        stages={["Morning trigger", "Read Gmail", "Sort 3 buckets", "Text digest"]}
+        stages={["Read Gmail", "Classify msg", "Queue draft", "You confirm"]}
         tone="sky"
         ownerFacing
-        interface="runs: daily AM · you see it: self-chat · needs Gmail"
+        interface="runs: ~45m · you see it: self-chat · needs Gmail"
+      />
+      <AgentLoop
+        title="ai-radar"
+        cadence="~5m cron"
+        execModel="scheduled"
+        stages={["Scan AI feeds", "Dedupe", "Rank new", "Surface to you"]}
+        tone="violet"
+        ownerFacing
+        interface={'runs: ~5m · you see it: "news" in self-chat'}
       />
 
       <h4 id="bridge-agents">Bridge loops — runs on your Mac, driven by device signals</h4>

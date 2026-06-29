@@ -403,16 +403,15 @@ Owner profile at `~/.lantern/owner-profile.md` — facts, per-contact rules, dia
 
 ### Your agents
 
-Eight agents make up the personal suite. The first six are **owner-facing** — they nudge or brief you in your self-chat and never touch your contacts. Only the two **assistant** agents reply to contacts as you. This distinction matters: owner-facing agents can be aggressive and proactive; assistant agents carry trust.
+The personal suite is a set of **owner-facing** loop agents — they nudge or brief you in your self-chat and never touch your contacts — plus two **assistant** agents that reply to contacts as you. This distinction matters: owner-facing agents can be aggressive and proactive; assistant agents carry trust. Highlights below; the full roster (scheduled, bridge, and reactive tiers) and how each loops lives in `apps/docs` → `/personal`.
 
 | Agent | What it does | Reactive / Proactive | Reaches you via | Touches your contacts? |
 |---|---|---|---|---|
 | **concierge** | Captures tasks (from you or from what people message you), researches how to handle them, and nudges you with one-tap actions — reply / snooze / done — until handled. | Both | self-chat nudges | No — private to-do layer |
 | **relationship-keeper** | Each week finds people you've gone quiet on (21+ days) and nudges you to reach out, with a draft in your voice if you want it. | Proactive (weekly) | self-chat | No — you do the outreach |
 | **financial-sentinel** | Watches bills and subscriptions. Flags price hikes and recurring charges, and drafts a review or cancel for your one-tap OK. Never moves money. | Proactive (daily) | self-chat | No |
-| **morning-brief** | Texts you ~3 bullets every weekday at 8am on what matters today. | Proactive (daily 8am) | self-chat | No |
-| **inbox-concierge** | Reads your Gmail each morning and texts a 3-bucket digest. | Proactive (daily) | self-chat | No |
 | **inbox-triage** | Polls Gmail every ~45 min, classifies each new message (action / FYI / noise), and for action items drafts a ready-to-send reply you confirm with one tap. | Proactive (meso) | self-chat + one-tap send | No — you confirm every send |
+| **ai-radar** | Every ~5 min scans Anthropic / OpenAI / DeepMind / HuggingFace / Simon Willison / GitHub releases / HackerNews / Reddit / podcasts, dedupes, and surfaces genuinely new AI developments. Pull anytime with `news` (e.g. `news openai`, `news week`). | Proactive (micro, ~5m) | self-chat (`news`) | No |
 | **whatsapp-assistant** | Auto-replies to your WhatsApp contacts in your voice. | Reactive (on inbound) | replies to contacts | **Yes** — talks to contacts as you |
 | **imessage-assistant** | Auto-replies to your iMessage contacts in your voice. | Reactive (on inbound) | replies to contacts | **Yes** — talks to contacts as you |
 
@@ -422,11 +421,11 @@ The loop agents (concierge, relationship-keeper, financial-sentinel) run on the 
 
 Every loop agent is created at one of five **tiers**. The tier is the only knob that sets cadence; the durable engine, budget cap, and signed receipt are identical across all of them. `POST /v1/agents/loop` takes `"tier": "nano|micro|meso|macro|mega"` and stamps the matching cron (nano is event-driven — no schedule row). See `loop_agent.go`.
 
-<img src="docs/assets/loop-tiers.svg" alt="The five loop tiers: nano (event-driven, no cron — bridge fires on a signal; commute-copilot, energy-guardian, health-coach, focus-guardian), micro (every 5 min, */5 * * * *), meso (every 45 min, */45 * * * *; inbox-autopilot), macro (daily 8am, 0 8 * * *; chief-of-staff, financial-sentinel, domain-tracker), mega (weekly Mon 9am, 0 9 * * 1; relationship-keeper). Top turns fastest, bottom slowest." width="100%">
+<img src="docs/assets/loop-tiers.svg" alt="The five loop tiers: nano (event-driven, no cron — bridge fires on a signal; commute-copilot, energy-guardian, health-coach, focus-guardian), micro (every 5 min, */5 * * * *; ai-radar), meso (every 45 min, */45 * * * *; inbox-triage), macro (daily 8am, 0 8 * * *; chief-of-staff, financial-sentinel, domain-tracker), mega (weekly Mon 9am, 0 9 * * 1; relationship-keeper). Top turns fastest, bottom slowest." width="100%">
 
 #### Owner-facing loops — nudge you in self-chat, never touch your contacts
 
-<img src="docs/assets/agent-loops-owner.svg" alt="Owner-facing agent loops — concierge (Capture→Research→Nudge→You act), relationship-keeper (Scan people→Gone quiet?→Draft→Nudge you→You reach out), financial-sentinel (Scan bills→Price hike?→Flag review→You decide), morning-brief (8am trigger→Gather context→3 bullets→Text you), inbox-concierge (Morning trigger→Read Gmail→Sort buckets→Text digest); each loop returns to its first step" width="100%">
+<img src="docs/assets/agent-loops-owner.svg" alt="Owner-facing agent loops — concierge (Capture→Research→Nudge→You act), relationship-keeper (Scan people→Gone quiet?→Draft→Nudge you→You reach out), financial-sentinel (Scan bills→Price hike?→Flag review→You decide), inbox-triage (Read Gmail→Classify msg→Queue draft→You confirm), ai-radar (Scan AI feeds→Dedupe→Rank new→Surface); each loop returns to its first step" width="100%">
 
 #### Contact-facing loops — reply AS YOU to real contacts ⚠
 
