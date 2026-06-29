@@ -64,7 +64,9 @@
     "./proactive-loops": "./src/proactive-loops.ts",
     "./digest-compose": "./src/digest-compose.ts",
     "./doc-ingest": "./src/doc-ingest.ts",
-    "./recall": "./src/recall.ts"
+    "./recall": "./src/recall.ts",
+    "./command-center": "./src/command-center.ts",
+    "./command-center-executor": "./src/command-center-executor.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

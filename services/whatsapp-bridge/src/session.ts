@@ -126,6 +126,14 @@ import {
   findDocFiles,
 } from "@lantern/bridge-core/doc-ingest";
 import { extname } from "path";
+import {
+  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews,
+  type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite,
+} from "@lantern/bridge-core/command-center";
+import {
+  getCenterItems, setCenterItems, isRealTimeNudge, fetchBriefInput, parseSnoozeMs,
+  type CenterStateEntry,
+} from "@lantern/bridge-core/command-center-executor";
 
 // MIME map for sendDocument — WhatsApp's UI shows a file-type icon
 // based on this. Falls back to application/octet-stream for unknown.
@@ -1471,6 +1479,9 @@ export class WhatsAppSession {
   private conciergeNudgedToday = new Set<string>();
   // API client — injected authedFetch; same pattern as the rest of the bridge.
   private readonly commitments = new CommitmentsClient(authedFetch);
+  // Per-chat numbered state for the command center. Maps owner JID → last shown
+  // numbered list + 15-min expiry. Cleared on next Brief/plate/did render.
+  private readonly centerState = new Map<string, CenterStateEntry>();
   // ── Commute copilot (LANTERN_COMMUTE=on, default OFF) ──────────────────────
   // Ships dark. Fires hands-free commitment surface once per drive + park recap.
   // ponytail: ships dark; owner flips LANTERN_COMMUTE=on to enable.
@@ -4303,6 +4314,28 @@ export class WhatsAppSession {
       }
     }
 
+    // COMMAND CENTER: "?" / "brief" / "plate" / "agents" / "did" / "<domain>"
+    // and numbered-action replies against the last Brief/plate/did shown.
+    // Owner-only (self && !group). Runs BEFORE concierge so "1 done" on a
+    // Brief item is handled by the command center, not concierge resolution.
+    if (self && !group && trimmed) {
+      const lastItems = getCenterItems(this.centerState, jid);
+      if (lastItems) {
+        const action = parseActionReply(text, lastItems);
+        if (action) {
+          void this.executeCenterAction(jid, action).catch((err) =>
+            this.logger.warn({ err }, "wa center action execute failed"));
+          return;
+        }
+      }
+      const cmd = parseCenterCommand(text);
+      if (cmd) {
+        void this.handleCenterCommand(jid, cmd).catch((err) =>
+          this.logger.warn({ err }, "wa center command failed"));
+        return;
+      }
+    }
+
     // CONCIERGE 1-CLICK RESOLUTION: before the draft-edit block so "done" /
     // "research" / "snooze" from the owner don't accidentally fall through to
     // draft-confirm logic. Mirrors the pendingDraftEdits pattern exactly.
@@ -4559,6 +4592,17 @@ export class WhatsAppSession {
         [
           "🤖 *Lantern commands*",
           "",
+          "Command center (type in self-chat):",
+          "`?` or `today` — your daily brief (drafts + commitments + fyi)",
+          "`plate` — everything on your plate right now",
+          "`agents` — agent health + last run",
+          "`did` — auto-actions from the last 24h",
+          "`health` / `vehicle` / `money` / `home` / `career` — domain drill-down",
+          "",
+          "Numbered actions (after a brief/plate):",
+          "`1` — default · `1 done` · `1 snooze 2h` · `1 send` · `1 edit <text>`",
+          "",
+          "Bridge commands:",
           "`/lantern status` — bridge uptime + agent state",
           "`/lantern ping` — quick echo, confirms I'm alive",
           "`/lantern groups` — list the groups I'm monitoring",
@@ -8557,6 +8601,13 @@ export class WhatsAppSession {
         if (firedThisTick >= WhatsAppSession.NUDGE_MAX_PER_TICK) break;
         if (this.firedNudgeKeys.has(n.dedupeKey)) continue;
 
+        // Hybrid proactive gate: only pre-meeting + bill/price-hike commitments fire
+        // in real-time. Everything else (overdue-reply, relationship-date, dormant-vip)
+        // surfaces in "?" / Brief on demand. Don't mark as fired — re-evaluated next
+        // tick (gated silently, not spammy).
+        // ponytail: isRealTimeNudge from command-center-executor.
+        if (!isRealTimeNudge(n)) continue;
+
         // Focus guardian: hold non-urgent nudges (priority < 80) when heads-down.
         // URGENT (pre-meeting, relationship-date priority ≥ 80) always sends.
         // ponytail: focusWasActive is updated by runHealthCoachTick; at most 60 min lag.
@@ -8592,6 +8643,153 @@ export class WhatsAppSession {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  // ── Command center ────────────────────────────────────────────────────────
+
+  /**
+   * Execute a numbered action reply from the command center.
+   * Routes to commitment done/snooze/dismiss, draft send/edit, or auto-action undo.
+   * All execution reuses existing bridge rails — no new send paths.
+   */
+  private async executeCenterAction(jid: string, action: ParsedAction): Promise<void> {
+    const { item } = action;
+    try {
+      if (item.ref === "commitment") {
+        if (action.action === "done") {
+          await this.commitments.done(item.id);
+          await this.confirmToSelf(`✅ done — "${item.label}"`);
+        } else if (action.action === "snooze") {
+          const until = new Date(Date.now() + parseSnoozeMs(action.arg)).toISOString();
+          await this.commitments.snooze(item.id, until);
+          await this.confirmToSelf(`⏰ snoozed ${action.arg ?? "3h"} — "${item.label}"`);
+        } else if (action.action === "skip") {
+          await this.commitments.dismiss(item.id);
+          await this.confirmToSelf(`👍 skipped — "${item.label}"`);
+        } else {
+          await this.confirmToSelf(`"${item.n} done" · "${item.n} snooze 2h" · "${item.n} skip"`);
+        }
+      } else if (item.ref === "draft") {
+        // item.id = the pendingDraftEdits map key (owner JID) set during handleCenterCommand.
+        const pending = this.pendingDraftEdits.get(item.id);
+        if (!pending) {
+          await this.confirmToSelf("⚠️ that draft expired or was already sent.");
+          return;
+        }
+        const label = pending.displayName ?? pending.targetJid.split("@")[0];
+        if (action.action === "send" || action.action === "act") {
+          this.pendingDraftEdits.delete(item.id);
+          await this.sendMessage(pending.targetJid, pending.draftText);
+          this.recordOutboundReply(pending.targetJid, pending.draftText);
+          await this.confirmToSelf(`✅ sent to ${label}.`);
+        } else if (action.action === "edit" || action.action === "custom") {
+          const replacement = action.arg ?? "";
+          if (!replacement) {
+            await this.confirmToSelf(`type your version: "${item.n} edit <your text>"`);
+            return;
+          }
+          this.pendingDraftEdits.delete(item.id);
+          await this.sendMessage(pending.targetJid, replacement);
+          this.recordOutboundReply(pending.targetJid, replacement);
+          await this.confirmToSelf(`✅ sent your version to ${label}.`);
+        } else if (action.action === "skip") {
+          this.pendingDraftEdits.delete(item.id);
+          await this.confirmToSelf(`👍 dropped draft to ${label}.`);
+        } else {
+          await this.confirmToSelf(
+            `draft to ${label}: "${pending.draftText.slice(0, 40)}…"\n"${item.n} send" / "${item.n} edit <text>"`
+          );
+        }
+      } else if (item.ref === "auto_action") {
+        // Route to the existing auto-action undo rail via pendingOffers (kind=auto-act-undo).
+        const cachedOffer = this.pendingOffers.get(jid);
+        if (cachedOffer && (cachedOffer as any).kind === "auto-act-undo") {
+          this.pendingOffers.delete(jid);
+          void this.executeCachedOffer(jid, cachedOffer);
+          await this.confirmToSelf("↩️ reverting…");
+        } else {
+          await this.confirmToSelf("⚠️ that action can't be undone (no undo cached).");
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err, action: action.action, ref: item.ref }, "wa center action execute failed");
+      await this.confirmToSelf("⚠️ something went wrong — try again.");
+    }
+  }
+
+  /**
+   * Render and send a command-center view (brief / plate / agents / domain / did).
+   * Fetches commitments + life-events, builds the view, stores numbered state.
+   */
+  private async handleCenterCommand(jid: string, cmd: CenterCommand): Promise<void> {
+    try {
+      const all = await this.commitments.list();
+      const allOpen = all.filter((c) => c.status === "open" || c.status === "suggested");
+
+      // Collect still-valid pending drafts from the B5 map (keyed by owner JID).
+      this.gcPendingDraftEdits();
+      const drafts: DraftWaiting[] = [];
+      for (const [key, pending] of this.pendingDraftEdits) {
+        if (Date.now() - pending.issuedAt <= WhatsAppSession.DRAFT_EDIT_TTL_MS) {
+          drafts.push({
+            id: key, // use map key as stable Draft id for executeCenterAction lookup
+            to: pending.displayName ?? pending.targetJid.split("@")[0],
+            preview: pending.draftText.slice(0, 60),
+          });
+        }
+      }
+
+      let text: string;
+      let items: BriefItem[] = [];
+
+      if (cmd === "brief") {
+        const input = await fetchBriefInput(authedFetch, allOpen, drafts);
+        const view = buildBrief(input);
+        text = view.text; items = view.items;
+      } else if (cmd === "plate") {
+        const view = buildPlate(allOpen, drafts);
+        text = view.text; items = view.items;
+      } else if (cmd === "agents") {
+        // Best-effort: list agents from the control plane.
+        const agentStats: AgentStat[] = [];
+        try {
+          const r = await authedFetch("/v1/agents");
+          if (r.ok) {
+            const data = (await r.json()) as { agents?: Array<{ name: string; status?: string }> };
+            for (const a of data.agents ?? []) {
+              agentStats.push({ name: a.name, health: a.status ?? "idle" });
+            }
+          }
+        } catch { /* best-effort */ }
+        text = buildAgents(agentStats);
+      } else if (cmd === "did") {
+        // ponytail: auto-actions not yet sourced from an API endpoint; shows "nothing auto-handled"
+        const view = buildDid([]);
+        text = view.text; items = view.items;
+      } else if (cmd === "news") {
+        // AI Radar feed (links included). Best-effort; endpoint 404s if radar not yet run.
+        const news: NewsItemLite[] = [];
+        try {
+          const r = await authedFetch("/v1/news?limit=20");
+          if (r.ok) {
+            const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
+            for (const it of data ?? []) news.push({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score });
+          }
+        } catch { /* best-effort */ }
+        text = buildNews(news);
+      } else {
+        // Domain drill-down.
+        // ponytail: domain records not sourced yet; shows "nothing tracked yet"
+        const domain = (cmd as { domain: string }).domain;
+        text = buildDomain({ domain, recordCount: 0, recent: [], obligations: [] });
+      }
+
+      setCenterItems(this.centerState, jid, items);
+      await this.sendSelf(text);
+    } catch (err) {
+      this.logger.warn({ err }, "wa center command failed");
+      await this.confirmToSelf("⚠️ couldn't load your brief right now — try again.");
     }
   }
 
