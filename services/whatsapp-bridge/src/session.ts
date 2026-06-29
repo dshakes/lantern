@@ -2067,7 +2067,13 @@ export class WhatsAppSession {
     });
   }
 
-  async start() {
+  // `manual` = an owner-initiated start (POST /start / dashboard Reconnect).
+  // ONLY a manual start clears the conflict-storm counters — auto-reconnects
+  // (the timer-driven start() below) must NOT reset them, or the storm count
+  // resets every cycle and the dormancy threshold is never reached → the
+  // bridge fights another live WhatsApp Web session forever instead of backing
+  // off. (This was the "kicked off every reconnect" loop.)
+  async start(manual = false) {
     // LIVE-SOCKET GUARD (fix: 440 connectionReplaced flap). start() is
     // reachable from POST /start, the auto-resume sweep, and every reconnect
     // timer. If a socket is already open or a start() is mid-flight, opening a
@@ -2084,13 +2090,16 @@ export class WhatsAppSession {
       return;
     }
     this.connecting = true;
-    // A manual start() is the recovery path out of conflict dormancy:
-    // clear the storm so we genuinely re-attempt instead of immediately
-    // re-dormant. (Reconnect-timer-driven starts never reach here while
-    // dormant because we cancel the timer when going dormant.)
-    this.conflictDormant = false;
-    this.conflictStormCount = 0;
-    this.conflictStormStartedAt = 0;
+    // ONLY a manual start clears conflict-storm state (the recovery path out of
+    // dormancy). Auto-reconnects must leave the counters intact so sustained
+    // conflicts actually accumulate to the dormancy threshold and the bridge
+    // stops fighting a competing session.
+    if (manual) {
+      this.conflictDormant = false;
+      this.conflictStormCount = 0;
+      this.conflictStormStartedAt = 0;
+      this.conflictBackoffMs = 60_000;
+    }
     this.setConnectionState("starting");
     try {
       const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
