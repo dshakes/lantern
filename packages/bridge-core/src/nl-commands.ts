@@ -83,20 +83,30 @@ export interface ParsedCommand {
 
 const INVOCATION_PREFIX = /^(?:hey\s+)?lantern[,!:\s]+/i;
 
-const MUTE_VERBS = /\b(?:pause|mute|stop\s+replying|hush|quiet|silence|go\s+to\s+sleep)\b/i;
+// Full-body anchored: the verb must BE the message (optionally + a recognized
+// scope/duration), never just appear inside a sentence. "pause and tell me how
+// the deal went" / "give me a quiet update" must reach the assistant, not mute.
+const MUTE_VERBS = /^(?:pause|mute|stop\s+replying|hush|quiet|silence|go\s+to\s+sleep)(?:\s+(?:everyone|everybody|all(?:\s+contacts)?|for\b.+|until\b.+|tonight|the\s+night|a\s+(?:while|bit)|\d.+))?\s*[?!.]*$/i;
 // Bare "on" / "off" / "stop" used to be in here but tripped on
 // natural phrases like "what's on my calendar". Now we only accept
 // explicit forms — bare verbs at the start of message body, full
 // phrases, or the "lantern, on" / slash forms.
-const UNMUTE_VERBS = /^(?:resume|unmute|wake(?:\s+up)?|reactivate|start\s+replying|come\s+back)\b/i;
-const STRICT_MUTE_AT_START = /^(?:stop\s+replying|stop|off|sleep)\b/i;
-const STRICT_UNMUTE_AT_START = /^(?:on)\b/i;
-const STATUS_VERBS = /\b(?:status|state|diagnostics|how('s|\s+are|\s+is)|check\s*in)\b/i;
-const PING_VERBS = /\b(?:ping|are\s+you\s+(?:alive|there|up|on))\b/i;
-const RESUME_ALL_VERBS = /\bresume\s+(?:all|everyone|everybody)\b/i;
-const LIST_PAUSED_VERBS = /\b(?:what'?s\s+paused|who'?s\s+paused|list\s+pa(used|usee)?|paused\s+contacts?|show\s+paused)\b/i;
-const LIST_CHATS_VERBS = /\b(?:list\s+(chats|groups)|monitored\s+(chats|groups)|show\s+chats|show\s+groups)\b/i;
-const HELP_VERBS = /\b(?:help|what\s+can\s+you\s+do|commands?|usage)\b/i;
+// All full-body anchored: the command word must BE the message (the codebase's
+// established convention for terse commands) — never a word inside a sentence.
+// "resume the meeting notes", "status of the deal", "help me draft this" must
+// reach the assistant, not fire a command.
+const UNMUTE_VERBS = /^(?:resume|unmute|wake(?:\s+up)?|reactivate|start\s+replying|come\s+back)\s*[?!.]*$/i;
+const STRICT_MUTE_AT_START = /^(?:stop\s+replying|stop|off|sleep)\s*[?!.]*$/i;
+const STRICT_UNMUTE_AT_START = /^on\s*[?!.]*$/i;
+const STATUS_VERBS = /^(?:status|state|diagnostics|how\s+are\s+you|how'?s\s+it\s+going|how'?s\s+the\s+bot|check\s*in)\s*[?!.]*$/i;
+// Anchored ^…$ so ONLY a standalone liveness check fires the pong — never a
+// sentence that merely contains "ping" ("ping me how the HM round went" must
+// reach the assistant, not return a bridge-alive diagnostic).
+const PING_VERBS = /^(?:ping|are\s+you\s+(?:alive|there|up|on)|you\s+(?:there|up|alive))\s*[?!.]*$/i;
+const RESUME_ALL_VERBS = /^resume\s+(?:all|everyone|everybody)\s*[?!.]*$/i;
+const LIST_PAUSED_VERBS = /^(?:what'?s\s+paused|who'?s\s+paused|list\s+pa(?:used|usee)?|paused\s+contacts?|show\s+paused)\s*[?!.]*$/i;
+const LIST_CHATS_VERBS = /^(?:list\s+(?:chats|groups)|monitored\s+(?:chats|groups)|show\s+(?:chats|groups))\s*[?!.]*$/i;
+const HELP_VERBS = /^(?:help|what\s+can\s+you\s+do|commands?|usage|menu)\s*[?!.]*$/i;
 // Personal-docs toggle. Strict prefix so plain chat ("doc this") doesn't
 // misfire. Either "docs on/off" or "personal docs on/off".
 const DOCS_ON_VERBS = /^(?:personal\s+)?docs?\s+(?:on|enable|enabled|allow)$/i;
