@@ -69,6 +69,16 @@ test("center commands: brief / plate / agents / did / domains", () => {
   assert.equal(parseCenterCommand("tell me a joke"), null);
 });
 
+test("news/radar command — case-insensitive (regression: 'News' fell through to the assistant)", () => {
+  assert.equal(parseCenterCommand("news"), "news");
+  assert.equal(parseCenterCommand("News"), "news"); // capital — the exact text that failed live
+  assert.equal(parseCenterCommand("NEWS"), "news");
+  assert.equal(parseCenterCommand("radar"), "news");
+  assert.equal(parseCenterCommand("News "), "news"); // trailing space
+  assert.equal(parseCenterCommand("what's new"), "news");
+  assert.equal(parseCenterCommand("latest"), "news");
+});
+
 // ── Brief composition ────────────────────────────────────────────────────────
 function cmt(over: Partial<Commitment>): Commitment {
   return { id: "x", title: "t", status: "open", ...over } as Commitment;
