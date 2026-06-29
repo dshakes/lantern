@@ -54,11 +54,15 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
   const uid = title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const mid = `al-${uid}`;
 
-  // Cubic bezier: right edge of last node → arc below all nodes → left edge of first node
-  const ax0 = nx(n - 1) + NW;
-  const ax1 = nx(0);
+  // Loop-back arc: exit the LAST node's bottom-center straight down, sweep under
+  // the row, and re-enter the FIRST node's bottom-center straight UP — both ends
+  // vertical, so the arrowhead is axis-aligned (points up), never a crooked tilt.
   const ay  = PT + NH + DIP;
-  const loopPath = `M ${ax0} ${midY} C ${ax0 + 14} ${ay}, ${ax1 - 14} ${ay}, ${ax1} ${midY}`;
+  const nodeBottom = PT + NH;
+  const firstCx = nx(0) + NW / 2;
+  const lastCx  = nx(n - 1) + NW / 2;
+  const loopMidX = (firstCx + lastCx) / 2;
+  const loopPath = `M ${lastCx} ${nodeBottom} C ${lastCx} ${ay}, ${firstCx} ${ay}, ${firstCx} ${nodeBottom}`;
 
   const eb = execModel ? EXEC_BADGE[execModel] : null;
 
@@ -138,8 +142,8 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
         />
         {/* Explicit loop label so the dashed arc reads clearly as "this repeats". */}
         <g>
-          <rect x={(ax0 + ax1) / 2 - 34} y={ay - 9} width={68} height={18} rx={9} fill={c.fill} stroke={c.border} strokeWidth={1} />
-          <text x={(ax0 + ax1) / 2} y={ay + 1} textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight={700} fill={c.text} style={{ fontFamily: "inherit" }}>↻ repeats</text>
+          <rect x={loopMidX - 34} y={ay - 9} width={68} height={18} rx={9} fill={c.fill} stroke={c.border} strokeWidth={1} />
+          <text x={loopMidX} y={ay + 1} textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight={700} fill={c.text} style={{ fontFamily: "inherit" }}>↻ repeats</text>
         </g>
       </svg>
       {iface && (
