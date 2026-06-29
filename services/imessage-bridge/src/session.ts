@@ -256,7 +256,7 @@ import {
   findDocFiles,
 } from "@lantern/bridge-core/doc-ingest";
 import {
-  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildReadlist,
+  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildReadlist, buildQuietAck,
   selectTopDrops, buildTopDropPush, buildNewsDigest,
   type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite,
 } from "@lantern/bridge-core/command-center";
@@ -728,7 +728,13 @@ export class IMessageSession {
   private newsPushedPath = "";
   private newsNeedsSeed = false;
   private lastNewsDigestDay = "";
+  private proactiveMuteUntil = 0; // epoch ms; while now < this, all proactive pushes pause ("quiet [Nh]")
   private commuteWasLastDriving = false;
+
+  /** True while quiet-hours OR an owner "quiet [Nh]" window is active — gates every proactive push. */
+  private proactivePaused(): boolean {
+    return isQuietHours(new Date(), defaultQuietHours()) || Date.now() < this.proactiveMuteUntil;
+  }
   // ── Energy guardian (LANTERN_ENERGY=on, default OFF) ───────────────────────
   // ponytail: ships dark; owner flips LANTERN_ENERGY=on to enable.
   private static readonly ENERGY_ENABLED =
@@ -1293,6 +1299,8 @@ export class IMessageSession {
     }
     this.newsPushedPath = join(this.stateDir, "news-pushed.json");
     this.newsNeedsSeed = !existsSync(this.newsPushedPath);
+    // Restore an in-flight "quiet [Nh]" window across restarts.
+    try { this.proactiveMuteUntil = parseInt(readFileSync(join(this.stateDir, "proactive-mute.txt"), "utf8").trim(), 10) || 0; } catch { /* none */ }
     try {
       const arr = JSON.parse(readFileSync(this.newsPushedPath, "utf8")) as string[];
       if (Array.isArray(arr)) this.newsPushed = new Set(arr.slice(-500));
@@ -1311,7 +1319,7 @@ export class IMessageSession {
       if (this.killSwitch) return;
       const target = this.ownerSelfChatTarget();
       if (!target) return;
-      if (isQuietHours(new Date(), defaultQuietHours())) return;
+      if (this.proactivePaused()) return;
       // Rank by the radar's popularity score among recently-scanned items
       // (no publish-window — a high-signal article is worth pushing even if it
       // was published a day or two ago). Dedup keeps each pushed once.
@@ -1394,7 +1402,7 @@ export class IMessageSession {
       if (this.killSwitch) return;
       const target = this.ownerSelfChatTarget();
       if (!target) return;
-      if (isQuietHours(new Date(), defaultQuietHours())) return;
+      if (this.proactivePaused()) return;
 
       const { readDevicePresence } = await import("./device-signals-reader.js");
       const presence = readDevicePresence(this.logger);
@@ -1434,7 +1442,7 @@ export class IMessageSession {
       if (this.killSwitch) return;
       const target = this.ownerSelfChatTarget();
       if (!target) return;
-      if (isQuietHours(new Date(), defaultQuietHours())) return;
+      if (this.proactivePaused()) return;
 
       const today = new Date().toISOString().slice(0, 10);
       if (this.energyNudgedDate === today) return;
@@ -1474,7 +1482,7 @@ export class IMessageSession {
       if (this.killSwitch) return;
       const target = this.ownerSelfChatTarget();
       if (!target) return;
-      if (isQuietHours(new Date(), defaultQuietHours())) return;
+      if (this.proactivePaused()) return;
 
       const nowMs = Date.now();
       const today = new Date(nowMs).toISOString().slice(0, 10);
@@ -1580,7 +1588,7 @@ export class IMessageSession {
 
       // Quiet hours: defer nudges (don't wake the owner). The next tick
       // picks them up once the window reopens; dedupe keys keep them fresh.
-      if (isQuietHours(new Date(), defaultQuietHours())) return;
+      if (this.proactivePaused()) return;
 
       const now = Date.now();
       const input = await this.gatherProactiveSignals(now);
@@ -2629,6 +2637,20 @@ export class IMessageSession {
         } catch { /* best-effort */ }
         const nv = buildNews(news, nq);
         text = nv.text; items = nv.items;
+      } else if (typeof cmd === "object" && "quiet" in cmd) {
+        // quiet [Nh] — pause ALL proactive pushes for a window (de-bloat).
+        const hours = cmd.quiet.hours;
+        const mutePath = join(this.stateDir, "proactive-mute.txt");
+        if (hours <= 0) {
+          this.proactiveMuteUntil = 0;
+          try { writeFileSync(mutePath, "0", { mode: 0o600 }); } catch { /* best-effort */ }
+          text = buildQuietAck(0, "");
+        } else {
+          this.proactiveMuteUntil = Date.now() + hours * 3_600_000;
+          try { writeFileSync(mutePath, String(this.proactiveMuteUntil), { mode: 0o600 }); } catch { /* best-effort */ }
+          const until = new Date(this.proactiveMuteUntil).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: process.env.LANTERN_OWNER_TIMEZONE || undefined });
+          text = buildQuietAck(hours, until);
+        }
       } else {
         // Domain drill-down.
         // ponytail: domain records not sourced yet; shows "nothing tracked yet"
@@ -2702,7 +2724,7 @@ export class IMessageSession {
       if (this.killSwitch) return;
       const owner = this.ownerSelfChatTarget();
       if (!owner) return;
-      if (isQuietHours(new Date(), defaultQuietHours())) return;
+      if (this.proactivePaused()) return;
 
       const commitments = await this.commitments.list({ status: "open", limit: 10 });
       const suggested = await this.commitments.list({ status: "suggested", limit: 10 });
