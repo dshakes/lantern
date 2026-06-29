@@ -19,8 +19,10 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -73,15 +75,76 @@ func (d *recordingDialer) last() recordedCall {
 // ---------- helpers ----------
 
 // newErrandHandlerWithDialer builds a handler backed by a real pool, with an
-// injected dialer. The LANTERN_ERRAND env var must be set by the caller via
-// t.Setenv("LANTERN_ERRAND", "1") for endpoints to respond (not 404).
+// injected dialer (no LLM). The LANTERN_ERRAND env var must be set by the
+// caller via t.Setenv("LANTERN_ERRAND", "1") for endpoints to respond (not 404).
 func newErrandHandlerWithDialer(t *testing.T, pool *pgxpool.Pool, dialer OutboundDialer) *ErrandHandler {
 	t.Helper()
 	logger, _ := zap.NewDevelopment()
 	srv := &server.Server{Pool: pool, Logger: logger}
-	h := NewErrandHandler(srv, NewAuthHandler(srv, testJWTSecret))
+	h := NewErrandHandler(srv, NewAuthHandler(srv, testJWTSecret), nil)
 	h.dialer = dialer
 	return h
+}
+
+// newErrandHandlerWithCompleter builds a handler backed by a real pool with an
+// injected stub LLM completion function. Sets h.dialer to a recordingDialer.
+func newErrandHandlerWithCompleter(t *testing.T, pool *pgxpool.Pool, fn researchCompleteFn) *ErrandHandler {
+	t.Helper()
+	logger, _ := zap.NewDevelopment()
+	srv := &server.Server{Pool: pool, Logger: logger}
+	h := NewErrandHandler(srv, NewAuthHandler(srv, testJWTSecret), nil)
+	h.dialer = &recordingDialer{}
+	h.completeFn = fn
+	return h
+}
+
+// seedPlacedErrand inserts an errand directly in 'placed' status (bypasses
+// propose+confirm so tests can target ErrandTurn without a full dial flow).
+func seedPlacedErrand(t *testing.T, pool *pgxpool.Pool, tenantID, number, goal string) string {
+	t.Helper()
+	ctx := context.Background()
+	disclosure := buildDisclosurePreamble("Test Owner", goal)
+	var id string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO errands (tenant_id, callee_number, callee_name, goal, status, disclosure_script)
+		VALUES ($1, $2, 'Test Callee', $3, 'placed', $4)
+		RETURNING id
+	`, tenantID, number, goal, disclosure).Scan(&id); err != nil {
+		t.Fatalf("seedPlacedErrand: %v", err)
+	}
+	return id
+}
+
+// seedTwilioConnector inserts a connector_installs row for Twilio with the
+// given authToken so signature verification can run against a real token.
+func seedTwilioConnector(t *testing.T, pool *pgxpool.Pool, tenantID, authToken string) {
+	t.Helper()
+	cfg, _ := json.Marshal(map[string]string{"authToken": authToken, "accountSid": "ACtest"})
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO connector_installs (tenant_id, connector_id, display_name, status, config)
+		VALUES ($1, 'twilio', 'Twilio', 'connected', $2::jsonb)
+		ON CONFLICT (tenant_id, connector_id) DO UPDATE SET config = EXCLUDED.config, status = 'connected'
+	`, tenantID, string(cfg)); err != nil {
+		t.Fatalf("seedTwilioConnector: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM connector_installs WHERE tenant_id=$1 AND connector_id='twilio'`, tenantID)
+	})
+}
+
+// doErrandTurn fires POST /v1/voice/errand/turn/{id} as a Twilio form POST.
+// Uses LANTERN_TWILIO_WEBHOOK_AUTH=off (set by caller via t.Setenv) to bypass
+// signature verification in most tests.
+func doErrandTurn(t *testing.T, h *ErrandHandler, id string, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	body := form.Encode()
+	req := httptest.NewRequest(http.MethodPost, "/v1/voice/errand/turn/"+id, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("id", id)
+	rr := httptest.NewRecorder()
+	h.ErrandTurn(rr, req)
+	return rr
 }
 
 // seedErrandTenant inserts a minimal tenant and registers cleanup for errands
@@ -237,7 +300,7 @@ func TestErrand_GateOff_404(t *testing.T) {
 	// No DB needed: gate check fires before any DB access.
 	logger, _ := zap.NewDevelopment()
 	srv := &server.Server{Logger: logger}
-	h := NewErrandHandler(srv, NewAuthHandler(srv, testJWTSecret))
+	h := NewErrandHandler(srv, NewAuthHandler(srv, testJWTSecret), nil)
 	// Do NOT set LANTERN_ERRAND.
 
 	tenant := uuid.NewString()
@@ -605,7 +668,7 @@ func TestErrand_OptOut_AddsDNC(t *testing.T) {
 func newEnforcedErrandHandler(t *testing.T, e *enforcedServer) *ErrandHandler {
 	t.Helper()
 	auth := NewAuthHandler(e.srv, testJWTSecret)
-	h := NewErrandHandler(e.srv, auth)
+	h := NewErrandHandler(e.srv, auth, nil)
 	h.dialer = &recordingDialer{}
 	return h
 }
@@ -677,5 +740,329 @@ func TestRLSErrands_CrossTenantBlocked(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("SECURITY VIOLATION: tenant B sees %d of tenant A's errands under RLS, want 0", len(rows))
+	}
+}
+
+// ---------- Layer 1: pure tests for new conversational TwiML builders ----------
+
+// TestErrandConversationalTwiML_DisclosureFirst asserts:
+//   - The disclosure text appears before the first <Gather element.
+//   - The <Gather has the expected action URL.
+//   - The opt-out fallback line is present.
+func TestErrandConversationalTwiML_DisclosureFirst(t *testing.T) {
+	disclosure := buildDisclosurePreamble("Alice", "book a table at Nobu")
+	turnURL := "https://example.com/v1/voice/errand/turn/abc-123"
+	twiml := buildErrandConversationalTwiML(disclosure, turnURL, "")
+
+	lower := strings.ToLower(twiml)
+
+	aiIdx := strings.Index(lower, errandAIDisclosureMarker)
+	if aiIdx < 0 {
+		t.Fatalf("conversational TwiML missing AI-disclosure marker")
+	}
+
+	gatherIdx := strings.Index(lower, "<gather")
+	if gatherIdx < 0 {
+		t.Fatalf("conversational TwiML missing <Gather element")
+	}
+
+	if aiIdx > gatherIdx {
+		t.Errorf("AI-disclosure must appear BEFORE <Gather (aiIdx=%d gatherIdx=%d)", aiIdx, gatherIdx)
+	}
+
+	if !strings.Contains(twiml, turnURL) {
+		t.Errorf("conversational TwiML missing action URL %q", turnURL)
+	}
+
+	if !strings.Contains(lower, "removed from our calling list") {
+		t.Errorf("conversational TwiML missing opt-out fallback line")
+	}
+}
+
+// TestContainsOptOut_Table checks every opt-out phrase and a non-opt-out sentence.
+func TestContainsOptOut_Table(t *testing.T) {
+	cases := []struct {
+		speech string
+		want   bool
+	}{
+		{"please stop calling me", true},
+		{"STOP CALLING please", true},
+		{"remove me from this list", true},
+		{"do not call me again", true},
+		{"don't call here", true},
+		{"take me off your list", true},
+		{"unsubscribe", true},
+		{"UNSUBSCRIBE NOW", true},
+		{"yes I am interested", false},
+		{"", false},
+		{"hello who is this", false},
+	}
+	for _, tc := range cases {
+		got := containsOptOut(tc.speech)
+		if got != tc.want {
+			t.Errorf("containsOptOut(%q) = %v, want %v", tc.speech, got, tc.want)
+		}
+	}
+}
+
+// ---------- Layer 6: DB-backed ErrandTurn tests ----------
+
+// TestErrandTurn_OptOut_DNC verifies that an opt-out phrase spoken by the
+// callee adds their number to dnc_numbers and marks the errand 'cancelled'.
+func TestErrandTurn_OptOut_DNC(t *testing.T) {
+	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("LANTERN_TWILIO_WEBHOOK_AUTH", "off") // bypass Twilio sig verify
+	pool := openTestPool(t)
+	if err := db.Migrate(context.Background(), pool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	tenant := seedErrandTenant(t, pool)
+	number := "+15125559901"
+	id := seedPlacedErrand(t, pool, tenant, number, "schedule a plumber visit")
+
+	h := newErrandHandlerWithCompleter(t, pool, nil) // completeFn not reached
+
+	form := url.Values{"SpeechResult": {"please remove me from your calling list"}}
+	rr := doErrandTurn(t, h, id, form)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("ErrandTurn opt-out: got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(strings.ToLower(body), "<hangup") {
+		t.Errorf("ErrandTurn opt-out: response should contain <Hangup/>; got: %s", body)
+	}
+
+	// DNC must now contain the number.
+	var dncCnt int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM dnc_numbers WHERE tenant_id=$1 AND number=$2`,
+		tenant, number).Scan(&dncCnt); err != nil {
+		t.Fatalf("DNC count: %v", err)
+	}
+	if dncCnt != 1 {
+		t.Errorf("expected 1 DNC row, got %d", dncCnt)
+	}
+
+	// Errand must be 'cancelled'.
+	var status string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT status FROM errands WHERE id=$1`, id).Scan(&status); err != nil {
+		t.Fatalf("status query: %v", err)
+	}
+	if status != "cancelled" {
+		t.Errorf("status=%q, want 'cancelled'", status)
+	}
+}
+
+// TestErrandTurn_MaxTurns_Completed checks that the max-turn cap marks the
+// errand completed and returns a <Hangup/>.
+func TestErrandTurn_MaxTurns_Completed(t *testing.T) {
+	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("LANTERN_TWILIO_WEBHOOK_AUTH", "off")
+	pool := openTestPool(t)
+	if err := db.Migrate(context.Background(), pool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	tenant := seedErrandTenant(t, pool)
+	id := seedPlacedErrand(t, pool, tenant, "+15125559902", "check on package delivery")
+
+	// Exhaust turns directly in the DB.
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE errands SET turns=$1 WHERE id=$2`, errandMaxTurns, id); err != nil {
+		t.Fatalf("set turns: %v", err)
+	}
+
+	h := newErrandHandlerWithCompleter(t, pool, nil) // LLM never called at cap
+	rr := doErrandTurn(t, h, id, url.Values{"SpeechResult": {"sure I can wait"}})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("ErrandTurn max-turns: got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(rr.Body.String()), "<hangup") {
+		t.Errorf("max-turns: response should contain <Hangup/>; got: %s", rr.Body.String())
+	}
+
+	var status string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT status FROM errands WHERE id=$1`, id).Scan(&status); err != nil {
+		t.Fatalf("status query: %v", err)
+	}
+	if status != "completed" {
+		t.Errorf("status=%q, want 'completed'", status)
+	}
+}
+
+// TestErrandTurn_NormalTurn_Continue checks a successful LLM turn that is not
+// done: response contains <Gather, the say text, transcript grew by 2, turns++.
+func TestErrandTurn_NormalTurn_Continue(t *testing.T) {
+	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("LANTERN_TWILIO_WEBHOOK_AUTH", "off")
+	pool := openTestPool(t)
+	if err := db.Migrate(context.Background(), pool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	tenant := seedErrandTenant(t, pool)
+	id := seedPlacedErrand(t, pool, tenant, "+15125559903", "confirm dentist appointment")
+
+	stubReply := `{"say":"I am calling to confirm your appointment tomorrow at 9am. Does that still work for you?","done":false}`
+	fn := func(_ context.Context, _, _, _ string) (string, error) {
+		return stubReply, nil
+	}
+	h := newErrandHandlerWithCompleter(t, pool, fn)
+
+	speech := "Hello, who is this?"
+	rr := doErrandTurn(t, h, id, url.Values{"SpeechResult": {speech}})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("ErrandTurn normal: got %d; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	lower := strings.ToLower(body)
+
+	if !strings.Contains(lower, "<gather") {
+		t.Errorf("normal turn: response should contain <Gather; got: %s", body)
+	}
+	if !strings.Contains(body, "confirm your appointment") {
+		t.Errorf("normal turn: response should contain the say text; got: %s", body)
+	}
+
+	// Transcript should have 2 new entries (callee + assistant).
+	var rawTranscript []byte
+	var turns int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT transcript, turns FROM errands WHERE id=$1`, id).Scan(&rawTranscript, &turns); err != nil {
+		t.Fatalf("transcript query: %v", err)
+	}
+	var entries []transcriptEntry
+	if err := json.Unmarshal(rawTranscript, &entries); err != nil {
+		t.Fatalf("unmarshal transcript: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("transcript has %d entries, want 2", len(entries))
+	} else {
+		if entries[0].Role != "callee" || entries[0].Text != speech {
+			t.Errorf("entries[0]=%+v, want callee/%q", entries[0], speech)
+		}
+		if entries[1].Role != "assistant" {
+			t.Errorf("entries[1].Role=%q, want 'assistant'", entries[1].Role)
+		}
+	}
+	if turns != 1 {
+		t.Errorf("turns=%d, want 1", turns)
+	}
+}
+
+// TestErrandTurn_DoneTurn_Completed checks that done=true marks status=completed
+// and returns a <Hangup/> response containing the say text.
+func TestErrandTurn_DoneTurn_Completed(t *testing.T) {
+	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("LANTERN_TWILIO_WEBHOOK_AUTH", "off")
+	pool := openTestPool(t)
+	if err := db.Migrate(context.Background(), pool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	tenant := seedErrandTenant(t, pool)
+	id := seedPlacedErrand(t, pool, tenant, "+15125559904", "reschedule dentist")
+
+	fn := func(_ context.Context, _, _, _ string) (string, error) {
+		return `{"say":"all set, your appointment is confirmed for next Tuesday","done":true}`, nil
+	}
+	h := newErrandHandlerWithCompleter(t, pool, fn)
+
+	rr := doErrandTurn(t, h, id, url.Values{"SpeechResult": {"yes Tuesday works"}})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("ErrandTurn done: got %d; body: %s", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	lower := strings.ToLower(body)
+
+	if !strings.Contains(lower, "<hangup") {
+		t.Errorf("done turn: response should contain <Hangup/>; got: %s", body)
+	}
+	if !strings.Contains(body, "all set") {
+		t.Errorf("done turn: response should contain say text 'all set'; got: %s", body)
+	}
+
+	var status string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT status FROM errands WHERE id=$1`, id).Scan(&status); err != nil {
+		t.Fatalf("status query: %v", err)
+	}
+	if status != "completed" {
+		t.Errorf("status=%q, want 'completed'", status)
+	}
+}
+
+// TestErrandTurn_LLMError_GracefulEnd checks that an LLM error causes a graceful
+// <Hangup/> response and marks the errand completed.
+func TestErrandTurn_LLMError_GracefulEnd(t *testing.T) {
+	t.Setenv("LANTERN_ERRAND", "1")
+	t.Setenv("LANTERN_TWILIO_WEBHOOK_AUTH", "off")
+	pool := openTestPool(t)
+	if err := db.Migrate(context.Background(), pool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	tenant := seedErrandTenant(t, pool)
+	id := seedPlacedErrand(t, pool, tenant, "+15125559905", "order flowers")
+
+	fn := func(_ context.Context, _, _, _ string) (string, error) {
+		return "", errors.New("llm unavailable")
+	}
+	h := newErrandHandlerWithCompleter(t, pool, fn)
+
+	rr := doErrandTurn(t, h, id, url.Values{"SpeechResult": {"who is calling?"}})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("ErrandTurn LLM error: got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(rr.Body.String()), "<hangup") {
+		t.Errorf("LLM error: response should contain <Hangup/>; got: %s", rr.Body.String())
+	}
+
+	var status string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT status FROM errands WHERE id=$1`, id).Scan(&status); err != nil {
+		t.Fatalf("status query: %v", err)
+	}
+	if status != "completed" {
+		t.Errorf("status=%q, want 'completed'", status)
+	}
+}
+
+// TestErrandTurn_BadSignature_403 verifies that a request with a wrong
+// X-Twilio-Signature (when an authToken IS configured) returns 403.
+func TestErrandTurn_BadSignature_403(t *testing.T) {
+	t.Setenv("LANTERN_ERRAND", "1")
+	// Do NOT set LANTERN_TWILIO_WEBHOOK_AUTH=off — signature verification must run.
+	pool := openTestPool(t)
+	if err := db.Migrate(context.Background(), pool, false); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	tenant := seedErrandTenant(t, pool)
+	id := seedPlacedErrand(t, pool, tenant, "+15125559906", "test signature check")
+
+	// Seed a real (known) auth token so loadDecryptedConfig returns it.
+	seedTwilioConnector(t, pool, tenant, "real-auth-token-abc123")
+
+	h := newErrandHandlerWithCompleter(t, pool, nil)
+
+	body := url.Values{"SpeechResult": {"hello"}}.Encode()
+	req := httptest.NewRequest(http.MethodPost, "/v1/voice/errand/turn/"+id, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Twilio-Signature", "bad-signature-value")
+	req.SetPathValue("id", id)
+	rr := httptest.NewRecorder()
+	h.ErrandTurn(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("bad signature: got %d, want 403; body: %s", rr.Code, rr.Body.String())
 	}
 }
