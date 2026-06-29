@@ -506,7 +506,8 @@ func TestProcessDomainMessages_DomainCursorIsolation(t *testing.T) {
 // ----------------------- SeedLoopAgents -----------------------
 
 // TestSeedLoopAgents_DomainTrackers verifies that all 5 domain-tracker seeds
-// (care-coordinator, garage, upskill, travel-concierge, household) are created idempotently.
+// (care-coordinator, garage, upskill, travel-concierge, household) are created idempotently
+// and that their schedules fire every 6 hours (not daily).
 func TestSeedLoopAgents_DomainTrackers(t *testing.T) {
 	pool := openTestPool(t)
 	mustMigrate(t, pool)
@@ -531,6 +532,7 @@ func TestSeedLoopAgents_DomainTrackers(t *testing.T) {
 	}
 
 	for _, want := range agents {
+		want := want
 		var agentID string
 		if err := pool.QueryRow(ctx,
 			`SELECT id FROM agents WHERE tenant_id = $1 AND name = $2`,
@@ -566,6 +568,16 @@ func TestSeedLoopAgents_DomainTrackers(t *testing.T) {
 		if !m.Coach {
 			t.Errorf("agent %q: Coach=false, want true (coaching pass required)", want.name)
 		}
+
+		// Schedule must fire every 6 hours so new email is picked up within hours.
+		var cronExpr string
+		_ = pool.QueryRow(ctx,
+			`SELECT cron_expr FROM schedules WHERE tenant_id = $1 AND agent_name = $2`,
+			devTenantID, want.name,
+		).Scan(&cronExpr)
+		if cronExpr != "0 */6 * * *" {
+			t.Errorf("agent %q: cron_expr=%q, want '0 */6 * * *'", want.name, cronExpr)
+		}
 	}
 
 	// Cleanup seeded agents (best-effort; dev tenant might not be in this DB).
@@ -577,6 +589,63 @@ func TestSeedLoopAgents_DomainTrackers(t *testing.T) {
 				devTenantID, name)
 		})
 	}
+}
+
+// TestSeedLoopAgents_InboxTriage verifies that SeedLoopAgents creates an
+// inbox-triage agent with role=inbox_triage, tier=meso, and a */45 schedule.
+func TestSeedLoopAgents_InboxTriage(t *testing.T) {
+	pool := openTestPool(t)
+	mustMigrate(t, pool)
+	ctx := context.Background()
+
+	// Idempotent — second call must not error or duplicate.
+	SeedLoopAgents(ctx, pool, nopLogger())
+	SeedLoopAgents(ctx, pool, nopLogger())
+
+	const devTenantID = "00000000-0000-0000-0000-000000000001"
+
+	var agentID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM agents WHERE tenant_id = $1 AND name = 'inbox-triage'`,
+		devTenantID,
+	).Scan(&agentID); err != nil {
+		t.Fatalf("seed agent 'inbox-triage' not found: %v", err)
+	}
+
+	var manifestJSON []byte
+	_ = pool.QueryRow(ctx, `
+		SELECT av.manifest
+		FROM agent_versions av
+		JOIN agents a ON a.current_version_id = av.id
+		WHERE a.id = $1
+	`, agentID).Scan(&manifestJSON)
+
+	var m LoopManifest
+	if err := json.Unmarshal(manifestJSON, &m); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if m.Role != "inbox_triage" {
+		t.Errorf("role=%q, want 'inbox_triage'", m.Role)
+	}
+	if m.Tier != "meso" {
+		t.Errorf("tier=%q, want 'meso'", m.Tier)
+	}
+
+	var cronExpr string
+	_ = pool.QueryRow(ctx,
+		`SELECT cron_expr FROM schedules WHERE tenant_id = $1 AND agent_name = 'inbox-triage'`,
+		devTenantID,
+	).Scan(&cronExpr)
+	if cronExpr != "*/45 * * * *" {
+		t.Errorf("cron_expr=%q, want '*/45 * * * *'", cronExpr)
+	}
+
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM schedules WHERE tenant_id = $1 AND agent_name = 'inbox-triage'`, devTenantID)
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM agents WHERE tenant_id = $1 AND name = 'inbox-triage'`, devTenantID)
+	})
 }
 
 // ----------------------- domainSystemPrompt unit test -----------------------
