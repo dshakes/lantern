@@ -102,6 +102,11 @@ func (h *NewsHandler) ListNews(w http.ResponseWriter, r *http.Request) {
 	orderBy := "created_at DESC"
 	if q.Get("sort") == "popular" || (windowInterval != "" && q.Get("sort") == "") {
 		orderBy = "score DESC NULLS LAST, COALESCE(published_at, created_at) DESC"
+	} else if sourceFilter != "" && q.Get("sort") == "" {
+		// "news openai" → the LATEST from that company by article date, not
+		// scan order (created_at is ~uniform across a backfilled archive, which
+		// otherwise surfaces years-old posts).
+		orderBy = "COALESCE(published_at, created_at) DESC"
 	}
 
 	items := make([]newsItemJSON, 0)
