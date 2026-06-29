@@ -34,13 +34,13 @@ const NH  = 42;
 const GAP = 32;
 const PX  = 16;
 const PT  = 18;
-const DIP = 26;
+const DIP = 44; // deep enough that the loop arc clears the "↻ repeats" label
 
 export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel, interface: iface }: AgentLoopProps) {
   const c = COLORS[tone];
   const n = stages.length;
   const svgW = PX + n * (NW + GAP) - GAP + PX;
-  const svgH = PT + NH + DIP + 14;
+  const svgH = PT + NH + DIP + 10;
 
   const nx  = (i: number) => PX + i * (NW + GAP);
   const midY = PT + NH / 2;
@@ -48,10 +48,16 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
   const uid = title.toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const mid = `al-${uid}`;
 
-  const ax0 = nx(n - 1) + NW;
-  const ax1 = nx(0);
   const ay  = PT + NH + DIP;
-  const loopPath = `M ${ax0} ${midY} C ${ax0 + 14} ${ay}, ${ax1 - 14} ${ay}, ${ax1} ${midY}`;
+  const nodeBottom = PT + NH;
+  const firstCx = nx(0) + NW / 2;
+  const lastCx  = nx(n - 1) + NW / 2;
+  const loopMidX = (firstCx + lastCx) / 2;
+  // Loop-back arc: exit the LAST node's bottom-center straight down, sweep under
+  // the row, and re-enter the FIRST node's bottom-center straight UP. Both ends
+  // are vertical, so the arrowhead is axis-aligned (points up) — never the
+  // crooked tilt a side-entry curve produces with orient="auto".
+  const loopPath = `M ${lastCx} ${nodeBottom} C ${lastCx} ${ay}, ${firstCx} ${ay}, ${firstCx} ${nodeBottom}`;
 
   const eb = execModel ? EXEC_BADGE[execModel] : null;
 
@@ -97,9 +103,11 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
 
         <path d={loopPath} fill="none" stroke={c.stroke} strokeWidth={1.5} strokeDasharray="5 3" markerEnd={`url(#${mid})`} />
         {/* Explicit loop label so the dashed arc reads clearly as "this repeats". */}
+        {/* Label sits in the clear gap just below the boxes; the arc dips
+            BELOW it (DIP is tuned so they never overlap). */}
         <g>
-          <rect x={(ax0 + ax1) / 2 - 34} y={ay - 9} width={68} height={18} rx={9} fill={c.fill} stroke={c.border} strokeWidth={1} />
-          <text x={(ax0 + ax1) / 2} y={ay + 1} textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight={700} fill={c.text} style={{ fontFamily: "inherit" }}>↻ repeats</text>
+          <rect x={loopMidX - 34} y={nodeBottom + 4} width={68} height={18} rx={9} fill={c.fill} stroke={c.border} strokeWidth={1} />
+          <text x={loopMidX} y={nodeBottom + 14} textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight={700} fill={c.text} style={{ fontFamily: "inherit" }}>↻ repeats</text>
         </g>
       </svg>
       {iface && (
