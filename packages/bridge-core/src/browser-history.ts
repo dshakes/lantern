@@ -24,7 +24,7 @@ export interface WatchItem {
 }
 
 export interface ReadHistoryOpts {
-  /** Lookback window in hours (default 48). */
+  /** Lookback window in hours (default 168 = 7 days). */
   windowHours?: number;
   /** Max items returned (default 40). */
   limit?: number;
@@ -59,7 +59,7 @@ export function isWatchQuery(text: string): boolean {
 export async function readWatchHistory(opts: ReadHistoryOpts = {}): Promise<WatchItem[]> {
   if (typeof process !== "undefined" && process.platform !== "darwin") return [];
   const nowMs = opts.nowMs ?? Date.now();
-  const windowHours = opts.windowHours ?? 48;
+  const windowHours = opts.windowHours ?? 168;
   const sinceMs = nowMs - windowHours * 3_600_000;
   const limit = Math.max(1, Math.min(opts.limit ?? 40, 200));
 
@@ -194,14 +194,10 @@ export function iphoneUsageBlock(signals: PhoneSignalLite[], nowMs = Date.now(),
 }
 
 /** Owner-facing summary block. YouTube watches first (what they asked for),
- *  then a short "also browsed" tail. Pure — safe to unit-test with mock items. */
-export function watchSummary(items: WatchItem[], nowMs = Date.now()): string {
-  if (!items.length) {
-    return "no browser history in the last couple of days I can see — either nothing tracked or I don't have Full Disk Access to the browser DB.";
-  }
-  const yt = items.filter((i) => i.source === "youtube");
-  const web = items.filter((i) => i.source === "web");
-  const lines: string[] = [];
+ *  then a short "also browsed" tail. Pure — safe to unit-test with mock items.
+ *  `askedYouTube`: the owner specifically asked about YouTube, so when there's
+ *  no YouTube in browser history, say so + point at the iPhone-app gap. */
+export function watchSummary(items: WatchItem[], nowMs = Date.now(), askedYouTube = false): string {
   const ago = (ts: number): string => {
     const m = Math.max(0, Math.round((nowMs - ts) / 60000));
     if (m < 60) return `${m}m ago`;
@@ -209,14 +205,33 @@ export function watchSummary(items: WatchItem[], nowMs = Date.now()): string {
     return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
   };
   const clip = (s: string, n: number): string => { s = (s || "").replace(/\s*-\s*YouTube\s*$/i, "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+  // Collapse repeated identical titles (e.g. 12 distinct Gmail URLs → "Gmail ×12").
+  const collapse = (list: WatchItem[]): Array<{ title: string; ts: number; count: number }> => {
+    const by = new Map<string, { title: string; ts: number; count: number }>();
+    for (const i of list) {
+      const key = clip(i.title, 80).toLowerCase();
+      const e = by.get(key);
+      if (e) { e.count++; e.ts = Math.max(e.ts, i.ts); } else by.set(key, { title: i.title, ts: i.ts, count: 1 });
+    }
+    return [...by.values()].sort((a, b) => b.ts - a.ts);
+  };
+  const yt = collapse(items.filter((i) => i.source === "youtube"));
+  const web = collapse(items.filter((i) => i.source === "web"));
+
+  const lines: string[] = [];
   if (yt.length) {
     lines.push("📺 Recently watched on YouTube:");
-    for (const i of yt.slice(0, 8)) lines.push(`• ${clip(i.title, 70)} — ${ago(i.ts)}`);
+    for (const i of yt.slice(0, 8)) lines.push(`• ${clip(i.title, 70)}${i.count > 1 ? ` ×${i.count}` : ""} — ${ago(i.ts)}`);
+  } else if (askedYouTube) {
+    lines.push("nothing on YouTube in your browser history lately. if you watched in the YouTube *app* on your phone, I can't see that yet — it only shows up if your iPhone posts a now-playing signal (Shortcut).");
   }
   if (web.length) {
     if (lines.length) lines.push("");
     lines.push("🌐 Also browsed:");
-    for (const i of web.slice(0, 5)) lines.push(`• ${clip(i.title, 60)} — ${ago(i.ts)}`);
+    for (const i of web.slice(0, 6)) lines.push(`• ${clip(i.title, 60)}${i.count > 1 ? ` ×${i.count}` : ""} — ${ago(i.ts)}`);
+  }
+  if (!lines.length) {
+    return "no browser history in the last week I can see — either nothing tracked or I don't have Full Disk Access to the browser DB.";
   }
   return lines.join("\n");
 }

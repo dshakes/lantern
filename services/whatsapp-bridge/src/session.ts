@@ -4363,7 +4363,7 @@ export class WhatsAppSession {
       }
       // "what did I watch / browse" — Mac browser history + iPhone signals.
       if (isWatchQuery(text)) {
-        void this.handleWatchQuery(jid).catch((err) =>
+        void this.handleWatchQuery(jid, text).catch((err) =>
           this.logger.warn({ err }, "wa watch query failed"));
         return;
       }
@@ -8862,10 +8862,11 @@ export class WhatsAppSession {
 
   /** Answer "what did I watch / browse" from Mac browser history (YouTube titles
    *  live there) + iPhone media/app signals. Owner-only (caller-gated). */
-  private async handleWatchQuery(_jid: string): Promise<void> {
+  private async handleWatchQuery(_jid: string, query = ""): Promise<void> {
     try {
-      const items = await readWatchHistory({ windowHours: 48, logger: this.logger });
-      let text = watchSummary(items);
+      const askedYouTube = /\b(youtube|yt)\b/i.test(query);
+      const items = await readWatchHistory({ windowHours: 168, logger: this.logger });
+      let text = watchSummary(items, Date.now(), askedYouTube);
       try {
         const file = join(homedir(), ".lantern", "device-signals.jsonl");
         if (existsSync(file)) {
