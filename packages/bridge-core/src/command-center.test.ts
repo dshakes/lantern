@@ -14,6 +14,8 @@ import {
   buildDid,
   buildNews,
   buildReadlist,
+  selectTopDrops,
+  buildTopDropPush,
   type BriefItem,
 } from "./command-center.ts";
 import type { Commitment } from "./commitments-edge.ts";
@@ -174,4 +176,21 @@ test("buildAgents flags failures; buildDomain summarizes records + obligations",
   assert.match(d, /health — 6 records/);
   assert.match(d, /dentist Jul 3/);
   assert.match(d, /refill metformin/);
+});
+
+test("selectTopDrops: high-signal, deduped, capped", () => {
+  const items = [
+    { source: "HN", title: "Big model", url: "https://a", score: 740 },
+    { source: "HN", title: "meh", url: "https://b", score: 10 },
+    { source: "GH", title: "Hot repo", url: "https://c", score: 300 },
+    { source: "X", title: "already seen", url: "https://d", score: 500 },
+  ];
+  const pushed = new Set(["https://d"]);
+  const drops = selectTopDrops(items, pushed, { threshold: 100, max: 2 });
+  assert.equal(drops.length, 2);
+  assert.equal(drops[0].url, "https://a"); // highest score
+  assert.equal(drops[1].url, "https://c");
+  assert.ok(!drops.some((d) => d.url === "https://b")); // below threshold
+  assert.ok(!drops.some((d) => d.url === "https://d")); // already pushed
+  assert.match(buildTopDropPush(items[0]), /Top AI drop \(740\): Big model/);
 });

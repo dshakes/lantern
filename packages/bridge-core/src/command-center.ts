@@ -518,3 +518,28 @@ export function buildReadlist(entries: ReadlistEntry[]): CenterView {
   lines.push(`"<n> done" to clear a saved item`);
   return { text: lines.join("\n"), items };
 }
+
+// ── proactive "top drops": only high-signal news, deduped ───────────────────
+
+/** Pick the new, high-signal items worth interrupting the owner for. Pure:
+ *  filter by score >= threshold, drop anything already pushed, take the top N.
+ *  Conservative by design — proactive news must never become a firehose. */
+export function selectTopDrops(
+  items: NewsItemLite[],
+  pushed: ReadonlySet<string>,
+  opts?: { threshold?: number; max?: number },
+): NewsItemLite[] {
+  const threshold = opts?.threshold ?? 100;
+  const max = opts?.max ?? 2;
+  return items
+    .filter((it) => !!it.url && (it.score ?? 0) >= threshold && !pushed.has(it.url))
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, max);
+}
+
+/** Format one top-drop for a self-chat push. */
+export function buildTopDropPush(it: NewsItemLite): string {
+  const icon = (it.category && NEWS_CAT_ICON[it.category]) || "🔥";
+  const score = (it.score ?? 0) > 0 ? ` (${it.score})` : "";
+  return `${icon} Top AI drop${score}: ${clip(it.title, 90)} — ${clip(it.source, 24)}\n${it.url}`;
+}
