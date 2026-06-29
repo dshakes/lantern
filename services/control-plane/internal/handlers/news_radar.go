@@ -109,6 +109,7 @@ type atomEntry struct {
 type atomLink struct {
 	Href string `xml:"href,attr"`
 	Rel  string `xml:"rel,attr"`
+	Type string `xml:"type,attr"`
 }
 
 type atomAuthor struct {
@@ -169,20 +170,50 @@ func parseAtom(body []byte, src newsSource) []newsCandidate {
 		if title == "" {
 			continue
 		}
-		// Pick the first alternate/self link, or the first link if none tagged.
-		u := ""
+		// Pick the ARTICLE link, not the feed/self link. Priority:
+		//   1. rel="alternate" type="text/html" (the canonical article page)
+		//   2. any rel="alternate"
+		//   3. an untyped <link> (many feeds use a bare link = the article)
+		//   4. any link that isn't self/replies/edit (feed-internal rels)
+		// NEVER fall back to rel="self" (that's the Atom feed/API URL — the
+		// blogger.com/feeds/… bug). entry.ID is a last resort (often the URL).
+		var altHTML, alt, untyped, other string
 		for _, l := range entry.Links {
-			if l.Rel == "alternate" || l.Rel == "self" || l.Rel == "" {
-				if u == "" {
-					u = strings.TrimSpace(l.Href)
+			href := strings.TrimSpace(l.Href)
+			if href == "" {
+				continue
+			}
+			switch {
+			case l.Rel == "alternate" && (l.Type == "text/html" || l.Type == ""):
+				if altHTML == "" {
+					altHTML = href
+				}
+			case l.Rel == "alternate":
+				if alt == "" {
+					alt = href
+				}
+			case l.Rel == "":
+				if untyped == "" {
+					untyped = href
+				}
+			case l.Rel != "self" && l.Rel != "replies" && l.Rel != "edit" && l.Rel != "edit-media":
+				if other == "" {
+					other = href
 				}
 			}
 		}
-		if u == "" && len(entry.Links) > 0 {
-			u = strings.TrimSpace(entry.Links[0].Href)
-		}
-		if u == "" {
-			u = strings.TrimSpace(entry.ID) // fall back to id as URL
+		u := ""
+		switch {
+		case altHTML != "":
+			u = altHTML
+		case alt != "":
+			u = alt
+		case untyped != "":
+			u = untyped
+		case other != "":
+			u = other
+		default:
+			u = strings.TrimSpace(entry.ID) // last resort; filtered below if not http
 		}
 		if u == "" || !strings.HasPrefix(u, "http") {
 			continue
