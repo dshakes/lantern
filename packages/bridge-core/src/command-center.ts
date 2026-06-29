@@ -116,7 +116,7 @@ export interface NewsQuery {
   /** Source/company substring filter, e.g. "openai" matches "OpenAI Blog". */
   source?: string;
 }
-export type CenterCommand = "brief" | "plate" | "agents" | "did" | "readlist" | { news: NewsQuery } | { domain: string };
+export type CenterCommand = "brief" | "plate" | "agents" | "did" | "readlist" | { news: NewsQuery } | { domain: string } | { quiet: { hours: number } };
 
 const NEWS_CATEGORIES = ["labs", "people", "coding-tools", "aggregators", "podcasts"];
 
@@ -180,6 +180,15 @@ export function parseCenterCommand(text: string): CenterCommand | null {
   if (t === "news" || t === "radar" || t === "ai news" || t === "ai radar" || t === "ai" || t === "latest" || t === "what's new" || t === "whats new") {
     return { news: {} };
   }
+  // quiet [Nh|Nm] — pause ALL proactive pushes (news, digest, nudges) for a
+  // window. "quiet off"/"unquiet"/"loud"/"resume" clears it. Bare "quiet" = 2h.
+  if (t === "quiet off" || t === "unquiet" || t === "loud" || t === "resume" || t === "unmute") {
+    return { quiet: { hours: 0 } };
+  }
+  const qm = t.match(/^(?:quiet|mute|pause|dnd)(?:\s+(.+))?$/);
+  if (qm) {
+    return { quiet: { hours: parseQuietHours(qm[1]) } };
+  }
   if (DOMAINS.includes(t)) return { domain: DOMAIN_ALIAS[t] ?? t };
   // "health?" / "show health" / "status health"
   const dm = t.match(/^(?:show|status|how(?:'s| is)?|my)\s+(\w+)$/);
@@ -188,6 +197,25 @@ export function parseCenterCommand(text: string): CenterCommand | null {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+// "3h" / "90m" / "3" / undefined → hours (default 2), clamped 0.25h..24h.
+export function parseQuietHours(arg?: string): number {
+  if (!arg) return 2;
+  const m = arg.trim().match(/^(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours|m|min|mins|minute|minutes)?$/);
+  if (!m) return 2;
+  const n = parseFloat(m[1]);
+  const unit = m[2] ?? "h";
+  const hours = /^m/.test(unit) ? n / 60 : n;
+  return Math.min(24, Math.max(0.25, hours));
+}
+
+// Owner-facing ack for the quiet command. `untilLabel` is a preformatted local
+// time (e.g. "6:30 PM"); hours===0 means the window was cleared.
+export function buildQuietAck(hours: number, untilLabel: string): string {
+  if (hours <= 0) return "🔔 proactive pushes back on — I'll nudge you as things come up.";
+  const dur = hours >= 1 ? `${hours % 1 === 0 ? hours : hours.toFixed(1)}h` : `${Math.round(hours * 60)}m`;
+  return `🔕 quiet for ${dur} — no proactive pushes until ${untilLabel}. (replies still work; "quiet off" to end early)`;
+}
 
 function clip(s: string, n: number): string {
   s = (s ?? "").replace(/\s+/g, " ").trim();

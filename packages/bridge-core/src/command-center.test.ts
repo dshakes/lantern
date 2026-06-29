@@ -14,6 +14,8 @@ import {
   buildDid,
   buildNews,
   buildNewsDigest,
+  buildQuietAck,
+  parseQuietHours,
   buildReadlist,
   selectTopDrops,
   buildTopDropPush,
@@ -138,6 +140,30 @@ test("buildNews items are numbered + saveable", () => {
   assert.equal(v.items[0].ref, "news_item");
   assert.equal(v.items[0].url, "https://x");
   assert.equal(v.items[0].defaultAction, "save");
+});
+
+test("quiet [Nh] parses duration; off-words clear it", () => {
+  assert.deepEqual(parseCenterCommand("quiet"), { quiet: { hours: 2 } });
+  assert.deepEqual(parseCenterCommand("quiet 3h"), { quiet: { hours: 3 } });
+  assert.deepEqual(parseCenterCommand("quiet 90m"), { quiet: { hours: 1.5 } });
+  assert.deepEqual(parseCenterCommand("mute 4"), { quiet: { hours: 4 } });
+  assert.deepEqual(parseCenterCommand("quiet off"), { quiet: { hours: 0 } });
+  assert.deepEqual(parseCenterCommand("unquiet"), { quiet: { hours: 0 } });
+  assert.deepEqual(parseCenterCommand("loud"), { quiet: { hours: 0 } });
+});
+
+test("parseQuietHours clamps + defaults", () => {
+  assert.equal(parseQuietHours(undefined), 2);
+  assert.equal(parseQuietHours("3h"), 3);
+  assert.equal(parseQuietHours("30m"), 0.5);
+  assert.equal(parseQuietHours("100"), 24); // clamp to 24h
+  assert.equal(parseQuietHours("1m"), 0.25); // clamp to 15m floor
+});
+
+test("buildQuietAck: window vs cleared", () => {
+  assert.match(buildQuietAck(2, "6:30 PM"), /quiet for 2h.*until 6:30 PM/);
+  assert.match(buildQuietAck(0.5, "1:00 PM"), /quiet for 30m/);
+  assert.match(buildQuietAck(0, ""), /back on/);
 });
 
 test("save action ('<n> save' + 'save <n>' + bookmark) → save", () => {

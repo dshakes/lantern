@@ -127,7 +127,7 @@ import {
 } from "@lantern/bridge-core/doc-ingest";
 import { extname } from "path";
 import {
-  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildReadlist,
+  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildReadlist, buildQuietAck,
   selectTopDrops, buildTopDropPush, buildNewsDigest,
   type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite,
 } from "@lantern/bridge-core/command-center";
@@ -1510,6 +1510,8 @@ export class WhatsAppSession {
   private readonly newsPushedFile = join(homedir(), ".lantern", "whatsapp-news-pushed.json");
   private newsNeedsSeed = false;
   private lastNewsDigestDay = "";
+  private proactiveMuteUntil = 0; // epoch ms; while now < this, all proactive pushes pause ("quiet [Nh]")
+  private readonly proactiveMuteFile = join(homedir(), ".lantern", "whatsapp-proactive-mute.txt");
   // ── Health coach (LANTERN_HEALTH=on, default OFF) ──────────────────────────
   // Ships dark. Nudges daily on step goal + acks workouts + weekly trend.
   // ponytail: ships dark; owner flips LANTERN_HEALTH=on to enable.
@@ -1705,6 +1707,8 @@ export class WhatsAppSession {
       );
       this.commuteTimer.unref?.();
     }
+    // Restore an in-flight "quiet [Nh]" window across restarts.
+    try { this.proactiveMuteUntil = parseInt(readFileSync(this.proactiveMuteFile, "utf8").trim(), 10) || 0; } catch { /* none */ }
     // Proactive AI top-drops (ON by default; LANTERN_NEWS_PROACTIVE=off to silence).
     if (WhatsAppSession.NEWS_PROACTIVE_ENABLED) {
       this.newsNeedsSeed = !existsSync(this.newsPushedFile);
@@ -8562,6 +8566,7 @@ export class WhatsAppSession {
     try {
       // Killswitch: when engaged the bridge is fully silent — no proactive DMs.
       if (this.killSwitch) return;
+      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
       // Only fire when paired + connected so sendSelf can land.
       if (!this.socket || !this.connected || !this.ownJid()) return;
       // Quiet hours (01:00–06:00 owner-local): defer — don't ping overnight.
@@ -8820,6 +8825,19 @@ export class WhatsAppSession {
         } catch { /* best-effort */ }
         const nv = buildNews(news, nq);
         text = nv.text; items = nv.items;
+      } else if (typeof cmd === "object" && "quiet" in cmd) {
+        // quiet [Nh] — pause ALL proactive pushes for a window (de-bloat).
+        const hours = cmd.quiet.hours;
+        if (hours <= 0) {
+          this.proactiveMuteUntil = 0;
+          try { writeFileSync(this.proactiveMuteFile, "0", { mode: 0o600 }); } catch { /* best-effort */ }
+          text = buildQuietAck(0, "");
+        } else {
+          this.proactiveMuteUntil = Date.now() + hours * 3_600_000;
+          try { writeFileSync(this.proactiveMuteFile, String(this.proactiveMuteUntil), { mode: 0o600 }); } catch { /* best-effort */ }
+          const until = new Date(this.proactiveMuteUntil).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: process.env.LANTERN_OWNER_TIMEZONE || undefined });
+          text = buildQuietAck(hours, until);
+        }
       } else {
         // Domain drill-down.
         // ponytail: domain records not sourced yet; shows "nothing tracked yet"
@@ -9003,11 +9021,16 @@ export class WhatsAppSession {
     }
   }
 
+  /** True while quiet-hours OR an owner "quiet [Nh]" window is active — gates every proactive push. */
+  private proactivePaused(): boolean {
+    return isQuietHours(new Date(), defaultQuietHours()) || Date.now() < this.proactiveMuteUntil;
+  }
+
   /** Push only high-signal NEW AI news to self-chat. Deduped + quiet-hours aware. */
   private async runNewsProactiveTick(): Promise<void> {
     try {
       if (this.killSwitch || !this.socket) return;
-      if (isQuietHours(new Date(), defaultQuietHours())) return;
+      if (this.proactivePaused()) return;
       const r = await authedFetch("/v1/news?sort=popular&limit=20");
       if (!r.ok) return;
       const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; score?: number }>;
