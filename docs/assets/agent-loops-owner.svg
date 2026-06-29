@@ -1,171 +1,100 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="700" viewBox="0 0 1240 700"
-     font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
-     role="img" aria-label="Owner-facing agent loops — concierge, relationship-keeper, financial-sentinel, morning-brief, inbox-concierge. Each loop nudges the owner in self-chat and never contacts anyone else.">
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="580" viewBox="0 0 1240 580" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="Owner-facing agent loops — concierge, relationship-keeper, financial-sentinel, morning-brief, inbox-concierge. Each loop nudges the owner in self-chat and never contacts anyone else; each returns to its first step (repeats).">
   <title>Owner-facing agent loops</title>
   <defs>
-    <!-- arrow marker per tone so they don't collide -->
-    <marker id="mv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#a78bfa"/>
-    </marker>
-    <marker id="ms" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#38bdf8"/>
-    </marker>
-    <marker id="ma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#f59e0b"/>
-    </marker>
-    <marker id="me" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#34d399"/>
-    </marker>
-    <marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#fb7185"/>
-    </marker>
+    <marker id="mv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a78bfa"/></marker>
+    <marker id="ms" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#38bdf8"/></marker>
+    <marker id="ma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#f59e0b"/></marker>
+    <marker id="me" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#34d399"/></marker>
+    <marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#fb7185"/></marker>
   </defs>
-
-  <!-- backdrop -->
-  <rect width="1240" height="700" rx="16" fill="#0b1120"/>
-  <rect width="1240" height="700" rx="16" fill="none" stroke="#1e293b"/>
-
-  <!-- title -->
-  <text x="32" y="38" fill="#f8fafc" font-size="20" font-weight="700">Owner-facing loops</text>
-  <text x="260" y="38" fill="#94a3b8" font-size="13">nudge you in self-chat · never touch your contacts · scheduled on the Lantern platform</text>
-
-  <!-- ═══════════════════════════════════════════════════════════
-       BAND 1: concierge · continuous (violet)
-       NW=148, NH=44, GAP=24, PT=28, DIP=30
-       nodes at x: 42,214,386,558 (n=4)
-       last_right=706, arc ax0=706, ax1=42, ay=band_y+102, midY=band_y+50
-  ════════════════════════════════════════════════════════════ -->
-  <rect x="20" y="54" width="1200" height="120" rx="10" fill="#a78bfa" fill-opacity="0.07" stroke="#a78bfa" stroke-opacity="0.28"/>
-  <text x="42" y="72" fill="#c4b5fd" font-size="11" font-weight="700">concierge</text>
-  <text x="135" y="72" fill="#64748b" font-size="10">continuous · both reactive and proactive · captures tasks and nudges you with one-tap actions</text>
-
-  <!-- nodes -->
-  <rect x="42"  y="82" width="148" height="44" rx="8" fill="#a78bfa" fill-opacity="0.13" stroke="#a78bfa" stroke-opacity="0.5"/>
-  <text x="116" y="109" fill="#c4b5fd" font-size="11" font-weight="600" text-anchor="middle">Capture</text>
-
-  <rect x="214" y="82" width="148" height="44" rx="8" fill="#a78bfa" fill-opacity="0.13" stroke="#a78bfa" stroke-opacity="0.5"/>
-  <text x="288" y="109" fill="#c4b5fd" font-size="11" font-weight="600" text-anchor="middle">Research</text>
-
-  <rect x="386" y="82" width="148" height="44" rx="8" fill="#a78bfa" fill-opacity="0.13" stroke="#a78bfa" stroke-opacity="0.5"/>
-  <text x="460" y="109" fill="#c4b5fd" font-size="11" font-weight="600" text-anchor="middle">Nudge</text>
-
-  <rect x="558" y="82" width="148" height="44" rx="8" fill="#a78bfa" fill-opacity="0.13" stroke="#a78bfa" stroke-opacity="0.5"/>
-  <text x="632" y="109" fill="#c4b5fd" font-size="11" font-weight="600" text-anchor="middle">You act</text>
-
-  <!-- forward arrows -->
-  <line x1="192" y1="104" x2="212" y2="104" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#mv)"/>
-  <line x1="364" y1="104" x2="384" y2="104" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#mv)"/>
-  <line x1="536" y1="104" x2="556" y2="104" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#mv)"/>
-
-  <!-- loop arc -->
-  <path d="M 706 104 C 720 156, 28 156, 42 104" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mv)"/>
-
-  <!-- ═══════════════════════════════════════════════════════════
-       BAND 2: relationship-keeper · weekly (sky)
-       nodes at x: 42,214,386,558,730 (n=5)
-       last_right=878, arc ax0=878, ax1=42, ay=band_y+102, midY=band_y+50
-  ════════════════════════════════════════════════════════════ -->
-  <rect x="20" y="188" width="1200" height="120" rx="10" fill="#38bdf8" fill-opacity="0.07" stroke="#38bdf8" stroke-opacity="0.25"/>
-  <text x="42" y="206" fill="#7dd3fc" font-size="11" font-weight="700">relationship-keeper</text>
-  <text x="205" y="206" fill="#64748b" font-size="10">weekly · finds people you've gone quiet on (21+ days) and nudges you with a draft</text>
-
-  <rect x="42"  y="216" width="148" height="44" rx="8" fill="#38bdf8" fill-opacity="0.13" stroke="#38bdf8" stroke-opacity="0.45"/>
-  <text x="116" y="243" fill="#7dd3fc" font-size="11" font-weight="600" text-anchor="middle">Scan people</text>
-
-  <rect x="214" y="216" width="148" height="44" rx="8" fill="#38bdf8" fill-opacity="0.13" stroke="#38bdf8" stroke-opacity="0.45"/>
-  <text x="288" y="243" fill="#7dd3fc" font-size="11" font-weight="600" text-anchor="middle">Gone quiet?</text>
-
-  <rect x="386" y="216" width="148" height="44" rx="8" fill="#38bdf8" fill-opacity="0.13" stroke="#38bdf8" stroke-opacity="0.45"/>
-  <text x="460" y="243" fill="#7dd3fc" font-size="11" font-weight="600" text-anchor="middle">Draft</text>
-
-  <rect x="558" y="216" width="148" height="44" rx="8" fill="#38bdf8" fill-opacity="0.13" stroke="#38bdf8" stroke-opacity="0.45"/>
-  <text x="632" y="243" fill="#7dd3fc" font-size="11" font-weight="600" text-anchor="middle">Nudge you</text>
-
-  <rect x="730" y="216" width="148" height="44" rx="8" fill="#38bdf8" fill-opacity="0.13" stroke="#38bdf8" stroke-opacity="0.45"/>
-  <text x="804" y="243" fill="#7dd3fc" font-size="11" font-weight="600" text-anchor="middle">You reach out</text>
-
-  <line x1="192" y1="238" x2="212" y2="238" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ms)"/>
-  <line x1="364" y1="238" x2="384" y2="238" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ms)"/>
-  <line x1="536" y1="238" x2="556" y2="238" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ms)"/>
-  <line x1="708" y1="238" x2="728" y2="238" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ms)"/>
-
-  <path d="M 878 238 C 892 290, 28 290, 42 238" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ms)"/>
-
-  <!-- ═══════════════════════════════════════════════════════════
-       BAND 3: financial-sentinel · daily (amber)
-       4 nodes
-  ════════════════════════════════════════════════════════════ -->
-  <rect x="20" y="322" width="1200" height="120" rx="10" fill="#f59e0b" fill-opacity="0.07" stroke="#f59e0b" stroke-opacity="0.28"/>
-  <text x="42" y="340" fill="#fcd34d" font-size="11" font-weight="700">financial-sentinel</text>
-  <text x="190" y="340" fill="#64748b" font-size="10">daily · watches bills and subscriptions, flags price hikes, drafts cancel/review for your one-tap OK</text>
-
-  <rect x="42"  y="350" width="148" height="44" rx="8" fill="#f59e0b" fill-opacity="0.13" stroke="#f59e0b" stroke-opacity="0.5"/>
-  <text x="116" y="377" fill="#fcd34d" font-size="11" font-weight="600" text-anchor="middle">Scan bills</text>
-
-  <rect x="214" y="350" width="148" height="44" rx="8" fill="#f59e0b" fill-opacity="0.13" stroke="#f59e0b" stroke-opacity="0.5"/>
-  <text x="288" y="377" fill="#fcd34d" font-size="11" font-weight="600" text-anchor="middle">Price hike?</text>
-
-  <rect x="386" y="350" width="148" height="44" rx="8" fill="#f59e0b" fill-opacity="0.13" stroke="#f59e0b" stroke-opacity="0.5"/>
-  <text x="460" y="377" fill="#fcd34d" font-size="11" font-weight="600" text-anchor="middle">Flag review</text>
-
-  <rect x="558" y="350" width="148" height="44" rx="8" fill="#f59e0b" fill-opacity="0.13" stroke="#f59e0b" stroke-opacity="0.5"/>
-  <text x="632" y="377" fill="#fcd34d" font-size="11" font-weight="600" text-anchor="middle">You decide</text>
-
-  <line x1="192" y1="372" x2="212" y2="372" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#ma)"/>
-  <line x1="364" y1="372" x2="384" y2="372" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#ma)"/>
-  <line x1="536" y1="372" x2="556" y2="372" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#ma)"/>
-
-  <path d="M 706 372 C 720 424, 28 424, 42 372" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ma)"/>
-
-  <!-- ═══════════════════════════════════════════════════════════
-       BAND 4: morning-brief · daily 8am (emerald)
-       4 nodes
-  ════════════════════════════════════════════════════════════ -->
-  <rect x="20" y="456" width="1200" height="120" rx="10" fill="#34d399" fill-opacity="0.07" stroke="#34d399" stroke-opacity="0.25"/>
-  <text x="42" y="474" fill="#6ee7b7" font-size="11" font-weight="700">morning-brief</text>
-  <text x="167" y="474" fill="#64748b" font-size="10">daily at 8am · texts you 3 bullets on what matters today</text>
-
-  <rect x="42"  y="484" width="148" height="44" rx="8" fill="#34d399" fill-opacity="0.13" stroke="#34d399" stroke-opacity="0.45"/>
-  <text x="116" y="511" fill="#6ee7b7" font-size="11" font-weight="600" text-anchor="middle">8am trigger</text>
-
-  <rect x="214" y="484" width="148" height="44" rx="8" fill="#34d399" fill-opacity="0.13" stroke="#34d399" stroke-opacity="0.45"/>
-  <text x="288" y="511" fill="#6ee7b7" font-size="11" font-weight="600" text-anchor="middle">Gather context</text>
-
-  <rect x="386" y="484" width="148" height="44" rx="8" fill="#34d399" fill-opacity="0.13" stroke="#34d399" stroke-opacity="0.45"/>
-  <text x="460" y="511" fill="#6ee7b7" font-size="11" font-weight="600" text-anchor="middle">3 bullets</text>
-
-  <rect x="558" y="484" width="148" height="44" rx="8" fill="#34d399" fill-opacity="0.13" stroke="#34d399" stroke-opacity="0.45"/>
-  <text x="632" y="511" fill="#6ee7b7" font-size="11" font-weight="600" text-anchor="middle">Text you</text>
-
-  <line x1="192" y1="506" x2="212" y2="506" stroke="#34d399" stroke-width="1.5" marker-end="url(#me)"/>
-  <line x1="364" y1="506" x2="384" y2="506" stroke="#34d399" stroke-width="1.5" marker-end="url(#me)"/>
-  <line x1="536" y1="506" x2="556" y2="506" stroke="#34d399" stroke-width="1.5" marker-end="url(#me)"/>
-
-  <path d="M 706 506 C 720 558, 28 558, 42 506" fill="none" stroke="#34d399" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#me)"/>
-
-  <!-- ═══════════════════════════════════════════════════════════
-       BAND 5: inbox-concierge · daily AM (rose)
-       4 nodes
-  ════════════════════════════════════════════════════════════ -->
-  <rect x="20" y="590" width="1200" height="90" rx="10" fill="#fb7185" fill-opacity="0.07" stroke="#fb7185" stroke-opacity="0.28"/>
-  <text x="42" y="608" fill="#fda4af" font-size="11" font-weight="700">inbox-concierge</text>
-  <text x="185" y="608" fill="#64748b" font-size="10">daily AM · reads your Gmail and texts a 3-bucket digest</text>
-
-  <rect x="42"  y="618" width="148" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
-  <text x="116" y="645" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Morning trigger</text>
-
-  <rect x="214" y="618" width="148" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
-  <text x="288" y="645" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Read Gmail</text>
-
-  <rect x="386" y="618" width="148" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
-  <text x="460" y="645" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Sort buckets</text>
-
-  <rect x="558" y="618" width="148" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
-  <text x="632" y="645" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Text digest</text>
-
-  <line x1="192" y1="640" x2="212" y2="640" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
-  <line x1="364" y1="640" x2="384" y2="640" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
-  <line x1="536" y1="640" x2="556" y2="640" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
-
-  <path d="M 706 640 C 720 682, 28 682, 42 640" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mr)"/>
+  <rect width="1240" height="580" rx="16" fill="#0b1120"/>
+  <rect width="1240" height="580" rx="16" fill="none" stroke="#1e293b"/>
+  <rect x="20" y="16" width="1200" height="100" rx="10" fill="#a78bfa" fill-opacity="0.07" stroke="#a78bfa" stroke-opacity="0.26"/>
+  <text x="42" y="34" fill="#c4b5fd" font-size="12" font-weight="700">concierge</text>
+  <text x="132" y="34" fill="#64748b" font-size="10.5">continuous · captures tasks and nudges you with one-tap actions</text>
+  <rect x="42" y="46" width="148" height="44" rx="8" fill="#a78bfa" fill-opacity="0.13" stroke="#a78bfa" stroke-opacity="0.5"/>
+  <text x="116" y="72" fill="#c4b5fd" font-size="11" font-weight="600" text-anchor="middle">Capture</text>
+  <rect x="214" y="46" width="148" height="44" rx="8" fill="#a78bfa" fill-opacity="0.13" stroke="#a78bfa" stroke-opacity="0.5"/>
+  <text x="288" y="72" fill="#c4b5fd" font-size="11" font-weight="600" text-anchor="middle">Research</text>
+  <rect x="386" y="46" width="148" height="44" rx="8" fill="#a78bfa" fill-opacity="0.13" stroke="#a78bfa" stroke-opacity="0.5"/>
+  <text x="460" y="72" fill="#c4b5fd" font-size="11" font-weight="600" text-anchor="middle">Nudge</text>
+  <rect x="558" y="46" width="148" height="44" rx="8" fill="#a78bfa" fill-opacity="0.13" stroke="#a78bfa" stroke-opacity="0.5"/>
+  <text x="632" y="72" fill="#c4b5fd" font-size="11" font-weight="600" text-anchor="middle">You act</text>
+  <line x1="192" y1="68" x2="212" y2="68" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#mv)"/>
+  <line x1="364" y1="68" x2="384" y2="68" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#mv)"/>
+  <line x1="536" y1="68" x2="556" y2="68" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#mv)"/>
+  <path d="M 706 68 C 720 108, 28 108, 42 68" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mv)"/>
+  <rect x="340" y="91" width="68" height="18" rx="9" fill="#0b1120" stroke="#a78bfa" stroke-opacity="0.5"/>
+  <text x="374" y="101" fill="#c4b5fd" font-size="9" font-weight="700" text-anchor="middle" dominant-baseline="middle">↻ repeats</text>
+  <rect x="20" y="128" width="1200" height="100" rx="10" fill="#38bdf8" fill-opacity="0.07" stroke="#38bdf8" stroke-opacity="0.26"/>
+  <text x="42" y="146" fill="#7dd3fc" font-size="12" font-weight="700">relationship-keeper</text>
+  <text x="212" y="146" fill="#64748b" font-size="10.5">weekly · finds people you've gone quiet on (21+ days) and drafts an opener</text>
+  <rect x="42" y="158" width="148" height="44" rx="8" fill="#38bdf8" fill-opacity="0.13" stroke="#38bdf8" stroke-opacity="0.5"/>
+  <text x="116" y="184" fill="#7dd3fc" font-size="11" font-weight="600" text-anchor="middle">Scan people</text>
+  <rect x="214" y="158" width="148" height="44" rx="8" fill="#38bdf8" fill-opacity="0.13" stroke="#38bdf8" stroke-opacity="0.5"/>
+  <text x="288" y="184" fill="#7dd3fc" font-size="11" font-weight="600" text-anchor="middle">Gone quiet?</text>
+  <rect x="386" y="158" width="148" height="44" rx="8" fill="#38bdf8" fill-opacity="0.13" stroke="#38bdf8" stroke-opacity="0.5"/>
+  <text x="460" y="184" fill="#7dd3fc" font-size="11" font-weight="600" text-anchor="middle">Draft</text>
+  <rect x="558" y="158" width="148" height="44" rx="8" fill="#38bdf8" fill-opacity="0.13" stroke="#38bdf8" stroke-opacity="0.5"/>
+  <text x="632" y="184" fill="#7dd3fc" font-size="11" font-weight="600" text-anchor="middle">Nudge you</text>
+  <rect x="730" y="158" width="148" height="44" rx="8" fill="#38bdf8" fill-opacity="0.13" stroke="#38bdf8" stroke-opacity="0.5"/>
+  <text x="804" y="184" fill="#7dd3fc" font-size="11" font-weight="600" text-anchor="middle">You reach out</text>
+  <line x1="192" y1="180" x2="212" y2="180" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ms)"/>
+  <line x1="364" y1="180" x2="384" y2="180" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ms)"/>
+  <line x1="536" y1="180" x2="556" y2="180" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ms)"/>
+  <line x1="708" y1="180" x2="728" y2="180" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#ms)"/>
+  <path d="M 878 180 C 892 220, 28 220, 42 180" fill="none" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ms)"/>
+  <rect x="426" y="203" width="68" height="18" rx="9" fill="#0b1120" stroke="#38bdf8" stroke-opacity="0.5"/>
+  <text x="460" y="213" fill="#7dd3fc" font-size="9" font-weight="700" text-anchor="middle" dominant-baseline="middle">↻ repeats</text>
+  <rect x="20" y="240" width="1200" height="100" rx="10" fill="#f59e0b" fill-opacity="0.07" stroke="#f59e0b" stroke-opacity="0.26"/>
+  <text x="42" y="258" fill="#fcd34d" font-size="12" font-weight="700">financial-sentinel</text>
+  <text x="204" y="258" fill="#64748b" font-size="10.5">daily · flags price hikes, drafts cancel/review for your one-tap OK</text>
+  <rect x="42" y="270" width="148" height="44" rx="8" fill="#f59e0b" fill-opacity="0.13" stroke="#f59e0b" stroke-opacity="0.5"/>
+  <text x="116" y="296" fill="#fcd34d" font-size="11" font-weight="600" text-anchor="middle">Scan bills</text>
+  <rect x="214" y="270" width="148" height="44" rx="8" fill="#f59e0b" fill-opacity="0.13" stroke="#f59e0b" stroke-opacity="0.5"/>
+  <text x="288" y="296" fill="#fcd34d" font-size="11" font-weight="600" text-anchor="middle">Price hike?</text>
+  <rect x="386" y="270" width="148" height="44" rx="8" fill="#f59e0b" fill-opacity="0.13" stroke="#f59e0b" stroke-opacity="0.5"/>
+  <text x="460" y="296" fill="#fcd34d" font-size="11" font-weight="600" text-anchor="middle">Flag review</text>
+  <rect x="558" y="270" width="148" height="44" rx="8" fill="#f59e0b" fill-opacity="0.13" stroke="#f59e0b" stroke-opacity="0.5"/>
+  <text x="632" y="296" fill="#fcd34d" font-size="11" font-weight="600" text-anchor="middle">You decide</text>
+  <line x1="192" y1="292" x2="212" y2="292" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#ma)"/>
+  <line x1="364" y1="292" x2="384" y2="292" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#ma)"/>
+  <line x1="536" y1="292" x2="556" y2="292" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#ma)"/>
+  <path d="M 706 292 C 720 332, 28 332, 42 292" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ma)"/>
+  <rect x="340" y="315" width="68" height="18" rx="9" fill="#0b1120" stroke="#f59e0b" stroke-opacity="0.5"/>
+  <text x="374" y="325" fill="#fcd34d" font-size="9" font-weight="700" text-anchor="middle" dominant-baseline="middle">↻ repeats</text>
+  <rect x="20" y="352" width="1200" height="100" rx="10" fill="#34d399" fill-opacity="0.07" stroke="#34d399" stroke-opacity="0.26"/>
+  <text x="42" y="370" fill="#6ee7b7" font-size="12" font-weight="700">morning-brief</text>
+  <text x="164" y="370" fill="#64748b" font-size="10.5">daily 8am · texts you 3 bullets on what matters today</text>
+  <rect x="42" y="382" width="148" height="44" rx="8" fill="#34d399" fill-opacity="0.13" stroke="#34d399" stroke-opacity="0.5"/>
+  <text x="116" y="408" fill="#6ee7b7" font-size="11" font-weight="600" text-anchor="middle">8am trigger</text>
+  <rect x="214" y="382" width="148" height="44" rx="8" fill="#34d399" fill-opacity="0.13" stroke="#34d399" stroke-opacity="0.5"/>
+  <text x="288" y="408" fill="#6ee7b7" font-size="11" font-weight="600" text-anchor="middle">Gather context</text>
+  <rect x="386" y="382" width="148" height="44" rx="8" fill="#34d399" fill-opacity="0.13" stroke="#34d399" stroke-opacity="0.5"/>
+  <text x="460" y="408" fill="#6ee7b7" font-size="11" font-weight="600" text-anchor="middle">3 bullets</text>
+  <rect x="558" y="382" width="148" height="44" rx="8" fill="#34d399" fill-opacity="0.13" stroke="#34d399" stroke-opacity="0.5"/>
+  <text x="632" y="408" fill="#6ee7b7" font-size="11" font-weight="600" text-anchor="middle">Text you</text>
+  <line x1="192" y1="404" x2="212" y2="404" stroke="#34d399" stroke-width="1.5" marker-end="url(#me)"/>
+  <line x1="364" y1="404" x2="384" y2="404" stroke="#34d399" stroke-width="1.5" marker-end="url(#me)"/>
+  <line x1="536" y1="404" x2="556" y2="404" stroke="#34d399" stroke-width="1.5" marker-end="url(#me)"/>
+  <path d="M 706 404 C 720 444, 28 444, 42 404" fill="none" stroke="#34d399" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#me)"/>
+  <rect x="340" y="427" width="68" height="18" rx="9" fill="#0b1120" stroke="#34d399" stroke-opacity="0.5"/>
+  <text x="374" y="437" fill="#6ee7b7" font-size="9" font-weight="700" text-anchor="middle" dominant-baseline="middle">↻ repeats</text>
+  <rect x="20" y="464" width="1200" height="100" rx="10" fill="#fb7185" fill-opacity="0.07" stroke="#fb7185" stroke-opacity="0.26"/>
+  <text x="42" y="482" fill="#fda4af" font-size="12" font-weight="700">inbox-concierge</text>
+  <text x="180" y="482" fill="#64748b" font-size="10.5">daily AM · reads your Gmail and texts a 3-bucket digest</text>
+  <rect x="42" y="494" width="148" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="116" y="520" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Morning trigger</text>
+  <rect x="214" y="494" width="148" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="288" y="520" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Read Gmail</text>
+  <rect x="386" y="494" width="148" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="460" y="520" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Sort buckets</text>
+  <rect x="558" y="494" width="148" height="44" rx="8" fill="#fb7185" fill-opacity="0.13" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="632" y="520" fill="#fda4af" font-size="11" font-weight="600" text-anchor="middle">Text digest</text>
+  <line x1="192" y1="516" x2="212" y2="516" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
+  <line x1="364" y1="516" x2="384" y2="516" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
+  <line x1="536" y1="516" x2="556" y2="516" stroke="#fb7185" stroke-width="1.5" marker-end="url(#mr)"/>
+  <path d="M 706 516 C 720 556, 28 556, 42 516" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mr)"/>
+  <rect x="340" y="539" width="68" height="18" rx="9" fill="#0b1120" stroke="#fb7185" stroke-opacity="0.5"/>
+  <text x="374" y="549" fill="#fda4af" font-size="9" font-weight="700" text-anchor="middle" dominant-baseline="middle">↻ repeats</text>
 </svg>
