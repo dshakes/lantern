@@ -732,9 +732,11 @@ export class IMessageSession {
   private proactiveMuteUntil = 0; // epoch ms; while now < this, all proactive pushes pause ("quiet [Nh]")
   private commuteWasLastDriving = false;
 
-  /** True while quiet-hours OR an owner "quiet [Nh]" window is active — gates every proactive push. */
+  /** True while the bot is muted ("quiet/pause Nh"), in quiet-hours, OR inside an
+   *  owner "quiet [Nh]" window — gates every proactive push so a global mute also
+   *  silences proactive bloat, not just contact replies. */
   private proactivePaused(): boolean {
-    return isQuietHours(new Date(), defaultQuietHours()) || Date.now() < this.proactiveMuteUntil;
+    return this.muted || isQuietHours(new Date(), defaultQuietHours()) || Date.now() < this.proactiveMuteUntil;
   }
   // ── Energy guardian (LANTERN_ENERGY=on, default OFF) ───────────────────────
   // ponytail: ships dark; owner flips LANTERN_ENERGY=on to enable.
