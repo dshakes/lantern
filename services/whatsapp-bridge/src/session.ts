@@ -128,6 +128,7 @@ import {
 import { extname } from "path";
 import {
   parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildReadlist,
+  selectTopDrops, buildTopDropPush,
   type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite,
 } from "@lantern/bridge-core/command-center";
 import {
@@ -1500,6 +1501,14 @@ export class WhatsAppSession {
   private energyTimer: ReturnType<typeof setInterval> | null = null;
   private energyNudgedDate = ""; // YYYY-MM-DD — set after sending, reset on new date
   private readonly energyNudgeFile = join(homedir(), ".lantern", "whatsapp-energy-nudge.json");
+  // Proactive "top AI drops" — push only high-signal NEW news. ON by default.
+  private static readonly NEWS_PROACTIVE_ENABLED =
+    !["off", "0", "false"].includes((process.env.LANTERN_NEWS_PROACTIVE ?? "on").toLowerCase());
+  private static readonly NEWS_PROACTIVE_INTERVAL_MS = 60 * 60_000;
+  private newsTimer: ReturnType<typeof setInterval> | null = null;
+  private newsPushed = new Set<string>();
+  private readonly newsPushedFile = join(homedir(), ".lantern", "whatsapp-news-pushed.json");
+  private newsNeedsSeed = false;
   // ── Health coach (LANTERN_HEALTH=on, default OFF) ──────────────────────────
   // Ships dark. Nudges daily on step goal + acks workouts + weekly trend.
   // ponytail: ships dark; owner flips LANTERN_HEALTH=on to enable.
@@ -1694,6 +1703,18 @@ export class WhatsAppSession {
         WhatsAppSession.COMMUTE_INTERVAL_MS,
       );
       this.commuteTimer.unref?.();
+    }
+    // Proactive AI top-drops (ON by default; LANTERN_NEWS_PROACTIVE=off to silence).
+    if (WhatsAppSession.NEWS_PROACTIVE_ENABLED) {
+      this.newsNeedsSeed = !existsSync(this.newsPushedFile);
+      try {
+        const arr = JSON.parse(readFileSync(this.newsPushedFile, "utf8")) as string[];
+        if (Array.isArray(arr)) this.newsPushed = new Set(arr.slice(-500));
+      } catch { /* first run */ }
+      const k = setTimeout(() => void this.runNewsProactiveTick(), 30_000);
+      k.unref?.();
+      this.newsTimer = setInterval(() => void this.runNewsProactiveTick(), WhatsAppSession.NEWS_PROACTIVE_INTERVAL_MS);
+      this.newsTimer.unref?.();
     }
     // Energy guardian (LANTERN_ENERGY=on only).
     if (WhatsAppSession.ENERGY_ENABLED) {
@@ -8977,6 +8998,42 @@ export class WhatsAppSession {
       this.commuteWasLastDriving = isDriving;
     } catch (err) {
       this.logger.debug({ err }, "commute tick failed (non-fatal)");
+    }
+  }
+
+  /** Push only high-signal NEW AI news to self-chat. Deduped + quiet-hours aware. */
+  private async runNewsProactiveTick(): Promise<void> {
+    try {
+      if (this.killSwitch || !this.socket) return;
+      if (isQuietHours(new Date(), defaultQuietHours())) return;
+      const r = await authedFetch("/v1/news?sort=popular&limit=20");
+      if (!r.ok) return;
+      const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; score?: number }>;
+      const items: NewsItemLite[] = (data ?? []).map((it) => ({ source: it.source, category: it.category, title: it.title, url: it.url, score: it.score }));
+      if (this.newsNeedsSeed) {
+        for (const it of items) if (it.url) this.newsPushed.add(it.url);
+        try { writeFileSync(this.newsPushedFile, JSON.stringify([...this.newsPushed].slice(-500)), { mode: 0o600 }); } catch { /* best-effort */ }
+        this.newsNeedsSeed = false;
+        this.logger.info({ seeded: this.newsPushed.size }, "proactive AI news: seeded baseline (will push only NEW drops)");
+        return;
+      }
+      const drops = selectTopDrops(items, this.newsPushed, { threshold: 70, max: 2 });
+      let pushed = 0;
+      for (const d of drops) {
+        try {
+          await this.sendSelf(buildTopDropPush(d));
+          if (d.url) this.newsPushed.add(d.url);
+          pushed++;
+        } catch (e) {
+          this.logger.warn({ err: e }, "top-drop send failed");
+        }
+      }
+      if (pushed > 0) {
+        try { writeFileSync(this.newsPushedFile, JSON.stringify([...this.newsPushed].slice(-500)), { mode: 0o600 }); } catch { /* best-effort */ }
+        this.logger.info({ pushed }, "proactive AI news: top drops pushed");
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "news proactive tick failed");
     }
   }
 
