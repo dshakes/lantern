@@ -113,10 +113,24 @@ export type NewsWindow = "today" | "week" | "month";
 export interface NewsQuery {
   window?: NewsWindow;
   category?: string;
+  /** Source/company substring filter, e.g. "openai" matches "OpenAI Blog". */
+  source?: string;
 }
 export type CenterCommand = "brief" | "plate" | "agents" | "did" | "readlist" | { news: NewsQuery } | { domain: string };
 
 const NEWS_CATEGORIES = ["labs", "people", "coding-tools", "aggregators", "podcasts"];
+
+// "news <company>" → a source substring the server ILIKE-matches.
+const NEWS_SOURCE_ALIASES: Record<string, string> = {
+  openai: "openai", anthropic: "claude", claude: "claude",
+  google: "google", deepmind: "deepmind", gemini: "gemini",
+  mistral: "mistral", meta: "meta", llama: "meta",
+  huggingface: "huggingface", hf: "huggingface", nvidia: "nvidia",
+  aws: "aws", amazon: "aws",
+  simon: "willison", willison: "willison",
+  swyx: "latent", latent: "latent", "latent space": "latent",
+  aider: "aider", cline: "cline", reddit: "reddit", hn: "hacker", "hacker news": "hacker",
+};
 
 const DOMAINS = ["health", "vehicle", "car", "money", "finance", "home", "household", "career", "work", "travel"];
 const DOMAIN_ALIAS: Record<string, string> = {
@@ -159,7 +173,8 @@ export function parseCenterCommand(text: string): CenterCommand | null {
     else if (mod === "week" || mod === "this week") q.window = "week";
     else if (mod === "month" || mod === "this month") q.window = "month";
     else if (NEWS_CATEGORIES.includes(mod)) q.category = mod;
-    // unknown modifier → treat as a plain news pull
+    else if (NEWS_SOURCE_ALIASES[mod]) q.source = NEWS_SOURCE_ALIASES[mod];
+    else q.source = mod; // any other word → treat as a source/company filter ("news perplexity")
     return { news: q };
   }
   if (t === "news" || t === "radar" || t === "ai news" || t === "ai radar" || t === "ai" || t === "latest" || t === "what's new" || t === "whats new") {
@@ -471,15 +486,30 @@ const NEWS_WINDOW_LABEL: Record<NewsWindow, string> = {
 };
 
 export function buildNews(items: NewsItemLite[], q?: NewsQuery): CenterView {
-  const win = q?.window ? ` · ${NEWS_WINDOW_LABEL[q.window]} · top by popularity` : " · ≤5-min fresh";
-  const cat = q?.category ? ` (${q.category})` : "";
+  const win = q?.window ? ` · ${NEWS_WINDOW_LABEL[q.window]} · top by popularity` : "";
+  const tag = q?.source ? ` (${q.source})` : q?.category ? ` (${q.category})` : "";
   if (!items.length) {
-    return { text: `📡 AI Radar${cat}${win} — nothing yet. Try "news week" or a category like "news coding-tools".`, items: [] };
+    return { text: `📡 AI Radar${tag}${win} — nothing yet. Try "news week", a company ("news openai"), or a category ("news coding-tools").`, items: [] };
   }
-  // When a window is set the server already ranks by popularity; otherwise sort by score here.
-  const ranked = q?.window ? items.slice(0, 12) : [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 12);
+  const sorted = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  // Diversity: when NOT filtered to one source, cap items per source so a
+  // backfilled feed (OpenAI/HuggingFace have 1000s of items) can't dominate.
+  let ranked: NewsItemLite[];
+  if (q?.source) {
+    ranked = sorted.slice(0, 12); // filtered to one company → show its top items
+  } else {
+    const perSource = new Map<string, number>();
+    ranked = [];
+    for (const it of sorted) {
+      const c = perSource.get(it.source) ?? 0;
+      if (c >= 3) continue;
+      perSource.set(it.source, c + 1);
+      ranked.push(it);
+      if (ranked.length >= 12) break;
+    }
+  }
   const out: BriefItem[] = [];
-  const lines: string[] = [`📡 AI Radar${cat} · ${items.length}${win}`, ""];
+  const lines: string[] = [`📡 AI Radar${tag} · top ${ranked.length}${win}`, ""];
   let n = 1;
   for (const it of ranked) {
     const icon = (it.category && NEWS_CAT_ICON[it.category]) || "•";
@@ -531,10 +561,40 @@ export function selectTopDrops(
 ): NewsItemLite[] {
   const threshold = opts?.threshold ?? 100;
   const max = opts?.max ?? 2;
-  return items
-    .filter((it) => !!it.url && (it.score ?? 0) >= threshold && !pushed.has(it.url))
-    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-    .slice(0, max);
+  const out: NewsItemLite[] = [];
+  const seenSource = new Set<string>();
+  for (const it of [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))) {
+    if (!it.url || (it.score ?? 0) < threshold || pushed.has(it.url)) continue;
+    if (seenSource.has(it.source)) continue; // diversity: at most 1 per source per push
+    seenSource.add(it.source);
+    out.push(it);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** A proactive DAILY news roundup — top diverse items, one push per day. Pure. */
+export function buildNewsDigest(items: NewsItemLite[], dayLabel: string): string {
+  if (!items.length) return `📰 AI news — ${dayLabel}: quiet day, nothing notable scanned.`;
+  const sorted = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  const perSource = new Map<string, number>();
+  const picked: NewsItemLite[] = [];
+  for (const it of sorted) {
+    const c = perSource.get(it.source) ?? 0;
+    if (c >= 2) continue; // up to 2 per source for diversity
+    perSource.set(it.source, c + 1);
+    picked.push(it);
+    if (picked.length >= 8) break;
+  }
+  const lines: string[] = [`📰 AI news · ${dayLabel} · top ${picked.length}`, ""];
+  for (const it of picked) {
+    const icon = (it.category && NEWS_CAT_ICON[it.category]) || "•";
+    lines.push(`${icon} ${clip(it.title, 80)} — ${clip(it.source, 22)}`);
+    if (it.url) lines.push(`   ${it.url}`);
+  }
+  lines.push("");
+  lines.push(`pull "news" anytime · "news openai" / "news week" to filter`);
+  return lines.join("\n");
 }
 
 /** Format one top-drop for a self-chat push. */

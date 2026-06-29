@@ -13,6 +13,7 @@ import {
   buildDomain,
   buildDid,
   buildNews,
+  buildNewsDigest,
   buildReadlist,
   selectTopDrops,
   buildTopDropPush,
@@ -91,15 +92,48 @@ test("news time-windows + category (feature: 'news today/week/month', 'news labs
   assert.deepEqual(parseCenterCommand("radar today"), { news: { window: "today" } });
   assert.deepEqual(parseCenterCommand("news labs"), { news: { category: "labs" } });
   assert.deepEqual(parseCenterCommand("news coding-tools"), { news: { category: "coding-tools" } });
-  assert.deepEqual(parseCenterCommand("news whatever"), { news: {} }); // unknown modifier → plain
+  // any non-window/non-category word → a source/company filter
+  assert.deepEqual(parseCenterCommand("news openai"), { news: { source: "openai" } });
+  assert.deepEqual(parseCenterCommand("news claude"), { news: { source: "claude" } });
+  assert.deepEqual(parseCenterCommand("news google"), { news: { source: "google" } });
+  assert.deepEqual(parseCenterCommand("news perplexity"), { news: { source: "perplexity" } });
 });
 
 test("buildNews shows the window + popularity label + numbered saveable items", () => {
   const items = [{ source: "Anthropic", category: "labs", title: "Claude 4.8", url: "https://x", score: 9 }];
   assert.match(buildNews(items, { window: "week" }).text, /this week · top by popularity/);
-  assert.match(buildNews(items, {}).text, /≤5-min fresh/);
+  assert.match(buildNews(items, {}).text, /📡 AI Radar · top \d/);
   assert.match(buildNews(items, { category: "labs" }).text, /\(labs\)/);
-  const v = buildNews(items, {});
+  assert.match(buildNews(items, { source: "openai" }).text, /\(openai\)/);
+});
+
+test("buildNews caps one dominant source when unfiltered, but not when filtered", () => {
+  const flood = Array.from({ length: 10 }, (_, i) => ({ source: "OpenAI Blog", title: `o${i}`, url: `https://o/${i}`, score: 90 - i }));
+  const others = [{ source: "Anthropic", title: "a", url: "https://a", score: 50 }];
+  // unfiltered: OpenAI Blog capped at 3
+  const mixed = buildNews([...flood, ...others], {});
+  assert.equal(mixed.items.filter((it) => it.url?.startsWith("https://o/")).length, 3);
+  // filtered to that source: show its top items (no per-source cap)
+  const only = buildNews(flood, { source: "openai" });
+  assert.ok(only.items.length > 3);
+});
+
+test("buildNewsDigest: top-8 cross-source, ≤2 per source, empty → quiet-day line", () => {
+  assert.match(buildNewsDigest([], "today"), /quiet day/);
+  const items = [
+    ...Array.from({ length: 5 }, (_, i) => ({ source: "OpenAI Blog", title: `o${i}`, url: `https://o/${i}`, score: 90 - i })),
+    { source: "Anthropic", title: "a", url: "https://a", score: 80 },
+    { source: "HN", title: "h", url: "https://h", score: 70 },
+    { source: "AWS", title: "w", url: "https://w", score: 60 },
+  ];
+  const out = buildNewsDigest(items, "today");
+  assert.match(out, /📰 AI news · today/);
+  // OpenAI capped at 2 in the digest
+  assert.equal((out.match(/https:\/\/o\//g) ?? []).length, 2);
+});
+
+test("buildNews items are numbered + saveable", () => {
+  const v = buildNews([{ source: "X", category: "labs", title: "T", url: "https://x", score: 5 }], {});
   assert.equal(v.items.length, 1);
   assert.equal(v.items[0].ref, "news_item");
   assert.equal(v.items[0].url, "https://x");
