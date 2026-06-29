@@ -1,65 +1,41 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!--
-LaunchAgent for the Lantern WhatsApp bridge. Loaded into the user's
-launchd session via `make launchd-install` (which substitutes
-__REPO_ROOT__, __NODE__, __HOME__ before linking into ~/Library/
-LaunchAgents/). Auto-starts at login + auto-restarts on crash.
-
-To unload:  launchctl unload ~/Library/LaunchAgents/dev.lantern.whatsapp-bridge.plist
-To inspect: launchctl list | grep lantern
-Logs:       ~/Library/Logs/Lantern/whatsapp-bridge.{out,err}.log
--->
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>dev.lantern.whatsapp-bridge</string>
-
-  <key>ProgramArguments</key>
-  <array>
-    <string>__NODE__</string>
-    <string>__REPO_ROOT__/services/whatsapp-bridge/node_modules/.bin/tsx</string>
-    <string>__REPO_ROOT__/services/whatsapp-bridge/src/index.ts</string>
-  </array>
-
-  <key>WorkingDirectory</key>
-  <string>__REPO_ROOT__/services/whatsapp-bridge</string>
-
-  <key>RunAtLoad</key>
-  <true/>
-
-  <key>KeepAlive</key>
-  <dict>
-    <!-- Restart only on crash, not on clean exit. Lets us stop the
-         service intentionally without launchd respawning it. -->
-    <key>SuccessfulExit</key>
-    <false/>
-    <key>Crashed</key>
-    <true/>
-  </dict>
-
-  <!-- Backoff so a permanently-broken state doesn't spin the CPU. -->
-  <key>ThrottleInterval</key>
-  <integer>10</integer>
-
-  <key>StandardOutPath</key>
-  <string>__HOME__/Library/Logs/Lantern/whatsapp-bridge.out.log</string>
-  <key>StandardErrorPath</key>
-  <string>__HOME__/Library/Logs/Lantern/whatsapp-bridge.err.log</string>
-
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <!-- Tunables — override by editing the installed plist. The
-         install script copies the file with all __VAR__ slots
-         substituted, so changes here AFTER install require a reload. -->
-    <key>LANTERN_API_URL</key>
-    <string>http://localhost:8080</string>
-    <key>LANTERN_BRIDGE_PORT</key>
-    <string>3100</string>
-    <key>LOG_LEVEL</key>
-    <string>info</string>
-  </dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>LANTERN_API_URL</key>
+		<string>http://localhost:8080</string>
+		<key>LANTERN_BRIDGE_PORT</key>
+		<string>3100</string>
+		<key>LOG_LEVEL</key>
+		<string>info</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>KeepAlive</key>
+	<dict>
+		<key>Crashed</key>
+		<true/>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>Label</key>
+	<string>dev.lantern.whatsapp-bridge</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__REPO_ROOT__/scripts/launchd/run-bridge-wrapper.sh</string>
+		<string>__REPO_ROOT__/services/whatsapp-bridge</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/Lantern/whatsapp-bridge.err.log</string>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/Lantern/whatsapp-bridge.out.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>__REPO_ROOT__/services/whatsapp-bridge</string>
 </dict>
 </plist>
