@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
@@ -265,6 +266,25 @@ func main() {
 	commitmentHandler.SetLlmProxy(llmProxyHandler) // enables ResearchCommitment
 	crossAppHandler := handlers.NewCrossAppHandler(srv, authHandler)
 	crossAppHandler.SetLlmProxy(llmProxyHandler) // enables cross-app LLM composition
+
+	// Browser-as-skill (LANTERN_BROWSER_SKILL=on, default OFF).
+	// Optionally wires RuntimeManager.ExecTool when LANTERN_RUNTIME_MANAGER_ADDR
+	// is set. Without the addr the handler is 503 for dispatch endpoints — honest
+	// increment 1 behavior until the runtime image ships (increment 2).
+	browserHandler := handlers.NewBrowserHandler(srv, authHandler)
+	if rmAddr := os.Getenv("LANTERN_RUNTIME_MANAGER_ADDR"); rmAddr != "" {
+		rmConn, rmErr := grpc.NewClient(rmAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if rmErr != nil {
+			logger.Warn("browser-skill: failed to dial runtime manager",
+				zap.String("addr", rmAddr),
+				zap.Error(rmErr),
+			)
+		} else {
+			browserHandler.SetRuntimeClient(lanternv1.NewRuntimeManagerClient(rmConn))
+			logger.Info("browser-skill: runtime manager client wired", zap.String("addr", rmAddr))
+		}
+	}
+
 	domainRecordHandler := handlers.NewDomainRecordHandler(srv, authHandler)
 	loopAgentHandler := handlers.NewLoopAgentHandler(srv, authHandler, llmProxyHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
@@ -505,6 +525,14 @@ func main() {
 	// Execute-action: SOLE side-effect path; requires explicit owner confirm.
 	httpMux.HandleFunc("POST /v1/cross-app/propose", crossAppHandler.Propose)
 	httpMux.HandleFunc("POST /v1/commitments/{id}/execute-action", crossAppHandler.ExecuteAction)
+
+	// Browser-as-skill (LANTERN_BROWSER_SKILL=on, default OFF — ADR 0017).
+	// Read: autonomous web read; dispatch 503 in increment 1 (no runtime yet).
+	// Propose: owner-confirm browser_act stored as a commitment (no execution).
+	// Execute: SOLE browser write path; owner confirm required.
+	httpMux.HandleFunc("POST /v1/browser/read", browserHandler.Read)
+	httpMux.HandleFunc("POST /v1/browser/propose", browserHandler.Propose)
+	httpMux.HandleFunc("POST /v1/browser/commitments/{id}/execute", browserHandler.Execute)
 
 	// Domain-tracker agents: encrypted PII store for health / vehicle / career records.
 	httpMux.HandleFunc("POST /v1/domain-records", domainRecordHandler.CreateDomainRecord)
