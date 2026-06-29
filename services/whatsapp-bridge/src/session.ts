@@ -17,6 +17,7 @@ import { authedFetch } from "@lantern/bridge-core/auth";
 import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
 import { parseSignals, presenceFromSignals, type SignalPresence } from "@lantern/bridge-core/device-signals";
+import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
@@ -4358,6 +4359,12 @@ export class WhatsAppSession {
       if (cmd) {
         void this.handleCenterCommand(jid, cmd).catch((err) =>
           this.logger.warn({ err }, "wa center command failed"));
+        return;
+      }
+      // "what did I watch / browse" — Mac browser history + iPhone signals.
+      if (isWatchQuery(text)) {
+        void this.handleWatchQuery(jid).catch((err) =>
+          this.logger.warn({ err }, "wa watch query failed"));
         return;
       }
     }
@@ -8850,6 +8857,27 @@ export class WhatsAppSession {
     } catch (err) {
       this.logger.warn({ err }, "wa center command failed");
       await this.confirmToSelf("⚠️ couldn't load your brief right now — try again.");
+    }
+  }
+
+  /** Answer "what did I watch / browse" from Mac browser history (YouTube titles
+   *  live there) + iPhone media/app signals. Owner-only (caller-gated). */
+  private async handleWatchQuery(_jid: string): Promise<void> {
+    try {
+      const items = await readWatchHistory({ windowHours: 48, logger: this.logger });
+      let text = watchSummary(items);
+      try {
+        const file = join(homedir(), ".lantern", "device-signals.jsonl");
+        if (existsSync(file)) {
+          const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+          const phone = iphoneUsageBlock(parseSignals(tail), Date.now());
+          if (phone) text += (text ? "\n\n" : "") + phone;
+        }
+      } catch { /* best-effort */ }
+      await this.sendSelf(text);
+    } catch (err) {
+      this.logger.warn({ err }, "watch query failed");
+      await this.sendSelf("couldn't pull your watch/browse history right now.").catch(() => {});
     }
   }
 

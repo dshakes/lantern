@@ -66,7 +66,8 @@
     "./doc-ingest": "./src/doc-ingest.ts",
     "./recall": "./src/recall.ts",
     "./command-center": "./src/command-center.ts",
-    "./command-center-executor": "./src/command-center-executor.ts"
+    "./command-center-executor": "./src/command-center-executor.ts",
+    "./browser-history": "./src/browser-history.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
