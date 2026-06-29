@@ -127,7 +127,8 @@ import {
 } from "@lantern/bridge-core/doc-ingest";
 import { extname } from "path";
 import {
-  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews,
+  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildReadlist,
+  selectTopDrops, buildTopDropPush,
   type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite,
 } from "@lantern/bridge-core/command-center";
 import {
@@ -1500,6 +1501,14 @@ export class WhatsAppSession {
   private energyTimer: ReturnType<typeof setInterval> | null = null;
   private energyNudgedDate = ""; // YYYY-MM-DD — set after sending, reset on new date
   private readonly energyNudgeFile = join(homedir(), ".lantern", "whatsapp-energy-nudge.json");
+  // Proactive "top AI drops" — push only high-signal NEW news. ON by default.
+  private static readonly NEWS_PROACTIVE_ENABLED =
+    !["off", "0", "false"].includes((process.env.LANTERN_NEWS_PROACTIVE ?? "on").toLowerCase());
+  private static readonly NEWS_PROACTIVE_INTERVAL_MS = 60 * 60_000;
+  private newsTimer: ReturnType<typeof setInterval> | null = null;
+  private newsPushed = new Set<string>();
+  private readonly newsPushedFile = join(homedir(), ".lantern", "whatsapp-news-pushed.json");
+  private newsNeedsSeed = false;
   // ── Health coach (LANTERN_HEALTH=on, default OFF) ──────────────────────────
   // Ships dark. Nudges daily on step goal + acks workouts + weekly trend.
   // ponytail: ships dark; owner flips LANTERN_HEALTH=on to enable.
@@ -1694,6 +1703,18 @@ export class WhatsAppSession {
         WhatsAppSession.COMMUTE_INTERVAL_MS,
       );
       this.commuteTimer.unref?.();
+    }
+    // Proactive AI top-drops (ON by default; LANTERN_NEWS_PROACTIVE=off to silence).
+    if (WhatsAppSession.NEWS_PROACTIVE_ENABLED) {
+      this.newsNeedsSeed = !existsSync(this.newsPushedFile);
+      try {
+        const arr = JSON.parse(readFileSync(this.newsPushedFile, "utf8")) as string[];
+        if (Array.isArray(arr)) this.newsPushed = new Set(arr.slice(-500));
+      } catch { /* first run */ }
+      const k = setTimeout(() => void this.runNewsProactiveTick(), 30_000);
+      k.unref?.();
+      this.newsTimer = setInterval(() => void this.runNewsProactiveTick(), WhatsAppSession.NEWS_PROACTIVE_INTERVAL_MS);
+      this.newsTimer.unref?.();
     }
     // Energy guardian (LANTERN_ENERGY=on only).
     if (WhatsAppSession.ENERGY_ENABLED) {
@@ -8656,6 +8677,15 @@ export class WhatsAppSession {
   private async executeCenterAction(jid: string, action: ParsedAction): Promise<void> {
     const { item } = action;
     try {
+      if (action.action === "save") {
+        // Save any item (esp. a news article) to the readlist. source must be a
+        // valid enum ("self"); kind="readlist" is what distinguishes it.
+        const saved = await this.commitments.create({ title: item.label, source: "self", kind: "readlist", sourcePreview: item.url });
+        await this.confirmToSelf(saved
+          ? `🔖 saved to readlist — "${item.label.slice(0, 50)}". pull "readlist" anytime.`
+          : `⚠️ couldn't save that — try again.`);
+        return;
+      }
       if (item.ref === "commitment") {
         if (action.action === "done") {
           await this.commitments.done(item.id);
@@ -8725,7 +8755,8 @@ export class WhatsAppSession {
   private async handleCenterCommand(jid: string, cmd: CenterCommand): Promise<void> {
     try {
       const all = await this.commitments.list();
-      const allOpen = all.filter((c) => c.status === "open" || c.status === "suggested");
+      // readlist items are saved articles, not todos — keep them out of plate/brief.
+      const allOpen = all.filter((c) => (c.status === "open" || c.status === "suggested") && c.kind !== "readlist");
 
       // Collect still-valid pending drafts from the B5 map (keyed by owner JID).
       this.gcPendingDraftEdits();
@@ -8750,6 +8781,10 @@ export class WhatsAppSession {
       } else if (cmd === "plate") {
         const view = buildPlate(allOpen, drafts);
         text = view.text; items = view.items;
+      } else if (cmd === "readlist") {
+        const saved = all.filter((c) => c.kind === "readlist");
+        const view = buildReadlist(saved.map((c) => ({ id: c.id, title: c.title, url: c.source_preview })));
+        text = view.text; items = view.items;
       } else if (cmd === "agents") {
         // Best-effort: list agents from the control plane.
         const agentStats: AgentStat[] = [];
@@ -8767,17 +8802,22 @@ export class WhatsAppSession {
         // ponytail: auto-actions not yet sourced from an API endpoint; shows "nothing auto-handled"
         const view = buildDid([]);
         text = view.text; items = view.items;
-      } else if (cmd === "news") {
-        // AI Radar feed (links included). Best-effort; endpoint 404s if radar not yet run.
+      } else if (typeof cmd === "object" && "news" in cmd) {
+        // AI Radar feed (links). today/week/month windows → server ranks by popularity.
+        const nq = cmd.news;
+        const params = new URLSearchParams({ limit: "20" });
+        if (nq.window) { params.set("window", nq.window); params.set("sort", "popular"); }
+        if (nq.category) params.set("category", nq.category);
         const news: NewsItemLite[] = [];
         try {
-          const r = await authedFetch("/v1/news?limit=20");
+          const r = await authedFetch("/v1/news?" + params.toString());
           if (r.ok) {
             const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
             for (const it of data ?? []) news.push({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score });
           }
         } catch { /* best-effort */ }
-        text = buildNews(news);
+        const nv = buildNews(news, nq);
+        text = nv.text; items = nv.items;
       } else {
         // Domain drill-down.
         // ponytail: domain records not sourced yet; shows "nothing tracked yet"
@@ -8958,6 +8998,42 @@ export class WhatsAppSession {
       this.commuteWasLastDriving = isDriving;
     } catch (err) {
       this.logger.debug({ err }, "commute tick failed (non-fatal)");
+    }
+  }
+
+  /** Push only high-signal NEW AI news to self-chat. Deduped + quiet-hours aware. */
+  private async runNewsProactiveTick(): Promise<void> {
+    try {
+      if (this.killSwitch || !this.socket) return;
+      if (isQuietHours(new Date(), defaultQuietHours())) return;
+      const r = await authedFetch("/v1/news?sort=popular&limit=20");
+      if (!r.ok) return;
+      const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; score?: number }>;
+      const items: NewsItemLite[] = (data ?? []).map((it) => ({ source: it.source, category: it.category, title: it.title, url: it.url, score: it.score }));
+      if (this.newsNeedsSeed) {
+        for (const it of items) if (it.url) this.newsPushed.add(it.url);
+        try { writeFileSync(this.newsPushedFile, JSON.stringify([...this.newsPushed].slice(-500)), { mode: 0o600 }); } catch { /* best-effort */ }
+        this.newsNeedsSeed = false;
+        this.logger.info({ seeded: this.newsPushed.size }, "proactive AI news: seeded baseline (will push only NEW drops)");
+        return;
+      }
+      const drops = selectTopDrops(items, this.newsPushed, { threshold: 70, max: 2 });
+      let pushed = 0;
+      for (const d of drops) {
+        try {
+          await this.sendSelf(buildTopDropPush(d));
+          if (d.url) this.newsPushed.add(d.url);
+          pushed++;
+        } catch (e) {
+          this.logger.warn({ err: e }, "top-drop send failed");
+        }
+      }
+      if (pushed > 0) {
+        try { writeFileSync(this.newsPushedFile, JSON.stringify([...this.newsPushed].slice(-500)), { mode: 0o600 }); } catch { /* best-effort */ }
+        this.logger.info({ pushed }, "proactive AI news: top drops pushed");
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "news proactive tick failed");
     }
   }
 
