@@ -53,6 +53,7 @@ import { composeDigestNarrative } from "@lantern/bridge-core/digest-compose";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
 import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
 import { deviceContextBlock as iphoneContextBlock, parseSignals, presenceFromSignals } from "@lantern/bridge-core/device-signals";
+import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
@@ -2666,6 +2667,28 @@ export class IMessageSession {
     }
   }
 
+  /** Answer "what did I watch / browse" from Mac browser history (YouTube titles
+   *  live there) + iPhone media/app signals. Owner-only (caller-gated). */
+  private async handleWatchQuery(handle: string): Promise<void> {
+    try {
+      const items = await readWatchHistory({ windowHours: 48, logger: this.logger });
+      let text = watchSummary(items);
+      // Fold in iPhone media/app usage (Shortcuts → /v1/signals → device-signals.jsonl).
+      try {
+        const file = join(homedir(), ".lantern", "device-signals.jsonl");
+        if (existsSync(file)) {
+          const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-500);
+          const phone = iphoneUsageBlock(parseSignals(tail), Date.now());
+          if (phone) text += (text ? "\n\n" : "") + phone;
+        }
+      } catch { /* best-effort */ }
+      await this.send(handle, text);
+    } catch (err) {
+      this.logger.warn({ err }, "watch query failed");
+      await this.send(handle, "couldn't pull your watch/browse history right now.").catch(() => {});
+    }
+  }
+
   // ── Concierge edge — task capture + nudge poll + 1-click resolution ──────
 
   /**
@@ -4219,6 +4242,13 @@ export class IMessageSession {
       if (cmd) {
         void this.handleCenterCommand(row.handle, cmd).catch((err) =>
           this.logger.warn({ err }, "im center command failed"));
+        return;
+      }
+      // "what did I watch / browse" — answer from Mac browser history + iPhone
+      // media/app signals deterministically (never "no media tool wired up").
+      if (isWatchQuery(text)) {
+        void this.handleWatchQuery(row.handle).catch((err) =>
+          this.logger.warn({ err }, "im watch query failed"));
         return;
       }
     }
