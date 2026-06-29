@@ -2498,19 +2498,22 @@ export class WhatsAppSession {
           const reactionMsg = msg.message?.reactionMessage;
           if (reactionMsg && msg.key.fromMe) {
             // Dedup: WhatsApp re-delivers reactions on every reconnect/history
-            // sync. Process each reaction event ONCE — otherwise an old 🟢/⏸
-            // re-fires its command every cycle (the "auto-reply on" spam loop).
-            const rxnId = msg.key.id || "";
-            if (rxnId) {
-              if (this.processedReactionIds.has(rxnId)) continue;
-              this.processedReactionIds.add(rxnId);
+            // sync (and the Signal decrypt storm forces frequent reconnects).
+            // Key on the SEMANTIC reaction identity — reacted-to message id +
+            // emoji — NOT the envelope key.id, which WhatsApp can re-mint per
+            // re-delivery (so an id-only dedup would let the same 🟢 re-fire
+            // resume-contact every cycle → the "auto-reply on" spam loop).
+            const emoji = reactionMsg.text || "";
+            const rxnKey = `${reactionMsg.key?.id || msg.key.id || ""}:${emoji}`;
+            if (rxnKey !== ":") {
+              if (this.processedReactionIds.has(rxnKey)) continue;
+              this.processedReactionIds.add(rxnKey);
               if (this.processedReactionIds.size > WhatsAppSession.PROCESSED_REACTION_IDS_MAX) {
                 this.processedReactionIds = new Set(
                   [...this.processedReactionIds].slice(-Math.floor(WhatsAppSession.PROCESSED_REACTION_IDS_MAX / 2)),
                 );
               }
             }
-            const emoji = reactionMsg.text || "";
             const action = reactionToAction(emoji);
             if (action) {
               const targetKeyId = reactionMsg.key?.id || undefined;
