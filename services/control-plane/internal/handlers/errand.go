@@ -10,22 +10,38 @@ package handlers
 //
 //  2. Every call MUST open with the AI-disclosure + recording-consent preamble.
 //     buildDisclosurePreamble() is the single source of truth for those phrases.
-//     buildErrandTwiML() always puts that preamble FIRST — no code path produces
-//     errand TwiML without it.
+//     buildErrandTwiML() / buildErrandConversationalTwiML() always put that
+//     preamble FIRST — no code path produces errand TwiML without it.
 //
 //  3. Recording consent is inside the same preamble (2-party-consent states).
 //
 //  4. DNC (Do-Not-Call): checked at propose-time; re-checked atomically at
 //     confirm-and-call (same transaction as the status claim).
 //     Any number in dnc_numbers → refuse without dialing.
+//     Opt-out phrases spoken DURING the call are detected in ErrandTurn before
+//     any LLM involvement and add the callee to DNC immediately.
 //
 //  5. Owner-only gate on confirm-and-call: claims.Role must be "owner" or "admin".
 //
 //  6. Feature gate: LANTERN_ERRAND must be "1"/"true"/"on"; otherwise 404.
 //
+// Conversational call flow (when LANTERN_ERRAND_PUBLIC_URL / LANTERN_CONTROL_PLANE_URL
+// is set AND an LLM is configured):
+//
+//   ConfirmAndCall → buildErrandConversationalTwiML → Twilio calls back at
+//   POST /v1/voice/errand/turn/{id} with the callee's speech transcript.
+//   ErrandTurn verifies the X-Twilio-Signature, detects opt-out, enforces
+//   the max-turn cap (errandMaxTurns=6), calls the LLM for the next line,
+//   appends both turns to errands.transcript, and returns either a
+//   <Gather> (continue) or <Hangup> (done/error).
+//
+//   Disclosure is ALWAYS structurally first in the opening TwiML — the
+//   <Gather> opening line only fires after it has been spoken.
+//
+//   When public URL or LLM is unavailable, ConfirmAndCall falls back to the
+//   one-way buildErrandTwiML path (graceful degradation).
+//
 // Deferred (not v1):
-//   - Real-time conversational AI on the call (voice-worker last mile).
-//   - DTMF opt-out during the live call.
 //   - Provider status-callback → cost reconciliation.
 //   - Budget enforcement for errand call spend.
 
@@ -57,6 +73,12 @@ const (
 	errandRecordingMarker    = "recorded"
 )
 
+// transcriptEntry is one spoken turn stored in errands.transcript.
+type transcriptEntry struct {
+	Role string `json:"role"` // "assistant" or "callee"
+	Text string `json:"text"`
+}
+
 // buildDisclosurePreamble returns the AI-disclosure + recording-consent text
 // that is ALWAYS the first thing spoken on an errand call (FCC Feb-2024 /
 // TCPA). Stored in errands.disclosure_script at propose-time so the owner can
@@ -78,8 +100,9 @@ func buildDisclosurePreamble(ownerName, goal string) string {
 	)
 }
 
-// buildErrandTwiML wraps disclosureScript in TwiML.  The disclosure preamble
-// is structurally first — there is no call path that bypasses it.
+// buildErrandTwiML wraps disclosureScript in one-way TwiML (no <Gather>).
+// Used as the graceful-degradation path when no public URL or LLM is available.
+// The disclosure preamble is structurally first — no call path bypasses it.
 func buildErrandTwiML(disclosureScript string) string {
 	// ponytail: no template dep; disclosureScript is already plain text (ASCII
 	// safe characters); escapeTwimlText guards against user-supplied angle brackets.
@@ -90,6 +113,82 @@ func buildErrandTwiML(disclosureScript string) string {
 		"  <Say voice=\"alice\">If you wish to be removed from our calling list, please reply to this call's originating number or contact the caller directly. Thank you.</Say>\n" +
 		"</Response>"
 }
+
+// buildErrandConversationalTwiML wraps disclosureScript in TwiML that opens
+// a <Gather input="speech"> loop so the callee can speak back.
+// Disclosure is ALWAYS the first <Say> — it completes before the <Gather>
+// prompts for input.  turnActionURL is the absolute URL Twilio POSTs speech to.
+// openingLine defaults to a neutral prompt when empty.
+func buildErrandConversationalTwiML(disclosureScript, turnActionURL, openingLine string) string {
+	if openingLine == "" {
+		openingLine = "Please go ahead. How can I help with this?"
+	}
+	optOutLine := "If you wish to be removed from our calling list, please reply to this call's originating number or contact the caller directly. Thank you."
+	return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+		"<Response>\n" +
+		"  <Say voice=\"alice\">" + escapeTwimlText(disclosureScript) + "</Say>\n" +
+		"  <Gather input=\"speech\" action=\"" + escapeTwimlText(turnActionURL) + "\" method=\"POST\" speechTimeout=\"auto\" actionOnEmptyResult=\"true\">\n" +
+		"    <Say voice=\"alice\">" + escapeTwimlText(openingLine) + "</Say>\n" +
+		"  </Gather>\n" +
+		"  <Say voice=\"alice\">" + escapeTwimlText(optOutLine) + "</Say>\n" +
+		"</Response>"
+}
+
+// buildErrandTurnContinueTwiML returns TwiML for an in-progress conversational
+// turn: speak sayLine then open another <Gather> for the callee's reply.
+func buildErrandTurnContinueTwiML(sayLine, turnActionURL string) string {
+	return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+		"<Response>\n" +
+		"  <Gather input=\"speech\" action=\"" + escapeTwimlText(turnActionURL) + "\" method=\"POST\" speechTimeout=\"auto\" actionOnEmptyResult=\"true\">\n" +
+		"    <Say voice=\"alice\">" + escapeTwimlText(sayLine) + "</Say>\n" +
+		"  </Gather>\n" +
+		"  <Say voice=\"alice\">Thank you. Goodbye.</Say>\n" +
+		"</Response>"
+}
+
+// buildErrandTurnEndTwiML speaks sayLine and hangs up.
+func buildErrandTurnEndTwiML(sayLine string) string {
+	return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+		"<Response>\n" +
+		"  <Say voice=\"alice\">" + escapeTwimlText(sayLine) + "</Say>\n" +
+		"  <Hangup/>\n" +
+		"</Response>"
+}
+
+// errandPublicBaseURL returns the base URL to use in turn-action callback URLs.
+// Priority: LANTERN_ERRAND_PUBLIC_URL → LANTERN_CONTROL_PLANE_URL → derivePublicURL.
+// Trailing slash is removed. May return "" when none can be resolved.
+func errandPublicBaseURL(r *http.Request) string {
+	for _, v := range []string{
+		os.Getenv("LANTERN_ERRAND_PUBLIC_URL"),
+		os.Getenv("LANTERN_CONTROL_PLANE_URL"),
+	} {
+		if v = strings.TrimRight(strings.TrimSpace(v), "/"); v != "" {
+			return v
+		}
+	}
+	return strings.TrimRight(derivePublicURL(r), "/")
+}
+
+// containsOptOut reports whether the callee's speech contains an opt-out phrase.
+// Checked case-insensitively. Called BEFORE the LLM so no model roundtrip is
+// needed to respect an explicit stop request.
+func containsOptOut(speech string) bool {
+	lower := strings.ToLower(speech)
+	for _, phrase := range []string{
+		"stop calling", "remove me", "do not call", "don't call",
+		"take me off", "unsubscribe",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// errandMaxTurns is the maximum number of LLM-driven assistant turns on a
+// single call. Enforced in ErrandTurn before the LLM call.
+const errandMaxTurns = 6
 
 // ---------- feature gate ----------
 
@@ -150,19 +249,29 @@ func validE164(n string) bool { return e164Re.MatchString(n) }
 // ErrandHandler provides the REST surface for errand-runner v1.
 // All endpoints are gated by LANTERN_ERRAND; confirm-and-call is owner-only.
 type ErrandHandler struct {
-	srv    *server.Server
-	auth   *AuthHandler
-	dialer OutboundDialer
+	srv        *server.Server
+	auth       *AuthHandler
+	dialer     OutboundDialer
+	completeFn researchCompleteFn // nil when no LLM configured
 }
 
 // NewErrandHandler constructs an ErrandHandler with the production connector
-// dialer. Tests replace h.dialer with a stub after construction.
-func NewErrandHandler(srv *server.Server, auth *AuthHandler) *ErrandHandler {
-	return &ErrandHandler{
+// dialer. Pass llmProxy=nil to disable conversational call support (falls back
+// to one-way TwiML). Tests replace h.dialer / h.completeFn after construction.
+func NewErrandHandler(srv *server.Server, auth *AuthHandler, llmProxy *LlmProxyHandler) *ErrandHandler {
+	h := &ErrandHandler{
 		srv:    srv,
 		auth:   auth,
 		dialer: &connectorDialer{pool: srv.Pool},
 	}
+	if llmProxy != nil {
+		p := llmProxy
+		h.completeFn = func(ctx context.Context, tenantID, system, user string) (string, error) {
+			text, _, _, _, err := p.CompleteInternalWithUsage(ctx, tenantID, system, user)
+			return text, err
+		}
+	}
+	return h
 }
 
 func (h *ErrandHandler) logger() *zap.Logger { return h.srv.Logger.Named("errand") }
@@ -283,6 +392,9 @@ func (h *ErrandHandler) Propose(w http.ResponseWriter, r *http.Request) {
 // concurrent confirms can't double-dial. Re-checks DNC inside the same
 // transaction. Builds TwiML with the mandatory compliance preamble first.
 // Places the call via OutboundDialer. Marks placed.
+//
+// When a public base URL and LLM completion function are configured the TwiML
+// opens a <Gather input="speech"> loop; otherwise falls back to one-way TwiML.
 func (h *ErrandHandler) ConfirmAndCall(w http.ResponseWriter, r *http.Request) {
 	if !errandEnabled() {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "errand feature is not enabled"})
@@ -354,7 +466,19 @@ func (h *ErrandHandler) ConfirmAndCall(w http.ResponseWriter, r *http.Request) {
 	// disclosureScript was set at propose-time from buildDisclosurePreamble;
 	// we re-generate from the stored script (not the goal) so the owner
 	// always hears exactly what they previewed.
-	twiml := buildErrandTwiML(disclosureScript)
+	//
+	// Use the conversational (<Gather>) path when a public URL and LLM
+	// completion function are both available; fall back to one-way TwiML
+	// otherwise (graceful degradation — no silent failure).
+	var twiml string
+	base := errandPublicBaseURL(r)
+	if base != "" && h.completeFn != nil {
+		turnActionURL := base + "/v1/voice/errand/turn/" + id
+		twiml = buildErrandConversationalTwiML(disclosureScript, turnActionURL, "")
+	} else {
+		twiml = buildErrandTwiML(disclosureScript)
+	}
+
 	from := errandFromNumber()
 
 	// --- Place call via injected dialer ---
@@ -389,6 +513,249 @@ func (h *ErrandHandler) ConfirmAndCall(w http.ResponseWriter, r *http.Request) {
 		"callSid": callSid,
 		"status":  "placed",
 	})
+}
+
+// ErrandTurn handles POST /v1/voice/errand/turn/{id}.
+//
+// Twilio webhook — NOT JWT-authenticated. Authenticated by X-Twilio-Signature
+// using the tenant's Twilio authToken (fail-closed; dev bypass:
+// LANTERN_TWILIO_WEBHOOK_AUTH=off). The errand id is an unguessable UUID.
+//
+// On each call-back this handler:
+//  1. Loads the errand (rls-exempt, privileged pool — id resolves tenant).
+//  2. Verifies the Twilio signature.
+//  3. Checks speech for opt-out phrases → DNC + cancel (before any LLM).
+//  4. Enforces errandMaxTurns cap.
+//  5. Runs one LLM turn to produce the next spoken line.
+//  6. Persists transcript + turns.
+//  7. Returns <Gather> TwiML (continue) or <Hangup> TwiML (done/error).
+func (h *ErrandHandler) ErrandTurn(w http.ResponseWriter, r *http.Request) {
+	if !errandEnabled() {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "errand feature is not enabled"})
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Load the errand by id.
+	// rls-exempt: Twilio-signature-authorized webhook; id is an unguessable uuid —
+	// this query resolves which tenant owns the call so we can scope subsequent ops.
+	var (
+		tenantID      string
+		calleeNumber  string
+		goal          string
+		status        string
+		turns         int
+		transcriptRaw []byte
+	)
+	err := h.srv.Pool.QueryRow(ctx, `
+		SELECT tenant_id, callee_number, goal, status, turns, transcript
+		FROM errands
+		WHERE id = $1
+	`, id).Scan(&tenantID, &calleeNumber, &goal, &status, &turns, &transcriptRaw)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.NotFound(w, r)
+			return
+		}
+		h.logger().Error("errand turn: load errand failed", zap.String("id", id), zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// If the call is no longer active, hang up silently (benign — idempotent).
+	if status != "placed" {
+		writeTwiML(w, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response><Hangup/></Response>")
+		return
+	}
+
+	// Resolve Twilio auth token for webhook signature verification.
+	// Uses the privileged pool — connector_installs RLS bypass intentional here
+	// (we need the token to authenticate the request, before tenant context is set).
+	cfg := loadDecryptedConfig(ctx, h.srv.Pool, tenantID, "twilio")
+	token, _ := cfg["authToken"].(string)
+
+	// Verify Twilio signature. Dev bypass: LANTERN_TWILIO_WEBHOOK_AUTH=off.
+	// Mirrors voice.go's verification pattern exactly.
+	skipVerify := strings.ToLower(os.Getenv("LANTERN_TWILIO_WEBHOOK_AUTH")) == "off"
+	if !skipVerify {
+		fullURL := derivePublicURL(r) + r.URL.Path
+		if !validTwilioSignature(token, fullURL, r.PostForm, r.Header.Get("X-Twilio-Signature")) {
+			h.logger().Warn("errand turn: invalid Twilio signature", zap.String("id", id))
+			http.Error(w, "invalid signature", http.StatusForbidden)
+			return
+		}
+	}
+
+	speech := strings.TrimSpace(r.PostForm.Get("SpeechResult"))
+	tenantCtx := middleware.InjectTenantID(ctx, tenantID)
+
+	// --- Opt-out detection (BEFORE the LLM) ---
+	// Any explicit stop request goes straight to DNC + cancel; the LLM never runs.
+	if containsOptOut(speech) {
+		h.logger().Info("errand turn: opt-out detected",
+			zap.String("id", id), zap.String("number", calleeNumber))
+		_ = h.srv.WithTenant(tenantCtx, func(tx pgx.Tx) error {
+			if _, insErr := tx.Exec(tenantCtx, `
+				INSERT INTO dnc_numbers (tenant_id, number, reason)
+				VALUES ($1, $2, $3)
+				ON CONFLICT (tenant_id, number) DO UPDATE SET reason = EXCLUDED.reason, added_at = now()
+			`, tenantID, calleeNumber, "opt-out during call "+id); insErr != nil {
+				return insErr
+			}
+			_, updErr := tx.Exec(tenantCtx,
+				`UPDATE errands SET status='cancelled', updated_at=now() WHERE id=$1 AND tenant_id=$2`,
+				id, tenantID)
+			return updErr
+		})
+		writeTwiML(w, buildErrandTurnEndTwiML("Understood. I will remove this number from our list. Goodbye."))
+		return
+	}
+
+	// --- Max-turn cap ---
+	if turns >= errandMaxTurns {
+		_ = h.srv.WithTenant(tenantCtx, func(tx pgx.Tx) error {
+			_, err := tx.Exec(tenantCtx,
+				`UPDATE errands SET status='completed', updated_at=now() WHERE id=$1 AND tenant_id=$2`,
+				id, tenantID)
+			return err
+		})
+		writeTwiML(w, buildErrandTurnEndTwiML("Thank you for your time. Goodbye."))
+		return
+	}
+
+	// gracefulEnd marks the errand completed and hangs up with an apology.
+	ownerName := ownerNameForTenant()
+	gracefulEnd := func() {
+		_ = h.srv.WithTenant(tenantCtx, func(tx pgx.Tx) error {
+			_, err := tx.Exec(tenantCtx,
+				`UPDATE errands SET status='completed', updated_at=now() WHERE id=$1 AND tenant_id=$2`,
+				id, tenantID)
+			return err
+		})
+		writeTwiML(w, buildErrandTurnEndTwiML("I'm sorry, I'm having trouble continuing. I'll have "+ownerName+" follow up. Goodbye."))
+	}
+
+	if h.completeFn == nil {
+		gracefulEnd()
+		return
+	}
+
+	// --- Build LLM prompt from accumulated transcript ---
+	var transcript []transcriptEntry
+	_ = json.Unmarshal(transcriptRaw, &transcript)
+
+	var sb strings.Builder
+	for _, e := range transcript {
+		switch e.Role {
+		case "assistant":
+			sb.WriteString("Assistant: ")
+		default: // "callee"
+			sb.WriteString("Them: ")
+		}
+		sb.WriteString(e.Text)
+		sb.WriteByte('\n')
+	}
+	sb.WriteString("Them: ")
+	sb.WriteString(speech)
+
+	system := fmt.Sprintf(
+		"You are an automated AI assistant making a phone call on behalf of %s "+
+			"(the AI disclosure has ALREADY been given at the start of the call). "+
+			"The purpose: %s. "+
+			"Be honest, concise, and stay strictly on this purpose. "+
+			"You are not a human; never claim to be. "+
+			"If the person asks you to stop or is not the right party, wrap up politely. "+
+			`Reply ONLY with strict JSON: {"say":"<your next spoken line, plain text, <=60 words>","done":<true|false>}. `+
+			"Set done=true when the purpose is resolved or the call should end.",
+		ownerName, goal,
+	)
+
+	// Idempotency key ties this exact turn so a provider retry doesn't double-charge.
+	idemBase := "errand-turn:" + id + ":" + fmt.Sprint(turns)
+	llmCtx := WithLLMIdempotencyBase(tenantCtx, idemBase)
+
+	raw, llmErr := h.completeFn(llmCtx, tenantID, system, sb.String())
+	if llmErr != nil {
+		h.logger().Error("errand turn: LLM failed", zap.String("id", id), zap.Error(llmErr))
+		gracefulEnd()
+		return
+	}
+
+	// Parse LLM response — strip code fences, find first JSON object.
+	s := strings.TrimSpace(raw)
+	if idx := strings.Index(s, "```"); idx != -1 {
+		s = s[idx+3:]
+		if strings.HasPrefix(s, "json") {
+			s = s[4:]
+		}
+		if end := strings.Index(s, "```"); end != -1 {
+			s = s[:end]
+		}
+		s = strings.TrimSpace(s)
+	}
+	if start := strings.Index(s, "{"); start != -1 {
+		s = s[start:]
+	}
+	if end := strings.LastIndex(s, "}"); end != -1 {
+		s = s[:end+1]
+	}
+
+	var llmResp struct {
+		Say  string `json:"say"`
+		Done bool   `json:"done"`
+	}
+	if jsonErr := json.Unmarshal([]byte(s), &llmResp); jsonErr != nil || strings.TrimSpace(llmResp.Say) == "" {
+		h.logger().Error("errand turn: LLM parse failed",
+			zap.String("id", id), zap.String("raw", raw))
+		gracefulEnd()
+		return
+	}
+
+	say := llmResp.Say
+
+	// --- Persist: append callee speech + assistant reply, increment turns ---
+	appendJSON, _ := json.Marshal([]transcriptEntry{
+		{Role: "callee", Text: speech},
+		{Role: "assistant", Text: say},
+	})
+	_ = h.srv.WithTenant(tenantCtx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(tenantCtx, `
+			UPDATE errands
+			SET transcript  = transcript || $1::jsonb,
+			    turns       = turns + 1,
+			    updated_at  = now()
+			WHERE id = $2 AND tenant_id = $3
+		`, string(appendJSON), id, tenantID)
+		return err
+	})
+
+	base := errandPublicBaseURL(r)
+	turnURL := base + "/v1/voice/errand/turn/" + id
+
+	if llmResp.Done {
+		_ = h.srv.WithTenant(tenantCtx, func(tx pgx.Tx) error {
+			_, err := tx.Exec(tenantCtx,
+				`UPDATE errands SET status='completed', updated_at=now() WHERE id=$1 AND tenant_id=$2`,
+				id, tenantID)
+			return err
+		})
+		writeTwiML(w, buildErrandTurnEndTwiML(say))
+		return
+	}
+
+	writeTwiML(w, buildErrandTurnContinueTwiML(say, turnURL))
 }
 
 // OptOut handles POST /v1/errands/{id}/opt-out.

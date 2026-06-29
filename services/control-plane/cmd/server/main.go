@@ -635,11 +635,14 @@ func main() {
 	// Errand-runner v1: owner-confirmed outbound AI calls (FCC/TCPA compliant).
 	// Gated by LANTERN_ERRAND=1/true/on; all endpoints 404 when off (default).
 	// confirm-and-call is the SOLE dial path and requires owner/admin role.
-	errandHandler := handlers.NewErrandHandler(srv, authHandler)
+	errandHandler := handlers.NewErrandHandler(srv, authHandler, llmProxyHandler)
 	httpMux.HandleFunc("POST /v1/errands", errandHandler.Propose)
 	httpMux.HandleFunc("GET /v1/errands", errandHandler.List)
 	httpMux.HandleFunc("POST /v1/errands/{id}/confirm-and-call", errandHandler.ConfirmAndCall)
 	httpMux.HandleFunc("POST /v1/errands/{id}/opt-out", errandHandler.OptOut)
+	// ErrandTurn: Twilio <Gather> callback — unauthenticated by JWT,
+	// authenticated by X-Twilio-Signature (see ErrandTurn handler).
+	httpMux.HandleFunc("POST /v1/voice/errand/turn/{id}", errandHandler.ErrandTurn)
 
 	// Headless-agent runtime governance — REST surface in front of the
 	// Firecracker-backed RuntimeScheduler at :50055. Quota-gated,
