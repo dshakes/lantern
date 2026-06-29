@@ -82,6 +82,14 @@ const BOT_SELF_PREFIXES: string[] = [
   "👀 monitoring",
   "🙈 stopped monitoring",
 
+  // ── Command echoes (mute / unmute / resume / ping) — without these the
+  //    bot reprocesses its own toggle confirmations echoed back in self-chat. ──
+  "✅ auto-reply on",
+  "⏸ auto-reply paused",
+  "✅ auto-resumed",
+  "🏓 pong",
+  "▶️ resumed",
+
   // ── Memory + fact replies ──
   "📝 noted about",
   "📝 got it",

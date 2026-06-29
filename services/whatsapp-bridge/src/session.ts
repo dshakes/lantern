@@ -1412,6 +1412,13 @@ export class WhatsAppSession {
   // owner taps both. Bounded; entries are cheap msg-id strings.
   private retriedReplyIds = new Set<string>();
   private static readonly RETRIED_REPLY_IDS_MAX = 200;
+  // Reaction events re-deliver on every reconnect (WhatsApp re-syncs history,
+  // and the Signal decrypt-failure storm forces frequent reconnects). Without
+  // dedup, an old 🟢/⏸ reaction re-fires its command each cycle → self-chat
+  // spam ("✅ auto-reply on" over and over). Keyed by the reaction message's
+  // own key.id, which is stable across re-delivery.
+  private processedReactionIds = new Set<string>();
+  private static readonly PROCESSED_REACTION_IDS_MAX = 3000;
 
   // ── Overnight replay queue ───────────────────────────────────────────
   // Contact (non-owner, 1:1) messages that land during quiet hours
@@ -2490,6 +2497,19 @@ export class WhatsAppSession {
           // reacted-to message. Only OWNER reactions count.
           const reactionMsg = msg.message?.reactionMessage;
           if (reactionMsg && msg.key.fromMe) {
+            // Dedup: WhatsApp re-delivers reactions on every reconnect/history
+            // sync. Process each reaction event ONCE — otherwise an old 🟢/⏸
+            // re-fires its command every cycle (the "auto-reply on" spam loop).
+            const rxnId = msg.key.id || "";
+            if (rxnId) {
+              if (this.processedReactionIds.has(rxnId)) continue;
+              this.processedReactionIds.add(rxnId);
+              if (this.processedReactionIds.size > WhatsAppSession.PROCESSED_REACTION_IDS_MAX) {
+                this.processedReactionIds = new Set(
+                  [...this.processedReactionIds].slice(-Math.floor(WhatsAppSession.PROCESSED_REACTION_IDS_MAX / 2)),
+                );
+              }
+            }
             const emoji = reactionMsg.text || "";
             const action = reactionToAction(emoji);
             if (action) {
