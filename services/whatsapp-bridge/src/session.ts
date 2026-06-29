@@ -127,8 +127,8 @@ import {
 } from "@lantern/bridge-core/doc-ingest";
 import { extname } from "path";
 import {
-  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid,
-  type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat,
+  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews,
+  type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite,
 } from "@lantern/bridge-core/command-center";
 import {
   getCenterItems, setCenterItems, isRealTimeNudge, fetchBriefInput, parseSnoozeMs,
@@ -8767,6 +8767,17 @@ export class WhatsAppSession {
         // ponytail: auto-actions not yet sourced from an API endpoint; shows "nothing auto-handled"
         const view = buildDid([]);
         text = view.text; items = view.items;
+      } else if (cmd === "news") {
+        // AI Radar feed (links included). Best-effort; endpoint 404s if radar not yet run.
+        const news: NewsItemLite[] = [];
+        try {
+          const r = await authedFetch("/v1/news?limit=20");
+          if (r.ok) {
+            const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
+            for (const it of data ?? []) news.push({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score });
+          }
+        } catch { /* best-effort */ }
+        text = buildNews(news);
       } else {
         // Domain drill-down.
         // ponytail: domain records not sourced yet; shows "nothing tracked yet"
