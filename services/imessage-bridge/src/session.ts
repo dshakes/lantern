@@ -4132,7 +4132,19 @@ export class IMessageSession {
     }
     const until = this.pausedUntil.get(row.handle);
     if (until && until > Date.now()) {
+      // never-silent rule: a paused contact is a deliberate owner takeover, but
+      // it must NOT be an invisible drop. Log it and give the owner one deduped
+      // heads-up so a waiting message is never lost in silence.
+      const mins = Math.ceil((until - Date.now()) / 60000);
+      this.logger.info(
+        { handle: row.handle, resumesInMin: mins, text: text.slice(0, 80) },
+        "imessage: contact paused (owner takeover) — skipping reply",
+      );
       this.broadcast({ type: "activity", data: { kind: "agent_skipped", summary: `paused — ${this.contactLabel(row.handle)}`, jid: row.handle, timestamp: Date.now() } });
+      this.notifyOwnerOfDrop(
+        `${this.contactLabel(row.handle)} messaged while you're handling that thread (auto-reply resumes in ~${mins}m).`,
+        `paused:${row.handle}`,
+      );
       return;
     }
     if (isGroup) {
@@ -4295,6 +4307,11 @@ export class IMessageSession {
     // instead of replying, or stay silent entirely.
     const verdict = shouldRespond(text);
     if (!verdict.respond) {
+      // never-silent rule: log every suppression with a reason.
+      this.logger.info(
+        { handle: row.handle, reason: verdict.reason, text: text.slice(0, 80) },
+        "imessage: skipping ack-only message (no reply)",
+      );
       this.broadcast({
         type: "agent_reply",
         data: { to: row.handle, text: "(no reply — ack)", skipped: true, reason: verdict.reason, timestamp: Date.now() },
@@ -4302,30 +4319,36 @@ export class IMessageSession {
       return;
     }
 
-    // Escalation guard: urgent/health/money/legal/grief content goes
-    // to the human. Auto-reply is suppressed; the contact is paused so
-    // a follow-up doesn't trigger again before the user takes over.
+    // Escalation = PAGE the owner, then STILL REPLY. Per owner mandate the bot
+    // must never go silent unless the owner explicitly says "bot off". A
+    // sensitive message (money/legal/grief/urgent) gets the owner a heads-up,
+    // but the bot still answers with intelligent context — the draft-and-confirm
+    // / confidence layer downstream handles caution for the truly sensitive
+    // ones. We do NOT suppress and do NOT pause here (that was the silent-drop
+    // bug: "where are you" was classified as an escalation and dropped).
     if (!isGroup) {
       const escalation = detectEscalation(text);
       if (escalation.escalate) {
         this.escalationsToday += 1;
+        this.logger.info(
+          { handle: row.handle, reason: escalation.reason, text: text.slice(0, 80) },
+          "imessage: escalation — paging owner AND replying (not suppressed)",
+        );
         const alertBody = [
-          `🚨 *Escalation: ${this.contactLabel(row.handle)}*`,
+          `🔔 *Heads-up: ${this.contactLabel(row.handle)}*`,
           "",
           `Reason: _${escalation.reason}_`,
           "",
           `> ${text.slice(0, 300)}`,
           "",
-          "Auto-reply was suppressed — please respond yourself.",
+          "The bot is replying for now — jump in anytime if you'd rather take it.",
         ].join("\n");
         void this.mirrorToEmail(alertBody);
         this.broadcast({
           type: "activity",
-          data: { kind: "attention_dm", summary: `escalated: ${escalation.reason}`, detail: text.slice(0, 200), jid: row.handle, timestamp: Date.now() },
+          data: { kind: "attention_dm", summary: `heads-up: ${escalation.reason}`, detail: text.slice(0, 200), jid: row.handle, timestamp: Date.now() },
         });
-        this.pausedUntil.set(row.handle, Date.now() + PAUSE_DURATION_MS);
-        this.persist();
-        return;
+        // fall through to the normal reply path — NO return, NO pause.
       }
     }
 
@@ -4341,6 +4364,10 @@ export class IMessageSession {
         if (!this.isOwnerChatRow(row)) {
           this.enqueueQuietReplay(row, unixMs);
         }
+        this.logger.info(
+          { handle: row.handle, queuedForReplay: !this.isOwnerChatRow(row) },
+          "imessage: quiet hours — deferring reply to morning replay (not dropped)",
+        );
         this.broadcast({ type: "activity", data: { kind: "agent_skipped", summary: "quiet hours — queued for morning reply", jid: row.handle, timestamp: Date.now() } });
         return;
       }

@@ -221,6 +221,11 @@ const INDEFINITE_MS = 365 * 24 * 60 * 60_000;
 const PAUSE_WARN_LEAD_MS = 5 * 60_000;
 const PAUSE_WARN_FLUSH_MS = 30_000;
 const PAUSE_TICK_MS = 30_000;
+// The proactive "auto-replies resume in ~5m … type /bot off" self-chat DM is
+// OFF by default: the owner found it noisy/"random". The pause still expires
+// and auto-reply resumes silently; set LANTERN_PAUSE_WARN=on to restore the
+// heads-up. (Expired pauses are still dropped regardless of this flag.)
+const PAUSE_WARN_ENABLED = /^(1|true|on)$/i.test(process.env.LANTERN_PAUSE_WARN ?? "");
 
 /**
  * Per-contact pause metadata. Kept richer than a bare epoch-ms so we can
@@ -6194,6 +6199,9 @@ export class WhatsAppSession {
         this.pausedUntil.delete(jid);
         continue;
       }
+      // Proactive pause-expiry warning is opt-in (default off — owner found it
+      // noisy). Expired entries are already dropped above; we just skip buffering.
+      if (!PAUSE_WARN_ENABLED) continue;
       if (entry.warned) continue;
       const remaining = entry.until - now;
       if (remaining > PAUSE_WARN_LEAD_MS) continue;
@@ -7251,21 +7259,28 @@ export class WhatsAppSession {
       return;
     }
 
-    // Escalation guard: urgent/health/money/legal/emotional content MUST
-    // route to the human, not a bot. Skip auto-reply + DM the owner via
-    // the existing mirror channels so they see the heads-up immediately.
+    // Escalation = PAGE the owner, then STILL REPLY. Per owner mandate the bot
+    // must never go silent unless the owner explicitly says "bot off". Sensitive
+    // content (money/legal/grief/urgent) gets the owner an immediate heads-up,
+    // but the bot still answers — the draft-and-confirm / confidence layer
+    // downstream handles caution for the truly sensitive ones. We do NOT
+    // suppress and do NOT pause (that was the silent-drop bug).
     const escalation = detectEscalation(text);
     if (escalation.escalate && !opts.isGroup) {
       this.escalationsToday += 1;
       const senderLabel = opts.senderName || from.split("@")[0];
+      this.logger.info(
+        { from, reason: escalation.reason },
+        "whatsapp: escalation — paging owner AND replying (not suppressed)",
+      );
       const alertBody = [
-        `🚨 *Escalation: ${senderLabel}*`,
+        `🔔 *Heads-up: ${senderLabel}*`,
         "",
         `Reason: _${escalation.reason}_`,
         "",
         `> ${text.slice(0, 300)}`,
         "",
-        "Auto-reply was suppressed — please respond yourself.",
+        "The bot is replying for now — jump in anytime if you'd rather take it.",
       ].join("\n");
       void this.mirrorToEmail(alertBody);
       void this.mirrorToTelegram(alertBody);
@@ -7273,17 +7288,14 @@ export class WhatsAppSession {
         type: "activity",
         data: {
           kind: "attention_dm",
-          summary: `escalated to you: ${escalation.reason}`,
+          summary: `heads-up: ${escalation.reason}`,
           detail: text.slice(0, 200),
           jid: from,
           pushName: opts.senderName,
           timestamp: Date.now(),
         },
       });
-      // Also pause auto-reply for this contact so a follow-up message
-      // doesn't get auto-replied to before the user has handled it.
-      this.pauseContact(from);
-      return;
+      // fall through to the normal reply path — NO return, NO pause.
     }
 
     // Quiet hours: skip auto-reply during sleeping hours so contacts
