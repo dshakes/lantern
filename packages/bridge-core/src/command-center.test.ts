@@ -12,6 +12,7 @@ import {
   buildAgents,
   buildDomain,
   buildDid,
+  buildNews,
   type BriefItem,
 } from "./command-center.ts";
 import type { Commitment } from "./commitments-edge.ts";
@@ -70,13 +71,31 @@ test("center commands: brief / plate / agents / did / domains", () => {
 });
 
 test("news/radar command — case-insensitive (regression: 'News' fell through to the assistant)", () => {
-  assert.equal(parseCenterCommand("news"), "news");
-  assert.equal(parseCenterCommand("News"), "news"); // capital — the exact text that failed live
-  assert.equal(parseCenterCommand("NEWS"), "news");
-  assert.equal(parseCenterCommand("radar"), "news");
-  assert.equal(parseCenterCommand("News "), "news"); // trailing space
-  assert.equal(parseCenterCommand("what's new"), "news");
-  assert.equal(parseCenterCommand("latest"), "news");
+  assert.deepEqual(parseCenterCommand("news"), { news: {} });
+  assert.deepEqual(parseCenterCommand("News"), { news: {} }); // capital — the exact text that failed live
+  assert.deepEqual(parseCenterCommand("NEWS"), { news: {} });
+  assert.deepEqual(parseCenterCommand("radar"), { news: {} });
+  assert.deepEqual(parseCenterCommand("News "), { news: {} }); // trailing space
+  assert.deepEqual(parseCenterCommand("what's new"), { news: {} });
+  assert.deepEqual(parseCenterCommand("latest"), { news: {} });
+});
+
+test("news time-windows + category (feature: 'news today/week/month', 'news labs')", () => {
+  assert.deepEqual(parseCenterCommand("news today"), { news: { window: "today" } });
+  assert.deepEqual(parseCenterCommand("news week"), { news: { window: "week" } });
+  assert.deepEqual(parseCenterCommand("news this week"), { news: { window: "week" } });
+  assert.deepEqual(parseCenterCommand("news month"), { news: { window: "month" } });
+  assert.deepEqual(parseCenterCommand("radar today"), { news: { window: "today" } });
+  assert.deepEqual(parseCenterCommand("news labs"), { news: { category: "labs" } });
+  assert.deepEqual(parseCenterCommand("news coding-tools"), { news: { category: "coding-tools" } });
+  assert.deepEqual(parseCenterCommand("news whatever"), { news: {} }); // unknown modifier → plain
+});
+
+test("buildNews shows the window + popularity label", () => {
+  const items = [{ source: "Anthropic", category: "labs", title: "Claude 4.8", url: "https://x", score: 9 }];
+  assert.match(buildNews(items, { window: "week" }), /this week · top by popularity/);
+  assert.match(buildNews(items, {}), /≤5-min fresh/);
+  assert.match(buildNews(items, { category: "labs" }), /\(labs\)/);
 });
 
 // ── Brief composition ────────────────────────────────────────────────────────

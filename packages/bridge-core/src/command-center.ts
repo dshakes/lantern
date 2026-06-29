@@ -98,7 +98,14 @@ export function parseActionReply(text: string, items: BriefItem[]): ParsedAction
 
 // ── Command recognition (which surface to render) ───────────────────────────
 
-export type CenterCommand = "brief" | "plate" | "agents" | "did" | "news" | { domain: string };
+export type NewsWindow = "today" | "week" | "month";
+export interface NewsQuery {
+  window?: NewsWindow;
+  category?: string;
+}
+export type CenterCommand = "brief" | "plate" | "agents" | "did" | { news: NewsQuery } | { domain: string };
+
+const NEWS_CATEGORIES = ["labs", "people", "coding-tools", "aggregators", "podcasts"];
 
 const DOMAINS = ["health", "vehicle", "car", "money", "finance", "home", "household", "career", "work", "travel"];
 const DOMAIN_ALIAS: Record<string, string> = {
@@ -129,8 +136,20 @@ export function parseCenterCommand(text: string): CenterCommand | null {
   if (t === "did" || t === "recap" || t === "what did you do" || t === "what did you do today" || t === "auto" || t === "auto-actions") {
     return "did";
   }
+  // news / radar [today|week|month|<category>]
+  const nm = t.match(/^(?:news|radar)\s+(.+)$/);
+  if (nm) {
+    const mod = nm[1].trim();
+    const q: NewsQuery = {};
+    if (mod === "today" || mod === "day") q.window = "today";
+    else if (mod === "week" || mod === "this week") q.window = "week";
+    else if (mod === "month" || mod === "this month") q.window = "month";
+    else if (NEWS_CATEGORIES.includes(mod)) q.category = mod;
+    // unknown modifier → treat as a plain news pull
+    return { news: q };
+  }
   if (t === "news" || t === "radar" || t === "ai news" || t === "ai radar" || t === "ai" || t === "latest" || t === "what's new" || t === "whats new") {
-    return "news";
+    return { news: {} };
   }
   if (DOMAINS.includes(t)) return { domain: DOMAIN_ALIAS[t] ?? t };
   // "health?" / "show health" / "status health"
@@ -431,16 +450,27 @@ const NEWS_CAT_ICON: Record<string, string> = {
 
 /** Render the AI Radar feed — ranked by score, grouped lightly, links included
  *  (the owner taps them in the message). Pure. */
-export function buildNews(items: NewsItemLite[]): string {
-  if (!items.length) return "📡 AI Radar — nothing fresh yet (scans every ~5 min). Try again shortly.";
-  const ranked = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 12);
-  const lines: string[] = [`📡 AI Radar · ${items.length} recent · ≤5-min fresh`, ""];
+const NEWS_WINDOW_LABEL: Record<NewsWindow, string> = {
+  today: "today",
+  week: "this week",
+  month: "this month",
+};
+
+export function buildNews(items: NewsItemLite[], q?: NewsQuery): string {
+  const win = q?.window ? ` · ${NEWS_WINDOW_LABEL[q.window]} · top by popularity` : " · ≤5-min fresh";
+  const cat = q?.category ? ` (${q.category})` : "";
+  if (!items.length) {
+    return `📡 AI Radar${cat}${win} — nothing yet. Try "news week" or a category like "news coding-tools".`;
+  }
+  // When a window is set the server already ranks by popularity; otherwise sort by score here.
+  const ranked = q?.window ? items.slice(0, 12) : [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 12);
+  const lines: string[] = [`📡 AI Radar${cat} · ${items.length}${win}`, ""];
   for (const it of ranked) {
     const icon = (it.category && NEWS_CAT_ICON[it.category]) || "•";
     lines.push(`${icon} ${clip(it.title, 72)} — ${clip(it.source, 22)}`);
     if (it.url) lines.push(`   ${it.url}`);
   }
   lines.push("");
-  lines.push(`"news labs" / "news coding-tools" to filter · pulls the latest scan`);
+  lines.push(`"news today" · "news week" · "news month" · "news labs"/"coding-tools" to filter`);
   return lines.join("\n");
 }

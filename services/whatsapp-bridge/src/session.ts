@@ -8767,17 +8767,21 @@ export class WhatsAppSession {
         // ponytail: auto-actions not yet sourced from an API endpoint; shows "nothing auto-handled"
         const view = buildDid([]);
         text = view.text; items = view.items;
-      } else if (cmd === "news") {
-        // AI Radar feed (links included). Best-effort; endpoint 404s if radar not yet run.
+      } else if (typeof cmd === "object" && "news" in cmd) {
+        // AI Radar feed (links). today/week/month windows → server ranks by popularity.
+        const nq = cmd.news;
+        const params = new URLSearchParams({ limit: "20" });
+        if (nq.window) { params.set("window", nq.window); params.set("sort", "popular"); }
+        if (nq.category) params.set("category", nq.category);
         const news: NewsItemLite[] = [];
         try {
-          const r = await authedFetch("/v1/news?limit=20");
+          const r = await authedFetch("/v1/news?" + params.toString());
           if (r.ok) {
             const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
             for (const it of data ?? []) news.push({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score });
           }
         } catch { /* best-effort */ }
-        text = buildNews(news);
+        text = buildNews(news, nq);
       } else {
         // Domain drill-down.
         // ponytail: domain records not sourced yet; shows "nothing tracked yet"
