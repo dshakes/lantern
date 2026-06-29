@@ -2669,10 +2669,11 @@ export class IMessageSession {
 
   /** Answer "what did I watch / browse" from Mac browser history (YouTube titles
    *  live there) + iPhone media/app signals. Owner-only (caller-gated). */
-  private async handleWatchQuery(handle: string): Promise<void> {
+  private async handleWatchQuery(handle: string, query = ""): Promise<void> {
     try {
-      const items = await readWatchHistory({ windowHours: 48, logger: this.logger });
-      let text = watchSummary(items);
+      const askedYouTube = /\b(youtube|yt)\b/i.test(query);
+      const items = await readWatchHistory({ windowHours: 168, logger: this.logger });
+      let text = watchSummary(items, Date.now(), askedYouTube);
       // Fold in iPhone media/app usage (Shortcuts → /v1/signals → device-signals.jsonl).
       try {
         const file = join(homedir(), ".lantern", "device-signals.jsonl");
@@ -3963,6 +3964,13 @@ export class IMessageSession {
               this.logger.warn({ err }, "imsg center command failed"));
             return;
           }
+          // "what did I watch / browse" — answer from Mac browser history +
+          // iPhone signals deterministically (never "no media tool wired up").
+          if (isWatchQuery(text)) {
+            void this.handleWatchQuery(row.handle, text).catch((err) =>
+              this.logger.warn({ err }, "imsg watch query failed"));
+            return;
+          }
         }
         void this.handleOwnerDocQuery(row.handle, text, row.chatRowid).catch((err) =>
           this.logger.error({ err }, "handleOwnerDocQuery threw"),
@@ -4247,7 +4255,7 @@ export class IMessageSession {
       // "what did I watch / browse" — answer from Mac browser history + iPhone
       // media/app signals deterministically (never "no media tool wired up").
       if (isWatchQuery(text)) {
-        void this.handleWatchQuery(row.handle).catch((err) =>
+        void this.handleWatchQuery(row.handle, text).catch((err) =>
           this.logger.warn({ err }, "im watch query failed"));
         return;
       }

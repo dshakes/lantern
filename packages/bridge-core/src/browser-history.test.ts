@@ -17,19 +17,34 @@ test("isWatchQuery recognizes watch/browse asks, ignores unrelated", () => {
   }
 });
 
-test("watchSummary: YouTube first, strips '- YouTube', empty → honest line", () => {
+test("watchSummary: YouTube first, strips '- YouTube', collapses dups, empty → honest line", () => {
   assert.match(watchSummary([]), /no browser history|Full Disk Access/);
   const now = 1_000_000_000_000;
   const items: WatchItem[] = [
     { title: "Cool Song - YouTube", url: "https://youtube.com/watch?v=1", source: "youtube", ts: now - 600_000 },
     { title: "Some Docs Page", url: "https://example.com/x", source: "web", ts: now - 7_200_000 },
+    // four DISTINCT Gmail URLs, same title → must collapse to "Gmail ×4"
+    { title: "Gmail", url: "https://mail.google.com/a", source: "web", ts: now - 7_300_000 },
+    { title: "Gmail", url: "https://mail.google.com/b", source: "web", ts: now - 7_400_000 },
+    { title: "Gmail", url: "https://mail.google.com/c", source: "web", ts: now - 7_500_000 },
+    { title: "Gmail", url: "https://mail.google.com/d", source: "web", ts: now - 7_600_000 },
   ];
   const out = watchSummary(items, now);
   assert.match(out, /📺 Recently watched on YouTube/);
   assert.match(out, /Cool Song —/); // "- YouTube" suffix stripped
   assert.doesNotMatch(out, /Cool Song - YouTube/);
   assert.match(out, /🌐 Also browsed/);
+  assert.match(out, /Gmail ×4/); // collapsed, not repeated
+  assert.equal((out.match(/Gmail/g) ?? []).length, 1);
   assert.match(out, /10m ago/);
+});
+
+test("watchSummary: asked about YouTube but none → points at the iPhone-app gap", () => {
+  const now = 1_000_000_000_000;
+  const webOnly: WatchItem[] = [{ title: "Docs", url: "https://x.com", source: "web", ts: now - 600_000 }];
+  const out = watchSummary(webOnly, now, true);
+  assert.match(out, /nothing on YouTube/i);
+  assert.match(out, /YouTube \*app\* on your phone|Shortcut/i);
 });
 
 test("iphoneUsageBlock: now_playing first, app_open counts, empty when nothing in window", () => {
