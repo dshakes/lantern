@@ -293,6 +293,7 @@ Valid roles (pick the one that best matches the description):
   energy_guardian     → bridge-side only; protects focus when sleep/step signals show low energy (tier=nano)
   health_coach        → bridge-side only; nudges daily step goal + acks workouts + weekly trend (tier=nano)
   focus_guardian      → bridge-side only; holds non-urgent nudges during heads-down focus blocks and recaps on release (tier=nano)
+  news_radar          → polls AI news feeds (labs, people, coding-tools, aggregators) every 5 min, deduplicates, ranks with LLM (tier=micro)
 
 Valid tiers and their default crons:
   nano   → no schedule (event-driven only); omit cron
@@ -516,6 +517,19 @@ func runLoopAgentIfPresent(
 			}
 		}
 		outputJSON, _ = json.Marshal(map[string]any{"records": recN, "obligations": oblN, "domain": m.Domain})
+
+	case "news_radar":
+		scanned, newN, srcOK, srcFail := runNewsRadar(ctx, pool, logger, tenantID, runID, completeFn, nil)
+		if scanned == 0 && srcFail > 0 {
+			logger.Warn("loop-agent: news_radar — all sources failed",
+				zap.String("run_id", runID), zap.Int("sources_failed", srcFail))
+		}
+		outputJSON, _ = json.Marshal(map[string]any{
+			"scanned":        scanned,
+			"new":            newN,
+			"sources_ok":     srcOK,
+			"sources_failed": srcFail,
+		})
 
 	case "commute_copilot", "energy_guardian", "health_coach", "focus_guardian":
 		// Bridge-side loops: execution happens entirely in the macOS bridge.
@@ -2368,6 +2382,19 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Sensors: []string{"signals"},
 			Actions: []string{"nudge"},
 			Trust:   "ask",
+		},
+		// AI Radar: polls labs, people, coding-tools, and aggregator feeds every
+		// 5 min. Deduplicates via news_items.UNIQUE(tenant_id, url); LLM ranks new items.
+		{
+			Role:    "news_radar",
+			Type:    "loop",
+			Name:    "ai-radar",
+			Goal:    "Your AI news radar. Every 5 minutes it scans Anthropic, OpenAI, DeepMind, HuggingFace, Simon Willison, GitHub releases for Claude Code / Gemini CLI / Aider, HackerNews, Reddit, and podcasts — deduplicates and surfaces only genuinely new developments.",
+			Tier:    "micro",
+			Cron:    tierCronDefault["micro"],
+			Sensors: []string{"web"},
+			Actions: []string{"record"},
+			Trust:   "auto_safe",
 		},
 	} {
 		seedOneLoopAgent(ctx, pool, logger, m)
