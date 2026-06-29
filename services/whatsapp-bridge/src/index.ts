@@ -263,7 +263,7 @@ app.post("/session/:tenantId/start", async (req, res) => {
 
   const session = new WhatsAppSession(tenantId, logger);
   sessions.set(tenantId, session);
-  session.start();
+  session.start(true); // owner-initiated → clears conflict dormancy + storm counters
 
   res.json({ status: "starting", message: "session starting — reuse creds if available, else QR via WebSocket", reused: false });
 });
