@@ -153,6 +153,31 @@ func TestNewsParseAtom_FallbackToID(t *testing.T) {
 	}
 }
 
+// Regression: Blogger/Google-style Atom entries list a rel="self" feed link
+// (blogger.com/feeds/…) BEFORE the rel="alternate" type="text/html" article
+// link. The parser must pick the ARTICLE link, never the self/feed URL.
+func TestNewsParseAtom_PrefersArticleOverSelf(t *testing.T) {
+	bloggerAtom := `<feed xmlns="http://www.w3.org/2005/Atom">
+  <link rel="self" type="application/atom+xml" href="http://www.blogger.com/feeds/8474926331452026626/posts/default"/>
+  <entry>
+    <title>Exphormer: Scaling transformers</title>
+    <updated>2026-02-01T00:00:00Z</updated>
+    <link rel="self" type="application/atom+xml" href="http://www.blogger.com/feeds/8474926331452026626/posts/default/123"/>
+    <link rel="replies" type="text/html" href="https://blog.google/exphormer/comments"/>
+    <link rel="alternate" type="text/html" href="https://research.google/blog/exphormer-scaling-transformers/"/>
+  </entry>
+</feed>`
+	src := newsSource{Name: "Google AI Blog", Category: "labs", Kind: "atom"}
+	items := parseAtom([]byte(bloggerAtom), src)
+	if len(items) != 1 {
+		t.Fatalf("want 1 item, got %d", len(items))
+	}
+	want := "https://research.google/blog/exphormer-scaling-transformers/"
+	if items[0].URL != want {
+		t.Errorf("URL = %q, want the article alternate link %q (not the blogger.com self/feed URL)", items[0].URL, want)
+	}
+}
+
 // ---------- HN Algolia parser unit test ----------
 
 func TestNewsParseHNAlgolia_SelfPost(t *testing.T) {
