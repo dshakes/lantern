@@ -256,7 +256,8 @@ import {
   findDocFiles,
 } from "@lantern/bridge-core/doc-ingest";
 import {
-  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews,
+  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildReadlist,
+  selectTopDrops, buildTopDropPush,
   type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite,
 } from "@lantern/bridge-core/command-center";
 import {
@@ -716,6 +717,16 @@ export class IMessageSession {
   private static readonly COMMUTE_INTERVAL_MS = 5 * 60_000; // 5 min
   private commuteTimer: ReturnType<typeof setInterval> | null = null;
   private commuteDriveFired = false;
+
+  // Proactive "top AI drops": push only high-signal news, deduped, quiet-hours
+  // aware. ON by default (the owner asked for proactive news); LANTERN_NEWS_PROACTIVE=off to silence.
+  private static readonly NEWS_PROACTIVE_ENABLED =
+    !["off", "0", "false"].includes((process.env.LANTERN_NEWS_PROACTIVE ?? "on").toLowerCase());
+  private static readonly NEWS_PROACTIVE_INTERVAL_MS = 60 * 60_000; // hourly
+  private newsTimer: ReturnType<typeof setInterval> | null = null;
+  private newsPushed = new Set<string>();
+  private newsPushedPath = "";
+  private newsNeedsSeed = false;
   private commuteWasLastDriving = false;
   // ── Energy guardian (LANTERN_ENERGY=on, default OFF) ───────────────────────
   // ponytail: ships dark; owner flips LANTERN_ENERGY=on to enable.
@@ -902,6 +913,7 @@ export class IMessageSession {
     this.startAnticipationNudges();
     this.startConcierge();
     this.startCommuteLoop();
+    this.startNewsProactiveLoop();
     this.startEnergyLoop();
     this.startHealthLoop();
     this.startGmailIngest();
@@ -1271,6 +1283,68 @@ export class IMessageSession {
     t.unref?.();
     this.commuteTimer = t;
     this.logger.info("commute-copilot enabled (LANTERN_COMMUTE=on)");
+  }
+
+  private startNewsProactiveLoop(): void {
+    if (!IMessageSession.NEWS_PROACTIVE_ENABLED) {
+      this.logger.info("proactive AI news disabled (LANTERN_NEWS_PROACTIVE=off)");
+      return;
+    }
+    this.newsPushedPath = join(this.stateDir, "news-pushed.json");
+    this.newsNeedsSeed = !existsSync(this.newsPushedPath);
+    try {
+      const arr = JSON.parse(readFileSync(this.newsPushedPath, "utf8")) as string[];
+      if (Array.isArray(arr)) this.newsPushed = new Set(arr.slice(-500));
+    } catch { /* first run */ }
+    const first = setTimeout(() => void this.runNewsProactiveTick(), 25_000);
+    first.unref?.();
+    const t = setInterval(() => void this.runNewsProactiveTick(), IMessageSession.NEWS_PROACTIVE_INTERVAL_MS);
+    t.unref?.();
+    this.newsTimer = t;
+    this.logger.info("proactive AI news enabled (top drops only; LANTERN_NEWS_PROACTIVE=off to silence)");
+  }
+
+  /** Push only high-signal NEW AI news to self-chat. Deduped + quiet-hours aware. */
+  private async runNewsProactiveTick(): Promise<void> {
+    try {
+      if (this.killSwitch) return;
+      const target = this.ownerSelfChatTarget();
+      if (!target) return;
+      if (isQuietHours(new Date(), defaultQuietHours())) return;
+      // Rank by the radar's popularity score among recently-scanned items
+      // (no publish-window — a high-signal article is worth pushing even if it
+      // was published a day or two ago). Dedup keeps each pushed once.
+      const r = await authedFetch("/v1/news?sort=popular&limit=20");
+      if (!r.ok) return;
+      const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; score?: number }>;
+      const items: NewsItemLite[] = (data ?? []).map((it) => ({ source: it.source, category: it.category, title: it.title, url: it.url, score: it.score }));
+      // First run ever: mark today's top items as "already seen" WITHOUT pushing,
+      // so we only push genuinely-new drops from here on (no day-1 backlog spam).
+      if (this.newsNeedsSeed) {
+        for (const it of items) if (it.url) this.newsPushed.add(it.url);
+        try { writeFileSync(this.newsPushedPath, JSON.stringify([...this.newsPushed].slice(-500)), { mode: 0o600 }); } catch { /* best-effort */ }
+        this.newsNeedsSeed = false;
+        this.logger.info({ seeded: this.newsPushed.size }, "proactive AI news: seeded baseline (will push only NEW drops)");
+        return;
+      }
+      const drops = selectTopDrops(items, this.newsPushed, { threshold: 70, max: 2 });
+      for (const d of drops) {
+        // Only mark as pushed if the send actually succeeds (else we'd silently
+        // drop it forever). this.send resolves on success / rejects on failure.
+        try {
+          await this.send(target, buildTopDropPush(d));
+          if (d.url) this.newsPushed.add(d.url);
+        } catch (e) {
+          this.logger.warn({ err: e, target }, "top-drop send failed");
+        }
+      }
+      if (drops.length > 0) {
+        try { writeFileSync(this.newsPushedPath, JSON.stringify([...this.newsPushed].slice(-500)), { mode: 0o600 }); } catch { /* best-effort */ }
+        this.logger.info({ pushed: drops.length }, "proactive AI news: top drops pushed");
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "news proactive tick failed");
+    }
   }
 
   private startEnergyLoop(): void {
@@ -2399,6 +2473,15 @@ export class IMessageSession {
     const { item } = action;
     const ack = (msg: string) => this.send(handle, msg).catch(() => {});
     try {
+      if (action.action === "save") {
+        // Save any item (esp. a news article) to the readlist. source must be a
+        // valid enum ("self"); kind="readlist" is what distinguishes it.
+        const saved = await this.commitments.create({ title: item.label, source: "self", kind: "readlist", sourcePreview: item.url });
+        ack(saved
+          ? `🔖 saved to readlist — "${item.label.slice(0, 50)}". pull "readlist" anytime.`
+          : `⚠️ couldn't save that — try again.`);
+        return;
+      }
       if (item.ref === "commitment") {
         if (action.action === "done") {
           await this.commitments.done(item.id);
@@ -2461,7 +2544,8 @@ export class IMessageSession {
     const send = (msg: string) => this.send(handle, msg).catch(() => {});
     try {
       const all = await this.commitments.list();
-      const allOpen = all.filter((c) => c.status === "open" || c.status === "suggested");
+      // readlist items are saved articles, not todos — keep them out of plate/brief.
+      const allOpen = all.filter((c) => (c.status === "open" || c.status === "suggested") && c.kind !== "readlist");
 
       // Collect still-valid pending drafts from the B5 map.
       this.gcPendingDraftEdits();
@@ -2486,6 +2570,10 @@ export class IMessageSession {
       } else if (cmd === "plate") {
         const view = buildPlate(allOpen, drafts);
         text = view.text; items = view.items;
+      } else if (cmd === "readlist") {
+        const saved = all.filter((c) => c.kind === "readlist");
+        const view = buildReadlist(saved.map((c) => ({ id: c.id, title: c.title, url: c.source_preview })));
+        text = view.text; items = view.items;
       } else if (cmd === "agents") {
         // Best-effort: list agents from the control plane.
         const agentStats: AgentStat[] = [];
@@ -2503,17 +2591,22 @@ export class IMessageSession {
         // ponytail: auto-actions not yet sourced from an API; shows "nothing auto-handled"
         const view = buildDid([]);
         text = view.text; items = view.items;
-      } else if (cmd === "news") {
-        // AI Radar feed (links included). Best-effort; endpoint 404s if radar not yet run.
+      } else if (typeof cmd === "object" && "news" in cmd) {
+        // AI Radar feed (links). today/week/month windows → server ranks by popularity.
+        const nq = cmd.news;
+        const params = new URLSearchParams({ limit: "20" });
+        if (nq.window) { params.set("window", nq.window); params.set("sort", "popular"); }
+        if (nq.category) params.set("category", nq.category);
         const news: NewsItemLite[] = [];
         try {
-          const r = await authedFetch("/v1/news?limit=20");
+          const r = await authedFetch("/v1/news?" + params.toString());
           if (r.ok) {
             const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
             for (const it of data ?? []) news.push({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score });
           }
         } catch { /* best-effort */ }
-        text = buildNews(news);
+        const nv = buildNews(news, nq);
+        text = nv.text; items = nv.items;
       } else {
         // Domain drill-down.
         // ponytail: domain records not sourced yet; shows "nothing tracked yet"

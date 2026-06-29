@@ -12,6 +12,10 @@ import {
   buildAgents,
   buildDomain,
   buildDid,
+  buildNews,
+  buildReadlist,
+  selectTopDrops,
+  buildTopDropPush,
   type BriefItem,
 } from "./command-center.ts";
 import type { Commitment } from "./commitments-edge.ts";
@@ -70,13 +74,54 @@ test("center commands: brief / plate / agents / did / domains", () => {
 });
 
 test("news/radar command — case-insensitive (regression: 'News' fell through to the assistant)", () => {
-  assert.equal(parseCenterCommand("news"), "news");
-  assert.equal(parseCenterCommand("News"), "news"); // capital — the exact text that failed live
-  assert.equal(parseCenterCommand("NEWS"), "news");
-  assert.equal(parseCenterCommand("radar"), "news");
-  assert.equal(parseCenterCommand("News "), "news"); // trailing space
-  assert.equal(parseCenterCommand("what's new"), "news");
-  assert.equal(parseCenterCommand("latest"), "news");
+  assert.deepEqual(parseCenterCommand("news"), { news: {} });
+  assert.deepEqual(parseCenterCommand("News"), { news: {} }); // capital — the exact text that failed live
+  assert.deepEqual(parseCenterCommand("NEWS"), { news: {} });
+  assert.deepEqual(parseCenterCommand("radar"), { news: {} });
+  assert.deepEqual(parseCenterCommand("News "), { news: {} }); // trailing space
+  assert.deepEqual(parseCenterCommand("what's new"), { news: {} });
+  assert.deepEqual(parseCenterCommand("latest"), { news: {} });
+});
+
+test("news time-windows + category (feature: 'news today/week/month', 'news labs')", () => {
+  assert.deepEqual(parseCenterCommand("news today"), { news: { window: "today" } });
+  assert.deepEqual(parseCenterCommand("news week"), { news: { window: "week" } });
+  assert.deepEqual(parseCenterCommand("news this week"), { news: { window: "week" } });
+  assert.deepEqual(parseCenterCommand("news month"), { news: { window: "month" } });
+  assert.deepEqual(parseCenterCommand("radar today"), { news: { window: "today" } });
+  assert.deepEqual(parseCenterCommand("news labs"), { news: { category: "labs" } });
+  assert.deepEqual(parseCenterCommand("news coding-tools"), { news: { category: "coding-tools" } });
+  assert.deepEqual(parseCenterCommand("news whatever"), { news: {} }); // unknown modifier → plain
+});
+
+test("buildNews shows the window + popularity label + numbered saveable items", () => {
+  const items = [{ source: "Anthropic", category: "labs", title: "Claude 4.8", url: "https://x", score: 9 }];
+  assert.match(buildNews(items, { window: "week" }).text, /this week · top by popularity/);
+  assert.match(buildNews(items, {}).text, /≤5-min fresh/);
+  assert.match(buildNews(items, { category: "labs" }).text, /\(labs\)/);
+  const v = buildNews(items, {});
+  assert.equal(v.items.length, 1);
+  assert.equal(v.items[0].ref, "news_item");
+  assert.equal(v.items[0].url, "https://x");
+  assert.equal(v.items[0].defaultAction, "save");
+});
+
+test("save action ('<n> save' + 'save <n>' + bookmark) → save", () => {
+  const news = buildNews([{ source: "X", category: "labs", title: "T", url: "https://x", score: 5 }], {}).items;
+  assert.equal(parseActionReply("1 save", news)?.action, "save");
+  assert.equal(parseActionReply("save 1", news)?.action, "save");
+  assert.equal(parseActionReply("1 bookmark", news)?.action, "save");
+  assert.equal(parseActionReply("1", news)?.action, "save"); // news default = save
+});
+
+test("readlist: command recognition + buildReadlist", () => {
+  assert.equal(parseCenterCommand("readlist"), "readlist");
+  assert.equal(parseCenterCommand("saved"), "readlist");
+  assert.equal(parseCenterCommand("reading list"), "readlist");
+  const v = buildReadlist([{ id: "c1", title: "Saved article", url: "https://a" }]);
+  assert.equal(v.items.length, 1);
+  assert.match(v.text, /Readlist · 1 saved/);
+  assert.match(v.text, /https:\/\/a/);
 });
 
 // ── Brief composition ────────────────────────────────────────────────────────
@@ -131,4 +176,21 @@ test("buildAgents flags failures; buildDomain summarizes records + obligations",
   assert.match(d, /health — 6 records/);
   assert.match(d, /dentist Jul 3/);
   assert.match(d, /refill metformin/);
+});
+
+test("selectTopDrops: high-signal, deduped, capped", () => {
+  const items = [
+    { source: "HN", title: "Big model", url: "https://a", score: 740 },
+    { source: "HN", title: "meh", url: "https://b", score: 10 },
+    { source: "GH", title: "Hot repo", url: "https://c", score: 300 },
+    { source: "X", title: "already seen", url: "https://d", score: 500 },
+  ];
+  const pushed = new Set(["https://d"]);
+  const drops = selectTopDrops(items, pushed, { threshold: 100, max: 2 });
+  assert.equal(drops.length, 2);
+  assert.equal(drops[0].url, "https://a"); // highest score
+  assert.equal(drops[1].url, "https://c");
+  assert.ok(!drops.some((d) => d.url === "https://b")); // below threshold
+  assert.ok(!drops.some((d) => d.url === "https://d")); // already pushed
+  assert.match(buildTopDropPush(items[0]), /Top AI drop \(740\): Big model/);
 });

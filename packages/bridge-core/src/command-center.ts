@@ -29,13 +29,14 @@ export type ActionKind =
   | "review" // show details / open the item
   | "edit" // replace a draft with the owner's text (arg)
   | "undo" // revert an auto-action
+  | "save" // save the item to the readlist / todo
   | "custom"; // free-text the owner typed after the number
 
-export type RefKind = "commitment" | "draft" | "life_event" | "auto_action";
+export type RefKind = "commitment" | "draft" | "life_event" | "auto_action" | "news_item";
 
 /** One numbered, actionable line shown to the owner. The bridge maps `id`+`ref`
  *  back to the right rail (commitment resolve / draft send / cross-app execute /
- *  undo) when an action reply arrives. */
+ *  undo / save-to-readlist) when an action reply arrives. */
 export interface BriefItem {
   n: number;
   ref: RefKind;
@@ -46,6 +47,8 @@ export interface BriefItem {
   defaultAction: ActionKind;
   /** Actions offered in the hint text, in display order. */
   actions: ActionKind[];
+  /** For news_item: the article URL (saved to the readlist). */
+  url?: string;
 }
 
 export interface ParsedAction {
@@ -60,6 +63,7 @@ const DONE_RE = /^(done|complete|completed|resolve|resolved|finished?)$/i;
 const SKIP_RE = /^(skip|no|n|nope|nah|dismiss|drop|ignore|👎)$/i;
 const REVIEW_RE = /^(review|open|show|details?|view|info|more)$/i;
 const UNDO_RE = /^(undo|revert|cancel\s*that)$/i;
+const SAVE_RE = /^(save|read\s*later|readlist|bookmark|keep)$/i;
 const SNOOZE_RE = /^(snooze|later|defer|remind|hold)\b\s*(.*)$/i;
 const EDIT_RE = /^(edit|change|rewrite|reword)\b\s*(.*)$/i;
 
@@ -71,6 +75,12 @@ const EDIT_RE = /^(edit|change|rewrite|reword)\b\s*(.*)$/i;
 export function parseActionReply(text: string, items: BriefItem[]): ParsedAction | null {
   if (!items.length) return null;
   const t = text.trim();
+  // Verb-first save: "save 3" / "bookmark 3" / "read later 3".
+  const sv = t.match(/^(?:save|bookmark|keep|read\s*later)\s+(\d{1,2})\b/i);
+  if (sv) {
+    const it = items.find((i) => i.n === parseInt(sv[1], 10));
+    if (it) return { item: it, action: "save" };
+  }
   // Must start with the item number (1–99). Anything else is normal chat.
   const m = t.match(/^(\d{1,2})\b[.):]?\s*(.*)$/s);
   if (!m) return null;
@@ -88,6 +98,7 @@ export function parseActionReply(text: string, items: BriefItem[]): ParsedAction
   if (SKIP_RE.test(rest)) return { item, action: "skip" };
   if (REVIEW_RE.test(rest)) return { item, action: "review" };
   if (UNDO_RE.test(rest)) return { item, action: "undo" };
+  if (SAVE_RE.test(rest)) return { item, action: "save" };
   const sn = rest.match(SNOOZE_RE);
   if (sn) return { item, action: "snooze", arg: sn[2]?.trim() || undefined };
   const ed = rest.match(EDIT_RE);
@@ -98,7 +109,14 @@ export function parseActionReply(text: string, items: BriefItem[]): ParsedAction
 
 // ── Command recognition (which surface to render) ───────────────────────────
 
-export type CenterCommand = "brief" | "plate" | "agents" | "did" | "news" | { domain: string };
+export type NewsWindow = "today" | "week" | "month";
+export interface NewsQuery {
+  window?: NewsWindow;
+  category?: string;
+}
+export type CenterCommand = "brief" | "plate" | "agents" | "did" | "readlist" | { news: NewsQuery } | { domain: string };
+
+const NEWS_CATEGORIES = ["labs", "people", "coding-tools", "aggregators", "podcasts"];
 
 const DOMAINS = ["health", "vehicle", "car", "money", "finance", "home", "household", "career", "work", "travel"];
 const DOMAIN_ALIAS: Record<string, string> = {
@@ -129,8 +147,23 @@ export function parseCenterCommand(text: string): CenterCommand | null {
   if (t === "did" || t === "recap" || t === "what did you do" || t === "what did you do today" || t === "auto" || t === "auto-actions") {
     return "did";
   }
+  if (t === "readlist" || t === "reading list" || t === "saved" || t === "bookmarks" || t === "read later") {
+    return "readlist";
+  }
+  // news / radar [today|week|month|<category>]
+  const nm = t.match(/^(?:news|radar)\s+(.+)$/);
+  if (nm) {
+    const mod = nm[1].trim();
+    const q: NewsQuery = {};
+    if (mod === "today" || mod === "day") q.window = "today";
+    else if (mod === "week" || mod === "this week") q.window = "week";
+    else if (mod === "month" || mod === "this month") q.window = "month";
+    else if (NEWS_CATEGORIES.includes(mod)) q.category = mod;
+    // unknown modifier → treat as a plain news pull
+    return { news: q };
+  }
   if (t === "news" || t === "radar" || t === "ai news" || t === "ai radar" || t === "ai" || t === "latest" || t === "what's new" || t === "whats new") {
-    return "news";
+    return { news: {} };
   }
   if (DOMAINS.includes(t)) return { domain: DOMAIN_ALIAS[t] ?? t };
   // "health?" / "show health" / "status health"
@@ -431,16 +464,82 @@ const NEWS_CAT_ICON: Record<string, string> = {
 
 /** Render the AI Radar feed — ranked by score, grouped lightly, links included
  *  (the owner taps them in the message). Pure. */
-export function buildNews(items: NewsItemLite[]): string {
-  if (!items.length) return "📡 AI Radar — nothing fresh yet (scans every ~5 min). Try again shortly.";
-  const ranked = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 12);
-  const lines: string[] = [`📡 AI Radar · ${items.length} recent · ≤5-min fresh`, ""];
+const NEWS_WINDOW_LABEL: Record<NewsWindow, string> = {
+  today: "today",
+  week: "this week",
+  month: "this month",
+};
+
+export function buildNews(items: NewsItemLite[], q?: NewsQuery): CenterView {
+  const win = q?.window ? ` · ${NEWS_WINDOW_LABEL[q.window]} · top by popularity` : " · ≤5-min fresh";
+  const cat = q?.category ? ` (${q.category})` : "";
+  if (!items.length) {
+    return { text: `📡 AI Radar${cat}${win} — nothing yet. Try "news week" or a category like "news coding-tools".`, items: [] };
+  }
+  // When a window is set the server already ranks by popularity; otherwise sort by score here.
+  const ranked = q?.window ? items.slice(0, 12) : [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 12);
+  const out: BriefItem[] = [];
+  const lines: string[] = [`📡 AI Radar${cat} · ${items.length}${win}`, ""];
+  let n = 1;
   for (const it of ranked) {
     const icon = (it.category && NEWS_CAT_ICON[it.category]) || "•";
-    lines.push(`${icon} ${clip(it.title, 72)} — ${clip(it.source, 22)}`);
-    if (it.url) lines.push(`   ${it.url}`);
+    out.push({ n, ref: "news_item", id: it.url, icon, label: clip(it.title, 120), url: it.url, defaultAction: "save", actions: ["save"] });
+    lines.push(` ${n} ${icon} ${clip(it.title, 70)} — ${clip(it.source, 22)}`);
+    if (it.url) lines.push(`    ${it.url}`);
+    n++;
   }
   lines.push("");
-  lines.push(`"news labs" / "news coding-tools" to filter · pulls the latest scan`);
-  return lines.join("\n");
+  lines.push(`"save 2" to keep · "readlist" to see saved · "news week"/"news labs" to filter`);
+  return { text: lines.join("\n"), items: out };
+}
+
+// ── readlist: items the owner saved with "save <n>" ─────────────────────────
+
+export interface ReadlistEntry {
+  id: string;
+  title: string;
+  url?: string;
+}
+
+export function buildReadlist(entries: ReadlistEntry[]): CenterView {
+  const items: BriefItem[] = [];
+  if (!entries.length) {
+    return { text: '📚 Readlist is empty — reply "save <n>" on any news item to keep it here.', items: [] };
+  }
+  const lines: string[] = [`📚 Readlist · ${entries.length} saved`, ""];
+  let n = 1;
+  for (const e of entries.slice(0, 20)) {
+    items.push({ n, ref: "commitment", id: e.id, icon: "🔖", label: clip(e.title, 70), url: e.url, defaultAction: "done", actions: ["done"] });
+    lines.push(` ${n} 🔖 ${clip(e.title, 70)}`);
+    if (e.url) lines.push(`    ${e.url}`);
+    n++;
+  }
+  lines.push("");
+  lines.push(`"<n> done" to clear a saved item`);
+  return { text: lines.join("\n"), items };
+}
+
+// ── proactive "top drops": only high-signal news, deduped ───────────────────
+
+/** Pick the new, high-signal items worth interrupting the owner for. Pure:
+ *  filter by score >= threshold, drop anything already pushed, take the top N.
+ *  Conservative by design — proactive news must never become a firehose. */
+export function selectTopDrops(
+  items: NewsItemLite[],
+  pushed: ReadonlySet<string>,
+  opts?: { threshold?: number; max?: number },
+): NewsItemLite[] {
+  const threshold = opts?.threshold ?? 100;
+  const max = opts?.max ?? 2;
+  return items
+    .filter((it) => !!it.url && (it.score ?? 0) >= threshold && !pushed.has(it.url))
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, max);
+}
+
+/** Format one top-drop for a self-chat push. */
+export function buildTopDropPush(it: NewsItemLite): string {
+  const icon = (it.category && NEWS_CAT_ICON[it.category]) || "🔥";
+  const score = (it.score ?? 0) > 0 ? ` (${it.score})` : "";
+  return `${icon} Top AI drop${score}: ${clip(it.title, 90)} — ${clip(it.source, 24)}\n${it.url}`;
 }

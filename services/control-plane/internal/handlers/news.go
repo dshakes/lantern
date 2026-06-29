@@ -82,6 +82,25 @@ func (h *NewsHandler) ListNews(w http.ResponseWriter, r *http.Request) {
 
 	categoryFilter := q.Get("category")
 
+	// ?window=today|week|month → filter on the item's date (published, else
+	// scanned). Empty = all time. Mapped to a fixed interval (never user SQL).
+	windowInterval := ""
+	switch q.Get("window") {
+	case "today", "day":
+		windowInterval = "1 day"
+	case "week":
+		windowInterval = "7 days"
+	case "month":
+		windowInterval = "30 days"
+	}
+	// ?sort=popular → rank by score (HN points / star-velocity / mentions),
+	// then recency. Default is recency. A windowed view defaults to popular
+	// ("top news this week"), which is what the owner asked for.
+	orderBy := "created_at DESC"
+	if q.Get("sort") == "popular" || (windowInterval != "" && q.Get("sort") == "") {
+		orderBy = "score DESC NULLS LAST, COALESCE(published_at, created_at) DESC"
+	}
+
 	items := make([]newsItemJSON, 0)
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		rows, qErr := tx.Query(ctx, `
@@ -94,9 +113,10 @@ func (h *NewsHandler) ListNews(w http.ResponseWriter, r *http.Request) {
 			FROM news_items
 			WHERE tenant_id = $1
 			  AND ($2 = '' OR category = $2)
-			ORDER BY created_at DESC
+			  AND ($4 = '' OR COALESCE(published_at, created_at) >= now() - $4::interval)
+			ORDER BY `+orderBy+`
 			LIMIT $3
-		`, claims.TenantID, categoryFilter, limit)
+		`, claims.TenantID, categoryFilter, limit, windowInterval)
 		if qErr != nil {
 			return qErr
 		}
