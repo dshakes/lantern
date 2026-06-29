@@ -2235,17 +2235,34 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Actions: []string{"create_commitment"},
 			Trust:   "ask",
 		},
+		// inbox_triage: LLM-backed Gmail classifier (action/fyi/noise) with
+		// one-tap draft replies. Runs every 45 min (meso) — same cadence as
+		// inbox_autopilot but uses a separate cursor ('inbox-triage') so they
+		// can coexist without advancing each other's high-water marks.
+		{
+			Role:    "inbox_triage",
+			Type:    "loop",
+			Name:    "inbox-triage",
+			Goal:    "Keeps your inbox from burying you. Every 45 minutes it reads your Gmail, classifies each new message as action/fyi/noise, and queues a one-tap draft reply for anything that needs a response.",
+			Tier:    "meso",
+			Cron:    tierCronDefault["meso"],
+			Sensors: []string{"email"},
+			Actions: []string{"create_commitment", "draft"},
+			Trust:   "ask",
+		},
 		// Domain-tracker agents: one per life domain. They share the same
 		// domain_tracker loop body; only Domain and Query differ.
 		// NOTE: career's web/LinkedIn ingestion is a later increment — for now
 		// the Gmail query covers job/learning email; the loop body is identical.
+		// ponytail: every-6h cron (not daily macro) so new email is picked up
+		// within hours; the coach UPSERT is per-ISO-week so extra runs are no-ops.
 		{
 			Role:    "domain_tracker",
 			Type:    "loop",
 			Name:    "care-coordinator",
 			Goal:    "Your care coordinator. Reads health email (labs, appointments, prescriptions, insurance), keeps a private encrypted record of your meds/doctors/history, and reminds you of appointments, refills, and follow-ups.",
 			Tier:    "macro",
-			Cron:    tierCronDefault["macro"],
+			Cron:    "0 */6 * * *",
 			Sensors: []string{"email"},
 			Actions: []string{"create_commitment", "record"},
 			Trust:   "ask",
@@ -2259,7 +2276,7 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Name:    "garage",
 			Goal:    "Keeps your vehicles in order. Tracks service records, registration renewals, insurance renewals, and recalls from email — and reminds you before things lapse.",
 			Tier:    "macro",
-			Cron:    tierCronDefault["macro"],
+			Cron:    "0 */6 * * *",
 			Sensors: []string{"email"},
 			Actions: []string{"create_commitment", "record"},
 			Trust:   "ask",
@@ -2273,7 +2290,7 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Name:    "upskill",
 			Goal:    "Tracks your career. Watches for job applications, interview invites, course enrollments, certifications, and deadlines from email — keeps a record and nudges you on next steps.",
 			Tier:    "macro",
-			Cron:    tierCronDefault["macro"],
+			Cron:    "0 */6 * * *",
 			Sensors: []string{"email"},
 			Actions: []string{"create_commitment", "record"},
 			Trust:   "ask",
@@ -2288,7 +2305,7 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Name:    "travel-concierge",
 			Goal:    "Your travel concierge. Reads trip email (flights, hotels, rentals) into a clear itinerary and reminds you of check-ins, departures, and what to do before you go. Runs on the Lantern platform.",
 			Tier:    "macro",
-			Cron:    tierCronDefault["macro"],
+			Cron:    "0 */6 * * *",
 			Sensors: []string{"email"},
 			Actions: []string{"create_commitment", "record"},
 			Trust:   "ask",
@@ -2302,7 +2319,7 @@ func SeedLoopAgents(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger)
 			Name:    "household",
 			Goal:    "Your household manager. Tracks utilities, warranties, home services, and renewals from your email and reminds you before anything lapses or expires. Runs on the Lantern platform.",
 			Tier:    "macro",
-			Cron:    tierCronDefault["macro"],
+			Cron:    "0 */6 * * *",
 			Sensors: []string{"email"},
 			Actions: []string{"create_commitment", "record"},
 			Trust:   "ask",
