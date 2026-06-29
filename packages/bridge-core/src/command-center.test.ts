@@ -13,6 +13,7 @@ import {
   buildDomain,
   buildDid,
   buildNews,
+  buildReadlist,
   type BriefItem,
 } from "./command-center.ts";
 import type { Commitment } from "./commitments-edge.ts";
@@ -91,11 +92,34 @@ test("news time-windows + category (feature: 'news today/week/month', 'news labs
   assert.deepEqual(parseCenterCommand("news whatever"), { news: {} }); // unknown modifier → plain
 });
 
-test("buildNews shows the window + popularity label", () => {
+test("buildNews shows the window + popularity label + numbered saveable items", () => {
   const items = [{ source: "Anthropic", category: "labs", title: "Claude 4.8", url: "https://x", score: 9 }];
-  assert.match(buildNews(items, { window: "week" }), /this week · top by popularity/);
-  assert.match(buildNews(items, {}), /≤5-min fresh/);
-  assert.match(buildNews(items, { category: "labs" }), /\(labs\)/);
+  assert.match(buildNews(items, { window: "week" }).text, /this week · top by popularity/);
+  assert.match(buildNews(items, {}).text, /≤5-min fresh/);
+  assert.match(buildNews(items, { category: "labs" }).text, /\(labs\)/);
+  const v = buildNews(items, {});
+  assert.equal(v.items.length, 1);
+  assert.equal(v.items[0].ref, "news_item");
+  assert.equal(v.items[0].url, "https://x");
+  assert.equal(v.items[0].defaultAction, "save");
+});
+
+test("save action ('<n> save' + 'save <n>' + bookmark) → save", () => {
+  const news = buildNews([{ source: "X", category: "labs", title: "T", url: "https://x", score: 5 }], {}).items;
+  assert.equal(parseActionReply("1 save", news)?.action, "save");
+  assert.equal(parseActionReply("save 1", news)?.action, "save");
+  assert.equal(parseActionReply("1 bookmark", news)?.action, "save");
+  assert.equal(parseActionReply("1", news)?.action, "save"); // news default = save
+});
+
+test("readlist: command recognition + buildReadlist", () => {
+  assert.equal(parseCenterCommand("readlist"), "readlist");
+  assert.equal(parseCenterCommand("saved"), "readlist");
+  assert.equal(parseCenterCommand("reading list"), "readlist");
+  const v = buildReadlist([{ id: "c1", title: "Saved article", url: "https://a" }]);
+  assert.equal(v.items.length, 1);
+  assert.match(v.text, /Readlist · 1 saved/);
+  assert.match(v.text, /https:\/\/a/);
 });
 
 // ── Brief composition ────────────────────────────────────────────────────────

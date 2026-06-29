@@ -29,6 +29,7 @@ export interface Commitment {
   title: string;
   assignedBy?: string;
   status: string;
+  kind?: string;
   tier?: string;
   urgency?: string;
   deadline?: string;
@@ -236,6 +237,7 @@ export class CommitmentsClient {
     urgency?: string;
     idempotencyKey?: string;
     sourcePreview?: string;
+    kind?: string;
   }): Promise<{ id: string } | null> {
     try {
       const res = await this.fetchFn("/v1/commitments", {

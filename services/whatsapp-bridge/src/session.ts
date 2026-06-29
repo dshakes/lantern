@@ -127,7 +127,7 @@ import {
 } from "@lantern/bridge-core/doc-ingest";
 import { extname } from "path";
 import {
-  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews,
+  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildReadlist,
   type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite,
 } from "@lantern/bridge-core/command-center";
 import {
@@ -8656,6 +8656,15 @@ export class WhatsAppSession {
   private async executeCenterAction(jid: string, action: ParsedAction): Promise<void> {
     const { item } = action;
     try {
+      if (action.action === "save") {
+        // Save any item (esp. a news article) to the readlist. source must be a
+        // valid enum ("self"); kind="readlist" is what distinguishes it.
+        const saved = await this.commitments.create({ title: item.label, source: "self", kind: "readlist", sourcePreview: item.url });
+        await this.confirmToSelf(saved
+          ? `🔖 saved to readlist — "${item.label.slice(0, 50)}". pull "readlist" anytime.`
+          : `⚠️ couldn't save that — try again.`);
+        return;
+      }
       if (item.ref === "commitment") {
         if (action.action === "done") {
           await this.commitments.done(item.id);
@@ -8725,7 +8734,8 @@ export class WhatsAppSession {
   private async handleCenterCommand(jid: string, cmd: CenterCommand): Promise<void> {
     try {
       const all = await this.commitments.list();
-      const allOpen = all.filter((c) => c.status === "open" || c.status === "suggested");
+      // readlist items are saved articles, not todos — keep them out of plate/brief.
+      const allOpen = all.filter((c) => (c.status === "open" || c.status === "suggested") && c.kind !== "readlist");
 
       // Collect still-valid pending drafts from the B5 map (keyed by owner JID).
       this.gcPendingDraftEdits();
@@ -8749,6 +8759,10 @@ export class WhatsAppSession {
         text = view.text; items = view.items;
       } else if (cmd === "plate") {
         const view = buildPlate(allOpen, drafts);
+        text = view.text; items = view.items;
+      } else if (cmd === "readlist") {
+        const saved = all.filter((c) => c.kind === "readlist");
+        const view = buildReadlist(saved.map((c) => ({ id: c.id, title: c.title, url: c.source_preview })));
         text = view.text; items = view.items;
       } else if (cmd === "agents") {
         // Best-effort: list agents from the control plane.
@@ -8781,7 +8795,8 @@ export class WhatsAppSession {
             for (const it of data ?? []) news.push({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score });
           }
         } catch { /* best-effort */ }
-        text = buildNews(news, nq);
+        const nv = buildNews(news, nq);
+        text = nv.text; items = nv.items;
       } else {
         // Domain drill-down.
         // ponytail: domain records not sourced yet; shows "nothing tracked yet"
