@@ -3784,6 +3784,26 @@ export class IMessageSession {
           this.logger.info({ chat: row.handle, textPreview: text.slice(0, 60) }, "fromMe owner-query skipped — chat busy");
           return;
         }
+        // COMMAND CENTER FIRST: ?/today/plate/agents/did/news/<domain> + numbered
+        // actions must be intercepted BEFORE the agentic assistant — otherwise
+        // "news"/"plate" reach the doc-query LLM, which has no such tool.
+        {
+          const lastItems = getCenterItems(this.centerState, row.handle);
+          if (lastItems) {
+            const action = parseActionReply(text, lastItems);
+            if (action) {
+              void this.executeCenterAction(row.handle, action).catch((err) =>
+                this.logger.warn({ err }, "imsg center action execute failed"));
+              return;
+            }
+          }
+          const ccCmd = parseCenterCommand(text);
+          if (ccCmd) {
+            void this.handleCenterCommand(row.handle, ccCmd).catch((err) =>
+              this.logger.warn({ err }, "imsg center command failed"));
+            return;
+          }
+        }
         void this.handleOwnerDocQuery(row.handle, text, row.chatRowid).catch((err) =>
           this.logger.error({ err }, "handleOwnerDocQuery threw"),
         );
