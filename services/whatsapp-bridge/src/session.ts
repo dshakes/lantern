@@ -8573,7 +8573,7 @@ export class WhatsAppSession {
     try {
       // Killswitch: when engaged the bridge is fully silent — no proactive DMs.
       if (this.killSwitch) return;
-      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
+      if (this.proactivePaused()) return; // muted ("quiet Nh"), quiet-hours, or "quiet [Nh]" window
       // Only fire when paired + connected so sendSelf can land.
       if (!this.socket || !this.connected || !this.ownJid()) return;
       // Quiet hours (01:00–06:00 owner-local): defer — don't ping overnight.
@@ -9013,7 +9013,7 @@ export class WhatsAppSession {
   private async runCommuteTick(): Promise<void> {
     try {
       if (this.killSwitch) return;
-      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
+      if (this.proactivePaused()) return; // muted ("quiet Nh"), quiet-hours, or "quiet [Nh]" window
       if (!this.socket || !this.connected || !this.ownJid()) return;
       const hour = this.ownerLocalHour();
       if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
@@ -9051,9 +9051,11 @@ export class WhatsAppSession {
     }
   }
 
-  /** True while quiet-hours OR an owner "quiet [Nh]" window is active — gates every proactive push. */
+  /** True while the bot is muted ("quiet/pause Nh"), in quiet-hours, OR inside an
+   *  owner "quiet [Nh]" window — gates every proactive push so a global mute also
+   *  silences proactive bloat, not just contact replies. */
   private proactivePaused(): boolean {
-    return isQuietHours(new Date(), defaultQuietHours()) || Date.now() < this.proactiveMuteUntil;
+    return this.muted || isQuietHours(new Date(), defaultQuietHours()) || Date.now() < this.proactiveMuteUntil;
   }
 
   /** Push only high-signal NEW AI news to self-chat. Deduped + quiet-hours aware. */
@@ -9120,7 +9122,7 @@ export class WhatsAppSession {
   private async runEnergyTick(): Promise<void> {
     try {
       if (this.killSwitch) return;
-      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
+      if (this.proactivePaused()) return; // muted ("quiet Nh"), quiet-hours, or "quiet [Nh]" window
       if (!this.socket || !this.connected || !this.ownJid()) return;
       const hour = this.ownerLocalHour();
       if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
@@ -9191,7 +9193,7 @@ export class WhatsAppSession {
   private async runHealthCoachTick(): Promise<void> {
     try {
       if (this.killSwitch) return;
-      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
+      if (this.proactivePaused()) return; // muted ("quiet Nh"), quiet-hours, or "quiet [Nh]" window
       if (!this.socket || !this.connected || !this.ownJid()) return;
       const hour = this.ownerLocalHour();
       if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
