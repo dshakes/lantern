@@ -81,6 +81,9 @@ func (h *NewsHandler) ListNews(w http.ResponseWriter, r *http.Request) {
 	}
 
 	categoryFilter := q.Get("category")
+	// ?source=openai → case-insensitive substring match on the source name
+	// (e.g. "openai" matches "OpenAI Blog"). Empty = all sources.
+	sourceFilter := q.Get("source")
 
 	// ?window=today|week|month → filter on the item's date (published, else
 	// scanned). Empty = all time. Mapped to a fixed interval (never user SQL).
@@ -114,9 +117,10 @@ func (h *NewsHandler) ListNews(w http.ResponseWriter, r *http.Request) {
 			WHERE tenant_id = $1
 			  AND ($2 = '' OR category = $2)
 			  AND ($4 = '' OR COALESCE(published_at, created_at) >= now() - $4::interval)
+			  AND ($5 = '' OR source ILIKE '%' || $5 || '%')
 			ORDER BY `+orderBy+`
 			LIMIT $3
-		`, claims.TenantID, categoryFilter, limit, windowInterval)
+		`, claims.TenantID, categoryFilter, limit, windowInterval, sourceFilter)
 		if qErr != nil {
 			return qErr
 		}
