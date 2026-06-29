@@ -34,13 +34,13 @@ const NH  = 42;
 const GAP = 32;
 const PX  = 16;
 const PT  = 18;
-const DIP = 26;
+const DIP = 44; // deep enough that the loop arc clears the "↻ repeats" label
 
 export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel, interface: iface }: AgentLoopProps) {
   const c = COLORS[tone];
   const n = stages.length;
   const svgW = PX + n * (NW + GAP) - GAP + PX;
-  const svgH = PT + NH + DIP + 14;
+  const svgH = PT + NH + DIP + 10;
 
   const nx  = (i: number) => PX + i * (NW + GAP);
   const midY = PT + NH / 2;
@@ -103,9 +103,11 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
 
         <path d={loopPath} fill="none" stroke={c.stroke} strokeWidth={1.5} strokeDasharray="5 3" markerEnd={`url(#${mid})`} />
         {/* Explicit loop label so the dashed arc reads clearly as "this repeats". */}
+        {/* Label sits in the clear gap just below the boxes; the arc dips
+            BELOW it (DIP is tuned so they never overlap). */}
         <g>
-          <rect x={loopMidX - 34} y={ay - 9} width={68} height={18} rx={9} fill={c.fill} stroke={c.border} strokeWidth={1} />
-          <text x={loopMidX} y={ay + 1} textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight={700} fill={c.text} style={{ fontFamily: "inherit" }}>↻ repeats</text>
+          <rect x={loopMidX - 34} y={nodeBottom + 4} width={68} height={18} rx={9} fill={c.fill} stroke={c.border} strokeWidth={1} />
+          <text x={loopMidX} y={nodeBottom + 14} textAnchor="middle" dominantBaseline="middle" fontSize={9} fontWeight={700} fill={c.text} style={{ fontFamily: "inherit" }}>↻ repeats</text>
         </g>
       </svg>
       {iface && (
