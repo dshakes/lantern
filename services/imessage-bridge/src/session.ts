@@ -257,7 +257,7 @@ import {
 } from "@lantern/bridge-core/doc-ingest";
 import {
   parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildReadlist,
-  selectTopDrops, buildTopDropPush,
+  selectTopDrops, buildTopDropPush, buildNewsDigest,
   type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite,
 } from "@lantern/bridge-core/command-center";
 import {
@@ -727,6 +727,7 @@ export class IMessageSession {
   private newsPushed = new Set<string>();
   private newsPushedPath = "";
   private newsNeedsSeed = false;
+  private lastNewsDigestDay = "";
   private commuteWasLastDriving = false;
   // ── Energy guardian (LANTERN_ENERGY=on, default OFF) ───────────────────────
   // ponytail: ships dark; owner flips LANTERN_ENERGY=on to enable.
@@ -1326,6 +1327,26 @@ export class IMessageSession {
         this.newsNeedsSeed = false;
         this.logger.info({ seeded: this.newsPushed.size }, "proactive AI news: seeded baseline (will push only NEW drops)");
         return;
+      }
+      // Daily news digest: once per day at/after the digest hour (default 9am
+      // owner-local), push a top-8 cross-source roundup. Persisted to a sibling
+      // file so a same-day restart doesn't re-send it.
+      const digestHour = parseInt(process.env.LANTERN_NEWS_DIGEST_HOUR ?? "9", 10);
+      const now = new Date();
+      const ymd = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+      const digestDayPath = this.newsPushedPath.replace(/[^/]+$/, "news-digest-day.txt");
+      if (!this.lastNewsDigestDay) {
+        try { this.lastNewsDigestDay = readFileSync(digestDayPath, "utf8").trim(); } catch { /* none yet */ }
+      }
+      if (now.getHours() >= digestHour && this.lastNewsDigestDay !== ymd) {
+        try {
+          await this.send(target, buildNewsDigest(items, "today"));
+          this.lastNewsDigestDay = ymd;
+          try { writeFileSync(digestDayPath, ymd, { mode: 0o600 }); } catch { /* best-effort */ }
+          this.logger.info("proactive AI news: daily digest pushed");
+        } catch (e) {
+          this.logger.warn({ err: e }, "daily digest send failed");
+        }
       }
       const drops = selectTopDrops(items, this.newsPushed, { threshold: 70, max: 2 });
       for (const d of drops) {
@@ -2597,6 +2618,7 @@ export class IMessageSession {
         const params = new URLSearchParams({ limit: "20" });
         if (nq.window) { params.set("window", nq.window); params.set("sort", "popular"); }
         if (nq.category) params.set("category", nq.category);
+        if (nq.source) params.set("source", nq.source);
         const news: NewsItemLite[] = [];
         try {
           const r = await authedFetch("/v1/news?" + params.toString());
