@@ -1412,6 +1412,13 @@ export class WhatsAppSession {
   // owner taps both. Bounded; entries are cheap msg-id strings.
   private retriedReplyIds = new Set<string>();
   private static readonly RETRIED_REPLY_IDS_MAX = 200;
+  // Reaction events re-deliver on every reconnect (WhatsApp re-syncs history,
+  // and the Signal decrypt-failure storm forces frequent reconnects). Without
+  // dedup, an old 🟢/⏸ reaction re-fires its command each cycle → self-chat
+  // spam ("✅ auto-reply on" over and over). Keyed by the reaction message's
+  // own key.id, which is stable across re-delivery.
+  private processedReactionIds = new Set<string>();
+  private static readonly PROCESSED_REACTION_IDS_MAX = 3000;
 
   // ── Overnight replay queue ───────────────────────────────────────────
   // Contact (non-owner, 1:1) messages that land during quiet hours
@@ -2490,7 +2497,23 @@ export class WhatsAppSession {
           // reacted-to message. Only OWNER reactions count.
           const reactionMsg = msg.message?.reactionMessage;
           if (reactionMsg && msg.key.fromMe) {
+            // Dedup: WhatsApp re-delivers reactions on every reconnect/history
+            // sync (and the Signal decrypt storm forces frequent reconnects).
+            // Key on the SEMANTIC reaction identity — reacted-to message id +
+            // emoji — NOT the envelope key.id, which WhatsApp can re-mint per
+            // re-delivery (so an id-only dedup would let the same 🟢 re-fire
+            // resume-contact every cycle → the "auto-reply on" spam loop).
             const emoji = reactionMsg.text || "";
+            const rxnKey = `${reactionMsg.key?.id || msg.key.id || ""}:${emoji}`;
+            if (rxnKey !== ":") {
+              if (this.processedReactionIds.has(rxnKey)) continue;
+              this.processedReactionIds.add(rxnKey);
+              if (this.processedReactionIds.size > WhatsAppSession.PROCESSED_REACTION_IDS_MAX) {
+                this.processedReactionIds = new Set(
+                  [...this.processedReactionIds].slice(-Math.floor(WhatsAppSession.PROCESSED_REACTION_IDS_MAX / 2)),
+                );
+              }
+            }
             const action = reactionToAction(emoji);
             if (action) {
               const targetKeyId = reactionMsg.key?.id || undefined;
