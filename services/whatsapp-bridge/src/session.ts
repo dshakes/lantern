@@ -8984,6 +8984,7 @@ export class WhatsAppSession {
   private async runCommuteTick(): Promise<void> {
     try {
       if (this.killSwitch) return;
+      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
       if (!this.socket || !this.connected || !this.ownJid()) return;
       const hour = this.ownerLocalHour();
       if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
@@ -9090,6 +9091,7 @@ export class WhatsAppSession {
   private async runEnergyTick(): Promise<void> {
     try {
       if (this.killSwitch) return;
+      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
       if (!this.socket || !this.connected || !this.ownJid()) return;
       const hour = this.ownerLocalHour();
       if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
@@ -9160,6 +9162,7 @@ export class WhatsAppSession {
   private async runHealthCoachTick(): Promise<void> {
     try {
       if (this.killSwitch) return;
+      if (Date.now() < this.proactiveMuteUntil) return; // "quiet [Nh]" window
       if (!this.socket || !this.connected || !this.ownJid()) return;
       const hour = this.ownerLocalHour();
       if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
