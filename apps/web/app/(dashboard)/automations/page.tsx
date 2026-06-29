@@ -722,7 +722,10 @@ export default function AutomationsPage() {
   // ---- Render --------------------------------------------------------------
 
   return (
-    <div className="min-h-screen bg-surface-0">
+    // flex child of the dashboard's overflow-hidden <main>; the feed scrolls in
+    // its own overflow-y-auto region (min-h-screen here trapped scroll + clipped
+    // content on desktop AND mobile).
+    <div className="flex flex-1 flex-col overflow-hidden bg-surface-0">
       <PageHeader
         title="Automations"
         description="Actions your bot has taken or suggested — bills, deliveries, appointments, and more."
@@ -739,6 +742,8 @@ export default function AutomationsPage() {
         }
       />
 
+      {/* Scrollable region (the rest of the page owns the only scrollbar). */}
+      <div className="flex-1 overflow-y-auto">
       {/* Main content — single-column, max 640 px so it reads well on iPhone */}
       <div className="mx-auto max-w-2xl px-4 pb-16 pt-6 sm:px-6">
 
@@ -849,6 +854,7 @@ export default function AutomationsPage() {
             <strong className="text-zinc-500">Off</strong> — bot ignores this category.
           </p>
         </section>
+      </div>
       </div>
     </div>
   );
