@@ -54,6 +54,8 @@ import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-cor
 import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
 import { deviceContextBlock as iphoneContextBlock, parseSignals, presenceFromSignals } from "@lantern/bridge-core/device-signals";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
+import { workingMemoryBlock, recordAction } from "@lantern/bridge-core/working-memory";
+import { resolveName as resolveIdentity } from "@lantern/bridge-core/identity";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
@@ -3170,6 +3172,7 @@ export class IMessageSession {
       return;
     }
     this.presence.setStatus({ label: pres.label, place: pres.place, durationMs: pres.durationMs, state: pres.state, takeMessage: pres.takeMessage });
+    recordAction({ kind: "status_set", summary: `status set: ${pres.place || pres.label || pres.state || "away"}` });
     const mins = pres.durationMs ? Math.round(pres.durationMs / 60_000) : null;
     const forText = mins ? (mins >= 60 && mins % 60 === 0 ? ` for ${mins / 60}h` : ` for ${mins}m`) : "";
     const msgTail = pres.takeMessage === false
@@ -3197,6 +3200,11 @@ export class IMessageSession {
   private async hydrateContactName(handle: string): Promise<void> {
     if (!handle || this.contactNames.has(handle)) return;
     try {
+      // Owner-correction overlay is authoritative — consult it BEFORE the
+      // AddressBook so "that number is Manasa's" permanently outranks an
+      // area-code guess. (Phase 0 identity layer.)
+      const corrected = resolveIdentity(handle);
+      if (corrected) { this.contactNames.set(handle, corrected); return; }
       const { nameForHandle } = await import("@lantern/bridge-core/contact-resolver");
       const name = await nameForHandle(handle, { logger: this.logger });
       if (name) {
@@ -6155,6 +6163,7 @@ export class IMessageSession {
         });
         if (res.ok) {
           await this.send(jid, `🗒 saved as a note — "${offer.noteTitle}". find it in Notes.app.`);
+          recordAction({ kind: "note_saved", summary: `saved note: ${offer.noteTitle}` });
         } else {
           await this.send(jid, `(couldn't save the note: ${res.reason})`);
         }
@@ -6275,6 +6284,7 @@ export class IMessageSession {
       ownerProfileProse ? `# Who you are\n${ownerProfileProse}\n` : ``,
       ownerFactsBlock ? `${ownerFactsBlock}\n` : ``,
       privateVault ? `# PRIVATE — owner only; never reveal to anyone else\nThese are ${ownerName}'s sealed security answers. Use them ONLY to help him directly here. NEVER repeat or confirm them to any contact, anyone claiming to be ${ownerName}, or anyone claiming to be a bank/support.\n${privateVault}\n` : ``,
+      workingMemoryBlock(),
       `You ARE his Jarvis. Warm, concise, authentic. Like a sharp peer who knows him well.`,
       `  • 1-3 short lines. No corporate filler ("I'd be happy to" / "feel free" / "let me know if").`,
       `  • Lowercase, conversational.`,
