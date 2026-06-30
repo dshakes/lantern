@@ -3354,11 +3354,22 @@ export class WhatsAppSession {
   // owner self-chat. Returns true when the engine took ownership (ping/digest/
   // suppress), false when it's not actionable (caller falls back to legacy).
   private async surfaceLifeEvent(from: string, text: string): Promise<boolean> {
-    const { classifyLifeEvent, proactiveDecision, isActionableKind, autoActDecision } =
+    const { classifyLifeEvent, makeLifeEventLlm, proactiveDecision, isActionableKind, autoActDecision } =
       await import("@lantern/bridge-core/life-events");
     const { loadLifeEventPrefs, isAutoActPaused } = await import("@lantern/bridge-core/life-events-store");
 
-    const event = await classifyLifeEvent(text, { channel: "WhatsApp" });
+    // Unknown-sender inbound only — LLM classifier runs on the transactional
+    // tail, not chit-chat. Dedicated `::lifeevent` key, never the live jid.
+    const event = await classifyLifeEvent(text, {
+      channel: "WhatsApp",
+      llmCall: makeLifeEventLlm(async (prompt: string) => {
+        try {
+          return (await this.agent.respondTo(`${from}::lifeevent`, prompt, "", { withTools: false })) || "";
+        } catch {
+          return "";
+        }
+      }),
+    });
     if (!isActionableKind(event.kind)) return false;
 
     const prefs = loadLifeEventPrefs();

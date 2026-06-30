@@ -267,10 +267,14 @@ export async function classifyLifeEvent(text: string, opts: ClassifyOpts = {}): 
   // source of truth shared with the sync entry point.
   const verdict = rulesDispatch(text, opts);
 
-  // Only consult the injected LLM when the rules landed on a low-confidence,
-  // non-actionable verdict ("personal"/"other") — i.e. genuinely ambiguous.
-  const ambiguous = !isActionableKind(verdict.kind) && verdict.kind !== "promo";
-  if (opts.llmCall && ambiguous && verdict.confidence < (opts.llmThreshold ?? 0.45)) {
+  // Trust a CONFIDENT actionable rules hit (bill/fraud/otp/delivery from a
+  // precise regex) and skip the LLM. EVERYTHING ELSE — a weak actionable
+  // verdict, a "promo", or a "personal"/"other" — is handed to the injected LLM
+  // as the real classifier, so a bill/delivery/fraud the keyword tables missed
+  // is no longer silently dropped (the owner's "GEICO bill got dropped" class
+  // of failure). Pure string tables were never the right thing to gate on.
+  const confidentActionable = isActionableKind(verdict.kind) && verdict.confidence >= 0.85;
+  if (opts.llmCall && !confidentActionable && verdict.confidence < (opts.llmThreshold ?? 0.85)) {
     try {
       const out = await opts.llmCall((text || "").replace(/\s+/g, " ").trim());
       if (out && out.kind) {
@@ -294,6 +298,48 @@ export async function classifyLifeEvent(text: string, opts: ClassifyOpts = {}): 
 // LLM. Identical dispatch to classifyLifeEvent's rules phase.
 export function classifyLifeEventSync(text: string, opts: Omit<ClassifyOpts, "llmCall"> = {}): LifeEvent {
   return rulesDispatch(text, opts);
+}
+
+const LIFE_EVENT_KINDS: ReadonlySet<string> = new Set<LifeEventKind>([
+  "bill", "delivery", "appointment", "fraud_alert", "otp", "travel", "receipt", "promo", "personal", "other",
+]);
+
+// Reusable adapter: wrap any text-completion function into the structured
+// `LifeEventLlm` hook `classifyLifeEvent` expects. Shared across both bridges +
+// the email ingester so the LLM classifier lives in ONE place, not per-caller.
+// Returns null on any failure so the caller falls back to the rules verdict.
+export function makeLifeEventLlm(complete: (prompt: string) => Promise<string>): LifeEventLlm {
+  return async (text: string): Promise<LlmClassification | null> => {
+    const prompt =
+      `You classify a single inbound message (often from an unknown sender — a business, bank, carrier, or short-code) into ONE life-event kind for a personal assistant.\n` +
+      `Kinds: bill (money the owner owes / a statement / premium due), delivery (a package/shipment update), appointment (a booking/visit to confirm), fraud_alert (a suspicious or declined charge to verify), otp (a verification code), travel (flight/hotel/itinerary), receipt (an order confirmation, nothing owed), promo (marketing/sale blast), personal (a human writing personally), other.\n` +
+      `Return STRICT minified JSON, nothing else: {"kind":"<one>","confidence":0..1,"urgency":"now"|"soon"|"fyi","fields":{"amount"?:number,"payee"?:string,"merchant"?:string,"dueDate"?:"YYYY-MM-DD","carrier"?:string,"eta"?:string,"code"?:string,"place"?:string,"time"?:string}}.\n` +
+      `Be decisive: if it asks for money or shows a balance it is a bill, not a promo. A genuine sale/marketing blast is promo. Only use "personal"/"other" when it truly is not transactional.\n` +
+      `Message:\n"""${text}"""\nJSON:`;
+    let raw: string;
+    try {
+      raw = await complete(prompt);
+    } catch {
+      return null;
+    }
+    const m = raw && raw.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    let obj: any;
+    try {
+      obj = JSON.parse(m[0]);
+    } catch {
+      return null;
+    }
+    if (!obj || typeof obj.kind !== "string" || !LIFE_EVENT_KINDS.has(obj.kind)) return null;
+    const urgency: Urgency = obj.urgency === "now" || obj.urgency === "soon" || obj.urgency === "fyi" ? obj.urgency : "fyi";
+    const conf = typeof obj.confidence === "number" ? Math.max(0, Math.min(1, obj.confidence)) : 0.7;
+    return {
+      kind: obj.kind as LifeEventKind,
+      confidence: conf,
+      urgency,
+      fields: obj.fields && typeof obj.fields === "object" ? obj.fields : {},
+    };
+  };
 }
 
 // The single source of truth for the deterministic dispatch, shared by the

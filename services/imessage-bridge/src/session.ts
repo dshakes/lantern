@@ -3035,11 +3035,24 @@ export class IMessageSession {
   //   digest   → queue the short owner line into the morning briefing.
   //   suppress → drop (record kind for the owner model), as today.
   private async surfaceLifeEvent(handle: string, text: string, channel = "iMessage"): Promise<boolean> {
-    const { classifyLifeEvent, proactiveDecision, isActionableKind, autoActDecision } =
+    const { classifyLifeEvent, makeLifeEventLlm, proactiveDecision, isActionableKind, autoActDecision } =
       await import("@lantern/bridge-core/life-events");
     const { loadLifeEventPrefs, isAutoActPaused } = await import("@lantern/bridge-core/life-events-store");
 
-    const event = await classifyLifeEvent(text, { channel });
+    // Unknown-sender inbound only (gated by maybeIngestUnknownInbound) — so the
+    // LLM classifier runs on the low-volume transactional tail, not chit-chat.
+    // Dedicated `::lifeevent` session key, never the sender's live jid (avoids
+    // leaking the JSON-classification turn into a reply — respondTo pollution).
+    const event = await classifyLifeEvent(text, {
+      channel,
+      llmCall: makeLifeEventLlm(async (prompt) => {
+        try {
+          return (await this.agent.respondTo(`${handle}::lifeevent`, prompt, "", { withTools: false })) || "";
+        } catch {
+          return "";
+        }
+      }),
+    });
     if (!isActionableKind(event.kind)) return false; // promo/personal/other → legacy path
 
     const prefs = loadLifeEventPrefs();

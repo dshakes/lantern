@@ -8,6 +8,7 @@ import { strict as assert } from "node:assert";
 import {
   classifyLifeEvent,
   classifyLifeEventSync,
+  makeLifeEventLlm,
   suggestedActionsFor,
   proactiveDecision,
   isStaleEvent,
@@ -344,6 +345,38 @@ describe("LLM fallback (injected hook)", () => {
       llmCall: async () => { throw new Error("boom"); },
     });
     assert.ok(["personal", "other"].includes(e.kind));
+  });
+
+  test("a bill the regex misses is recovered by the LLM (no longer dropped)", async () => {
+    // Phrasing with no BILL_RE/$ keyword — rules land on personal/other; the
+    // widened gate hands it to the LLM, which recognizes it as a bill.
+    const e = await classifyLifeEvent("Your account with us is now past the grace window — kindly clear the outstanding before the 5th.", {
+      ...opts,
+      llmCall: makeLifeEventLlm(async () =>
+        '{"kind":"bill","confidence":0.8,"urgency":"soon","fields":{"payee":"Acme"}}'),
+    });
+    assert.equal(e.kind, "bill");
+    assert.equal(e.fields.payee, "Acme");
+  });
+});
+
+describe("makeLifeEventLlm (structured adapter)", () => {
+  test("parses JSON embedded in prose + validates kind", async () => {
+    const llm = makeLifeEventLlm(async () =>
+      'Sure! {"kind":"delivery","confidence":0.9,"urgency":"soon","fields":{"carrier":"UPS"}} done');
+    const out = await llm("your UPS package is out for delivery");
+    assert.equal(out?.kind, "delivery");
+    assert.equal(out?.fields?.carrier, "UPS");
+  });
+
+  test("rejects an unknown kind → null (caller keeps rules verdict)", async () => {
+    const llm = makeLifeEventLlm(async () => '{"kind":"banana","confidence":0.9}');
+    assert.equal(await llm("whatever"), null);
+  });
+
+  test("non-JSON / throwing completion → null", async () => {
+    assert.equal(await makeLifeEventLlm(async () => "no json here")("x"), null);
+    assert.equal(await makeLifeEventLlm(async () => { throw new Error("x"); })("x"), null);
   });
 });
 
