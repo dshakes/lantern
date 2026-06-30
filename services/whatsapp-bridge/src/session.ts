@@ -19,6 +19,7 @@ import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
 import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
 import { parseSignals, presenceFromSignals, latestKnownLocation, isInnerCircle, formatOwnerLocationBlock, type SignalPresence } from "@lantern/bridge-core/device-signals";
+import { extractArticleUrl, fetchArticle, buildArticleBlock } from "@lantern/bridge-core/article";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
@@ -7982,6 +7983,20 @@ export class WhatsAppSession {
         systemHint += "\n\n" + formatOwnerLocationBlock(known, ownerName, label);
         truthfulLocationKnown = known != null;
       } catch { /* fail-closed: no block, net stays armed */ }
+    }
+    // AGENTIC ARTICLE READING: fetch + read a shared link so the reply grounds
+    // on real content, not the title. Best-effort; 1:1 only.
+    if (!opts.isGroup && (process.env.LANTERN_ARTICLE_READ || "on").toLowerCase() !== "off") {
+      try {
+        const articleUrl = extractArticleUrl(text);
+        if (articleUrl) {
+          const content = await fetchArticle(articleUrl);
+          if (content) {
+            systemHint += "\n\n" + buildArticleBlock(content, (opts.senderName ?? this.contactNames.get(from)) || "they", ownerName);
+            this.logger.info({ url: articleUrl, via: content.via, chars: content.text.length }, "article fetched for grounding");
+          }
+        }
+      } catch { /* best-effort */ }
     }
     const userText = opts.isGroup
       ? `[group message from ${opts.senderName || "a participant"}]\n${text}`
