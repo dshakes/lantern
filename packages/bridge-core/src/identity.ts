@@ -13,7 +13,7 @@
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
-import { canonicalHandle } from "./canonical-handle.ts";
+import { canonicalHandle } from "./canonical-handle.js";
 
 export interface IdentityOverride {
   handle: string;
