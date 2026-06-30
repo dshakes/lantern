@@ -418,6 +418,89 @@ export function buildAgents(stats: AgentStat[]): string {
   return lines.join("\n");
 }
 
+/** A run row as returned by GET /v1/runs (only the fields we read). */
+export interface AgentRunRow {
+  agentName?: string;
+  status?: string; // "running" | "succeeded" | "failed" | "queued"
+  createdAt?: string;
+  output?: Record<string, unknown> | null;
+}
+
+function agoLabel(iso: string | undefined, now: number): string | undefined {
+  if (!iso) return undefined;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return undefined;
+  const s = Math.max(0, Math.floor((now - t) / 1000));
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+// Humanize a loop-agent's output JSON into a short outcome. Known shapes are
+// labelled meaningfully; anything else falls back to the first numeric field so
+// a new agent still shows substance instead of nothing.
+function outcomeLabel(out: Record<string, unknown> | null | undefined): string | undefined {
+  if (!out || typeof out !== "object") return undefined;
+  const n = (k: string): number | undefined => (typeof out[k] === "number" ? (out[k] as number) : undefined);
+  if (n("hikes") !== undefined) return `${n("hikes")} flagged`;
+  if (n("records") !== undefined) {
+    const obl = n("obligations");
+    return `${n("records")} records${obl ? ` · ${obl} open` : ""}`;
+  }
+  if (n("new") !== undefined && n("scanned") !== undefined) return `${n("new")} new of ${n("scanned")}`;
+  if (n("action") !== undefined || n("fyi") !== undefined) {
+    const a = n("action") ?? 0, f = n("fyi") ?? 0;
+    return `${a} action · ${f} fyi`;
+  }
+  if (n("created") !== undefined) return `${n("created")} created`;
+  if (n("surfaced") !== undefined) return `${n("surfaced")} surfaced`;
+  if (n("brief_chars") !== undefined) return n("brief_chars")! > 0 ? "brief written" : "no brief";
+  for (const [k, v] of Object.entries(out)) {
+    if (typeof v === "number") return `${v} ${k}`;
+  }
+  return undefined;
+}
+
+/**
+ * Turn the raw agent list + recent run rows into AgentStats with real
+ * last-run/outcome/health — the `agents` view previously showed only name +
+ * status. `runs` is expected newest-first (as GET /v1/runs returns). Pure +
+ * testable; no I/O.
+ */
+export function summarizeAgentRuns(
+  agents: Array<{ name: string; status?: string }>,
+  runs: AgentRunRow[],
+  now: number = Date.now(),
+): AgentStat[] {
+  const lastByAgent = new Map<string, AgentRunRow>();
+  for (const r of runs) {
+    const name = r.agentName;
+    if (!name || lastByAgent.has(name)) continue; // first seen = most recent (newest-first)
+    lastByAgent.set(name, r);
+  }
+  return agents.map((a) => {
+    const last = lastByAgent.get(a.name);
+    let health = "never";
+    if (last) {
+      health =
+        last.status === "running" || last.status === "queued"
+          ? "running"
+          : last.status === "failed"
+            ? "failed"
+            : "idle";
+    }
+    return {
+      name: a.name,
+      health,
+      lastRunAgo: agoLabel(last?.createdAt, now),
+      lastOutcome: outcomeLabel(last?.output),
+    };
+  });
+}
+
 // ── <domain> drill-down ─────────────────────────────────────────────────────
 
 export interface DomainView {
