@@ -378,6 +378,23 @@ app.get("/session/:tenantId/imessage/groups", async (req, res) => {
   }
 });
 
+// Cross-bridge thread-peek: the WhatsApp bridge calls this for a person's
+// recent iMessage thread, to merge into a unified cross-channel answer.
+app.post("/session/:tenantId/imessage/thread-peek", async (req, res) => {
+  const s = sessions.get(req.params.tenantId);
+  if (!s) { res.status(400).json({ error: "session not started" }); return; }
+  const { name } = req.body as { name?: unknown };
+  if (typeof name !== "string" || !name.trim()) { res.status(400).json({ error: "name required" }); return; }
+  try {
+    const peek = await s.peekLocal(name.trim());
+    if (!peek) { res.status(204).end(); return; }
+    res.json(peek);
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "imessage/thread-peek failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 app.post("/session/:tenantId/imessage/group", async (req, res) => {
   const s = sessions.get(req.params.tenantId);
   if (!s) { res.status(400).json({ error: "session not started" }); return; }

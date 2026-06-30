@@ -333,6 +333,16 @@ export type ConnectionState =
   | "conflict"
   | "error";
 
+// One channel's recent thread for a person — exchanged between bridges over
+// loopback so "what did X say" answers identically on both.
+export interface PeekLocalResult {
+  who: string;
+  channel: "imessage" | "whatsapp";
+  messages: Array<{ ts: number; fromMe: boolean; text: string }>;
+  emailHints: string[];
+  gender: "m" | "f" | null;
+}
+
 export class WhatsAppSession {
   private tenantId: string;
   private logger: Logger;
@@ -9824,19 +9834,10 @@ export class WhatsAppSession {
   // contact → pull their real recent 1:1 messages from wa-history → return a
   // context block so the LLM answers from the real thread, not a punted
   // search_whatsapp_history call. "" on any miss → caller falls through.
-  private async buildThreadPeekBlock(contactName: string): Promise<string> {
+  // LOCAL single-channel peek (WhatsApp). PUBLIC so the iMessage bridge can
+  // fetch it over loopback for cross-bridge parity.
+  async peekLocal(contactName: string): Promise<PeekLocalResult | null> {
     try {
-      // Gather THIS person's 1:1 jids from EVERY source the bridge has — the
-      // AddressBook card, the handles chat history has seen under their name,
-      // and recent history rows whose sender matches — deduped by canonical
-      // handle. Critical: the card may hold an OLD number while the person's
-      // RECENT messages come from a jid only history knows; the card alone
-      // surfaces a stale thread and reports "nothing recent" (the Manasa bug).
-      // Whole-word/exact name match keeps it to one person; @g.us/@lid excluded.
-      // A first name routinely matches MANY cards (family-prefix names), most
-      // with stale threads. Gather jids from ALL whole-word name matches, then
-      // show the SINGLE most-recently-active thread — the contact the owner
-      // actually talks to. Fixes picking the wrong namesake AND mixing two.
       const isDmJid = (j: string) => !!j && !j.endsWith("@g.us") && !j.endsWith("@lid");
       const needle = contactName.trim().toLowerCase();
       const nameMatches = (n?: string): boolean => {
@@ -9857,9 +9858,6 @@ export class WhatsAppSession {
         jids.push(j);
       };
       const emailHints: string[] = [];
-      // Build the jid from the CANONICAL digits (US 10-digit → 1+10) so it
-      // matches wa-history's country-coded jids — same format-mismatch class
-      // that broke iMessage.
       const toJid = (p: string) => { const c = canonicalHandle(p); return /^\d{8,15}$/.test(c) ? c + "@s.whatsapp.net" : ""; };
       for (const c of hits) {
         if (!nameMatches(c.name)) continue;
@@ -9870,14 +9868,10 @@ export class WhatsAppSession {
         if (nameMatches(name)) add(jid, name);
       }
       for (const r of this.searchHistory({ fromContact: contactName, limit: 5 })) add(r.jid, r.senderName);
-      // Owner-explicit mappings (e.g. a spouse texted daily at an unsaved
-      // number) — the only source for a handle in neither AddressBook nor
-      // profile. Convert a bare phone to its WhatsApp jid.
       for (const h of resolveHandlesByName(contactName)) {
         if (h.includes("@")) add(h, contactName);
         else add(toJid(h), contactName);
       }
-
       let best: { jid: string; msgs: Array<{ ts: number; fromMe: boolean; text: string }>; newest: number } | null = null;
       for (const jid of jids) {
         const rows: Array<{ ts: number; fromMe: boolean; text: string }> = [];
@@ -9889,30 +9883,76 @@ export class WhatsAppSession {
         const newest = Math.max(...rows.map((r) => r.ts));
         if (!best || newest > best.newest) best = { jid, msgs: rows, newest };
       }
+      if (!best && jids.length === 0 && emailHints.length === 0) return null;
       const who = best ? (this.contactNames.get(best.jid) || nameByCanon.get(canonicalHandle(best.jid)) || contactName) : contactName;
-      // PRONOUN SAFETY: gender from RELATIONSHIP, never the name. Unknown → name/they.
       const relLabel = best ? (this.ownerProfileStore.relationshipFor(best.jid, who) || "") : "";
-      const g = resolveGender(who)
+      const gender: "m" | "f" | null = resolveGender(who)
         || (/\b(wife|sister|mother|mom|daughter|girlfriend|aunt|grandmother|niece|sister-in-law|fiancee)\b/i.test(relLabel) ? "f"
           : /\b(husband|brother|father|dad|son|boyfriend|uncle|grandfather|nephew|brother-in-law|fiance)\b/i.test(relLabel) ? "m"
           : null);
-      const pronounRule = g === "f"
+      return {
+        who,
+        channel: "whatsapp",
+        messages: best ? best.msgs.sort((a, b) => a.ts - b.ts).slice(-15) : [],
+        emailHints: [...new Set(emailHints)],
+        gender,
+      };
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "peekLocal failed");
+      return null;
+    }
+  }
+
+  // Fetch the iMessage bridge's local peek for the same person (loopback).
+  private async fetchPeerPeek(contactName: string): Promise<PeekLocalResult | null> {
+    try {
+      const imBase = (process.env.LANTERN_IMESSAGE_BRIDGE_URL || "http://127.0.0.1:3200").replace(/\/$/, "");
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 4000);
+      try {
+        const res = await fetch(`${imBase}/session/${this.tenantId}/imessage/thread-peek`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: contactName }),
+          signal: ctrl.signal,
+        });
+        if (!res.ok) return null;
+        const d = (await res.json()) as PeekLocalResult;
+        return d && Array.isArray(d.messages) ? d : null;
+      } finally { clearTimeout(t); }
+    } catch { return null; }
+  }
+
+  // CROSS-BRIDGE thread-peek: merge WhatsApp (local) + iMessage (peer) + email
+  // into ONE unified answer, so "what did X say" is identical on both bridges.
+  private async buildThreadPeekBlock(contactName: string): Promise<string> {
+    try {
+      const [local, peer] = await Promise.all([
+        this.peekLocal(contactName),
+        this.fetchPeerPeek(contactName),
+      ]);
+      const parts = [local, peer].filter(Boolean) as PeekLocalResult[];
+      if (parts.length === 0) return "";
+      const newestOf = (p?: PeekLocalResult | null) => (p && p.messages.length ? Math.max(...p.messages.map((m) => m.ts)) : -1);
+      const who = (newestOf(peer) > newestOf(local) ? peer?.who : local?.who) || local?.who || peer?.who || contactName;
+      const gender = resolveGender(who) || local?.gender || peer?.gender || null;
+      const emailHints = [...new Set([...(local?.emailHints ?? []), ...(peer?.emailHints ?? [])])];
+      const pronounRule = gender === "f"
         ? `Use she/her for ${who} (her correct pronoun).`
-        : g === "m"
+        : gender === "m"
           ? `Use he/him for ${who} (his correct pronoun).`
           : `CRITICAL: ${who}'s gender is unknown — refer to ${who} ONLY by name ("${who}"). Do NOT use he/she/him/her/his/hers anywhere; if a pronoun is unavoidable use they/them. Guessing gender is a serious error.`;
-      // EMAIL too (cross-channel): always tell the model to also pull email for
-      // this person and merge it with the texts — never report "nothing" while
-      // an email thread is active.
-      const emailLine = `# Also check EMAIL (cross-channel): run gmail_search for ${who}${emailHints.length ? ` (address: ${[...new Set(emailHints)].slice(0, 2).join(", ")})` : ""} and COMBINE any recent email with the messages above into ONE answer — most recent/relevant first. Include email ONLY if gmail_search returns REAL results; if it returns nothing, say nothing about email and NEVER invent or assume email content. Don't tunnel-vision on one channel.`;
-      if (!best) {
-        if (jids.length === 0 && emailHints.length === 0) return "";
-        return [`# No recent WhatsApp texts found from ${who}.`, emailLine].join("\n");
+      const emailLine = `# Also check EMAIL (cross-channel): run gmail_search for ${who}${emailHints.length ? ` (address: ${emailHints.slice(0, 2).join(", ")})` : ""} and COMBINE any recent email with the messages above into ONE answer — most recent/relevant first. Include email ONLY if gmail_search returns REAL results; if it returns nothing, say nothing about email and NEVER invent or assume email content. Don't tunnel-vision on one channel.`;
+      const merged: Array<{ ts: number; fromMe: boolean; text: string; channel: string }> = [];
+      for (const p of parts) for (const m of p.messages) merged.push({ ...m, channel: p.channel });
+      merged.sort((a, b) => a.ts - b.ts);
+      const recent = merged.slice(-14);
+      if (recent.length === 0) {
+        return [`# No recent iMessage or WhatsApp texts found from ${who}.`, emailLine].join("\n");
       }
-      const recent = best.msgs.sort((a, b) => a.ts - b.ts).slice(-12);
-      const lines = recent.map((m) => `${m.fromMe ? "you" : who}: ${m.text}`);
+      const lines = recent.map((m) => `[${m.channel === "imessage" ? "iMessage" : "WhatsApp"}] ${m.fromMe ? "you" : who}: ${m.text}`);
       return [
-        `# Recent messages from ${who} (oldest first — the real thread). Answer the owner's question from THIS; do not fabricate.`,
+        `# Recent messages from ${who} across iMessage + WhatsApp (oldest first — the real threads). Answer the owner's question from THIS; do not fabricate.`,
         `Summarize in natural THIRD PERSON about ${who}. ${pronounRule} NEVER echo ${who}'s first-person words verbatim ("${who} I'll…" / "${who} said I'll…" is wrong) and don't paste messages raw. Keep concrete details EXACT (item names, names, dates, conditions like "not from the snack section"). Lead with the single most useful takeaway, then the specifics.`,
         `This is its OWN question about ${who}. Answer ONLY from ${who}'s messages below — do NOT carry over the previous question's person or topic, and do NOT comment on whether ${who} mentioned someone else from an earlier question. Treat "today/recently/lately" loosely: if ${who}'s latest update answers it, LEAD WITH THAT ANSWER directly — don't bury it under "nothing new today" when you have a recent relevant update.`,
         ...lines,
