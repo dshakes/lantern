@@ -407,7 +407,7 @@ export function buildAgents(stats: AgentStat[]): string {
   const failed = stats.filter((s) => s.health === "failed").length;
   const lines: string[] = [`🤖 agents — ${ok} healthy${failed ? ` · ⚠️ ${failed} failed` : ""} · ${stats.length} total`];
   for (const s of stats) {
-    const dot = s.health === "failed" ? "🔴" : s.health === "never" ? "⚪" : "🟢";
+    const dot = s.health === "failed" ? "🔴" : s.health === "off" ? "⚫" : s.health === "never" ? "⚪" : "🟢";
     const bits = [s.name];
     if (s.lastRunAgo) bits.push(`ran ${s.lastRunAgo}`);
     if (s.lastOutcome) bits.push(`(${s.lastOutcome})`);
@@ -497,6 +497,36 @@ export function summarizeAgentRuns(
       health,
       lastRunAgo: agoLabel(last?.createdAt, now),
       lastOutcome: outcomeLabel(last?.output),
+    };
+  });
+}
+
+/** Local status of a bridge-side nano-loop (commute/energy/health/focus) — these
+ *  execute in the bridge, not the control-plane, so they have no run rows. */
+export interface BridgeLoopStatus {
+  name: string; // must match the seeded control-plane agent name
+  enabled: boolean; // env-gated on?
+  firedToday?: boolean;
+  note?: string; // override outcome label (e.g. "armed", "in focus")
+}
+
+/**
+ * Patch the control-plane AgentStats with the bridge's REAL local state for the
+ * loops it runs itself. Without this they show "never" (no control-plane runs)
+ * even when off or actively firing — misleading. Disabled → "off"; enabled →
+ * "idle" with today's fire reflected.
+ */
+export function mergeBridgeLoopStatus(stats: AgentStat[], local: BridgeLoopStatus[]): AgentStat[] {
+  const byName = new Map(local.map((l) => [l.name, l]));
+  return stats.map((s) => {
+    const l = byName.get(s.name);
+    if (!l) return s;
+    if (!l.enabled) return { ...s, health: "off", lastRunAgo: undefined, lastOutcome: l.note ?? "off" };
+    return {
+      ...s,
+      health: "idle",
+      lastRunAgo: l.firedToday ? "today" : s.lastRunAgo,
+      lastOutcome: l.note ?? (l.firedToday ? "fired today" : "armed"),
     };
   });
 }
