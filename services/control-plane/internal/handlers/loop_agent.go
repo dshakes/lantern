@@ -760,12 +760,34 @@ func runChiefOfStaffBrief(
 		logger.Warn("chief_of_staff: commitments rows error", zap.Error(rErr))
 	}
 
-	// 2. Count recent life events (last 24h).
-	var lifeEventCount int
-	_ = pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM life_events
-		WHERE tenant_id = $1 AND created_at >= now() - interval '24 hours'
-	`, tenantID).Scan(&lifeEventCount)
+	// 2. Read recent life events (last 24h) — the actual events, not a count,
+	//    so the LLM can lead with what genuinely needs attention (a fraud
+	//    alert, a bill due today) instead of being told "5 events happened".
+	type lifeEvt struct{ kind, summary, urgency string }
+	var lifeEvents []lifeEvt
+	lrows, lErr := pool.Query(ctx, `
+		SELECT kind, COALESCE(summary,''), COALESCE(urgency,'normal')
+		FROM life_events
+		WHERE tenant_id = $1
+		  AND created_at >= now() - interval '24 hours'
+		  AND status NOT IN ('dismissed','undone')
+		ORDER BY
+			CASE urgency WHEN 'now' THEN 1 WHEN 'soon' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END,
+			created_at DESC
+		LIMIT 12
+	`, tenantID)
+	if lErr == nil {
+		for lrows.Next() {
+			var e lifeEvt
+			if sErr := lrows.Scan(&e.kind, &e.summary, &e.urgency); sErr == nil {
+				lifeEvents = append(lifeEvents, e)
+			}
+		}
+		lrows.Close()
+	} else {
+		logger.Warn("chief_of_staff: query life events", zap.Error(lErr))
+	}
+	lifeEventCount := len(lifeEvents)
 
 	// 3. Compose brief — try LLM first, fall back to template.
 	var briefText string
@@ -777,13 +799,25 @@ func runChiefOfStaffBrief(
 			}
 			topItems.WriteString(fmt.Sprintf("  - [%s] %s\n", c.urgency, c.title))
 		}
-		systemPrompt := `You are a personal chief-of-staff AI. Write a concise morning brief (3–6 sentences, plain text, no bullet points, no markdown). Be direct and actionable.`
+		var evtLines strings.Builder
+		for _, e := range lifeEvents {
+			s := strings.TrimSpace(e.summary)
+			if s == "" {
+				s = e.kind
+			}
+			evtLines.WriteString(fmt.Sprintf("  - [%s/%s] %s\n", e.kind, e.urgency, clampRunes(s, 160)))
+		}
+		if evtLines.Len() == 0 {
+			evtLines.WriteString("  (none)\n")
+		}
+		systemPrompt := `You are a personal chief-of-staff AI. Write a concise morning brief (3–6 sentences, plain text, no bullet points, no markdown). Lead with what genuinely needs the owner's attention today (money, deadlines, fraud, anything urgent); fold the rest into a sentence; ignore noise. Be direct and actionable — never just count things. Output ONLY the brief prose itself — no preamble, no "Plan:", no numbered steps, no headers, no meta-commentary about how you wrote it.`
 		userPrompt := fmt.Sprintf(
-			"Date: %s\nOpen items (%d total, top %d shown):\n%sLife events in last 24h: %d\nWrite the brief.",
+			"Date: %s\nOpen items (%d total, top %d shown):\n%sToday's events (%d):\n%sWrite the brief.",
 			now.Format("Mon Jan 2, 2006"),
 			len(commitments), min(len(commitments), 5),
 			topItems.String(),
 			lifeEventCount,
+			evtLines.String(),
 		)
 		// Idempotency key scoped to tenant + calendar day (invariant #8).
 		idemCtx := WithLLMIdempotencyBase(ctx, "daily-brief:"+tenantID+":"+now.Format("2006-01-02"))
