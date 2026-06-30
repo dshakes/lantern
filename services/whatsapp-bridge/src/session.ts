@@ -72,6 +72,7 @@ import { PresenceTracker } from "@lantern/bridge-core/presence";
 import { resolveName as resolveIdentity, resolveHandlesByName, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
 import { TurnBindings } from "@lantern/bridge-core/entity-binding";
 import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
+import { buildKnownPeopleBlock, normalizeProfilePerson } from "@lantern/bridge-core/known-people";
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
 import { recordAction, recentActions } from "@lantern/bridge-core/working-memory";
@@ -1095,6 +1096,35 @@ export class WhatsAppSession {
     }
     return out;
   }
+  // Top 1:1 contacts by message volume in the recent window, aggregated from
+  // wa-history.jsonl — the behavioral signal for the known-people grounding.
+  // Groups excluded. Best-effort; [] on any failure.
+  topActiveContacts(opts: { sinceDays?: number; limit?: number } = {}): Array<{ handle: string; msgs: number; lastTs: number }> {
+    if (!this.historyFile || !existsSync(this.historyFile)) return [];
+    const sinceMs = Date.now() - (opts.sinceDays ?? 30) * 86_400_000;
+    const limit = Math.min(Math.max(opts.limit ?? 15, 1), 50);
+    const agg = new Map<string, { msgs: number; lastTs: number }>();
+    try {
+      for (const line of readFileSync(this.historyFile, "utf-8").split("\n")) {
+        if (!line) continue;
+        let e: { ts?: number; jid?: string; isGroup?: boolean };
+        try { e = JSON.parse(line); } catch { continue; }
+        if (!e.jid || e.isGroup || typeof e.ts !== "number" || e.ts < sinceMs) continue;
+        if (e.jid.endsWith("@g.us") || e.jid.endsWith("@lid")) continue;
+        const cur = agg.get(e.jid) ?? { msgs: 0, lastTs: 0 };
+        cur.msgs += 1;
+        if (e.ts > cur.lastTs) cur.lastTs = e.ts;
+        agg.set(e.jid, cur);
+      }
+    } catch {
+      return [];
+    }
+    return [...agg.entries()]
+      .map(([handle, v]) => ({ handle, msgs: v.msgs, lastTs: v.lastTs }))
+      .sort((a, b) => b.msgs - a.msgs)
+      .slice(0, limit);
+  }
+
   private macActions: MacActions | null = null;
   // Per-chat cache of the most recent offer (humanize follow-up).
   // On next-turn "yes" we execute it deterministically — bypasses
@@ -5503,6 +5533,8 @@ export class WhatsAppSession {
     // PROACTIVE BRIEFING: "brief me" / "what's on my plate" → assemble today's
     // calendar + who's waiting + open commitments (incl. promises) on demand.
     const briefingBlock = looksLikeBriefingRequest(query) ? await this.buildBriefingBlock() : "";
+    // Intelligent person-context grounding (parity with iMessage).
+    const knownPeopleBlock = this.ownerKnownPeopleBlock();
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his WhatsApp self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
@@ -5575,6 +5607,7 @@ export class WhatsAppSession {
       rosterBlock ? "\n" + rosterBlock : "",
       threadPeekBlock ? "\n" + threadPeekBlock : "",
       briefingBlock ? "\n" + briefingBlock : "",
+      knownPeopleBlock ? "\n" + knownPeopleBlock : "",
       planBlock ? "\n" + planBlock : "",
     ].filter(Boolean).join("\n");
 
@@ -9886,6 +9919,34 @@ export class WhatsAppSession {
       this.logger.debug({ err: (err as Error)?.message }, "buildBriefingBlock failed");
       return "";
     }
+  }
+
+  // KNOWN-PEOPLE GROUNDING (parity with iMessage): fuse profile relationships
+  // with real wa-history activity so the LLM resolves names from a real model
+  // of the owner's people. TTL-cached 5 min.
+  private knownPeopleCache: { block: string; at: number } = { block: "", at: 0 };
+  private ownerKnownPeopleBlock(): string {
+    const now = Date.now();
+    if (now - this.knownPeopleCache.at < 300_000 && this.knownPeopleCache.block) return this.knownPeopleCache.block;
+    let block = "";
+    try {
+      const ownerFirst = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0].toLowerCase();
+      const threads: Array<{ handle: string; name?: string; msgs: number; lastTs: number }> = [];
+      for (const a of this.topActiveContacts({ sinceDays: 30, limit: 15 })) {
+        const name = resolveIdentity(a.handle) || this.contactNames.get(a.handle) || undefined;
+        const ln = (name || "").toLowerCase();
+        if (ln && (ln.includes(ownerFirst) || /personal agent|\bagent\b|\bbot\b/.test(ln))) continue;
+        threads.push({ handle: a.handle, name, msgs: a.msgs, lastTs: a.lastTs });
+      }
+      const profile: Array<{ name: string; relationship?: string }> = [];
+      const rel = this.ownerProfileStore.get()?.relationships;
+      if (rel) for (const [k, v] of rel) { if (/^\d/.test(k)) continue; const p = normalizeProfilePerson(k, v); if (p) profile.push(p); }
+      block = buildKnownPeopleBlock(profile, threads, { nowMs: now, max: 12 });
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "ownerKnownPeopleBlock failed");
+    }
+    this.knownPeopleCache = { block, at: now };
+    return block;
   }
 
   // Resolve an owner-referenced target — a name ("Ravi") or a raw jid/phone —

@@ -59,6 +59,7 @@ import { resolveName as resolveIdentity, resolveHandlesByName, detectIdentityCor
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
 import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
+import { buildKnownPeopleBlock, normalizeProfilePerson } from "@lantern/bridge-core/known-people";
 import { TurnBindings } from "@lantern/bridge-core/entity-binding";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
@@ -3385,6 +3386,37 @@ export class IMessageSession {
       this.logger.debug({ err: (err as Error)?.message }, "buildBriefingBlock failed");
       return "";
     }
+  }
+
+  // KNOWN-PEOPLE GROUNDING (intelligent context, not string matching): fuse who
+  // the owner CARES about (profile relationships) with who they ACTUALLY talk to
+  // (real chat.db activity), so the LLM resolves any name from a real model of
+  // the owner's people — and never claims a top contact went silent. TTL-cached
+  // (5 min): the roster changes slowly and this runs per owner query.
+  private knownPeopleCache: { block: string; at: number } = { block: "", at: 0 };
+  private ownerKnownPeopleBlock(): string {
+    const now = Date.now();
+    if (now - this.knownPeopleCache.at < 300_000 && this.knownPeopleCache.block) return this.knownPeopleCache.block;
+    let block = "";
+    try {
+      const ownerFirst = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0].toLowerCase();
+      const threads: Array<{ handle: string; name?: string; msgs: number; lastTs: number }> = [];
+      for (const a of this.db.topActiveContacts({ sinceDays: 30, limit: 15 })) {
+        const name = resolveIdentity(a.handle) || this.contactNames.get(a.handle) || undefined;
+        const ln = (name || "").toLowerCase();
+        // Skip the owner's own self-chat + the agent/Twilio number — not "people".
+        if (ln && (ln.includes(ownerFirst) || /personal agent|\bagent\b|\bbot\b/.test(ln))) continue;
+        threads.push({ handle: a.handle, name, msgs: a.msgs, lastTs: a.lastTs });
+      }
+      const profile: Array<{ name: string; relationship?: string }> = [];
+      const rel = this.ownerProfileStore.get()?.relationships;
+      if (rel) for (const [k, v] of rel) { if (/^\d/.test(k)) continue; const p = normalizeProfilePerson(k, v); if (p) profile.push(p); }
+      block = buildKnownPeopleBlock(profile, threads, { nowMs: now, max: 12 });
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "ownerKnownPeopleBlock failed");
+    }
+    this.knownPeopleCache = { block, at: now };
+    return block;
   }
 
   // Resolve an owner-referenced target — a name ("Ravi") or a raw phone/email
@@ -7605,6 +7637,10 @@ export class IMessageSession {
     // PROACTIVE BRIEFING: "brief me" / "what's on my plate" → assemble today's
     // calendar + who's waiting + open commitments (incl. promises) on demand.
     const briefingBlock = looksLikeBriefingRequest(query) ? await this.buildBriefingBlock() : "";
+    // Intelligent person-context: ground EVERY owner query on a real model of
+    // the owner's people (profile + actual activity), so name resolution is
+    // reasoned, not string-matched.
+    const knownPeopleBlock = this.ownerKnownPeopleBlock();
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his iMessage self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
@@ -7684,6 +7720,7 @@ export class IMessageSession {
       rosterBlock ? "\n" + rosterBlock : "",
       threadPeekBlock ? "\n" + threadPeekBlock : "",
       briefingBlock ? "\n" + briefingBlock : "",
+      knownPeopleBlock ? "\n" + knownPeopleBlock : "",
       planBlock ? "\n" + planBlock : "",
       // Screen-context (opt-in, off by default). Adds recent
       // foreground-app OCR snippets the user might be referring to.
