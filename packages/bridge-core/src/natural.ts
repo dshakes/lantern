@@ -645,7 +645,7 @@ export function agentPersonaPrompt(
     `- Use contractions ("I'll", "can't", "don't", "won't"). Not "I will" / "cannot".`,
     `- Don't end every line with a period.`,
     `- When you don't know, say "not sure" or "lemme check" — don't invent.`,
-    `- LIVE-STATE RULE — NEVER fabricate ${ownerName}'s current physical state. Questions about right-now status — "did you eat?" / "thinnava?" / "are you home?" / "where are you?" / "are you sleeping?" / "reached?" / "are you free?" — ask something you genuinely DON'T know unless the "Owner's current state" block below states it. Do NOT assert a definite answer in EITHER direction ("yes I ate", "no haven't eaten", "I'm home", "on my way"). If the status block covers it, answer from it. Otherwise, do NOT claim a state — deflect warmly or turn it back: for "thinnava?" → "meeru tinnara? 🙂" or "malli cheptha"; for "are you home?" → "almost there" only if you truly know, else "will ping you in a bit". Confidently guessing your own state wrong (saying "I ate" when you didn't) is exactly the kind of thing that outs you as not really ${ownerName}.`,
+    `- LIVE-STATE RULE — NEVER fabricate ${ownerName}'s current physical state. Questions about right-now status — "did you eat?" / "thinnava?" / "are you home?" / "where are you?" / "are you sleeping?" / "reached?" / "are you free?" — ask something you genuinely DON'T know unless the "Owner's current state" block below states it. Do NOT assert a definite answer in EITHER direction ("yes I ate", "no haven't eaten", "I'm home", "on my way"). If the status block covers it, answer from it. Otherwise, do NOT claim a state — deflect warmly or turn it back: for "thinnava?" → "meeru tinnara? 🙂" or "malli cheptha". LOCATION specifically — if there is an "Owner's current location" block below, answer "where are you?" truthfully FROM IT (e.g. "at the office, heading home in a bit"). If there is NO such block, you do NOT know where ${ownerName} is — NEVER say "almost home", "on my way", "5 min away", "just left", or any specific whereabouts; say something honest and non-specific like "still out, will ping you when i'm close". Confidently guessing your own state or location wrong (saying "I ate" when you didn't, "almost home" when you're at work) is exactly the kind of thing that outs you as not really ${ownerName}.`,
     isOwnerAudience
       ? `- GROUND TRUTH ABOUT ${ownerName}: NEVER deny, contradict, or joke away a known fact about ${ownerName} — their marriage, family, kids, key dates (anniversary/birthday), home or work. You are talking to ${ownerName} himself, so answer his OWN factual questions ("when's my anniversary?", "what's my wife's name?") truthfully and directly from the facts below. If you have NO fact for something asked, say "not sure" — don't invent. Fabricating a DENIAL ("you're not even married") is the single worst failure here — never do it.`
       : `- PRIVATE-FACT NON-DISCLOSURE — you are talking to a CONTACT, not ${ownerName}: NEVER confirm, deny, restate, or volunteer ${ownerName}'s private personal facts to this person. This covers his marriage / relationship status, spouse or partner, family / kids / parents, home or location / address, daily schedule or routine, travel / trips, and current plans or whereabouts. The facts and profile below are for sounding like ${ownerName} — they are NOT things to disclose. If the contact ASKS or REFERENCES any of these ("are you married?", "who's your wife?", "do you have kids?", "where do you live?", "are you home alone?", "when are you traveling?", "what's your schedule?"), do NOT answer with the fact and do NOT deny it either — deflect warmly and route to ${ownerName} ("aw, that's sweet 🙏", "ha, I'll let him tell you that one", "best to ask him directly", "lemme leave that to ${ownerName}"). A celebratory WISH ("happy anniversary!", "happy birthday!") still gets a short warm thanks ("thanks! 🙏") — but WITHOUT restating or confirming the underlying detail (don't name a spouse, a date, kids, or a place). Fabricating a DENIAL ("I'm not even married") is also forbidden — never confirm AND never deny; deflect.`,
@@ -1635,6 +1635,13 @@ export interface BotTellContext {
    * to set this gets the non-disclosure path, never accidental location leak.
    */
   audience?: "owner" | "contact";
+  /**
+   * Set true ONLY when the turn was given the owner's REAL current location
+   * (the "Owner's current location" truth block, for an allowed close contact).
+   * When false/omitted, any self-location claim in the draft ("almost home",
+   * "on my way", "5 min away") is a FABRICATION and is suppressed.
+   */
+  truthfulLocationKnown?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1739,6 +1746,31 @@ export function detectWhereaboutsLeak(draft: string): string | null {
     }
   }
 
+  return null;
+}
+
+// Placeless self-location CLAIMS — "almost home", "on my way", "5 min away".
+// detectWhereaboutsLeak only catches named places (City, ST); these relative
+// claims name no place but are exactly the fabrications that embarrass the
+// owner (the bot said "almost home" while he was at the office). Caught ONLY
+// when the turn had NO truthful location to back the claim.
+const SELF_LOCATION_CLAIM_RE =
+  /\b(almost\s+(?:home|there)|on\s+(?:my|the)\s+way(?:\s+(?:home|back|there))?|omw|heading\s+(?:home|back\s+home|over\s+there)|just\s+(?:left|got\s+home)|(?:i'?m|im)\s+(?:home|here|outside|almost\s+\w+)|reached\s+(?:home|there|office)|pulling\s+(?:up|in)|be\s+there\s+(?:soon|in\s+\d)|\d+\s*(?:min|mins|minute|minutes)\s*(?:away|out)|right\s+outside|outside\s+(?:now|your))\b/i;
+
+/**
+ * Detect a placeless self-location assertion in a contact-facing draft. Returns
+ * a reason when the draft claims the owner's current whereabouts. The caller
+ * runs this ONLY when no truthful location was supplied — so a real "almost
+ * home" (backed by a live driving-home signal) is allowed, but a guessed one is
+ * suppressed and regenerated into a truthful deflection.
+ */
+export function detectFabricatedLocation(draft: string): string | null {
+  const t = (draft || "").trim();
+  if (!t) return null;
+  const m = t.match(SELF_LOCATION_CLAIM_RE);
+  if (m) {
+    return `fabricated location: draft asserts the owner's whereabouts ("${m[0].trim()}") with no truthful location to back it`;
+  }
   return null;
 }
 
@@ -1880,6 +1912,12 @@ export function detectBotTells(
   if (audience === "contact") {
     const leakReason = detectWhereaboutsLeak(text);
     if (leakReason) return { ok: false, reason: leakReason };
+    // Placeless location fabrication ("almost home" while at the office) —
+    // suppress UNLESS the turn was given the owner's real location to share.
+    if (!ctx?.truthfulLocationKnown) {
+      const fab = detectFabricatedLocation(text);
+      if (fab) return { ok: false, reason: fab };
+    }
   }
 
   // Length sanity (A9): a text message is a text message, but a legitimately

@@ -18,7 +18,7 @@ import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/br
 import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
 import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
-import { parseSignals, presenceFromSignals, type SignalPresence } from "@lantern/bridge-core/device-signals";
+import { parseSignals, presenceFromSignals, latestKnownLocation, isInnerCircle, formatOwnerLocationBlock, type SignalPresence } from "@lantern/bridge-core/device-signals";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
@@ -7958,6 +7958,26 @@ export class WhatsAppSession {
     // In groups, annotate the user message so the agent knows it's in a group
     // and who sent it — otherwise the prompt has no way to tell 1-on-1 from
     // group context, and no way to reference the speaker by name.
+    // INNER-CIRCLE TRUTHFUL LOCATION (spouse / siblings + family): inject the
+    // owner's REAL location from signals as ground truth — so "where r u" gets
+    // the truth, not a fabricated "almost home". Others get nothing + the net.
+    let truthfulLocationKnown = false;
+    if (
+      !opts.isGroup &&
+      isInnerCircle(relationship) &&
+      !denyLoc &&
+      (process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() !== "off"
+    ) {
+      try {
+        const f = join(homedir(), ".lantern", "device-signals.jsonl");
+        const known = existsSync(f)
+          ? latestKnownLocation(parseSignals(readFileSync(f, "utf8").split("\n").filter(Boolean).slice(-500)))
+          : null;
+        const label = (opts.senderName ?? this.contactNames.get(from)) || "them";
+        systemHint += "\n\n" + formatOwnerLocationBlock(known, ownerName, label);
+        truthfulLocationKnown = known != null;
+      } catch { /* fail-closed: no block, net stays armed */ }
+    }
     const userText = opts.isGroup
       ? `[group message from ${opts.senderName || "a participant"}]\n${text}`
       : text;
@@ -8033,6 +8053,7 @@ export class WhatsAppSession {
       contactName: opts.isGroup ? undefined : (opts.senderName ?? this.contactNames.get(from)),
       relationship,
       audience: (isOwnerChan ? "owner" : "contact") as "owner" | "contact",
+      truthfulLocationKnown,
     };
     let tellCheck = detectBotTells(draft, text, botTellCtx);
     if (!tellCheck.ok) {

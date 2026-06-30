@@ -22,6 +22,9 @@ import {
   summarizeDeviceSignals,
   deviceContextBlock,
   presenceFromSignals,
+  latestKnownLocation,
+  formatOwnerLocationBlock,
+  isInnerCircle,
   type DeviceSignal,
 } from "./device-signals.ts";
 
@@ -417,4 +420,39 @@ test("presenceFromSignals: no usable signal, stale signal, and empty → null", 
   assert.equal(presenceFromSignals([app("YouTube", 5)], { nowMs: NOW }), null); // app_open isn't presence
   assert.equal(presenceFromSignals([sig("device", 600, { detail: "driving" })], { nowMs: NOW }), null); // 10h stale
   assert.equal(presenceFromSignals([], { nowMs: NOW }), null);
+});
+
+// ─── latestKnownLocation + inner-circle + block (truthful spouse location) ───
+test("latestKnownLocation: returns the real place within window; null when stale/absent", () => {
+  assert.deepEqual(
+    latestKnownLocation([sig("location", 30, { detail: "Office" })], { nowMs: NOW }),
+    { place: "the office", inTransit: false, ageMin: 30 },
+  );
+  // Home label
+  assert.equal(latestKnownLocation([sig("location", 10, { detail: "Home" })], { nowMs: NOW })?.place, "home");
+  // Fresh driving newer than any location → in transit
+  const t = latestKnownLocation(
+    [sig("location", 40, { detail: "Office" }), sig("device", 5, { detail: "driving" })],
+    { nowMs: NOW },
+  );
+  assert.equal(t?.inTransit, true);
+  // Stale (8h) location → null (no fabrication)
+  assert.equal(latestKnownLocation([sig("location", 480, { detail: "Office" })], { nowMs: NOW }), null);
+  assert.equal(latestKnownLocation([], { nowMs: NOW }), null);
+});
+
+test("isInnerCircle: spouse + siblings + family true; acquaintances false", () => {
+  for (const r of ["wife", "husband", "spouse", "brother", "sister", "sister-in-law", "brother's wife"])
+    assert.equal(isInnerCircle(r), true, r);
+  for (const r of ["college friend", "manager", "dentist", "vendor", "", undefined])
+    assert.equal(isInnerCircle(r as string), false, String(r));
+});
+
+test("formatOwnerLocationBlock: facts when known, honest-unknown when null (never a canned lie)", () => {
+  const known = formatOwnerLocationBlock({ place: "the office", inTransit: false, ageMin: 12 }, "Shekhar", "Manasa");
+  assert.match(known, /at the office/);
+  assert.match(known, /TRUE/);
+  const unknown = formatOwnerLocationBlock(null, "Shekhar", "Manasa");
+  assert.match(unknown, /do NOT/i);
+  assert.match(unknown, /NEVER guess/i);
 });

@@ -58,3 +58,27 @@ test("#6 newly-added assistant tells are caught by detectBotTells", () => {
     assert.equal(v.ok, false, `should flag: "${draft}"`);
   }
 });
+
+// ── placeless location fabrication ("almost home" while at the office) ──
+test("detectBotTells suppresses a placeless location claim to a contact with no truthful location", () => {
+  const r = detectBotTells("almost home", "where r u", { audience: "contact" });
+  assert.equal(r.ok, false);
+  assert.match(r.reason ?? "", /fabricat/i);
+});
+
+test("detectBotTells ALLOWS a location claim when truthful location was injected (inner circle)", () => {
+  const r = detectBotTells("at the office, headed back soon", "where r u", {
+    audience: "contact",
+    truthfulLocationKnown: true,
+  });
+  assert.equal(r.ok, true);
+});
+
+test("detectBotTells does not touch location claims on the owner channel", () => {
+  const r = detectBotTells("almost home", "where r u", { audience: "owner" });
+  assert.equal(r.ok, true);
+});
+
+test("location fabrication net ignores non-location text", () => {
+  assert.equal(detectBotTells("sounds good, talk later", "ok", { audience: "contact" }).ok, true);
+});

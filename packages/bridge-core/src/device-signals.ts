@@ -361,6 +361,109 @@ export function presenceFromSignals(
   return null;
 }
 
+// ── Truthful location (for ALLOWED close contacts only) ─────────────────────
+// presenceFromSignals is availability-only and deliberately never carries a
+// place. This is the SEPARATE, opt-in source of the owner's REAL place, used
+// ONLY when the owner wants a specific close contact (spouse/family) to get a
+// truthful "where are you" answer. Never call this for a general contact, and
+// never let its output reach a contact the owner hasn't allowed.
+
+const LOCATION_TTL_MS = 6 * 60 * 60 * 1000; // location is sticky — a desk day stays "the office" for hours
+
+export interface KnownLocation {
+  /** Natural phrase for sharing: "the office", "home", "the gym", "on the road". */
+  place: string;
+  /** True when the most recent trustworthy signal is fresh driving (in transit). */
+  inTransit: boolean;
+  /** Minutes since the backing signal. */
+  ageMin: number;
+}
+
+/**
+ * The owner's REAL current location, or null when there's no recent trustworthy
+ * signal (in which case the bot must NOT state a location — no fabrication).
+ * 6h window because location is sticky (unlike availability). Driving within the
+ * last 30 min and newer than any location ⇒ in transit.
+ */
+export function latestKnownLocation(
+  signals: DeviceSignal[],
+  opts: { nowMs?: number; ttlMs?: number } = {},
+): KnownLocation | null {
+  const nowMs = opts.nowMs ?? Date.now();
+  const ttlMs = opts.ttlMs ?? LOCATION_TTL_MS;
+  const cutoff = nowMs - ttlMs;
+  const recent = (signals || [])
+    .filter((s) => s && Number.isFinite(s.ts) && s.ts >= cutoff && s.ts <= nowMs)
+    .sort((a, b) => b.ts - a.ts);
+  const locSig = recent.find((s) => s.kind === "location");
+  const devSig = recent.find((s) => s.kind === "device");
+
+  const DRIVING_FRESH_MS = 30 * 60 * 1000;
+  if (
+    devSig &&
+    /carplay|driving/.test((devSig.detail || "").toLowerCase()) &&
+    devSig.ts >= nowMs - DRIVING_FRESH_MS &&
+    (!locSig || devSig.ts >= locSig.ts)
+  ) {
+    return { place: "on the road", inTransit: true, ageMin: Math.round((nowMs - devSig.ts) / 60000) };
+  }
+  if (!locSig) return null;
+  const raw = (locSig.detail || "").trim();
+  if (!raw) return null;
+  const lc = raw.toLowerCase();
+  let place = raw; // default: the owner's own geofence label, verbatim
+  if (/office|work/.test(lc)) place = "the office";
+  else if (/^home$|at home|^house$/.test(lc)) place = "home";
+  else if (/gym|fitness|workout/.test(lc)) place = "the gym";
+  else if (/airport/.test(lc)) place = "the airport";
+  return { place, inTransit: false, ageMin: Math.round((nowMs - locSig.ts) / 60000) };
+}
+
+// Inner circle = the people the owner has granted EXTRA privileges to (truthful
+// location + agentic actions): spouse, siblings, and their families. Classified
+// from the owner's OWN relationship label (his data — set in owner-profile),
+// not a hardcoded contact list, so adding a labeled sibling extends it for free.
+const INNER_CIRCLE_RE =
+  /\b(wife|husband|spouse|partner|brother|sister|sibling|bro|sis|in-?law|bava|vadina|maradalu|baava|niece|nephew|sister['’]?s|brother['’]?s)\b/i;
+
+/** True when the contact's relationship label puts them in the owner's inner
+ *  circle (spouse / siblings / their family) — the tier allowed truthful
+ *  presence + agentic actions. Empty/unknown relationship → false (fail-safe). */
+export function isInnerCircle(relationship?: string | null): boolean {
+  return !!relationship && INNER_CIRCLE_RE.test(relationship);
+}
+
+/**
+ * Build the ground-truth location block injected ONLY into an allowed close
+ * contact's reply turn (spouse). It gives the LLM the FACTS and tells it to
+ * answer naturally — it does NOT hand it a canned line. When `known` is null,
+ * it instructs an honest "I don't know" (never a guess). The caller injects
+ * this only for the allowed contact; `truthfulLocationKnown` should be set to
+ * `known != null` on the bot-tell context.
+ */
+export function formatOwnerLocationBlock(
+  known: KnownLocation | null,
+  ownerName: string,
+  contactLabel: string,
+): string {
+  if (!known) {
+    return (
+      `## ${ownerName}'s location right now\n` +
+      `You do NOT have a recent location signal — you genuinely don't know where ${ownerName} is. ` +
+      `If ${contactLabel} asks "where are you", say so honestly and warmly (e.g. "not sure exactly rn, ping you when i'm headed back"). ` +
+      `NEVER guess "almost home" / "on my way" / a specific place.`
+    );
+  }
+  const where = known.inTransit ? "on the road (driving)" : `at ${known.place}`;
+  const age = known.ageMin <= 1 ? "just now" : `${known.ageMin} min ago`;
+  return (
+    `## ${ownerName}'s current location — TRUE, and you MAY share it plainly with ${contactLabel} (full privilege)\n` +
+    `Latest phone signal (${age}): ${ownerName} is ${where}.\n` +
+    `Answer her "where are you" truthfully and naturally from this fact, in ${ownerName}'s casual voice — one short line. ` +
+    `Do NOT round or soften it into a different place; if he's ${where}, say that. Only say "almost home"/"heading back" if the signal actually shows transit.`
+  );
+}
+
 interface BuildLineInput {
   topApps: AppCount[];
   windowMs: number;
