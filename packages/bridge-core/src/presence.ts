@@ -75,6 +75,10 @@ export interface PresenceLookupOpts {
   // fresh per-call by the bridge; wins over macOS Focus + calendar (the phone
   // reflects where the owner actually is), below a manual self-chat override.
   iphone?: SignalPresence | null;
+  // When the iphone signal was sampled (ms epoch). Used to compare freshness
+  // against a manual override so a stale place-based override yields to a
+  // fresher phone signal. Pass the latest DeviceSignal.ts value here.
+  iphoneTs?: number;
   logger?: Logger;
 }
 
@@ -82,6 +86,9 @@ export interface ManualOverride {
   state: PresenceSnapshot["state"];
   label: string;
   expiresAt: number;
+  // When the override was set (ms epoch). Required for staleness/anti-fabrication.
+  // Old files without this field are coerced to 0 (unknown age).
+  setAt: number;
   // Free-text place/status the owner set ("at the temple", "at the gym").
   place?: string;
   // When true, the bot should OFFER to take a message from a contact while
@@ -120,6 +127,8 @@ export class PresenceTracker {
       const raw = readFileSync(PRESENCE_FILE, "utf8");
       const ov = JSON.parse(raw) as ManualOverride;
       if (!ov || typeof ov.expiresAt !== "number" || Date.now() >= ov.expiresAt) return null;
+      // ponytail: coerce old files without setAt to 0 (unknown age); place will be suppressed.
+      if (!ov.setAt) ov.setAt = 0;
       return ov;
     } catch {
       return null;
@@ -144,6 +153,7 @@ export class PresenceTracker {
     this.manualOverride = {
       state,
       label: normalized,
+      setAt: Date.now(),
       expiresAt: Date.now() + durationMs,
     };
     this.persist(this.manualOverride);
@@ -167,6 +177,7 @@ export class PresenceTracker {
     this.manualOverride = {
       state: opts.state ?? "busy",
       label,
+      setAt: Date.now(),
       place: opts.place?.trim() || undefined,
       takeMessage: opts.takeMessage ?? true,
       expiresAt: Date.now() + (opts.durationMs ?? 4 * 60 * 60_000),
@@ -208,19 +219,35 @@ export class PresenceTracker {
       return this.cache;
     }
 
-    // 1. Manual override wins.
+    // 1. Manual override wins — UNLESS a fresher iphone signal contradicts a
+    // place-based status (e.g., "at the park" set 3h ago vs. a fresh Home signal).
     if (override) {
-      const snap: PresenceSnapshot = {
-        line: override.label,
-        state: override.state,
-        capturedAt: now,
-        source: "override",
-        place: override.place,
-        takeMessage: override.takeMessage,
-        away: override.state !== "free",
-      };
-      this.cache = snap;
-      return snap;
+      const iphoneTs = opts.iphoneTs ?? 0;
+      const overrideSetAt = override.setAt ?? 0;
+      // Drop place-based overrides when the phone has fresher data: the owner moved.
+      // Non-place overrides (meeting, sleep) are intentional and stick.
+      const stalePlace = override.place && opts.iphone && iphoneTs > overrideSetAt;
+      if (!stalePlace) {
+        // Staleness: show "as of Nm ago" when the override is ≥5 min old.
+        const ageMins = overrideSetAt > 0 ? Math.round((now - overrideSetAt) / 60_000) : -1;
+        const asOf = ageMins >= 5 ? ` (as of ${ageMins}m ago)` : "";
+        const snap: PresenceSnapshot = {
+          line: override.label + asOf,
+          state: override.state,
+          capturedAt: now,
+          source: "override",
+          // Anti-fabrication: only surface place when we have a timestamp for it.
+          place: overrideSetAt > 0 ? override.place : undefined,
+          takeMessage: override.takeMessage,
+          away: override.state !== "free",
+        };
+        this.cache = snap;
+        return snap;
+      }
+      // Stale place-based override: iphone is fresher → discard, fall through.
+      this.manualOverride = null;
+      this.persist(null);
+      this.cache = null;
     }
 
     // 1.5 iPhone signal (focus/device/location from the phone). Fresher than the
@@ -251,8 +278,12 @@ export class PresenceTracker {
           this.logger?.debug({ err }, "driving-vs-meeting calendar probe failed");
         }
       }
+      // Staleness: show "as of Nm ago" when the iphone signal is ≥5 min old.
+      const iphoneTs = opts.iphoneTs ?? 0;
+      const ageMins = iphoneTs > 0 ? Math.round((now - iphoneTs) / 60_000) : -1;
+      const asOf = ageMins >= 5 ? ` (as of ${ageMins}m ago)` : "";
       return {
-        line: opts.iphone.line,
+        line: opts.iphone.line + asOf,
         state: opts.iphone.state,
         capturedAt: now,
         source: "iphone",
