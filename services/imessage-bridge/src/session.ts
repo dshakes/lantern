@@ -3262,21 +3262,33 @@ export class IMessageSession {
   // through to the normal path. Best-effort; never throws.
   private async buildThreadPeekBlock(contactName: string): Promise<string> {
     try {
-      // Resolve to ONE contact — never merge two different people who happen
-      // to share a name (that would mix-attribute their threads in the prompt).
-      // AddressBook first (its top hit groups one person's phones+emails);
-      // else the session name cache, taking only the single best (first) match.
-      let handles: string[] = [];
-      let who = contactName;
+      // Gather THIS person's handles from BOTH the AddressBook card AND the
+      // chat.db handles the bridge has seen under their name, deduped by
+      // canonical handle. Critical: the AddressBook card may hold an OLD number
+      // while the person's RECENT messages arrive from a handle only chat.db
+      // knows — searching the card alone surfaces a stale thread and reports
+      // "nothing recent" (the Manasa bug). A whole-word/exact name match keeps
+      // this to one person (won't fold "Manasa" into "Manish").
+      const needle = contactName.trim().toLowerCase();
+      const nameMatches = (n?: string): boolean => {
+        if (!n) return false;
+        const ln = n.toLowerCase();
+        return ln === needle || ln.split(/\s+/).includes(needle);
+      };
       const hits = await this.searchContacts(contactName, 3);
-      if (hits[0]) {
-        who = hits[0].name;
-        handles = [...hits[0].phones, ...hits[0].emails];
-      } else {
-        const needle = contactName.trim().toLowerCase();
-        for (const [handle, name] of this.contactNames) {
-          if (name && name.toLowerCase().includes(needle)) { handles = [handle]; who = name; break; }
-        }
+      let who = hits[0]?.name || contactName;
+      const seen = new Set<string>();
+      const handles: string[] = [];
+      const add = (h?: string) => {
+        if (!h) return;
+        const key = canonicalHandle(h);
+        if (seen.has(key)) return;
+        seen.add(key);
+        handles.push(h);
+      };
+      if (hits[0]) { for (const p of hits[0].phones) add(p); for (const e of hits[0].emails) add(e); }
+      for (const [handle, name] of this.contactNames) {
+        if (nameMatches(name)) { add(handle); if (!hits[0]) who = name; }
       }
       if (handles.length === 0) return "";
 
