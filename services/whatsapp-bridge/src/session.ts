@@ -69,6 +69,10 @@ import {
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
 import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
+import { resolveName as resolveIdentity, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
+import { TurnBindings } from "@lantern/bridge-core/entity-binding";
+import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
+import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { computeHoldFromSamples, type LatencySample } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
@@ -3658,6 +3662,10 @@ export class WhatsAppSession {
   private async hydrateContactName(jid: string): Promise<void> {
     if (!jid || jid.endsWith("@lid") || this.isGroupJid(jid)) return;
     try {
+      // Owner-correction overlay is authoritative — consult it FIRST so a
+      // corrected name outranks the AddressBook/pushName (parity with iMessage).
+      const corrected = resolveIdentity(jid);
+      if (corrected) { this.rememberContactName(jid, corrected); return; }
       const { nameForHandle } = await import("@lantern/bridge-core/contact-resolver");
       const saved = await nameForHandle(jid, { logger: this.logger });
       if (saved) {
@@ -5157,6 +5165,23 @@ export class WhatsAppSession {
     jid: string,
     text: string,
   ): Promise<void> {
+    // PHASE 0 #2 — identity-correction CAPTURE (parity with iMessage). Owner
+    // self-chats "+1512… is Manasa" / "Sam's number is 512…" → persist to the
+    // owner-correction overlay (highest-precedence name source). Deterministic;
+    // runs before the LLM extractor. The next reply re-reads it (Phase 3 bind).
+    try {
+      const corr = detectIdentityCorrection(text);
+      if (corr && recordIdentityCorrection(corr.handle, corr.name)) {
+        const key = canonicalHandle(corr.handle);
+        for (const j of this.contactNames.keys()) {
+          if (canonicalHandle(j) === key) this.contactNames.set(j, corr.name);
+        }
+        this.logger.info({ handle: corr.handle, name: corr.name }, "identity correction captured");
+        await this.confirmToSelf(`📝 noted — saved ${corr.handle} as ${corr.name}`);
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "identity-correction capture failed");
+    }
     try {
       const { maybeAutoUpdateOwnerProfile, formatAck } = await import(
         "@lantern/bridge-core/owner-profile-auto-update"
@@ -5442,8 +5467,14 @@ export class WhatsAppSession {
         try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
       },
       iphone: this.contactIphonePresence(),
+      iphoneTs: this.latestSignalTs(),
     }).catch(() => null);
     const presenceLine = selfPresence?.line ? `Right now you are: ${selfPresence.line}.` : "";
+    // PHASE 2 — thread-peek prefetch. "what did Arun say" / "catch me up on
+    // Raju" → inject that contact's real recent messages so the answer comes
+    // from the actual thread, not a punted/fabricated tool call.
+    const peek = looksLikeThreadPeek(query);
+    const threadPeekBlock = peek ? await this.buildThreadPeekBlock(peek.contact) : "";
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his WhatsApp self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
@@ -5514,6 +5545,7 @@ export class WhatsAppSession {
       `For ROSTER questions ("who came on X", "who's in X"): the group rosters above are the truth. If a member appears as "(name unknown — group privacy)", that's WhatsApp's new privacy-preserving identifier (@lid) — we genuinely don't have their name because they haven't DM'd us. State the FULL roster size from the group AND list every name we DO have; for the rest say "N others (WhatsApp doesn't expose names of non-contacts in groups, unless they DM you)". Their PARTICIPATION in the group still proves they were on the trip. Do NOT ask the user if they want you to search further; if you can search WhatsApp/iMessage history for the trip date range, JUST DO IT in this same turn.`,
       apptBlock ? "\n" + apptBlock : "",
       rosterBlock ? "\n" + rosterBlock : "",
+      threadPeekBlock ? "\n" + threadPeekBlock : "",
       planBlock ? "\n" + planBlock : "",
     ].filter(Boolean).join("\n");
 
@@ -7484,11 +7516,27 @@ export class WhatsAppSession {
       ? []
       : this.ownerSentHistory.get(from) ?? [];
     const stylePrompt = await this.agent.getStylePrompt();
+    // PHASE 3 — per-turn entity binding (parity with iMessage). One
+    // authoritative name for this jid THIS reply, so relationship, addressing
+    // rule, persona, and social-graph all agree (no Arun↔Manasa flip). The
+    // cached/pushName binds heuristic; the owner-correction overlay binds
+    // explicit and OUTRANKS it. 1:1 only — in a group `from` is the group jid.
+    let boundName: string | undefined;
+    if (!opts.isGroup) {
+      const bindings = new TurnBindings();
+      const cachedName = opts.senderName ?? this.contactNames.get(from);
+      if (cachedName) bindings.bind(from, cachedName);
+      const correctedName = resolveIdentity(from);
+      if (correctedName) bindings.bind(from, correctedName, { explicit: true });
+      boundName = bindings.nameFor(from) ?? undefined;
+      if (boundName && boundName !== this.contactNames.get(from)) this.contactNames.set(from, boundName);
+    }
+    const effectiveName = boundName ?? opts.senderName ?? this.contactNames.get(from);
     // Owner profile + relationship — the "sounds like me" context.
     const ownerProfile = this.ownerProfileStore.prose();
     const relationship = opts.isGroup
       ? undefined
-      : this.ownerProfileStore.relationshipFor(from, opts.senderName ?? this.contactNames.get(from));
+      : this.ownerProfileStore.relationshipFor(from, effectiveName);
     // Recent thread context. WhatsApp has no chat.db, so we interleave the
     // bridge's captured inbound (them) + owner-sent (you) tails into a
     // rough recent transcript. Grounds the reply in what's being discussed
@@ -7521,7 +7569,7 @@ export class WhatsAppSession {
     const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu", text);
     // Compute the sync prerequisites for the reads up front so the reads
     // themselves can be issued concurrently below.
-    const senderName = opts.senderName || this.contactNames.get(from);
+    const senderName = effectiveName;
     // Cross-contact recall: pull episodes from OTHER chats (most
     // importantly self-chat) that mention this contact by first name.
     // This is how "Sujith was here this weekend" — said in self-chat —
@@ -7555,6 +7603,7 @@ export class WhatsAppSession {
             try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
           },
           iphone: opts.isGroup ? null : this.contactIphonePresence(),
+          iphoneTs: this.latestSignalTs(),
         }),
       ]);
 
@@ -7606,7 +7655,7 @@ export class WhatsAppSession {
     // owner never uses with them) + structured owner facts. Both ground
     // the reply so the bot honors naming and never denies a known fact.
     const addressRule = !opts.isGroup
-      ? this.ownerProfileStore.addressRuleFor(from, opts.senderName ?? this.contactNames.get(from)) ?? undefined
+      ? this.ownerProfileStore.addressRuleFor(from, effectiveName) ?? undefined
       : undefined;
     // B1 — emotional register. Read the contact's affect off the inbound
     // (deterministic, no LLM) and pass it into the persona so a distressed /
@@ -9579,6 +9628,68 @@ export class WhatsAppSession {
     } catch (err) {
       this.logger.debug({ err }, "iPhone presence read failed (no-op)");
       return null;
+    }
+  }
+
+  // Latest device-signal timestamp (Phase 1, parity with iMessage). Lets
+  // presence.current() compare a manual status override's age against the
+  // freshest iphone signal — a stale override is dropped the moment a newer
+  // location/focus signal contradicts it, and the line carries an as-of clause.
+  private latestSignalTs(): number {
+    try {
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return 0;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-50);
+      return parseSignals(tail).reduce((m, s) => Math.max(m, s.ts || 0), 0);
+    } catch { return 0; }
+  }
+
+  // PHASE 2 — thread-peek (parity with iMessage, WhatsApp source). Owner
+  // self-chats "what did Arun say" / "catch me up on Raju" → resolve the
+  // contact → pull their real recent 1:1 messages from wa-history → return a
+  // context block so the LLM answers from the real thread, not a punted
+  // search_whatsapp_history call. "" on any miss → caller falls through.
+  private async buildThreadPeekBlock(contactName: string): Promise<string> {
+    try {
+      const jids = new Set<string>();
+      // a) recent history rows whose senderName matches the contact.
+      for (const r of this.searchHistory({ fromContact: contactName, limit: 5 })) {
+        if (!r.isGroup && r.jid) jids.add(r.jid);
+      }
+      // b) AddressBook phones → WhatsApp jid.
+      const hits = await this.searchContacts(contactName, 3);
+      for (const h of hits) {
+        for (const p of h.phones) {
+          const digits = p.replace(/\D/g, "");
+          if (digits) jids.add(digits + "@s.whatsapp.net");
+        }
+      }
+      // c) cached jid→name reverse (contacts not in the AddressBook).
+      const needle = contactName.trim().toLowerCase();
+      for (const [jid, name] of this.contactNames) {
+        if (name && name.toLowerCase().includes(needle)) jids.add(jid);
+      }
+      if (jids.size === 0) return "";
+
+      const msgs: Array<{ ts: number; fromMe: boolean; text: string }> = [];
+      for (const jid of jids) {
+        for (const r of this.searchHistory({ jid, limit: 15 })) {
+          if (r.isGroup || !r.text.trim()) continue;
+          msgs.push({ ts: r.ts, fromMe: r.fromMe, text: r.text.trim() });
+        }
+      }
+      if (msgs.length === 0) return "";
+      msgs.sort((a, b) => a.ts - b.ts);
+      const recent = msgs.slice(-12);
+      const who = hits[0]?.name || contactName;
+      const lines = recent.map((m) => `${m.fromMe ? "you" : who}: ${m.text}`);
+      return [
+        `# Recent messages with ${who} (oldest first — the real thread; answer the owner's question from THIS, do not fabricate)`,
+        ...lines,
+      ].join("\n");
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "buildThreadPeekBlock failed");
+      return "";
     }
   }
 
