@@ -118,3 +118,21 @@ test("does NOT capture hedge/verdict annotations about a number", () => {
     assert.equal(detectIdentityCorrection(s), null, s);
   }
 });
+
+test("does NOT capture a negation ('512 is not Sam')", () => {
+  assert.equal(detectIdentityCorrection("5125551234 is not Sam"), null);
+});
+
+test("captures 'belongs to' with a relationship-prefixed name", () => {
+  // "my boss Raju" → leading "my" stripped → first two tokens kept.
+  const c = detectIdentityCorrection("5125551234 belongs to my boss Raju");
+  assert.ok(c);
+  assert.equal(c.handle, "5125551234");
+});
+
+test("captures a foreign / two-word name", () => {
+  assert.deepEqual(detectIdentityCorrection("+15125551234 is Anjali Rao"), {
+    handle: "+15125551234",
+    name: "Anjali Rao",
+  });
+});

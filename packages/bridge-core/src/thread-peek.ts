@@ -75,7 +75,12 @@ export function looksLikeThreadPeek(
 
   for (const extract of EXTRACTORS) {
     const contact = extract(q);
-    if (contact) return { contact };
+    // Reject pronoun/self "contacts" ("what did you say", "what did I say") —
+    // they resolve to nobody and aren't a thread peek.
+    if (contact && !PRONOUN_CONTACT.test(contact)) return { contact };
   }
   return null;
 }
+
+// Bare pronouns / self-references that are never a real contact to peek.
+const PRONOUN_CONTACT = /^(?:you|i|me|it|we|us|they|them)$/i;

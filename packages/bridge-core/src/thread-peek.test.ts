@@ -78,3 +78,19 @@ test("text Sam happy birthday → null", () => {
 test("empty string → null", () => {
   assert.equal(looksLikeThreadPeek(""), null);
 });
+
+// ---- adversarial ----------------------------------------------------------
+
+test("'what did you say' → null (pronoun, not a contact)", () => {
+  assert.equal(looksLikeThreadPeek("what did you say"), null);
+  assert.equal(looksLikeThreadPeek("what did i say"), null);
+});
+
+test("send-intents stay null even with a name", () => {
+  assert.equal(looksLikeThreadPeek("forward Arun the address"), null);
+  assert.equal(looksLikeThreadPeek("reply to Sam that I'm in"), null);
+});
+
+test("generic 'what did the meeting decide' → null", () => {
+  assert.equal(looksLikeThreadPeek("what did the meeting decide"), null);
+});

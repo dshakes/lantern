@@ -97,6 +97,48 @@ test("does NOT trip on unrelated text", () => {
   assert.equal(detectDisclosureDeny("tell Ravi I'll call him"), null);
 });
 
+// ---- adversarial -----------------------------------------------------------
+
+test("REJECTS self-referential 'don't tell me where I am'", () => {
+  // Would otherwise record a deny against a junk handle resolved from "me".
+  assert.equal(detectDisclosureDeny("don't tell me where I am"), null);
+  assert.equal(detectDisclosureDeny("don't tell anyone where I am"), null);
+  assert.equal(detectDisclosureDeny("don't tell everyone my location"), null);
+});
+
+test("strips a relationship article: 'don't tell my mom where I am' → mom", () => {
+  assert.deepEqual(detectDisclosureDeny("don't tell my mom where I am"), {
+    target: "mom",
+    deny: true,
+  });
+});
+
+test("captures 'never tell Ravi my location'", () => {
+  assert.deepEqual(detectDisclosureDeny("never tell Ravi my location"), {
+    target: "Ravi",
+    deny: true,
+  });
+});
+
+test("captures 'where I'm going' as a location ask", () => {
+  assert.deepEqual(detectDisclosureDeny("don't tell Sam where I'm going"), {
+    target: "Sam",
+    deny: true,
+  });
+});
+
+test("does NOT trip on a non-location secret without 'where'", () => {
+  assert.equal(detectDisclosureDeny("don't tell Ravi I'm running late"), null);
+  assert.equal(detectDisclosureDeny("don't tell Ravi I'm upset"), null);
+});
+
+test("re-allow is not misread as deny", () => {
+  assert.deepEqual(detectDisclosureDeny("stop hiding my location from Sam"), {
+    target: "Sam",
+    deny: false,
+  });
+});
+
 test("round-trips through the store (detect → resolve)", () => {
   const path = tmp();
   const c = detectDisclosureDeny("don't tell Ravi where I am");
