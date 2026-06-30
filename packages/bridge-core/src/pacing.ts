@@ -55,15 +55,19 @@ export interface PaceVerdict {
 // Hold floor: never SLOWER than this. Some delay is good (humans
 // don't reply in 100ms) but excessive holds make the bot feel
 // distracted.
-const FLOOR_MS = 600;
+// 3s minimum: a real person reads, thinks, and types — sub-second replies are
+// the #1 bot-tell. This is ADDITIONAL hold on top of the 1-3s LLM call, so the
+// perceived floor is ~4-6s, which reads as human. (Was 600ms — far too fast.)
+const FLOOR_MS = 3_000;
 // Hold ceiling: never WAIT MORE than this. Beyond ~25s the contact
 // thinks the reply isn't coming. (The async LLM call already takes
 // 1-3s in most cases; this is the ADDITIONAL hold.)
 const CEILING_MS = 25_000;
-// Active-burst clamp: when we're in a fast back-and-forth, hold
-// shorter than the median so we don't break the rhythm.
-const BURST_FAST_MS = 1_500;
-const BURST_FAST_CEIL_MS = 5_000;
+// Active-burst clamp: in a fast back-and-forth, hold shorter than the median so
+// we don't break the rhythm — but still a couple seconds (humans don't fire
+// instantly even mid-burst).
+const BURST_FAST_MS = 2_500;
+const BURST_FAST_CEIL_MS = 6_000;
 
 // Time-of-day multipliers. Gentle + bounded — the goal is a believable
 // nudge, not a dramatic swing. Quiet hours (01:00-06:00) never reach
@@ -71,7 +75,7 @@ const BURST_FAST_CEIL_MS = 5_000;
 // the day and gives the post-wake / pre-quiet edge hours a higher floor.
 const TOD_PEAK_MULT = 0.7; // ~10:00-16:00 — phone in hand, quicker replies
 const TOD_EVENING_MULT = 1.5; // ~21:00-00:00 — winding down, distracted
-const TOD_EDGE_FLOOR_MS = 1_200; // overnight-edge floor (00:00-01:00 / 06:00-10:00)
+const TOD_EDGE_FLOOR_MS = 4_000; // overnight-edge floor (00:00-01:00 / 06:00-10:00) — slower when just-woken/winding-down
 
 /**
  * Gentle time-of-day multiplier for the reply hold, keyed on the owner's
@@ -136,7 +140,7 @@ export function computeHold(ctx: PaceContext): PaceVerdict {
   if (samples.length === 0) {
     // No data — moderate default with jitter so we don't all fire
     // at exactly the same delay.
-    const base = 1_800 * todMult;
+    const base = 6_000 * todMult;
     return jitter(base, "no-prior-latency-samples", edgeFloor);
   }
 
@@ -150,11 +154,13 @@ export function computeHold(ctx: PaceContext): PaceVerdict {
     base = Math.min(base, BURST_FAST_CEIL_MS);
     reason = `active-burst (median ${median}ms × 0.5)`;
   } else if (ctx.msSinceLastInbound > 30 * 60_000) {
-    base = median * 0.7;
-    reason = `cold-restart (median ${median}ms × 0.7)`;
+    base = median * 0.95;
+    reason = `cold-restart (median ${median}ms × 0.95)`;
   } else {
-    base = median * 0.8;
-    reason = `normal (median ${median}ms × 0.8)`;
+    // Reply AT the owner's own typical pace (not a discount) — mimicking a
+    // human means matching their cadence, not out-typing them.
+    base = median * 1.05;
+    reason = `normal (median ${median}ms × 1.05)`;
   }
 
   base *= todMult;
