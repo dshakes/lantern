@@ -91,6 +91,21 @@ export function recentActions(opts: WMOpts = {}): WorkingAction[] {
   return out.slice(0, MAX_SHOWN);
 }
 
+/** Owner questions that should be answered by SYNTHESIZING recent actions +
+ *  live signals rather than a literal tool lookup ("where did I go", "what am I
+ *  doing"). These are the queries that need the forced-inference pass so the
+ *  model can't punt to "I can't tell." */
+export function isSelfContextQuery(text: string): boolean {
+  const t = (text || "").toLowerCase().trim();
+  if (!t) return false;
+  return (
+    /^where\b.*\b(am|did|was|have)\s+i\b/.test(t) ||      // where am i / where did i go / where have i been
+    /\bwhere\s+(?:am\s+i\s+(?:going|headed)|did\s+i\s+go|was\s+i)\b/.test(t) ||
+    /^what\b.*\bi\b.*\b(doing|up to|been)\b/.test(t) ||    // what am i doing / what have i been up to
+    /\b(am|was)\s+i\s+(?:doing|going|headed)\b/.test(t)
+  );
+}
+
 const KIND_ICON: Record<ActionKind, string> = {
   status_set: "📍", list_made: "🛒", note_saved: "🗒", calendar_added: "📅",
   call_placed: "📞", message_sent: "✉️", presence: "📡", custom: "•",
