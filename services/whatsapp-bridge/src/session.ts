@@ -5528,8 +5528,8 @@ export class WhatsAppSession {
     // PHASE 2 — thread-peek prefetch. "what did Arun say" / "catch me up on
     // Raju" → inject that contact's real recent messages so the answer comes
     // from the actual thread, not a punted/fabricated tool call.
-    const peek = looksLikeThreadPeek(query);
-    const threadPeekBlock = peek ? await this.buildThreadPeekBlock(peek.contact) : "";
+    const peekContact = looksLikeThreadPeek(query)?.contact || this.mentionedKnownPerson(query);
+    const threadPeekBlock = peekContact ? await this.buildThreadPeekBlock(peekContact) : "";
     // PROACTIVE BRIEFING: "brief me" / "what's on my plate" → assemble today's
     // calendar + who's waiting + open commitments (incl. promises) on demand.
     const briefingBlock = looksLikeBriefingRequest(query) ? await this.buildBriefingBlock() : "";
@@ -9780,6 +9780,29 @@ export class WhatsAppSession {
     return v;
   }
 
+  // Does the owner's query mention a KNOWN person? (parity with iMessage)
+  // "how did Raju interview go" → pull Raju's thread even though it's not a
+  // "what did X say". High-precision: only the owner's actual people.
+  private mentionedKnownPerson(query: string): string | null {
+    const words = (query.toLowerCase().match(/[a-z][a-z']{2,}/g) || []);
+    if (words.length === 0) return null;
+    const STOP = new Set([
+      "how", "did", "what", "whats", "when", "where", "who", "why", "the", "you",
+      "your", "does", "with", "about", "today", "tomorrow", "yesterday", "call",
+      "said", "say", "says", "message", "text", "from", "get", "got", "they",
+      "them", "this", "that", "was", "were", "are", "and", "for", "her", "him",
+      "his", "she", "has", "have", "just", "now", "new", "old", "all", "any",
+      "can", "not", "yet", "going", "tell", "ask", "interview", "meeting",
+      "coming", "doing", "want", "need", "let", "know", "send", "reply", "back",
+    ]);
+    const known = new Map<string, string>();
+    const rel = this.ownerProfileStore.get()?.relationships;
+    if (rel) for (const [k] of rel) { if (/^\d/.test(k)) continue; const f = k.split(/\s+/)[0]; if (f.length >= 3) known.set(f.toLowerCase(), f); }
+    for (const name of this.contactNames.values()) { const f = (name || "").split(/\s+/)[0]; if (f && f.length >= 3) known.set(f.toLowerCase(), f); }
+    for (const w of words) { if (STOP.has(w)) continue; const hit = known.get(w); if (hit) return hit; }
+    return null;
+  }
+
   // PHASE 2 — thread-peek (parity with iMessage, WhatsApp source). Owner
   // self-chats "what did Arun say" / "catch me up on Raju" → resolve the
   // contact → pull their real recent 1:1 messages from wa-history → return a
@@ -9818,12 +9841,13 @@ export class WhatsAppSession {
         jids.push(j);
       };
       const emailHints: string[] = [];
+      // Build the jid from the CANONICAL digits (US 10-digit → 1+10) so it
+      // matches wa-history's country-coded jids — same format-mismatch class
+      // that broke iMessage.
+      const toJid = (p: string) => { const c = canonicalHandle(p); return /^\d{8,15}$/.test(c) ? c + "@s.whatsapp.net" : ""; };
       for (const c of hits) {
         if (!nameMatches(c.name)) continue;
-        for (const p of c.phones) {
-          const d = p.replace(/\D/g, "");
-          if (d) add(d + "@s.whatsapp.net", c.name);
-        }
+        for (const p of c.phones) add(toJid(p), c.name);
         for (const e of c.emails) if (e.includes("@")) emailHints.push(e);
       }
       for (const [jid, name] of this.contactNames) {
@@ -9835,7 +9859,7 @@ export class WhatsAppSession {
       // profile. Convert a bare phone to its WhatsApp jid.
       for (const h of resolveHandlesByName(contactName)) {
         if (h.includes("@")) add(h, contactName);
-        else { const d = h.replace(/\D/g, ""); if (d) add(d + "@s.whatsapp.net", contactName); }
+        else add(toJid(h), contactName);
       }
 
       let best: { jid: string; msgs: Array<{ ts: number; fromMe: boolean; text: string }>; newest: number } | null = null;
@@ -9853,7 +9877,7 @@ export class WhatsAppSession {
       // EMAIL too (cross-channel): always tell the model to also pull email for
       // this person and merge it with the texts — never report "nothing" while
       // an email thread is active.
-      const emailLine = `# Also check EMAIL (cross-channel): run gmail_search for ${who}${emailHints.length ? ` (address: ${[...new Set(emailHints)].slice(0, 2).join(", ")})` : ""} and COMBINE any recent email with the messages above into ONE answer — most recent/relevant first. Do NOT say "nothing in messages" or stop at one channel; give the full picture across texts + email.`;
+      const emailLine = `# Also check EMAIL (cross-channel): run gmail_search for ${who}${emailHints.length ? ` (address: ${[...new Set(emailHints)].slice(0, 2).join(", ")})` : ""} and COMBINE any recent email with the messages above into ONE answer — most recent/relevant first. Include email ONLY if gmail_search returns REAL results; if it returns nothing, say nothing about email and NEVER invent or assume email content. Don't tunnel-vision on one channel.`;
       if (!best) {
         if (jids.length === 0 && emailHints.length === 0) return "";
         return [`# No recent WhatsApp texts found from ${who}.`, emailLine].join("\n");
