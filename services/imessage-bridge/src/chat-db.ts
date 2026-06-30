@@ -23,6 +23,7 @@ import { existsSync } from "fs";
 import type { Logger } from "pino";
 import { decodeAttributedBody } from "./attributed-body.js";
 import { dedupeKey } from "@lantern/bridge-core/owner-voice";
+import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 
 export interface IMessageRow {
   // Stable per-message identity. We track lastSeenRowid in memory and
@@ -620,6 +621,18 @@ export class ChatDB {
       chatIdentifier: r.chat_identifier,
       isGroup: r.chat_display_name !== "",
     }));
+  }
+
+  // Map owner-supplied handles (any format) to the ACTUAL chat.db handle.id
+  // strings, matched by CANONICAL digits. Critical: AddressBook phone formats
+  // ("+1 (630) 347-5128") differ from chat.db's stored E.164 ("+16303475128"),
+  // so an exact `h.id = ?` match misses every message. Canonical match fixes it.
+  handleIdsForCanonicals(canon: Set<string>): string[] {
+    if (!this.db || canon.size === 0) return [];
+    const ids = (this.db.prepare("SELECT DISTINCT id FROM handle").all() as Array<{ id: string }>)
+      .map((r) => r.id)
+      .filter(Boolean);
+    return ids.filter((id) => canon.has(canonicalHandle(id)));
   }
 
   // Top 1:1 contacts by message volume in the recent window — the behavioral

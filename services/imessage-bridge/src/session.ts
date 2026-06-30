@@ -3254,6 +3254,32 @@ export class IMessageSession {
     return searchAddressBookContacts(query, { limit, logger: this.logger });
   }
 
+  // Does the owner's query mention a KNOWN person (a profile relationship or a
+  // contact the bridge has seen)? "how did Raju interview go", "is Madhu coming"
+  // — these aren't "what did X say" but the bot still needs that person's real
+  // thread to answer. Returns the matched first name, or null. High-precision:
+  // only matches names that are actually the owner's people, skips stopwords.
+  private mentionedKnownPerson(query: string): string | null {
+    const words = (query.toLowerCase().match(/[a-z][a-z']{2,}/g) || []);
+    if (words.length === 0) return null;
+    const STOP = new Set([
+      "how", "did", "what", "whats", "when", "where", "who", "why", "the", "you",
+      "your", "does", "with", "about", "today", "tomorrow", "yesterday", "call",
+      "said", "say", "says", "message", "text", "from", "get", "got", "they",
+      "them", "this", "that", "was", "were", "are", "and", "for", "her", "him",
+      "his", "she", "has", "have", "just", "now", "new", "old", "all", "any",
+      "can", "not", "yet", "going", "tell", "ask", "him", "interview", "meeting",
+      "coming", "doing", "want", "need", "let", "know", "send", "reply", "back",
+    ]);
+    // Known first names: profile relationships + seen contacts.
+    const known = new Map<string, string>(); // lc first name -> display name
+    const rel = this.ownerProfileStore.get()?.relationships;
+    if (rel) for (const [k] of rel) { if (/^\d/.test(k)) continue; const f = k.split(/\s+/)[0]; if (f.length >= 3) known.set(f.toLowerCase(), f); }
+    for (const name of this.contactNames.values()) { const f = (name || "").split(/\s+/)[0]; if (f && f.length >= 3) known.set(f.toLowerCase(), f); }
+    for (const w of words) { if (STOP.has(w)) continue; const hit = known.get(w); if (hit) return hit; }
+    return null;
+  }
+
   // PHASE 2 — thread-peek. Owner self-chat "show me what Arun said" / "catch
   // me up on Raju" → resolve the contact → pull their real recent chat.db
   // messages → return a context block. Injected into the owner self-chat
@@ -3277,34 +3303,33 @@ export class IMessageSession {
         return ln === needle || ln.split(/\s+/).includes(needle);
       };
       const hits = await this.searchContacts(contactName, 10);
-      const seen = new Set<string>();
-      const handles: string[] = [];
-      const add = (h?: string) => {
-        if (!h) return;
-        const key = canonicalHandle(h);
-        if (seen.has(key)) return;
-        seen.add(key);
-        handles.push(h);
-      };
+      // Collect candidate handles as CANONICAL keys (digits-only / lowercased
+      // email). We resolve these to the real chat.db handle.id strings below —
+      // never exact-match an AddressBook-formatted phone against chat.db.
+      const wantCanon = new Set<string>();
+      const addCanon = (h?: string) => { if (h) wantCanon.add(canonicalHandle(h)); };
       const emailHints: string[] = [];
       for (const c of hits) {
         if (!nameMatches(c.name)) continue;
-        for (const p of c.phones) add(p);
-        for (const e of c.emails) { add(e); if (e.includes("@")) emailHints.push(e); }
+        for (const p of c.phones) addCanon(p);
+        for (const e of c.emails) { addCanon(e); if (e.includes("@")) emailHints.push(e); }
       }
       for (const [handle, name] of this.contactNames) {
-        if (nameMatches(name)) add(handle);
+        if (nameMatches(name)) addCanon(handle);
       }
-      // Owner-explicit mappings: a person the owner told us about directly —
-      // e.g. a spouse texted daily at a number never saved in Contacts. This is
-      // the ONLY source for a handle that's in neither the AddressBook nor the
-      // profile, so it's what makes "what did <spouse> say" actually resolve.
-      for (const h of resolveHandlesByName(contactName)) add(h);
+      // Owner-explicit mappings (a spouse texted daily at a number never saved
+      // in Contacts) — the only source for a handle in neither AddressBook nor
+      // profile.
+      for (const h of resolveHandlesByName(contactName)) addCanon(h);
+      // Map canonical candidates → the ACTUAL chat.db handle.id strings (defeats
+      // the AddressBook "+1 (630) 347-5128" vs chat.db "+16303475128" mismatch
+      // that made every AddressBook-only contact return "nothing").
+      const dbHandles = this.db.handleIdsForCanonicals(wantCanon);
 
       // Per handle, pull recent 1:1 messages; keep the thread whose newest
-      // message is the most recent (the active "Manasa").
+      // message is the most recent (the active person, not a stale namesake).
       let best: { handle: string; msgs: Array<{ ts: number; fromMe: boolean; text: string }>; newest: number } | null = null;
-      for (const handle of handles) {
+      for (const handle of dbHandles) {
         const rows: Array<{ ts: number; fromMe: boolean; text: string }> = [];
         for (const m of this.db.searchMessages({ handle, limit: 25 })) {
           if (m.isGroup || !m.text.trim()) continue;
@@ -3314,12 +3339,14 @@ export class IMessageSession {
         const newest = Math.max(...rows.map((r) => r.ts));
         if (!best || newest > best.newest) best = { handle, msgs: rows, newest };
       }
-      const who = best ? (this.contactNames.get(best.handle) || hits.find((h) => h.phones.concat(h.emails).some((x) => canonicalHandle(x) === canonicalHandle(best!.handle)))?.name || contactName) : contactName;
+      const who = best
+        ? (resolveIdentity(best.handle) || this.contactNames.get(best.handle) || hits.find((h) => h.phones.concat(h.emails).some((x) => canonicalHandle(x) === canonicalHandle(best!.handle)))?.name || contactName)
+        : contactName;
       // EMAIL too: the owner's question is cross-channel. Always tell the model
       // to also pull email for this person and MERGE it with the texts — so it
       // never reports "nothing in messages" while ignoring an active email
       // thread (the daycare-emails case). gmail_search is in the toolkit.
-      const emailLine = `# Also check EMAIL (cross-channel): run gmail_search for ${who}${emailHints.length ? ` (address: ${[...new Set(emailHints)].slice(0, 2).join(", ")})` : ""} and COMBINE any recent email with the messages above into ONE answer — most recent/relevant first. Do NOT say "nothing in messages" or stop at one channel; give the full picture across texts + email.`;
+      const emailLine = `# Also check EMAIL (cross-channel): run gmail_search for ${who}${emailHints.length ? ` (address: ${[...new Set(emailHints)].slice(0, 2).join(", ")})` : ""} and COMBINE any recent email with the messages above into ONE answer — most recent/relevant first. Include email ONLY if gmail_search returns REAL results; if it returns nothing, say nothing about email and NEVER invent or assume email content. Don't tunnel-vision on one channel.`;
       if (!best) {
         // No recent texts found — still ground an email check so a contact the
         // owner mostly emails isn't reported as silent.
@@ -7649,8 +7676,11 @@ export class IMessageSession {
     // PHASE 2 — thread-peek prefetch. "what did Arun say" / "catch me up on
     // Raju" → inject that contact's real recent messages so the answer comes
     // from the actual thread, not a punted/fabricated tool call.
-    const peek = looksLikeThreadPeek(query);
-    const threadPeekBlock = peek ? await this.buildThreadPeekBlock(peek.contact) : "";
+    // Pull a person's real thread when the query is a peek ("what did X say")
+    // OR simply mentions a known person ("how did Raju interview go") — so the
+    // bot answers from their actual messages, not a generic "no word from X".
+    const peekContact = looksLikeThreadPeek(query)?.contact || this.mentionedKnownPerson(query);
+    const threadPeekBlock = peekContact ? await this.buildThreadPeekBlock(peekContact) : "";
     // PROACTIVE BRIEFING: "brief me" / "what's on my plate" → assemble today's
     // calendar + who's waiting + open commitments (incl. promises) on demand.
     const briefingBlock = looksLikeBriefingRequest(query) ? await this.buildBriefingBlock() : "";
