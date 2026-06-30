@@ -9909,7 +9909,9 @@ export class WhatsAppSession {
         if (!best || newest > best.newest) best = { jid, msgs: rows, newest };
       }
       if (!best && jids.length === 0 && emailHints.length === 0) return null;
-      const who = best ? (this.contactNames.get(best.jid) || nameByCanon.get(canonicalHandle(best.jid)) || contactName) : contactName;
+      // resolveIdentity FIRST — the owner-correction overlay outranks the
+      // WhatsApp-saved name (so the wife is "Manasa", never her phone alias "Manu").
+      const who = best ? (resolveIdentity(best.jid) || this.contactNames.get(best.jid) || nameByCanon.get(canonicalHandle(best.jid)) || contactName) : contactName;
       const relLabel = best ? (this.ownerProfileStore.relationshipFor(best.jid, who) || "") : "";
       const gender: "m" | "f" | null = resolveGender(who)
         || (/\b(wife|sister|mother|mom|daughter|girlfriend|aunt|grandmother|niece|sister-in-law|fiancee)\b/i.test(relLabel) ? "f"
