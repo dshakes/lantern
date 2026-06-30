@@ -648,7 +648,7 @@ func TestFinancialSentinel_DetectsHike(t *testing.T) {
 	seedBill(t, pool, tenant, "Netflix", 100.00, 45)
 	seedBill(t, pool, tenant, "Netflix", 130.00, 5)
 
-	hikesN, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID)
+	hikesN, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID, nil)
 	if err != nil {
 		t.Fatalf("runFinancialSentinel: %v", err)
 	}
@@ -699,7 +699,7 @@ func TestFinancialSentinel_Idempotent(t *testing.T) {
 	seedBill(t, pool, tenant, "Hulu", 100.00, 50)
 	seedBill(t, pool, tenant, "Hulu", 125.00, 3)
 
-	h1, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID1)
+	h1, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID1, nil)
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
@@ -707,7 +707,7 @@ func TestFinancialSentinel_Idempotent(t *testing.T) {
 		t.Fatalf("first run hikesN=%d, want 1", h1)
 	}
 
-	h2, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID2)
+	h2, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID2, nil)
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -738,7 +738,7 @@ func TestFinancialSentinel_BelowThreshold(t *testing.T) {
 	seedBill(t, pool, tenant, "Spotify", 100.00, 45)
 	seedBill(t, pool, tenant, "Spotify", 103.00, 5) // +3%, +$3 — below both thresholds
 
-	hikesN, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID)
+	hikesN, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID, nil)
 	if err != nil {
 		t.Fatalf("runFinancialSentinel: %v", err)
 	}
@@ -764,7 +764,7 @@ func TestFinancialSentinel_NoBills(t *testing.T) {
 	tenant := seedBodyTenant(t, pool)
 	runID := insertBodyRun(t, pool, tenant, "finsentinel-nobills")
 
-	hikesN, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID)
+	hikesN, err := runFinancialSentinel(ctx, pool, nopLogger(), tenant, runID, nil)
 	if err != nil {
 		t.Fatalf("runFinancialSentinel on empty tenant: %v", err)
 	}
