@@ -111,6 +111,47 @@ export function detectTaskCapture(text: string, _ctx?: TaskCaptureCtx): Captured
   return null;
 }
 
+// ── detectOutboundPromise ─────────────────────────────────────────────────────
+
+/** A promise the bot made in the owner's name on a contact thread
+ *  ("I'll send you the deck tonight") that nothing yet tracks. */
+export interface OutboundPromise {
+  /** The commitment body, verb-first ("send you the deck tonight"). */
+  title: string;
+  urgency?: "now" | "soon" | "normal";
+}
+
+// First-person future marker ("I'll" / "I will" / "I'm going to" / "I'm gonna").
+const PROMISE_FUTURE = String.raw`i(?:'?ll|\s+will|'?m\s+gonna|\s+gonna|'?m\s+going\s+to|\s+am\s+going\s+to)`;
+// Concrete action verbs — mirrors verifiable-claims.ts (send/email/forward/add/
+// book/call/…) plus a few delivery/follow-up verbs. Conservative on purpose:
+// a hedge ("I'll try", "I'll see", "I'll be there") has no whitelisted verb and
+// is therefore NOT captured — a false promise spams the owner with a nudge they
+// never made.
+const PROMISE_VERB = String.raw`(?:send|email|e-?mail|forward|share|add|book|reserve|call|ring|text|message|ping|bring|drop|check|confirm|schedule|sort|handle|remind|get\s+back|pick\s+up|set\s+up|follow\s+up|let\s+you\s+know|make\s+sure|find\s+out|look\s+into)`;
+const PROMISE_RE = new RegExp(`\\b${PROMISE_FUTURE}\\s+(${PROMISE_VERB}\\b[^.!?\\n]{0,120})`, "i");
+
+/**
+ * Detect a promise the bot just made in an OUTBOUND reply. High-precision:
+ * requires a first-person future marker + a concrete action verb. Returns null
+ * on no match (the common case). The caller records the hit as an owner
+ * commitment so the anticipation engine can later nudge "still on your plate: …".
+ */
+export function detectOutboundPromise(text: string): OutboundPromise | null {
+  const t = (text || "").replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  const m = t.match(PROMISE_RE);
+  if (!m) return null;
+  const title = m[1].replace(/[?.!,;]+$/, "").trim();
+  if (title.length < 5) return null;
+  const urgency: OutboundPromise["urgency"] = URGENCY_NOW_RE.test(t)
+    ? "now"
+    : URGENCY_SOON_RE.test(t)
+      ? "soon"
+      : "normal";
+  return { title, urgency };
+}
+
 // ── renderNudge ───────────────────────────────────────────────────────────────
 
 /**

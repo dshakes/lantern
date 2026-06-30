@@ -247,6 +247,7 @@ import type { ContactSignals } from "@lantern/bridge-core/contact-priority";
 import { authedFetch } from "@lantern/bridge-core/auth";
 import {
   detectTaskCapture,
+  detectOutboundPromise,
   renderNudge,
   resolveReply,
   CommitmentsClient,
@@ -2767,6 +2768,40 @@ export class IMessageSession {
       }
     } catch (err) {
       this.logger.debug({ err, handle }, "concierge capture failed (continuing)");
+    }
+  }
+
+  // PROMISE-KEEPING (#1): record a promise the bot just made in the owner's
+  // name on a contact thread ("I'll send you the deck tonight") as an owner
+  // commitment, so the anticipation engine can nudge it later if it goes
+  // unfulfilled. SILENT — no per-promise ack (the bot promises often); the
+  // owner only hears about it if/when it becomes overdue. Fire-and-forget;
+  // never blocks or throws into the reply path.
+  private maybeCaptureOutboundPromise(handle: string, outbound: string): void {
+    // Gated with the rest of the concierge edge — without the nudge poll a
+    // captured promise would never surface, so don't write it.
+    if (!IMessageSession.CONCIERGE_ENABLED) return;
+    try {
+      const p = detectOutboundPromise(outbound);
+      if (!p) return;
+      const who = this.contactNames.get(handle) || handle.split("@")[0] || "them";
+      // Make the owner-facing title name the contact ("send you …" → "send Raju …").
+      let title = p.title.replace(/\byou\b/i, who).replace(/\byour\b/i, `${who}'s`);
+      if (!title.toLowerCase().includes(who.toLowerCase())) title = `${title} — for ${who}`;
+      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "-").slice(0, 60);
+      void this.commitments
+        .create({
+          title,
+          source: "reply-promise",
+          kind: "promise",
+          urgency: p.urgency,
+          sourcePreview: outbound.slice(0, 200),
+          idempotencyKey: `promise:${norm(handle)}:${norm(title)}`,
+        })
+        .then((r) => { if (r) this.logger.info({ handle, title }, "promise captured"); })
+        .catch(() => {});
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "maybeCaptureOutboundPromise failed");
     }
   }
 
@@ -5540,6 +5575,12 @@ export class IMessageSession {
       }
       this.recentBotReplies.set(row.handle, ring);
     }
+
+    // PROMISE-KEEPING (#1): if the bot just promised something in the owner's
+    // name ("I'll send you the deck tonight"), record it as an owner commitment
+    // so the anticipation engine can later nudge "still on your plate: …".
+    // Nothing else tracks promises made ON a contact thread. Fire-and-forget.
+    if (!isGroup) this.maybeCaptureOutboundPromise(row.handle, draft);
 
     // MEDIUM-confidence audit ping — let owner know what just went
     // out so they can correct if needed.

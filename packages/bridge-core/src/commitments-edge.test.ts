@@ -6,11 +6,56 @@ import { test, describe } from "node:test";
 import { strict as assert } from "node:assert";
 import {
   detectTaskCapture,
+  detectOutboundPromise,
   renderNudge,
   resolveReply,
   type Commitment,
   type PendingCommitmentNudge,
 } from "./commitments-edge.ts";
+
+// ── detectOutboundPromise ─────────────────────────────────────────────────────
+describe("detectOutboundPromise", () => {
+  test("captures 'I'll send you the deck tonight'", () => {
+    const p = detectOutboundPromise("sure, i'll send you the deck tonight");
+    assert.equal(p?.title, "send you the deck tonight");
+    assert.equal(p?.urgency, "soon");
+  });
+
+  test("captures 'I will call you tomorrow'", () => {
+    assert.equal(detectOutboundPromise("I will call you tomorrow").title, "call you tomorrow");
+  });
+
+  test("captures 'I'm going to forward the email'", () => {
+    assert.equal(detectOutboundPromise("I'm going to forward the email").title, "forward the email");
+  });
+
+  test("captures 'I'll get back to you on that'", () => {
+    assert.equal(detectOutboundPromise("ok i'll get back to you on that").title, "get back to you on that");
+  });
+
+  test("urgency now on 'I'll call you right now'", () => {
+    assert.equal(detectOutboundPromise("i'll call you right now").urgency, "now");
+  });
+
+  // negatives — hedges and non-promises must NOT be captured (false promise =
+  // a nudge the owner never made).
+  test("does NOT capture 'I'll try'", () => {
+    assert.equal(detectOutboundPromise("i'll try to make it"), null);
+  });
+
+  test("does NOT capture 'I'll be there'", () => {
+    assert.equal(detectOutboundPromise("i'll be there at 6"), null);
+  });
+
+  test("does NOT capture 'I'll see'", () => {
+    assert.equal(detectOutboundPromise("i'll see what i can do"), null);
+  });
+
+  test("does NOT capture a plain reply", () => {
+    assert.equal(detectOutboundPromise("haha yeah that was wild"), null);
+    assert.equal(detectOutboundPromise(""), null);
+  });
+});
 
 // ── Shared fixture ────────────────────────────────────────────────────────────
 

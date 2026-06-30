@@ -115,6 +115,7 @@ import {
 import { contactPriority, type ContactSignals } from "@lantern/bridge-core/contact-priority";
 import {
   detectTaskCapture,
+  detectOutboundPromise,
   renderNudge,
   resolveReply,
   CommitmentsClient,
@@ -8333,6 +8334,11 @@ export class WhatsAppSession {
       this.unansweredInbound.set(from, 0);
     }
 
+    // PROMISE-KEEPING (#1): record a promise the bot just made in the owner's
+    // name ("I'll send you the deck tonight") so the anticipation engine can
+    // nudge it later. Fire-and-forget; parity with the iMessage bridge.
+    if (!opts.isGroup) this.maybeCaptureOutboundPromise(from, draft);
+
     // MEDIUM-confidence audit ping for non-group sends.
     if (tier.tier === "MEDIUM" && !opts.isGroup) {
       try {
@@ -9054,6 +9060,36 @@ export class WhatsAppSession {
       }
     } catch (err) {
       this.logger.debug({ err, jid }, "concierge capture failed (continuing)");
+    }
+  }
+
+  // PROMISE-KEEPING (#1, parity with iMessage): record a promise the bot just
+  // made in the owner's name on a contact thread ("I'll send you the deck
+  // tonight") as an owner commitment, so the anticipation engine can nudge it
+  // later. SILENT (no per-promise ack). Gated with the concierge edge so a
+  // captured promise always has a nudge loop to surface it. Fire-and-forget.
+  private maybeCaptureOutboundPromise(jid: string, outbound: string): void {
+    if (!WhatsAppSession.CONCIERGE_ENABLED) return;
+    try {
+      const p = detectOutboundPromise(outbound);
+      if (!p) return;
+      const who = this.contactNames.get(jid) || jid.split("@")[0] || "them";
+      let title = p.title.replace(/\byou\b/i, who).replace(/\byour\b/i, `${who}'s`);
+      if (!title.toLowerCase().includes(who.toLowerCase())) title = `${title} — for ${who}`;
+      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "-").slice(0, 60);
+      void this.commitments
+        .create({
+          title,
+          source: "reply-promise",
+          kind: "promise",
+          urgency: p.urgency,
+          sourcePreview: outbound.slice(0, 200),
+          idempotencyKey: `promise:${norm(jid)}:${norm(title)}`,
+        })
+        .then((r) => { if (r) this.logger.info({ jid, title }, "promise captured"); })
+        .catch(() => {});
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "maybeCaptureOutboundPromise failed");
     }
   }
 
