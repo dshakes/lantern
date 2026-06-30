@@ -120,6 +120,7 @@ import {
 import { contactPriority, type ContactSignals } from "@lantern/bridge-core/contact-priority";
 import {
   detectTaskCapture,
+  captureTaskWithLlm,
   detectOutboundPromise,
   renderNudge,
   resolveReply,
@@ -9140,7 +9141,15 @@ export class WhatsAppSession {
       const rel = this.ownerProfileStore.relationshipFor(jid, displayName);
       if (!rel) return; // not a known relationship — skip to avoid noise
 
-      const captured = detectTaskCapture(text, { relationship: rel });
+      // Regex fast-path; LLM recovers tasks phrased outside the templates.
+      // Dedicated `::taskcapture` session key (never the live jid).
+      const captured = await captureTaskWithLlm(text, { relationship: rel }, async (prompt) => {
+        try {
+          return (await this.agent.respondTo(`${jid}::taskcapture`, prompt, "", { withTools: false })) || "";
+        } catch {
+          return "";
+        }
+      });
       if (!captured) return;
 
       // Determine source from relationship label.

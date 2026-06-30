@@ -111,6 +111,67 @@ export function detectTaskCapture(text: string, _ctx?: TaskCaptureCtx): Captured
   return null;
 }
 
+/**
+ * Intelligent task capture: the high-precision regex is the fast, free path
+ * (returned verbatim when it hits — preserves the conservative no-false-positive
+ * behavior). When it MISSES but the message plausibly asks the owner to do
+ * something ("would be great if you grabbed milk", "mind picking up the dry
+ * cleaning?" — phrasings no template matches), an injected LLM is the real
+ * extractor: it decides whether a task was actually assigned, and returns a
+ * clean title + urgency. The cheap pre-filter keeps the LLM off non-requests.
+ * Returns null when nothing was assigned.
+ */
+export async function captureTaskWithLlm(
+  text: string,
+  ctx: TaskCaptureCtx | undefined,
+  llmCall?: (prompt: string) => Promise<string>,
+): Promise<CapturedTask | null> {
+  const regexHit = detectTaskCapture(text, ctx);
+  if (regexHit) return regexHit; // precise + free — no LLM needed
+  if (!llmCall) return null;
+
+  const t = (text || "").replace(/\s+/g, " ").trim();
+  // Pre-filter: cheaply skip the LLM on text that can't be a request. A real
+  // assignment either addresses the owner, uses a request/imperative cue, or is
+  // a question — but never trivially short/long. Deliberately generous (this
+  // only runs on known-relationship contacts) so it doesn't DROP a real task;
+  // the LLM makes the final call.
+  if (t.length < 12 || t.length > 400) return null;
+  const requestCue =
+    /\b(you|u|ya|your|pls|plz|please|mind|chance|appreciate|need|want|pick|grab|drop|bring|remember|forget|get|send|call|text|book|order|return|handle|sort)\b/i;
+  if (!requestCue.test(t) && !t.includes("?")) return null;
+
+  const prompt =
+    `A message arrived from ${ctx?.relationship ? `the owner's ${ctx.relationship}` : "a known contact"}. ` +
+    `Decide if it ASKS THE OWNER to do a concrete task/errand/to-do (something the owner should DO). ` +
+    `A polite request phrased as a question still counts ("mind picking up X?", "any chance you could grab Y?", "would you call Z?"). ` +
+    `An INFORMATIONAL question ("do you think…?", "what time…?"), an FYI, banter, or a plan with no action assigned is NOT a task. ` +
+    `Return STRICT minified JSON, nothing else: {"isTask":boolean,"title":"<imperative, owner's to-do, <=80 chars>","urgency":"now"|"soon"|"normal"}. ` +
+    `title is verb-first ("pick up the dry cleaning"), no "you"; urgency 'now' only if explicitly urgent.\n` +
+    `Message:\n"""${t}"""\nJSON:`;
+
+  let raw: string;
+  try {
+    raw = await llmCall(prompt);
+  } catch {
+    return null;
+  }
+  const m = raw && raw.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let obj: { isTask?: unknown; title?: unknown; urgency?: unknown };
+  try {
+    obj = JSON.parse(m[0]);
+  } catch {
+    return null;
+  }
+  if (obj.isTask !== true || typeof obj.title !== "string") return null;
+  const title = obj.title.replace(/[?.!,;]+$/, "").trim();
+  if (title.length < 5 || title.length > 150) return null;
+  const urgency: CapturedTask["urgency"] =
+    obj.urgency === "now" || obj.urgency === "soon" || obj.urgency === "normal" ? obj.urgency : "normal";
+  return { title, urgency };
+}
+
 // ── detectOutboundPromise ─────────────────────────────────────────────────────
 
 /** A promise the bot made in the owner's name on a contact thread
