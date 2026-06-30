@@ -49,7 +49,7 @@ func defaultNewsHTTPGet(ctx context.Context, rawURL string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("news: HTTP %d from %s", resp.StatusCode, rawURL)
 	}
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB cap
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 12<<20)) // 12 MB cap — Substack/full-content RSS feeds run 2-3 MB; a 1 MB cap truncated them mid-XML so parsing silently yielded 0 items
 	if readErr != nil {
 		return nil, fmt.Errorf("news: read body: %w", readErr)
 	}
