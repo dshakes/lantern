@@ -1984,6 +1984,19 @@ export class IMessageSession {
     }
   }
 
+  // Latest device-signal timestamp (Phase 1). Lets presence.current() compare a
+  // manual status override's age against the freshest iphone signal — so a
+  // stale override ("at the park") is dropped the moment a newer location
+  // signal contradicts it, and the rendered line carries an as-of clause.
+  private latestSignalTs(): number {
+    try {
+      const file = join(homedir(), ".lantern", "device-signals.jsonl");
+      if (!existsSync(file)) return 0;
+      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-50);
+      return parseSignals(tail).reduce((m, s) => Math.max(m, s.ts || 0), 0);
+    } catch { return 0; }
+  }
+
   // Gather the signals available to this bridge for the nudge engine. All
   // best-effort — any sub-failure degrades to an empty slice, never throws.
   private async gatherProactiveSignals(now: number): Promise<{
@@ -4858,6 +4871,7 @@ export class IMessageSession {
           try { return await this.calendar.nextMeetingWindow?.(); } catch { return null; }
         },
         iphone: iphonePresence,
+        iphoneTs: this.latestSignalTs(),
       }),
     ]);
     const dislikeBlock = formatDislikeBlock(dislikeEntries);
@@ -6307,7 +6321,7 @@ export class IMessageSession {
       let inferred: string | null = null;
       if (wmBlock && isSelfContextQuery(text)) {
         let presLine = "";
-        try { presLine = (await this.presence.current())?.line || ""; } catch { /* best-effort */ }
+        try { presLine = (await this.presence.current({ iphoneTs: this.latestSignalTs() }))?.line || ""; } catch { /* best-effort */ }
         const synthHint = [
           `You are ${ownerName}'s personal agent in his self-chat. Answer his question by SYNTHESIZING the facts below — infer the likely place/activity and SAY what you inferred it from (1-2 short lines, hedge if unsure). Do NOT say "I can't tell" or "no destination" when these support a reasonable guess.`,
           presLine ? `Live signal: ${presLine}` : "",
