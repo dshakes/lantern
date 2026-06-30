@@ -6,6 +6,7 @@ package handlers
 // news_items with full links so the bridge and dashboard can display them.
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,15 +23,30 @@ const (
 	newsMaxLimit     = 100
 )
 
-// NewsHandler provides GET /v1/news.
+// NewsHandler provides GET /v1/news and POST /v1/news/ask.
 type NewsHandler struct {
-	srv  *server.Server
-	auth *AuthHandler
+	srv      *server.Server
+	auth     *AuthHandler
+	llmProxy *LlmProxyHandler // nil → /v1/news/ask falls back to importance ranking
 }
 
 // NewNewsHandler creates a NewsHandler.
 func NewNewsHandler(srv *server.Server, auth *AuthHandler) *NewsHandler {
 	return &NewsHandler{srv: srv, auth: auth}
+}
+
+// SetLlmProxy enables the intelligent /v1/news/ask path (LLM curation).
+func (h *NewsHandler) SetLlmProxy(p *LlmProxyHandler) { h.llmProxy = p }
+
+// completeFn returns an LLM completion seam, or nil when no proxy is configured.
+func (h *NewsHandler) completeFn() researchCompleteFn {
+	if h.llmProxy == nil {
+		return nil
+	}
+	return func(ctx context.Context, tenantID, system, user string) (string, error) {
+		text, _, _, _, err := h.llmProxy.CompleteInternalWithUsage(ctx, tenantID, system, user)
+		return text, err
+	}
 }
 
 func (h *NewsHandler) logger() *zap.Logger { return h.srv.Logger.Named("news") }
@@ -99,13 +115,16 @@ func (h *NewsHandler) ListNews(w http.ResponseWriter, r *http.Request) {
 	// ?sort=popular → rank by score (HN points / star-velocity / mentions),
 	// then recency. Default is recency. A windowed view defaults to popular
 	// ("top news this week"), which is what the owner asked for.
-	orderBy := "created_at DESC"
-	if q.Get("sort") == "popular" || (windowInterval != "" && q.Get("sort") == "") {
-		orderBy = "score DESC NULLS LAST, COALESCE(published_at, created_at) DESC"
+	// Default ranking is now IMPORTANCE-first (score), then recency — so a bare
+	// "news" leads with MAJOR releases instead of burying them under minor CLI
+	// version bumps (which carry low scores). Recency-only is opt-in via
+	// ?sort=recent. A source/author filter still defaults to latest-by-date.
+	orderBy := "score DESC NULLS LAST, COALESCE(published_at, created_at) DESC"
+	if q.Get("sort") == "recent" {
+		orderBy = "COALESCE(published_at, created_at) DESC, created_at DESC"
 	} else if sourceFilter != "" && q.Get("sort") == "" {
-		// "news openai" → the LATEST from that company by article date, not
-		// scan order (created_at is ~uniform across a backfilled archive, which
-		// otherwise surfaces years-old posts).
+		// "news openai" / "news <author>" → the LATEST from them by article date,
+		// not scan order (created_at is ~uniform across a backfilled archive).
 		orderBy = "COALESCE(published_at, created_at) DESC"
 	}
 

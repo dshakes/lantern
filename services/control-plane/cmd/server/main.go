@@ -287,6 +287,7 @@ func main() {
 
 	domainRecordHandler := handlers.NewDomainRecordHandler(srv, authHandler)
 	newsHandler := handlers.NewNewsHandler(srv, authHandler)
+	newsHandler.SetLlmProxy(llmProxyHandler) // enables intelligent /v1/news/ask
 	loopAgentHandler := handlers.NewLoopAgentHandler(srv, authHandler, llmProxyHandler)
 	restHandler.SetLlmProxy(llmProxyHandler) // enables inline run execution
 	restHandler.SetDataPlaneRouter(dpSvc)    // routes runs to a connected data plane when one is live
@@ -543,6 +544,7 @@ func main() {
 
 	// AI Radar feed (news_radar loop agent).
 	httpMux.HandleFunc("GET /v1/news", newsHandler.ListNews)
+	httpMux.HandleFunc("POST /v1/news/ask", newsHandler.AskNews)
 
 	// Loop-agent platform primitive (Stage 3).
 	// Must be registered before the generic /v1/agents/{name} patterns to avoid shadowing.

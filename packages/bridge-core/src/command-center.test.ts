@@ -13,6 +13,7 @@ import {
   buildDomain,
   buildDid,
   buildNews,
+  buildNewsAsk,
   buildNewsDigest,
   buildQuietAck,
   parseQuietHours,
@@ -253,4 +254,26 @@ test("selectTopDrops: high-signal, deduped, capped", () => {
   assert.ok(!drops.some((d) => d.url === "https://b")); // below threshold
   assert.ok(!drops.some((d) => d.url === "https://d")); // already pushed
   assert.match(buildTopDropPush(items[0]), /Top AI drop \(740\): Big model/);
+});
+
+test("buildNewsAsk — grouped by company, dated, why + links (intelligent radar)", () => {
+  const v = buildNewsAsk({
+    interpretation: "biggest AI news this week",
+    note: "",
+    groups: [
+      { company: "OpenAI", items: [{ title: "GPT-5.6 launches", url: "https://x/1", source: "OpenAI Blog", category: "labs", publishedAt: "2026-06-27", why: "new frontier model", score: 90 }] },
+      { company: "HuggingFace", items: [{ title: "GLM-5.2 released", url: "https://x/2", source: "HF", publishedAt: "2026-06-17", why: "long-horizon agent model", score: 92 }] },
+    ],
+  });
+  assert.match(v.text, /📡 AI Radar/);
+  assert.match(v.text, /▸ OpenAI/);
+  assert.match(v.text, /▸ HuggingFace/);
+  assert.match(v.text, /Jun 27/);
+  assert.equal(v.items.length, 2); // numbered, savable
+});
+
+test("buildNewsAsk — empty groups surfaces the honest note", () => {
+  const v = buildNewsAsk({ note: "nothing from Sebastian Rachika in the feed", groups: [] });
+  assert.match(v.text, /Sebastian Rachika/);
+  assert.equal(v.items.length, 0);
 });

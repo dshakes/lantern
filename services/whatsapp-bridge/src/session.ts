@@ -138,9 +138,9 @@ import {
 } from "@lantern/bridge-core/doc-ingest";
 import { extname } from "path";
 import {
-  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildReadlist, buildQuietAck,
+  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildNewsAsk, buildReadlist, buildQuietAck,
   selectTopDrops, buildTopDropPush, buildNewsDigest,
-  type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite,
+  type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite, type NewsAskResult,
 } from "@lantern/bridge-core/command-center";
 import {
   getCenterItems, setCenterItems, isRealTimeNudge, fetchBriefInput, parseSnoozeMs,
@@ -9020,21 +9020,35 @@ export class WhatsAppSession {
         const view = buildDid([]);
         text = view.text; items = view.items;
       } else if (typeof cmd === "object" && "news" in cmd) {
-        // AI Radar feed (links). today/week/month windows → server ranks by popularity.
+        // INTELLIGENT AI Radar (parity with iMessage): LLM-curated /v1/news/ask.
         const nq = cmd.news;
-        const params = new URLSearchParams({ limit: "20" });
-        if (nq.window) { params.set("window", nq.window); params.set("sort", "popular"); }
-        if (nq.category) params.set("category", nq.category);
-        if (nq.source) params.set("source", nq.source);
-        const news: NewsItemLite[] = [];
+        const q = nq.source
+          ? nq.source
+          : nq.category
+            ? `top ${nq.category} AI news`
+            : nq.window
+              ? `the most important AI news ${nq.window === "today" ? "today" : nq.window === "week" ? "this week" : "this month"}`
+              : "the most important recent AI news";
+        let nv: ReturnType<typeof buildNewsAsk> | undefined;
         try {
-          const r = await authedFetch("/v1/news?" + params.toString());
-          if (r.ok) {
-            const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
-            for (const it of data ?? []) news.push({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score });
-          }
-        } catch { /* best-effort */ }
-        const nv = buildNews(news, nq);
+          const r = await authedFetch("/v1/news/ask", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q, limit: 5 }) });
+          if (r.ok) nv = buildNewsAsk((await r.json()) as NewsAskResult);
+        } catch { /* fall through */ }
+        if (!nv) {
+          const params = new URLSearchParams({ limit: "20" });
+          if (nq.window) { params.set("window", nq.window); params.set("sort", "popular"); }
+          if (nq.category) params.set("category", nq.category);
+          if (nq.source) params.set("source", nq.source);
+          const news: NewsItemLite[] = [];
+          try {
+            const r = await authedFetch("/v1/news?" + params.toString());
+            if (r.ok) {
+              const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
+              for (const it of data ?? []) news.push({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score });
+            }
+          } catch { /* best-effort */ }
+          nv = buildNews(news, nq);
+        }
         text = nv.text; items = nv.items;
       } else if (typeof cmd === "object" && "quiet" in cmd) {
         // quiet [Nh] — pause ALL proactive pushes for a window (de-bloat).
