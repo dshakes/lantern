@@ -3343,6 +3343,16 @@ export class IMessageSession {
       const who = best
         ? (resolveIdentity(best.handle) || this.contactNames.get(best.handle) || hits.find((h) => h.phones.concat(h.emails).some((x) => canonicalHandle(x) === canonicalHandle(best!.handle)))?.name || contactName)
         : contactName;
+      // PRONOUN SAFETY: derive gender from the RELATIONSHIP, never the name.
+      // Unknown (business contacts like Prithvi) → name/they; NEVER guess.
+      const relLabel = best ? (this.ownerProfileStore.relationshipFor(best.handle, who) || "") : "";
+      const fem = /\b(wife|sister|mother|mom|daughter|girlfriend|aunt|grandmother|niece|sister-in-law|fiancee)\b/i.test(relLabel);
+      const masc = /\b(husband|brother|father|dad|son|boyfriend|uncle|grandfather|nephew|brother-in-law|fiance)\b/i.test(relLabel);
+      const pronounRule = fem
+        ? `Use she/her for ${who}.`
+        : masc
+          ? `Use he/him for ${who}.`
+          : `${who}'s gender is UNKNOWN — refer to ${who} by name or they/them; NEVER assume he or she.`;
       // EMAIL too: the owner's question is cross-channel. Always tell the model
       // to also pull email for this person and MERGE it with the texts — so it
       // never reports "nothing in messages" while ignoring an active email
@@ -3357,7 +3367,7 @@ export class IMessageSession {
       const lines = recent.map((m) => `${m.fromMe ? "you" : who}: ${m.text}`);
       return [
         `# Recent messages from ${who} (oldest first — the real thread). Answer the owner's question from THIS; do not fabricate.`,
-        `Summarize in natural THIRD PERSON about ${who} — e.g. "she's sending you a grocery list", "she added Swathi as a pickup". NEVER echo her first-person words verbatim ("she I'll…" / "she said I'll…" is wrong) and don't paste her messages raw. Keep her concrete details EXACT (item names, names, dates, conditions like "not from the snack section"). Lead with the single most useful takeaway, then the specifics.`,
+        `Summarize in natural THIRD PERSON about ${who}. ${pronounRule} NEVER echo ${who}'s first-person words verbatim ("${who} I'll…" / "${who} said I'll…" is wrong) and don't paste messages raw. Keep concrete details EXACT (item names, names, dates, conditions like "not from the snack section"). Lead with the single most useful takeaway, then the specifics.`,
         `This is its OWN question about ${who}. Answer ONLY from ${who}'s messages below — do NOT carry over the previous question's person or topic, and do NOT comment on whether ${who} mentioned someone else from an earlier question. Treat "today/recently/lately" loosely: if ${who}'s latest update answers it, LEAD WITH THAT ANSWER directly — don't bury it under "nothing new today" when you have a recent relevant update.`,
         ...lines,
         emailLine,
