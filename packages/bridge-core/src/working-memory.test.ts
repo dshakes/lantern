@@ -6,7 +6,16 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { recordAction, recentActions, workingMemoryBlock } from "./working-memory.ts";
+import { recordAction, recentActions, workingMemoryBlock, isSelfContextQuery } from "./working-memory.ts";
+
+test("isSelfContextQuery detects where/what-am-i questions, ignores others", () => {
+  for (const q of ["where did i go", "where am i headed", "where am i going", "where have i been", "what am i doing", "what have i been up to", "Where Did I Go?"]) {
+    assert.equal(isSelfContextQuery(q), true, q);
+  }
+  for (const q of ["where is the nearest store", "what time is it", "news openai", "where does my passport expire"]) {
+    assert.equal(isSelfContextQuery(q), false, q);
+  }
+});
 
 function tmp(): string {
   return join(mkdtempSync(join(tmpdir(), "lantern-wm-")), "wm.jsonl");

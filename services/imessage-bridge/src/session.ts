@@ -54,7 +54,7 @@ import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-cor
 import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
 import { deviceContextBlock as iphoneContextBlock, parseSignals, presenceFromSignals } from "@lantern/bridge-core/device-signals";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
-import { workingMemoryBlock, recordAction } from "@lantern/bridge-core/working-memory";
+import { workingMemoryBlock, recordAction, isSelfContextQuery } from "@lantern/bridge-core/working-memory";
 import { resolveName as resolveIdentity } from "@lantern/bridge-core/identity";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
@@ -6297,7 +6297,25 @@ export class IMessageSession {
       languageModality,
     ].filter(Boolean).join("\n");
     try {
-      const draft = await this.agent.respondTo(jid, text, systemHint, { withTools: true });
+      // FORCED INFERENCE (Phase 0): "where did I go / what am I doing" must be
+      // answered by SYNTHESIZING recent actions + signals, not punted to "I
+      // can't tell." With the tool catalog present the model defaults to a
+      // literal calendar/presence lookup and ignores working memory — so for
+      // these self-context questions we run a focused NO-TOOLS pass whose only
+      // job is to reason over working memory + the live presence line.
+      const wmBlock = workingMemoryBlock();
+      let inferred: string | null = null;
+      if (wmBlock && isSelfContextQuery(text)) {
+        let presLine = "";
+        try { presLine = (await this.presence.current())?.line || ""; } catch { /* best-effort */ }
+        const synthHint = [
+          `You are ${ownerName}'s personal agent in his self-chat. Answer his question by SYNTHESIZING the facts below — infer the likely place/activity and SAY what you inferred it from (1-2 short lines, hedge if unsure). Do NOT say "I can't tell" or "no destination" when these support a reasonable guess.`,
+          presLine ? `Live signal: ${presLine}` : "",
+          wmBlock,
+        ].filter(Boolean).join("\n\n");
+        inferred = await this.agent.respondTo(`${jid}::infer`, text, synthHint, { withTools: false });
+      }
+      const draft = inferred || await this.agent.respondTo(jid, text, systemHint, { withTools: true });
       if (!draft) {
         this.logger.warn({ jid }, "owner natural chat — no draft");
         // Even the owner's "hi" deserves a reply when the round-trip fails.
@@ -7370,10 +7388,27 @@ export class IMessageSession {
       iphoneLine ? "\n" + iphoneContextBlock(iphoneLine) : "",
     ].filter(Boolean).join("\n");
 
-    // First attempt. withTools=true so the agent has the personal-docs
+    // FORCED INFERENCE (Phase 0): "where did I go / what am I doing" must be
+    // answered by SYNTHESIZING recent actions + live signals — not punted to
+    // "I can't tell." With the tool catalog present the model defaults to a
+    // literal lookup and ignores working memory, so for these self-context
+    // questions we run a focused NO-TOOLS pass over working memory + the live
+    // iphone signal first.
+    let draft: string | null = null;
+    const wmBlock = workingMemoryBlock();
+    if (wmBlock && isSelfContextQuery(query)) {
+      const synthHint = [
+        `You are ${ownerName}'s personal agent in his self-chat. Answer his question by SYNTHESIZING the facts below — infer the likely place/activity and SAY what you inferred it from (1-2 short lines, hedge if unsure). Do NOT say "I can't tell" or "no destination" when these support a reasonable guess.`,
+        iphoneLine ? `Live signal: ${iphoneLine}` : "",
+        wmBlock,
+      ].filter(Boolean).join("\n\n");
+      draft = await this.agent.respondTo(`${jid}::infer`, query, synthHint, { withTools: false });
+    }
+
+    // Main attempt. withTools=true so the agent has the personal-docs
     // + connector tools — but the profile context above lets the LLM
     // skip them for profile-answerable questions.
-    let draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
+    if (!draft) draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
 
     // SILENT AUTO-RETRY on null (timeout, transient failure). The
     // AgentClient already retries once on session-not-active 409; this
