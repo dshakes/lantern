@@ -14,6 +14,7 @@ import type { Logger } from "pino";
 import { AgentClient } from "@lantern/bridge-core/agent";
 import { AttentionClassifier } from "./attention.js";
 import { authedFetch } from "@lantern/bridge-core/auth";
+import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/bridge-core/auto-actions-store";
 import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
 import { parseSignals, presenceFromSignals, type SignalPresence } from "@lantern/bridge-core/device-signals";
@@ -1673,6 +1674,7 @@ export class WhatsAppSession {
     // were colocated and re-pairing silently cleared every preference.
     const stateDir = join(process.cwd(), "bridge_state", tenantId);
     mkdirSync(stateDir, { recursive: true });
+    this.stateDir = stateDir;
     this.stateFile = join(stateDir, "agent_state.json");
     // One-time migration: if the legacy file exists in authDir but the
     // new location is empty, move it. Idempotent — runs once per tenant
@@ -3582,6 +3584,8 @@ export class WhatsAppSession {
     this.autoActLog.push({ text, ts: now });
     const since = now - 24 * 3_600_000;
     this.autoActLog = this.autoActLog.filter((e) => e.ts >= since).slice(-50);
+    // Persist so the `did` recap survives a bridge restart.
+    recordAutoAction(this.stateDir, text, now);
   }
 
   // "what did you do today" recap.
@@ -4844,6 +4848,7 @@ export class WhatsAppSession {
   private lastLifeEventKind: import("@lantern/bridge-core/life-events").LifeEventKind | null = null;
   // AUTO-ACT LADDER — in-memory ring of today's auto-actions for the recap.
   private autoActLog: Array<{ text: string; ts: number }> = [];
+  private stateDir = "";
 
   // Set to true once the bridge has been in `connected` state at least
   // once. OfflineMonitor uses this to distinguish first-boot idle
@@ -9028,7 +9033,7 @@ export class WhatsAppSession {
         text = buildAgents(agentStats);
       } else if (cmd === "did") {
         // ponytail: auto-actions not yet sourced from an API endpoint; shows "nothing auto-handled"
-        const view = buildDid([]);
+        const view = buildDid(autoActionsToDid(loadAutoActions(this.stateDir)));
         text = view.text; items = view.items;
       } else if (typeof cmd === "object" && "news" in cmd) {
         // INTELLIGENT AI Radar (parity with iMessage): LLM-curated /v1/news/ask.

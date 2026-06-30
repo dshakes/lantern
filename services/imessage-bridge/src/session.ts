@@ -248,6 +248,7 @@ import { runDislikeConsolidation, formatStyleLessonsBlock, type StyleLesson } fr
 import { detectEmotionalRegister } from "@lantern/bridge-core/emotional-register";
 import type { ContactSignals } from "@lantern/bridge-core/contact-priority";
 import { authedFetch } from "@lantern/bridge-core/auth";
+import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/bridge-core/auto-actions-store";
 import {
   detectTaskCapture,
   detectOutboundPromise,
@@ -2673,8 +2674,10 @@ export class IMessageSession {
         } catch { /* best-effort */ }
         text = buildAgents(agentStats);
       } else if (cmd === "did") {
-        // ponytail: auto-actions not yet sourced from an API; shows "nothing auto-handled"
-        const view = buildDid([]);
+        // Recap of the SAFE/REVERSIBLE actions the bridge auto-took (deliveries
+        // logged, calendar events added), read from the persisted 24h store so
+        // it's accurate even right after a restart.
+        const view = buildDid(autoActionsToDid(loadAutoActions(this.stateDir)));
         text = view.text; items = view.items;
       } else if (typeof cmd === "object" && "news" in cmd) {
         // INTELLIGENT AI Radar: route the owner's natural request to the
@@ -6397,6 +6400,9 @@ export class IMessageSession {
     this.autoActLog.push({ text, ts: now });
     const since = now - 24 * 3_600_000;
     this.autoActLog = this.autoActLog.filter((e) => e.ts >= since).slice(-50);
+    // Persist so the `did` recap survives a bridge restart (the owner restarts
+    // often during testing; in-memory-only made `did` falsely say "nothing").
+    recordAutoAction(this.stateDir, text, now);
   }
 
   // "what did you do today" — recap of the auto-actions taken in the last 24h.
