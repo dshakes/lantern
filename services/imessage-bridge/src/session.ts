@@ -5293,7 +5293,14 @@ export class IMessageSession {
     // instead of falling back to generic rules. For a Telugu inbound, also
     // surface the owner's real Telugu phrasing (beats the BAD→GOOD dialect
     // rules — the source of broken-Telangana output). Cheap pure function.
-    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu", text);
+    // Inject the owner's REAL Telugu exemplars whenever Telugu is even LIKELY —
+    // not only when it's the inbound's PRIMARY language. A mixed / English-
+    // dominant message with Telugu tokens, or a Telugu voice-note, otherwise
+    // fell back to the model's textbook-Telugu prior (the "people are laughing"
+    // bug). Over-injecting is harmless: unused exemplars just sit in the few-shot.
+    const teluguLikely =
+      langHint.primary === "telugu" || langHint.hasNativeScript || langHint.hasRomanized;
+    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, teluguLikely, text);
     // Cross-contact recall — episodes from other chats (self-chat
     // especially) that mention this contact by first name. Surfaces
     // "Sujith was here this weekend" when Sujith messages later.
