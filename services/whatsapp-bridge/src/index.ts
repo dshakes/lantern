@@ -180,6 +180,23 @@ app.get("/session/:tenantId/diagnostics", (req, res) => {
   res.json({ ...session.getDiagnostics(), present: true });
 });
 
+// POST /session/:tenantId/whatsapp/thread-peek -- cross-bridge: the iMessage
+// bridge calls this for a person's recent WhatsApp thread to merge cross-channel.
+app.post("/session/:tenantId/whatsapp/thread-peek", async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) { res.status(400).json({ error: "session not started" }); return; }
+  const { name } = req.body as { name?: unknown };
+  if (typeof name !== "string" || !name.trim()) { res.status(400).json({ error: "name required" }); return; }
+  try {
+    const peek = await session.peekLocal(name.trim());
+    if (!peek) { res.status(204).end(); return; }
+    res.json(peek);
+  } catch (err) {
+    logger.warn({ err, tenantId: req.params.tenantId }, "whatsapp/thread-peek failed");
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // GET /session/:tenantId/status -- check if a session exists and is connected
 app.get("/session/:tenantId/status", (req, res) => {
   const session = sessions.get(req.params.tenantId);
