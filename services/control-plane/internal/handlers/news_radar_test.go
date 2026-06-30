@@ -377,7 +377,10 @@ func TestNewsListHandler_ReturnsItems(t *testing.T) {
 	h := NewNewsHandler(e.srv, auth)
 
 	tok := mintTestToken(t, tenantID, "00000000-0000-0000-0000-000000000002", "owner")
-	req := httptest.NewRequest(http.MethodGet, "/v1/news?limit=10", nil)
+	// sort=recent so the freshly-seeded row is at the top regardless of how many
+	// higher-SCORED rows already exist (default sort is importance-first, so on a
+	// populated DB a score-42 row would otherwise fall outside ?limit=10).
+	req := httptest.NewRequest(http.MethodGet, "/v1/news?sort=recent&limit=10", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	w := httptest.NewRecorder()
 	h.ListNews(w, req)
