@@ -88,6 +88,14 @@ the promises the bot made on your behalf**):
 Deterministic assembly (never invents items), narrated back in your voice.
 Owner self-chat only.
 
+**Closed-loop actions.** When the bot performs an action for you — adds a
+calendar event, saves a note, drafts mail — it sends a concrete receipt
+(`📅 added to calendar — Dentist, Tue 3:00pm`) **and** records it to working
+memory. So the action shows up under "Handled recently" in your next briefing,
+and "did you add that?" is answerable from the ledger, not a guess. (The
+visible reply still says "I'll add it" until the action actually succeeds — the
+receipt is the source of truth, so a failed action is never claimed as done.)
+
 ### Promise-keeping (`commitments-edge.ts`)
 
 When the bot tells a contact "I'll send you the deck tonight," it records that

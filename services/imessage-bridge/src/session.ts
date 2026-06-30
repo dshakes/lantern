@@ -54,7 +54,7 @@ import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-cor
 import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/mac-usage";
 import { deviceContextBlock as iphoneContextBlock, parseSignals, presenceFromSignals } from "@lantern/bridge-core/device-signals";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
-import { workingMemoryBlock, recordAction, isSelfContextQuery } from "@lantern/bridge-core/working-memory";
+import { workingMemoryBlock, recordAction, recentActions, isSelfContextQuery } from "@lantern/bridge-core/working-memory";
 import { resolveName as resolveIdentity, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
@@ -3343,6 +3343,13 @@ export class IMessageSession {
         sections.push("On your plate:");
         for (const c of commitments) sections.push(`  • ${c.title}`);
       }
+      // CLOSED LOOP: what the bot already handled (calendar/note/mail/call/
+      // status). The receipt, surfaced — "here's what I took care of."
+      const handled = recentActions().filter((a) => a.kind !== "presence").slice(-5);
+      if (handled.length) {
+        sections.push("Handled recently:");
+        for (const a of handled) sections.push(`  • ${a.summary}`);
+      }
       if (sections.length === 0) {
         return "# Daily briefing (the owner asked for their day)\nNothing pressing — calendar's clear, no one's waiting, plate's empty. Say so briefly.";
       }
@@ -6342,6 +6349,11 @@ export class IMessageSession {
         const res = await placeCallNow((offer as any).callRequest, (offer as any).callPlan, deps);
         if (!res.ok) {
           await this.send(jid, `(couldn't place call: ${res.reason || "unknown"})`);
+        } else {
+          // CLOSED LOOP: record the placed call (briefing + self-context). Fires
+          // at the real dial site (post owner-confirm), never at marker time.
+          const who = (offer as any).callPlan?.targetName ?? (offer as any).callRequest?.toName ?? (offer as any).callRequest?.target ?? "a contact";
+          recordAction({ kind: "call_placed", summary: `called ${who}` });
         }
       } catch (err) {
         this.logger.error({ err }, "outbound-call offer execution failed");
@@ -6365,6 +6377,7 @@ export class IMessageSession {
         if (res.ok) {
           const friendly = reminderDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
           await this.send(jid, `📅 done — reminder set for ${friendly} (${offer.leadDays} days before). ${res.detail || ""}`);
+          recordAction({ kind: "calendar_added", summary: `reminder set: ${offer.title || "renewal"} (${friendly})` });
         } else {
           await this.send(jid, `(couldn't add to calendar: ${res.reason})`);
         }
@@ -7718,6 +7731,7 @@ export class IMessageSession {
       } else if (status.label) {
         const durationMs = status.untilIso ? Math.max(60_000, Date.parse(status.untilIso) - Date.now()) : undefined;
         this.presence.setStatus({ label: status.label, place: status.place, durationMs });
+        recordAction({ kind: "status_set", summary: `status set: ${status.place || status.label}` });
         this.logger.info({ label: status.label, untilIso: status.untilIso }, "presence set via [STATUS:]");
       }
     }
@@ -7793,6 +7807,9 @@ export class IMessageSession {
       try {
         const res = await this.macActions.createCalendarEvent(ev);
         await this.send(jid, res.ok ? `📅 added to calendar — ${res.detail || ev.title}` : `(calendar failed: ${res.reason})`);
+        // CLOSED LOOP: record the action so the bot remembers it did this
+        // (surfaces in the briefing's "handled today" + self-context).
+        if (res.ok) recordAction({ kind: "calendar_added", summary: `added to calendar: ${ev.title}` });
         this.logger.info({ title: ev.title, ok: res.ok }, "calendar action");
       } catch (err) {
         this.logger.warn({ err, title: ev.title }, "calendar action exception");
@@ -7802,6 +7819,7 @@ export class IMessageSession {
       try {
         const res = await this.macActions.createNote(n);
         await this.send(jid, res.ok ? `🗒 saved as a note — "${n.title}"` : `(note failed: ${res.reason})`);
+        if (res.ok) recordAction({ kind: "note_saved", summary: `saved note: ${n.title}` });
         this.logger.info({ title: n.title, ok: res.ok }, "note action");
       } catch (err) {
         this.logger.warn({ err, title: n.title }, "note action exception");
@@ -7811,6 +7829,7 @@ export class IMessageSession {
       try {
         const res = await this.macActions.createMailDraft(m);
         await this.send(jid, res.ok ? `✉️ draft opened in Mail — review + send when ready` : `(mail draft failed: ${res.reason})`);
+        if (res.ok) recordAction({ kind: "custom", summary: `drafted mail to ${m.to}: ${m.subject}` });
         this.logger.info({ to: m.to, subject: m.subject, ok: res.ok }, "mail action");
       } catch (err) {
         this.logger.warn({ err, subject: m.subject }, "mail action exception");
