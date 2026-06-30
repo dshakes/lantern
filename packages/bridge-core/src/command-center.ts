@@ -578,6 +578,9 @@ export interface NewsItemLite {
   url: string;
   summary?: string;
   score?: number;
+  /** ISO publish date. Used to recency-gate proactive pushes — a "major drop"
+   *  must be RECENTLY PUBLISHED, not merely recently ingested. */
+  publishedAt?: string;
 }
 
 const NEWS_CAT_ICON: Record<string, string> = {
@@ -723,14 +726,25 @@ export function buildReadlist(entries: ReadlistEntry[]): CenterView {
 export function selectTopDrops(
   items: NewsItemLite[],
   pushed: ReadonlySet<string>,
-  opts?: { threshold?: number; max?: number },
+  opts?: { threshold?: number; max?: number; maxAgeMs?: number; now?: number },
 ): NewsItemLite[] {
   const threshold = opts?.threshold ?? 100;
   const max = opts?.max ?? 2;
+  // A proactive "major drop" interrupt must be for something published RECENTLY.
+  // Default 4 days — covers a weekend + ingestion lag without resurfacing old
+  // posts. This is the guard against a newly-added source's backlog (all
+  // freshly ingested, all high-scored) firing as "major drops now".
+  const maxAgeMs = opts?.maxAgeMs ?? 4 * 24 * 60 * 60 * 1000;
+  const now = opts?.now ?? Date.now();
   const out: NewsItemLite[] = [];
   const seenSource = new Set<string>();
   for (const it of [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))) {
     if (!it.url || (it.score ?? 0) < threshold || pushed.has(it.url)) continue;
+    // Recency gate: require a parseable publish date within the window. Missing
+    // or stale date → never a proactive interrupt (it still appears in the
+    // daily digest + on-demand "news").
+    const pubMs = it.publishedAt ? Date.parse(it.publishedAt) : NaN;
+    if (Number.isNaN(pubMs) || now - pubMs > maxAgeMs) continue;
     if (seenSource.has(it.source)) continue; // diversity: at most 1 per source per push
     seenSource.add(it.source);
     out.push(it);

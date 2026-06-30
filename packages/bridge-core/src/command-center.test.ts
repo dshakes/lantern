@@ -267,21 +267,43 @@ test("summarizeAgentRuns maps real run history → last-run/outcome/health", () 
   assert.equal(garage.lastRunAgo, undefined);
 });
 
-test("selectTopDrops: high-signal, deduped, capped", () => {
+test("selectTopDrops: high-signal, deduped, capped, recent-only", () => {
+  const now = Date.parse("2026-06-30T12:00:00Z");
+  const recent = "2026-06-29T12:00:00Z"; // 1 day old
   const items = [
-    { source: "HN", title: "Big model", url: "https://a", score: 740 },
-    { source: "HN", title: "meh", url: "https://b", score: 10 },
-    { source: "GH", title: "Hot repo", url: "https://c", score: 300 },
-    { source: "X", title: "already seen", url: "https://d", score: 500 },
+    { source: "HN", title: "Big model", url: "https://a", score: 740, publishedAt: recent },
+    { source: "HN", title: "meh", url: "https://b", score: 10, publishedAt: recent },
+    { source: "GH", title: "Hot repo", url: "https://c", score: 300, publishedAt: recent },
+    { source: "X", title: "already seen", url: "https://d", score: 500, publishedAt: recent },
   ];
   const pushed = new Set(["https://d"]);
-  const drops = selectTopDrops(items, pushed, { threshold: 100, max: 2 });
+  const drops = selectTopDrops(items, pushed, { threshold: 100, max: 2, now });
   assert.equal(drops.length, 2);
   assert.equal(drops[0].url, "https://a"); // highest score
   assert.equal(drops[1].url, "https://c");
   assert.ok(!drops.some((d) => d.url === "https://b")); // below threshold
   assert.ok(!drops.some((d) => d.url === "https://d")); // already pushed
   assert.match(buildTopDropPush(items[0]), /major AI drop — Big model/);
+});
+
+test("selectTopDrops: a high-score but OLD-published item is NOT pushed (backlog guard)", () => {
+  const now = Date.parse("2026-06-30T12:00:00Z");
+  const items = [
+    // High score, freshly ingested, but published 7 months ago — a newly-added
+    // source's backlog. Must NOT fire as a "major drop now".
+    { source: "Sebastian Raschka", title: "The Big LLM Architecture Comparison", url: "https://old", score: 840, publishedAt: "2025-07-19T00:00:00Z" },
+    // Genuinely recent major → should push.
+    { source: "OpenAI", title: "New frontier model", url: "https://new", score: 300, publishedAt: "2026-06-29T00:00:00Z" },
+  ];
+  const drops = selectTopDrops(items, new Set(), { threshold: 100, max: 2, now });
+  assert.equal(drops.length, 1);
+  assert.equal(drops[0].url, "https://new");
+});
+
+test("selectTopDrops: missing publishedAt → not a proactive interrupt", () => {
+  const now = Date.parse("2026-06-30T12:00:00Z");
+  const items = [{ source: "HN", title: "dateless", url: "https://x", score: 900 }];
+  assert.equal(selectTopDrops(items, new Set(), { threshold: 100, now }).length, 0);
 });
 
 test("buildNewsAsk — grouped by company, dated, why + links (intelligent radar)", () => {

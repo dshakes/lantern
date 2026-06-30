@@ -1352,8 +1352,8 @@ export class IMessageSession {
       // was published a day or two ago). Dedup keeps each pushed once.
       const r = await authedFetch("/v1/news?sort=popular&limit=20");
       if (!r.ok) return;
-      const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
-      const items: NewsItemLite[] = (data ?? []).map((it) => ({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score }));
+      const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number; publishedAt?: string }>;
+      const items: NewsItemLite[] = (data ?? []).map((it) => ({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score, publishedAt: it.publishedAt }));
       // First run ever: mark today's top items as "already seen" WITHOUT pushing,
       // so we only push genuinely-new drops from here on (no day-1 backlog spam).
       if (this.newsNeedsSeed) {
@@ -1392,7 +1392,7 @@ export class IMessageSession {
           this.logger.warn({ err: e }, "daily digest send failed");
         }
       }
-      const drops = selectTopDrops(items, this.newsPushed, { threshold: 70, max: 2 });
+      const drops = selectTopDrops(items, this.newsPushed, { threshold: 70, max: 2, now: Date.now() });
       for (const d of drops) {
         // Only mark as pushed if the send actually succeeds (else we'd silently
         // drop it forever). this.send resolves on success / rejects on failure.
