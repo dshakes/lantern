@@ -9362,8 +9362,8 @@ export class WhatsAppSession {
       if (this.proactivePaused()) return;
       const r = await authedFetch("/v1/news?sort=popular&limit=20");
       if (!r.ok) return;
-      const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
-      const items: NewsItemLite[] = (data ?? []).map((it) => ({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score }));
+      const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number; publishedAt?: string }>;
+      const items: NewsItemLite[] = (data ?? []).map((it) => ({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score, publishedAt: it.publishedAt }));
       if (this.newsNeedsSeed) {
         for (const it of items) if (it.url) this.newsPushed.add(it.url);
         try { writeFileSync(this.newsPushedFile, JSON.stringify([...this.newsPushed].slice(-500)), { mode: 0o600 }); } catch { /* best-effort */ }
@@ -9397,7 +9397,7 @@ export class WhatsAppSession {
           this.logger.warn({ err: e }, "daily digest send failed");
         }
       }
-      const drops = selectTopDrops(items, this.newsPushed, { threshold: 70, max: 2 });
+      const drops = selectTopDrops(items, this.newsPushed, { threshold: 70, max: 2, now: Date.now() });
       let pushed = 0;
       for (const d of drops) {
         try {
