@@ -9932,11 +9932,15 @@ export class WhatsAppSession {
     let block = "";
     try {
       const ownerFirst = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0].toLowerCase();
+      // Robust self-exclusion: the bridge's OWN jid by canonical match — never
+      // surface the owner's self-chat as a "person" (don't rely on a name match).
+      const ownCanon = canonicalHandle(this.ownJid() || "");
       const threads: Array<{ handle: string; name?: string; msgs: number; lastTs: number }> = [];
       for (const a of this.topActiveContacts({ sinceDays: 30, limit: 15 })) {
+        if (ownCanon && canonicalHandle(a.handle) === ownCanon) continue;
         const name = resolveIdentity(a.handle) || this.contactNames.get(a.handle) || undefined;
         const ln = (name || "").toLowerCase();
-        if (ln && (ln.includes(ownerFirst) || /personal agent|\bagent\b|\bbot\b/.test(ln))) continue;
+        if (ln && (ownerFirst && ln.includes(ownerFirst) || /personal agent|\bagent\b|\bbot\b/.test(ln))) continue;
         threads.push({ handle: a.handle, name, msgs: a.msgs, lastTs: a.lastTs });
       }
       const profile: Array<{ name: string; relationship?: string }> = [];

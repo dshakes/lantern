@@ -3401,12 +3401,18 @@ export class IMessageSession {
     let block = "";
     try {
       const ownerFirst = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0].toLowerCase();
+      // Robust self-exclusion: the owner's OWN handle by canonical match (don't
+      // rely on a name substring) — the self-chat must never appear as a "person".
+      const ownCanon = new Set<string>();
+      const og = this.ownerSelfChatTarget(); if (og) ownCanon.add(canonicalHandle(og));
+      const envOwn = process.env.LANTERN_IMESSAGE_OWNER_HANDLE; if (envOwn) ownCanon.add(canonicalHandle(envOwn));
       const threads: Array<{ handle: string; name?: string; msgs: number; lastTs: number }> = [];
       for (const a of this.db.topActiveContacts({ sinceDays: 30, limit: 15 })) {
+        if (ownCanon.has(canonicalHandle(a.handle))) continue;
         const name = resolveIdentity(a.handle) || this.contactNames.get(a.handle) || undefined;
         const ln = (name || "").toLowerCase();
         // Skip the owner's own self-chat + the agent/Twilio number — not "people".
-        if (ln && (ln.includes(ownerFirst) || /personal agent|\bagent\b|\bbot\b/.test(ln))) continue;
+        if (ln && (ownerFirst && ln.includes(ownerFirst) || /personal agent|\bagent\b|\bbot\b/.test(ln))) continue;
         threads.push({ handle: a.handle, name, msgs: a.msgs, lastTs: a.lastTs });
       }
       const profile: Array<{ name: string; relationship?: string }> = [];
