@@ -65,25 +65,41 @@ export function resolveName(handle: string, opts: IdOpts = {}): string | null {
 const PHONE_SRC = String.raw`\+?\d[\d\s().-]{7,}\d`;
 const EMAIL_SRC = String.raw`[\w.+-]+@[\w-]+\.[\w.-]+`;
 
-// First-token words that are never a contact name (so "512… is wrong" /
-// "… is mine" don't get stored as a bogus name).
+// Words that are never part of a contact name. If ANY token of the captured
+// name is in here we reject — so "512… is wrong", "… is just spam", "…
+// definitely wrong", "… clearly not Manasa" don't get stored as a bogus,
+// highest-precedence override. Includes hedges/adverbs/verdicts that follow
+// "is" in a non-correction sentence.
 const NON_NAMES = new Set([
+  // verdicts / states
   "wrong", "mine", "not", "gone", "dead", "old", "new", "off", "blocked",
   "spam", "busy", "here", "there", "fine", "ok", "okay", "correct", "right",
-  "me", "us", "them", "him", "her", "working", "down", "unknown",
-  "unavailable", "at", "in", "on", "from", "the", "a", "an",
-  "my", "your", "our", "his", "their",
+  "working", "down", "unknown", "unavailable", "calling", "texting", "back",
+  // pronouns / articles / prepositions
+  "me", "us", "them", "him", "her", "at", "in", "on", "from", "the", "a", "an",
+  "my", "your", "our", "his", "their", "it",
+  // hedges / adverbs that follow "is" in a non-correction sentence
+  "just", "still", "probably", "definitely", "really", "clearly", "actually",
+  "basically", "literally", "maybe", "perhaps", "no", "nope", "yeah", "yes",
+  "always", "never", "sometimes", "now",
 ]);
 
 function cleanCorrectionName(raw: string): string | null {
-  let s = raw.trim().replace(/^(?:the|a|an|my)\s+/i, "").trim();
+  let s = raw.trim();
+  // "<handle> is a/an/the …" is a description, not a name assignment
+  // ("512 is a great number") — names don't take an article. Reject.
+  if (/^(?:a|an|the)\s/i.test(s)) return null;
+  s = s.replace(/^my\s+/i, "").trim();
   s = s.replace(/['']s\b/i, "").replace(/[.,!?;:]+$/, "").trim();
   if (!s) return null;
   // ponytail: keep at most the first 2 tokens — a display name, not a sentence.
   const tokens = s.split(/\s+/).slice(0, 2);
   const name = tokens.join(" ");
   if (name.length < 2 || name.length > 40) return null;
-  if (NON_NAMES.has(tokens[0].toLowerCase())) return null;
+  // Reject if ANY token is a non-name word (catches "just spam", "definitely
+  // wrong", "clearly not", "probably <name>") — a single bad token means the
+  // sentence isn't a clean correction, so we leave it to the LLM extractor.
+  if (tokens.some((t) => NON_NAMES.has(t.toLowerCase()))) return null;
   if (/^\+?\d/.test(name) || name.includes("@")) return null; // not another handle
   return name;
 }

@@ -73,6 +73,7 @@ import { resolveName as resolveIdentity, detectIdentityCorrection, recordIdentit
 import { TurnBindings } from "@lantern/bridge-core/entity-binding";
 import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
+import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
 import { computeHoldFromSamples, type LatencySample } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
@@ -5178,9 +5179,30 @@ export class WhatsAppSession {
         }
         this.logger.info({ handle: corr.handle, name: corr.name }, "identity correction captured");
         await this.confirmToSelf(`📝 noted — saved ${corr.handle} as ${corr.name}`);
+        // This message WAS the correction — skip the LLM extractor (avoids a
+        // second redundant "📝 noted" ack).
+        return;
       }
     } catch (err) {
       this.logger.warn({ err }, "identity-correction capture failed");
+    }
+    // PHASE #2 — disclosure-deny CAPTURE (parity with iMessage). "don't tell
+    // Ravi where I am" / "you can tell Ravi where I am again" → persist a
+    // per-contact location-disclosure flag the contact-reply path consults.
+    try {
+      const d = detectDisclosureDeny(text);
+      if (d) {
+        const handle = await this.resolveTargetToHandle(d.target);
+        if (handle && recordDisclosureDeny(handle, d.deny)) {
+          this.logger.info({ handle, deny: d.deny }, "disclosure preference captured");
+          await this.confirmToSelf(d.deny
+            ? `📝 noted — I won't tell ${d.target} where you are`
+            : `📝 noted — I can share your whereabouts with ${d.target} again`);
+          return;
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "disclosure-deny capture failed");
     }
     try {
       const { maybeAutoUpdateOwnerProfile, formatAck } = await import(
@@ -7636,19 +7658,35 @@ export class WhatsAppSession {
         topics: inboundTopics,
       });
     }
-    let presenceLine = presenceSnap.line || "";
+    // #2 disclosure-deny: owner asked to keep his whereabouts PRIVATE from THIS
+    // contact (the location-leak fix). Suppress any place/activity presence and
+    // hard-instruct no leak — even the "away at X" directive must not name X.
+    const denyLoc = !opts.isGroup && resolveDisclosureDeny(from);
+    let presenceLine = denyLoc ? "" : (presenceSnap.line || "");
     // AWAY directive: when the owner set a status, tell the contact where he
     // is + that he'll get back, and offer to take a message. This is the
     // "Ada's at the temple right now, can I pass a message?" behavior.
     if (presenceSnap.away && !opts.isGroup) {
-      const where = presenceSnap.place ? `at ${presenceSnap.place}` : presenceSnap.line;
-      presenceLine =
-        `${ownerName} is ${where} right now and away from messages. ` +
-        `If this needs ${ownerName}, tell them warmly that he's ${where} and will get back to them` +
-        (presenceSnap.takeMessage
-          ? `, then OFFER to take a message ("want me to pass anything along?"). If they leave one, acknowledge you'll make sure ${ownerName} gets it.`
-          : `.`) +
-        ` Keep it short and natural — don't pretend to be ${ownerName} mid-activity.`;
+      if (denyLoc) {
+        presenceLine =
+          `${ownerName} is away from messages right now. Tell them warmly he'll get back to them` +
+          (presenceSnap.takeMessage ? `, then OFFER to take a message ("want me to pass anything along?").` : `.`) +
+          ` Do NOT say where ${ownerName} is or what he's doing.`;
+      } else {
+        const where = presenceSnap.place ? `at ${presenceSnap.place}` : presenceSnap.line;
+        presenceLine =
+          `${ownerName} is ${where} right now and away from messages. ` +
+          `If this needs ${ownerName}, tell them warmly that he's ${where} and will get back to them` +
+          (presenceSnap.takeMessage
+            ? `, then OFFER to take a message ("want me to pass anything along?"). If they leave one, acknowledge you'll make sure ${ownerName} gets it.`
+            : `.`) +
+          ` Keep it short and natural — don't pretend to be ${ownerName} mid-activity.`;
+      }
+    }
+    if (denyLoc) {
+      presenceLine +=
+        (presenceLine ? " " : "") +
+        `(${ownerName} asked to keep his location/whereabouts PRIVATE from this contact — never reveal where he is or what he's doing, even if asked directly.)`;
     }
 
     // Per-contact addressing rule (what to call them / kinship terms the
@@ -9635,13 +9673,23 @@ export class WhatsAppSession {
   // presence.current() compare a manual status override's age against the
   // freshest iphone signal — a stale override is dropped the moment a newer
   // location/focus signal contradicts it, and the line carries an as-of clause.
+  private signalTsCache: { v: number; at: number } = { v: 0, at: 0 };
   private latestSignalTs(): number {
+    // TTL-cache the scalar: this runs on EVERY inbound (presence.current), and
+    // device-signals.jsonl can be ~500KB — a sync read per WhatsApp message
+    // would stall Baileys' WebSocket/reconnect timers. 10s staleness is fine.
+    const now = Date.now();
+    if (now - this.signalTsCache.at < 10_000) return this.signalTsCache.v;
+    let v = 0;
     try {
       const file = join(homedir(), ".lantern", "device-signals.jsonl");
-      if (!existsSync(file)) return 0;
-      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-50);
-      return parseSignals(tail).reduce((m, s) => Math.max(m, s.ts || 0), 0);
-    } catch { return 0; }
+      if (existsSync(file)) {
+        const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-50);
+        v = parseSignals(tail).reduce((m, s) => Math.max(m, s.ts || 0), 0);
+      }
+    } catch { /* keep v=0 */ }
+    this.signalTsCache = { v, at: now };
+    return v;
   }
 
   // PHASE 2 — thread-peek (parity with iMessage, WhatsApp source). Owner
@@ -9651,25 +9699,34 @@ export class WhatsAppSession {
   // search_whatsapp_history call. "" on any miss → caller falls through.
   private async buildThreadPeekBlock(contactName: string): Promise<string> {
     try {
-      const jids = new Set<string>();
-      // a) recent history rows whose senderName matches the contact.
-      for (const r of this.searchHistory({ fromContact: contactName, limit: 5 })) {
-        if (!r.isGroup && r.jid) jids.add(r.jid);
-      }
-      // b) AddressBook phones → WhatsApp jid.
+      // Resolve to ONE 1:1 contact — never merge two different people who share
+      // a name (mixed attribution), and never a group/@lid jid. AddressBook
+      // first (groups one person's numbers); else the most-recent history
+      // sender match; else a single cached name match.
+      const isDmJid = (j: string) => !!j && !j.endsWith("@g.us") && !j.endsWith("@lid");
+      let jids: string[] = [];
+      let who = contactName;
       const hits = await this.searchContacts(contactName, 3);
-      for (const h of hits) {
-        for (const p of h.phones) {
-          const digits = p.replace(/\D/g, "");
-          if (digits) jids.add(digits + "@s.whatsapp.net");
+      if (hits[0]) {
+        who = hits[0].name;
+        jids = hits[0].phones
+          .map((p) => p.replace(/\D/g, ""))
+          .filter(Boolean)
+          .map((d) => d + "@s.whatsapp.net");
+      }
+      if (jids.length === 0) {
+        // most-recent 1:1 history row whose senderName matches.
+        const probe = this.searchHistory({ fromContact: contactName, limit: 5 }).find((r) => isDmJid(r.jid));
+        if (probe) { jids = [probe.jid]; who = probe.senderName || contactName; }
+      }
+      if (jids.length === 0) {
+        const needle = contactName.trim().toLowerCase();
+        for (const [jid, name] of this.contactNames) {
+          if (isDmJid(jid) && name && name.toLowerCase().includes(needle)) { jids = [jid]; who = name; break; }
         }
       }
-      // c) cached jid→name reverse (contacts not in the AddressBook).
-      const needle = contactName.trim().toLowerCase();
-      for (const [jid, name] of this.contactNames) {
-        if (name && name.toLowerCase().includes(needle)) jids.add(jid);
-      }
-      if (jids.size === 0) return "";
+      jids = jids.filter(isDmJid);
+      if (jids.length === 0) return "";
 
       const msgs: Array<{ ts: number; fromMe: boolean; text: string }> = [];
       for (const jid of jids) {
@@ -9681,7 +9738,6 @@ export class WhatsAppSession {
       if (msgs.length === 0) return "";
       msgs.sort((a, b) => a.ts - b.ts);
       const recent = msgs.slice(-12);
-      const who = hits[0]?.name || contactName;
       const lines = recent.map((m) => `${m.fromMe ? "you" : who}: ${m.text}`);
       return [
         `# Recent messages with ${who} (oldest first — the real thread; answer the owner's question from THIS, do not fabricate)`,
@@ -9691,6 +9747,26 @@ export class WhatsAppSession {
       this.logger.debug({ err: (err as Error)?.message }, "buildThreadPeekBlock failed");
       return "";
     }
+  }
+
+  // Resolve an owner-referenced target — a name ("Ravi") or a raw jid/phone —
+  // to a WhatsApp jid. Best-effort; "" on miss.
+  private async resolveTargetToHandle(target: string): Promise<string> {
+    const t = (target || "").trim();
+    if (!t) return "";
+    if (t.includes("@")) return t; // already a jid
+    if (/^\+?[\d\s().-]{7,}$/.test(t)) {
+      const digits = t.replace(/\D/g, "");
+      return digits ? digits + "@s.whatsapp.net" : "";
+    }
+    const hits = await this.searchContacts(t, 1);
+    const digits = hits[0]?.phones[0]?.replace(/\D/g, "");
+    if (digits) return digits + "@s.whatsapp.net";
+    const needle = t.toLowerCase();
+    for (const [jid, name] of this.contactNames) {
+      if (!jid.endsWith("@g.us") && !jid.endsWith("@lid") && name && name.toLowerCase().includes(needle)) return jid;
+    }
+    return "";
   }
 
   private ownerFreeSlotsBlock(): string {

@@ -71,7 +71,8 @@
     "./working-memory": "./src/working-memory.ts",
     "./identity": "./src/identity.ts",
     "./entity-binding": "./src/entity-binding.ts",
-    "./thread-peek": "./src/thread-peek.ts"
+    "./thread-peek": "./src/thread-peek.ts",
+    "./disclosure": "./src/disclosure.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",

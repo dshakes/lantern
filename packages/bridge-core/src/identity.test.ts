@@ -103,3 +103,18 @@ test("does NOT capture a handle-less message", () => {
   assert.equal(detectIdentityCorrection("that's Manasa"), null);
   assert.equal(detectIdentityCorrection("call 5125551234"), null);
 });
+
+// REGRESSION (audit): adverb/hedge/verdict-prefixed sentences must NOT be
+// stored as a name — they'd become a permanent, highest-precedence mislabel.
+test("does NOT capture hedge/verdict annotations about a number", () => {
+  for (const s of [
+    "5125551234 is probably Manasa",
+    "5125551234 is just spam",
+    "5125551234 is still calling me",
+    "5125551234 is definitely wrong",
+    "5125551234 is clearly not Manasa",
+    "5125551234 is a great number",
+  ]) {
+    assert.equal(detectIdentityCorrection(s), null, s);
+  }
+});

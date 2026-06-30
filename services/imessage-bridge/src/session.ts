@@ -57,6 +57,7 @@ import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "
 import { workingMemoryBlock, recordAction, isSelfContextQuery } from "@lantern/bridge-core/working-memory";
 import { resolveName as resolveIdentity, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
+import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
 import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
 import { TurnBindings } from "@lantern/bridge-core/entity-binding";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
@@ -1991,13 +1992,23 @@ export class IMessageSession {
   // manual status override's age against the freshest iphone signal — so a
   // stale override ("at the park") is dropped the moment a newer location
   // signal contradicts it, and the rendered line carries an as-of clause.
+  private signalTsCache: { v: number; at: number } = { v: 0, at: 0 };
   private latestSignalTs(): number {
+    // TTL-cache the scalar: this is read on EVERY reply (presence.current),
+    // and device-signals.jsonl can be ~500KB — a sync read per inbound would
+    // stall the event loop. 10s staleness is fine for presence.
+    const now = Date.now();
+    if (now - this.signalTsCache.at < 10_000) return this.signalTsCache.v;
+    let v = 0;
     try {
       const file = join(homedir(), ".lantern", "device-signals.jsonl");
-      if (!existsSync(file)) return 0;
-      const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-50);
-      return parseSignals(tail).reduce((m, s) => Math.max(m, s.ts || 0), 0);
-    } catch { return 0; }
+      if (existsSync(file)) {
+        const tail = readFileSync(file, "utf8").split("\n").filter(Boolean).slice(-50);
+        v = parseSignals(tail).reduce((m, s) => Math.max(m, s.ts || 0), 0);
+      }
+    } catch { /* keep v=0 */ }
+    this.signalTsCache = { v, at: now };
+    return v;
   }
 
   // Gather the signals available to this bridge for the nudge engine. All
@@ -3216,23 +3227,26 @@ export class IMessageSession {
   // through to the normal path. Best-effort; never throws.
   private async buildThreadPeekBlock(contactName: string): Promise<string> {
     try {
-      const handles = new Set<string>();
-      // AddressBook lookup (name → phones + emails).
+      // Resolve to ONE contact — never merge two different people who happen
+      // to share a name (that would mix-attribute their threads in the prompt).
+      // AddressBook first (its top hit groups one person's phones+emails);
+      // else the session name cache, taking only the single best (first) match.
+      let handles: string[] = [];
+      let who = contactName;
       const hits = await this.searchContacts(contactName, 3);
-      for (const h of hits) {
-        for (const p of h.phones) handles.add(p);
-        for (const e of h.emails) handles.add(e);
+      if (hits[0]) {
+        who = hits[0].name;
+        handles = [...hits[0].phones, ...hits[0].emails];
+      } else {
+        const needle = contactName.trim().toLowerCase();
+        for (const [handle, name] of this.contactNames) {
+          if (name && name.toLowerCase().includes(needle)) { handles = [handle]; who = name; break; }
+        }
       }
-      // Fallback: handles we've already seen this session whose cached name
-      // matches (covers contacts not in the AddressBook).
-      const needle = contactName.trim().toLowerCase();
-      for (const [handle, name] of this.contactNames) {
-        if (name && name.toLowerCase().includes(needle)) handles.add(handle);
-      }
-      if (handles.size === 0) return "";
+      if (handles.length === 0) return "";
 
-      // Pull recent 1:1 messages for any matched handle, newest-first, then
-      // merge + sort oldest-first into one transcript.
+      // Pull recent 1:1 messages for the resolved contact's handles, newest-
+      // first, then merge + sort oldest-first into one transcript.
       const msgs: Array<{ ts: number; fromMe: boolean; text: string }> = [];
       for (const handle of handles) {
         for (const m of this.db.searchMessages({ handle, limit: 15 })) {
@@ -3243,7 +3257,6 @@ export class IMessageSession {
       if (msgs.length === 0) return "";
       msgs.sort((a, b) => a.ts - b.ts);
       const recent = msgs.slice(-12);
-      const who = hits[0]?.name || contactName;
       const lines = recent.map((m) => `${m.fromMe ? "you" : who}: ${m.text}`);
       return [
         `# Recent messages with ${who} (oldest first — the real thread; answer the owner's question from THIS, do not fabricate)`,
@@ -3253,6 +3266,22 @@ export class IMessageSession {
       this.logger.debug({ err: (err as Error)?.message }, "buildThreadPeekBlock failed");
       return "";
     }
+  }
+
+  // Resolve an owner-referenced target — a name ("Ravi") or a raw phone/email
+  // handle — to a contact handle. Best-effort; "" on miss.
+  private async resolveTargetToHandle(target: string): Promise<string> {
+    const t = (target || "").trim();
+    if (!t) return "";
+    if (t.includes("@") || /^\+?[\d\s().-]{7,}$/.test(t)) return t; // already a handle
+    const hits = await this.searchContacts(t, 1);
+    const fromBook = hits[0]?.phones[0] || hits[0]?.emails[0];
+    if (fromBook) return fromBook;
+    const needle = t.toLowerCase();
+    for (const [h, n] of this.contactNames) {
+      if (n && n.toLowerCase().includes(needle)) return h;
+    }
+    return "";
   }
 
   // Resolve a single inbound handle to its saved AddressBook name and cache it
@@ -4969,18 +4998,34 @@ export class IMessageSession {
         topics: inboundTopics,
       });
     }
-    let presenceLine = presenceSnap.line || "";
+    // #2 disclosure-deny: owner asked to keep his whereabouts PRIVATE from THIS
+    // contact (the location-leak fix). Suppress any place/activity presence and
+    // hard-instruct no leak — even the "away at X" directive must not name X.
+    const denyLoc = !isGroup && resolveDisclosureDeny(row.handle);
+    let presenceLine = denyLoc ? "" : (presenceSnap.line || "");
     // AWAY directive: tell the contact where the owner is + offer to take a
     // message ("Ada's at the temple, he'll get back — can I pass a note?").
     if (presenceSnap.away && !isGroup) {
-      const where = presenceSnap.place ? `at ${presenceSnap.place}` : presenceSnap.line;
-      presenceLine =
-        `${ownerName} is ${where} right now and away from messages. ` +
-        `If this needs ${ownerName}, tell them warmly that he's ${where} and will get back to them` +
-        (presenceSnap.takeMessage
-          ? `, then OFFER to take a message ("want me to pass anything along?"). If they leave one, acknowledge you'll make sure ${ownerName} gets it.`
-          : `.`) +
-        ` Keep it short and natural — don't pretend to be ${ownerName} mid-activity.`;
+      if (denyLoc) {
+        presenceLine =
+          `${ownerName} is away from messages right now. Tell them warmly he'll get back to them` +
+          (presenceSnap.takeMessage ? `, then OFFER to take a message ("want me to pass anything along?").` : `.`) +
+          ` Do NOT say where ${ownerName} is or what he's doing.`;
+      } else {
+        const where = presenceSnap.place ? `at ${presenceSnap.place}` : presenceSnap.line;
+        presenceLine =
+          `${ownerName} is ${where} right now and away from messages. ` +
+          `If this needs ${ownerName}, tell them warmly that he's ${where} and will get back to them` +
+          (presenceSnap.takeMessage
+            ? `, then OFFER to take a message ("want me to pass anything along?"). If they leave one, acknowledge you'll make sure ${ownerName} gets it.`
+            : `.`) +
+          ` Keep it short and natural — don't pretend to be ${ownerName} mid-activity.`;
+      }
+    }
+    if (denyLoc) {
+      presenceLine +=
+        (presenceLine ? " " : "") +
+        `(${ownerName} asked to keep his location/whereabouts PRIVATE from this contact — never reveal where he is or what he's doing, even if asked directly.)`;
     }
 
     // Owner's dashboard/agent style override (the configured persona
@@ -7061,9 +7106,31 @@ export class IMessageSession {
         this.contactNames.set(corr.handle, corr.name);
         this.logger.info({ handle: corr.handle, name: corr.name }, "identity correction captured");
         await this.send(jid, `📝 noted — saved ${corr.handle} as ${corr.name}`);
+        // This message WAS the correction — don't also run the LLM extractor
+        // on it (it would emit a second, redundant "📝 noted" ack).
+        return;
       }
     } catch (err) {
       this.logger.warn({ err }, "identity-correction capture failed");
+    }
+    // PHASE #2 — disclosure-deny CAPTURE. Owner self-chats "don't tell Ravi
+    // where I am" / "you can tell Ravi where I am again" → persist a per-contact
+    // location-disclosure flag. The contact-reply path consults it before ever
+    // telling a contact where the owner is (the location-leak fix).
+    try {
+      const d = detectDisclosureDeny(text);
+      if (d) {
+        const handle = await this.resolveTargetToHandle(d.target);
+        if (handle && recordDisclosureDeny(handle, d.deny)) {
+          this.logger.info({ handle, deny: d.deny }, "disclosure preference captured");
+          await this.send(jid, d.deny
+            ? `📝 noted — I won't tell ${d.target} where you are`
+            : `📝 noted — I can share your whereabouts with ${d.target} again`);
+          return;
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "disclosure-deny capture failed");
     }
     try {
       const { maybeAutoUpdateOwnerProfile, formatAck } = await import(
