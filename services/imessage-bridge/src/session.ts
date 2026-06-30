@@ -56,6 +56,7 @@ import { deviceContextBlock as iphoneContextBlock, parseSignals, presenceFromSig
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { workingMemoryBlock, recordAction, isSelfContextQuery } from "@lantern/bridge-core/working-memory";
 import { resolveName as resolveIdentity } from "@lantern/bridge-core/identity";
+import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
@@ -3202,6 +3203,54 @@ export class IMessageSession {
   async searchContacts(query: string, limit?: number) {
     const { searchAddressBookContacts } = await import("@lantern/bridge-core/contact-resolver");
     return searchAddressBookContacts(query, { limit, logger: this.logger });
+  }
+
+  // PHASE 2 — thread-peek. Owner self-chat "show me what Arun said" / "catch
+  // me up on Raju" → resolve the contact → pull their real recent chat.db
+  // messages → return a context block. Injected into the owner self-chat
+  // prompt so the LLM answers from the real thread instead of punting on (or
+  // fabricating around) a `search_imessage_history` call it often skips.
+  // Returns "" on any miss (no contact, no messages) so the caller falls
+  // through to the normal path. Best-effort; never throws.
+  private async buildThreadPeekBlock(contactName: string): Promise<string> {
+    try {
+      const handles = new Set<string>();
+      // AddressBook lookup (name → phones + emails).
+      const hits = await this.searchContacts(contactName, 3);
+      for (const h of hits) {
+        for (const p of h.phones) handles.add(p);
+        for (const e of h.emails) handles.add(e);
+      }
+      // Fallback: handles we've already seen this session whose cached name
+      // matches (covers contacts not in the AddressBook).
+      const needle = contactName.trim().toLowerCase();
+      for (const [handle, name] of this.contactNames) {
+        if (name && name.toLowerCase().includes(needle)) handles.add(handle);
+      }
+      if (handles.size === 0) return "";
+
+      // Pull recent 1:1 messages for any matched handle, newest-first, then
+      // merge + sort oldest-first into one transcript.
+      const msgs: Array<{ ts: number; fromMe: boolean; text: string }> = [];
+      for (const handle of handles) {
+        for (const m of this.db.searchMessages({ handle, limit: 15 })) {
+          if (m.isGroup || !m.text.trim()) continue;
+          msgs.push({ ts: m.unixMs, fromMe: m.fromMe, text: m.text.trim() });
+        }
+      }
+      if (msgs.length === 0) return "";
+      msgs.sort((a, b) => a.ts - b.ts);
+      const recent = msgs.slice(-12);
+      const who = hits[0]?.name || contactName;
+      const lines = recent.map((m) => `${m.fromMe ? "you" : who}: ${m.text}`);
+      return [
+        `# Recent messages with ${who} (oldest first — the real thread; answer the owner's question from THIS, do not fabricate)`,
+        ...lines,
+      ].join("\n");
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "buildThreadPeekBlock failed");
+      return "";
+    }
   }
 
   // Resolve a single inbound handle to its saved AddressBook name and cache it
@@ -7310,6 +7359,11 @@ export class IMessageSession {
       iphone: await this.contactIphonePresence(),
     }).catch(() => null);
     const presenceLine = presenceSnap?.line ? `Right now you are: ${presenceSnap.line}.` : "";
+    // PHASE 2 — thread-peek prefetch. "what did Arun say" / "catch me up on
+    // Raju" → inject that contact's real recent messages so the answer comes
+    // from the actual thread, not a punted/fabricated tool call.
+    const peek = looksLikeThreadPeek(query);
+    const threadPeekBlock = peek ? await this.buildThreadPeekBlock(peek.contact) : "";
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his iMessage self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
@@ -7387,6 +7441,7 @@ export class IMessageSession {
       "For ROSTER questions ('who came on X', 'who's in X'): the group rosters above are the truth. If members show as raw phone numbers (no name), their PARTICIPATION in the group already proves they were part of the trip/event. Answer with the FULL roster from the group; mention the unresolved ones as '+ N more (numbers only — names not in contacts yet)'. Do NOT ask the user if they want you to search further; if you can call search_whatsapp_history / search_imessage_history for the trip date range, JUST DO IT in this same turn.",
       apptBlock ? "\n" + apptBlock : "",
       rosterBlock ? "\n" + rosterBlock : "",
+      threadPeekBlock ? "\n" + threadPeekBlock : "",
       planBlock ? "\n" + planBlock : "",
       // Screen-context (opt-in, off by default). Adds recent
       // foreground-app OCR snippets the user might be referring to.
