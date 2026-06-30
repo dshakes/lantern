@@ -69,7 +69,7 @@ import {
 import { DislikeMemory, formatDislikeBlock } from "@lantern/bridge-core/dislike-memory";
 import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
-import { resolveName as resolveIdentity, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
+import { resolveName as resolveIdentity, resolveHandlesByName, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
 import { TurnBindings } from "@lantern/bridge-core/entity-binding";
 import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
@@ -9761,6 +9761,10 @@ export class WhatsAppSession {
       // RECENT messages come from a jid only history knows; the card alone
       // surfaces a stale thread and reports "nothing recent" (the Manasa bug).
       // Whole-word/exact name match keeps it to one person; @g.us/@lid excluded.
+      // A first name routinely matches MANY cards (family-prefix names), most
+      // with stale threads. Gather jids from ALL whole-word name matches, then
+      // show the SINGLE most-recently-active thread — the contact the owner
+      // actually talks to. Fixes picking the wrong namesake AND mixing two.
       const isDmJid = (j: string) => !!j && !j.endsWith("@g.us") && !j.endsWith("@lid");
       const needle = contactName.trim().toLowerCase();
       const nameMatches = (n?: string): boolean => {
@@ -9768,39 +9772,52 @@ export class WhatsAppSession {
         const ln = n.toLowerCase();
         return ln === needle || ln.split(/\s+/).includes(needle);
       };
-      const hits = await this.searchContacts(contactName, 3);
-      let who = hits[0]?.name || contactName;
+      const hits = await this.searchContacts(contactName, 10);
       const seen = new Set<string>();
       const jids: string[] = [];
-      const add = (j?: string) => {
+      const nameByCanon = new Map<string, string>();
+      const add = (j?: string, nm?: string) => {
         if (!j || !isDmJid(j)) return;
         const key = canonicalHandle(j);
+        if (nm && !nameByCanon.has(key)) nameByCanon.set(key, nm);
         if (seen.has(key)) return;
         seen.add(key);
         jids.push(j);
       };
-      if (hits[0]) {
-        for (const p of hits[0].phones) {
+      for (const c of hits) {
+        if (!nameMatches(c.name)) continue;
+        for (const p of c.phones) {
           const d = p.replace(/\D/g, "");
-          if (d) add(d + "@s.whatsapp.net");
+          if (d) add(d + "@s.whatsapp.net", c.name);
         }
       }
       for (const [jid, name] of this.contactNames) {
-        if (nameMatches(name)) { add(jid); if (!hits[0]) who = name; }
+        if (nameMatches(name)) add(jid, name);
       }
-      for (const r of this.searchHistory({ fromContact: contactName, limit: 5 })) add(r.jid);
+      for (const r of this.searchHistory({ fromContact: contactName, limit: 5 })) add(r.jid, r.senderName);
+      // Owner-explicit mappings (e.g. a spouse texted daily at an unsaved
+      // number) — the only source for a handle in neither AddressBook nor
+      // profile. Convert a bare phone to its WhatsApp jid.
+      for (const h of resolveHandlesByName(contactName)) {
+        if (h.includes("@")) add(h, contactName);
+        else { const d = h.replace(/\D/g, ""); if (d) add(d + "@s.whatsapp.net", contactName); }
+      }
       if (jids.length === 0) return "";
 
-      const msgs: Array<{ ts: number; fromMe: boolean; text: string }> = [];
+      let best: { jid: string; msgs: Array<{ ts: number; fromMe: boolean; text: string }>; newest: number } | null = null;
       for (const jid of jids) {
-        for (const r of this.searchHistory({ jid, limit: 15 })) {
+        const rows: Array<{ ts: number; fromMe: boolean; text: string }> = [];
+        for (const r of this.searchHistory({ jid, limit: 25 })) {
           if (r.isGroup || !r.text.trim()) continue;
-          msgs.push({ ts: r.ts, fromMe: r.fromMe, text: r.text.trim() });
+          rows.push({ ts: r.ts, fromMe: r.fromMe, text: r.text.trim() });
         }
+        if (rows.length === 0) continue;
+        const newest = Math.max(...rows.map((r) => r.ts));
+        if (!best || newest > best.newest) best = { jid, msgs: rows, newest };
       }
-      if (msgs.length === 0) return "";
-      msgs.sort((a, b) => a.ts - b.ts);
-      const recent = msgs.slice(-12);
+      if (!best) return "";
+      const who = this.contactNames.get(best.jid) || nameByCanon.get(canonicalHandle(best.jid)) || contactName;
+      const recent = best.msgs.sort((a, b) => a.ts - b.ts).slice(-12);
       const lines = recent.map((m) => `${m.fromMe ? "you" : who}: ${m.text}`);
       return [
         `# Recent messages with ${who} (oldest first — the real thread; answer the owner's question from THIS, do not fabricate)`,

@@ -137,6 +137,38 @@ export function detectIdentityCorrection(
   return null;
 }
 
+/** Inverse of resolveName: every handle the owner has explicitly mapped to a
+ *  name (whole-word or exact match, case-insensitive). Lets a spoken name find
+ *  its handle even when the number is NOT in the AddressBook — e.g. a spouse
+ *  the owner texts daily at a number they never saved as a contact. Last write
+ *  wins per handle. */
+export function resolveHandlesByName(name: string, opts: IdOpts = {}): string[] {
+  const path = opts.path ?? DEFAULT_PATH;
+  const needle = (name || "").trim().toLowerCase();
+  if (!needle || !existsSync(path)) return [];
+  const latest = new Map<string, { handle: string; name: string }>(); // canon -> latest
+  try {
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      const t = line.trim();
+      if (!t) continue;
+      try {
+        const o = JSON.parse(t) as IdentityOverride;
+        if (o && o.handle && o.name) latest.set(canonicalHandle(o.handle), { handle: o.handle, name: o.name });
+      } catch {
+        /* skip malformed */
+      }
+    }
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const { handle, name: nm } of latest.values()) {
+    const ln = nm.toLowerCase();
+    if (ln === needle || ln.split(/\s+/).includes(needle)) out.push(handle);
+  }
+  return out;
+}
+
 /** Persist an owner correction ("that number is Manasa's" / "this is Sam").
  *  Best-effort; returns whether it was written. */
 export function recordIdentityCorrection(handle: string, name: string, opts: IdOpts = {}): boolean {
