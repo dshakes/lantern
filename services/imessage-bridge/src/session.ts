@@ -55,7 +55,7 @@ import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/
 import { deviceContextBlock as iphoneContextBlock, parseSignals, presenceFromSignals } from "@lantern/bridge-core/device-signals";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { workingMemoryBlock, recordAction, recentActions, isSelfContextQuery } from "@lantern/bridge-core/working-memory";
-import { resolveName as resolveIdentity, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
+import { resolveName as resolveIdentity, resolveHandlesByName, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
 import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
@@ -3262,21 +3262,20 @@ export class IMessageSession {
   // through to the normal path. Best-effort; never throws.
   private async buildThreadPeekBlock(contactName: string): Promise<string> {
     try {
-      // Gather THIS person's handles from BOTH the AddressBook card AND the
-      // chat.db handles the bridge has seen under their name, deduped by
-      // canonical handle. Critical: the AddressBook card may hold an OLD number
-      // while the person's RECENT messages arrive from a handle only chat.db
-      // knows — searching the card alone surfaces a stale thread and reports
-      // "nothing recent" (the Manasa bug). A whole-word/exact name match keeps
-      // this to one person (won't fold "Manasa" into "Manish").
+      // A first name like "Manasa" routinely matches MANY AddressBook cards
+      // (Manasa Mom, Manasa Dad, Manasa Sesham, …) — distinct people sharing a
+      // family-prefix name, most with stale/dead threads. So: (1) gather handles
+      // from ALL whole-word name matches (AddressBook + seen chat.db handles),
+      // then (2) show the SINGLE most-recently-active thread — the "Manasa" the
+      // owner actually talks to. That fixes both failure modes: picking the
+      // wrong namesake (the 1-message Oct thread) AND mixing two namesakes.
       const needle = contactName.trim().toLowerCase();
       const nameMatches = (n?: string): boolean => {
         if (!n) return false;
         const ln = n.toLowerCase();
         return ln === needle || ln.split(/\s+/).includes(needle);
       };
-      const hits = await this.searchContacts(contactName, 3);
-      let who = hits[0]?.name || contactName;
+      const hits = await this.searchContacts(contactName, 10);
       const seen = new Set<string>();
       const handles: string[] = [];
       const add = (h?: string) => {
@@ -3286,24 +3285,37 @@ export class IMessageSession {
         seen.add(key);
         handles.push(h);
       };
-      if (hits[0]) { for (const p of hits[0].phones) add(p); for (const e of hits[0].emails) add(e); }
-      for (const [handle, name] of this.contactNames) {
-        if (nameMatches(name)) { add(handle); if (!hits[0]) who = name; }
+      for (const c of hits) {
+        if (!nameMatches(c.name)) continue;
+        for (const p of c.phones) add(p);
+        for (const e of c.emails) add(e);
       }
+      for (const [handle, name] of this.contactNames) {
+        if (nameMatches(name)) add(handle);
+      }
+      // Owner-explicit mappings: a person the owner told us about directly —
+      // e.g. a spouse texted daily at a number never saved in Contacts. This is
+      // the ONLY source for a handle that's in neither the AddressBook nor the
+      // profile, so it's what makes "what did <spouse> say" actually resolve.
+      for (const h of resolveHandlesByName(contactName)) add(h);
       if (handles.length === 0) return "";
 
-      // Pull recent 1:1 messages for the resolved contact's handles, newest-
-      // first, then merge + sort oldest-first into one transcript.
-      const msgs: Array<{ ts: number; fromMe: boolean; text: string }> = [];
+      // Per handle, pull recent 1:1 messages; keep the thread whose newest
+      // message is the most recent (the active "Manasa").
+      let best: { handle: string; msgs: Array<{ ts: number; fromMe: boolean; text: string }>; newest: number } | null = null;
       for (const handle of handles) {
-        for (const m of this.db.searchMessages({ handle, limit: 15 })) {
+        const rows: Array<{ ts: number; fromMe: boolean; text: string }> = [];
+        for (const m of this.db.searchMessages({ handle, limit: 25 })) {
           if (m.isGroup || !m.text.trim()) continue;
-          msgs.push({ ts: m.unixMs, fromMe: m.fromMe, text: m.text.trim() });
+          rows.push({ ts: m.unixMs, fromMe: m.fromMe, text: m.text.trim() });
         }
+        if (rows.length === 0) continue;
+        const newest = Math.max(...rows.map((r) => r.ts));
+        if (!best || newest > best.newest) best = { handle, msgs: rows, newest };
       }
-      if (msgs.length === 0) return "";
-      msgs.sort((a, b) => a.ts - b.ts);
-      const recent = msgs.slice(-12);
+      if (!best) return "";
+      const who = this.contactNames.get(best.handle) || hits.find((h) => h.phones.concat(h.emails).some((x) => canonicalHandle(x) === canonicalHandle(best!.handle)))?.name || contactName;
+      const recent = best.msgs.sort((a, b) => a.ts - b.ts).slice(-12);
       const lines = recent.map((m) => `${m.fromMe ? "you" : who}: ${m.text}`);
       return [
         `# Recent messages with ${who} (oldest first — the real thread; answer the owner's question from THIS, do not fabricate)`,

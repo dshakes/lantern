@@ -6,7 +6,7 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveName, recordIdentityCorrection, detectIdentityCorrection } from "./identity.ts";
+import { resolveName, resolveHandlesByName, recordIdentityCorrection, detectIdentityCorrection } from "./identity.ts";
 
 function tmp(): string {
   return join(mkdtempSync(join(tmpdir(), "lantern-id-")), "id.jsonl");
@@ -28,6 +28,23 @@ test("REGRESSION: owner correction is authoritative and last-write-wins (the Aru
   recordIdentityCorrection("+16303475128", "Manu", { path });
   assert.equal(resolveName("+16303475128", { path }), "Manu");
   rmSync(join(path, ".."), { recursive: true, force: true });
+});
+
+test("resolveHandlesByName: name → handle (the spouse-not-in-AddressBook case)", () => {
+  const path = tmp();
+  recordIdentityCorrection("+16303475128", "Manasa", { path });
+  recordIdentityCorrection("+15551112222", "Manasa Dad", { path }); // namesake
+  // Whole-word match returns BOTH (each has "manasa" as a word); the
+  // dominant-active-thread selection downstream picks the real one.
+  assert.deepEqual(resolveHandlesByName("Manasa", { path }).sort(), ["+15551112222", "+16303475128"].sort());
+  // A fuller name narrows to the one card.
+  assert.deepEqual(resolveHandlesByName("Manasa Dad", { path }), ["+15551112222"]);
+  assert.deepEqual(resolveHandlesByName("Sajid", { path }), []);
+  rmSync(join(path, ".."), { recursive: true, force: true });
+});
+
+test("resolveHandlesByName: last-write-wins per handle, empty on no store", () => {
+  assert.deepEqual(resolveHandlesByName("Anyone", { path: tmp() }), []);
 });
 
 test("resolves across handle forms via canonicalization", () => {
