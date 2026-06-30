@@ -34,6 +34,7 @@ import {
   isQuietHours,
   naturalize,
   shouldRespond,
+  fixThirdPersonEcho,
 } from "@lantern/bridge-core/natural";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
@@ -5654,7 +5655,7 @@ export class WhatsAppSession {
     // save it"); the deterministic per-action confirm (📅/🗒/✉️ or the failure
     // line) is the single source of truth for the outcome.
     const pendingMacAction = notes.length > 0 || calendarEvents.length > 0 || mailDrafts.length > 0;
-    const polished = pendingMacAction ? verifyClaims(polished0).text : polished0;
+    const polished = fixThirdPersonEcho(pendingMacAction ? verifyClaims(polished0).text : polished0);
     if (polished) {
       await this.confirmToSelf(polished);
       // SELF-EVAL — record so 🔁 / 🤦 can re-prompt with critique.

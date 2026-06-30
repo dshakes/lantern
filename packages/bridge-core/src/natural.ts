@@ -2223,6 +2223,29 @@ function gapMs(): number {
  * of paced messages the bridge should actually send. The output is what
  * `handleAgentReply` iterates over.
  */
+/**
+ * Deterministic last-pass fix for the LLM artifact of echoing a contact's
+ * first-person quote with a third-person subject when SUMMARIZING someone
+ * else's messages: "she i'll send you a grocery list" → "she'll send you a
+ * grocery list". Prompt instructions don't reliably prevent it; this does.
+ * Case-preserving; safe to run on any outbound text.
+ */
+export function fixThirdPersonEcho(text: string): string {
+  if (!text) return text;
+  const fix = (subj: string, will: boolean): string => {
+    const low = subj.toLowerCase();
+    const out = will
+      ? `${low}'ll`
+      : low === "they"
+        ? "they're"
+        : `${low}'s`;
+    return subj[0] === subj[0].toUpperCase() ? out[0].toUpperCase() + out.slice(1) : out;
+  };
+  return text
+    .replace(/\b(She|He|They|she|he|they)\s+[Ii]'?ll\b/g, (_m, s) => fix(s, true))
+    .replace(/\b(She|He|They|she|he|they)\s+[Ii]'?(?:m|ve)\b/g, (_m, s) => fix(s, false));
+}
+
 export function naturalize(
   draft: string,
   opts: {

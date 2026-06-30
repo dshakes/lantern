@@ -44,6 +44,7 @@ import {
   isQuietHours,
   naturalize,
   shouldRespond,
+  fixThirdPersonEcho,
 } from "@lantern/bridge-core/natural";
 import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type PresenceCommand } from "@lantern/bridge-core/nl-commands";
 import { executeCommand } from "@lantern/bridge-core/command-executor";
@@ -7855,7 +7856,11 @@ export class IMessageSession {
     // returned `offer` lets us deterministically execute the action
     // on the next-turn confirmation — bypasses the LLM's tendency
     // to claim "already done" without emitting the marker.
-    const { reply: polished, offer } = humanizeWithOffer(finalText);
+    const { reply: polished0, offer } = humanizeWithOffer(finalText);
+    // Deterministic fix for "she i'll send you…" → "she'll send you…" when
+    // summarizing a contact's messages (prompt instructions don't reliably
+    // prevent the first-person echo).
+    const polished = fixThirdPersonEcho(polished0);
 
     if (polished) {
       await this.send(jid, polished);
