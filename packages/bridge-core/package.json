@@ -67,7 +67,9 @@
     "./recall": "./src/recall.ts",
     "./command-center": "./src/command-center.ts",
     "./command-center-executor": "./src/command-center-executor.ts",
-    "./browser-history": "./src/browser-history.ts"
+    "./browser-history": "./src/browser-history.ts",
+    "./working-memory": "./src/working-memory.ts",
+    "./identity": "./src/identity.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
