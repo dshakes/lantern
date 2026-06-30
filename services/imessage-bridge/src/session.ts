@@ -57,6 +57,7 @@ import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "
 import { workingMemoryBlock, recordAction, isSelfContextQuery } from "@lantern/bridge-core/working-memory";
 import { resolveName as resolveIdentity } from "@lantern/bridge-core/identity";
 import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
+import { TurnBindings } from "@lantern/bridge-core/entity-binding";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
 import {
@@ -4832,11 +4833,27 @@ export class IMessageSession {
     // resolves to the primary contact's relationship instead of cold-starting.
     // Best-effort + cached; never blocks on failure.
     await this.hydrateContactName(row.handle);
+    // PHASE 3 — per-turn entity binding. One authoritative name for this
+    // handle THIS reply, so every prompt-facing lookup below agrees (no
+    // Arun↔Manasa flip). The cached AddressBook name binds as a heuristic;
+    // the owner-correction overlay binds as explicit and OUTRANKS it — even
+    // when the cache is stale (hydrateContactName early-returns on a populated
+    // cache, so a correction made mid-session would otherwise be ignored until
+    // restart). Re-reading the overlay here (cheap jsonl) closes that gap.
+    const bindings = new TurnBindings();
+    const cachedName = this.contactNames.get(row.handle);
+    if (cachedName) bindings.bind(row.handle, cachedName);
+    const correctedName = resolveIdentity(row.handle);
+    if (correctedName) bindings.bind(row.handle, correctedName, { explicit: true });
+    const contactName = bindings.nameFor(row.handle) ?? undefined;
+    // Keep the session cache consistent with the bound name so non-prompt
+    // sites (logging, mirrors, social-graph) and later turns agree too.
+    if (contactName && contactName !== cachedName) this.contactNames.set(row.handle, contactName);
     // Owner profile + relationship — the "sounds like me" context.
     const ownerProfile = this.ownerProfileStore.prose();
     const relationship = isGroup
       ? undefined
-      : this.ownerProfileStore.relationshipFor(row.handle, this.contactNames.get(row.handle));
+      : this.ownerProfileStore.relationshipFor(row.handle, contactName);
     // Recent thread transcript (real back-and-forth from chat.db) so the
     // reply is grounded in what's actually being discussed.
     const recentTranscript = this.buildRecentTranscript(row.chatRowid);
