@@ -3319,7 +3319,8 @@ export class IMessageSession {
       const recent = best.msgs.sort((a, b) => a.ts - b.ts).slice(-12);
       const lines = recent.map((m) => `${m.fromMe ? "you" : who}: ${m.text}`);
       return [
-        `# Recent messages with ${who} (oldest first — the real thread; answer the owner's question from THIS, do not fabricate)`,
+        `# Recent messages from ${who} (oldest first — the real thread). Answer the owner's question from THIS; do not fabricate.`,
+        `Summarize in natural THIRD PERSON about ${who} — e.g. "she's sending you a grocery list", "she added Swathi as a pickup". NEVER echo her first-person words verbatim ("she I'll…" / "she said I'll…" is wrong) and don't paste her messages raw. Keep her concrete details EXACT (item names, names, dates, conditions like "not from the snack section"). Lead with the single most useful takeaway, then the specifics.`,
         ...lines,
       ].join("\n");
     } catch (err) {
