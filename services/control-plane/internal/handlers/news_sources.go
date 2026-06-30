@@ -44,6 +44,8 @@ var newsSources = []newsSource{
 	// ---------- people ----------
 	{Name: "Simon Willison", Category: "people", Kind: "atom", URL: "https://simonwillison.net/atom/everything/", Available: true},
 	{Name: "Lilian Weng", Category: "people", Kind: "atom", URL: "https://lilianweng.github.io/index.xml", Available: true},
+	// Sebastian Raschka — "Ahead of AI" (Substack); one of the most-read ML educators.
+	{Name: "Sebastian Raschka", Category: "people", Kind: "rss", URL: "https://magazine.sebastianraschka.com/feed", Available: true},
 	{Name: "The Batch (deeplearning.ai)", Category: "people", Kind: "rss", URL: "https://www.deeplearning.ai/the-batch/feed/", Available: true},
 	// Andrej Karpathy posts on X/Twitter and GitHub; no standalone RSS.
 	{Name: "Andrej Karpathy", Category: "people", Kind: "rss", URL: "", Available: false},
