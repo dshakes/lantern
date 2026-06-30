@@ -1372,7 +1372,16 @@ export class IMessageSession {
       }
       if (now.getHours() >= digestHour && this.lastNewsDigestDay !== ymd) {
         try {
-          await this.send(target, buildNewsDigest(items, "today"));
+          // INTELLIGENT daily digest: let the LLM curate the day's MAJOR items
+          // (grouped by company, "why it matters") instead of a flat popularity
+          // list — the fix for "never delivered major news". Falls back to the
+          // structured digest if the intelligent endpoint is unavailable.
+          let digestText = "";
+          try {
+            const ar = await authedFetch("/v1/news/ask", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: "the most important / major AI news from the last day or two — launches, model releases, and notable announcements only, skip minor version bumps", limit: 6 }) });
+            if (ar.ok) digestText = "🌅 today's AI radar\n\n" + buildNewsAsk((await ar.json()) as NewsAskResult).text;
+          } catch { /* fall through */ }
+          await this.send(target, digestText || buildNewsDigest(items, "today"));
           this.lastNewsDigestDay = ymd;
           try { writeFileSync(digestDayPath, ymd, { mode: 0o600 }); } catch { /* best-effort */ }
           this.logger.info("proactive AI news: daily digest pushed");
