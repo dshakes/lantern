@@ -249,6 +249,7 @@ import { detectEmotionalRegister } from "@lantern/bridge-core/emotional-register
 import type { ContactSignals } from "@lantern/bridge-core/contact-priority";
 import { authedFetch } from "@lantern/bridge-core/auth";
 import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/bridge-core/auto-actions-store";
+import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
 import {
   detectTaskCapture,
   captureTaskWithLlm,
@@ -1455,7 +1456,7 @@ export class IMessageSession {
       });
 
       if (result) {
-        await this.send(target, result.text).catch(() => {});
+        await this.send(target, await this.nudgeVoice(result.text)).catch(() => {});
         if (result.kind === "drive") this.commuteDriveFired = true;
         this.logger.info({ kind: result.kind }, "commute-copilot fired");
       }
@@ -1491,7 +1492,7 @@ export class IMessageSession {
       const result = computeEnergyNudge(signals, { alreadyNudgedToday: false, nowMs: Date.now() });
       if (!result) return;
 
-      await this.send(target, result.text).catch(() => {});
+      await this.send(target, await this.nudgeVoice(result.text)).catch(() => {});
       this.energyNudgedDate = today;
       // Persist so a launchd restart doesn't re-nudge today.
       try {
@@ -1566,7 +1567,7 @@ export class IMessageSession {
           this.saveFocusHeldItems();
           this.logger.debug("health-coach: nudge held during focus");
         } else {
-          await this.send(target, nudge.text).catch(() => {});
+          await this.send(target, await this.nudgeVoice(nudge.text)).catch(() => {});
           this.healthNudgedDate = today;
           this.saveHealthNudgeState(today);
           this.logger.info("health-coach nudge fired");
@@ -6404,6 +6405,25 @@ export class IMessageSession {
   }
 
   // Record an auto-action into the in-memory recap ring (last 24h, capped).
+  // Rephrase a deterministic proactive nudge in the owner's casual voice so the
+  // same daily nudge doesn't read identically every day (the sameness is a
+  // bot-tell). All facts/numbers are preserved by rephraseNudge's guards; any
+  // doubt falls back to the deterministic text. Off via LANTERN_NUDGE_VOICE=off.
+  private async nudgeVoice(text: string): Promise<string> {
+    if ((process.env.LANTERN_NUDGE_VOICE || "on").toLowerCase() === "off") return text;
+    return rephraseNudge(
+      text,
+      async (p) => {
+        try {
+          return (await this.agent.respondTo("owner::nudgevoice", p, "", { withTools: false })) || "";
+        } catch {
+          return "";
+        }
+      },
+      { ownerName: process.env.LANTERN_OWNER_NAME },
+    );
+  }
+
   private noteAutoAction(text: string): void {
     const now = Date.now();
     this.autoActLog.push({ text, ts: now });

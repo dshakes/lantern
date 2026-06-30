@@ -15,6 +15,7 @@ import { AgentClient } from "@lantern/bridge-core/agent";
 import { AttentionClassifier } from "./attention.js";
 import { authedFetch } from "@lantern/bridge-core/auth";
 import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/bridge-core/auto-actions-store";
+import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
 import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
 import { parseSignals, presenceFromSignals, type SignalPresence } from "@lantern/bridge-core/device-signals";
@@ -3580,6 +3581,24 @@ export class WhatsAppSession {
   }
 
   // Record an auto-action into the recap ring (last 24h, capped).
+  // Rephrase a deterministic proactive nudge in the owner's casual voice so the
+  // same daily nudge doesn't read identically every day. Facts/numbers preserved
+  // by rephraseNudge's guards; any doubt → deterministic text. LANTERN_NUDGE_VOICE=off.
+  private async nudgeVoice(text: string): Promise<string> {
+    if ((process.env.LANTERN_NUDGE_VOICE || "on").toLowerCase() === "off") return text;
+    return rephraseNudge(
+      text,
+      async (p) => {
+        try {
+          return (await this.agent.respondTo("owner::nudgevoice", p, "", { withTools: false })) || "";
+        } catch {
+          return "";
+        }
+      },
+      { ownerName: process.env.LANTERN_OWNER_NAME },
+    );
+  }
+
   private noteAutoAction(text: string): void {
     const now = Date.now();
     this.autoActLog.push({ text, ts: now });
@@ -9316,7 +9335,7 @@ export class WhatsAppSession {
       });
 
       if (result) {
-        await this.sendSelf(result.text).catch(() => {});
+        await this.sendSelf(await this.nudgeVoice(result.text)).catch(() => {});
         if (result.kind === "drive") this.commuteDriveFired = true;
         this.logger.info({ kind: result.kind }, "commute-copilot fired");
       }
@@ -9422,7 +9441,7 @@ export class WhatsAppSession {
       const result = computeEnergyNudge(signals, { alreadyNudgedToday: false, nowMs: Date.now() });
       if (!result) return;
 
-      await this.sendSelf(result.text).catch(() => {});
+      await this.sendSelf(await this.nudgeVoice(result.text)).catch(() => {});
       this.energyNudgedDate = today;
       this.saveEnergyNudgeState(today);
       this.logger.info("energy-guardian nudge fired");
@@ -9527,7 +9546,7 @@ export class WhatsAppSession {
           this.saveFocusHeldItems();
           this.logger.debug("health-coach: nudge held during focus");
         } else {
-          await this.sendSelf(nudge.text).catch(() => {});
+          await this.sendSelf(await this.nudgeVoice(nudge.text)).catch(() => {});
           this.healthNudgedDate = today;
           this.saveHealthNudgeState(today, this.healthWeeklyFiredWeek || undefined);
           this.logger.info("health-coach nudge fired");
