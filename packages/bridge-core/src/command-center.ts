@@ -551,6 +551,61 @@ export function buildNews(items: NewsItemLite[], q?: NewsQuery): CenterView {
   return { text: lines.join("\n"), items: out };
 }
 
+// ── intelligent AI Radar (LLM-curated, grouped by company, dated) ───────────
+
+export interface NewsAskItem {
+  title: string;
+  url: string;
+  source: string;
+  author?: string;
+  category?: string;
+  publishedAt?: string;
+  why?: string;
+  score?: number;
+}
+export interface NewsAskGroup { company: string; items: NewsAskItem[] }
+export interface NewsAskResult { interpretation?: string; note?: string; groups: NewsAskGroup[] }
+
+function fmtNewsDate(iso?: string): string {
+  if (!iso) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return "";
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const mo = months[parseInt(m[2], 10) - 1] || "";
+  return `${mo} ${parseInt(m[3], 10)}`;
+}
+
+/** Render the intelligent (LLM-curated) AI Radar result: grouped by company,
+ *  each item dated with a one-line "why it matters" + link. Pure. */
+export function buildNewsAsk(res: NewsAskResult): CenterView {
+  const groups = res?.groups ?? [];
+  const total = groups.reduce((n, g) => n + (g.items?.length ?? 0), 0);
+  if (total === 0) {
+    const why = res?.note || `nothing matched. try a company ("news openai"), a topic ("news agents"), or "news week".`;
+    return { text: `📡 AI Radar — ${why}`, items: [] };
+  }
+  const out: BriefItem[] = [];
+  const lines: string[] = ["📡 AI Radar"];
+  if (res.note) lines.push(res.note);
+  lines.push("");
+  let n = 1;
+  for (const g of groups) {
+    lines.push(`▸ ${g.company}`);
+    for (const it of g.items ?? []) {
+      const date = it.publishedAt ? ` · ${fmtNewsDate(it.publishedAt)}` : "";
+      const icon = (it.category && NEWS_CAT_ICON[it.category]) || "•";
+      out.push({ n, ref: "news_item", id: it.url, icon, label: clip(it.title, 120), url: it.url, defaultAction: "save", actions: ["save"] });
+      lines.push(` ${n} ${clip(it.title, 64)}${date}`);
+      if (it.why) lines.push(`    ${clip(it.why, 96)}`);
+      if (it.url) lines.push(`    ${it.url}`);
+      n++;
+    }
+    lines.push("");
+  }
+  lines.push(`"save N" to keep · "readlist" for saved · ask "news <person / company / topic>"`);
+  return { text: lines.join("\n"), items: out };
+}
+
 // ── readlist: items the owner saved with "save <n>" ─────────────────────────
 
 export interface ReadlistEntry {
