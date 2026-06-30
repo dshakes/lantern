@@ -39,7 +39,7 @@ import { parseNLCommand, parsePresenceCommand, type ParsedCommand, type Presence
 import { executeCommand } from "@lantern/bridge-core/command-executor";
 import { parseVoiceCommand } from "@lantern/bridge-core/voice-commands";
 import { reactionToAction, dispatchReaction } from "@lantern/bridge-core/reaction-commands";
-import { scheduleDigest, defaultDigestConfig } from "@lantern/bridge-core/daily-digest";
+import { scheduleDigest, defaultDigestConfig, looksLikeBriefingRequest } from "@lantern/bridge-core/daily-digest";
 import { composeDigestNarrative } from "@lantern/bridge-core/digest-compose";
 import { OfflineMonitor, defaultOfflineMonitorConfig } from "@lantern/bridge-core/offline-monitor";
 import { EmailMirror } from "@lantern/bridge-core/email-mirror";
@@ -5498,6 +5498,9 @@ export class WhatsAppSession {
     // from the actual thread, not a punted/fabricated tool call.
     const peek = looksLikeThreadPeek(query);
     const threadPeekBlock = peek ? await this.buildThreadPeekBlock(peek.contact) : "";
+    // PROACTIVE BRIEFING: "brief me" / "what's on my plate" → assemble today's
+    // calendar + who's waiting + open commitments (incl. promises) on demand.
+    const briefingBlock = looksLikeBriefingRequest(query) ? await this.buildBriefingBlock() : "";
     const systemHint = [
       `You are Lantern — ${ownerName}'s personal agent, replying in his WhatsApp self-chat as if you ARE him talking to himself.`,
       `Today is ${today}.`,
@@ -5569,6 +5572,7 @@ export class WhatsAppSession {
       apptBlock ? "\n" + apptBlock : "",
       rosterBlock ? "\n" + rosterBlock : "",
       threadPeekBlock ? "\n" + threadPeekBlock : "",
+      briefingBlock ? "\n" + briefingBlock : "",
       planBlock ? "\n" + planBlock : "",
     ].filter(Boolean).join("\n");
 
@@ -9781,6 +9785,59 @@ export class WhatsAppSession {
       ].join("\n");
     } catch (err) {
       this.logger.debug({ err: (err as Error)?.message }, "buildThreadPeekBlock failed");
+      return "";
+    }
+  }
+
+  // PROACTIVE BRIEFING (parity with iMessage): assemble the owner's day on
+  // demand — today's calendar + who's waiting + open commitments (incl. the
+  // promises the bot made, #1). Reuses the scheduled-digest sources. "" on
+  // total failure. Note: macActions is nullable on WA (Mac calendar may be
+  // unavailable) — the calendar section is simply omitted then.
+  private async buildBriefingBlock(): Promise<string> {
+    try {
+      const now = Date.now();
+      const tout = <T>(p: Promise<T>, fb: T): Promise<T> =>
+        Promise.race([p, new Promise<T>((r) => setTimeout(() => r(fb), 4000))]);
+      const eventsP: Promise<CalendarEventRead[]> = this.macActions
+        ? this.macActions.readUpcomingEvents({ days: 1, max: 10 }).catch(() => [])
+        : Promise.resolve([]);
+      const [commitments, events] = await Promise.all([
+        tout(this.commitments.list({ status: "open", limit: 6 }), []),
+        tout(eventsP, [] as CalendarEventRead[]),
+      ]);
+      const overdue = this.gatherAwaitingReply(now).slice(0, 5);
+      const tz = process.env.LANTERN_OWNER_TIMEZONE || undefined;
+      const sections: string[] = [];
+      if (events.length) {
+        sections.push("Today's calendar:");
+        for (const e of events) {
+          const t = e.start instanceof Date
+            ? e.start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })
+            : "";
+          sections.push(`  • ${t ? t + " — " : ""}${e.title}`);
+        }
+      }
+      if (overdue.length) {
+        sections.push("Waiting on you:");
+        for (const r of overdue) {
+          const days = Math.floor((now - r.lastInboundAt) / 86_400_000);
+          sections.push(`  • ${r.displayName || r.handle.split("@")[0]}${days >= 1 ? ` (${days}d)` : ""}`);
+        }
+      }
+      if (commitments.length) {
+        sections.push("On your plate:");
+        for (const c of commitments) sections.push(`  • ${c.title}`);
+      }
+      if (sections.length === 0) {
+        return "# Daily briefing (the owner asked for their day)\nNothing pressing — calendar's clear, no one's waiting, plate's empty. Say so briefly.";
+      }
+      return [
+        "# Daily briefing — the owner asked for their day. Narrate THIS in his voice (short, lowercase, grouped, no preamble/sign-off). Do NOT invent anything not listed here.",
+        ...sections,
+      ].join("\n");
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "buildBriefingBlock failed");
       return "";
     }
   }

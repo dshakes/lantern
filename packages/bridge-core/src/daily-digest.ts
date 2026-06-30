@@ -205,6 +205,27 @@ export async function buildDigest(data: DigestData): Promise<string> {
   return lines.join("\n");
 }
 
+// On-demand briefing: does the owner self-chat ask for their day / what's on
+// their plate? Pure + high-precision — too-generic phrases ("what's up", "hi")
+// must NOT trigger a full briefing assembly. Mirrors the scheduled digest but
+// fires whenever the owner asks.
+export function looksLikeBriefingRequest(text: string): boolean {
+  const t = (text || "").trim().toLowerCase().replace(/[?.!]+$/, "");
+  if (!t || t.length > 80) return false;
+  return (
+    /\bbrief me\b/.test(t) ||
+    /\b(morning|daily|my) brief(ing)?\b/.test(t) ||
+    /^brief(ing)?$/.test(t) ||
+    /\bwhat'?s (on )?(my )?(plate|agenda)\b/.test(t) ||
+    /\bwhat'?s (on for|happening|going on|up|on) (today|this morning)\b/.test(t) ||
+    /\bwhat (do|have) i (have|got)\b.*\b(today|this morning|on)\b/.test(t) ||
+    /\b(catch me up|fill me in|run me through|rundown of) (on )?(my |the )?(day|today|morning|plate|schedule)\b/.test(t) ||
+    /\bhow('?s| is| does) (my )?(day|today) (look|looking|shaping)/.test(t) ||
+    /\bwhere (do |does )?(things|everything) stand\b/.test(t) ||
+    /\bmy (day|schedule) today\b/.test(t)
+  );
+}
+
 // Schedule the digest to run at the configured hour. Returns a
 // stop() function the caller invokes on shutdown.
 export function scheduleDigest(opts: {
