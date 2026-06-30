@@ -242,7 +242,7 @@ func TestProcessInboxMessages_CreatesCommitment(t *testing.T) {
 			From: "billing@bank.com", Subject: "Your invoice #1234 is ready", Snippet: "Payment due"},
 	}
 
-	newN, createdM, err := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, "")
+	newN, createdM, err := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, "", nil)
 	if err != nil {
 		t.Fatalf("processInboxMessages: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestProcessInboxMessages_Idempotent(t *testing.T) {
 			From: "boss@company.com", Subject: "Action required: Q3 review", Snippet: "Please review"},
 	}
 
-	_, created1, _ := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, "")
+	_, created1, _ := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, "", nil)
 	if created1 != 1 {
 		t.Fatalf("first run: createdM=%d, want 1", created1)
 	}
@@ -289,7 +289,7 @@ func TestProcessInboxMessages_Idempotent(t *testing.T) {
 	// Second run with same messages and empty cursor (simulates re-run scenario).
 	// Cursor was advanced by first run; but here we pass empty cursor to force
 	// re-processing — the DB-level idempotency key must block duplicates.
-	_, created2, _ := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, "")
+	_, created2, _ := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, "", nil)
 	if created2 != 0 {
 		t.Errorf("second run: createdM=%d, want 0 (idempotency guard)", created2)
 	}
@@ -310,7 +310,7 @@ func TestProcessInboxMessages_AdvancesCursor(t *testing.T) {
 		{ID: "msg-c2", InternalDate: "1750000003000", From: "a@b.com", Subject: "Second"},
 	}
 
-	_, _, err := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, "")
+	_, _, err := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, "", nil)
 	if err != nil {
 		t.Fatalf("processInboxMessages: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestProcessInboxMessages_SkipsBeforeCursor(t *testing.T) {
 		{ID: "msg-old", InternalDate: "1750000000100", From: "x@y.com", Subject: "Old"},
 	}
 	// Cursor is already past these messages.
-	newN, createdM, _ := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, "1750000000200")
+	newN, createdM, _ := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, "1750000000200", nil)
 	if newN != 0 {
 		t.Errorf("newN=%d, want 0 (all before cursor)", newN)
 	}
@@ -365,7 +365,7 @@ func TestGmailCursor_CrossTenant(t *testing.T) {
 	msgs := []GmailMessage{
 		{ID: "ct-msg-1", InternalDate: "1750000010000", From: "a@a.com", Subject: "Task"},
 	}
-	_, _, _ = processInboxMessages(ctx, pool, nopLogger(), tenantA, runA, msgs, "")
+	_, _, _ = processInboxMessages(ctx, pool, nopLogger(), tenantA, runA, msgs, "", nil)
 
 	// Cursor must exist for tenant A.
 	var cursorA string

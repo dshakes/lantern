@@ -471,7 +471,7 @@ func runLoopAgentIfPresent(
 		outputJSON, _ = json.Marshal(map[string]any{"brief_chars": briefChars})
 
 	case "inbox_autopilot":
-		newN, createdM, runErr := runInboxAutopilot(ctx, pool, logger, tenantID, runID)
+		newN, createdM, runErr := runInboxAutopilot(ctx, pool, logger, tenantID, runID, completeFn)
 		if runErr != nil {
 			logger.Error("loop-agent: inbox_autopilot failed",
 				zap.String("run_id", runID), zap.Error(runErr))
@@ -882,6 +882,7 @@ func runInboxAutopilot(
 	pool *pgxpool.Pool,
 	logger *zap.Logger,
 	tenantID, runID string,
+	completeFn researchCompleteFn,
 ) (newN, createdM int, err error) {
 	// 1. Pull recent Gmail.
 	gmailResult, gmailErr := executeConnectorAction(ctx, pool, tenantID, "gmail", "list_recent",
@@ -913,7 +914,7 @@ func runInboxAutopilot(
 	msgs, _ := resMap["messages"].([]GmailMessage)
 
 	// 4. Process: filter, create commitments, advance cursor.
-	newN, createdM, err = processInboxMessages(ctx, pool, logger, tenantID, runID, msgs, lastInternalDate)
+	newN, createdM, err = processInboxMessages(ctx, pool, logger, tenantID, runID, msgs, lastInternalDate, completeFn)
 	return newN, createdM, err
 }
 
@@ -927,8 +928,12 @@ func processInboxMessages(
 	tenantID, runID string,
 	msgs []GmailMessage,
 	lastInternalDate string,
+	completeFn researchCompleteFn,
 ) (newN, createdM int, err error) {
 	maxDate := lastInternalDate
+	// Gather the NEW, non-promo messages as candidates (and advance the cursor
+	// over ALL new messages, promo included, so promo isn't reprocessed).
+	var cands []GmailMessage
 	for _, msg := range msgs {
 		if msg.ID == "" {
 			continue
@@ -942,42 +947,35 @@ func processInboxMessages(
 		if msg.InternalDate > maxDate {
 			maxDate = msg.InternalDate
 		}
-
-		// ponytail: cheap heuristic promo filter; model-router classification
-		// or the bridge's classifier is the upgrade path if false-positive rate matters.
-		if isPromoEmail(msg) {
+		if isPromoEmail(msg) { // cheap pre-filter — skip obvious bulk/promo
 			logger.Debug("inbox-autopilot: skipping promo",
 				zap.String("subject", msg.Subject), zap.String("from", msg.From))
 			continue
 		}
+		cands = append(cands, msg)
+	}
 
-		title := msg.Subject
-		if title == "" {
-			title = "(no subject)"
+	// INTELLIGENT path: let the LLM decide which emails genuinely need the owner
+	// to DO something and write a clean task title — instead of dumping a
+	// commitment per non-promo email with the raw subject (noise).
+	usedLLM := false
+	if completeFn != nil && len(cands) > 0 {
+		if n, ok := inboxAutopilotIntelligent(ctx, pool, logger, tenantID, completeFn, cands); ok {
+			createdM = n
+			usedLLM = true
 		}
-		if len(title) > 500 {
-			title = title[:500]
-		}
-		snippet := msg.Snippet
-		if len(snippet) > 500 {
-			snippet = snippet[:500]
-		}
+	}
 
-		// Create commitment; ON CONFLICT DO NOTHING is the idempotency guard.
-		// rls-exempt: inline executor — explicit tenant_id; dedup on Gmail message ID.
-		var insertedID string
-		insertErr := pool.QueryRow(ctx, `
-			INSERT INTO commitments (tenant_id, title, source, idempotency_key, source_preview, tier, urgency)
-			VALUES ($1, $2, 'email', $3, $4, 'meso', 'normal')
-			ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
-			DO NOTHING
-			RETURNING id
-		`, tenantID, title, msg.ID, snippet).Scan(&insertedID)
-		if insertErr == nil {
-			createdM++
-		} else if !errors.Is(insertErr, pgx.ErrNoRows) {
-			logger.Warn("inbox-autopilot: insert commitment failed",
-				zap.String("msg_id", msg.ID), zap.Error(insertErr))
+	// FALLBACK: commitment per non-promo email with the raw subject.
+	if !usedLLM {
+		for _, msg := range cands {
+			title := msg.Subject
+			if title == "" {
+				title = "(no subject)"
+			}
+			if inboxInsertCommitment(ctx, pool, logger, tenantID, clampRunes(title, 500), msg.ID, clampRunes(msg.Snippet, 500), "normal") {
+				createdM++
+			}
 		}
 	}
 
@@ -995,6 +993,77 @@ func processInboxMessages(
 
 	emitInboxSwept(ctx, pool, runID, newN, createdM)
 	return newN, createdM, nil
+}
+
+// inboxAutopilotIntelligent uses LLMCurate to pick the emails that genuinely
+// need the owner to act and creates a commitment with a clean task title for
+// each. Returns (created, true) when the LLM ran (even with 0 picks — a valid,
+// smarter "nothing actionable"); (0, false) on LLM failure → caller falls back.
+func inboxAutopilotIntelligent(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	logger *zap.Logger,
+	tenantID string,
+	completeFn researchCompleteFn,
+	cands []GmailMessage,
+) (int, bool) {
+	lines := make([]string, len(cands))
+	for i, m := range cands {
+		lines[i] = fmt.Sprintf("[%d] From: %s | Subject: %s | %s",
+			i, clampRunes(m.From, 50), clampRunes(m.Subject, 100), clampRunes(m.Snippet, 140))
+	}
+	curated, ok := LLMCurate(ctx, completeFn, tenantID, CurateOpts{
+		SystemRole:    "You triage a busy founder's inbox. You decide which emails genuinely require HIM to do something.",
+		Request:       "Which of these emails need the owner to take a real action (reply, pay, schedule, review, decide, send something)? IGNORE newsletters, promotions, receipts, automated notifications, and pure FYIs. For each one that needs action, the 'why' is a clean imperative task title (e.g. 'Reply to Sarah about the Q3 contract', 'Pay the AWS invoice').",
+		ItemLines:     lines,
+		MaxPicks:      12,
+		GroupNoun:     "urgency",
+		ExtraGuidance: "Be selective — only real to-dos. The 'why' becomes the owner's task title; make it a clean imperative, not the raw subject. Group is one of: now, soon, normal.",
+	})
+	if !ok {
+		return 0, false
+	}
+	n := 0
+	for _, p := range curated.Picks {
+		if p.I < 0 || p.I >= len(cands) {
+			continue
+		}
+		msg := cands[p.I]
+		title := strings.TrimSpace(p.Why)
+		if title == "" {
+			title = msg.Subject
+		}
+		urgency := "normal"
+		if g := strings.ToLower(strings.TrimSpace(p.Group)); g == "now" || g == "soon" {
+			urgency = g
+		}
+		if inboxInsertCommitment(ctx, pool, logger, tenantID, clampRunes(title, 500), msg.ID, clampRunes(msg.Snippet, 500), urgency) {
+			n++
+		}
+	}
+	logger.Info("inbox-autopilot: intelligent pass", zap.Int("actionable", n), zap.Int("candidates", len(cands)))
+	return n, true
+}
+
+// inboxInsertCommitment inserts an email-sourced commitment, idempotent on the
+// Gmail message ID. Returns true if a new row was created.
+func inboxInsertCommitment(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, tenantID, title, msgID, snippet, urgency string) bool {
+	var insertedID string
+	// rls-exempt: inline executor — explicit tenant_id; dedup on Gmail message ID.
+	insertErr := pool.QueryRow(ctx, `
+		INSERT INTO commitments (tenant_id, title, source, idempotency_key, source_preview, tier, urgency)
+		VALUES ($1, $2, 'email', $3, $4, 'meso', $5)
+		ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+		DO NOTHING
+		RETURNING id
+	`, tenantID, title, msgID, snippet, urgency).Scan(&insertedID)
+	if insertErr == nil {
+		return true
+	}
+	if !errors.Is(insertErr, pgx.ErrNoRows) {
+		logger.Warn("inbox-autopilot: insert commitment failed", zap.String("msg_id", msgID), zap.Error(insertErr))
+	}
+	return false
 }
 
 // isPromoEmail returns true for obvious promotional / newsletter / bulk emails
