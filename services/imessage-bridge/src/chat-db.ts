@@ -622,6 +622,34 @@ export class ChatDB {
     }));
   }
 
+  // Top 1:1 contacts by message volume in the recent window — the behavioral
+  // signal for "who the owner actually talks to" (feeds the known-people
+  // grounding). Groups excluded (display_name <> ''); reactions excluded.
+  topActiveContacts(opts: { sinceDays?: number; limit?: number } = {}): Array<{ handle: string; msgs: number; lastTs: number }> {
+    if (!this.db) return [];
+    const sinceDays = opts.sinceDays ?? 30;
+    const limit = Math.min(Math.max(opts.limit ?? 15, 1), 50);
+    const cutoffUnixSec = Math.floor(Date.now() / 1000) - sinceDays * 86400;
+    const rows = this.db
+      .prepare(
+        `SELECT COALESCE(h.id,'') AS handle, count(*) AS msgs, max(m.date) AS lastd
+         FROM message m
+         JOIN handle h ON m.handle_id = h.ROWID
+         LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+         LEFT JOIN chat c ON c.ROWID = cmj.chat_id
+         WHERE COALESCE(c.display_name,'') = ''
+           AND COALESCE(m.associated_message_type,0) = 0
+           AND m.date/1000000000 + 978307200 > ?
+         GROUP BY h.id
+         ORDER BY msgs DESC
+         LIMIT ?`,
+      )
+      .all(cutoffUnixSec, limit) as Array<{ handle: string; msgs: number; lastd: number }>;
+    return rows
+      .filter((r) => r.handle)
+      .map((r) => ({ handle: r.handle, msgs: r.msgs, lastTs: appleNsToUnixMs(r.lastd) }));
+  }
+
   // List all iMessage groups (multi-participant chats) with their
   // names and participant counts. Used by the LLM tool
   // `list_imessage_groups` so the bot can find a trip/family/etc
