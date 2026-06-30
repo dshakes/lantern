@@ -744,7 +744,7 @@ export class IMessageSession {
   // aware. ON by default (the owner asked for proactive news); LANTERN_NEWS_PROACTIVE=off to silence.
   private static readonly NEWS_PROACTIVE_ENABLED =
     !["off", "0", "false"].includes((process.env.LANTERN_NEWS_PROACTIVE ?? "on").toLowerCase());
-  private static readonly NEWS_PROACTIVE_INTERVAL_MS = 60 * 60_000; // hourly
+  private static readonly NEWS_PROACTIVE_INTERVAL_MS = 12 * 60_000; // ~12 min — near-real-time major-release alerts
   private newsTimer: ReturnType<typeof setInterval> | null = null;
   private newsPushed = new Set<string>();
   private newsPushedPath = "";
@@ -1349,8 +1349,8 @@ export class IMessageSession {
       // was published a day or two ago). Dedup keeps each pushed once.
       const r = await authedFetch("/v1/news?sort=popular&limit=20");
       if (!r.ok) return;
-      const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; score?: number }>;
-      const items: NewsItemLite[] = (data ?? []).map((it) => ({ source: it.source, category: it.category, title: it.title, url: it.url, score: it.score }));
+      const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
+      const items: NewsItemLite[] = (data ?? []).map((it) => ({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score }));
       // First run ever: mark today's top items as "already seen" WITHOUT pushing,
       // so we only push genuinely-new drops from here on (no day-1 backlog spam).
       if (this.newsNeedsSeed) {

@@ -253,7 +253,7 @@ test("selectTopDrops: high-signal, deduped, capped", () => {
   assert.equal(drops[1].url, "https://c");
   assert.ok(!drops.some((d) => d.url === "https://b")); // below threshold
   assert.ok(!drops.some((d) => d.url === "https://d")); // already pushed
-  assert.match(buildTopDropPush(items[0]), /Top AI drop \(740\): Big model/);
+  assert.match(buildTopDropPush(items[0]), /major AI drop — Big model/);
 });
 
 test("buildNewsAsk — grouped by company, dated, why + links (intelligent radar)", () => {

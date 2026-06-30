@@ -1562,7 +1562,7 @@ export class WhatsAppSession {
   // Proactive "top AI drops" — push only high-signal NEW news. ON by default.
   private static readonly NEWS_PROACTIVE_ENABLED =
     !["off", "0", "false"].includes((process.env.LANTERN_NEWS_PROACTIVE ?? "on").toLowerCase());
-  private static readonly NEWS_PROACTIVE_INTERVAL_MS = 60 * 60_000;
+  private static readonly NEWS_PROACTIVE_INTERVAL_MS = 12 * 60_000; // ~12 min — near-real-time major-release alerts
   private newsTimer: ReturnType<typeof setInterval> | null = null;
   private newsPushed = new Set<string>();
   private readonly newsPushedFile = join(homedir(), ".lantern", "whatsapp-news-pushed.json");
@@ -9313,8 +9313,8 @@ export class WhatsAppSession {
       if (this.proactivePaused()) return;
       const r = await authedFetch("/v1/news?sort=popular&limit=20");
       if (!r.ok) return;
-      const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; score?: number }>;
-      const items: NewsItemLite[] = (data ?? []).map((it) => ({ source: it.source, category: it.category, title: it.title, url: it.url, score: it.score }));
+      const data = (await r.json()) as Array<{ source: string; category?: string; title: string; url: string; summary?: string; score?: number }>;
+      const items: NewsItemLite[] = (data ?? []).map((it) => ({ source: it.source, category: it.category, title: it.title, url: it.url, summary: it.summary, score: it.score }));
       if (this.newsNeedsSeed) {
         for (const it of items) if (it.url) this.newsPushed.add(it.url);
         try { writeFileSync(this.newsPushedFile, JSON.stringify([...this.newsPushed].slice(-500)), { mode: 0o600 }); } catch { /* best-effort */ }
