@@ -29,8 +29,9 @@ import (
 
 // DomainRecordHandler handles /v1/domain-records.
 type DomainRecordHandler struct {
-	srv  *server.Server
-	auth *AuthHandler
+	srv      *server.Server
+	auth     *AuthHandler
+	llmProxy *LlmProxyHandler // nil → domain digest falls back to recency view
 }
 
 // NewDomainRecordHandler creates a DomainRecordHandler.

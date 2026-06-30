@@ -9075,10 +9075,15 @@ export class WhatsAppSession {
           text = buildQuietAck(hours, until);
         }
       } else {
-        // Domain drill-down.
-        // ponytail: domain records not sourced yet; shows "nothing tracked yet"
+        // Domain drill-down — LLM-curated rollup of the owner's real records
+        // (domain_records / finance commitments + bills) from the control-plane.
         const domain = (cmd as { domain: string }).domain;
-        text = buildDomain({ domain, recordCount: 0, recent: [], obligations: [] });
+        let dv = { domain, recordCount: 0, recent: [] as string[], obligations: [] as string[], next: undefined as string | undefined };
+        try {
+          const dr = await authedFetch(`/v1/domains/${encodeURIComponent(domain)}/digest`);
+          if (dr.ok) dv = { ...dv, ...((await dr.json()) as typeof dv) };
+        } catch { /* fall back to empty view */ }
+        text = buildDomain(dv);
       }
 
       setCenterItems(this.centerState, jid, items);

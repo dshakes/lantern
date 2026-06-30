@@ -814,6 +814,51 @@ func TestRLSDomainRecords_CrossTenantBlocked(t *testing.T) {
 	}
 }
 
+// ----------------------- domain digest (deterministic fallback) -----------------------
+
+// TestDomainDigest_FallbackBuckets verifies the no-LLM recency view: a
+// future-dated record becomes `next`, a past one becomes recent. newDomainHandler
+// sets no llmProxy, so curateDomain returns ok=false and the deterministic path runs.
+func TestDomainDigest_FallbackBuckets(t *testing.T) {
+	h := newDomainHandler(t)
+	tenant := domainTenant(t)
+
+	future := time.Now().Add(72 * time.Hour).Format("2006-01-02")
+	for _, rec := range []map[string]any{
+		{"domain": "vehicle", "kind": "recall", "title": "Honda Odyssey safety recall", "source": "manual", "validUntil": future, "idempotencyKey": "d-1"},
+		{"domain": "vehicle", "kind": "service", "title": "Oil change completed", "source": "manual", "idempotencyKey": "d-2"},
+	} {
+		if rr := postDomainRecord(t, h, tenant, rec); rr.Code != http.StatusCreated {
+			t.Fatalf("seed %v: %d %s", rec["title"], rr.Code, rr.Body.String())
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/domains/car/digest", nil) // alias car→vehicle
+	req.SetPathValue("domain", "car")
+	req.Header.Set("Authorization", bearerHeader(mintTestToken(t, tenant, "owner-1", "owner")))
+	rr := httptest.NewRecorder()
+	h.DomainDigest(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("digest: %d %s", rr.Code, rr.Body.String())
+	}
+	var dv domainDigestJSON
+	if err := json.Unmarshal(rr.Body.Bytes(), &dv); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if dv.Domain != "vehicle" {
+		t.Errorf("domain=%q, want vehicle (alias resolved)", dv.Domain)
+	}
+	if dv.RecordCount != 2 {
+		t.Errorf("recordCount=%d, want 2", dv.RecordCount)
+	}
+	if !strings.Contains(dv.Next, "recall") {
+		t.Errorf("next=%q, want the future-dated recall", dv.Next)
+	}
+	if !strings.Contains(strings.Join(dv.Recent, " | "), "Oil change") {
+		t.Errorf("recent=%v, want the past oil change", dv.Recent)
+	}
+}
+
 // ----------------------- time compile check -----------------------
 
 var _ = time.Now // keep time import alive for test helpers that may use it

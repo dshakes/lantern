@@ -286,6 +286,7 @@ func main() {
 	}
 
 	domainRecordHandler := handlers.NewDomainRecordHandler(srv, authHandler)
+	domainRecordHandler.SetLlmProxy(llmProxyHandler) // enables intelligent /v1/domains/{domain}/digest
 	newsHandler := handlers.NewNewsHandler(srv, authHandler)
 	newsHandler.SetLlmProxy(llmProxyHandler) // enables intelligent /v1/news/ask
 	loopAgentHandler := handlers.NewLoopAgentHandler(srv, authHandler, llmProxyHandler)
@@ -541,6 +542,7 @@ func main() {
 	httpMux.HandleFunc("GET /v1/domain-records", domainRecordHandler.ListDomainRecords)
 	httpMux.HandleFunc("PUT /v1/domain-records/{id}", domainRecordHandler.UpdateDomainRecord)
 	httpMux.HandleFunc("DELETE /v1/domain-records/{id}", domainRecordHandler.DeleteDomainRecord)
+	httpMux.HandleFunc("GET /v1/domains/{domain}/digest", domainRecordHandler.DomainDigest)
 
 	// AI Radar feed (news_radar loop agent).
 	httpMux.HandleFunc("GET /v1/news", newsHandler.ListNews)
