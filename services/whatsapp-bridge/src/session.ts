@@ -7704,7 +7704,12 @@ export class WhatsAppSession {
     // surface the owner's real Telugu phrasing (beats the BAD→GOOD dialect
     // rules — the source of the "vazthani Meeru chustha?" garbage). Cheap
     // pure function; recomputed per reply. relevantTo ranks by inbound overlap.
-    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, langHint.primary === "telugu", text);
+    // Inject the owner's REAL Telugu exemplars whenever Telugu is even LIKELY
+    // (any token/script), not only when it's the inbound's PRIMARY language —
+    // otherwise mixed/English-dominant + voice-note Telugu fell back to textbook.
+    const teluguLikely =
+      langHint.primary === "telugu" || langHint.hasNativeScript || langHint.hasRomanized;
+    const ownerVoiceBlock = this.buildOwnerVoiceBlock(ownerName, teluguLikely, text);
     // Compute the sync prerequisites for the reads up front so the reads
     // themselves can be issued concurrently below.
     const senderName = effectiveName;
