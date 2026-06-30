@@ -9754,33 +9754,41 @@ export class WhatsAppSession {
   // search_whatsapp_history call. "" on any miss → caller falls through.
   private async buildThreadPeekBlock(contactName: string): Promise<string> {
     try {
-      // Resolve to ONE 1:1 contact — never merge two different people who share
-      // a name (mixed attribution), and never a group/@lid jid. AddressBook
-      // first (groups one person's numbers); else the most-recent history
-      // sender match; else a single cached name match.
+      // Gather THIS person's 1:1 jids from EVERY source the bridge has — the
+      // AddressBook card, the handles chat history has seen under their name,
+      // and recent history rows whose sender matches — deduped by canonical
+      // handle. Critical: the card may hold an OLD number while the person's
+      // RECENT messages come from a jid only history knows; the card alone
+      // surfaces a stale thread and reports "nothing recent" (the Manasa bug).
+      // Whole-word/exact name match keeps it to one person; @g.us/@lid excluded.
       const isDmJid = (j: string) => !!j && !j.endsWith("@g.us") && !j.endsWith("@lid");
-      let jids: string[] = [];
-      let who = contactName;
+      const needle = contactName.trim().toLowerCase();
+      const nameMatches = (n?: string): boolean => {
+        if (!n) return false;
+        const ln = n.toLowerCase();
+        return ln === needle || ln.split(/\s+/).includes(needle);
+      };
       const hits = await this.searchContacts(contactName, 3);
+      let who = hits[0]?.name || contactName;
+      const seen = new Set<string>();
+      const jids: string[] = [];
+      const add = (j?: string) => {
+        if (!j || !isDmJid(j)) return;
+        const key = canonicalHandle(j);
+        if (seen.has(key)) return;
+        seen.add(key);
+        jids.push(j);
+      };
       if (hits[0]) {
-        who = hits[0].name;
-        jids = hits[0].phones
-          .map((p) => p.replace(/\D/g, ""))
-          .filter(Boolean)
-          .map((d) => d + "@s.whatsapp.net");
-      }
-      if (jids.length === 0) {
-        // most-recent 1:1 history row whose senderName matches.
-        const probe = this.searchHistory({ fromContact: contactName, limit: 5 }).find((r) => isDmJid(r.jid));
-        if (probe) { jids = [probe.jid]; who = probe.senderName || contactName; }
-      }
-      if (jids.length === 0) {
-        const needle = contactName.trim().toLowerCase();
-        for (const [jid, name] of this.contactNames) {
-          if (isDmJid(jid) && name && name.toLowerCase().includes(needle)) { jids = [jid]; who = name; break; }
+        for (const p of hits[0].phones) {
+          const d = p.replace(/\D/g, "");
+          if (d) add(d + "@s.whatsapp.net");
         }
       }
-      jids = jids.filter(isDmJid);
+      for (const [jid, name] of this.contactNames) {
+        if (nameMatches(name)) { add(jid); if (!hits[0]) who = name; }
+      }
+      for (const r of this.searchHistory({ fromContact: contactName, limit: 5 })) add(r.jid);
       if (jids.length === 0) return "";
 
       const msgs: Array<{ ts: number; fromMe: boolean; text: string }> = [];
