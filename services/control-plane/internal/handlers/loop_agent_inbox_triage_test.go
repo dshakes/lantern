@@ -443,7 +443,7 @@ func TestInboxTriageCursor_Separate(t *testing.T) {
 	}
 
 	// Run processInboxMessages (autopilot) against the same messages.
-	if _, _, err := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, ""); err != nil {
+	if _, _, err := processInboxMessages(ctx, pool, nopLogger(), tenant, runID, msgs, "", nil); err != nil {
 		t.Fatalf("processInboxMessages: %v", err)
 	}
 	// Run processTriageMessages (triage) against the same messages.
