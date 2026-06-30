@@ -3286,10 +3286,11 @@ export class IMessageSession {
         seen.add(key);
         handles.push(h);
       };
+      const emailHints: string[] = [];
       for (const c of hits) {
         if (!nameMatches(c.name)) continue;
         for (const p of c.phones) add(p);
-        for (const e of c.emails) add(e);
+        for (const e of c.emails) { add(e); if (e.includes("@")) emailHints.push(e); }
       }
       for (const [handle, name] of this.contactNames) {
         if (nameMatches(name)) add(handle);
@@ -3299,7 +3300,6 @@ export class IMessageSession {
       // the ONLY source for a handle that's in neither the AddressBook nor the
       // profile, so it's what makes "what did <spouse> say" actually resolve.
       for (const h of resolveHandlesByName(contactName)) add(h);
-      if (handles.length === 0) return "";
 
       // Per handle, pull recent 1:1 messages; keep the thread whose newest
       // message is the most recent (the active "Manasa").
@@ -3314,14 +3314,24 @@ export class IMessageSession {
         const newest = Math.max(...rows.map((r) => r.ts));
         if (!best || newest > best.newest) best = { handle, msgs: rows, newest };
       }
-      if (!best) return "";
-      const who = this.contactNames.get(best.handle) || hits.find((h) => h.phones.concat(h.emails).some((x) => canonicalHandle(x) === canonicalHandle(best!.handle)))?.name || contactName;
+      const who = best ? (this.contactNames.get(best.handle) || hits.find((h) => h.phones.concat(h.emails).some((x) => canonicalHandle(x) === canonicalHandle(best!.handle)))?.name || contactName) : contactName;
+      // EMAIL too: the owner's question is cross-channel. Always tell the model
+      // to also pull email for this person and MERGE it with the texts — so it
+      // never reports "nothing in messages" while ignoring an active email
+      // thread (the daycare-emails case). gmail_search is in the toolkit.
+      const emailLine = `# Also check EMAIL (cross-channel): run gmail_search for ${who}${emailHints.length ? ` (address: ${[...new Set(emailHints)].slice(0, 2).join(", ")})` : ""} and COMBINE any recent email with the messages above into ONE answer — most recent/relevant first. Do NOT say "nothing in messages" or stop at one channel; give the full picture across texts + email.`;
+      if (!best) {
+        // No recent texts found — still ground an email check so a contact the
+        // owner mostly emails isn't reported as silent.
+        return [`# No recent iMessage/RCS texts found from ${who}.`, emailLine].join("\n");
+      }
       const recent = best.msgs.sort((a, b) => a.ts - b.ts).slice(-12);
       const lines = recent.map((m) => `${m.fromMe ? "you" : who}: ${m.text}`);
       return [
         `# Recent messages from ${who} (oldest first — the real thread). Answer the owner's question from THIS; do not fabricate.`,
         `Summarize in natural THIRD PERSON about ${who} — e.g. "she's sending you a grocery list", "she added Swathi as a pickup". NEVER echo her first-person words verbatim ("she I'll…" / "she said I'll…" is wrong) and don't paste her messages raw. Keep her concrete details EXACT (item names, names, dates, conditions like "not from the snack section"). Lead with the single most useful takeaway, then the specifics.`,
         ...lines,
+        emailLine,
       ].join("\n");
     } catch (err) {
       this.logger.debug({ err: (err as Error)?.message }, "buildThreadPeekBlock failed");

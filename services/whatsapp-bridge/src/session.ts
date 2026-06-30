@@ -9817,12 +9817,14 @@ export class WhatsAppSession {
         seen.add(key);
         jids.push(j);
       };
+      const emailHints: string[] = [];
       for (const c of hits) {
         if (!nameMatches(c.name)) continue;
         for (const p of c.phones) {
           const d = p.replace(/\D/g, "");
           if (d) add(d + "@s.whatsapp.net", c.name);
         }
+        for (const e of c.emails) if (e.includes("@")) emailHints.push(e);
       }
       for (const [jid, name] of this.contactNames) {
         if (nameMatches(name)) add(jid, name);
@@ -9835,7 +9837,6 @@ export class WhatsAppSession {
         if (h.includes("@")) add(h, contactName);
         else { const d = h.replace(/\D/g, ""); if (d) add(d + "@s.whatsapp.net", contactName); }
       }
-      if (jids.length === 0) return "";
 
       let best: { jid: string; msgs: Array<{ ts: number; fromMe: boolean; text: string }>; newest: number } | null = null;
       for (const jid of jids) {
@@ -9848,14 +9849,22 @@ export class WhatsAppSession {
         const newest = Math.max(...rows.map((r) => r.ts));
         if (!best || newest > best.newest) best = { jid, msgs: rows, newest };
       }
-      if (!best) return "";
-      const who = this.contactNames.get(best.jid) || nameByCanon.get(canonicalHandle(best.jid)) || contactName;
+      const who = best ? (this.contactNames.get(best.jid) || nameByCanon.get(canonicalHandle(best.jid)) || contactName) : contactName;
+      // EMAIL too (cross-channel): always tell the model to also pull email for
+      // this person and merge it with the texts — never report "nothing" while
+      // an email thread is active.
+      const emailLine = `# Also check EMAIL (cross-channel): run gmail_search for ${who}${emailHints.length ? ` (address: ${[...new Set(emailHints)].slice(0, 2).join(", ")})` : ""} and COMBINE any recent email with the messages above into ONE answer — most recent/relevant first. Do NOT say "nothing in messages" or stop at one channel; give the full picture across texts + email.`;
+      if (!best) {
+        if (jids.length === 0 && emailHints.length === 0) return "";
+        return [`# No recent WhatsApp texts found from ${who}.`, emailLine].join("\n");
+      }
       const recent = best.msgs.sort((a, b) => a.ts - b.ts).slice(-12);
       const lines = recent.map((m) => `${m.fromMe ? "you" : who}: ${m.text}`);
       return [
         `# Recent messages from ${who} (oldest first — the real thread). Answer the owner's question from THIS; do not fabricate.`,
         `Summarize in natural THIRD PERSON about ${who} — e.g. "she's sending you a grocery list", "she added Swathi as a pickup". NEVER echo her first-person words verbatim ("she I'll…" / "she said I'll…" is wrong) and don't paste her messages raw. Keep her concrete details EXACT (item names, names, dates, conditions like "not from the snack section"). Lead with the single most useful takeaway, then the specifics.`,
         ...lines,
+        emailLine,
       ].join("\n");
     } catch (err) {
       this.logger.debug({ err: (err as Error)?.message }, "buildThreadPeekBlock failed");
