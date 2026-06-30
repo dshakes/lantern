@@ -3701,6 +3701,40 @@ export class IMessageSession {
   // bot can still respond. Only fires when LANTERN_TWILIO_NUMBER is set and the
   // target looks like a phone number (never for iMessage-email handles). The
   // contact receives the text from the Twilio number, not the owner's cell.
+  /** True when a Twilio from-number is configured for SMS/RCS fallback. */
+  private smsConfigured(): boolean {
+    return !!(process.env.LANTERN_TWILIO_NUMBER || process.env.LANTERN_TWILIO_SMS_FROM || "").trim();
+  }
+
+  /** A phone-number target (not an iMessage email handle) — SMS needs a number. */
+  private isPhoneish(to: string): boolean {
+    return !to.includes("@") && to.replace(/[^\d]/g, "").length >= 8;
+  }
+
+  /**
+   * After an iMessage send, re-check delivery from chat.db ~30s later (the
+   * "Not Delivered" error is computed async). If the just-sent iMessage failed
+   * (service=iMessage, error!=0, undelivered), fall back to SMS once so the
+   * message still gets there. Best-effort; unref'd so it never holds the process.
+   */
+  private scheduleDeliveryWatch(to: string, text: string): void {
+    const delayMs = Number(process.env.LANTERN_DELIVERY_WATCH_MS) || 30000;
+    const t = setTimeout(() => {
+      try {
+        const st = this.db.recentSendStatus(to);
+        if (st && st.service.toLowerCase() === "imessage" && st.error !== 0 && !st.isDelivered) {
+          this.logger.warn({ to, error: st.error }, "iMessage Not Delivered (async) — falling back to SMS");
+          void this.trySmsFallback(to, text).then((ok) => {
+            if (!ok) this.logger.warn({ to }, "SMS fallback after async Not-Delivered also failed");
+          });
+        }
+      } catch (err) {
+        this.logger.debug({ err }, "delivery watch failed (no-op)");
+      }
+    }, delayMs);
+    t.unref?.();
+  }
+
   private async trySmsFallback(to: string, text: string): Promise<boolean> {
     const from = (
       process.env.LANTERN_TWILIO_NUMBER ||
@@ -3772,12 +3806,36 @@ export class IMessageSession {
         return { ok: true };
       }
     }
+    // RCS/SMS PRE-ROUTING: if this contact's most recent message shows iMessage
+    // didn't work for them (they're on RCS/SMS, or the last iMessage came back
+    // error!=0 "Not Delivered"), skip the doomed iMessage attempt and deliver
+    // via Twilio directly. "Not Delivered" is async, so the contact's recent
+    // chat.db send-status is the only reliable pre-send signal.
+    if (this.smsConfigured() && this.isPhoneish(to) && !isBotSelfMessage(text)) {
+      const st = this.db.recentSendStatus(to);
+      const imsgFailing = !!st && (st.service.toLowerCase() !== "imessage" || st.error !== 0);
+      if (imsgFailing && (await this.trySmsFallback(to, text))) {
+        this.logger.info({ to, lastService: st?.service, lastError: st?.error }, "pre-routed to SMS/RCS (iMessage not working for this contact)");
+        this.recordBridgeSend(text);
+        this.enqueueOutboundEcho(to, text);
+        this.broadcast({ type: "agent_reply", data: { to, text, timestamp: Date.now() } });
+        return { ok: true };
+      }
+    }
     const res = await this.sender.send(to, text);
     if (!res.ok) {
       // iMessage couldn't deliver (e.g. SMS/RCS-only number) — try SMS.
       const smsOk = await this.trySmsFallback(to, text);
       if (!smsOk) return res;
       // fell back to SMS successfully — continue the normal post-send path.
+    } else {
+      // ASYNC DELIVERY WATCH: Messages.app accepted the text (osascript exit 0),
+      // but "Not Delivered" is computed seconds later and written ONLY to
+      // chat.db — the send call never sees it. Re-check shortly; if this
+      // contact's just-sent iMessage failed, fall back to SMS so it still lands.
+      if (this.smsConfigured() && this.isPhoneish(to) && !isBotSelfMessage(text)) {
+        this.scheduleDeliveryWatch(to, text);
+      }
     }
     // Record so the polling loop skips this row when chat.db echoes
     // it back as is_from_me=1.

@@ -635,6 +635,31 @@ export class ChatDB {
     return ids.filter((id) => canon.has(canonicalHandle(id)));
   }
 
+  /**
+   * Delivery status of the MOST RECENT message the owner/bridge sent to a handle
+   * (canonical-matched), or null when there's no history. Drives the RCS/SMS
+   * fallback: a failed iMessage is `service='iMessage', error!=0` (error 22 =
+   * "Not Delivered" — computed ASYNC by Messages.app, so the send call never
+   * sees it). Used both to PRE-ROUTE a known-non-iMessage contact and to VERIFY
+   * a just-sent iMessage actually delivered.
+   */
+  recentSendStatus(handle: string): { service: string; error: number; isDelivered: boolean } | null {
+    if (!this.db || !handle) return null;
+    const ids = this.handleIdsForCanonicals(new Set([canonicalHandle(handle)]));
+    if (ids.length === 0) return null;
+    const placeholders = ids.map(() => "?").join(",");
+    const row = this.db
+      .prepare(
+        `SELECT m.service AS service, m.error AS error, m.is_delivered AS is_delivered
+         FROM message m JOIN handle h ON m.handle_id = h.ROWID
+         WHERE h.id IN (${placeholders}) AND m.is_from_me = 1
+         ORDER BY m.ROWID DESC LIMIT 1`,
+      )
+      .get(...ids) as { service: string; error: number; is_delivered: number } | undefined;
+    if (!row) return null;
+    return { service: row.service || "", error: row.error || 0, isDelivered: !!row.is_delivered };
+  }
+
   // Top 1:1 contacts by message volume in the recent window — the behavioral
   // signal for "who the owner actually talks to" (feeds the known-people
   // grounding). Groups excluded (display_name <> ''); reactions excluded.
