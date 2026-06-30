@@ -55,6 +55,28 @@ describe("detectOutboundPromise", () => {
     assert.equal(detectOutboundPromise("haha yeah that was wild"), null);
     assert.equal(detectOutboundPromise(""), null);
   });
+
+  // adversarial
+  test("does NOT capture a threat ('I'll get you')", () => {
+    assert.equal(detectOutboundPromise("i'll get you for that"), null);
+  });
+
+  test("does NOT capture a negation ('I'll never send that')", () => {
+    assert.equal(detectOutboundPromise("i'll never send that to him"), null);
+  });
+
+  test("does NOT capture a question", () => {
+    assert.equal(detectOutboundPromise("should i send you the file?"), null);
+  });
+
+  test("does NOT capture vague 'I'll catch you later'", () => {
+    assert.equal(detectOutboundPromise("i'll catch you later"), null);
+  });
+
+  test("captures across capitalization + contraction", () => {
+    assert.equal(detectOutboundPromise("I'll Email You Tomorrow")?.title, "Email You Tomorrow");
+    assert.equal(detectOutboundPromise("I'm gonna forward the link")?.title, "forward the link");
+  });
 });
 
 // ── Shared fixture ────────────────────────────────────────────────────────────

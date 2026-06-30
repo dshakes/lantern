@@ -83,14 +83,17 @@ export function recordDisclosureDeny(handle: string, deny: boolean, opts: DiscOp
 const LOCATION_NOUN = String.raw`(?:where\s+i\s?'?m|where\s+i\s+am|my\s+location|my\s+whereabouts|where\s+i'?ll\s+be)`;
 
 function cleanTarget(raw: string): string | null {
-  const s = raw.trim().replace(/^(?:to\s+)?/i, "").replace(/[.,!?;:]+$/, "").trim();
+  let s = raw.trim().replace(/^(?:to\s+)?/i, "").replace(/[.,!?;:]+$/, "").trim();
+  // "my mom" / "the group" → "mom" / "group" (so a relationship word resolves).
+  s = s.replace(/^(?:my|the|a)\s+/i, "").trim();
   if (!s) return null;
   // ponytail: a name or a handle, at most 2 tokens — not a sentence.
   const tokens = s.split(/\s+/).slice(0, 2);
   const target = tokens.join(" ");
   if (target.length < 2 || target.length > 50) return null;
-  // Reject obvious non-targets.
-  if (/^(?:anyone|anybody|everyone|nobody|people|them|him|her)$/i.test(target)) return null;
+  // Reject non-targets, including self-referential ones ("don't tell ME where I
+  // am") that would otherwise record a deny against a junk handle.
+  if (/^(?:anyone|anybody|everyone|every\s?one|nobody|no\s?one|people|them|him|her|me|myself|us|i|you|it)$/i.test(target)) return null;
   return target;
 }
 
