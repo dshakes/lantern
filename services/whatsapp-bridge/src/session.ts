@@ -74,6 +74,7 @@ import { TurnBindings } from "@lantern/bridge-core/entity-binding";
 import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
+import { recordAction, recentActions } from "@lantern/bridge-core/working-memory";
 import { computeHoldFromSamples, type LatencySample } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
@@ -3554,6 +3555,7 @@ export class WhatsAppSession {
       return;
     }
     this.presence.setStatus({ label: pres.label, place: pres.place, durationMs: pres.durationMs, state: pres.state, takeMessage: pres.takeMessage });
+    recordAction({ kind: "status_set", summary: `status set: ${pres.place || pres.label || pres.state || "away"}` });
     const mins = pres.durationMs ? Math.round(pres.durationMs / 60_000) : null;
     const forText = mins ? (mins >= 60 && mins % 60 === 0 ? ` for ${mins / 60}h` : ` for ${mins}m`) : "";
     this.logActivity("attention_dm", `presence set: ${pres.label}${forText}`, { scope: "self" });
@@ -5601,6 +5603,7 @@ export class WhatsAppSession {
       } else if (status.label) {
         const durationMs = status.untilIso ? Math.max(60_000, Date.parse(status.untilIso) - Date.now()) : undefined;
         this.presence.setStatus({ label: status.label, place: status.place, durationMs });
+        recordAction({ kind: "status_set", summary: `status set: ${status.place || status.label}` });
         this.logger.info({ label: status.label, untilIso: status.untilIso }, "presence set via [STATUS:]");
       }
     }
@@ -5661,18 +5664,22 @@ export class WhatsAppSession {
         try {
           const res = await this.macActions.createCalendarEvent(ev);
           await this.confirmToSelf(res.ok ? `📅 added to calendar — ${res.detail || ev.title}` : `(calendar failed: ${res.reason})`);
+          // CLOSED LOOP: record so the bot remembers it (briefing + self-context).
+          if (res.ok) recordAction({ kind: "calendar_added", summary: `added to calendar: ${ev.title}` });
         } catch (err) { this.logger.warn({ err }, "calendar action exception"); }
       }
       for (const n of notes) {
         try {
           const res = await this.macActions.createNote(n);
           await this.confirmToSelf(res.ok ? `🗒 saved as a note — "${n.title}"` : `(note failed: ${res.reason})`);
+          if (res.ok) recordAction({ kind: "note_saved", summary: `saved note: ${n.title}` });
         } catch (err) { this.logger.warn({ err }, "note action exception"); }
       }
       for (const m of mailDrafts) {
         try {
           const res = await this.macActions.createMailDraft(m);
           await this.confirmToSelf(res.ok ? `✉️ draft opened in Mail — review + send when ready` : `(mail draft failed: ${res.reason})`);
+          if (res.ok) recordAction({ kind: "custom", summary: `drafted mail to ${m.to}: ${m.subject}` });
         } catch (err) { this.logger.warn({ err }, "mail action exception"); }
       }
     }
@@ -5792,7 +5799,13 @@ export class WhatsAppSession {
           return;
         }
         const res = await placeCallNow((offer as any).callRequest, (offer as any).callPlan, deps);
-        if (!res.ok) await this.confirmToSelf(`(couldn't place call: ${res.reason || "unknown"})`);
+        if (!res.ok) {
+          await this.confirmToSelf(`(couldn't place call: ${res.reason || "unknown"})`);
+        } else {
+          // CLOSED LOOP: record the placed call at the real dial site.
+          const who = (offer as any).callPlan?.targetName ?? (offer as any).callRequest?.toName ?? (offer as any).callRequest?.target ?? "a contact";
+          recordAction({ kind: "call_placed", summary: `called ${who}` });
+        }
       } catch (err) {
         this.logger.error({ err }, "outbound-call offer execution failed");
         await this.confirmToSelf("(couldn't place the call — try again)");
@@ -5815,6 +5828,7 @@ export class WhatsAppSession {
         if (res.ok) {
           const friendly = reminderDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
           await this.confirmToSelf(`📅 done — reminder set for ${friendly} (${offer.leadDays} days before). ${res.detail || ""}`);
+          recordAction({ kind: "calendar_added", summary: `reminder set: ${offer.title || "renewal"} (${friendly})` });
         } else {
           await this.confirmToSelf(`(couldn't add to calendar: ${res.reason})`);
         }
@@ -5832,6 +5846,7 @@ export class WhatsAppSession {
         });
         if (res.ok) {
           await this.confirmToSelf(`🗒 saved as a note — "${offer.noteTitle}". find it in Notes.app.`);
+          recordAction({ kind: "note_saved", summary: `saved note: ${offer.noteTitle}` });
         } else {
           await this.confirmToSelf(`(couldn't save the note: ${res.reason})`);
         }
@@ -9828,6 +9843,12 @@ export class WhatsAppSession {
       if (commitments.length) {
         sections.push("On your plate:");
         for (const c of commitments) sections.push(`  • ${c.title}`);
+      }
+      // CLOSED LOOP: what the bot already handled (calendar/note/mail/status).
+      const handled = recentActions().filter((a) => a.kind !== "presence").slice(-5);
+      if (handled.length) {
+        sections.push("Handled recently:");
+        for (const a of handled) sections.push(`  • ${a.summary}`);
       }
       if (sections.length === 0) {
         return "# Daily briefing (the owner asked for their day)\nNothing pressing — calendar's clear, no one's waiting, plate's empty. Say so briefly.";
