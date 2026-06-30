@@ -252,6 +252,7 @@ import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/br
 import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
 import { isInnerCircle, formatOwnerLocationBlock } from "@lantern/bridge-core/device-signals";
 import { readKnownLocation } from "./device-signals-reader.js";
+import { extractArticleUrl, fetchArticle, buildArticleBlock } from "@lantern/bridge-core/article";
 import {
   detectTaskCapture,
   captureTaskWithLlm,
@@ -5548,6 +5549,21 @@ export class IMessageSession {
         systemHint += "\n\n" + formatOwnerLocationBlock(known, ownerName, label);
         truthfulLocationKnown = known != null;
       } catch { /* fail-closed: no block, net stays armed */ }
+    }
+    // AGENTIC ARTICLE READING: if the contact shared a link, FETCH + READ it so
+    // the reply grounds on the article's real content (not the title). Best-
+    // effort; a slow/failed fetch just means no block. Only 1:1.
+    if (!isGroup && (process.env.LANTERN_ARTICLE_READ || "on").toLowerCase() !== "off") {
+      try {
+        const articleUrl = extractArticleUrl(text);
+        if (articleUrl) {
+          const content = await fetchArticle(articleUrl);
+          if (content) {
+            systemHint += "\n\n" + buildArticleBlock(content, this.contactNames.get(row.handle) || "they", ownerName);
+            this.logger.info({ url: articleUrl, via: content.via, chars: content.text.length }, "article fetched for grounding");
+          }
+        }
+      } catch { /* best-effort — never block a reply on a fetch */ }
     }
     const userText = isGroup ? `[group message]\n${text}` : text;
     // #7 — for clearly-logistics inbound ("did you get my email?", "what time

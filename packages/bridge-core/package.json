@@ -26,6 +26,7 @@
     "./life-events-store": "./src/life-events-store.ts",
     "./auto-actions-store": "./src/auto-actions-store.ts",
     "./nudge-voice": "./src/nudge-voice.ts",
+    "./article": "./src/article.ts",
     "./gmail-ingest": "./src/gmail-ingest.ts",
     "./humanize": "./src/humanize.ts",
     "./prefetch": "./src/prefetch.ts",
