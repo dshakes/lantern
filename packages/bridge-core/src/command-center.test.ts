@@ -10,6 +10,7 @@ import {
   buildBrief,
   buildPlate,
   buildAgents,
+  summarizeAgentRuns,
   buildDomain,
   buildDid,
   buildNews,
@@ -237,6 +238,33 @@ test("buildAgents flags failures; buildDomain summarizes records + obligations",
   assert.match(d, /health — 6 records/);
   assert.match(d, /dentist Jul 3/);
   assert.match(d, /refill metformin/);
+});
+
+test("summarizeAgentRuns maps real run history → last-run/outcome/health", () => {
+  const now = Date.parse("2026-06-30T12:10:00Z");
+  const stats = summarizeAgentRuns(
+    [
+      { name: "ai-radar", status: "active" },
+      { name: "financial-sentinel" },
+      { name: "garage" }, // no runs → never
+    ],
+    [
+      // newest-first, as GET /v1/runs returns
+      { agentName: "ai-radar", status: "running", createdAt: "2026-06-30T12:05:00Z", output: null },
+      { agentName: "ai-radar", status: "succeeded", createdAt: "2026-06-30T12:00:00Z", output: { new: 3, scanned: 2030 } },
+      { agentName: "financial-sentinel", status: "succeeded", createdAt: "2026-06-30T11:40:00Z", output: { hikes: 2 } },
+    ],
+    now,
+  );
+  const radar = stats.find((s) => s.name === "ai-radar")!;
+  assert.equal(radar.health, "running"); // most-recent run wins
+  assert.equal(radar.lastRunAgo, "5m ago");
+  const fin = stats.find((s) => s.name === "financial-sentinel")!;
+  assert.equal(fin.health, "idle");
+  assert.equal(fin.lastOutcome, "2 flagged");
+  const garage = stats.find((s) => s.name === "garage")!;
+  assert.equal(garage.health, "never");
+  assert.equal(garage.lastRunAgo, undefined);
 });
 
 test("selectTopDrops: high-signal, deduped, capped", () => {

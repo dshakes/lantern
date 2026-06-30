@@ -139,9 +139,9 @@ import {
 } from "@lantern/bridge-core/doc-ingest";
 import { extname } from "path";
 import {
-  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, buildDomain, buildDid, buildNews, buildNewsAsk, buildReadlist, buildQuietAck,
+  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, summarizeAgentRuns, buildDomain, buildDid, buildNews, buildNewsAsk, buildReadlist, buildQuietAck,
   selectTopDrops, buildTopDropPush, buildNewsDigest,
-  type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type NewsItemLite, type NewsAskResult,
+  type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type AgentRunRow, type NewsItemLite, type NewsAskResult,
 } from "@lantern/bridge-core/command-center";
 import {
   getCenterItems, setCenterItems, isRealTimeNudge, fetchBriefInput, parseSnoozeMs,
@@ -9019,16 +9019,16 @@ export class WhatsAppSession {
         const view = buildReadlist(saved.map((c) => ({ id: c.id, title: c.title, url: c.source_preview })));
         text = view.text; items = view.items;
       } else if (cmd === "agents") {
-        // Best-effort: list agents from the control plane.
-        const agentStats: AgentStat[] = [];
+        // Real agent health: join the agent list with recent run history so the
+        // owner sees what each agent actually did + when (not just name+status).
+        let agentStats: AgentStat[] = [];
         try {
-          const r = await authedFetch("/v1/agents");
-          if (r.ok) {
-            const data = (await r.json()) as { agents?: Array<{ name: string; status?: string }> };
-            for (const a of data.agents ?? []) {
-              agentStats.push({ name: a.name, health: a.status ?? "idle" });
-            }
-          }
+          const [ar, rr] = await Promise.all([authedFetch("/v1/agents"), authedFetch("/v1/runs?limit=100")]);
+          const agentsResp = ar.ok ? await ar.json() : [];
+          const agents = (Array.isArray(agentsResp) ? agentsResp : (agentsResp as { agents?: Array<{ name: string; status?: string }> }).agents ?? []) as Array<{ name: string; status?: string }>;
+          const runsResp = rr.ok ? await rr.json() : [];
+          const runs = (Array.isArray(runsResp) ? runsResp : (runsResp as { runs?: AgentRunRow[] }).runs ?? []) as AgentRunRow[];
+          agentStats = summarizeAgentRuns(agents, runs);
         } catch { /* best-effort */ }
         text = buildAgents(agentStats);
       } else if (cmd === "did") {
