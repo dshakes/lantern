@@ -251,6 +251,7 @@ import { authedFetch } from "@lantern/bridge-core/auth";
 import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/bridge-core/auto-actions-store";
 import {
   detectTaskCapture,
+  captureTaskWithLlm,
   detectOutboundPromise,
   renderNudge,
   resolveReply,
@@ -2784,7 +2785,15 @@ export class IMessageSession {
       const rel = this.ownerProfileStore.relationshipFor(handle, displayName);
       if (!rel) return; // not a known relationship — skip to avoid noise
 
-      const captured = detectTaskCapture(text, { relationship: rel });
+      // Regex fast-path; LLM recovers tasks phrased outside the templates.
+      // Dedicated `::taskcapture` session key (never the live jid).
+      const captured = await captureTaskWithLlm(text, { relationship: rel }, async (prompt) => {
+        try {
+          return (await this.agent.respondTo(`${handle}::taskcapture`, prompt, "", { withTools: false })) || "";
+        } catch {
+          return "";
+        }
+      });
       if (!captured) return;
 
       const source = /\b(?:wife|husband|spouse|partner)\b/i.test(rel) ? "spouse" : "vip";

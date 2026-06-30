@@ -6,6 +6,7 @@ import { test, describe } from "node:test";
 import { strict as assert } from "node:assert";
 import {
   detectTaskCapture,
+  captureTaskWithLlm,
   detectOutboundPromise,
   renderNudge,
   resolveReply,
@@ -141,6 +142,46 @@ describe("detectTaskCapture — negative (no false captures)", () => {
       assert.equal(result, null, `unexpected capture for: "${text}"`);
     });
   }
+});
+
+describe("captureTaskWithLlm (regex fast-path + LLM recovery)", () => {
+  test("regex hit returns immediately — LLM never consulted", async () => {
+    let called = false;
+    const r = await captureTaskWithLlm("don't forget to pick up the dry cleaning", undefined, async () => {
+      called = true;
+      return "{}";
+    });
+    assert.equal(called, false);
+    assert.match(r!.title, /dry cleaning/);
+  });
+
+  test("a task phrased outside the templates is recovered by the LLM", async () => {
+    const r = await captureTaskWithLlm("would be great if you grabbed milk on the way back", { relationship: "wife" }, async () =>
+      '{"isTask":true,"title":"grab milk on the way back","urgency":"normal"}');
+    assert.equal(r?.title, "grab milk on the way back");
+    assert.equal(r?.urgency, "normal");
+  });
+
+  test("LLM says not-a-task → null", async () => {
+    const r = await captureTaskWithLlm("do you think you'll make it to the game?", { relationship: "friend" }, async () =>
+      '{"isTask":false}');
+    assert.equal(r, null);
+  });
+
+  test("pre-filter blocks the LLM on a non-request (no 2nd-person cue)", async () => {
+    let called = false;
+    const r = await captureTaskWithLlm("the weather is nice today", undefined, async () => {
+      called = true;
+      return "{}";
+    });
+    assert.equal(called, false);
+    assert.equal(r, null);
+  });
+
+  test("malformed LLM output → null, never throws", async () => {
+    assert.equal(await captureTaskWithLlm("it would help if you looked at the report", undefined, async () => "not json"), null);
+    assert.equal(await captureTaskWithLlm("it would help if you looked at the report", undefined, async () => { throw new Error("x"); }), null);
+  });
 });
 
 describe("detectTaskCapture — urgency", () => {
