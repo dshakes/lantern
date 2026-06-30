@@ -495,7 +495,7 @@ func runLoopAgentIfPresent(
 		outputJSON, _ = json.Marshal(map[string]any{"surfaced": surfaced})
 
 	case "financial_sentinel":
-		hikesN, runErr := runFinancialSentinel(ctx, pool, logger, tenantID, runID)
+		hikesN, runErr := runFinancialSentinel(ctx, pool, logger, tenantID, runID, completeFn)
 		if runErr != nil {
 			logger.Error("loop-agent: financial_sentinel failed",
 				zap.String("run_id", runID), zap.Error(runErr))
@@ -1112,18 +1112,25 @@ func emitRelationshipSwept(ctx context.Context, pool *pgxpool.Pool, runID string
 //
 // rls-exempt: inline executor — life_events and commitments queries carry
 // explicit tenant_id; journal_events is RLS-exempt child table.
+type finPayeeGroup struct {
+	name      string
+	amounts   []float64
+	firstSeen time.Time
+	lastSeen  time.Time
+}
+
 func runFinancialSentinel(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	logger *zap.Logger,
 	tenantID, runID string,
+	completeFn researchCompleteFn,
 ) (hikesN int, err error) {
-	// Fetch bills in the look-back window, ordered by payee + created_at so we
-	// can detect per-payee price movement in a single ascending-order pass.
 	rows, qErr := pool.Query(ctx, `
 		SELECT
 			fields->>'payee'  AS payee,
-			fields->>'amount' AS amount_text
+			fields->>'amount' AS amount_text,
+			created_at
 		FROM life_events
 		WHERE tenant_id = $1
 		  AND kind = 'bill'
@@ -1135,47 +1142,50 @@ func runFinancialSentinel(
 	if qErr != nil {
 		return 0, fmt.Errorf("financial_sentinel: query bills: %w", qErr)
 	}
-
-	// Group consecutive rows by payee (already sorted).
-	type payeeGroup struct {
-		name    string
-		amounts []float64
-	}
-	var groups []payeeGroup
+	var groups []finPayeeGroup
 	totalBills := 0
 	for rows.Next() {
 		var payee, amountText string
-		if sErr := rows.Scan(&payee, &amountText); sErr != nil {
+		var createdAt time.Time
+		if sErr := rows.Scan(&payee, &amountText, &createdAt); sErr != nil {
 			logger.Warn("financial_sentinel: scan row failed", zap.Error(sErr))
 			continue
 		}
 		amount, parseErr := strconv.ParseFloat(amountText, 64)
 		if parseErr != nil {
-			logger.Debug("financial_sentinel: skip non-numeric amount",
-				zap.String("payee", payee), zap.String("raw", amountText))
 			continue
 		}
 		totalBills++
 		if len(groups) == 0 || groups[len(groups)-1].name != payee {
-			groups = append(groups, payeeGroup{name: payee})
+			groups = append(groups, finPayeeGroup{name: payee, firstSeen: createdAt})
 		}
-		groups[len(groups)-1].amounts = append(groups[len(groups)-1].amounts, amount)
+		g := &groups[len(groups)-1]
+		g.amounts = append(g.amounts, amount)
+		g.lastSeen = createdAt
 	}
 	rows.Close()
 	if rErr := rows.Err(); rErr != nil {
 		return 0, fmt.Errorf("financial_sentinel: rows: %w", rErr)
 	}
-
 	if totalBills == 0 {
-		logger.Debug("financial_sentinel: no bills found, skipping",
-			zap.String("tenant", tenantID))
 		emitFinancialSwept(ctx, pool, runID, 0, 0)
 		return 0, nil
 	}
 
-	// Detect hike: most-recent amount is higher than the prior amount by BOTH
-	// more than finSentinelHikePct AND more than finSentinelHikeDollar.
-	month := time.Now().Format("2006-01") // for idempotency key dedup within month
+	month := time.Now().Format("2006-01")
+
+	// INTELLIGENT path: let the LLM reason over the whole bill picture — real
+	// hikes, gradual creep, BRAND-NEW subscriptions, likely DUPLICATES — and
+	// ignore expected renewals. The dumb 10%+$5 threshold both false-positives
+	// (an annual insurance renewal) and misses what a human spots instantly.
+	if completeFn != nil {
+		if n, ok := financialSentinelIntelligent(ctx, pool, logger, tenantID, completeFn, groups, month); ok {
+			emitFinancialSwept(ctx, pool, runID, n, totalBills)
+			return n, nil
+		}
+	}
+
+	// FALLBACK: threshold scan (last-two amounts up by >pct AND >dollar).
 	for _, g := range groups {
 		if len(g.amounts) < 2 {
 			continue
@@ -1185,38 +1195,97 @@ func runFinancialSentinel(
 		if prev <= 0 {
 			continue
 		}
-		pctIncrease := (curr - prev) / prev
-		dollarIncrease := curr - prev
-		if pctIncrease <= finSentinelHikePct || dollarIncrease <= finSentinelHikeDollar {
+		if (curr-prev)/prev <= finSentinelHikePct || curr-prev <= finSentinelHikeDollar {
 			continue
 		}
-
-		title := clampRunes(
-			fmt.Sprintf("Review %s — $%.2f (up from $%.2f)", g.name, curr, prev),
-			500,
-		)
-		// Idempotency key deduplicates within the calendar month (invariant #8).
-		idemKey := fmt.Sprintf("finsentinel:%s:%s", g.name, month)
-
-		// rls-exempt: inline executor — explicit tenant_id; dedup on idemKey.
-		var insertedID string
-		insertErr := pool.QueryRow(ctx, `
-			INSERT INTO commitments (tenant_id, title, source, kind, idempotency_key, tier, urgency)
-			VALUES ($1, $2, 'bill', 'finance', $3, 'meso', 'soon')
-			ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
-			DO NOTHING
-			RETURNING id
-		`, tenantID, title, idemKey).Scan(&insertedID)
-		if insertErr == nil {
+		title := clampRunes(fmt.Sprintf("Review %s — $%.2f (up from $%.2f)", g.name, curr, prev), 500)
+		if finInsertReviewCommitment(ctx, pool, logger, tenantID, title, fmt.Sprintf("finsentinel:%s:%s", g.name, month)) {
 			hikesN++
-		} else if !errors.Is(insertErr, pgx.ErrNoRows) {
-			logger.Warn("financial_sentinel: insert commitment failed",
-				zap.String("payee", g.name), zap.Error(insertErr))
 		}
 	}
-
 	emitFinancialSwept(ctx, pool, runID, hikesN, totalBills)
 	return hikesN, nil
+}
+
+// financialSentinelIntelligent uses LLMCurate to pick the charges that genuinely
+// warrant the owner's review. Returns (commitmentsCreated, true) when the LLM
+// ran (even if it flags nothing — that's a valid, smarter "all clear"); (0,
+// false) on any LLM failure so the caller falls back to the threshold scan.
+func financialSentinelIntelligent(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	logger *zap.Logger,
+	tenantID string,
+	completeFn researchCompleteFn,
+	groups []finPayeeGroup,
+	month string,
+) (int, bool) {
+	lines := make([]string, len(groups))
+	for i, g := range groups {
+		latest := g.amounts[len(g.amounts)-1]
+		if len(g.amounts) >= 2 {
+			first := g.amounts[0]
+			trend := make([]string, len(g.amounts))
+			for j, a := range g.amounts {
+				trend[j] = fmt.Sprintf("%.2f", a)
+			}
+			pct := 0.0
+			if first > 0 {
+				pct = (latest - first) / first * 100
+			}
+			lines[i] = fmt.Sprintf("[%d] %s | latest $%.2f | trend: %s | %+.0f%% over %d bills (since %s)",
+				i, clampRunes(g.name, 40), latest, strings.Join(trend, "→"), pct, len(g.amounts), g.firstSeen.Format("2006-01-02"))
+		} else {
+			lines[i] = fmt.Sprintf("[%d] %s | $%.2f | SINGLE charge, first seen %s",
+				i, clampRunes(g.name, 40), latest, g.firstSeen.Format("2006-01-02"))
+		}
+	}
+	curated, ok := LLMCurate(ctx, completeFn, tenantID, CurateOpts{
+		SystemRole:    "You are a sharp personal-finance watchdog for a busy founder. You review recurring bills and flag ONLY charges that genuinely warrant his attention.",
+		Request:       "Which of these charges should the owner review? Flag: real price hikes, gradual creep (small recurring increases that add up), brand-NEW subscriptions, and likely DUPLICATE/overlapping services. IGNORE expected annual renewals, trivial cents-level changes, and normal variable bills (utilities). If nothing genuinely warrants review, pick nothing.",
+		ItemLines:     lines,
+		MaxPicks:      6,
+		GroupNoun:     "concern-type",
+		ExtraGuidance: "Be conservative — only flag what a careful person would actually want to look at. Your one-line 'why' becomes the owner's to-do.",
+	})
+	if !ok {
+		return 0, false
+	}
+	n := 0
+	for _, p := range curated.Picks {
+		g := groups[p.I]
+		why := strings.TrimSpace(p.Why)
+		if why == "" {
+			why = fmt.Sprintf("$%.2f", g.amounts[len(g.amounts)-1])
+		}
+		title := clampRunes(fmt.Sprintf("Review %s — %s", g.name, why), 500)
+		if finInsertReviewCommitment(ctx, pool, logger, tenantID, title, fmt.Sprintf("finsentinel:%s:%s", g.name, month)) {
+			n++
+		}
+	}
+	logger.Info("financial_sentinel: intelligent pass", zap.Int("flagged", n), zap.Int("payees", len(groups)))
+	return n, true
+}
+
+// finInsertReviewCommitment inserts a finance review commitment, idempotent on
+// idemKey. Returns true if a new row was created.
+func finInsertReviewCommitment(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, tenantID, title, idemKey string) bool {
+	var insertedID string
+	// rls-exempt: inline executor — explicit tenant_id; dedup on idemKey.
+	insertErr := pool.QueryRow(ctx, `
+		INSERT INTO commitments (tenant_id, title, source, kind, idempotency_key, tier, urgency)
+		VALUES ($1, $2, 'bill', 'finance', $3, 'meso', 'soon')
+		ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+		DO NOTHING
+		RETURNING id
+	`, tenantID, title, idemKey).Scan(&insertedID)
+	if insertErr == nil {
+		return true
+	}
+	if !errors.Is(insertErr, pgx.ErrNoRows) {
+		logger.Warn("financial_sentinel: insert commitment failed", zap.Error(insertErr))
+	}
+	return false
 }
 
 // emitFinancialSwept writes a financial_swept journal event.
