@@ -682,7 +682,7 @@ export function buildNewsDigest(items: NewsItemLite[], dayLabel: string): string
 
 /** Format one top-drop for a self-chat push. */
 export function buildTopDropPush(it: NewsItemLite): string {
-  const icon = (it.category && NEWS_CAT_ICON[it.category]) || "🔥";
-  const score = (it.score ?? 0) > 0 ? ` (${it.score})` : "";
-  return `${icon} Top AI drop${score}: ${clip(it.title, 90)} — ${clip(it.source, 24)}\n${it.url}`;
+  const icon = (it.category && NEWS_CAT_ICON[it.category]) || "🚨";
+  const why = it.summary ? `\n${clip(it.summary, 130)}` : "";
+  return `${icon} major AI drop — ${clip(it.title, 90)} (${clip(it.source, 24)})${why}\n${it.url}`;
 }
