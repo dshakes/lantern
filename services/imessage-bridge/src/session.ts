@@ -348,6 +348,7 @@ export interface PeekLocalResult {
   messages: Array<{ ts: number; fromMe: boolean; text: string }>;
   emailHints: string[];
   gender: "m" | "f" | null;
+  canon: string[]; // the resolved person's canonical handles (for peer lookup)
 }
 
 export class IMessageSession {
@@ -3315,18 +3316,44 @@ export class IMessageSession {
       const wantCanon = new Set<string>();
       const addCanon = (h?: string) => { if (h) wantCanon.add(canonicalHandle(h)); };
       const emailHints: string[] = [];
-      for (const c of hits) {
-        if (!nameMatches(c.name)) continue;
-        for (const p of c.phones) addCanon(p);
-        for (const e of c.emails) { addCanon(e); if (e.includes("@")) emailHints.push(e); }
+      // OVERRIDE PRIORITY: if the owner explicitly mapped this name (e.g.
+      // Manasa=wife at an unsaved number), that DEFINES the person — restrict to
+      // those handles so an AddressBook namesake (Manasa Dad) can't win, and so
+      // BOTH bridges resolve the same person.
+      const overrideHandles = resolveHandlesByName(contactName);
+      let personCanon: string[];
+      if (overrideHandles.length) {
+        for (const h of overrideHandles) addCanon(h);
+        personCanon = [...wantCanon];
+      } else {
+        for (const c of hits) {
+          if (!nameMatches(c.name)) continue;
+          for (const p of c.phones) addCanon(p);
+          for (const e of c.emails) { addCanon(e); if (e.includes("@")) emailHints.push(e); }
+        }
+        for (const [handle, name] of this.contactNames) {
+          if (nameMatches(name)) addCanon(handle);
+        }
+        personCanon = [];
       }
-      for (const [handle, name] of this.contactNames) {
-        if (nameMatches(name)) addCanon(handle);
-      }
-      for (const h of resolveHandlesByName(contactName)) addCanon(h);
-      // canonical candidates → ACTUAL chat.db handle.id (AddressBook format ≠ chat.db).
-      const dbHandles = this.db.handleIdsForCanonicals(wantCanon);
-      let best: { handle: string; msgs: Array<{ ts: number; fromMe: boolean; text: string }>; newest: number } | null = null;
+      // emails belong to whatever card(s) matched (for the gmail hint).
+      for (const c of hits) if (nameMatches(c.name)) for (const e of c.emails) if (e.includes("@")) emailHints.push(e);
+      const { who, messages, gender, canon } = this.peekResolve(wantCanon, hits, contactName, nameMatches, personCanon);
+      if (messages.length === 0 && wantCanon.size === 0 && emailHints.length === 0) return null;
+      return { who, channel: "imessage", messages, emailHints: [...new Set(emailHints)], gender, canon };
+    } catch (err) {
+      this.logger.debug({ err: (err as Error)?.message }, "peekLocal failed");
+      return null;
+    }
+  }
+
+  // Return a person's recent iMessage thread given their CANONICAL handles —
+  // used by the peer (WhatsApp) bridge so it pulls the SAME person, not a
+  // namesake. No name resolution here.
+  peekByCanon(canon: string[]): Array<{ ts: number; fromMe: boolean; text: string }> {
+    try {
+      const dbHandles = this.db.handleIdsForCanonicals(new Set(canon.map(canonicalHandle)));
+      let best: { msgs: Array<{ ts: number; fromMe: boolean; text: string }>; newest: number } | null = null;
       for (const handle of dbHandles) {
         const rows: Array<{ ts: number; fromMe: boolean; text: string }> = [];
         for (const m of this.db.searchMessages({ handle, limit: 25 })) {
@@ -3335,32 +3362,56 @@ export class IMessageSession {
         }
         if (rows.length === 0) continue;
         const newest = Math.max(...rows.map((r) => r.ts));
-        if (!best || newest > best.newest) best = { handle, msgs: rows, newest };
+        if (!best || newest > best.newest) best = { msgs: rows, newest };
       }
-      if (!best && wantCanon.size === 0 && emailHints.length === 0) return null;
-      const who = best
-        ? (resolveIdentity(best.handle) || this.contactNames.get(best.handle) || hits.find((h) => h.phones.concat(h.emails).some((x) => canonicalHandle(x) === canonicalHandle(best!.handle)))?.name || contactName)
-        : contactName;
-      const relLabel = best ? (this.ownerProfileStore.relationshipFor(best.handle, who) || "") : "";
-      const gender: "m" | "f" | null = resolveGender(who)
-        || (/\b(wife|sister|mother|mom|daughter|girlfriend|aunt|grandmother|niece|sister-in-law|fiancee)\b/i.test(relLabel) ? "f"
-          : /\b(husband|brother|father|dad|son|boyfriend|uncle|grandfather|nephew|brother-in-law|fiance)\b/i.test(relLabel) ? "m"
-          : null);
-      return {
-        who,
-        channel: "imessage",
-        messages: best ? best.msgs.sort((a, b) => a.ts - b.ts).slice(-15) : [],
-        emailHints: [...new Set(emailHints)],
-        gender,
-      };
-    } catch (err) {
-      this.logger.debug({ err: (err as Error)?.message }, "peekLocal failed");
-      return null;
-    }
+      return best ? best.msgs.sort((a, b) => a.ts - b.ts).slice(-15) : [];
+    } catch { return []; }
   }
 
-  // Fetch the WhatsApp bridge's local peek for the same person (loopback).
-  private async fetchPeerPeek(contactName: string): Promise<PeekLocalResult | null> {
+  // Shared resolve: pick the most-active thread among candidate canonicals.
+  private peekResolve(
+    wantCanon: Set<string>,
+    hits: Array<{ name: string; phones: string[]; emails: string[] }>,
+    contactName: string,
+    nameMatches: (n?: string) => boolean,
+    forcedCanon: string[],
+  ): { who: string; messages: Array<{ ts: number; fromMe: boolean; text: string }>; gender: "m" | "f" | null; canon: string[] } {
+    const dbHandles = this.db.handleIdsForCanonicals(wantCanon);
+    let best: { handle: string; msgs: Array<{ ts: number; fromMe: boolean; text: string }>; newest: number } | null = null;
+    for (const handle of dbHandles) {
+      const rows: Array<{ ts: number; fromMe: boolean; text: string }> = [];
+      for (const m of this.db.searchMessages({ handle, limit: 25 })) {
+        if (m.isGroup || !m.text.trim()) continue;
+        rows.push({ ts: m.unixMs, fromMe: m.fromMe, text: m.text.trim() });
+      }
+      if (rows.length === 0) continue;
+      const newest = Math.max(...rows.map((r) => r.ts));
+      if (!best || newest > best.newest) best = { handle, msgs: rows, newest };
+    }
+    const who = best
+      ? (resolveIdentity(best.handle) || this.contactNames.get(best.handle) || hits.find((h) => h.phones.concat(h.emails).some((x) => canonicalHandle(x) === canonicalHandle(best!.handle)))?.name || contactName)
+      : contactName;
+    const relLabel = best ? (this.ownerProfileStore.relationshipFor(best.handle, who) || "") : "";
+    const gender: "m" | "f" | null = resolveGender(who)
+      || (/\b(wife|sister|mother|mom|daughter|girlfriend|aunt|grandmother|niece|sister-in-law|fiancee)\b/i.test(relLabel) ? "f"
+        : /\b(husband|brother|father|dad|son|boyfriend|uncle|grandfather|nephew|brother-in-law|fiance)\b/i.test(relLabel) ? "m"
+        : null);
+    // canon = the resolved person's handles (forced override set, or the card
+    // that the dominant thread belongs to, plus the dominant handle).
+    let canon = [...forcedCanon];
+    if (best) {
+      const card = hits.find((h) => h.phones.concat(h.emails).some((x) => canonicalHandle(x) === canonicalHandle(best!.handle)));
+      if (card) for (const x of [...card.phones, ...card.emails]) canon.push(canonicalHandle(x));
+      canon.push(canonicalHandle(best.handle));
+    }
+    canon = [...new Set(canon.filter(Boolean))];
+    return { who, messages: best ? best.msgs.sort((a, b) => a.ts - b.ts).slice(-15) : [], gender, canon };
+  }
+
+  // Fetch the WhatsApp bridge's thread for the SAME person (by canonical handle
+  // when we resolved one, else by name) over loopback. Returns peer messages +
+  // optional peer-resolved who/gender/email (when fetched by name).
+  private async fetchPeerPeek(contactName: string, canon: string[]): Promise<{ messages: Array<{ ts: number; fromMe: boolean; text: string }>; who?: string; gender?: "m" | "f" | null; emailHints?: string[] }> {
     try {
       const waBase = (process.env.LANTERN_WHATSAPP_BRIDGE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
       const ctrl = new AbortController();
@@ -3369,31 +3420,29 @@ export class IMessageSession {
         const res = await fetch(`${waBase}/session/${this.tenantId}/whatsapp/thread-peek`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name: contactName }),
+          body: JSON.stringify(canon.length ? { canon } : { name: contactName }),
           signal: ctrl.signal,
         });
-        if (!res.ok) return null;
-        const d = (await res.json()) as PeekLocalResult;
-        return d && Array.isArray(d.messages) ? d : null;
+        if (!res.ok) return { messages: [] };
+        const d = (await res.json()) as PeekLocalResult & { messages?: unknown };
+        return Array.isArray(d?.messages)
+          ? { messages: d.messages, who: d.who, gender: d.gender, emailHints: d.emailHints }
+          : { messages: [] };
       } finally { clearTimeout(t); }
-    } catch { return null; }
+    } catch { return { messages: [] }; }
   }
 
   // CROSS-BRIDGE thread-peek: merge this bridge's iMessage thread with the peer
-  // WhatsApp bridge's thread + email into ONE unified, channel-tagged view, so
-  // "what did X say" answers identically no matter which bridge you ask.
+  // WhatsApp bridge's thread (SAME person) + email into ONE unified, channel-
+  // tagged view, so "what did X say" answers identically on either bridge.
   private async buildThreadPeekBlock(contactName: string): Promise<string> {
     try {
-      const [local, peer] = await Promise.all([
-        this.peekLocal(contactName),
-        this.fetchPeerPeek(contactName),
-      ]);
-      const parts = [local, peer].filter(Boolean) as PeekLocalResult[];
-      if (parts.length === 0) return "";
-      const newestOf = (p?: PeekLocalResult | null) => (p && p.messages.length ? Math.max(...p.messages.map((m) => m.ts)) : -1);
-      const who = (newestOf(peer) > newestOf(local) ? peer?.who : local?.who) || local?.who || peer?.who || contactName;
-      const gender = resolveGender(who) || local?.gender || peer?.gender || null;
-      const emailHints = [...new Set([...(local?.emailHints ?? []), ...(peer?.emailHints ?? [])])];
+      const local = await this.peekLocal(contactName);
+      const peer = await this.fetchPeerPeek(contactName, local?.canon ?? []);
+      if (!local && peer.messages.length === 0) return "";
+      const who = local?.who || peer.who || contactName;
+      const gender = resolveGender(who) || local?.gender || peer.gender || null;
+      const emailHints = [...new Set([...(local?.emailHints ?? []), ...(peer.emailHints ?? [])])];
       const pronounRule = gender === "f"
         ? `Use she/her for ${who} (her correct pronoun).`
         : gender === "m"
@@ -3401,7 +3450,8 @@ export class IMessageSession {
           : `CRITICAL: ${who}'s gender is unknown — refer to ${who} ONLY by name ("${who}"). Do NOT use he/she/him/her/his/hers anywhere; if a pronoun is unavoidable use they/them. Guessing gender is a serious error.`;
       const emailLine = `# Also check EMAIL (cross-channel): run gmail_search for ${who}${emailHints.length ? ` (address: ${emailHints.slice(0, 2).join(", ")})` : ""} and COMBINE any recent email with the messages above into ONE answer — most recent/relevant first. Include email ONLY if gmail_search returns REAL results; if it returns nothing, say nothing about email and NEVER invent or assume email content. Don't tunnel-vision on one channel.`;
       const merged: Array<{ ts: number; fromMe: boolean; text: string; channel: string }> = [];
-      for (const p of parts) for (const m of p.messages) merged.push({ ...m, channel: p.channel });
+      for (const m of local?.messages ?? []) merged.push({ ...m, channel: "imessage" });
+      for (const m of peer.messages) merged.push({ ...m, channel: "whatsapp" });
       merged.sort((a, b) => a.ts - b.ts);
       const recent = merged.slice(-14);
       if (recent.length === 0) {

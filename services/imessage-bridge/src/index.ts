@@ -383,12 +383,20 @@ app.get("/session/:tenantId/imessage/groups", async (req, res) => {
 app.post("/session/:tenantId/imessage/thread-peek", async (req, res) => {
   const s = sessions.get(req.params.tenantId);
   if (!s) { res.status(400).json({ error: "session not started" }); return; }
-  const { name } = req.body as { name?: unknown };
-  if (typeof name !== "string" || !name.trim()) { res.status(400).json({ error: "name required" }); return; }
+  const { name, canon } = req.body as { name?: unknown; canon?: unknown };
   try {
-    const peek = await s.peekLocal(name.trim());
-    if (!peek) { res.status(204).end(); return; }
-    res.json(peek);
+    // By canonical handle (peer asking for a SPECIFIC person) → messages only.
+    if (Array.isArray(canon)) {
+      res.json({ messages: s.peekByCanon(canon.filter((x): x is string => typeof x === "string")) });
+      return;
+    }
+    if (typeof name === "string" && name.trim()) {
+      const peek = await s.peekLocal(name.trim());
+      if (!peek) { res.status(204).end(); return; }
+      res.json(peek);
+      return;
+    }
+    res.status(400).json({ error: "name or canon required" });
   } catch (err) {
     logger.warn({ err, tenantId: req.params.tenantId }, "imessage/thread-peek failed");
     res.status(500).json({ error: (err as Error).message });
