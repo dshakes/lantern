@@ -74,6 +74,27 @@ Stored in `~/.lantern/disclosure-denies.jsonl` (cross-channel, last-write-wins).
 This is owner-set, not heuristic probe-detection — a deliberate flag, consistent
 with how identity corrections work.
 
+### Proactive briefing (`daily-digest.ts`)
+
+Beyond the scheduled morning digest (`LANTERN_DIGEST_HOUR`), ask for your day
+**on demand** and the bot assembles it from real sources — today's calendar,
+who's waiting on a reply, and what's on your plate (open commitments, **including
+the promises the bot made on your behalf**):
+
+> **You:** `brief me`
+> **You:** `what's on my plate`
+> **You:** `how's my day looking`
+
+Deterministic assembly (never invents items), narrated back in your voice.
+Owner self-chat only.
+
+### Promise-keeping (`commitments-edge.ts`)
+
+When the bot tells a contact "I'll send you the deck tonight," it records that
+as a commitment so it surfaces in your briefing and the overdue nudge — you keep
+a word you never saw made. High-precision: hedges ("I'll try", "I'll see") are
+not captured. Requires `LANTERN_CONCIERGE=on`.
+
 ### Cross-app synthesis (`working-memory.ts`)
 
 For self-context questions ("where did I go", "what am I doing") the bot
