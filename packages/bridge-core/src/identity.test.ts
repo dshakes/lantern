@@ -6,7 +6,7 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveName, recordIdentityCorrection } from "./identity.ts";
+import { resolveName, recordIdentityCorrection, detectIdentityCorrection } from "./identity.ts";
 
 function tmp(): string {
   return join(mkdtempSync(join(tmpdir(), "lantern-id-")), "id.jsonl");
@@ -43,4 +43,63 @@ test("rejects empty handle/name", () => {
   assert.equal(recordIdentityCorrection("", "X", { path }), false);
   assert.equal(recordIdentityCorrection("+1555", "  ", { path }), false);
   rmSync(join(path, ".."), { recursive: true, force: true });
+});
+
+// --- detectIdentityCorrection (capture side) ------------------------------
+
+test("captures handle-first correction", () => {
+  assert.deepEqual(detectIdentityCorrection("+15125551234 is Manasa"), {
+    handle: "+15125551234",
+    name: "Manasa",
+  });
+});
+
+test("captures possessive + formatted number", () => {
+  assert.deepEqual(detectIdentityCorrection("+1 (512) 555-1234 is Manasa's"), {
+    handle: "+1 (512) 555-1234",
+    name: "Manasa",
+  });
+});
+
+test("captures name-first form", () => {
+  assert.deepEqual(detectIdentityCorrection("Sam's number is 5125551234"), {
+    handle: "5125551234",
+    name: "Sam",
+  });
+});
+
+test("captures 'that number <handle> is <name>'", () => {
+  assert.deepEqual(detectIdentityCorrection("that number 5125551234 is sam"), {
+    handle: "5125551234",
+    name: "sam",
+  });
+});
+
+test("captures email handle", () => {
+  assert.deepEqual(detectIdentityCorrection("shiva@example.com is Shiva"), {
+    handle: "shiva@example.com",
+    name: "Shiva",
+  });
+});
+
+test("round-trips through the overlay (capture → resolve)", () => {
+  const path = tmp();
+  const c = detectIdentityCorrection("+16303475128 is Manasa");
+  assert.ok(c);
+  recordIdentityCorrection(c.handle, c.name, { path });
+  assert.equal(resolveName("16303475128@s.whatsapp.net", { path }), "Manasa");
+  rmSync(join(path, ".."), { recursive: true, force: true });
+});
+
+test("does NOT capture the owner's own number ('my number is …')", () => {
+  assert.equal(detectIdentityCorrection("my number is 5125551234"), null);
+});
+
+test("does NOT capture non-name verdicts ('… is wrong')", () => {
+  assert.equal(detectIdentityCorrection("5125551234 is wrong"), null);
+});
+
+test("does NOT capture a handle-less message", () => {
+  assert.equal(detectIdentityCorrection("that's Manasa"), null);
+  assert.equal(detectIdentityCorrection("call 5125551234"), null);
 });

@@ -55,7 +55,8 @@ import { usageContextBlock as macUsageContextBlock } from "@lantern/bridge-core/
 import { deviceContextBlock as iphoneContextBlock, parseSignals, presenceFromSignals } from "@lantern/bridge-core/device-signals";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { workingMemoryBlock, recordAction, isSelfContextQuery } from "@lantern/bridge-core/working-memory";
-import { resolveName as resolveIdentity } from "@lantern/bridge-core/identity";
+import { resolveName as resolveIdentity, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
+import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
 import { TurnBindings } from "@lantern/bridge-core/entity-binding";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
@@ -7042,6 +7043,28 @@ export class IMessageSession {
     jid: string,
     text: string,
   ): Promise<void> {
+    // PHASE 0 #2 — identity-correction CAPTURE. Owner self-chats "+1512… is
+    // Manasa" / "Sam's number is 512…" → persist to the owner-correction
+    // overlay (the highest-precedence name source). Deterministic + cheap;
+    // runs before the LLM extractor. The next reply to that handle re-reads
+    // the overlay (Phase 3 binding) and uses the corrected name.
+    try {
+      const corr = detectIdentityCorrection(text);
+      if (corr && recordIdentityCorrection(corr.handle, corr.name)) {
+        // Make it go live THIS session: refresh any cached name for the same
+        // canonical handle (hydrateContactName early-returns on a populated
+        // cache, so without this a correction wouldn't apply until restart).
+        const key = canonicalHandle(corr.handle);
+        for (const h of this.contactNames.keys()) {
+          if (canonicalHandle(h) === key) this.contactNames.set(h, corr.name);
+        }
+        this.contactNames.set(corr.handle, corr.name);
+        this.logger.info({ handle: corr.handle, name: corr.name }, "identity correction captured");
+        await this.send(jid, `📝 noted — saved ${corr.handle} as ${corr.name}`);
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "identity-correction capture failed");
+    }
     try {
       const { maybeAutoUpdateOwnerProfile, formatAck } = await import(
         "@lantern/bridge-core/owner-profile-auto-update"

@@ -92,6 +92,7 @@ const BOT_SELF_PREFIXES: string[] = [
 
   // ── Memory + fact replies ──
   "📝 noted about",
+  "📝 noted — saved",
   "📝 got it",
   "📝 saved",
   "couldn't save that note",
