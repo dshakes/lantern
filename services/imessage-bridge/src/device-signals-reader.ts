@@ -28,8 +28,10 @@ import {
   parseSignals,
   summarizeDeviceSignals,
   presenceFromSignals,
+  latestKnownLocation,
   type DeviceSummary,
   type SignalPresence,
+  type KnownLocation,
 } from "@lantern/bridge-core/device-signals";
 
 /** Default device-signals JSONL location for the current user. */
@@ -112,6 +114,32 @@ export function readDevicePresence(
     logger.child({ component: "device-signals-reader" }).debug(
       { err: (err as Error).message },
       "device presence read failed (no-op, fails closed)",
+    );
+    return null;
+  }
+}
+
+/**
+ * Read the owner's REAL current location for sharing with an ALLOWED close
+ * contact (spouse) only — the truthful facts (place, in-transit, age), NOT a
+ * canned line. The caller injects these as ground truth and lets the LLM phrase
+ * the answer naturally. Fails closed: null on any error / no recent location
+ * (the bot must then NOT state a location). Never call for a non-allowed contact.
+ */
+export function readKnownLocation(
+  logger: Logger,
+  opts: ReadDeviceSignalsOpts = {},
+): KnownLocation | null {
+  const filePath = opts.filePath ?? defaultDeviceSignalsPath();
+  if (!existsSync(filePath)) return null;
+  try {
+    const lines = readFileSync(filePath, "utf8").split("\n").filter(Boolean);
+    const tail = lines.slice(-(opts.maxLines ?? DEFAULT_MAX_LINES));
+    return latestKnownLocation(parseSignals(tail), { nowMs: opts.nowMs });
+  } catch (err) {
+    logger.child({ component: "device-signals-reader" }).debug(
+      { err: (err as Error).message },
+      "known-location read failed (no-op, fails closed)",
     );
     return null;
   }

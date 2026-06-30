@@ -250,6 +250,8 @@ import type { ContactSignals } from "@lantern/bridge-core/contact-priority";
 import { authedFetch } from "@lantern/bridge-core/auth";
 import { recordAutoAction, loadAutoActions, autoActionsToDid } from "@lantern/bridge-core/auto-actions-store";
 import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
+import { isInnerCircle, formatOwnerLocationBlock } from "@lantern/bridge-core/device-signals";
+import { readKnownLocation } from "./device-signals-reader.js";
 import {
   detectTaskCapture,
   captureTaskWithLlm,
@@ -5522,6 +5524,24 @@ export class IMessageSession {
     // "hard" (frontier tier) so contact replies get the best model — set
     // LANTERN_REPLY_MODEL_TIER=balanced to trade quality for cost.
     const replyTier = process.env.LANTERN_REPLY_MODEL_TIER || "hard";
+    // INNER-CIRCLE TRUTHFUL LOCATION (spouse / siblings + family): inject the
+    // owner's REAL location from signals as ground truth the LLM reasons over —
+    // so "where r u" gets the truth, not a fabricated "almost home". For everyone
+    // else nothing is injected and the fabrication net stays armed.
+    let truthfulLocationKnown = false;
+    if (
+      !isGroup &&
+      isInnerCircle(relationship) &&
+      !denyLoc &&
+      (process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() !== "off"
+    ) {
+      try {
+        const known = readKnownLocation(this.logger);
+        const label = this.contactNames.get(row.handle) || "them";
+        systemHint += "\n\n" + formatOwnerLocationBlock(known, ownerName, label);
+        truthfulLocationKnown = known != null;
+      } catch { /* fail-closed: no block, net stays armed */ }
+    }
     const userText = isGroup ? `[group message]\n${text}` : text;
     // #7 — for clearly-logistics inbound ("did you get my email?", "what time
     // did we say?") allow READ-only tools so the reply can ground on
@@ -5573,6 +5593,9 @@ export class IMessageSession {
         ? undefined
         : this.ownerProfileStore.relationshipFor(row.handle, this.contactNames.get(row.handle)),
       audience: (isOwnerChan ? "owner" : "contact") as "owner" | "contact",
+      // When the owner's real location was injected (inner circle), a location
+      // claim in the draft is grounded — don't suppress it as a fabrication.
+      truthfulLocationKnown,
     };
     let tellCheck = detectBotTells(draft, text, botTellCtx);
     if (!tellCheck.ok) {
