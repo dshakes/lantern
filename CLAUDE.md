@@ -839,6 +839,16 @@ the owner confirms a suggested follow-up. Lives in
 `packages/bridge-core/src/{personal-docs,mac-actions,humanize}.ts` and wires
 into both bridges' session handlers.
 
+**Intelligence layer ("personal OS").** A set of pure, owner-only, best-effort
+modules give the assistant stable identity (owner corrections > AddressBook,
+`identity.ts` + `entity-binding.ts`), truthful presence (never fabricate a
+place; stale overrides yield to fresh iPhone signals, `presence.ts`),
+thread-peek (answer from the real chat.db / wa-history thread, `thread-peek.ts`),
+location privacy per contact (`disclosure.ts`), and cross-app self-context
+synthesis (`working-memory.ts`). State is `0600` JSONL under `~/.lantern/`;
+nothing touches the control plane. **Full reference + owner self-chat commands:
+[`docs/personal/INTELLIGENCE-LAYER.md`](docs/personal/INTELLIGENCE-LAYER.md).**
+
 ### Security model
 
 - **Owner-only.** Both bridges enforce `isOwnerChatRow` / `isOwnerChat`
