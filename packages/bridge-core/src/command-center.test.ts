@@ -11,6 +11,7 @@ import {
   buildPlate,
   buildAgents,
   summarizeAgentRuns,
+  mergeBridgeLoopStatus,
   buildDomain,
   buildDid,
   buildNews,
@@ -265,6 +266,25 @@ test("summarizeAgentRuns maps real run history → last-run/outcome/health", () 
   const garage = stats.find((s) => s.name === "garage")!;
   assert.equal(garage.health, "never");
   assert.equal(garage.lastRunAgo, undefined);
+});
+
+test("mergeBridgeLoopStatus reflects real local nano-loop state", () => {
+  const base = [
+    { name: "commute-copilot", health: "never" as string },
+    { name: "energy-guardian", health: "never" as string },
+    { name: "ai-radar", health: "idle" as string, lastRunAgo: "3m ago" },
+  ];
+  const merged = mergeBridgeLoopStatus(base, [
+    { name: "commute-copilot", enabled: false },
+    { name: "energy-guardian", enabled: true, firedToday: true },
+  ]);
+  const commute = merged.find((s) => s.name === "commute-copilot")!;
+  assert.equal(commute.health, "off"); // env-gated off, not "never"
+  const energy = merged.find((s) => s.name === "energy-guardian")!;
+  assert.equal(energy.health, "idle");
+  assert.equal(energy.lastRunAgo, "today");
+  // non-loop agents untouched
+  assert.equal(merged.find((s) => s.name === "ai-radar")!.lastRunAgo, "3m ago");
 });
 
 test("selectTopDrops: high-signal, deduped, capped, recent-only", () => {

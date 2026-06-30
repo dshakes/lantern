@@ -141,7 +141,7 @@ import {
 } from "@lantern/bridge-core/doc-ingest";
 import { extname } from "path";
 import {
-  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, summarizeAgentRuns, buildDomain, buildDid, buildNews, buildNewsAsk, buildReadlist, buildQuietAck,
+  parseCenterCommand, parseActionReply, buildBrief, buildPlate, buildAgents, summarizeAgentRuns, mergeBridgeLoopStatus, buildDomain, buildDid, buildNews, buildNewsAsk, buildReadlist, buildQuietAck,
   selectTopDrops, buildTopDropPush, buildNewsDigest,
   type CenterCommand, type ParsedAction, type BriefItem, type DraftWaiting, type AgentStat, type AgentRunRow, type NewsItemLite, type NewsAskResult,
 } from "@lantern/bridge-core/command-center";
@@ -9049,6 +9049,15 @@ export class WhatsAppSession {
           const runsResp = rr.ok ? await rr.json() : [];
           const runs = (Array.isArray(runsResp) ? runsResp : (runsResp as { runs?: AgentRunRow[] }).runs ?? []) as AgentRunRow[];
           agentStats = summarizeAgentRuns(agents, runs);
+          // These 4 execute in THIS bridge (no control-plane runs) — reflect
+          // their real local state instead of a misleading "never".
+          const ymd = new Date().toISOString().slice(0, 10);
+          agentStats = mergeBridgeLoopStatus(agentStats, [
+            { name: "commute-copilot", enabled: WhatsAppSession.COMMUTE_ENABLED, firedToday: this.commuteDriveFired },
+            { name: "energy-guardian", enabled: WhatsAppSession.ENERGY_ENABLED, firedToday: this.energyNudgedDate === ymd },
+            { name: "health-coach", enabled: WhatsAppSession.HEALTH_ENABLED, firedToday: this.healthNudgedDate === ymd },
+            { name: "focus-guardian", enabled: WhatsAppSession.FOCUS_ENABLED, note: this.focusWasActive ? "in focus" : undefined },
+          ]);
         } catch { /* best-effort */ }
         text = buildAgents(agentStats);
       } else if (cmd === "did") {
