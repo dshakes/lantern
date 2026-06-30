@@ -76,6 +76,7 @@ import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
 import { buildKnownPeopleBlock, normalizeProfilePerson } from "@lantern/bridge-core/known-people";
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
+import { resolveGender, recordGender, detectGenderStatement } from "@lantern/bridge-core/gender";
 import { recordAction, recentActions } from "@lantern/bridge-core/working-memory";
 import { computeHoldFromSamples, type LatencySample } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
@@ -5238,6 +5239,17 @@ export class WhatsAppSession {
     } catch (err) {
       this.logger.warn({ err }, "disclosure-deny capture failed");
     }
+    // GENDER correction (parity): "Prithvi is a boy" → store the pronoun.
+    try {
+      const gs = detectGenderStatement(text);
+      if (gs && recordGender(gs.name, gs.gender)) {
+        this.logger.info({ name: gs.name, gender: gs.gender }, "gender correction captured");
+        await this.confirmToSelf(`📝 noted — ${gs.name} is ${gs.gender === "m" ? "he/him" : "she/her"} from now on`);
+        return;
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "gender capture failed");
+    }
     try {
       const { maybeAutoUpdateOwnerProfile, formatAck } = await import(
         "@lantern/bridge-core/owner-profile-auto-update"
@@ -9880,13 +9892,15 @@ export class WhatsAppSession {
       const who = best ? (this.contactNames.get(best.jid) || nameByCanon.get(canonicalHandle(best.jid)) || contactName) : contactName;
       // PRONOUN SAFETY: gender from RELATIONSHIP, never the name. Unknown → name/they.
       const relLabel = best ? (this.ownerProfileStore.relationshipFor(best.jid, who) || "") : "";
-      const fem = /\b(wife|sister|mother|mom|daughter|girlfriend|aunt|grandmother|niece|sister-in-law|fiancee)\b/i.test(relLabel);
-      const masc = /\b(husband|brother|father|dad|son|boyfriend|uncle|grandfather|nephew|brother-in-law|fiance)\b/i.test(relLabel);
-      const pronounRule = fem
-        ? `Use she/her for ${who}.`
-        : masc
-          ? `Use he/him for ${who}.`
-          : `${who}'s gender is UNKNOWN — refer to ${who} by name or they/them; NEVER assume he or she.`;
+      const g = resolveGender(who)
+        || (/\b(wife|sister|mother|mom|daughter|girlfriend|aunt|grandmother|niece|sister-in-law|fiancee)\b/i.test(relLabel) ? "f"
+          : /\b(husband|brother|father|dad|son|boyfriend|uncle|grandfather|nephew|brother-in-law|fiance)\b/i.test(relLabel) ? "m"
+          : null);
+      const pronounRule = g === "f"
+        ? `Use she/her for ${who} (her correct pronoun).`
+        : g === "m"
+          ? `Use he/him for ${who} (his correct pronoun).`
+          : `CRITICAL: ${who}'s gender is unknown — refer to ${who} ONLY by name ("${who}"). Do NOT use he/she/him/her/his/hers anywhere; if a pronoun is unavoidable use they/them. Guessing gender is a serious error.`;
       // EMAIL too (cross-channel): always tell the model to also pull email for
       // this person and merge it with the texts — never report "nothing" while
       // an email thread is active.

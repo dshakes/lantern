@@ -59,6 +59,7 @@ import { workingMemoryBlock, recordAction, recentActions, isSelfContextQuery } f
 import { resolveName as resolveIdentity, resolveHandlesByName, detectIdentityCorrection, recordIdentityCorrection } from "@lantern/bridge-core/identity";
 import { canonicalHandle } from "@lantern/bridge-core/canonical-handle";
 import { detectDisclosureDeny, recordDisclosureDeny, resolveDisclosureDeny } from "@lantern/bridge-core/disclosure";
+import { resolveGender, recordGender, detectGenderStatement } from "@lantern/bridge-core/gender";
 import { looksLikeThreadPeek } from "@lantern/bridge-core/thread-peek";
 import { buildKnownPeopleBlock, normalizeProfilePerson } from "@lantern/bridge-core/known-people";
 import { TurnBindings } from "@lantern/bridge-core/entity-binding";
@@ -3346,13 +3347,15 @@ export class IMessageSession {
       // PRONOUN SAFETY: derive gender from the RELATIONSHIP, never the name.
       // Unknown (business contacts like Prithvi) → name/they; NEVER guess.
       const relLabel = best ? (this.ownerProfileStore.relationshipFor(best.handle, who) || "") : "";
-      const fem = /\b(wife|sister|mother|mom|daughter|girlfriend|aunt|grandmother|niece|sister-in-law|fiancee)\b/i.test(relLabel);
-      const masc = /\b(husband|brother|father|dad|son|boyfriend|uncle|grandfather|nephew|brother-in-law|fiance)\b/i.test(relLabel);
-      const pronounRule = fem
-        ? `Use she/her for ${who}.`
-        : masc
-          ? `Use he/him for ${who}.`
-          : `${who}'s gender is UNKNOWN — refer to ${who} by name or they/them; NEVER assume he or she.`;
+      const g = resolveGender(who)
+        || (/\b(wife|sister|mother|mom|daughter|girlfriend|aunt|grandmother|niece|sister-in-law|fiancee)\b/i.test(relLabel) ? "f"
+          : /\b(husband|brother|father|dad|son|boyfriend|uncle|grandfather|nephew|brother-in-law|fiance)\b/i.test(relLabel) ? "m"
+          : null);
+      const pronounRule = g === "f"
+        ? `Use she/her for ${who} (her correct pronoun).`
+        : g === "m"
+          ? `Use he/him for ${who} (his correct pronoun).`
+          : `CRITICAL: ${who}'s gender is unknown — refer to ${who} ONLY by name ("${who}"). Do NOT use he/she/him/her/his/hers anywhere; if a pronoun is unavoidable use they/them. Guessing gender is a serious error.`;
       // EMAIL too: the owner's question is cross-channel. Always tell the model
       // to also pull email for this person and MERGE it with the texts — so it
       // never reports "nothing in messages" while ignoring an active email
@@ -7350,6 +7353,18 @@ export class IMessageSession {
       }
     } catch (err) {
       this.logger.warn({ err }, "disclosure-deny capture failed");
+    }
+    // GENDER correction: "Prithvi is a boy" → store the pronoun so summaries
+    // stop guessing wrong. Owner-authoritative; consulted by thread-peek.
+    try {
+      const gs = detectGenderStatement(text);
+      if (gs && recordGender(gs.name, gs.gender)) {
+        this.logger.info({ name: gs.name, gender: gs.gender }, "gender correction captured");
+        await this.send(jid, `📝 noted — ${gs.name} is ${gs.gender === "m" ? "he/him" : "she/her"} from now on`);
+        return;
+      }
+    } catch (err) {
+      this.logger.warn({ err }, "gender capture failed");
     }
     try {
       const { maybeAutoUpdateOwnerProfile, formatAck } = await import(

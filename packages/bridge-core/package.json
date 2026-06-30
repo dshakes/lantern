@@ -73,7 +73,8 @@
     "./entity-binding": "./src/entity-binding.ts",
     "./thread-peek": "./src/thread-peek.ts",
     "./disclosure": "./src/disclosure.ts",
-    "./known-people": "./src/known-people.ts"
+    "./known-people": "./src/known-people.ts",
+    "./gender": "./src/gender.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
