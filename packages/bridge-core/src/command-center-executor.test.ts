@@ -87,6 +87,16 @@ describe("isRealTimeNudge", () => {
     assert.ok(!isRealTimeNudge({ kind: "commitment", text: "call mom this week" }));
   });
 
+  it("structured urgency overrides the text heuristic (field wins)", () => {
+    // text has no bill keyword, but the commitment is urgent → real-time.
+    assert.ok(isRealTimeNudge({ kind: "commitment", text: "send Raju the deck", urgency: "now" }));
+    // text LOOKS like a bill ("$5 coupon"), but it's a low-urgency errand → NOT real-time.
+    assert.ok(!isRealTimeNudge({ kind: "commitment", text: "review the $5 coupon", urgency: "normal" }));
+    // kind-based when no urgency.
+    assert.ok(isRealTimeNudge({ kind: "commitment", text: "look at this", commitmentKind: "finance" }));
+    assert.ok(!isRealTimeNudge({ kind: "commitment", text: "look at this", commitmentKind: "errand" }));
+  });
+
   it("overdue-reply → NOT real-time", () => {
     assert.ok(!isRealTimeNudge({ kind: "overdue-reply", text: "You haven't replied to Raju in 3 days" }));
   });

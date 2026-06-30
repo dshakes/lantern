@@ -58,10 +58,20 @@ export function setCenterItems(
  *
  * ponytail: three-case gate; expand when nudge taxonomy grows.
  */
-export function isRealTimeNudge(nudge: { kind: string; text: string }): boolean {
+export function isRealTimeNudge(nudge: {
+  kind: string;
+  text: string;
+  urgency?: "now" | "soon" | "normal";
+  commitmentKind?: string;
+}): boolean {
   if (nudge.kind === "pre-meeting") return true;
   if (nudge.kind === "commitment") {
-    // Bill / price-hike commitments are time-sensitive — owner should see them immediately.
+    // Prefer the STRUCTURED fields — classifying importance by regex-matching a
+    // nudge's own rendered text is fragile (a "$5 coupon review" would wrongly
+    // fire real-time). Fall back to the text heuristic only when neither field
+    // is present (older callers that don't pass them yet).
+    if (nudge.urgency) return nudge.urgency === "now" || nudge.urgency === "soon";
+    if (nudge.commitmentKind) return /finance|bill|money|payment/i.test(nudge.commitmentKind);
     return /bill|charge|\$|subscription|price\s*hike|renew/i.test(nudge.text);
   }
   return false;

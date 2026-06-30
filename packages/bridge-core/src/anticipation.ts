@@ -64,6 +64,12 @@ export interface ProactiveNudge {
    *  (relationship date at local midnight, meeting start). Omitted for
    *  open-ended ones (overdue replies, commitments). */
   dueAt?: number;
+  /** Structured importance carried from the source commitment (when this is a
+   *  `commitment` nudge) so consumers classify urgency from the FIELD, not by
+   *  regex-matching the rendered text. */
+  urgency?: "now" | "soon" | "normal";
+  /** Source commitment kind ("finance", "errand", …) — same purpose as urgency. */
+  commitmentKind?: string;
 }
 
 // ── Input signal shapes (gathered by the bridge, passed in) ──────────
@@ -126,6 +132,11 @@ export interface OpenCommitmentSignal {
   madeAt?: number;
   /** Optional priority signals for the owed-to contact. */
   contactSignals?: ContactSignals;
+  /** Structured urgency from the commitment row — lets the real-time gate
+   *  classify importance from this FIELD instead of regexing the rendered text. */
+  urgency?: "now" | "soon" | "normal";
+  /** Commitment kind ("finance", "errand", …). */
+  commitmentKind?: string;
 }
 
 /** A high-priority ("VIP") contact the owner has had NO exchange with in
@@ -378,6 +389,8 @@ export function computeProactiveNudges(input: ProactiveInput): ProactiveNudge[] 
       priority,
       // Once per day per commitment id.
       dedupeKey: `commitment:${c.id}:${dayBucket(now)}`,
+      urgency: c.urgency,
+      commitmentKind: c.commitmentKind,
     };
     nudge.text = phraseCommitment(c);
     out.push(nudge);
