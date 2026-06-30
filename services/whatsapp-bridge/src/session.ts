@@ -341,6 +341,7 @@ export interface PeekLocalResult {
   messages: Array<{ ts: number; fromMe: boolean; text: string }>;
   emailHints: string[];
   gender: "m" | "f" | null;
+  canon: string[]; // the resolved person's canonical handles (for peer lookup)
 }
 
 export class WhatsAppSession {
@@ -9836,6 +9837,28 @@ export class WhatsAppSession {
   // search_whatsapp_history call. "" on any miss → caller falls through.
   // LOCAL single-channel peek (WhatsApp). PUBLIC so the iMessage bridge can
   // fetch it over loopback for cross-bridge parity.
+  private toWaJid(p: string): string { const c = canonicalHandle(p); return /^\d{8,15}$/.test(c) ? c + "@s.whatsapp.net" : ""; }
+
+  // Recent WhatsApp thread for a set of canonical handles (the SAME person the
+  // peer resolved). No name resolution.
+  peekByCanon(canon: string[]): Array<{ ts: number; fromMe: boolean; text: string }> {
+    try {
+      const jids = [...new Set(canon.map((c) => this.toWaJid(c)).filter(Boolean))];
+      let best: { msgs: Array<{ ts: number; fromMe: boolean; text: string }>; newest: number } | null = null;
+      for (const jid of jids) {
+        const rows: Array<{ ts: number; fromMe: boolean; text: string }> = [];
+        for (const r of this.searchHistory({ jid, limit: 25 })) {
+          if (r.isGroup || !r.text.trim()) continue;
+          rows.push({ ts: r.ts, fromMe: r.fromMe, text: r.text.trim() });
+        }
+        if (rows.length === 0) continue;
+        const newest = Math.max(...rows.map((r) => r.ts));
+        if (!best || newest > best.newest) best = { msgs: rows, newest };
+      }
+      return best ? best.msgs.sort((a, b) => a.ts - b.ts).slice(-15) : [];
+    } catch { return []; }
+  }
+
   async peekLocal(contactName: string): Promise<PeekLocalResult | null> {
     try {
       const isDmJid = (j: string) => !!j && !j.endsWith("@g.us") && !j.endsWith("@lid");
@@ -9858,19 +9881,21 @@ export class WhatsAppSession {
         jids.push(j);
       };
       const emailHints: string[] = [];
-      const toJid = (p: string) => { const c = canonicalHandle(p); return /^\d{8,15}$/.test(c) ? c + "@s.whatsapp.net" : ""; };
-      for (const c of hits) {
-        if (!nameMatches(c.name)) continue;
-        for (const p of c.phones) add(toJid(p), c.name);
-        for (const e of c.emails) if (e.includes("@")) emailHints.push(e);
-      }
-      for (const [jid, name] of this.contactNames) {
-        if (nameMatches(name)) add(jid, name);
-      }
-      for (const r of this.searchHistory({ fromContact: contactName, limit: 5 })) add(r.jid, r.senderName);
-      for (const h of resolveHandlesByName(contactName)) {
-        if (h.includes("@")) add(h, contactName);
-        else add(toJid(h), contactName);
+      for (const c of hits) if (nameMatches(c.name)) for (const e of c.emails) if (e.includes("@")) emailHints.push(e);
+      // OVERRIDE PRIORITY: an explicit owner mapping DEFINES the person (so both
+      // bridges resolve the same one, and a namesake can't win).
+      const overrideHandles = resolveHandlesByName(contactName);
+      let forcedCanon: string[] = [];
+      if (overrideHandles.length) {
+        for (const h of overrideHandles) add(h.includes("@") ? h : this.toWaJid(h), contactName);
+        forcedCanon = overrideHandles.map(canonicalHandle);
+      } else {
+        for (const c of hits) {
+          if (!nameMatches(c.name)) continue;
+          for (const p of c.phones) add(this.toWaJid(p), c.name);
+        }
+        for (const [jid, name] of this.contactNames) if (nameMatches(name)) add(jid, name);
+        for (const r of this.searchHistory({ fromContact: contactName, limit: 5 })) add(r.jid, r.senderName);
       }
       let best: { jid: string; msgs: Array<{ ts: number; fromMe: boolean; text: string }>; newest: number } | null = null;
       for (const jid of jids) {
@@ -9890,12 +9915,14 @@ export class WhatsAppSession {
         || (/\b(wife|sister|mother|mom|daughter|girlfriend|aunt|grandmother|niece|sister-in-law|fiancee)\b/i.test(relLabel) ? "f"
           : /\b(husband|brother|father|dad|son|boyfriend|uncle|grandfather|nephew|brother-in-law|fiance)\b/i.test(relLabel) ? "m"
           : null);
+      const canon = [...new Set([...forcedCanon, ...(best ? [canonicalHandle(best.jid)] : []), ...jids.map(canonicalHandle)])].filter(Boolean);
       return {
         who,
         channel: "whatsapp",
         messages: best ? best.msgs.sort((a, b) => a.ts - b.ts).slice(-15) : [],
         emailHints: [...new Set(emailHints)],
         gender,
+        canon,
       };
     } catch (err) {
       this.logger.debug({ err: (err as Error)?.message }, "peekLocal failed");
@@ -9903,8 +9930,8 @@ export class WhatsAppSession {
     }
   }
 
-  // Fetch the iMessage bridge's local peek for the same person (loopback).
-  private async fetchPeerPeek(contactName: string): Promise<PeekLocalResult | null> {
+  // Fetch the iMessage bridge's thread for the SAME person (by canon, else name).
+  private async fetchPeerPeek(contactName: string, canon: string[]): Promise<{ messages: Array<{ ts: number; fromMe: boolean; text: string }>; who?: string; gender?: "m" | "f" | null; emailHints?: string[] }> {
     try {
       const imBase = (process.env.LANTERN_IMESSAGE_BRIDGE_URL || "http://127.0.0.1:3200").replace(/\/$/, "");
       const ctrl = new AbortController();
@@ -9913,30 +9940,28 @@ export class WhatsAppSession {
         const res = await fetch(`${imBase}/session/${this.tenantId}/imessage/thread-peek`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name: contactName }),
+          body: JSON.stringify(canon.length ? { canon } : { name: contactName }),
           signal: ctrl.signal,
         });
-        if (!res.ok) return null;
-        const d = (await res.json()) as PeekLocalResult;
-        return d && Array.isArray(d.messages) ? d : null;
+        if (!res.ok) return { messages: [] };
+        const d = (await res.json()) as PeekLocalResult & { messages?: unknown };
+        return Array.isArray(d?.messages)
+          ? { messages: d.messages, who: d.who, gender: d.gender, emailHints: d.emailHints }
+          : { messages: [] };
       } finally { clearTimeout(t); }
-    } catch { return null; }
+    } catch { return { messages: [] }; }
   }
 
-  // CROSS-BRIDGE thread-peek: merge WhatsApp (local) + iMessage (peer) + email
-  // into ONE unified answer, so "what did X say" is identical on both bridges.
+  // CROSS-BRIDGE thread-peek: merge WhatsApp (local) + iMessage (peer, SAME
+  // person) + email into ONE unified answer — identical on either bridge.
   private async buildThreadPeekBlock(contactName: string): Promise<string> {
     try {
-      const [local, peer] = await Promise.all([
-        this.peekLocal(contactName),
-        this.fetchPeerPeek(contactName),
-      ]);
-      const parts = [local, peer].filter(Boolean) as PeekLocalResult[];
-      if (parts.length === 0) return "";
-      const newestOf = (p?: PeekLocalResult | null) => (p && p.messages.length ? Math.max(...p.messages.map((m) => m.ts)) : -1);
-      const who = (newestOf(peer) > newestOf(local) ? peer?.who : local?.who) || local?.who || peer?.who || contactName;
-      const gender = resolveGender(who) || local?.gender || peer?.gender || null;
-      const emailHints = [...new Set([...(local?.emailHints ?? []), ...(peer?.emailHints ?? [])])];
+      const local = await this.peekLocal(contactName);
+      const peer = await this.fetchPeerPeek(contactName, local?.canon ?? []);
+      if (!local && peer.messages.length === 0) return "";
+      const who = local?.who || peer.who || contactName;
+      const gender = resolveGender(who) || local?.gender || peer.gender || null;
+      const emailHints = [...new Set([...(local?.emailHints ?? []), ...(peer.emailHints ?? [])])];
       const pronounRule = gender === "f"
         ? `Use she/her for ${who} (her correct pronoun).`
         : gender === "m"
@@ -9944,7 +9969,8 @@ export class WhatsAppSession {
           : `CRITICAL: ${who}'s gender is unknown — refer to ${who} ONLY by name ("${who}"). Do NOT use he/she/him/her/his/hers anywhere; if a pronoun is unavoidable use they/them. Guessing gender is a serious error.`;
       const emailLine = `# Also check EMAIL (cross-channel): run gmail_search for ${who}${emailHints.length ? ` (address: ${emailHints.slice(0, 2).join(", ")})` : ""} and COMBINE any recent email with the messages above into ONE answer — most recent/relevant first. Include email ONLY if gmail_search returns REAL results; if it returns nothing, say nothing about email and NEVER invent or assume email content. Don't tunnel-vision on one channel.`;
       const merged: Array<{ ts: number; fromMe: boolean; text: string; channel: string }> = [];
-      for (const p of parts) for (const m of p.messages) merged.push({ ...m, channel: p.channel });
+      for (const m of local?.messages ?? []) merged.push({ ...m, channel: "whatsapp" });
+      for (const m of peer.messages) merged.push({ ...m, channel: "imessage" });
       merged.sort((a, b) => a.ts - b.ts);
       const recent = merged.slice(-14);
       if (recent.length === 0) {
