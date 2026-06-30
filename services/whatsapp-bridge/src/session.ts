@@ -5612,10 +5612,13 @@ export class WhatsAppSession {
     ].filter(Boolean).join("\n");
 
     // First attempt + silent auto-retry on null (timeout / transient).
-    let draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
+    // SESSION SCOPING (parity with iMessage): a person-peek runs under a
+    // per-person key so consecutive lookups about different people can't bleed.
+    const sessionKey = peekContact ? `${jid}::peek:${peekContact.toLowerCase().replace(/\s+/g, "-")}` : jid;
+    let draft = await this.agent.respondTo(sessionKey, query, systemHint, { withTools: true });
     if (!draft) {
       this.logger.warn({ totalMs: Date.now() - startedAt }, "agent returned null — retrying once");
-      draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
+      draft = await this.agent.respondTo(sessionKey, query, systemHint, { withTools: true });
     }
 
     this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft, thinkingSent }, "doc query done (whatsapp)");
@@ -9887,6 +9890,7 @@ export class WhatsAppSession {
       return [
         `# Recent messages from ${who} (oldest first — the real thread). Answer the owner's question from THIS; do not fabricate.`,
         `Summarize in natural THIRD PERSON about ${who} — e.g. "she's sending you a grocery list", "she added Swathi as a pickup". NEVER echo her first-person words verbatim ("she I'll…" / "she said I'll…" is wrong) and don't paste her messages raw. Keep her concrete details EXACT (item names, names, dates, conditions like "not from the snack section"). Lead with the single most useful takeaway, then the specifics.`,
+        `This is its OWN question about ${who}. Answer ONLY from ${who}'s messages below — do NOT carry over the previous question's person or topic, and do NOT comment on whether ${who} mentioned someone else from an earlier question. Treat "today/recently/lately" loosely: if ${who}'s latest update answers it, LEAD WITH THAT ANSWER directly — don't bury it under "nothing new today" when you have a recent relevant update.`,
         ...lines,
         emailLine,
       ].join("\n");
