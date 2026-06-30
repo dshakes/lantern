@@ -127,9 +127,10 @@ test("computeHoldFromSamples: falls back to safe default below MIN_REAL_SAMPLES"
     }).holdMs;
   }
   const avg = sum / 200;
-  // Default base ~1.8s. If it had (wrongly) used the 60s median it'd be
-  // ~48s (clamped to 25s ceiling). Assert it stays near the default.
-  assert.ok(avg < 5_000, `expected safe default (~1.8s), got ${avg}`);
+  // Human-paced default base ~6s. If it had (wrongly) used the 60s median
+  // it'd be ~48s (clamped to the 25s ceiling). Assert it stays near the
+  // default and nowhere near the ceiling.
+  assert.ok(avg > 3_500 && avg < 10_000, `expected human default (~6s), got ${avg}`);
 });
 
 test("computeHoldFromSamples: empty samples → safe default, never throws", () => {

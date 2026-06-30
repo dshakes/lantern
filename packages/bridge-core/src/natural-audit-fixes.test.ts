@@ -28,8 +28,8 @@ test("#2 inboundUrgent injects an urgency addendum into the persona prompt", () 
 test("#2 urgent pacing collapses the hold to ~floor and skips cadence math", () => {
   const urgent = computeHold({ ownerLatencies: [120_000, 90_000], msSinceLastInbound: 0, isActiveBurst: false, urgent: true });
   assert.match(urgent.reason, /urgent/i);
-  assert.ok(urgent.holdMs <= 800, `urgent hold should be ~floor, got ${urgent.holdMs}`);
-  // Same latencies WITHOUT urgent pace much longer (median 105s × 0.8).
+  assert.ok(urgent.holdMs <= 4_000, `urgent hold should be ~floor (3s), got ${urgent.holdMs}`);
+  // Same latencies WITHOUT urgent pace much longer (median 105s × 1.05 → ceiling).
   const calm = computeHold({ ownerLatencies: [120_000, 90_000], msSinceLastInbound: 0, isActiveBurst: false });
   assert.ok(calm.holdMs > urgent.holdMs, `calm (${calm.holdMs}) should exceed urgent (${urgent.holdMs})`);
 });
