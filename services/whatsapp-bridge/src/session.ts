@@ -9334,7 +9334,13 @@ export class WhatsAppSession {
       }
       if (now.getHours() >= digestHour && this.lastNewsDigestDay !== ymd) {
         try {
-          await this.sendSelf(buildNewsDigest(items, "today"));
+          // INTELLIGENT daily digest (parity with iMessage): LLM-curated majors.
+          let digestText = "";
+          try {
+            const ar = await authedFetch("/v1/news/ask", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: "the most important / major AI news from the last day or two — launches, model releases, and notable announcements only, skip minor version bumps", limit: 6 }) });
+            if (ar.ok) digestText = "🌅 today's AI radar\n\n" + buildNewsAsk((await ar.json()) as NewsAskResult).text;
+          } catch { /* fall through */ }
+          await this.sendSelf(digestText || buildNewsDigest(items, "today"));
           this.lastNewsDigestDay = ymd;
           try { writeFileSync(digestDayPath, ymd, { mode: 0o600 }); } catch { /* best-effort */ }
           this.logger.info("proactive AI news: daily digest pushed");
