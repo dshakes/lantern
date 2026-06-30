@@ -66,10 +66,11 @@ const PHONE_SRC = String.raw`\+?\d[\d\s().-]{7,}\d`;
 const EMAIL_SRC = String.raw`[\w.+-]+@[\w-]+\.[\w.-]+`;
 
 // Words that are never part of a contact name. If ANY token of the captured
-// name is in here we reject — so "512… is wrong", "… is just spam", "…
-// definitely wrong", "… clearly not Manasa" don't get stored as a bogus,
-// highest-precedence override. Includes hedges/adverbs/verdicts that follow
-// "is" in a non-correction sentence.
+// name is in here we reject — so a hedge/verdict sentence ("… is wrong", "…
+// is definitely not them", "… is busy right now") doesn't get stored as a
+// bogus, highest-precedence override. Includes hedges/adverbs/verdicts that
+// follow "is" in a non-correction sentence. (The handle itself is never
+// interpreted — no number is ever assumed to mean anything.)
 const NON_NAMES = new Set([
   // verdicts / states
   "wrong", "mine", "not", "gone", "dead", "old", "new", "off", "blocked",

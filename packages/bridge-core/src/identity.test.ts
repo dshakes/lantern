@@ -107,13 +107,14 @@ test("does NOT capture a handle-less message", () => {
 // REGRESSION (audit): adverb/hedge/verdict-prefixed sentences must NOT be
 // stored as a name — they'd become a permanent, highest-precedence mislabel.
 test("does NOT capture hedge/verdict annotations about a number", () => {
+  // These exercise the NON_NAMES / article guards — the digit string is an
+  // arbitrary synthetic placeholder, NOT an assumption about any real number.
   for (const s of [
-    "5125551234 is probably Manasa",
-    "5125551234 is just spam",
-    "5125551234 is still calling me",
-    "5125551234 is definitely wrong",
-    "5125551234 is clearly not Manasa",
-    "5125551234 is a great number",
+    "5550000000 is probably Riya",
+    "5550000000 is still calling me",
+    "5550000000 is definitely wrong",
+    "5550000000 is clearly not Riya",
+    "5550000000 is a great number",
   ]) {
     assert.equal(detectIdentityCorrection(s), null, s);
   }
