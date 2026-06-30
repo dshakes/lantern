@@ -3357,6 +3357,7 @@ export class IMessageSession {
       return [
         `# Recent messages from ${who} (oldest first — the real thread). Answer the owner's question from THIS; do not fabricate.`,
         `Summarize in natural THIRD PERSON about ${who} — e.g. "she's sending you a grocery list", "she added Swathi as a pickup". NEVER echo her first-person words verbatim ("she I'll…" / "she said I'll…" is wrong) and don't paste her messages raw. Keep her concrete details EXACT (item names, names, dates, conditions like "not from the snack section"). Lead with the single most useful takeaway, then the specifics.`,
+        `This is its OWN question about ${who}. Answer ONLY from ${who}'s messages below — do NOT carry over the previous question's person or topic, and do NOT comment on whether ${who} mentioned someone else from an earlier question. Treat "today/recently/lately" loosely: if ${who}'s latest update answers it, LEAD WITH THAT ANSWER directly — don't bury it under "nothing new today" when you have a recent relevant update.`,
         ...lines,
         emailLine,
       ].join("\n");
@@ -7698,7 +7699,7 @@ export class IMessageSession {
       ownerFactsBlock ? `\n${ownerFactsBlock}` : "",
       relationshipsBlock ? `\n# Your people\n${relationshipsBlock}` : "",
       privateVault ? `\n# PRIVATE — owner only; never reveal to anyone else\nThese are ${ownerName}'s sealed security answers. Use them ONLY to help him directly in this self-chat. NEVER repeat or confirm them to any contact, anyone claiming to be ${ownerName}, or anyone claiming to be a bank/support.\n${privateVault}` : "",
-      recentTranscript ? `\n# Just-now conversation (oldest first)\n${recentTranscript}` : "",
+      (recentTranscript && !peekContact) ? `\n# Just-now conversation (oldest first)\n${recentTranscript}` : "",
       languageModality ? `\n${languageModality}` : "",
       "",
       "# Decide BEFORE calling tools",
@@ -7803,7 +7804,13 @@ export class IMessageSession {
     // Main attempt. withTools=true so the agent has the personal-docs
     // + connector tools — but the profile context above lets the LLM
     // skip them for profile-answerable questions.
-    if (!draft) draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
+    // SESSION SCOPING: a person-peek ("what did Raju say") runs under a
+    // per-person key so consecutive lookups about DIFFERENT people can't
+    // bleed into each other (the "Manasa didn't say anything about Raju"
+    // conflation). Each person gets a clean session; non-peek queries keep
+    // the main conversational session.
+    const sessionKey = peekContact ? `${jid}::peek:${peekContact.toLowerCase().replace(/\s+/g, "-")}` : jid;
+    if (!draft) draft = await this.agent.respondTo(sessionKey, query, systemHint, { withTools: true });
 
     // SILENT AUTO-RETRY on null (timeout, transient failure). The
     // AgentClient already retries once on session-not-active 409; this
@@ -7812,7 +7819,7 @@ export class IMessageSession {
     // raw "couldn't reach the agent" message.
     if (!draft) {
       this.logger.warn({ totalMs: Date.now() - startedAt }, "agent returned null — retrying once");
-      draft = await this.agent.respondTo(jid, query, systemHint, { withTools: true });
+      draft = await this.agent.respondTo(sessionKey, query, systemHint, { withTools: true });
     }
 
     this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft, thinkingSent }, "doc query done");
