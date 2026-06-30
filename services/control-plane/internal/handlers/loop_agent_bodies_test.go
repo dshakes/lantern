@@ -424,7 +424,7 @@ func TestRelationshipKeeper_SurfacesStale(t *testing.T) {
 		t.Fatalf("seed unlabeled person: %v", err)
 	}
 
-	surfaced, err := runRelationshipKeeper(ctx, pool, nopLogger(), tenant, runID)
+	surfaced, err := runRelationshipKeeper(ctx, pool, nopLogger(), tenant, runID, nil)
 	if err != nil {
 		t.Fatalf("runRelationshipKeeper: %v", err)
 	}
@@ -476,7 +476,7 @@ func TestRelationshipKeeper_Idempotent(t *testing.T) {
 		t.Fatalf("seed person: %v", err)
 	}
 
-	s1, err := runRelationshipKeeper(ctx, pool, nopLogger(), tenant, runID1)
+	s1, err := runRelationshipKeeper(ctx, pool, nopLogger(), tenant, runID1, nil)
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestRelationshipKeeper_Idempotent(t *testing.T) {
 		t.Fatalf("first run surfaced=%d, want 1", s1)
 	}
 
-	s2, err := runRelationshipKeeper(ctx, pool, nopLogger(), tenant, runID2)
+	s2, err := runRelationshipKeeper(ctx, pool, nopLogger(), tenant, runID2, nil)
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -512,7 +512,7 @@ func TestRelationshipKeeper_NoOp(t *testing.T) {
 	tenant := seedBodyTenant(t, pool)
 	runID := insertBodyRun(t, pool, tenant, "relkeeper-noop")
 
-	surfaced, err := runRelationshipKeeper(ctx, pool, nopLogger(), tenant, runID)
+	surfaced, err := runRelationshipKeeper(ctx, pool, nopLogger(), tenant, runID, nil)
 	if err != nil {
 		t.Fatalf("runRelationshipKeeper on empty tenant: %v", err)
 	}

@@ -487,7 +487,7 @@ func runLoopAgentIfPresent(
 		outputJSON, _ = json.Marshal(map[string]any{"action": actionN, "fyi": fyiN})
 
 	case "relationship_keeper":
-		surfaced, runErr := runRelationshipKeeper(ctx, pool, logger, tenantID, runID)
+		surfaced, runErr := runRelationshipKeeper(ctx, pool, logger, tenantID, runID, completeFn)
 		if runErr != nil {
 			logger.Error("loop-agent: relationship_keeper failed",
 				zap.String("run_id", runID), zap.Error(runErr))
@@ -1120,19 +1120,27 @@ func emitInboxSwept(ctx context.Context, pool *pgxpool.Pool, runID string, newN,
 //
 // rls-exempt: inline executor — people query carries explicit tenant_id;
 // commitments carry explicit tenant_id; journal_events is RLS-exempt.
+type staleContact struct {
+	id           string
+	displayName  string
+	relationship string
+	notes        string
+	idleDays     int
+}
+
 func runRelationshipKeeper(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	logger *zap.Logger,
 	tenantID, runID string,
+	completeFn researchCompleteFn,
 ) (surfaced int, err error) {
-	// 1. Find stale labeled contacts.
-	type staleContact struct {
-		id          string
-		displayName string
-	}
+	// 1. Find stale labeled contacts (with the context needed to reason about
+	//    who actually warrants a reconnect — relationship, notes, how long).
 	rows, qErr := pool.Query(ctx, `
-		SELECT id::text, COALESCE(display_name, '') FROM people
+		SELECT id::text, COALESCE(display_name, ''), COALESCE(relationship, ''),
+		       COALESCE(notes, ''), EXTRACT(DAY FROM now() - updated_at)::int
+		FROM people
 		WHERE  tenant_id = $1
 		  AND  relationship IS NOT NULL AND relationship != ''
 		  AND  is_owner = false
@@ -1146,7 +1154,7 @@ func runRelationshipKeeper(
 	var stale []staleContact
 	for rows.Next() {
 		var c staleContact
-		if sErr := rows.Scan(&c.id, &c.displayName); sErr == nil {
+		if sErr := rows.Scan(&c.id, &c.displayName, &c.relationship, &c.notes, &c.idleDays); sErr == nil {
 			stale = append(stale, c)
 		}
 	}
@@ -1154,42 +1162,116 @@ func runRelationshipKeeper(
 	if rErr := rows.Err(); rErr != nil {
 		logger.Warn("relationship_keeper: people rows error", zap.Error(rErr))
 	}
-
 	if len(stale) == 0 {
 		emitRelationshipSwept(ctx, pool, runID, 0)
 		return 0, nil
 	}
 
-	// 2. Create weekly reach-out commitments (one per person per ISO week).
 	year, week := time.Now().ISOWeek()
+
+	// INTELLIGENT path: a 21-day idle threshold over a labeled contact list
+	// flags HUNDREDS of people — nudging the owner to "reach out" to every
+	// acquaintance is noise. Let the LLM pick the FEW close ties genuinely worth
+	// reconnecting with and write a warm, specific reason.
+	if completeFn != nil {
+		if n, ok := relationshipKeeperIntelligent(ctx, pool, logger, tenantID, completeFn, stale, year, week); ok {
+			emitRelationshipSwept(ctx, pool, runID, n)
+			return n, nil
+		}
+	}
+
+	// FALLBACK: one flat reach-out commitment per stale contact.
 	for _, c := range stale {
 		name := c.displayName
 		if name == "" {
 			name = "contact"
 		}
-		// Idempotency key = agent + person + ISO week (invariant #8).
-		idemKey := fmt.Sprintf("relkeeper:%s:%d-W%02d", c.id, year, week)
-		title := fmt.Sprintf("Reach out to %s", name)
-
-		// rls-exempt: inline executor — explicit tenant_id; dedup on idemKey.
-		var insertedID string
-		insertErr := pool.QueryRow(ctx, `
-			INSERT INTO commitments (tenant_id, title, source, kind, idempotency_key, tier, urgency)
-			VALUES ($1, $2, 'vip', 'relationship', $3, 'meso', 'fyi')
-			ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
-			DO NOTHING
-			RETURNING id
-		`, tenantID, title, idemKey).Scan(&insertedID)
-		if insertErr == nil {
+		if relInsertReachOut(ctx, pool, logger, tenantID, fmt.Sprintf("Reach out to %s", name),
+			fmt.Sprintf("relkeeper:%s:%d-W%02d", c.id, year, week)) {
 			surfaced++
-		} else if !errors.Is(insertErr, pgx.ErrNoRows) {
-			logger.Warn("relationship_keeper: insert commitment failed",
-				zap.String("person_id", c.id), zap.Error(insertErr))
 		}
 	}
-
 	emitRelationshipSwept(ctx, pool, runID, surfaced)
 	return surfaced, nil
+}
+
+// relationshipKeeperIntelligent uses LLMCurate to pick the handful of people the
+// owner should genuinely reconnect with this week, with a warm reason as the
+// title. Returns (created, true) when the LLM ran; (0, false) on failure.
+func relationshipKeeperIntelligent(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	logger *zap.Logger,
+	tenantID string,
+	completeFn researchCompleteFn,
+	stale []staleContact,
+	year, week int,
+) (int, bool) {
+	lines := make([]string, len(stale))
+	for i, c := range stale {
+		name := c.displayName
+		if name == "" {
+			name = "(unknown)"
+		}
+		line := fmt.Sprintf("[%d] %s | %s | idle %dd", i, clampRunes(name, 40), clampRunes(c.relationship, 40), c.idleDays)
+		if c.notes != "" {
+			line += " | " + clampRunes(c.notes, 80)
+		}
+		lines[i] = line
+	}
+	curated, ok := LLMCurate(ctx, completeFn, tenantID, CurateOpts{
+		SystemRole:    "You help a busy founder keep his most important relationships warm. You look at people he hasn't connected with in a while and pick the FEW genuinely worth a proactive reach-out.",
+		Request:       "Which of these people should the owner reconnect with this week? Prioritize CLOSE relationships — family, close friends, important mentors/colleagues — who've gone quiet. SKIP distant acquaintances, vendors, and anyone where an out-of-the-blue message would feel random. The 'why' is a short, warm, specific reason to reach out.",
+		ItemLines:     lines,
+		MaxPicks:      5,
+		GroupNoun:     "closeness",
+		ExtraGuidance: "Be very selective — a few meaningful reconnections beat a long nag list. The 'why' becomes the owner's reminder; make it warm and human.",
+	})
+	if !ok {
+		return 0, false
+	}
+	n := 0
+	for _, p := range curated.Picks {
+		if p.I < 0 || p.I >= len(stale) {
+			continue
+		}
+		c := stale[p.I]
+		name := c.displayName
+		if name == "" {
+			name = "them"
+		}
+		title := strings.TrimSpace(p.Why)
+		if title == "" {
+			title = fmt.Sprintf("Reach out to %s", name)
+		}
+		if relInsertReachOut(ctx, pool, logger, tenantID, clampRunes(title, 500),
+			fmt.Sprintf("relkeeper:%s:%d-W%02d", c.id, year, week)) {
+			n++
+		}
+	}
+	logger.Info("relationship_keeper: intelligent pass", zap.Int("surfaced", n), zap.Int("stale", len(stale)))
+	return n, true
+}
+
+// relInsertReachOut inserts a relationship reach-out commitment, idempotent on
+// idemKey. Returns true if a new row was created.
+func relInsertReachOut(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger, tenantID, title, idemKey string) bool {
+	var insertedID string
+	// rls-exempt: inline executor — explicit tenant_id; dedup on idemKey.
+	insertErr := pool.QueryRow(ctx, `
+		INSERT INTO commitments (tenant_id, title, source, kind, idempotency_key, tier, urgency)
+		VALUES ($1, $2, 'vip', 'relationship', $3, 'meso', 'fyi')
+		ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+		DO NOTHING
+		RETURNING id
+	`, tenantID, title, idemKey).Scan(&insertedID)
+	if insertErr == nil {
+		return true
+	}
+	if !errors.Is(insertErr, pgx.ErrNoRows) {
+		logger.Warn("relationship_keeper: insert commitment failed", zap.Error(insertErr))
+	}
+	return false
 }
 
 // emitRelationshipSwept writes a relationship_swept journal event.
