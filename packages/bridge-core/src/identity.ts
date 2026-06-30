@@ -55,6 +55,71 @@ export function resolveName(handle: string, opts: IdOpts = {}): string | null {
   return name;
 }
 
+// --- Owner self-chat correction CAPTURE -----------------------------------
+// Deterministic detector for an owner correction that names a SPECIFIC handle,
+// e.g. "+15125551234 is Manasa" or "Sam's number is 512-555-1234". Only the
+// explicit-handle form is captured — a bare "that's Manasa" can't be resolved
+// to a handle without ambiguous context, so we leave it to the LLM extractor.
+// Pure; no I/O; never throws.
+
+const PHONE_SRC = String.raw`\+?\d[\d\s().-]{7,}\d`;
+const EMAIL_SRC = String.raw`[\w.+-]+@[\w-]+\.[\w.-]+`;
+
+// First-token words that are never a contact name (so "512… is wrong" /
+// "… is mine" don't get stored as a bogus name).
+const NON_NAMES = new Set([
+  "wrong", "mine", "not", "gone", "dead", "old", "new", "off", "blocked",
+  "spam", "busy", "here", "there", "fine", "ok", "okay", "correct", "right",
+  "me", "us", "them", "him", "her", "working", "down", "unknown",
+  "unavailable", "at", "in", "on", "from", "the", "a", "an",
+  "my", "your", "our", "his", "their",
+]);
+
+function cleanCorrectionName(raw: string): string | null {
+  let s = raw.trim().replace(/^(?:the|a|an|my)\s+/i, "").trim();
+  s = s.replace(/['']s\b/i, "").replace(/[.,!?;:]+$/, "").trim();
+  if (!s) return null;
+  // ponytail: keep at most the first 2 tokens — a display name, not a sentence.
+  const tokens = s.split(/\s+/).slice(0, 2);
+  const name = tokens.join(" ");
+  if (name.length < 2 || name.length > 40) return null;
+  if (NON_NAMES.has(tokens[0].toLowerCase())) return null;
+  if (/^\+?\d/.test(name) || name.includes("@")) return null; // not another handle
+  return name;
+}
+
+/** Detect an explicit owner identity correction in a self-chat message.
+ *  Returns the handle + name to persist, or null when there's no
+ *  unambiguous handle-named correction. */
+export function detectIdentityCorrection(
+  text: string,
+): { handle: string; name: string } | null {
+  const t = (text || "").trim();
+  if (!t || t.length > 200) return null;
+
+  // "<name>'s number/cell/phone/email is <handle>"
+  const b = new RegExp(
+    `^(.+?)(?:['']s)?\\s+(?:number|cell|phone|mobile|email|imessage|handle|contact)\\s+(?:is|=|:)\\s+(${PHONE_SRC}|${EMAIL_SRC})\\b`,
+    "i",
+  ).exec(t);
+  if (b) {
+    const name = cleanCorrectionName(b[1]);
+    if (name) return { handle: b[2].trim(), name };
+  }
+
+  // "[that|this] [number] <handle> is/=/belongs to <name>"
+  const a = new RegExp(
+    `(?:^|\\b)(?:that|this)?\\s*(?:number|contact)?\\s*(${PHONE_SRC}|${EMAIL_SRC})\\s+(?:is|=|belongs to|is for)\\s+(.+)$`,
+    "i",
+  ).exec(t);
+  if (a) {
+    const name = cleanCorrectionName(a[2]);
+    if (name) return { handle: a[1].trim(), name };
+  }
+
+  return null;
+}
+
 /** Persist an owner correction ("that number is Manasa's" / "this is Sam").
  *  Best-effort; returns whether it was written. */
 export function recordIdentityCorrection(handle: string, name: string, opts: IdOpts = {}): boolean {
