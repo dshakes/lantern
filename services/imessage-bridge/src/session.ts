@@ -259,6 +259,7 @@ import { addToList, removeFromList, loadList, renderList } from "@lantern/bridge
 import {
   detectTaskCapture,
   captureTaskWithLlm,
+  detectOwnerCompletion,
   detectOutboundPromise,
   renderNudge,
   resolveReply,
@@ -2794,6 +2795,45 @@ export class IMessageSession {
   // ── Concierge edge — task capture + nudge poll + 1-click resolution ──────
 
   /**
+   * 3rd completion path — the owner tells the bot he finished a task in natural
+   * language ("just grabbed the groceries", "sorted the plumber"). Matches it to
+   * his open items and marks them done. Cheap: a completion-cue pre-filter means
+   * a normal query never fetches or calls the LLM. Returns true when handled.
+   */
+  private async maybeMarkOwnerCompletion(handle: string, text: string): Promise<boolean> {
+    // Cheap gate: only proceed if the message carries a "finished" cue.
+    if (
+      !/\b(did|done|finished|got|picked|grabbed|sorted|handled|called|sent|paid|booked|completed|took\s+care|wrapped|dropped\s+off|mailed|emailed)\b/i.test(
+        text,
+      )
+    )
+      return false;
+    try {
+      const open = await this.commitments.list({ status: "open", limit: 50 }).catch(() => []);
+      if (open.length === 0) return false;
+      const result = await detectOwnerCompletion(
+        text,
+        open.map((c) => ({ id: c.id, title: c.title })),
+        async (p) => {
+          try {
+            return (await this.agent.respondTo(`${handle}::completion`, p, "", { withTools: false })) || "";
+          } catch {
+            return "";
+          }
+        },
+      );
+      if (!result) return false;
+      for (const id of result.doneIds) await this.commitments.done(id).catch(() => null);
+      await this.send(handle, result.ack).catch(() => {});
+      this.logger.info({ done: result.doneIds.length }, "owner marked task(s) done via natural language");
+      return true;
+    } catch (err) {
+      this.logger.debug({ err }, "owner-completion check failed (no-op)");
+      return false;
+    }
+  }
+
+  /**
    * Recurring-reminder tick — this bridge (the primary self-chat channel) fires
    * due recurring reminders to the owner's self-chat, once per local date each.
    * WhatsApp does NOT run this (avoids a double reminder). Every 60s; respects
@@ -4662,9 +4702,16 @@ export class IMessageSession {
             return;
           }
         }
-        void this.handleOwnerDocQuery(row.handle, text, row.chatRowid).catch((err) =>
-          this.logger.error({ err }, "handleOwnerDocQuery threw"),
-        );
+        // 3rd completion path: owner reports finishing a task in his OWN words
+        // ("just grabbed the groceries") → match + mark done. Cheap-gated by a
+        // completion cue so a normal query never pays for it. If NOT a
+        // completion, fall through to the normal owner query.
+        void this.maybeMarkOwnerCompletion(row.handle, text).then((handled) => {
+          if (handled) return;
+          void this.handleOwnerDocQuery(row.handle, text, row.chatRowid).catch((err) =>
+            this.logger.error({ err }, "handleOwnerDocQuery threw"),
+          );
+        });
         return;
       }
 

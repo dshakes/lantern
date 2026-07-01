@@ -172,6 +172,57 @@ export async function captureTaskWithLlm(
   return { title, urgency };
 }
 
+// ── detectOwnerCompletion (3rd way to mark a task done) ──────────────────────
+
+/**
+ * The owner told the bot, in his own words, that he finished something —
+ * "picked up the groceries", "done with the report", "sorted the plumber". The
+ * LLM matches it against his OPEN items and returns which to mark done + a short
+ * ack. Returns null when it isn't a completion report (normal message), so the
+ * caller falls through. This is the 3rd completion path (alongside replying
+ * "done" to a nudge, and the inner circle reporting an item handled).
+ */
+export async function detectOwnerCompletion(
+  text: string,
+  openItems: Array<{ id: string; title: string }>,
+  llmCall?: (prompt: string) => Promise<string>,
+): Promise<{ doneIds: string[]; ack: string } | null> {
+  const t = (text || "").replace(/\s+/g, " ").trim();
+  if (!t || !llmCall || openItems.length === 0) return null;
+  // Cheap pre-filter: a completion report has a past-tense/handled cue.
+  if (!/\b(did|done|finished|got|picked|grabbed|sorted|handled|called|sent|paid|booked|completed|took care|wrapped|dropped off|mailed|emailed)\b/i.test(t))
+    return null;
+
+  const list = openItems.slice(0, 30).map((it, i) => `[${i}] ${it.title}`).join("\n");
+  const prompt =
+    `The owner is telling his assistant, in his own words, what he has DONE. Match it against his OPEN to-dos ` +
+    `and identify which are now complete. Only match a real completion — if he's NOT reporting something finished, return {"done":[]}.\n` +
+    `OPEN to-dos:\n${list}\n\n` +
+    `Return STRICT minified JSON: {"done":[<indices>],"ack":"<short casual ack, e.g. 'nice, crossed off groceries'>"}\n` +
+    `Message:\n"""${t}"""\nJSON:`;
+  let raw: string;
+  try {
+    raw = await llmCall(prompt);
+  } catch {
+    return null;
+  }
+  const m = raw && raw.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let obj: { done?: unknown; ack?: unknown };
+  try {
+    obj = JSON.parse(m[0]);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(obj.done) || obj.done.length === 0) return null;
+  const doneIds = (obj.done as unknown[])
+    .map((i) => (typeof i === "number" && i >= 0 && i < openItems.length ? openItems[i].id : null))
+    .filter((x): x is string => !!x);
+  if (doneIds.length === 0) return null;
+  const ack = typeof obj.ack === "string" && obj.ack.trim() ? obj.ack.trim() : "done ✓";
+  return { doneIds, ack };
+}
+
 // ── detectOutboundPromise ─────────────────────────────────────────────────────
 
 /** A promise the bot made in the owner's name on a contact thread
