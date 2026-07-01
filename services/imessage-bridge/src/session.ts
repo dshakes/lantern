@@ -3949,12 +3949,16 @@ export class IMessageSession {
     if (to.includes("@") || digits.length < 8) return false;
     try {
       const { authedFetch } = await import("@lantern/bridge-core/auth");
+      // When a Twilio Messaging Service SID is configured, route through it (RCS
+      // sender + auto SMS fallback, better deliverability). The connector uses
+      // MessagingServiceSid and ignores `from` when this is present.
+      const messagingServiceSid = (process.env.LANTERN_TWILIO_MESSAGING_SERVICE_SID || "").trim();
       const res = await authedFetch(
         "/v1/connectors/twilio/execute?action=send_sms",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to, from, body: text }),
+          body: JSON.stringify(messagingServiceSid ? { to, from, body: text, messagingServiceSid } : { to, from, body: text }),
         },
       );
       if (!res.ok) {
