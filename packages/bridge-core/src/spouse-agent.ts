@@ -1,61 +1,72 @@
-// Spouse-nudge-agent — the elevated, agentic handler for the owner's inner
-// circle (spouse first). When Manasa sends action items / requests, the bot
-// doesn't just capture a vague commitment: it INTELLIGENTLY plans concrete
-// actions (todos, timed reminders/calendar), drafts a warm confirmation in the
-// owner's voice, and a one-line heads-up for the owner. The bridge executes the
-// plan (create commitments + calendar events, notify the owner) and sends the
-// confirmation.
+// Spouse-nudge-agent — the elevated, agentic, TWO-WAY handler for the owner's
+// inner circle (spouse first). It doesn't just capture tasks; it reasons about
+// what Manasa's message MEANS and responds truthfully from real task state:
 //
-// Pure planning here (one injected LLM call); all I/O + execution lives in the
-// bridge. Returns null when the message carries no real action item, so a
-// normal chat is untouched.
+//   • NEW ACTION ITEMS  → plan concrete actions (multi-item, timed → calendar)
+//   • STATUS QUERY       → answer "did he do X?" TRUTHFULLY from the open items
+//                          (never fabricate "done" when it's still pending)
+//   • DONE REPORT        → she says an item's handled → mark it complete
+//   • CHAT               → nothing to do, let the normal reply run
+//
+// Pure planning here (one injected LLM call over the message + the current open
+// items); all I/O + execution lives in the bridge. Returns null for plain chat.
 
 export type SpouseItemKind = "task" | "shopping" | "appointment" | "reminder";
 
 export interface SpouseActionItem {
-  /** Clean, imperative task title ("pick up the dry cleaning"). */
   title: string;
   kind: SpouseItemKind;
   urgency: "now" | "soon" | "normal";
-  /** ISO datetime when the item is time-bound (→ the bridge makes a calendar
-   *  event); omitted for a plain todo. */
+  /** ISO datetime when time-bound (→ calendar event); omitted for a plain todo. */
   whenISO?: string;
 }
 
-export interface SpouseAgentPlan {
-  items: SpouseActionItem[];
-  /** Warm confirmation to send the SPOUSE, in the owner's casual voice. */
-  replyToSpouse: string;
-  /** One-line heads-up for the OWNER's self-chat. */
-  ownerSummary: string;
+/** An open spouse-sourced commitment the bridge already tracks. */
+export interface OpenSpouseItem {
+  id: string;
+  title: string;
 }
+
+export type SpouseResponse =
+  | { type: "actions"; items: SpouseActionItem[]; replyToSpouse: string; ownerSummary: string }
+  | { type: "status"; replyToSpouse: string }
+  | { type: "done"; doneIds: string[]; replyToSpouse: string; ownerSummary: string }
+  | null;
 
 const KINDS = new Set<SpouseItemKind>(["task", "shopping", "appointment", "reminder"]);
 
 /**
- * Plan agentic actions from a spouse message. `nowISO` anchors relative dates
- * ("tomorrow 3pm"). `llmCall` is a plain text-completion seam. Returns null on
- * no action items, no LLM, or any failure (caller falls back to normal reply).
+ * Reason about a spouse message against the current open items and return the
+ * right agentic response. `nowISO` anchors relative dates. Returns null on plain
+ * chat / no LLM / any failure (caller falls back to the normal reply).
  */
-export async function planSpouseActions(
+export async function handleSpouseMessage(
   text: string,
-  opts: { ownerName: string; spouseName: string; nowISO: string },
+  opts: { ownerName: string; spouseName: string; nowISO: string; openItems?: OpenSpouseItem[] },
   llmCall?: (prompt: string) => Promise<string>,
-): Promise<SpouseAgentPlan | null> {
+): Promise<SpouseResponse> {
   const t = (text || "").replace(/\s+/g, " ").trim();
   if (!t || !llmCall) return null;
 
+  const open = (opts.openItems ?? []).slice(0, 30);
+  const openList = open.length
+    ? open.map((it, i) => `[${i}] ${it.title}`).join("\n")
+    : "(none currently open)";
+
   const prompt =
-    `${opts.spouseName} (${opts.ownerName}'s wife) just messaged him. Decide if it asks him to DO ` +
-    `something — a task, errand, shopping item, appointment, or reminder. It may contain MULTIPLE ` +
-    `items ("get milk and call the plumber, and Kai's dentist is tomorrow at 3"). A pure chat, ` +
-    `question, or FYI is NOT an action list.\n` +
-    `Current time (owner-local ISO): ${opts.nowISO}. Resolve relative times ("tomorrow 3pm") to ISO.\n` +
-    `Return STRICT minified JSON, nothing else:\n` +
-    `{"items":[{"title":"<imperative, no 'you'>","kind":"task|shopping|appointment|reminder","urgency":"now|soon|normal","whenISO":"<ISO if time-bound, else omit>"}],` +
-    `"replyToSpouse":"<warm 1-line confirmation in ${opts.ownerName}'s casual texting voice, e.g. 'got it, i'll grab milk and call the plumber — and added Kai's dentist to the calendar'>",` +
-    `"ownerSummary":"<one short line for ${opts.ownerName}: what ${opts.spouseName} needs>"}\n` +
-    `If there are NO real action items, return {"items":[]}.\n` +
+    `${opts.spouseName} (${opts.ownerName}'s wife) just messaged him. Classify her message and respond.\n` +
+    `Current time (owner-local ISO): ${opts.nowISO}.\n` +
+    `${opts.ownerName}'s OPEN items she previously asked for:\n${openList}\n\n` +
+    `Decide ONE type:\n` +
+    `- "actions": she's asking him to DO new things (task/errand/shopping/appointment/reminder — may be MULTIPLE). Resolve relative times to ISO.\n` +
+    `- "status": she's ASKING whether something is done / where it stands. Answer TRUTHFULLY from the open list above — if it's still open, say it's on his list (never claim it's done). Reference the real item.\n` +
+    `- "done": she's telling him an open item is now handled / no longer needed. Identify which open item indices.\n` +
+    `- "chat": ordinary conversation, no task. \n\n` +
+    `Return STRICT minified JSON, nothing else, ONE of:\n` +
+    `{"type":"actions","items":[{"title":"<imperative,no 'you'>","kind":"task|shopping|appointment|reminder","urgency":"now|soon|normal","whenISO":"<ISO if timed>"}],"replyToSpouse":"<warm 1-line confirmation in ${opts.ownerName}'s casual voice>","ownerSummary":"<one line for ${opts.ownerName}>"}\n` +
+    `{"type":"status","replyToSpouse":"<truthful 1-line answer from the open list, ${opts.ownerName}'s casual voice>"}\n` +
+    `{"type":"done","doneIndices":[<int>],"replyToSpouse":"<warm 1-line ack>","ownerSummary":"<one line for ${opts.ownerName}>"}\n` +
+    `{"type":"chat"}\n` +
     `Message:\n"""${t}"""\nJSON:`;
 
   let raw: string;
@@ -66,31 +77,53 @@ export async function planSpouseActions(
   }
   const m = raw && raw.match(/\{[\s\S]*\}/);
   if (!m) return null;
-  let obj: { items?: unknown; replyToSpouse?: unknown; ownerSummary?: unknown };
+  let obj: Record<string, unknown>;
   try {
     obj = JSON.parse(m[0]);
   } catch {
     return null;
   }
-  if (!Array.isArray(obj.items) || obj.items.length === 0) return null;
 
-  const items: SpouseActionItem[] = [];
-  for (const it of obj.items as Array<Record<string, unknown>>) {
-    const title = typeof it.title === "string" ? it.title.trim() : "";
-    if (title.length < 2 || title.length > 200) continue;
-    const kind = KINDS.has(it.kind as SpouseItemKind) ? (it.kind as SpouseItemKind) : "task";
-    const urgency =
-      it.urgency === "now" || it.urgency === "soon" || it.urgency === "normal" ? it.urgency : "normal";
-    const whenISO =
-      typeof it.whenISO === "string" && !Number.isNaN(Date.parse(it.whenISO)) ? it.whenISO : undefined;
-    items.push({ title, kind, urgency, whenISO });
+  const reply = typeof obj.replyToSpouse === "string" ? obj.replyToSpouse.trim() : "";
+  const ownerSummary = typeof obj.ownerSummary === "string" ? obj.ownerSummary.trim() : "";
+
+  if (obj.type === "status") {
+    return reply ? { type: "status", replyToSpouse: reply } : null;
   }
-  if (items.length === 0) return null;
 
-  const replyToSpouse = typeof obj.replyToSpouse === "string" ? obj.replyToSpouse.trim() : "";
-  const ownerSummary =
-    typeof obj.ownerSummary === "string" && obj.ownerSummary.trim()
-      ? obj.ownerSummary.trim()
-      : items.map((i) => i.title).join(", ");
-  return { items, replyToSpouse, ownerSummary };
+  if (obj.type === "done" && Array.isArray(obj.doneIndices)) {
+    const doneIds = (obj.doneIndices as unknown[])
+      .map((i) => (typeof i === "number" && i >= 0 && i < open.length ? open[i].id : null))
+      .filter((x): x is string => !!x);
+    if (doneIds.length === 0) return null;
+    return {
+      type: "done",
+      doneIds,
+      replyToSpouse: reply || "got it, marking that done 👍",
+      ownerSummary: ownerSummary || "marked done",
+    };
+  }
+
+  if (obj.type === "actions" && Array.isArray(obj.items)) {
+    const items: SpouseActionItem[] = [];
+    for (const it of obj.items as Array<Record<string, unknown>>) {
+      const title = typeof it.title === "string" ? it.title.trim() : "";
+      if (title.length < 2 || title.length > 200) continue;
+      const kind = KINDS.has(it.kind as SpouseItemKind) ? (it.kind as SpouseItemKind) : "task";
+      const urgency =
+        it.urgency === "now" || it.urgency === "soon" || it.urgency === "normal" ? it.urgency : "normal";
+      const whenISO =
+        typeof it.whenISO === "string" && !Number.isNaN(Date.parse(it.whenISO)) ? it.whenISO : undefined;
+      items.push({ title, kind, urgency, whenISO });
+    }
+    if (items.length === 0) return null;
+    return {
+      type: "actions",
+      items,
+      replyToSpouse: reply,
+      ownerSummary: ownerSummary || items.map((i) => i.title).join(", "),
+    };
+  }
+
+  return null; // "chat" or anything unrecognized
 }

@@ -253,7 +253,7 @@ import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
 import { isInnerCircle, formatOwnerLocationBlock } from "@lantern/bridge-core/device-signals";
 import { readKnownLocation } from "./device-signals-reader.js";
 import { extractArticleUrl, fetchArticle, buildArticleBlock } from "@lantern/bridge-core/article";
-import { planSpouseActions } from "@lantern/bridge-core/spouse-agent";
+import { handleSpouseMessage } from "@lantern/bridge-core/spouse-agent";
 import {
   detectTaskCapture,
   captureTaskWithLlm,
@@ -2802,9 +2802,16 @@ export class IMessageSession {
     try {
       const ownerName = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0] || "him";
       const spouseName = displayName || "your wife";
-      const plan = await planSpouseActions(
+      // Her still-open items (for truthful status/done reasoning). assignedBy is
+      // set to her name when we create them, so that's the filter.
+      const allOpen = await this.commitments.list({ status: "open", limit: 50 }).catch(() => []);
+      const openItems = allOpen
+        .filter((c) => (c.assignedBy || "").toLowerCase() === spouseName.toLowerCase())
+        .map((c) => ({ id: c.id, title: c.title }));
+
+      const resp = await handleSpouseMessage(
         text,
-        { ownerName, spouseName, nowISO: new Date().toISOString() },
+        { ownerName, spouseName, nowISO: new Date().toISOString(), openItems },
         async (p) => {
           try {
             return (await this.agent.respondTo(`${handle}::spouseagent`, p, "", { withTools: false })) || "";
@@ -2813,13 +2820,31 @@ export class IMessageSession {
           }
         },
       );
-      if (!plan) return false; // no action items — let the normal reply handle it
+      if (!resp) return false; // plain chat — let the normal reply handle it
 
-      // EXECUTE the plan: a todo per item + a calendar event for timed ones.
+      const owner = this.ownerSelfChatTarget();
+
+      // STATUS QUERY — truthful answer from real task state; no execution.
+      if (resp.type === "status") {
+        await this.send(handle, resp.replyToSpouse).catch(() => {});
+        this.logger.info({ handle }, "spouse-agent: answered status query");
+        return true;
+      }
+
+      // DONE REPORT — she says an item's handled → mark it complete + close loop.
+      if (resp.type === "done") {
+        for (const id of resp.doneIds) await this.commitments.done(id).catch(() => null);
+        await this.send(handle, resp.replyToSpouse).catch(() => {});
+        if (owner && owner !== handle) await this.send(owner, `✅ ${spouseName} — ${resp.ownerSummary}`).catch(() => {});
+        this.logger.info({ handle, done: resp.doneIds.length }, "spouse-agent: closed items she reported done");
+        return true;
+      }
+
+      // NEW ACTION ITEMS — a todo per item + a calendar event for timed ones.
       const day = new Date().toISOString().slice(0, 10);
       const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "-").slice(0, 40);
       const done: string[] = [];
-      for (const item of plan.items) {
+      for (const item of resp.items) {
         await this.commitments
           .create({
             title: item.title,
@@ -2840,14 +2865,11 @@ export class IMessageSession {
           done.push(`📝 ${item.title}`);
         }
       }
-
-      // Confirm to her (the agent's own voice), then heads-up the owner.
-      if (plan.replyToSpouse) await this.send(handle, plan.replyToSpouse).catch(() => {});
-      const owner = this.ownerSelfChatTarget();
+      if (resp.replyToSpouse) await this.send(handle, resp.replyToSpouse).catch(() => {});
       if (owner && owner !== handle) {
-        await this.send(owner, `📋 ${spouseName} — ${plan.ownerSummary}\n${done.join("\n")}`).catch(() => {});
+        await this.send(owner, `📋 ${spouseName} — ${resp.ownerSummary}\n${done.join("\n")}`).catch(() => {});
       }
-      this.logger.info({ handle, items: plan.items.length }, "spouse-agent: handled action items");
+      this.logger.info({ handle, items: resp.items.length }, "spouse-agent: handled action items");
       return true;
     } catch (err) {
       this.logger.warn({ err, handle }, "spouse-agent failed — falling back to normal reply");

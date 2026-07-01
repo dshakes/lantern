@@ -20,7 +20,7 @@ import { MediaHandler } from "./media.js";
 import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/personal";
 import { parseSignals, presenceFromSignals, latestKnownLocation, isInnerCircle, formatOwnerLocationBlock, type SignalPresence } from "@lantern/bridge-core/device-signals";
 import { extractArticleUrl, fetchArticle, buildArticleBlock } from "@lantern/bridge-core/article";
-import { planSpouseActions } from "@lantern/bridge-core/spouse-agent";
+import { handleSpouseMessage } from "@lantern/bridge-core/spouse-agent";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
@@ -9216,9 +9216,14 @@ export class WhatsAppSession {
     try {
       const ownerName = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0] || "him";
       const spouseName = displayName || "your wife";
-      const plan = await planSpouseActions(
+      const allOpen = await this.commitments.list({ status: "open", limit: 50 }).catch(() => []);
+      const openItems = allOpen
+        .filter((c) => (c.assignedBy || "").toLowerCase() === spouseName.toLowerCase())
+        .map((c) => ({ id: c.id, title: c.title }));
+
+      const resp = await handleSpouseMessage(
         text,
-        { ownerName, spouseName, nowISO: new Date().toISOString() },
+        { ownerName, spouseName, nowISO: new Date().toISOString(), openItems },
         async (p) => {
           try {
             return (await this.agent.respondTo(`${from}::spouseagent`, p, "", { withTools: false })) || "";
@@ -9227,12 +9232,29 @@ export class WhatsAppSession {
           }
         },
       );
-      if (!plan) return false;
+      if (!resp) return false;
 
+      // STATUS QUERY — truthful answer from real task state.
+      if (resp.type === "status") {
+        await this.sendMessage(from, resp.replyToSpouse).catch(() => {});
+        this.logger.info({ from }, "spouse-agent: answered status query");
+        return true;
+      }
+
+      // DONE REPORT — mark the items she reported handled complete.
+      if (resp.type === "done") {
+        for (const id of resp.doneIds) await this.commitments.done(id).catch(() => null);
+        await this.sendMessage(from, resp.replyToSpouse).catch(() => {});
+        await this.sendSelf(`✅ ${spouseName} — ${resp.ownerSummary}`).catch(() => {});
+        this.logger.info({ from, done: resp.doneIds.length }, "spouse-agent: closed items she reported done");
+        return true;
+      }
+
+      // NEW ACTION ITEMS.
       const day = new Date().toISOString().slice(0, 10);
       const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "-").slice(0, 40);
       const done: string[] = [];
-      for (const item of plan.items) {
+      for (const item of resp.items) {
         await this.commitments
           .create({
             title: item.title,
@@ -9254,9 +9276,9 @@ export class WhatsAppSession {
         }
       }
 
-      if (plan.replyToSpouse) await this.sendMessage(from, plan.replyToSpouse).catch(() => {});
-      await this.sendSelf(`📋 ${spouseName} — ${plan.ownerSummary}\n${done.join("\n")}`).catch(() => {});
-      this.logger.info({ from, items: plan.items.length }, "spouse-agent: handled action items");
+      if (resp.replyToSpouse) await this.sendMessage(from, resp.replyToSpouse).catch(() => {});
+      await this.sendSelf(`📋 ${spouseName} — ${resp.ownerSummary}\n${done.join("\n")}`).catch(() => {});
+      this.logger.info({ from, items: resp.items.length }, "spouse-agent: handled action items");
       return true;
     } catch (err) {
       this.logger.warn({ err, from }, "spouse-agent failed — falling back to normal reply");
