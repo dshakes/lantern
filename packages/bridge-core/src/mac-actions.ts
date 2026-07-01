@@ -758,9 +758,11 @@ export function extractActionMarkers(text: string): ExtractedActions {
  * garbage or PAST datetime must never be booked verbatim — that's how a
  * scheduling negotiation ends up booking "Thu 9am" from a phone-hours string.
  * Rejects unparseable / past / implausibly-far / inverted-range events.
- * ponytail: valid+future only — cross-checking the datetime against the exact
- * free slot the bot offered during a live negotiation is the stronger
- * follow-up (needs the offered-slots state threaded to the booking site).
+ * Conflict-with-real-calendar is a SEPARATE check — see checkCalendarConflict.
+ * ponytail: still valid+future only here — cross-checking the datetime against
+ * the exact free slot the bot offered during a live negotiation remains the
+ * stronger follow-up (needs the offered-slots state threaded to the booking
+ * site; checkCalendarConflict covers the real-calendar double-book case).
  */
 export function validateCalendarEvent(
   ev: CalendarEventSpec,
@@ -776,4 +778,35 @@ export function validateCalendarEvent(
     if (!Number.isNaN(endMs) && endMs <= startMs) return { ok: false, reason: "end is not after start" };
   }
   return { ok: true };
+}
+
+/**
+ * Cross-check a to-be-booked event against the owner's already-loaded upcoming
+ * events and flag a real overlap — the bot must not double-book. Pure +
+ * testable; the booking site passes the events it already read via
+ * `readUpcomingEvents` (best-effort: an empty list → no conflict reported, so
+ * this never blocks when the calendar wasn't loaded for this turn).
+ *
+ * Overlap is half-open [start, end): two events that merely touch (one ends
+ * exactly when the next starts) do NOT conflict. An existing event with no end
+ * is treated as a 30-min block, matching createCalendarEvent's default
+ * duration. Assumes `ev` already passed validateCalendarEvent (parseable start).
+ */
+export function checkCalendarConflict(
+  ev: CalendarEventSpec,
+  existingEvents: CalendarEventRead[] | undefined,
+): { conflict: false } | { conflict: true; title: string; start: Date } {
+  const startMs = Date.parse(ev.start);
+  if (Number.isNaN(startMs)) return { conflict: false };
+  const endParsed = ev.end ? Date.parse(ev.end) : NaN;
+  const endMs = Number.isNaN(endParsed) ? startMs + 30 * 60_000 : endParsed;
+  for (const e of existingEvents || []) {
+    const eStart = e.start.getTime();
+    const eEnd = (e.end ?? new Date(eStart + 30 * 60_000)).getTime();
+    if (Number.isNaN(eStart)) continue;
+    if (startMs < eEnd && endMs > eStart) {
+      return { conflict: true, title: e.title || "(untitled)", start: e.start };
+    }
+  }
+  return { conflict: false };
 }
