@@ -49,6 +49,7 @@ const BOT_SELF_PREFIXES: string[] = [
   "couldn't add it",      // confirm-before-book: createCalendarEvent failed
   "(couldn't attach",
   "(calendar failed",
+  "heads up — that overlaps your", // conflict guard: marker overlaps an existing calendar event
   "(note failed",
   "(mail draft failed",
   "couldn't reach the agent",

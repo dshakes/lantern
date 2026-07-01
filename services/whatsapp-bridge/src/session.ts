@@ -62,7 +62,7 @@ import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
 import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@lantern/bridge-core/language";
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
-import { MacActions, extractActionMarkers, validateCalendarEvent, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
+import { MacActions, extractActionMarkers, validateCalendarEvent, checkCalendarConflict, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, type PendingOffer } from "@lantern/bridge-core/humanize";
 import { resolvePendingBooking } from "@lantern/bridge-core/life-events";
 import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
@@ -5838,6 +5838,11 @@ export class WhatsAppSession {
     }
     // Humanize: friendly dates + guaranteed offer + deterministic
     // execution path on next-turn confirmation.
+    // rawSource (id re-extraction ground truth) is intentionally undefined:
+    // the file/OCR text is read by the agent's tools INSIDE the control-plane
+    // (respondTo withTools returns only the final reply text), so no
+    // authoritative doc source is reachable locally to thread here. Threading an
+    // unrelated local blob would risk saving the WRONG id. See report FIX-1 flag.
     const { reply: polished0, offer } = humanizeWithOffer(finalText);
     // The mac-action markers (notes/calendar/mail) extracted above execute
     // AFTER this reply is sent (below) and can still FAIL — e.g. a cold
@@ -5895,6 +5900,17 @@ export class WhatsAppSession {
           // The LLM wrote this datetime itself — never book a past/garbage marker.
           this.logger.warn({ title: ev.title, start: ev.start, reason: valid.reason }, "calendar marker rejected — not booked");
           await this.confirmToSelf(`(couldn't book "${ev.title}" — ${valid.reason})`);
+          continue;
+        }
+        // Real-calendar double-book guard: reject a marker that overlaps an
+        // already-loaded upcoming event (deviceEvents, read above). Best-effort —
+        // an empty list (calendar not loaded this turn) is a no-op. Tell the
+        // owner instead of silently booking a conflict.
+        const conflict = checkCalendarConflict(ev, deviceEvents);
+        if (conflict.conflict) {
+          const when = conflict.start.toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" });
+          this.logger.warn({ title: ev.title, start: ev.start, conflictsWith: conflict.title }, "calendar marker rejected — overlaps existing event");
+          await this.confirmToSelf(`heads up — that overlaps your "${conflict.title}" at ${when}; want a different time?`);
           continue;
         }
         try {
