@@ -21,6 +21,7 @@ import (
 
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/control-plane/internal/db"
+	"github.com/dshakes/lantern/services/control-plane/internal/grounding"
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
@@ -1716,6 +1717,17 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 				return "", err
 			}
 			text, _, _, _, llmErr := h.llmProxy.callLLMSync(ctx, provider, model, apiKey, prompt)
+			if llmErr == nil {
+				// Workflow ai-steps have no tools, so the performed set is nil.
+				// G3 guard: soften any unbacked completion claims before the
+				// workflow interpreter stores the output as a step result.
+				out, rewrites := grounding.RewriteActions(text, nil)
+				if len(rewrites) > 0 {
+					h.logger().Warn("grounding: workflow ai-step claims softened",
+						zap.Strings("rewrites", rewrites))
+				}
+				text = out
+			}
 			return text, llmErr
 		},
 		CallConnector: func(ctx context.Context, connectorID, action string, params map[string]any) (any, error) {

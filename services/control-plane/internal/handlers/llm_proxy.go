@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/grounding"
 	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/secrets"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
@@ -2553,8 +2554,16 @@ func (h *LlmProxyHandler) callLLMWithTools(
 		if jerr := json.Unmarshal(body, &parsed); jerr == nil && len(parsed.Choices) > 0 {
 			tokensIn += parsed.Usage.PromptTokens
 			tokensOut += parsed.Usage.CompletionTokens
-			if strings.TrimSpace(parsed.Choices[0].Message.Content) != "" {
-				return parsed.Choices[0].Message.Content, invocations, tokensIn, tokensOut, nil
+			if content := strings.TrimSpace(parsed.Choices[0].Message.Content); content != "" {
+				// ponytail: defense-in-depth — outer callLLMWithFailover also runs
+				// rewriteUnbackedClaims, but guarding here ensures the synthesis path
+				// is covered even if the inner function is ever called independently.
+				out, rewrites := grounding.RewriteActions(content, invocationsToPerformed(invocations))
+				for _, r := range rewrites {
+					h.logger().Warn("grounding: forced-synthesis (openai) claim softened",
+						zap.String("rewrite", r))
+				}
+				return out, invocations, tokensIn, tokensOut, nil
 			}
 		}
 	}
@@ -2859,8 +2868,14 @@ func (h *LlmProxyHandler) callAnthropicWithTools(
 					sb.WriteString(c.Text)
 				}
 			}
-			if strings.TrimSpace(sb.String()) != "" {
-				return sb.String(), invocations, tokensIn, tokensOut, nil
+			if content := strings.TrimSpace(sb.String()); content != "" {
+				// ponytail: defense-in-depth — same rationale as the OpenAI path above.
+				out, rewrites := grounding.RewriteActions(content, invocationsToPerformed(invocations))
+				for _, r := range rewrites {
+					h.logger().Warn("grounding: forced-synthesis (anthropic) claim softened",
+						zap.String("rewrite", r))
+				}
+				return out, invocations, tokensIn, tokensOut, nil
 			}
 		}
 	}

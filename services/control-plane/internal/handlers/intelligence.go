@@ -20,11 +20,12 @@ package handlers
 
 import (
 	"os"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
 	"go.uber.org/zap"
+
+	"github.com/dshakes/lantern/services/control-plane/internal/grounding"
 )
 
 // ---------------------------------------------------------------------------
@@ -206,128 +207,35 @@ func resolveModelForComplexity(tier turnTier, hasAnthropic, hasOpenAI bool) (str
 }
 
 // ---------------------------------------------------------------------------
-// G3 — Claim verifier
+// G3 — Claim verifier (thin wrapper over internal/grounding)
 // ---------------------------------------------------------------------------
 
-// claimVerifyEnabled reports whether G3 is active.
-func claimVerifyEnabled() bool {
-	return !isFlagDisabled(os.Getenv("LANTERN_CLAIM_VERIFY"))
-}
-
-// completionVerbs maps a completed-action verb (lower-case) to the category
-// of tool that would legitimately back it. A claim is "backed" when at least
-// one successful (non-error) invocation of a tool in that category ran this
-// turn.
-var completionVerbCategories = map[string][]string{
-	// Communication
-	"sent":      {"send_message", "send_email", "send_sms", "gmail_send", "slack_send", "message", "send"},
-	"emailed":   {"send_email", "gmail_send", "email", "send"},
-	"texted":    {"send_sms", "send_message", "sms", "send"},
-	"messaged":  {"send_message", "slack_send", "message", "send"},
-	"replied":   {"send_message", "send_email", "reply", "send"},
-	"forwarded": {"send_email", "forward", "send"},
-	// Calendar / scheduling
-	"booked":     {"create_event", "book", "calendar", "schedule"},
-	"scheduled":  {"create_event", "schedule", "calendar"},
-	"added":      {"create_event", "add", "calendar", "create"},
-	"created":    {"create_event", "create", "calendar", "add"},
-	"set":        {"create_event", "set", "calendar", "create"},
-	"registered": {"register", "create"},
-	// Notes / Tasks
-	"saved":   {"save", "create_note", "notes", "create"},
-	"updated": {"update", "edit"},
-	"deleted": {"delete", "remove"},
-	// Calls
-	"called":  {"make_call", "call", "phone"},
-	"dialed":  {"make_call", "dial", "phone"},
-	"ordered": {"order", "create", "purchase"},
-	"paid":    {"pay", "charge", "payment"},
-}
-
-// claimPattern matches phrases like "I sent", "I've emailed", "I already booked",
-// "I just scheduled", etc.
-var claimPattern = regexp.MustCompile(
-	`(?i)\b(i(?:'ve|'m| have| just| already| went ahead and|'ll|'d)?\s+` +
-		`(sent|emailed|texted|messaged|replied|forwarded|booked|scheduled|added|` +
-		`created|set|registered|saved|updated|deleted|called|dialed|ordered|paid))\b`,
-)
-
-// softReplacements maps an asserted-past verb to an honest-intent phrase.
-var softReplacements = map[string]string{
-	"sent":       "I'll send",
-	"emailed":    "I'll email",
-	"texted":     "I'll text",
-	"messaged":   "I'll message",
-	"replied":    "I'll reply",
-	"forwarded":  "I'll forward",
-	"booked":     "I'll book",
-	"scheduled":  "I'll schedule",
-	"added":      "I'll add",
-	"created":    "I'll create",
-	"set":        "I'll set",
-	"registered": "I'll register",
-	"saved":      "I'll save",
-	"updated":    "I'll update",
-	"deleted":    "I'll delete",
-	"called":     "I'll call",
-	"dialed":     "I'll dial",
-	"ordered":    "I'll order",
-	"paid":       "I'll pay",
-}
-
-// isBacked returns true when at least one successful tool invocation matches
-// (by name substring) one of the backing categories for the given verb.
-func isBacked(verb string, invocations []ToolInvocation) bool {
-	cats, ok := completionVerbCategories[strings.ToLower(verb)]
-	if !ok {
-		return true // unknown verb — don't touch it
+// invocationsToPerformed converts []ToolInvocation to the map[string]bool
+// shape that grounding.RewriteActions / HasUnbackedClaims expect.
+// Only successful invocations (Error == "") are included.
+func invocationsToPerformed(invocations []ToolInvocation) map[string]bool {
+	if len(invocations) == 0 {
+		return nil
 	}
+	m := make(map[string]bool, len(invocations))
 	for _, inv := range invocations {
-		if inv.Error != "" {
-			continue // failed invocations don't count as backing
-		}
-		toolLower := strings.ToLower(inv.Name)
-		for _, cat := range cats {
-			if strings.Contains(toolLower, cat) {
-				return true
-			}
+		if inv.Error == "" {
+			m[strings.ToLower(inv.Name)] = true
 		}
 	}
-	return false
+	return m
 }
 
-// rewriteUnbackedClaims scans the assistant reply for completed-action
-// assertions and softens any that have no backing tool invocation. The
-// original text is returned unchanged when G3 is disabled or when every
-// claim is backed. Rewrites are logged at Warn level.
+// rewriteUnbackedClaims is the handler-layer wrapper for G3. It converts
+// the tool invocations to the performed set, delegates the rewrite to the
+// grounding package, and logs each rewrite at Warn level.
+// Original text is returned unchanged when G3 is disabled or every claim is backed.
 func rewriteUnbackedClaims(text string, invocations []ToolInvocation, log *zap.Logger) string {
-	if !claimVerifyEnabled() {
-		return text
+	out, rewrites := grounding.RewriteActions(text, invocationsToPerformed(invocations))
+	for _, r := range rewrites {
+		log.Warn("claim-verifier: softened unbacked claim", zap.String("rewrite", r))
 	}
-
-	result := claimPattern.ReplaceAllStringFunc(text, func(match string) string {
-		// Extract the verb from the match (the second capture group).
-		sub := claimPattern.FindStringSubmatch(match)
-		if len(sub) < 3 {
-			return match
-		}
-		verb := strings.ToLower(sub[2])
-		if isBacked(verb, invocations) {
-			return match // legitimately backed — keep it
-		}
-		soft, ok := softReplacements[verb]
-		if !ok {
-			return match
-		}
-		// Replace the full matched phrase preserving surrounding text.
-		rewritten := strings.Replace(match, sub[1], soft, 1)
-		log.Warn("claim-verifier: softened unbacked claim",
-			zap.String("original", match),
-			zap.String("rewritten", rewritten),
-		)
-		return rewritten
-	})
-	return result
+	return out
 }
 
 // ---------------------------------------------------------------------------
