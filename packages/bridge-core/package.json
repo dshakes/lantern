@@ -28,6 +28,8 @@
     "./nudge-voice": "./src/nudge-voice.ts",
     "./article": "./src/article.ts",
     "./spouse-agent": "./src/spouse-agent.ts",
+    "./recurring": "./src/recurring.ts",
+    "./shared-list": "./src/shared-list.ts",
     "./gmail-ingest": "./src/gmail-ingest.ts",
     "./humanize": "./src/humanize.ts",
     "./prefetch": "./src/prefetch.ts",
