@@ -1,12 +1,18 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/structpb"
 
+	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
+	"github.com/dshakes/lantern/services/control-plane/internal/middleware"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -14,13 +20,23 @@ import (
 // Agents can publish Agent Cards for cross-platform discovery and invoke
 // each other using the standardized A2A request format.
 type A2AHandler struct {
-	srv  *server.Server
-	auth *AuthHandler
+	srv    *server.Server
+	auth   *AuthHandler
+	runSvc *RunService  // injected to support real invoke execution
+	rest   *RESTHandler // for kicking off inline execution after invoke
 }
 
 // NewA2AHandler creates a new A2AHandler.
 func NewA2AHandler(srv *server.Server, auth *AuthHandler) *A2AHandler {
 	return &A2AHandler{srv: srv, auth: auth}
+}
+
+// SetExecutionDeps wires the run service + REST handler after construction
+// so InvokeAgent can kick off a real run on behalf of the agent's tenant.
+// Optional — if unset, InvokeAgent returns a clear 503.
+func (h *A2AHandler) SetExecutionDeps(runSvc *RunService, rest *RESTHandler) {
+	h.runSvc = runSvc
+	h.rest = rest
 }
 
 func (h *A2AHandler) logger() *zap.Logger {
@@ -303,17 +319,102 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger().Info("a2a invoke (not yet wired to real execution)",
+	if h.rest == nil || h.runSvc == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "A2A invoke requires execution deps — call SetExecutionDeps at boot",
+		})
+		return
+	}
+
+	// Merge body.Message into input for callers using the message-only form.
+	input := body.Input
+	if input == nil {
+		input = map[string]any{}
+	}
+	if body.Message != "" {
+		input["message"] = body.Message
+	}
+
+	// Execute on the agent's own tenant so the agent uses its own LLM keys
+	// and budgets — same pattern as marketplace_invoke.go.
+	agentCtx := middleware.InjectTenantID(context.Background(), agentTenantID)
+	agentCtx = metadata.NewIncomingContext(agentCtx, metadata.Pairs("tenant_id", agentTenantID))
+
+	inputStruct, _ := structpb.NewStruct(input)
+	run, runErr := h.runSvc.CreateRun(agentCtx, &lanternv1.CreateRunRequest{
+		AgentName:   name,
+		Input:       inputStruct,
+		TriggerKind: lanternv1.TriggerKind_TRIGGER_KIND_MANUAL,
+	})
+	if runErr != nil {
+		h.logger().Error("a2a invoke: CreateRun failed",
+			zap.String("agent", name),
+			zap.String("agentTenant", agentTenantID),
+			zap.Error(runErr),
+		)
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"status": "failed",
+			"error":  runErr.Error(),
+		})
+		return
+	}
+
+	runID := run.GetId()
+	h.logger().Info("a2a invoke: run created",
 		zap.String("agent", name),
 		zap.String("agentTenant", agentTenantID),
 		zap.String("callerTenant", claims.TenantID),
+		zap.String("runId", runID),
 	)
 
-	// ponytail: 501 until A2AHandler is wired to RESTHandler.executeRunInline
-	// (requires sharing InFlightRuns + RunService — same work as marketplace_invoke.go).
-	// Returning a fabricated "completed" status here would tell callers the agent ran
-	// when it never did. 501 is honest; upgrade to real execution when wiring is done.
-	writeJSON(w, http.StatusNotImplemented, map[string]string{
-		"error": "A2A invoke is not yet wired to a real execution backend; the agent was not executed",
+	// Kick off inline execution on the agent's tenant. Tracked by inFlightRuns
+	// so SIGTERM drain waits for it to finish.
+	h.rest.inFlightRuns.Add(1)
+	go func() {
+		defer h.rest.inFlightRuns.Done()
+		h.rest.executeRunInline(runID, agentTenantID, name, input)
+	}()
+
+	// Poll up to 60s for the run to complete. The inline executor runs in-process
+	// so for most agents this resolves well within the timeout.
+	deadline := time.Now().Add(60 * time.Second)
+	var status string
+	var outputRaw, errRaw []byte
+	for time.Now().Before(deadline) {
+		// rls-exempt: A2A invoke is intentionally cross-tenant — caller invokes
+		// the agent's OWN tenant's run (scoped by agentTenantID). Same rationale
+		// as marketplace invoke (ADR 0011).
+		_ = h.srv.Pool.QueryRow(ctx, `
+			SELECT status,
+			       COALESCE(output, 'null'::jsonb),
+			       COALESCE(error, 'null'::jsonb)
+			FROM runs WHERE id = $1 AND tenant_id = $2
+		`, runID, agentTenantID).Scan(&status, &outputRaw, &errRaw)
+		if status == "succeeded" || status == "failed" {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	if status != "succeeded" {
+		errMsg := "agent run did not succeed: " + status
+		if len(errRaw) > 0 && string(errRaw) != "null" {
+			errMsg = string(errRaw)
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"runId":  runID,
+			"status": status,
+			"error":  errMsg,
+		})
+		return
+	}
+
+	var output any
+	_ = json.Unmarshal(outputRaw, &output)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"runId":  runID,
+		"status": "succeeded",
+		"output": output,
 	})
 }

@@ -33,6 +33,57 @@ func newA2ATestHandler(t *testing.T, pool *pgxpool.Pool) *A2AHandler {
 	return NewA2AHandler(srv, auth)
 }
 
+// newA2ATestHandlerWithDeps builds an A2AHandler with execution deps wired so
+// InvokeAgent can create and run a real run (will fail without LLM keys, which
+// is expected in CI — what matters is a real run row is created).
+func newA2ATestHandlerWithDeps(t *testing.T, pool *pgxpool.Pool) *A2AHandler {
+	t.Helper()
+	logger, _ := zap.NewDevelopment()
+	srv := &server.Server{Pool: pool, Logger: logger}
+	auth := NewAuthHandler(srv, testJWTSecret)
+	agentSvc := NewAgentService(srv)
+	runSvc := NewRunService(srv)
+	restH := NewRESTHandler(srv, auth, agentSvc, runSvc)
+	h := NewA2AHandler(srv, auth)
+	h.SetExecutionDeps(runSvc, restH)
+	return h
+}
+
+// seedA2AAgentWithVersion inserts an agent + a promoted version so CreateRun
+// can resolve the agent. Used by invoke tests that need real execution.
+func seedA2AAgentWithVersion(t *testing.T, pool *pgxpool.Pool, tenantID, name string, isPublic bool) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO agents (tenant_id, name, description, is_public)
+		VALUES ($1, $2, 'a2a exec test agent', $3)
+		ON CONFLICT (tenant_id, name) DO NOTHING
+	`, tenantID, name, isPublic)
+	if err != nil {
+		t.Fatalf("seed agent %q: %v", name, err)
+	}
+	var agentID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM agents WHERE tenant_id = $1 AND name = $2`, tenantID, name,
+	).Scan(&agentID); err != nil {
+		t.Fatalf("resolve agent %q: %v", name, err)
+	}
+	var versionID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO agent_versions (agent_id, version, digest, bundle_uri, manifest)
+		VALUES ($1, '0.1.0-a2a-test', 'sha256:a2a-test', 's3://test/bundle.tar.gz', '{}'::jsonb)
+		ON CONFLICT (agent_id, version) DO UPDATE SET digest = EXCLUDED.digest
+		RETURNING id
+	`, agentID).Scan(&versionID); err != nil {
+		t.Fatalf("insert version for %q: %v", name, err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE agents SET current_version_id = $1 WHERE id = $2`, versionID, agentID,
+	); err != nil {
+		t.Fatalf("promote version for %q: %v", name, err)
+	}
+}
+
 // seedA2ATenant inserts a fresh tenant and returns its ID. Cleanup removes it
 // (ON DELETE CASCADE drops its agents too).
 func seedA2ATenant(t *testing.T, pool *pgxpool.Pool, slug string) string {
@@ -170,10 +221,10 @@ func TestA2A_PublicAgentVisible(t *testing.T) {
 		t.Errorf("public agent %q missing from directory", pubName)
 	}
 
-	// 3. Cross-tenant invoke (tenant B authed) → 501 (not yet wired; must NOT be
-	//    a fabricated 200 "completed" response when no agent actually ran).
-	if w := a2aInvoke(h, pubName, tokB); w.Code != http.StatusNotImplemented {
-		t.Errorf("cross-tenant invoke of public agent: got %d, want 501; body %s", w.Code, w.Body.String())
+	// 3. Cross-tenant invoke (tenant B authed) → 503 (deps not wired in unit test;
+	//    in production SetExecutionDeps is called at boot so real execution runs).
+	if w := a2aInvoke(h, pubName, tokB); w.Code != http.StatusServiceUnavailable {
+		t.Errorf("cross-tenant invoke of public agent (no deps): got %d, want 503; body %s", w.Code, w.Body.String())
 	}
 }
 
@@ -193,8 +244,44 @@ func TestA2A_OwnerSeesOwnPrivateAgent(t *testing.T) {
 	if w := a2aGetCard(h, privName, tokA); w.Code != http.StatusOK {
 		t.Errorf("owner card of own private agent: got %d, want 200; body %s", w.Code, w.Body.String())
 	}
-	// Invoke returns 501 (not yet wired to real execution), not a fabricated 200.
-	if w := a2aInvoke(h, privName, tokA); w.Code != http.StatusNotImplemented {
-		t.Errorf("owner invoke of own private agent: got %d, want 501; body %s", w.Code, w.Body.String())
+	// Invoke returns 503 (deps not wired in unit-test handler), not a fabricated 200.
+	if w := a2aInvoke(h, privName, tokA); w.Code != http.StatusServiceUnavailable {
+		t.Errorf("owner invoke of own private agent (no deps): got %d, want 503; body %s", w.Code, w.Body.String())
 	}
+}
+
+// TestA2A_Invoke_WithDeps_CreatesRun proves InvokeAgent is wired to real
+// execution: a run row is created in the DB and the response contains a
+// non-empty runId. The run itself will fail (no LLM keys in CI) — that is
+// expected; the key invariant is that it is NOT a 501/503 stub.
+func TestA2A_Invoke_WithDeps_CreatesRun(t *testing.T) {
+	pool := openTestPool(t)
+	h := newA2ATestHandlerWithDeps(t, pool)
+
+	tenantA := seedA2ATenant(t, pool, "a2a-exec-a")
+	tenantB := seedA2ATenant(t, pool, "a2a-exec-b")
+
+	const pubName = "a2a-exec-public"
+	seedA2AAgentWithVersion(t, pool, tenantA, pubName, true) // public, with version
+
+	tokB := mintTestToken(t, tenantB, "user-b-exec", "owner")
+
+	w := a2aInvoke(h, pubName, tokB)
+
+	// Must NOT be 501 (old stub) or 503 (deps missing): both mean no execution.
+	if w.Code == http.StatusNotImplemented || w.Code == http.StatusServiceUnavailable {
+		t.Fatalf("invoke returned %d: execution deps not wired or fell back to stub; body: %s",
+			w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v (body: %s)", err, w.Body.String())
+	}
+	runID, _ := resp["runId"].(string)
+	if runID == "" {
+		t.Errorf("response missing runId (real run not created); status=%d body=%s",
+			w.Code, w.Body.String())
+	}
+	t.Logf("invoke: HTTP %d runId=%s (run fails without LLM — expected in CI)", w.Code, runID)
 }
