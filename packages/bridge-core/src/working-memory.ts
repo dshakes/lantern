@@ -124,8 +124,8 @@ export function workingMemoryBlock(opts: WMOpts = {}): string {
     return m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
   };
   const lines = [
-    '## What just happened (last few hours) — USE THIS TO ANSWER',
-    'These are the owner\'s own recent actions. SYNTHESIZE them with the live signals (location/driving/focus) to answer where/what/who questions. Examples: "where did I go / where am I going" + a driving signal + a recently-saved grocery/shopping list or place → infer the likely destination ("looks like the store — you just saved a grocery list and you\'re driving") and say what you inferred from. NEVER answer "I can\'t tell" or "no destination" when these recent actions support a reasonable guess — make the guess, hedged if needed.',
+    '## What just happened (last few hours) — real signals, timestamped',
+    'These are the owner\'s own recent actions with ages. Use them to answer where/what/who questions ONLY when they actually support an answer, and SAY which signal you reasoned from ("you saved a grocery list 15m ago and you\'re driving — maybe the store, not certain"). If the signals do NOT clearly indicate the answer, report what you DO see and leave the rest open ("you were on YouTube earlier but I don\'t have a fresh location") — do NOT manufacture a destination, activity, or place from thin data. An honest "not sure exactly rn" is the correct answer when the signals don\'t back a confident one; never guess just to avoid saying you don\'t know.',
   ];
   for (const a of acts) lines.push(`- ${KIND_ICON[a.kind] ?? "•"} ${a.summary} (${ago(a.ts)})`);
   return lines.join("\n");

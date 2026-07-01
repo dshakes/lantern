@@ -33,7 +33,7 @@ test("records actions and surfaces them newest-first within the window", () => {
   rmSync(join(path, ".."), { recursive: true, force: true });
 });
 
-test("REGRESSION: block carries recent actions + the SYNTHESIZE mandate (the 'where did I go' fix)", () => {
+test("REGRESSION: block carries recent actions + grounded reasoning rule (reason from signals, never manufacture)", () => {
   const path = tmp();
   const now = 2_000_000_000_000;
   recordAction({ kind: "status_set", summary: "status set: driving", ts: now - 20 * 60_000 }, { path });
@@ -42,9 +42,10 @@ test("REGRESSION: block carries recent actions + the SYNTHESIZE mandate (the 'wh
   assert.match(block, /What just happened/);
   assert.match(block, /driving/);
   assert.match(block, /grocery list from Manasa/);
-  // the load-bearing directive that stops "I can't tell"
-  assert.match(block, /SYNTHESIZE/);
-  assert.match(block, /can't tell/i);
+  // grounded reasoning, NOT a forced guess: must instruct honest-unknown + no fabrication
+  assert.match(block, /do NOT manufacture/i);
+  assert.match(block, /not sure exactly/i);
+  assert.doesNotMatch(block, /make the guess/i); // the old forced-inference mandate is gone
   rmSync(join(path, ".."), { recursive: true, force: true });
 });
 
