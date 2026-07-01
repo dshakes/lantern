@@ -21,6 +21,8 @@ import { PersonalClient, parseRememberCommand } from "@lantern/bridge-core/perso
 import { parseSignals, presenceFromSignals, latestKnownLocation, isInnerCircle, formatOwnerLocationBlock, type SignalPresence } from "@lantern/bridge-core/device-signals";
 import { extractArticleUrl, fetchArticle, buildArticleBlock } from "@lantern/bridge-core/article";
 import { handleSpouseMessage } from "@lantern/bridge-core/spouse-agent";
+import { addReminder as addRecurringReminder } from "@lantern/bridge-core/recurring";
+import { addToList, removeFromList, loadList, renderList } from "@lantern/bridge-core/shared-list";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
 import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
@@ -9247,6 +9249,37 @@ export class WhatsAppSession {
         await this.sendMessage(from, resp.replyToSpouse).catch(() => {});
         await this.sendSelf(`✅ ${spouseName} — ${resp.ownerSummary}`).catch(() => {});
         this.logger.info({ from, done: resp.doneIds.length }, "spouse-agent: closed items she reported done");
+        return true;
+      }
+
+      // RECURRING REMINDER — store it (the iMessage bridge fires it to self-chat).
+      if (resp.type === "recurring") {
+        addRecurringReminder(this.stateDir, {
+          id: `rr-${Date.now()}-${Math.round(performance.now())}`,
+          ...resp.reminder,
+          createdBy: spouseName,
+          createdMs: Date.now(),
+        });
+        await this.sendMessage(from, resp.replyToSpouse).catch(() => {});
+        await this.sendSelf(`⏰ ${spouseName} set a recurring reminder — ${resp.ownerSummary}`).catch(() => {});
+        this.logger.info({ from, title: resp.reminder.title }, "spouse-agent: created recurring reminder");
+        return true;
+      }
+
+      // SHARED LIST — add / remove / show.
+      if (resp.type === "list") {
+        let reply = resp.replyToSpouse;
+        if (resp.op === "add") {
+          const added = addToList(this.stateDir, resp.items, spouseName, Date.now());
+          reply = reply || (added.length ? `added ${added.join(", ")} 👍` : "already on the list");
+        } else if (resp.op === "remove") {
+          const removed = removeFromList(this.stateDir, resp.items);
+          reply = reply || (removed.length ? `took ${removed.join(", ")} off 👍` : "wasn't on the list");
+        } else {
+          reply = renderList(loadList(this.stateDir));
+        }
+        await this.sendMessage(from, reply).catch(() => {});
+        this.logger.info({ from, op: resp.op }, "spouse-agent: shared list op");
         return true;
       }
 

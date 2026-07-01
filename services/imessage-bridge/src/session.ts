@@ -254,6 +254,8 @@ import { isInnerCircle, formatOwnerLocationBlock } from "@lantern/bridge-core/de
 import { readKnownLocation } from "./device-signals-reader.js";
 import { extractArticleUrl, fetchArticle, buildArticleBlock } from "@lantern/bridge-core/article";
 import { handleSpouseMessage } from "@lantern/bridge-core/spouse-agent";
+import { addReminder as addRecurringReminder, loadReminders, persistReminders, ownerLocalClock, isDue, describeCadence } from "@lantern/bridge-core/recurring";
+import { addToList, removeFromList, loadList, renderList } from "@lantern/bridge-core/shared-list";
 import {
   detectTaskCapture,
   captureTaskWithLlm,
@@ -958,6 +960,7 @@ export class IMessageSession {
     this.startNewsProactiveLoop();
     this.startEnergyLoop();
     this.startHealthLoop();
+    this.startRecurringReminderLoop();
     this.startGmailIngest();
     this.startMacUsage();
     this.startIphoneSignals();
@@ -2791,6 +2794,41 @@ export class IMessageSession {
   // ── Concierge edge — task capture + nudge poll + 1-click resolution ──────
 
   /**
+   * Recurring-reminder tick — this bridge (the primary self-chat channel) fires
+   * due recurring reminders to the owner's self-chat, once per local date each.
+   * WhatsApp does NOT run this (avoids a double reminder). Every 60s; respects
+   * kill switch + quiet hours.
+   */
+  private startRecurringReminderLoop(): void {
+    const check = () => {
+      try {
+        if (this.killSwitch) return;
+        const target = this.ownerSelfChatTarget();
+        if (!target) return;
+        if (isQuietHours(new Date(), defaultQuietHours())) return;
+        const all = loadReminders(this.stateDir);
+        if (all.length === 0) return;
+        const now = ownerLocalClock(Date.now(), process.env.LANTERN_OWNER_TIMEZONE);
+        let changed = false;
+        for (const r of all) {
+          if (isDue(r, now)) {
+            void this.send(target, `⏰ reminder: ${r.title}`).catch(() => {});
+            r.lastFiredDate = now.dateStr;
+            changed = true;
+            this.logger.info({ id: r.id, title: r.title, cadence: describeCadence(r) }, "recurring reminder fired");
+          }
+        }
+        if (changed) persistReminders(this.stateDir, all);
+      } catch (err) {
+        this.logger.debug({ err }, "recurring reminder tick failed (no-op)");
+      }
+    };
+    const t = setInterval(check, 60_000);
+    t.unref?.();
+    this.logger.info("recurring reminders enabled (per-minute tick)");
+  }
+
+  /**
    * SPOUSE-NUDGE-AGENT — agentic handling of the inner circle's action items.
    * Plans concrete actions from the message (multi-item aware), EXECUTES them
    * (a todo per item + a calendar event for timed items), replies to her with a
@@ -2837,6 +2875,37 @@ export class IMessageSession {
         await this.send(handle, resp.replyToSpouse).catch(() => {});
         if (owner && owner !== handle) await this.send(owner, `✅ ${spouseName} — ${resp.ownerSummary}`).catch(() => {});
         this.logger.info({ handle, done: resp.doneIds.length }, "spouse-agent: closed items she reported done");
+        return true;
+      }
+
+      // RECURRING REMINDER — store it; the reminder tick fires it to self-chat.
+      if (resp.type === "recurring") {
+        addRecurringReminder(this.stateDir, {
+          id: `rr-${Date.now()}-${Math.round(performance.now())}`,
+          ...resp.reminder,
+          createdBy: spouseName,
+          createdMs: Date.now(),
+        });
+        await this.send(handle, resp.replyToSpouse).catch(() => {});
+        if (owner && owner !== handle) await this.send(owner, `⏰ ${spouseName} set a recurring reminder — ${resp.ownerSummary}`).catch(() => {});
+        this.logger.info({ handle, title: resp.reminder.title }, "spouse-agent: created recurring reminder");
+        return true;
+      }
+
+      // SHARED LIST — add / remove / show.
+      if (resp.type === "list") {
+        let reply = resp.replyToSpouse;
+        if (resp.op === "add") {
+          const added = addToList(this.stateDir, resp.items, spouseName, Date.now());
+          reply = reply || (added.length ? `added ${added.join(", ")} 👍` : "already on the list");
+        } else if (resp.op === "remove") {
+          const removed = removeFromList(this.stateDir, resp.items);
+          reply = reply || (removed.length ? `took ${removed.join(", ")} off 👍` : "wasn't on the list");
+        } else {
+          reply = renderList(loadList(this.stateDir));
+        }
+        await this.send(handle, reply).catch(() => {});
+        this.logger.info({ handle, op: resp.op }, "spouse-agent: shared list op");
         return true;
       }
 
