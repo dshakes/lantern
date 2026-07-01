@@ -253,6 +253,7 @@ import { rephraseNudge } from "@lantern/bridge-core/nudge-voice";
 import { isInnerCircle, formatOwnerLocationBlock } from "@lantern/bridge-core/device-signals";
 import { readKnownLocation } from "./device-signals-reader.js";
 import { extractArticleUrl, fetchArticle, buildArticleBlock } from "@lantern/bridge-core/article";
+import { planSpouseActions } from "@lantern/bridge-core/spouse-agent";
 import {
   detectTaskCapture,
   captureTaskWithLlm,
@@ -726,6 +727,10 @@ export class IMessageSession {
   // ponytail: ships dark; owner flips LANTERN_CONCIERGE=on to enable.
   private static readonly CONCIERGE_ENABLED =
     ["on", "1"].includes((process.env.LANTERN_CONCIERGE ?? "").toLowerCase());
+  // Spouse-nudge-agent: agentic handling of the inner circle's action items
+  // (todos + calendar + owner heads-up). Default ON (owner asked for it).
+  private static readonly SPOUSE_AGENT_ENABLED =
+    !["off", "0", "false"].includes((process.env.LANTERN_SPOUSE_AGENT ?? "on").toLowerCase());
   private static readonly CONCIERGE_INTERVAL_MS = 35 * 60_000; // 35 min poll
   private conciergeTimer: ReturnType<typeof setInterval> | null = null;
   // Pending 1-click nudges: commitment id → nudge entry. Owner's reply within
@@ -2784,6 +2789,71 @@ export class IMessageSession {
   }
 
   // ── Concierge edge — task capture + nudge poll + 1-click resolution ──────
+
+  /**
+   * SPOUSE-NUDGE-AGENT — agentic handling of the inner circle's action items.
+   * Plans concrete actions from the message (multi-item aware), EXECUTES them
+   * (a todo per item + a calendar event for timed items), replies to her with a
+   * real confirmation in the owner's voice, and DMs the owner a heads-up.
+   * Returns true when it handled the message (caller skips the normal reply).
+   * Best-effort; never throws — returns false so the normal reply runs.
+   */
+  private async runSpouseAgent(handle: string, text: string, displayName?: string): Promise<boolean> {
+    try {
+      const ownerName = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0] || "him";
+      const spouseName = displayName || "your wife";
+      const plan = await planSpouseActions(
+        text,
+        { ownerName, spouseName, nowISO: new Date().toISOString() },
+        async (p) => {
+          try {
+            return (await this.agent.respondTo(`${handle}::spouseagent`, p, "", { withTools: false })) || "";
+          } catch {
+            return "";
+          }
+        },
+      );
+      if (!plan) return false; // no action items — let the normal reply handle it
+
+      // EXECUTE the plan: a todo per item + a calendar event for timed ones.
+      const day = new Date().toISOString().slice(0, 10);
+      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "-").slice(0, 40);
+      const done: string[] = [];
+      for (const item of plan.items) {
+        await this.commitments
+          .create({
+            title: item.title,
+            source: "spouse",
+            assignedBy: spouseName,
+            urgency: item.urgency,
+            idempotencyKey: `spouse:${norm(handle)}:${norm(item.title)}:${day}`,
+            sourcePreview: text.slice(0, 200),
+          })
+          .catch(() => null);
+        if (item.whenISO) {
+          const end = new Date(new Date(item.whenISO).getTime() + 30 * 60_000).toISOString();
+          const res = await this.macActions
+            .createCalendarEvent({ title: item.title, start: item.whenISO, end, notes: `From ${spouseName}` })
+            .catch(() => ({ ok: false }));
+          done.push(res.ok ? `📅 ${item.title}` : `📝 ${item.title}`);
+        } else {
+          done.push(`📝 ${item.title}`);
+        }
+      }
+
+      // Confirm to her (the agent's own voice), then heads-up the owner.
+      if (plan.replyToSpouse) await this.send(handle, plan.replyToSpouse).catch(() => {});
+      const owner = this.ownerSelfChatTarget();
+      if (owner && owner !== handle) {
+        await this.send(owner, `📋 ${spouseName} — ${plan.ownerSummary}\n${done.join("\n")}`).catch(() => {});
+      }
+      this.logger.info({ handle, items: plan.items.length }, "spouse-agent: handled action items");
+      return true;
+    } catch (err) {
+      this.logger.warn({ err, handle }, "spouse-agent failed — falling back to normal reply");
+      return false;
+    }
+  }
 
   /**
    * Capture a task-assignment from a VIP/spouse contact into /v1/commitments.
@@ -4971,10 +5041,21 @@ export class IMessageSession {
       this.maybeNotifyUrgent(row.handle, text, isGroup);
     }
 
-    // CONCIERGE CAPTURE: detect task-assignments from VIP/spouse contacts.
-    // Fire-and-forget — never delays the reply pipeline.
-    if (IMessageSession.CONCIERGE_ENABLED && !isGroup && row.handle && !this.killSwitch && text && !this.isOwnerChatRow(row)) {
-      void this.maybeCaptureCommitment(row.handle, text, this.contactNames.get(row.handle));
+    // INNER-CIRCLE AGENTIC HANDLING + CONCIERGE CAPTURE.
+    if (!isGroup && row.handle && !this.killSwitch && text && !this.isOwnerChatRow(row)) {
+      const relForAgent = this.ownerProfileStore.relationshipFor(row.handle, this.contactNames.get(row.handle));
+      if (IMessageSession.SPOUSE_AGENT_ENABLED && isInnerCircle(relForAgent)) {
+        // Spouse-nudge-agent: if the message is an action-item list, plan +
+        // EXECUTE (todos + calendar), confirm to her, and heads-up the owner —
+        // then skip the normal reply (the confirmation IS the reply).
+        if (await this.runSpouseAgent(row.handle, text, this.contactNames.get(row.handle))) {
+          return;
+        }
+        // no action items → fall through to the normal reply below
+      } else if (IMessageSession.CONCIERGE_ENABLED) {
+        // VIP task capture (single-item) — fire-and-forget, never delays reply.
+        void this.maybeCaptureCommitment(row.handle, text, this.contactNames.get(row.handle));
+      }
     }
 
     // PROACTIVE MEMORY. Scan every contact-inbound for high-confidence
