@@ -14,12 +14,14 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"github.com/dshakes/lantern/services/control-plane/internal/grounding"
 	"github.com/dshakes/lantern/services/control-plane/internal/server"
 )
 
@@ -250,16 +252,63 @@ func (h *EvalHandler) RecordRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "suiteId and caseResults required"})
 		return
 	}
-	// Pull the agent_name for the suite.
+	// Pull the agent_name and cases for the suite.
 	var agentName string
+	var suiteCasesJSON []byte
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
-			`SELECT agent_name FROM eval_suites WHERE id = $1 AND tenant_id = $2`,
-			body.SuiteID, tenantID).Scan(&agentName)
+			`SELECT agent_name, cases FROM eval_suites WHERE id = $1 AND tenant_id = $2`,
+			body.SuiteID, tenantID).Scan(&agentName, &suiteCasesJSON)
 	})
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "suite not found"})
 		return
+	}
+	var suiteCases []evalCase
+	_ = json.Unmarshal(suiteCasesJSON, &suiteCases)
+
+	// Server-side groundedness assert (additive — only overrides when
+	// assert["grounded"]==true in the suite case definition). Deterministic:
+	// fails the case when the actual output contains an unbacked completed-
+	// action claim. HasUnbackedClaims always runs regardless of LANTERN_CLAIM_VERIFY
+	// because the test case author has explicitly opted in at the suite level.
+	//
+	// ponytail: deterministic only; no tool-backing context available here
+	// (the client ran the agent, not us), so performed=nil (strictest check).
+	// TODO: add LLM-judge dimension for semantic citation groundedness.
+	if len(suiteCases) > 0 {
+		caseAsserts := make(map[string]map[string]any, len(suiteCases))
+		for _, sc := range suiteCases {
+			if sc.Assert != nil {
+				caseAsserts[sc.Name] = sc.Assert
+			}
+		}
+		for i := range body.CaseResults {
+			cr := &body.CaseResults[i]
+			asserts, ok := caseAsserts[cr.Name]
+			if !ok || cr.Actual == "" {
+				continue
+			}
+			v, hasKey := asserts["grounded"]
+			if !hasKey {
+				continue
+			}
+			wantsGrounded, _ := v.(bool)
+			if !wantsGrounded {
+				continue
+			}
+			if grounding.HasUnbackedClaims(cr.Actual, nil) {
+				h.logger().Warn("eval grounded assert: unbacked claim found",
+					zap.String("case", cr.Name),
+					zap.String("actual", cr.Actual),
+				)
+				// Override client's verdict — server is authoritative for
+				// the grounded assert.
+				cr.Passed = false
+				cr.Error = strings.TrimSpace("grounded assert: output contains unbacked action claim. " + cr.Error)
+				cr.Score = 0
+			}
+		}
 	}
 
 	passed := 0
