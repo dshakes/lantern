@@ -5808,10 +5808,22 @@ export class WhatsAppSession {
     // SESSION SCOPING (parity with iMessage): a person-peek runs under a
     // per-person key so consecutive lookups about different people can't bleed.
     const sessionKey = peekContact ? `${jid}::peek:${peekContact.toLowerCase().replace(/\s+/g, "-")}` : jid;
-    let draft = await this.agent.respondTo(sessionKey, query, systemHint, { withTools: true });
+    // docText: raw doc source (read_personal_file OCR/content) the control-plane
+    // surfaces on the final agent.message — id ground truth for humanizeWithOffer
+    // (below). Owner-only doc path; respondToWithSources exposes it, respondTo
+    // (contact replies) never does. Undefined unless a personal-docs read ran.
+    let docText: string | undefined;
+    let draft: string | null;
+    {
+      const r = await this.agent.respondToWithSources(sessionKey, query, systemHint, { withTools: true });
+      draft = r?.text ?? null;
+      docText = r?.docText;
+    }
     if (!draft) {
       this.logger.warn({ totalMs: Date.now() - startedAt }, "agent returned null — retrying once");
-      draft = await this.agent.respondTo(sessionKey, query, systemHint, { withTools: true });
+      const r = await this.agent.respondToWithSources(sessionKey, query, systemHint, { withTools: true });
+      draft = r?.text ?? null;
+      docText = r?.docText;
     }
 
     this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft, thinkingSent }, "doc query done (whatsapp)");
@@ -5838,12 +5850,11 @@ export class WhatsAppSession {
     }
     // Humanize: friendly dates + guaranteed offer + deterministic
     // execution path on next-turn confirmation.
-    // rawSource (id re-extraction ground truth) is intentionally undefined:
-    // the file/OCR text is read by the agent's tools INSIDE the control-plane
-    // (respondTo withTools returns only the final reply text), so no
-    // authoritative doc source is reachable locally to thread here. Threading an
-    // unrelated local blob would risk saving the WRONG id. See report FIX-1 flag.
-    const { reply: polished0, offer } = humanizeWithOffer(finalText);
+    // rawSource = docText: the RAW read_personal_file OCR/content the
+    // control-plane surfaced this turn (undefined otherwise). humanizeWithOffer
+    // re-extracts document ids (passport/license #) VERBATIM from it instead of
+    // the LLM's reply, which corrupts O/0 and 1/l. (FIX-1 wired.)
+    const { reply: polished0, offer } = humanizeWithOffer(finalText, docText);
     // The mac-action markers (notes/calendar/mail) extracted above execute
     // AFTER this reply is sent (below) and can still FAIL — e.g. a cold
     // Notes.app osascript timing out. So the visible reply must never

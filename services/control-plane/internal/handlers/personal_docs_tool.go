@@ -273,6 +273,35 @@ func personalDocsTools() []map[string]any {
 	}
 }
 
+// docTextCap bounds the raw doc text threaded to the bridge (a few KB is
+// plenty for id/date re-extraction; caps prompt/PII exposure over the wire).
+const docTextCap = 8000
+
+// docTextFromToolResult returns the raw extracted document text from a
+// read_personal_file tool result — the id ground truth the bridge uses to
+// re-extract document numbers VERBATIM (the LLM's reply routinely corrupts
+// O/0, 1/l). Returns "" for any other tool, an errored/started invocation, or
+// a result without string content. Bounded to docTextCap. Never logged (PII —
+// invariant #10).
+func docTextFromToolResult(inv ToolInvocation) string {
+	if inv.Name != personalDocsReadTool || inv.Result == nil {
+		return ""
+	}
+	m, ok := inv.Result.(map[string]any)
+	if !ok {
+		return ""
+	}
+	// Bridge returned ok=false (extraction failed / path blocked) → no content.
+	if okv, present := m["ok"].(bool); present && !okv {
+		return ""
+	}
+	c, _ := m["content"].(string)
+	if len(c) > docTextCap {
+		c = c[:docTextCap]
+	}
+	return c
+}
+
 // isPersonalDocsTool returns true when `name` is one of the built-in
 // bridge-proxied tools (personal-docs, iMessage history, WhatsApp
 // history). Used by dispatchTool to branch before the

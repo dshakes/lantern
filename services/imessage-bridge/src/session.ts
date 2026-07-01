@@ -8428,7 +8428,16 @@ export class IMessageSession {
     // conflation). Each person gets a clean session; non-peek queries keep
     // the main conversational session.
     const sessionKey = peekContact ? `${jid}::peek:${peekContact.toLowerCase().replace(/\s+/g, "-")}` : jid;
-    if (!draft) draft = await this.agent.respondTo(sessionKey, query, systemHint, { withTools: true });
+    // docText: raw doc source (read_personal_file OCR/content) the control-plane
+    // surfaces on the final agent.message — id ground truth for humanizeWithOffer
+    // (below). Owner-only doc path; respondToWithSources exposes it, respondTo
+    // (contact replies) never does. Undefined unless a personal-docs read ran.
+    let docText: string | undefined;
+    if (!draft) {
+      const r = await this.agent.respondToWithSources(sessionKey, query, systemHint, { withTools: true });
+      draft = r?.text ?? null;
+      docText = r?.docText;
+    }
 
     // SILENT AUTO-RETRY on null (timeout, transient failure). The
     // AgentClient already retries once on session-not-active 409; this
@@ -8437,7 +8446,9 @@ export class IMessageSession {
     // raw "couldn't reach the agent" message.
     if (!draft) {
       this.logger.warn({ totalMs: Date.now() - startedAt }, "agent returned null — retrying once");
-      draft = await this.agent.respondTo(sessionKey, query, systemHint, { withTools: true });
+      const r = await this.agent.respondToWithSources(sessionKey, query, systemHint, { withTools: true });
+      draft = r?.text ?? null;
+      docText = r?.docText;
     }
 
     this.logger.info({ totalMs: Date.now() - startedAt, hadDraft: !!draft, thinkingSent }, "doc query done");
@@ -8473,14 +8484,11 @@ export class IMessageSession {
     // returned `offer` lets us deterministically execute the action
     // on the next-turn confirmation — bypasses the LLM's tendency
     // to claim "already done" without emitting the marker.
-    // rawSource (id re-extraction ground truth) is intentionally undefined:
-    // in this flow the file/OCR text is read by the agent's tools INSIDE the
-    // control-plane (respondTo withTools returns only the final reply text), so
-    // no authoritative doc source is available locally to thread here. Threading
-    // an unrelated local blob (systemHint / listings) would risk saving the
-    // WRONG id, so we pass nothing. See report FIX-1 flag — wiring a real
-    // rawSource needs the doc text surfaced locally (control-plane, out of scope).
-    const { reply: polished0, offer } = humanizeWithOffer(finalText);
+    // rawSource = docText: the RAW read_personal_file OCR/content the
+    // control-plane surfaced this turn (undefined otherwise). humanizeWithOffer
+    // re-extracts document ids (passport/license #) VERBATIM from it instead of
+    // the LLM's reply, which corrupts O/0 and 1/l. (FIX-1 wired.)
+    const { reply: polished0, offer } = humanizeWithOffer(finalText, docText);
     // Deterministic fix for "she i'll send you…" → "she'll send you…" when
     // summarizing a contact's messages (prompt instructions don't reliably
     // prevent the first-person echo).

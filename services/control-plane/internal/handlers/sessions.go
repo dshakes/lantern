@@ -459,6 +459,16 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// the chip ordering matches what the user saw via SSE.
 	persisted := []persistedToolCall{}
 
+	// Ground-truth document text captured from read_personal_file results.
+	// Threaded to the bridge on the final agent.message so its humanize pass
+	// re-extracts document ids (passport/license #) VERBATIM from the raw
+	// OCR/file text instead of trusting the LLM's transcription (which
+	// corrupts O/0, 1/l). Owner-only by construction: only the bridge's owner
+	// doc-query path (respondToWithSources) consumes docText; the contact
+	// reply path (respondTo) drops it. Bounded (docTextCap) and NEVER logged
+	// (PII — invariant #10).
+	var docText string
+
 	// Emit per-tool-call events so the UI can render "Used GitHub →
 	// list_prs" chips inline with the conversation. Each invocation fires
 	// twice: once before dispatch (Result==nil) and once after. We also
@@ -496,6 +506,11 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 					persisted[i].Result = s
 					break
 				}
+			}
+			// Capture raw extracted doc text as id ground truth (last read wins —
+			// the model typically reads the single file it answers from).
+			if dt := docTextFromToolResult(inv); dt != "" {
+				docText = dt
 			}
 		default:
 			// Initial fire — Result not yet set. Record as "started".
@@ -569,11 +584,18 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 
 	// Append assistant message (with any persisted tool calls) and publish.
 	h.appendAssistantMessageWithTools(ctx, sessionID, result, persisted)
-	h.publishEvent(sessionID, "agent.message", map[string]string{
+	finalMsg := map[string]string{
 		"content":   result,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"sessionId": sessionID,
-	})
+	}
+	// Optional, additive: raw doc text ground truth for the bridge's id
+	// re-extraction. Absent unless a read_personal_file tool ran this turn, so
+	// old bridges (which ignore unknown keys) see a byte-identical payload.
+	if docText != "" {
+		finalMsg["docText"] = docText
+	}
+	h.publishEvent(sessionID, "agent.message", finalMsg)
 	h.publishEvent(sessionID, "session.status_idle", map[string]string{})
 }
 

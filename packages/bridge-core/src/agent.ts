@@ -36,12 +36,41 @@ export interface AgentClientOptions {
   sessionsFile?: string;
 }
 
+// Result of one agent turn. `docText` is the RAW extracted document text
+// (read_personal_file OCR/content) the control-plane optionally surfaces on the
+// final agent.message — id ground truth for humanizeWithOffer so saved
+// passport/license numbers come from the source, not the LLM's transcription
+// (which corrupts O/0, 1/l). Owner-only: only respondToWithSources exposes it;
+// respondTo drops it so a contact-facing reply can never carry doc text.
+export interface TurnResult {
+  text: string;
+  docText?: string;
+}
+
+// Parse one SSE frame's `data:` JSON into a TurnResult when it is the final
+// agent.message event. Returns null for any other event or malformed JSON.
+// docText is carried through ONLY when the server sent a non-empty string
+// (absent on every non-doc turn → undefined). Exported for unit tests.
+export function parseAgentMessageFrame(dataJson: string): TurnResult | null {
+  try {
+    const evt = JSON.parse(dataJson) as { type?: string; data?: { content?: string; docText?: string } };
+    if (evt.type === "agent.message" && evt.data?.content) {
+      const docText =
+        typeof evt.data.docText === "string" && evt.data.docText.length > 0 ? evt.data.docText : undefined;
+      return { text: evt.data.content, docText };
+    }
+  } catch {
+    /* malformed frame — ignore */
+  }
+  return null;
+}
+
 export class AgentClient {
   private agentName: string;
   private logger: Logger;
   private sessionsFile?: string;
   private sessions: Map<string, string> = new Map();
-  private inflight: Map<string, Promise<string | null>> = new Map();
+  private inflight: Map<string, Promise<TurnResult | null>> = new Map();
   private cachedStylePrompt: string | undefined = undefined;
   private styleFetchedAt = 0;
   private static readonly STYLE_TTL_MS = 30_000;
@@ -62,12 +91,24 @@ export class AgentClient {
   // already large with OCR context. The bridges' natural-chat path
   // sets this to true so the bot can actually use Gmail when asked.
   async respondTo(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; turnHint?: string }): Promise<string | null> {
+    const r = await this.runQueuedTurn(jid, userText, systemHint, opts);
+    return r ? r.text : null;
+  }
+
+  // Same turn as respondTo, but also returns the raw doc text the control-plane
+  // surfaced (id ground truth for humanizeWithOffer). Owner-only doc-query path.
+  // respondTo stays the string|null contract for every other caller.
+  async respondToWithSources(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; turnHint?: string }): Promise<TurnResult | null> {
+    return this.runQueuedTurn(jid, userText, systemHint, opts);
+  }
+
+  private async runQueuedTurn(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; turnHint?: string }): Promise<TurnResult | null> {
     if (!this.enabled()) return null;
     // readOnlyTools implies the catalog loads (withTools), but the control
     // plane filters it to read-only actions. Used on the contact reply path
     // for logistics inbound so a contact can't drive a connector write.
     const withTools = opts?.withTools === true || opts?.readOnlyTools === true;
-    const prev = this.inflight.get(jid) ?? Promise.resolve<string | null>(null);
+    const prev = this.inflight.get(jid) ?? Promise.resolve<TurnResult | null>(null);
     const next = prev.then(() => this.runTurn(jid, userText, systemHint, withTools, opts?.turnHint, opts?.readOnlyTools === true)).catch((err) => {
       this.logger.error({ err, jid }, "turn errored");
       return null;
@@ -78,7 +119,7 @@ export class AgentClient {
     return reply;
   }
 
-  private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false, turnHint?: string, readOnlyTools = false): Promise<string | null> {
+  private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false, turnHint?: string, readOnlyTools = false): Promise<TurnResult | null> {
     // Up to ONE retry on dead-session errors. A prior turn that got
     // SSE-aborted (timeout, network hiccup) leaves the control-plane
     // session in "ended" state — the next POST then 409s with
@@ -220,7 +261,7 @@ export class AgentClient {
     return data.id;
   }
 
-  private async waitForAgentMessage(sessionId: string, signal: AbortSignal): Promise<string | null> {
+  private async waitForAgentMessage(sessionId: string, signal: AbortSignal): Promise<TurnResult | null> {
     const ctrl = new AbortController();
     signal.addEventListener("abort", () => ctrl.abort(), { once: true });
     const timeoutId = setTimeout(() => ctrl.abort(), SSE_TIMEOUT_MS);
@@ -246,13 +287,11 @@ export class AgentClient {
           buf = buf.slice(sep + 2);
           const dataLine = raw.split("\n").find((l) => l.startsWith("data: "));
           if (!dataLine) continue;
-          try {
-            const evt = JSON.parse(dataLine.slice(6)) as { type?: string; data?: { content?: string } };
-            if (evt.type === "agent.message" && evt.data?.content) {
-              ctrl.abort();
-              return evt.data.content;
-            }
-          } catch {}
+          const parsed = parseAgentMessageFrame(dataLine.slice(6));
+          if (parsed) {
+            ctrl.abort();
+            return parsed;
+          }
         }
       }
     } catch (err) {
