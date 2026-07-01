@@ -45,6 +45,8 @@ const BOT_SELF_PREFIXES: string[] = [
   "✉️ mail draft",
   "👍 no worries",
   "👍 ok",
+  "👍 skipped",           // confirm-before-book: owner declined a held booking
+  "couldn't add it",      // confirm-before-book: createCalendarEvent failed
   "(couldn't attach",
   "(calendar failed",
   "(note failed",
