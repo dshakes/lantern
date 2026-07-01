@@ -49,6 +49,11 @@ interface ClaimPattern {
   // for "I let him know" etc — those are always rewritten in default
   // mode because the bridge can't actually do them mid-thread.
   action: string;
+  // When true, this claim is ALWAYS rewritten (like notify-third-party),
+  // regardless of `performedActions` — the bridge has no truthful path to
+  // complete it mid-thread (placing a call, setting a reminder). Governed by
+  // the same `rewriteNotifyClaims` opt-out as notify.
+  alwaysRewrite?: boolean;
   // Regex with at least one capture group: $1 = the rest of the
   // claim that should become the intent ("sent him an email" →
   // "send him an email").
@@ -141,6 +146,51 @@ const PATTERNS: ClaimPattern[] = [
       (lower ? "i'll book " : "I'll book ") + m[1].trim(),
     description: "booked → will book",
   },
+
+  // "I scheduled ..." (meeting/appointment) — honored when the bridge
+  // actually emitted a [CALENDAR:...] marker this turn.
+  {
+    action: "schedule",
+    re: /\bi\s+(?:just\s+)?(?:already\s+)?(?:'?ve\s+)?scheduled\s+(\S[^.!?]*?)(?=[.!?]|$)/i,
+    rewrite: (m, lower) =>
+      (lower ? "i'll schedule " : "I'll schedule ") + m[1].trim(),
+    description: "scheduled → will schedule",
+  },
+
+  // "I confirmed ..." (RSVP'd, acknowledged with a third party) — honored
+  // when the matching action fired.
+  {
+    action: "confirm",
+    re: /\bi\s+(?:just\s+)?(?:already\s+)?(?:'?ve\s+)?confirmed\s+(\S[^.!?]*?)(?=[.!?]|$)/i,
+    rewrite: (m, lower) =>
+      (lower ? "i'll confirm " : "I'll confirm ") + m[1].trim(),
+    description: "confirmed → will confirm",
+  },
+
+  // "I set a reminder ..." / "I've set a reminder ..." — ALWAYS rewritten:
+  // the bridge can't set a reminder mid-thread, so this is a lie.
+  {
+    action: "set-reminder",
+    alwaysRewrite: true,
+    re: /\bi(?:'ve)?\s+(?:just\s+)?(?:already\s+)?set\s+(?:a\s+|the\s+|up\s+a\s+)?reminder\b\s*((?:to|for|about|on)?\s*[^.!?]*?)?(?=[.!?]|$)/i,
+    rewrite: (m, lower) => {
+      const rest = (m[1] || "").trim();
+      const prefix = lower ? "i'll set a reminder" : "I'll set a reminder";
+      return rest ? `${prefix} ${rest}` : prefix;
+    },
+    description: "set a reminder → will set a reminder",
+  },
+
+  // "I called / phoned / rang him/her/them ..." — ALWAYS rewritten: the
+  // bridge has no path to place a call inside a chat turn.
+  {
+    action: "call",
+    alwaysRewrite: true,
+    re: /\bi(?:'ve)?\s+(?:just\s+)?(?:already\s+)?(?:called|phoned|rang)\s+(him|her|them|you|\w+)([^.!?]*?)(?=[.!?]|$)/i,
+    rewrite: (m, lower) =>
+      (lower ? "i'll call " : "I'll call ") + `${m[1]}${m[2] || ""}`.trim(),
+    description: "called → will call",
+  },
 ];
 
 /**
@@ -162,10 +212,10 @@ export function verifyClaims(text: string, opts: VerifyOptions = {}): VerifyResu
   const rewrites: string[] = [];
 
   for (const pat of PATTERNS) {
-    // Honor genuine completions. The notify-third-party pattern is
-    // special: we rewrite it always (unless caller opts out) since
-    // the bridge has no truthful path to it.
-    if (pat.action === "notify-third-party") {
+    // Honor genuine completions. Always-rewrite patterns (notify-third-party,
+    // calls, reminders) have no truthful mid-thread path, so we rewrite them
+    // regardless of `performedActions` — unless the caller opts out.
+    if (pat.alwaysRewrite || pat.action === "notify-third-party") {
       if (!rewriteNotify) continue;
     } else if (performed.has(pat.action)) {
       continue;

@@ -403,7 +403,9 @@ function focusLabelFor(mode: string | undefined): { line: string; state: Presenc
     case "sleep":
       return { line: "asleep — Sleep Focus active", state: "sleep" };
     case "work":
-      return { line: "in Work Focus — heads-down on engineering", state: "busy" };
+      // Don't invent the specific activity ("engineering") — a Work focus name
+      // says nothing about WHAT the owner is doing. Report only the real state.
+      return { line: "in a Work focus — heads-down", state: "busy" };
     case "personal":
       return { line: "Personal Focus on — limited responsiveness", state: "busy" };
     case "fitness":

@@ -57,6 +57,11 @@ export interface Episode {
   // in the self-chat bucket BUT mentions ["sujith"], so Sujith's
   // next inbound message surfaces it via forMentions("sujith").
   mentions?: string[];
+  // Extraction confidence 0..1 for the outcome. Optional — most episodes are
+  // LLM-extracted with no confidence attached. When absent or low, recall
+  // surfaces the outcome hedged ("[unverified — from an earlier note]") rather
+  // than as hard fact (ground-or-abstain).
+  confidence?: number;
   ts: number; // epoch ms when recorded
 }
 

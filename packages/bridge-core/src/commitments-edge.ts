@@ -190,6 +190,15 @@ export async function captureTaskWithLlm(
 
 // ── detectOwnerCompletion (3rd way to mark a task done) ──────────────────────
 
+/** Result of a natural-language completion report.
+ *  - completion: an unambiguous set of items to mark done, plus an ack.
+ *  - disambiguation: the report plausibly matched >1 open item and the LLM
+ *    couldn't tell which — the bridge should ASK rather than mark the wrong
+ *    one done. `prompt` is the ready-to-send question. */
+export type OwnerCompletionResult =
+  | { doneIds: string[]; ack: string }
+  | { disambiguate: string };
+
 /**
  * The owner told the bot, in his own words, that he finished something —
  * "picked up the groceries", "done with the report", "sorted the plumber". The
@@ -197,12 +206,16 @@ export async function captureTaskWithLlm(
  * ack. Returns null when it isn't a completion report (normal message), so the
  * caller falls through. This is the 3rd completion path (alongside replying
  * "done" to a nudge, and the inner circle reporting an item handled).
+ *
+ * Ground-or-abstain: when the report could plausibly refer to MORE THAN ONE
+ * open item and the match is ambiguous, we do NOT auto-mark (marking the wrong
+ * task done is worse than asking). Instead we return a disambiguation prompt.
  */
 export async function detectOwnerCompletion(
   text: string,
   openItems: Array<{ id: string; title: string }>,
   llmCall?: (prompt: string) => Promise<string>,
-): Promise<{ doneIds: string[]; ack: string } | null> {
+): Promise<OwnerCompletionResult | null> {
   const t = (text || "").replace(/\s+/g, " ").trim();
   if (!t || !llmCall || openItems.length === 0) return null;
   // Cheap pre-filter: a completion report has a past-tense/handled cue.
@@ -213,8 +226,10 @@ export async function detectOwnerCompletion(
   const prompt =
     `The owner is telling his assistant, in his own words, what he has DONE. Match it against his OPEN to-dos ` +
     `and identify which are now complete. Only match a real completion — if he's NOT reporting something finished, return {"done":[]}.\n` +
+    `Put an index in "done" ONLY when it is an UNAMBIGUOUS single match. If his message could refer to MORE THAN ONE open to-do and you can't tell which, ` +
+    `put those candidate indices in "ambiguous" (NOT "done") so he can be asked.\n` +
     `OPEN to-dos:\n${list}\n\n` +
-    `Return STRICT minified JSON: {"done":[<indices>],"ack":"<short casual ack, e.g. 'nice, crossed off groceries'>"}\n` +
+    `Return STRICT minified JSON: {"done":[<indices>],"ambiguous":[<indices>],"ack":"<short casual ack, e.g. 'nice, crossed off groceries'>"}\n` +
     `Message:\n"""${t}"""\nJSON:`;
   let raw: string;
   try {
@@ -224,17 +239,35 @@ export async function detectOwnerCompletion(
   }
   const m = raw && raw.match(/\{[\s\S]*\}/);
   if (!m) return null;
-  let obj: { done?: unknown; ack?: unknown };
+  let obj: { done?: unknown; ambiguous?: unknown; ack?: unknown };
   try {
     obj = JSON.parse(m[0]);
   } catch {
     return null;
   }
-  if (!Array.isArray(obj.done) || obj.done.length === 0) return null;
-  const doneIds = (obj.done as unknown[])
-    .map((i) => (typeof i === "number" && i >= 0 && i < openItems.length ? openItems[i].id : null))
-    .filter((x): x is string => !!x);
-  if (doneIds.length === 0) return null;
+  const toIds = (arr: unknown): string[] =>
+    Array.isArray(arr)
+      ? (arr as unknown[])
+          .map((i) => (typeof i === "number" && i >= 0 && i < openItems.length ? openItems[i].id : null))
+          .filter((x): x is string => !!x)
+      : [];
+  const toTitles = (arr: unknown): string[] =>
+    Array.isArray(arr)
+      ? (arr as unknown[])
+          .map((i) => (typeof i === "number" && i >= 0 && i < openItems.length ? openItems[i].title : null))
+          .filter((x): x is string => !!x)
+      : [];
+
+  const doneIds = toIds(obj.done);
+  // Ambiguous match (and nothing confidently done) → ask, don't guess.
+  if (doneIds.length === 0) {
+    const candidates = [...new Set(toTitles(obj.ambiguous))];
+    if (candidates.length >= 2) {
+      const list2 = candidates.map((c) => `"${c}"`).join(" or ");
+      return { disambiguate: `which one did you finish — ${list2}?` };
+    }
+    return null;
+  }
   const ack = typeof obj.ack === "string" && obj.ack.trim() ? obj.ack.trim() : "done ✓";
   return { doneIds, ack };
 }

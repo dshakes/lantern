@@ -120,6 +120,47 @@ async function fetchPendingDrafts(): Promise<{ count: number; sample?: string }>
   }
 }
 
+export interface CalendarEventItem {
+  summary?: string;
+  start?: { dateTime?: string; date?: string };
+}
+
+/**
+ * Format the next upcoming calendar event as a short line. Pure + testable.
+ *
+ * All-day events (Google returns a date-only `start.date` like "2026-06-30",
+ * with no `dateTime`) have NO time-of-day. Feeding that to Date.parse yields
+ * UTC-midnight, so a negative-offset user gets a bogus "in 60 min" for an event
+ * that's really >23h away. We render date-only events as "· Jun 30 (all day)"
+ * and only compute minutes-from-now for a real `dateTime`.
+ */
+export function formatNextEvent(items: CalendarEventItem[], now: number = Date.now()): string | null {
+  const todayMidnight = new Date(now);
+  todayMidnight.setHours(0, 0, 0, 0);
+  for (const ev of items) {
+    const summary = ev.summary || "untitled";
+    const dateTime = ev.start?.dateTime;
+    const dateOnly = ev.start?.date;
+    if (dateTime) {
+      const ts = Date.parse(dateTime);
+      if (Number.isFinite(ts) && ts > now) {
+        const minutes = Math.round((ts - now) / 60_000);
+        const when = minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.round(minutes / 60)}h` : `${Math.round(minutes / 1440)}d`;
+        return `${summary} in ${when}`;
+      }
+    } else if (dateOnly && /^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
+      // All-day event — render the date, not a fabricated minutes-from-now.
+      const [y, mo, d] = dateOnly.split("-").map((n) => parseInt(n, 10));
+      const evDate = new Date(y, mo - 1, d);
+      if (evDate.getTime() >= todayMidnight.getTime()) {
+        const label = evDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        return `${summary} · ${label} (all day)`;
+      }
+    }
+  }
+  return null;
+}
+
 // Best-effort next-calendar-event peek.
 async function fetchNextEvent(): Promise<string | null> {
   try {
@@ -132,19 +173,8 @@ async function fetchNextEvent(): Promise<string | null> {
       },
     );
     if (!res.ok) return null;
-    const payload = (await res.json()) as { data?: { items?: Array<{ summary?: string; start?: { dateTime?: string; date?: string } }> } };
-    const items = payload.data?.items ?? [];
-    const now = Date.now();
-    for (const ev of items) {
-      const start = ev.start?.dateTime || ev.start?.date || "";
-      const ts = Date.parse(start);
-      if (Number.isFinite(ts) && ts > now) {
-        const minutes = Math.round((ts - now) / 60_000);
-        const when = minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.round(minutes / 60)}h` : `${Math.round(minutes / 1440)}d`;
-        return `${ev.summary || "untitled"} in ${when}`;
-      }
-    }
-    return null;
+    const payload = (await res.json()) as { data?: { items?: CalendarEventItem[] } };
+    return formatNextEvent(payload.data?.items ?? []);
   } catch {
     return null;
   }

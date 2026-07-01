@@ -9304,6 +9304,12 @@ export class WhatsAppSession {
         },
       );
       if (!result) return false;
+      // Ambiguous match → ask instead of marking the wrong task done.
+      if ("disambiguate" in result) {
+        await this.sendMessage(from, result.disambiguate).catch(() => {});
+        this.logger.info({}, "owner-completion ambiguous — asked to disambiguate");
+        return true;
+      }
       for (const id of result.doneIds) await this.commitments.done(id).catch(() => null);
       await this.sendMessage(from, result.ack).catch(() => {});
       this.logger.info({ done: result.doneIds.length }, "owner marked task(s) done via natural language");

@@ -2831,6 +2831,12 @@ export class IMessageSession {
         },
       );
       if (!result) return false;
+      // Ambiguous match → ask instead of marking the wrong task done.
+      if ("disambiguate" in result) {
+        await this.send(handle, result.disambiguate).catch(() => {});
+        this.logger.info({}, "owner-completion ambiguous — asked to disambiguate");
+        return true;
+      }
       for (const id of result.doneIds) await this.commitments.done(id).catch(() => null);
       await this.send(handle, result.ack).catch(() => {});
       this.logger.info({ done: result.doneIds.length }, "owner marked task(s) done via natural language");

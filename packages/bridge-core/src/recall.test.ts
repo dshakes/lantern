@@ -109,6 +109,20 @@ describe("assembleRelevantRecall", () => {
     assert.ok(!(result ?? "").includes("dentist"), "should not surface unrelated dentist item");
   });
 
+  test("episode outcome hedged when confidence absent, plain when confident", () => {
+    const unverified = assembleRelevantRecall("any update on the loan?", {
+      episodes: [ep("loan", "referred to mortgage broker")], // no confidence
+    });
+    assert.ok((unverified ?? "").includes("[unverified — from an earlier note]"), "absent confidence → hedged");
+
+    const confident: RecallSources = {
+      episodes: [{ ...ep("loan", "referred to mortgage broker"), confidence: 0.9 }],
+    };
+    const verified = assembleRelevantRecall("any update on the loan?", confident);
+    assert.ok(!(verified ?? "").includes("[unverified"), "high confidence → not hedged");
+    assert.ok((verified ?? "").includes("mortgage broker"), "outcome still surfaced");
+  });
+
   test("block format: header + bullets", () => {
     const sources: RecallSources = {
       episodes: [ep("loan", "referred to mortgage broker")],
