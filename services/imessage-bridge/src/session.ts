@@ -2433,7 +2433,7 @@ export class IMessageSession {
   // --- actions -----------------------------------------------------------
 
   mute(): void { this.muted = true; this.persist(); this.broadcast({ type: "activity", data: { kind: "bot_off", summary: "Auto-reply paused", timestamp: Date.now() } }); }
-  unmute(): void { this.muted = false; this.persist(); this.broadcast({ type: "activity", data: { kind: "bot_on", summary: "Auto-reply on", timestamp: Date.now() } }); }
+  unmute(): void { this.muted = false; this.pausedUntil.clear(); this.persist(); this.broadcast({ type: "activity", data: { kind: "bot_on", summary: "Auto-reply on", timestamp: Date.now() } }); }
   pauseContact(handle: string): void {
     this.pausedUntil.set(handle, Date.now() + PAUSE_DURATION_MS);
     this.persist();
@@ -4477,10 +4477,27 @@ export class IMessageSession {
       this.recentInbound = this.recentInbound.filter((e) => now - e.ts < IMessageSession.INBOUND_DEDUP_MS);
       const seen = this.recentInbound.find((e) => e.key === key);
       if (seen) {
-        this.logger.info({ rowid: row.rowid, handle: row.handle, textPreview: text.slice(0, 60), priorIsFromMe: seen.isFromMe, thisIsFromMe: row.isFromMe }, "duplicate inbound — skipping (cross-device echo)");
-        return;
+        // Dual-number / cross-device echo: the same (handle,text) arrives twice
+        // when the contact is one of the OWNER's own linked numbers (e.g. a work
+        // line) — once is_from_me=0 (real inbound) and once is_from_me=1 (the
+        // sent-copy synced via Text Message Forwarding). If the fromMe copy was
+        // seen FIRST it may have wrongly set an owner-takeover pause; this real
+        // inbound must undo that and be answered. Genuine owner-takeover (a
+        // fromMe with NO matching inbound) is untouched — its pause stands.
+        if (seen.isFromMe && !row.isFromMe) {
+          if (this.pausedUntil.has(row.handle)) {
+            this.pausedUntil.delete(row.handle);
+            this.persist();
+            this.logger.info({ handle: row.handle }, "cleared takeover pause from a dual-number fromMe echo — answering the real inbound");
+          }
+          // fall through: answer this inbound (do NOT return)
+        } else {
+          this.logger.info({ rowid: row.rowid, handle: row.handle, textPreview: text.slice(0, 60), priorIsFromMe: seen.isFromMe, thisIsFromMe: row.isFromMe }, "duplicate inbound — skipping (cross-device echo)");
+          return;
+        }
+      } else {
+        this.recentInbound.push({ key, ts: now, isFromMe: row.isFromMe });
       }
-      this.recentInbound.push({ key, ts: now, isFromMe: row.isFromMe });
     }
 
     // KILL SWITCH gate. When engaged, the bridge IGNORES every inbound
