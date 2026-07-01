@@ -303,6 +303,7 @@ func main() {
 	// handler needs the run service + inline executor. We wire them
 	// after construction to avoid a circular dependency in the imports.
 	marketplaceHandler.SetExecutionDeps(runSvc, restHandler)
+	a2aHandler.SetExecutionDeps(runSvc, restHandler)
 	mcpHandler := handlers.NewMCPHandler(srv, authHandler)
 	evalHandler := handlers.NewEvalHandler(srv, authHandler)
 	experimentHandler := handlers.NewExperimentHandler(srv, authHandler)

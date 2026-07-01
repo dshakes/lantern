@@ -890,6 +890,26 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	md := metadata.Pairs("tenant_id", tenantID)
 	ctx = metadata.NewIncomingContext(ctx, md)
 
+	// GA safety: this runs in a detached goroutine, so an unrecovered panic
+	// anywhere in run execution would crash the whole control-plane. Recover,
+	// log, and mark the run failed so pollers (a2a/marketplace invoke) don't
+	// hang in "running" waiting on a run that died.
+	defer func() {
+		if r := recover(); r != nil {
+			h.logger().Error("inline run panicked — recovered, server protected",
+				zap.String("run_id", runID), zap.String("agent", agentName), zap.Any("panic", r))
+			failJSON, _ := json.Marshal(map[string]string{"code": "internal_panic", "message": fmt.Sprintf("%v", r)})
+			// rls-exempt: inline executor — runs write keyed by id (authorized run).
+			if _, upErr := h.srv.Pool.Exec(ctx,
+				`UPDATE runs SET status = 'failed', finished_at = now(), error = $2::jsonb WHERE id = $1`,
+				runID, string(failJSON),
+			); upErr != nil {
+				h.logger().Error("inline run panic: failed to mark run failed",
+					zap.String("run_id", runID), zap.Error(upErr))
+			}
+		}
+	}()
+
 	result, resolvedTemplateID, err := h.executeRunInlineSync(ctx, runID, tenantID, agentName, input)
 	if err != nil {
 		// Error already written to runs.error by executeRunInlineSync.
