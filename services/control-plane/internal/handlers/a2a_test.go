@@ -170,9 +170,10 @@ func TestA2A_PublicAgentVisible(t *testing.T) {
 		t.Errorf("public agent %q missing from directory", pubName)
 	}
 
-	// 3. Cross-tenant invoke (tenant B authed) → 200.
-	if w := a2aInvoke(h, pubName, tokB); w.Code != http.StatusOK {
-		t.Errorf("cross-tenant invoke of public agent: got %d, want 200; body %s", w.Code, w.Body.String())
+	// 3. Cross-tenant invoke (tenant B authed) → 501 (not yet wired; must NOT be
+	//    a fabricated 200 "completed" response when no agent actually ran).
+	if w := a2aInvoke(h, pubName, tokB); w.Code != http.StatusNotImplemented {
+		t.Errorf("cross-tenant invoke of public agent: got %d, want 501; body %s", w.Code, w.Body.String())
 	}
 }
 
@@ -192,7 +193,8 @@ func TestA2A_OwnerSeesOwnPrivateAgent(t *testing.T) {
 	if w := a2aGetCard(h, privName, tokA); w.Code != http.StatusOK {
 		t.Errorf("owner card of own private agent: got %d, want 200; body %s", w.Code, w.Body.String())
 	}
-	if w := a2aInvoke(h, privName, tokA); w.Code != http.StatusOK {
-		t.Errorf("owner invoke of own private agent: got %d, want 200; body %s", w.Code, w.Body.String())
+	// Invoke returns 501 (not yet wired to real execution), not a fabricated 200.
+	if w := a2aInvoke(h, privName, tokA); w.Code != http.StatusNotImplemented {
+		t.Errorf("owner invoke of own private agent: got %d, want 501; body %s", w.Code, w.Body.String())
 	}
 }

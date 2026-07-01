@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"go.uber.org/zap"
@@ -101,18 +100,20 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 	var (
 		description *string
 		labelsJSON  []byte
+		version     string
 	)
 	// rls-exempt: public A2A card discovery — intentionally cross-tenant. Serves
 	// anonymous callers (tenantID == "") and is gated by the explicit
 	// `is_public = true OR tenant_id = $2` clause, not by RLS. Running under the
 	// app role would hide other tenants' public agents from discovery.
 	err := h.srv.Pool.QueryRow(ctx, `
-		SELECT description, labels
-		FROM agents
-		WHERE name = $1 AND archived_at IS NULL
-		  AND (is_public = true OR tenant_id = $2)
+		SELECT a.description, a.labels, COALESCE(av.version, '') AS version
+		FROM agents a
+		LEFT JOIN agent_versions av ON av.id = a.current_version_id
+		WHERE a.name = $1 AND a.archived_at IS NULL
+		  AND (a.is_public = true OR a.tenant_id = $2)
 		LIMIT 1
-	`, name, nullableTenant(tenantID)).Scan(&description, &labelsJSON)
+	`, name, nullableTenant(tenantID)).Scan(&description, &labelsJSON, &version)
 	if err == pgx.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
@@ -128,8 +129,9 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 		desc = *description
 	}
 
-	// Extract capabilities from labels if present.
-	caps := []string{"text-generation"}
+	// Extract capabilities from labels if present. Default to empty — never
+	// fabricate capabilities the agent hasn't declared.
+	caps := []string{}
 	labels := make(map[string]string)
 	if err := json.Unmarshal(labelsJSON, &labels); err == nil {
 		if c, ok := labels["capabilities"]; ok && c != "" {
@@ -146,7 +148,7 @@ func (h *A2AHandler) GetAgentCard(w http.ResponseWriter, r *http.Request) {
 	card := AgentCard{
 		Name:         name,
 		Description:  desc,
-		Version:      "0.1.0",
+		Version:      version, // real version from agent_versions; "" when no version deployed yet
 		Capabilities: caps,
 		Endpoint:     "https://api.lantern.run/v1/agents/" + name + "/a2a/invoke",
 		Auth: AgentCardAuth{
@@ -177,10 +179,11 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 	// gated by `is_public = true`. Must bypass RLS to list every tenant's
 	// public agents in the well-known directory.
 	rows, err := h.srv.Pool.Query(ctx, `
-		SELECT name, description, labels
-		FROM agents
-		WHERE archived_at IS NULL AND is_public = true
-		ORDER BY created_at DESC
+		SELECT a.name, a.description, a.labels, COALESCE(av.version, '') AS version
+		FROM agents a
+		LEFT JOIN agent_versions av ON av.id = a.current_version_id
+		WHERE a.archived_at IS NULL AND a.is_public = true
+		ORDER BY a.created_at DESC
 		LIMIT 100
 	`)
 	if err != nil {
@@ -196,8 +199,9 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 			name        string
 			description *string
 			labelsJSON  []byte
+			version     string
 		)
-		if err := rows.Scan(&name, &description, &labelsJSON); err != nil {
+		if err := rows.Scan(&name, &description, &labelsJSON, &version); err != nil {
 			h.logger().Error("scan agent row for directory failed", zap.Error(err))
 			continue
 		}
@@ -207,7 +211,8 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 			desc = *description
 		}
 
-		caps := []string{"text-generation"}
+		// Default to empty — never fabricate capabilities the agent hasn't declared.
+		caps := []string{}
 		labels := make(map[string]string)
 		if err := json.Unmarshal(labelsJSON, &labels); err == nil {
 			if c, ok := labels["capabilities"]; ok && c != "" {
@@ -221,7 +226,7 @@ func (h *A2AHandler) AgentDirectory(w http.ResponseWriter, r *http.Request) {
 		cards = append(cards, AgentCard{
 			Name:         name,
 			Description:  desc,
-			Version:      "0.1.0",
+			Version:      version, // real version from agent_versions; "" when none deployed
 			Capabilities: caps,
 			Endpoint:     "https://api.lantern.run/v1/agents/" + name + "/a2a/invoke",
 			Auth: AgentCardAuth{
@@ -298,20 +303,17 @@ func (h *A2AHandler) InvokeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger().Info("a2a invoke",
+	h.logger().Info("a2a invoke (not yet wired to real execution)",
 		zap.String("agent", name),
 		zap.String("agentTenant", agentTenantID),
 		zap.String("callerTenant", claims.TenantID),
 	)
 
-	// In the spike, we return a simulated A2A response. In production, this
-	// would create a real run via the workflow engine and return the result.
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id":        "a2a_" + agentID[:8] + "_" + time.Now().Format("20060102150405"),
-		"agentName": name,
-		"status":    "completed",
-		"result":    "A2A invocation received. In production this would execute the agent and return results.",
-		"input":     body,
-		"createdAt": time.Now().UTC(),
+	// ponytail: 501 until A2AHandler is wired to RESTHandler.executeRunInline
+	// (requires sharing InFlightRuns + RunService — same work as marketplace_invoke.go).
+	// Returning a fabricated "completed" status here would tell callers the agent ran
+	// when it never did. 501 is honest; upgrade to real execution when wiring is done.
+	writeJSON(w, http.StatusNotImplemented, map[string]string{
+		"error": "A2A invoke is not yet wired to a real execution backend; the agent was not executed",
 	})
 }
