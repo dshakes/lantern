@@ -1755,7 +1755,7 @@ export function detectWhereaboutsLeak(draft: string): string | null {
 // owner (the bot said "almost home" while he was at the office). Caught ONLY
 // when the turn had NO truthful location to back the claim.
 const SELF_LOCATION_CLAIM_RE =
-  /\b(almost\s+(?:home|there)|on\s+(?:my|the)\s+way(?:\s+(?:home|back|there))?|omw|heading\s+(?:home|back\s+home|over\s+there)|just\s+(?:left|got\s+home)|(?:i'?m|im)\s+(?:home|here|outside|almost\s+\w+)|reached\s+(?:home|there|office)|pulling\s+(?:up|in)|be\s+there\s+(?:soon|in\s+\d)|\d+\s*(?:min|mins|minute|minutes)\s*(?:away|out)|right\s+outside|outside\s+(?:now|your))\b/i;
+  /\b(almost\s+(?:home|there)|on\s+(?:my|the)\s+way(?:\s+(?:home|back|there))?|omw|heading\s+(?:home|back\s+home|over\s+there|back)|just\s+(?:left|got\s+home)|(?:i'?m|im)\s+(?:home|here|outside|out\b|still\s+out|almost\s+\w+)|still\s+out\b|out\s+and\s+about|reached\s+(?:home|there|office)|pulling\s+(?:up|in)|be\s+there\s+(?:soon|in\s+\d)|\d+\s*(?:min|mins|minute|minutes)\s*(?:away|out)|right\s+outside|outside\s+(?:now|your)|when\s+i'?m\s+close|when\s+i\s+get\s+(?:close|back|there))\b/i;
 
 /**
  * Detect a placeless self-location assertion in a contact-facing draft. Returns

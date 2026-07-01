@@ -442,26 +442,50 @@ export function isInnerCircle(relationship?: string | null): boolean {
  * this only for the allowed contact; `truthfulLocationKnown` should be set to
  * `known != null` on the bot-tell context.
  */
+/**
+ * Ground-truth block about the owner's whereabouts, injected into EVERY 1:1
+ * reply so the model never invents a location. Three cases:
+ *   - canShare + known signal → the real place, share it plainly.
+ *   - canShare + no signal    → honest "I don't know", never guess.
+ *   - !canShare               → do not disclose; deflect, never fabricate.
+ * `canShare` is true only for inner-circle contacts with disclosure allowed.
+ */
 export function formatOwnerLocationBlock(
   known: KnownLocation | null,
   ownerName: string,
   contactLabel: string,
+  canShare: boolean,
 ): string {
-  if (!known) {
+  const NO_FABRICATE =
+    `NEVER invent a location or movement status — not "still out", "out", "on my way", "omw", ` +
+    `"almost home", "heading back", "reached", "ping you when i'm close", or any made-up whereabouts. ` +
+    `Fabricating where ${ownerName} is is the single worst failure; an honest "not sure" is always better.`;
+  if (canShare && known) {
+    const where = known.inTransit ? "on the road (driving)" : `at ${known.place}`;
+    const age = known.ageMin <= 1 ? "just now" : `${known.ageMin} min ago`;
     return (
-      `## ${ownerName}'s location right now\n` +
-      `You do NOT have a recent location signal — you genuinely don't know where ${ownerName} is. ` +
-      `If ${contactLabel} asks "where are you", say so honestly and warmly (e.g. "not sure exactly rn, ping you when i'm headed back"). ` +
-      `NEVER guess "almost home" / "on my way" / a specific place.`
+      `## ${ownerName}'s current location — TRUE, and you MAY share it plainly with ${contactLabel}\n` +
+      `Latest phone signal (${age}): ${ownerName} is ${where}.\n` +
+      `If ${contactLabel} asks "where are you", answer truthfully from this fact in ${ownerName}'s casual voice — one short line. ` +
+      `Do NOT round or soften it into a different place. Only say "on my way"/"heading back" if the signal actually shows transit. ` +
+      `Beyond this real signal, ${NO_FABRICATE}`
     );
   }
-  const where = known.inTransit ? "on the road (driving)" : `at ${known.place}`;
-  const age = known.ageMin <= 1 ? "just now" : `${known.ageMin} min ago`;
+  if (canShare && !known) {
+    return (
+      `## ${ownerName}'s location right now — UNKNOWN\n` +
+      `You have NO recent location signal — you genuinely don't know where ${ownerName} is. ` +
+      `If ${contactLabel} asks "where are you", say so honestly and warmly (e.g. "not sure exactly rn, ping you in a bit"). ` +
+      NO_FABRICATE
+    );
+  }
+  // Not an inner-circle contact (or disclosure denied): never share whereabouts.
   return (
-    `## ${ownerName}'s current location — TRUE, and you MAY share it plainly with ${contactLabel} (full privilege)\n` +
-    `Latest phone signal (${age}): ${ownerName} is ${where}.\n` +
-    `Answer her "where are you" truthfully and naturally from this fact, in ${ownerName}'s casual voice — one short line. ` +
-    `Do NOT round or soften it into a different place; if he's ${where}, say that. Only say "almost home"/"heading back" if the signal actually shows transit.`
+    `## ${ownerName}'s location — do NOT disclose to ${contactLabel}\n` +
+    `You do NOT share ${ownerName}'s whereabouts with this contact. If they ask "where are you", ` +
+    `deflect warmly WITHOUT naming a place or a movement, and keep it short ` +
+    `(e.g. "caught up with a few things — what's up?"). ` +
+    NO_FABRICATE
   );
 }
 

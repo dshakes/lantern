@@ -448,11 +448,19 @@ test("isInnerCircle: spouse + kids + siblings + family true; acquaintances false
     assert.equal(isInnerCircle(r as string), false, String(r));
 });
 
-test("formatOwnerLocationBlock: facts when known, honest-unknown when null (never a canned lie)", () => {
-  const known = formatOwnerLocationBlock({ place: "the office", inTransit: false, ageMin: 12 }, "Shekhar", "Manasa");
+test("formatOwnerLocationBlock: truth when shareable+known; honest-unknown when shareable+null; deflect when not shareable — never fabricate in any case", () => {
+  // inner-circle + fresh signal → share the real place
+  const known = formatOwnerLocationBlock({ place: "the office", inTransit: false, ageMin: 12 }, "Shekhar", "Manasa", true);
   assert.match(known, /at the office/);
   assert.match(known, /TRUE/);
-  const unknown = formatOwnerLocationBlock(null, "Shekhar", "Manasa");
-  assert.match(unknown, /do NOT/i);
-  assert.match(unknown, /NEVER guess/i);
+  assert.match(known, /NEVER invent/i);
+  // inner-circle but no signal → honest "unknown", never guess
+  const unknown = formatOwnerLocationBlock(null, "Shekhar", "Manasa", true);
+  assert.match(unknown, /UNKNOWN/);
+  assert.match(unknown, /NEVER invent/i);
+  // non-inner-circle → do not disclose, never fabricate (this is the work-number case)
+  const deflect = formatOwnerLocationBlock({ place: "home", inTransit: false, ageMin: 3 }, "Shekhar", "a coworker", false);
+  assert.match(deflect, /do NOT disclose/i);
+  assert.doesNotMatch(deflect, /at home/); // must not leak the place
+  assert.match(deflect, /NEVER invent/i);
 });

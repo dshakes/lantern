@@ -5785,22 +5785,19 @@ export class IMessageSession {
     // "hard" (frontier tier) so contact replies get the best model — set
     // LANTERN_REPLY_MODEL_TIER=balanced to trade quality for cost.
     const replyTier = process.env.LANTERN_REPLY_MODEL_TIER || "hard";
-    // INNER-CIRCLE TRUTHFUL LOCATION (spouse / siblings + family): inject the
-    // owner's REAL location from signals as ground truth the LLM reasons over —
-    // so "where r u" gets the truth, not a fabricated "almost home". For everyone
-    // else nothing is injected and the fabrication net stays armed.
+    // OWNER LOCATION GROUND-TRUTH — injected for EVERY 1:1 reply so the LLM can
+    // never INVENT the owner's whereabouts. Inner circle (spouse/siblings/family)
+    // may hear the real place from signals; everyone else gets a hard
+    // deflect-and-never-fabricate rule. Either way the model has the truth (or an
+    // explicit "unknown"), so it reasons instead of guessing "still out".
     let truthfulLocationKnown = false;
-    if (
-      !isGroup &&
-      isInnerCircle(relationship) &&
-      !denyLoc &&
-      (process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() !== "off"
-    ) {
+    if (!isGroup && (process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() !== "off") {
       try {
-        const known = readKnownLocation(this.logger);
+        const canShare = isInnerCircle(relationship) && !denyLoc;
+        const known = canShare ? readKnownLocation(this.logger) : null;
         const label = this.contactNames.get(row.handle) || "them";
-        systemHint += "\n\n" + formatOwnerLocationBlock(known, ownerName, label);
-        truthfulLocationKnown = known != null;
+        systemHint += "\n\n" + formatOwnerLocationBlock(known, ownerName, label, canShare);
+        truthfulLocationKnown = canShare && known != null;
       } catch { /* fail-closed: no block, net stays armed */ }
     }
     // AGENTIC ARTICLE READING: if the contact shared a link, FETCH + READ it so
