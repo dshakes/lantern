@@ -114,6 +114,25 @@ const PATTERNS: ClaimPattern[] = [
     description: "emailed → will email",
   },
 
+  // "sending you the invoice" / "here's the photo" / "I'll attach the receipt"
+  // — the bridge has no path to attach/share media to a contact mid-thread,
+  // so these are always rewritten to honest intent.
+  {
+    action: "attach-media",
+    re: /\b(?:i'?m\s+)?(?:sending|attaching|sharing)\s+(?:you|him|her|them)?\s*((?:the|a|an|that|this)?\s*(?:photo|pic|picture|image|screenshot|doc|document|file|receipt|invoice|pdf|link)\b[^.!?]*?)(?=[.!?]|$)/i,
+    rewrite: (m, lower) =>
+      (lower ? "i'll get " : "I'll get ") + m[1].trim() + " over to you",
+    description: "sending media → will get it to you",
+  },
+  // "here's the receipt/photo" (present-tense delivery that didn't happen)
+  {
+    action: "attach-media",
+    re: /\bhere'?s\s+(the\s+(?:photo|pic|picture|screenshot|doc|document|file|receipt|invoice|pdf)\b[^.!?]*?)(?=[.!?]|$)/i,
+    rewrite: (m, lower) =>
+      (lower ? "i'll send " : "I'll send ") + m[1].trim() + " over",
+    description: "here's media → will send",
+  },
+
   // "I made the reservation" / "I booked ..."
   {
     action: "booking",
