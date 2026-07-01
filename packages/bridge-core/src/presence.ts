@@ -224,9 +224,16 @@ export class PresenceTracker {
     if (override) {
       const iphoneTs = opts.iphoneTs ?? 0;
       const overrideSetAt = override.setAt ?? 0;
-      // Drop place-based overrides when the phone has fresher data: the owner moved.
-      // Non-place overrides (meeting, sleep) are intentional and stick.
-      const stalePlace = override.place && opts.iphone && iphoneTs > overrideSetAt;
+      // Drop place-based overrides when the phone has fresher data (owner moved)
+      // OR when the place is simply OLD (>60 min): a stale "at the temple" from
+      // hours ago must not be served as current whereabouts just because no
+      // iPhone signal arrived to refute it. Non-place overrides (meeting, sleep)
+      // are intentional and stick.
+      const PLACE_MAX_AGE_MS = 60 * 60_000;
+      const stalePlace =
+        !!override.place &&
+        ((!!opts.iphone && iphoneTs > overrideSetAt) ||
+          (overrideSetAt > 0 && now - overrideSetAt > PLACE_MAX_AGE_MS));
       if (!stalePlace) {
         // Staleness: show "as of Nm ago" when the override is ≥5 min old.
         const ageMins = overrideSetAt > 0 ? Math.round((now - overrideSetAt) / 60_000) : -1;
@@ -336,10 +343,13 @@ export class PresenceTracker {
       }
     }
 
-    // 4. Default: free.
+    // 4. Default: NO signal → UNKNOWN, not "free". Asserting "he's free"
+    //    with zero basis is a fabrication (the contact is told he's available
+    //    when we have no idea). Empty line → the persona prompt omits the block
+    //    (the documented default), so the reply never claims an availability.
     const snap: PresenceSnapshot = {
-      line: "free / available",
-      state: "free",
+      line: "",
+      state: "unknown",
       capturedAt: now,
       source: "default",
       away: false,

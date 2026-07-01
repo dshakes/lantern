@@ -7130,7 +7130,7 @@ export class IMessageSession {
         let presLine = "";
         try { presLine = (await this.presence.current({ iphoneTs: this.latestSignalTs() }))?.line || ""; } catch { /* best-effort */ }
         const synthHint = [
-          `You are ${ownerName}'s personal agent in his self-chat. Answer his question by SYNTHESIZING the facts below — infer the likely place/activity and SAY what you inferred it from (1-2 short lines, hedge if unsure). Do NOT say "I can't tell" or "no destination" when these support a reasonable guess.`,
+          `You are ${ownerName}'s personal agent in his self-chat. Answer from the real signals below — reason over them and SAY which signal you inferred from (1-2 short lines, hedge if unsure). If the signals genuinely don't support an answer, say what you DO see and that you're not sure of the rest — do NOT manufacture a place/activity from thin data. An honest "not sure exactly rn" beats a confident wrong guess.`,
           presLine ? `Live signal: ${presLine}` : "",
           wmBlock,
         ].filter(Boolean).join("\n\n");
@@ -8293,7 +8293,7 @@ export class IMessageSession {
     const wmBlock = workingMemoryBlock();
     if (wmBlock && isSelfContextQuery(query)) {
       const synthHint = [
-        `You are ${ownerName}'s personal agent in his self-chat. Answer his question by SYNTHESIZING the facts below — infer the likely place/activity and SAY what you inferred it from (1-2 short lines, hedge if unsure). Do NOT say "I can't tell" or "no destination" when these support a reasonable guess.`,
+        `You are ${ownerName}'s personal agent in his self-chat. Answer from the real signals below — reason over them and SAY which signal you inferred from (1-2 short lines, hedge if unsure). If the signals genuinely don't support an answer, say what you DO see and that you're not sure of the rest — do NOT manufacture a place/activity from thin data. An honest "not sure exactly rn" beats a confident wrong guess.`,
         iphoneLine ? `Live signal: ${iphoneLine}` : "",
         wmBlock,
       ].filter(Boolean).join("\n\n");
