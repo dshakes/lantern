@@ -20,6 +20,7 @@ import type {
   Capability,
   Message,
   ToolDef,
+  GroundedResult,
 } from "../types.js";
 import type { Runtime } from "./runtime.js";
 import type {
@@ -60,6 +61,23 @@ function toGrpcToolDef(td: ToolDef): GrpcToolDef {
 }
 
 /** Build the messages array for a CompleteRequest. */
+/**
+ * Build the ground-or-abstain system contract for a grounded completion.
+ * Pure + exported so it's unit-testable without a runtime sidecar.
+ */
+export function buildGroundingContract(sources: string[]): string {
+  const list = sources.length
+    ? sources.map((s, i) => `[${i + 1}] ${s}`).join("\n")
+    : "(none provided)";
+  return (
+    "GROUND-OR-ABSTAIN: Assert ONLY what the SOURCES below support. " +
+    "If the answer is not in the sources, say you don't know or state it as intent — never as fact. " +
+    "Never invent names, numbers, dates, statuses, or completed actions. Cite the source you used.\n\n" +
+    "SOURCES:\n" +
+    list
+  );
+}
+
 function buildMessages(opts: LlmOptions): GrpcMessage[] {
   if (opts.messages) {
     return opts.messages.map(toGrpcMessage);
@@ -145,6 +163,30 @@ export class RuntimeLlmClient implements LlmClient {
         );
       }
     });
+  }
+
+  /**
+   * Complete under a ground-or-abstain contract. The model is instructed to
+   * assert only what the supplied `sources` support and to say it doesn't know
+   * (or state intent) rather than fabricate. Returns the reply plus the sources
+   * it was grounded against. The platform's server-side action guard still runs
+   * on top; this adds the citation contract at the agent's own boundary.
+   */
+  async completeGrounded(
+    opts: LlmOptions & { sources: string[] },
+  ): Promise<GroundedResult> {
+    const { sources = [], prompt, messages, ...rest } = opts;
+    const contract = buildGroundingContract(sources);
+    const base: Message[] = messages
+      ? [...messages]
+      : prompt
+        ? [{ role: "user", content: prompt }]
+        : [];
+    const text = await this.complete({
+      ...rest,
+      messages: [{ role: "system", content: contract }, ...base],
+    });
+    return { text, sources, grounded: sources.length > 0 };
   }
 
   /**

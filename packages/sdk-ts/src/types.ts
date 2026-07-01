@@ -132,8 +132,23 @@ export interface AgentContext {
   context: ContextManager;
 }
 
+/** Result of a grounded completion — the reply plus the sources it was told to
+ *  ground on. `grounded` is true when sources were supplied (the model was held
+ *  to the ground-or-abstain contract); false means it ran as a plain completion. */
+export interface GroundedResult {
+  text: string;
+  grounded: boolean;
+  sources: string[];
+}
+
 export interface LlmClient {
   complete(opts: LlmOptions): Promise<string>;
+  /** Complete under a ground-or-abstain contract: the model may assert only what
+   *  the supplied `sources` support, and must say it doesn't know (or state
+   *  intent) rather than invent facts/numbers/dates/actions. The platform's
+   *  server-side action guard still applies on top; this adds the citation
+   *  contract at the agent's own boundary. */
+  completeGrounded(opts: LlmOptions & { sources: string[] }): Promise<GroundedResult>;
   json<T>(opts: LlmJsonOptions<T>): Promise<T>;
   stream(opts: LlmStreamOptions): AsyncIterable<string>;
   embed(texts: string[], capability?: Capability): Promise<number[][]>;
