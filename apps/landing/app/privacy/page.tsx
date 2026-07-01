@@ -109,6 +109,17 @@ export default function PrivacyPage() {
               </li>
             </ul>
             <p className="mt-3">
+              <strong>
+                We do not share mobile information (your mobile phone number or
+                SMS opt-in/consent) with any third parties or affiliates for
+                marketing or promotional purposes.
+              </strong>{" "}
+              No mobile information is sold, rented, or shared for marketing. The
+              only sharing is with the messaging provider and carriers to deliver
+              a message, and the AI provider to generate a reply, as described
+              above.
+            </p>
+            <p className="mt-3">
               We may disclose information if required by law or to protect the
               rights, safety, and security of users and the public.
             </p>
