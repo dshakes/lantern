@@ -98,6 +98,25 @@ export class IMessageSender {
     return { ok: false, reason: lastErr.slice(0, 300) };
   }
 
+  // Send `text` to `to` via the SMS service — which routes through macOS
+  // Text Message Forwarding, delivering from the owner's REAL number and
+  // landing in-thread. Used for non-iMessage (RCS/SMS-only) contacts, where a
+  // forced-iMessage send just shows "Not Delivered". Requires Text Message
+  // Forwarding to be enabled (iPhone → Settings → Messages → Text Message
+  // Forwarding) so an SMS service exists; otherwise the send errors cleanly.
+  async sendSMS(to: string, text: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if (!to || !text) return { ok: false, reason: "to + text required" };
+    const aplStr = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    const script = `tell application "Messages"
+      set targetService to 1st service whose service type = SMS
+      set targetBuddy to buddy ${aplStr(to)} of targetService
+      send ${aplStr(text)} to targetBuddy
+    end tell`;
+    const res = await this.runOsascript(script);
+    if (res.ok) return { ok: true };
+    return { ok: false, reason: res.reason.slice(0, 300) };
+  }
+
   // Send a FILE attachment to `to` via Messages.app. AppleScript's
   // Messages dictionary supports `send <file alias>` for attachments
   // — the file must already exist on disk and be FULLY MATERIALIZED
