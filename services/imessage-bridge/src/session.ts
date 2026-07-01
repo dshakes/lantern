@@ -4007,12 +4007,18 @@ export class IMessageSession {
         return { ok: true };
       }
     }
-    // RCS/SMS PRE-ROUTING: if this contact's most recent message shows iMessage
-    // didn't work for them (they're on RCS/SMS, or the last iMessage came back
-    // error!=0 "Not Delivered"), skip the doomed iMessage attempt and deliver
-    // via Twilio directly. "Not Delivered" is async, so the contact's recent
-    // chat.db send-status is the only reliable pre-send signal.
-    if (this.smsConfigured() && this.isPhoneish(to) && !isBotSelfMessage(text)) {
+    // RCS/SMS PRE-ROUTING: skip a doomed iMessage for a known-non-iMessage
+    // contact and deliver via Twilio directly. OPT-IN (LANTERN_SMS_PREROUTE=on)
+    // and OFF by default: it only helps once Twilio can actually deliver (A2P
+    // 10DLC registered, or an RCS sender attached). While unregistered, Twilio
+    // returns 30034 (carrier-filtered) and pre-routing would silently swallow
+    // the reply instead of letting iMessage try + show its status in-thread.
+    if (
+      ["on", "1", "true"].includes((process.env.LANTERN_SMS_PREROUTE ?? "").toLowerCase()) &&
+      this.smsConfigured() &&
+      this.isPhoneish(to) &&
+      !isBotSelfMessage(text)
+    ) {
       const st = this.db.recentSendStatus(to);
       const imsgFailing = !!st && (st.service.toLowerCase() !== "imessage" || st.error !== 0);
       if (imsgFailing && (await this.trySmsFallback(to, text))) {
