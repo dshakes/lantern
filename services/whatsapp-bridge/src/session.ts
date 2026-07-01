@@ -7983,24 +7983,21 @@ export class WhatsAppSession {
     // In groups, annotate the user message so the agent knows it's in a group
     // and who sent it — otherwise the prompt has no way to tell 1-on-1 from
     // group context, and no way to reference the speaker by name.
-    // INNER-CIRCLE TRUTHFUL LOCATION (spouse / siblings + family): inject the
-    // owner's REAL location from signals as ground truth — so "where r u" gets
-    // the truth, not a fabricated "almost home". Others get nothing + the net.
+    // OWNER LOCATION GROUND-TRUTH — injected for EVERY 1:1 reply so the LLM can
+    // never INVENT the owner's whereabouts. Inner circle may hear the real place;
+    // everyone else gets a hard deflect-and-never-fabricate rule. Either way the
+    // model has the truth (or explicit "unknown") — it reasons, never guesses.
     let truthfulLocationKnown = false;
-    if (
-      !opts.isGroup &&
-      isInnerCircle(relationship) &&
-      !denyLoc &&
-      (process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() !== "off"
-    ) {
+    if (!opts.isGroup && (process.env.LANTERN_IPHONE_SIGNALS || "on").toLowerCase() !== "off") {
       try {
+        const canShare = isInnerCircle(relationship) && !denyLoc;
         const f = join(homedir(), ".lantern", "device-signals.jsonl");
-        const known = existsSync(f)
+        const known = canShare && existsSync(f)
           ? latestKnownLocation(parseSignals(readFileSync(f, "utf8").split("\n").filter(Boolean).slice(-500)))
           : null;
         const label = (opts.senderName ?? this.contactNames.get(from)) || "them";
-        systemHint += "\n\n" + formatOwnerLocationBlock(known, ownerName, label);
-        truthfulLocationKnown = known != null;
+        systemHint += "\n\n" + formatOwnerLocationBlock(known, ownerName, label, canShare);
+        truthfulLocationKnown = canShare && known != null;
       } catch { /* fail-closed: no block, net stays armed */ }
     }
     // AGENTIC ARTICLE READING: fetch + read a shared link so the reply grounds
