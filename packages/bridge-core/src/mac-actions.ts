@@ -751,3 +751,29 @@ export function extractActionMarkers(text: string): ExtractedActions {
   }
   return { cleanedText: cleaned.replace(/\n{3,}/g, "\n\n").trim(), calendarEvents, notes, mailDrafts, calls, status };
 }
+
+/**
+ * Guard before BOOKING a [CALENDAR:...] marker (validate at the side-effect
+ * boundary; the parser stays pure). The LLM writes the datetime itself, so a
+ * garbage or PAST datetime must never be booked verbatim — that's how a
+ * scheduling negotiation ends up booking "Thu 9am" from a phone-hours string.
+ * Rejects unparseable / past / implausibly-far / inverted-range events.
+ * ponytail: valid+future only — cross-checking the datetime against the exact
+ * free slot the bot offered during a live negotiation is the stronger
+ * follow-up (needs the offered-slots state threaded to the booking site).
+ */
+export function validateCalendarEvent(
+  ev: CalendarEventSpec,
+  nowMs: number = Date.now(),
+): { ok: true } | { ok: false; reason: string } {
+  const startMs = Date.parse(ev.start);
+  if (Number.isNaN(startMs)) return { ok: false, reason: "unparseable start datetime" };
+  // 5-min grace so "now" / just-passed rounding doesn't reject a valid book.
+  if (startMs < nowMs - 5 * 60_000) return { ok: false, reason: "start is in the past" };
+  if (startMs > nowMs + 2 * 365 * 24 * 3600_000) return { ok: false, reason: "start is implausibly far out" };
+  if (ev.end) {
+    const endMs = Date.parse(ev.end);
+    if (!Number.isNaN(endMs) && endMs <= startMs) return { ok: false, reason: "end is not after start" };
+  }
+  return { ok: true };
+}

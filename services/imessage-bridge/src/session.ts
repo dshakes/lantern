@@ -196,8 +196,9 @@ export function shouldFireDropNotice(
   state.set(dedupeKey, now);
   return true;
 }
-import { MacActions, extractActionMarkers, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
+import { MacActions, extractActionMarkers, validateCalendarEvent, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, type PendingOffer } from "@lantern/bridge-core/humanize";
+import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
 import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
@@ -491,6 +492,13 @@ export class IMessageSession {
   // without ever emitting a [CALENDAR:...] marker.
   private pendingOffers: Map<string, PendingOffer> = new Map();
   private static readonly OFFER_TTL_MS = 10 * 60_000; // 10 min
+
+  // Typed owner-facts (spouse/anniversary/kids/naming-rules) extracted from a
+  // self-chat teach, HELD pending the owner's "yes" before they're written as
+  // authoritative "never contradict" ground truth. Without this a mis-extracted
+  // "spouse: Mae" would be injected into every reply, unretractable. Keyed by
+  // owner handle; one-shot; expires with OFFER_TTL_MS.
+  private pendingFactConfirm: Map<string, { facts: AutoFact[]; issuedAt: number }> = new Map();
 
   // OVERNIGHT REPLAY QUEUE. When a 1:1 contact (non-owner) messages
   // during quiet hours (01:00-06:00) the auto-reply is suppressed.
@@ -5111,6 +5119,25 @@ export class IMessageSession {
       // "👍") still skips the heavy path. No more regex pre-deciders
       // guessing the user's intent from query shape — the model is the
       // router now.
+      //
+      // FIRST: a bare "yes"/"no" here answers a pending "save 'spouse: Mae'?"
+      // DM — apply or drop the held typed facts. Must run BEFORE the trivial-
+      // chatter branch (which would otherwise route "yes" to natural chat).
+      const pf = this.pendingFactConfirm.get(row.handle);
+      if (pf && Date.now() - pf.issuedAt < IMessageSession.OFFER_TTL_MS) {
+        if (looksLikeConfirmation(text)) {
+          this.pendingFactConfirm.delete(row.handle);
+          void this.applyPendingOwnerFacts(row.handle, pf.facts).catch((err) =>
+            this.logger.error({ err }, "applyPendingOwnerFacts threw"));
+          return;
+        }
+        if (looksLikeRejection(text)) {
+          this.pendingFactConfirm.delete(row.handle);
+          void this.send(row.handle, "ok, skipped — didn't save that").catch(() => {});
+          return;
+        }
+        // Neither yes nor no → fall through; the pending confirm expires on TTL.
+      }
       if (isTrivialChatter(text)) {
         const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
         if (nlEnabled && !this.muted) {
@@ -7845,6 +7872,11 @@ export class IMessageSession {
       );
       const result = await maybeAutoUpdateOwnerProfile(text, {
         profilePath: this.ownerProfileStore.getPath(),
+        // Typed facts (spouse/anniversary/kids/naming-rules) are injected as
+        // authoritative "never contradict" truth — CONFIRM before writing so a
+        // mis-extracted fact never lands unretractable. Generic notes still
+        // write async below.
+        deferTypedFacts: true,
         llmCall: async (prompt: string) => {
           // Cheapest model — the extractor is structured + tight.
           // Reuse the agent's completion path so we benefit from
@@ -7867,6 +7899,13 @@ export class IMessageSession {
         // (next reply's factsBlock/addressRuleFor reflects them).
         invalidate: () => this.ownerProfileStore.invalidate(),
       });
+      // Typed facts await the owner's explicit "yes" (see the intercept in the
+      // self-chat dispatch). Hold them + DM the confirm.
+      if (result.pendingTyped && result.pendingTyped.length > 0) {
+        const { formatFactConfirmPrompt } = await import("@lantern/bridge-core/owner-profile-auto-update");
+        this.pendingFactConfirm.set(jid, { facts: result.pendingTyped, issuedAt: Date.now() });
+        await this.send(jid, formatFactConfirmPrompt(result.pendingTyped));
+      }
       // Always try the mention-tagged episode capture, even when the
       // profile-update extractor said "nothing durable here". A
       // current-state ping like "Sujith reached home" is rarely a
@@ -7883,6 +7922,23 @@ export class IMessageSession {
       }
     } catch (err) {
       this.logger.warn({ err }, "owner-profile auto-update failed");
+    }
+  }
+
+  // Persist typed owner-facts the owner just confirmed with a "yes". Writes to
+  // ## Facts / ## Relationships and acks what landed.
+  private async applyPendingOwnerFacts(jid: string, facts: AutoFact[]): Promise<void> {
+    try {
+      const { applyConfirmedOwnerFacts, formatAck } = await import("@lantern/bridge-core/owner-profile-auto-update");
+      const res = await applyConfirmedOwnerFacts(facts, {
+        profilePath: this.ownerProfileStore.getPath(),
+        invalidate: () => this.ownerProfileStore.invalidate(),
+        logger: this.logger as any,
+      });
+      const ack = res.appended.length > 0 ? formatAck(res.appended) : "";
+      await this.send(jid, ack || "saved 👍");
+    } catch (err) {
+      this.logger.warn({ err }, "applyConfirmedOwnerFacts failed");
     }
   }
 
@@ -8235,6 +8291,7 @@ export class IMessageSession {
       "  • The 'device calendar' block is the SOURCE OF TRUTH for appointments (iCloud + Google + subscribed). If it's present, trust it over Gmail/files for 'do I have an appointment'.",
       "  • You may ONLY say something doesn't exist ('no haircut appointment', 'no such event') if the AUTHORITATIVE source for it is present below AND empty of it. If that source is ABSENT (not loaded this turn), do NOT deny it exists — say you'll check / ask a clarifying question. A confident 'not found' when you didn't actually look is the worst failure.",
       "  • Prefer 'I don't see one on your calendar for the next N days' (scoped to what you checked) over a blanket 'you have no appointment'.",
+      "  • Document field VALUES (passport #, license #, policy/account #, expiry date, dollar amount, any ID) MUST be quoted VERBATIM from the personal-docs file content shown below. If that specific field is NOT present in the extracted text (scanned/image-only file, or it didn't OCR), say 'i couldn't read that field off the file — want me to pull up the file itself?' and offer the attachment. NEVER compute, complete, guess, or recall a document field value from memory or the filename — a fabricated number/date is a critical failure.",
       "",
       "# Voice",
       "  • Direct answer first, lowercase, conversational. 1-3 short lines max.",
@@ -8422,6 +8479,13 @@ export class IMessageSession {
     // line back to the chat (or a clear error). All wrapped in
     // try/catch so one failing action doesn't kill the others.
     for (const ev of calendarEvents) {
+      const valid = validateCalendarEvent(ev);
+      if (!valid.ok) {
+        // The LLM wrote this datetime itself — never book a past/garbage marker.
+        this.logger.warn({ title: ev.title, start: ev.start, reason: valid.reason }, "calendar marker rejected — not booked");
+        await this.send(jid, `(couldn't book "${ev.title}" — ${valid.reason})`);
+        continue;
+      }
       try {
         const res = await this.macActions.createCalendarEvent(ev);
         await this.send(jid, res.ok ? `📅 added to calendar — ${res.detail || ev.title}` : `(calendar failed: ${res.reason})`);

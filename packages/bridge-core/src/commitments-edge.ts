@@ -44,6 +44,10 @@ export interface Commitment {
 export interface TaskCaptureCtx {
   /** Relationship label of the sender (e.g. "wife", "brother"). Informational. */
   relationship?: string;
+  /** Sender display name or handle — threaded into CapturedTask.from so callers
+   *  can pass it as CommitmentsClient.create({ assignedBy }) for attribution.
+   *  Without this a captured task renders as an unattributed owner commitment. */
+  from?: string;
 }
 
 /** Detected task from an inbound message. */
@@ -52,6 +56,13 @@ export interface CapturedTask {
   title: string;
   /** Best-effort urgency derived from the text. */
   urgency?: "now" | "soon" | "normal" | "fyi";
+  /** Who assigned this task — the sender's display name or handle, copied
+   *  from TaskCaptureCtx.from. Callers MUST map this to
+   *  CommitmentsClient.create({ assignedBy }) so renderNudge shows
+   *  "(from Verizon SMS)" and the owner can judge origin.
+   *  Tasks captured without a from are still accepted for backward
+   *  compat but SHOULD be attributed before persisting. */
+  from?: string;
 }
 
 // Second-person imperative triggers. Each regex captures the task body in group 1.
@@ -106,7 +117,7 @@ export function detectTaskCapture(text: string, _ctx?: TaskCaptureCtx): Captured
         ? "soon"
         : "normal";
 
-    return { title, urgency };
+    return { title, urgency, from: _ctx?.from };
   }
   return null;
 }
@@ -141,8 +152,13 @@ export async function captureTaskWithLlm(
     /\b(you|u|ya|your|pls|plz|please|mind|chance|appreciate|need|want|pick|grab|drop|bring|remember|forget|get|send|call|text|book|order|return|handle|sort)\b/i;
   if (!requestCue.test(t) && !t.includes("?")) return null;
 
+  const senderLabel = ctx?.from
+    ? ctx.from + (ctx.relationship ? ` (${ctx.relationship})` : "")
+    : ctx?.relationship
+      ? `the owner's ${ctx.relationship}`
+      : "a known contact";
   const prompt =
-    `A message arrived from ${ctx?.relationship ? `the owner's ${ctx.relationship}` : "a known contact"}. ` +
+    `A message arrived from ${senderLabel}. ` +
     `Decide if it ASKS THE OWNER to do a concrete task/errand/to-do (something the owner should DO). ` +
     `A polite request phrased as a question still counts ("mind picking up X?", "any chance you could grab Y?", "would you call Z?"). ` +
     `An INFORMATIONAL question ("do you think…?", "what time…?"), an FYI, banter, or a plan with no action assigned is NOT a task. ` +
@@ -169,7 +185,7 @@ export async function captureTaskWithLlm(
   if (title.length < 5 || title.length > 150) return null;
   const urgency: CapturedTask["urgency"] =
     obj.urgency === "now" || obj.urgency === "soon" || obj.urgency === "normal" ? obj.urgency : "normal";
-  return { title, urgency };
+  return { title, urgency, from: ctx?.from };
 }
 
 // ── detectOwnerCompletion (3rd way to mark a task done) ──────────────────────

@@ -11,7 +11,11 @@ import { strict as assert } from "node:assert";
 import { writeFileSync, readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { maybeAutoUpdateOwnerProfile } from "./owner-profile-auto-update.ts";
+import {
+  maybeAutoUpdateOwnerProfile,
+  applyConfirmedOwnerFacts,
+  formatFactConfirmPrompt,
+} from "./owner-profile-auto-update.ts";
 import { parseProfile } from "./owner-profile.ts";
 
 function tmpProfile(content: string): string {
@@ -129,6 +133,61 @@ test("invalidate callback fires after a successful write", async () => {
     }),
   });
   assert.equal(invalidated, true);
+});
+
+test("deferTypedFacts: typed fact is NOT written, returns pendingTyped instead", async () => {
+  const path = tmpProfile(`# Owner profile\n\n## About me\nfounder.\n`);
+  const res = await maybeAutoUpdateOwnerProfile("remember my wife is Mae", {
+    profilePath: path,
+    deferTypedFacts: true,
+    llmCall: stubLLM({
+      facts: [{ category: "owner-fact", line: "spouse Mae", fact: { key: "spouse", value: "Mae" } }],
+    }),
+  });
+  // Nothing authoritative written yet.
+  assert.equal(res.appended.length, 0);
+  assert.equal(res.pendingTyped?.length, 1);
+  const parsed = parseProfile(readFileSync(path, "utf8"));
+  assert.equal(parsed.facts?.spouse, undefined, "must not persist before confirm");
+  // The confirm DM names the fact.
+  assert.ok(formatFactConfirmPrompt(res.pendingTyped!).includes("spouse: Mae"));
+});
+
+test("deferTypedFacts: generic facts still write; typed still deferred", async () => {
+  const path = tmpProfile(`# Owner profile\n\n## About me\nfounder.\n`);
+  const res = await maybeAutoUpdateOwnerProfile("Raju moved to Poolville MD and my wife is Mae", {
+    profilePath: path,
+    deferTypedFacts: true,
+    llmCall: stubLLM({
+      facts: [
+        { category: "location", line: "Raju lives in Poolville, MD" },
+        { category: "owner-fact", line: "spouse Mae", fact: { key: "spouse", value: "Mae" } },
+      ],
+    }),
+  });
+  assert.equal(res.pendingTyped?.length, 1);
+  const text = readFileSync(path, "utf8");
+  assert.ok(text.includes("Raju lives in Poolville, MD"), "generic writes immediately");
+  assert.ok(!parseProfile(text).facts?.spouse, "typed fact deferred");
+});
+
+test("applyConfirmedOwnerFacts: persists the pending fact on a yes", async () => {
+  const path = tmpProfile(`# Owner profile\n\n## About me\nfounder.\n`);
+  const res = await maybeAutoUpdateOwnerProfile("remember my wife is Mae", {
+    profilePath: path,
+    deferTypedFacts: true,
+    llmCall: stubLLM({
+      facts: [{ category: "owner-fact", line: "spouse Mae", fact: { key: "spouse", value: "Mae" } }],
+    }),
+  });
+  let invalidated = false;
+  const applied = await applyConfirmedOwnerFacts(res.pendingTyped!, {
+    profilePath: path,
+    invalidate: () => { invalidated = true; },
+  });
+  assert.equal(applied.appended.length, 1);
+  assert.equal(invalidated, true);
+  assert.equal(parseProfile(readFileSync(path, "utf8")).facts?.spouse, "Mae");
 });
 
 test("generic auto-learn still works for non-typed facts", async () => {

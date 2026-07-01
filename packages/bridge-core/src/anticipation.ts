@@ -471,7 +471,7 @@ function phrasePreMeeting(ev: UpcomingEventSignal, mins: number): string {
   const when = mins <= 0 ? "now" : mins === 1 ? "in 1 min" : `in ${mins} min`;
   const title = ev.title.trim();
   const withWho = ev.withContact ? ` with ${ev.withContact.trim()}` : "";
-  return `${title}${withWho} starts ${when} — pulling up the thread`;
+  return `${title}${withWho} starts ${when} — want me to pull up the thread?`;
 }
 
 function phraseDormantVip(dc: DormantContactSignal, days: number): string {

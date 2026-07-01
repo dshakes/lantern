@@ -293,6 +293,12 @@ export interface AutoFact {
 export interface AutoUpdateResult {
   appended: AutoFact[];
   skipped: AutoFact[];
+  // Typed facts (## Facts / ## Relationships) that were NOT written because
+  // `deferTypedFacts` was set — the caller must confirm with the owner before
+  // persisting them (they're injected as authoritative "never contradict"
+  // ground truth, so a wrong one is a critical failure). Apply on a "yes" via
+  // `applyConfirmedOwnerFacts`.
+  pendingTyped?: AutoFact[];
 }
 
 // Cheap regex pre-filter: if the owner's message has none of these
@@ -366,6 +372,11 @@ export interface AutoUpdateOptions {
   // Called once after a successful write.
   invalidate?: () => void;
   logger?: Logger;
+  // When set, typed facts (## Facts / ## Relationships) are NOT written — they
+  // return in `pendingTyped` for the bridge to confirm with the owner before
+  // persisting. Generic free-text auto-learn still writes as usual. This is the
+  // GA guard against auto-writing a WRONG authoritative owner-fact.
+  deferTypedFacts?: boolean;
 }
 
 /**
@@ -498,23 +509,19 @@ export async function maybeAutoUpdateOwnerProfile(
   const skipped: AutoFact[] = [];
 
   // ── Typed routes ──
-  for (const fact of typed) {
-    let next: string | null = null;
-    if (fact.fact) {
-      next = upsertFact(updated, fact.fact.key, fact.fact.value);
-    } else if (fact.contactRule) {
-      next = mergeContactRule(updated, fact.contactRule.contact, {
-        addressAs: fact.contactRule.addressAs,
-        never: fact.contactRule.never,
-      });
-    }
-    if (next === null) {
-      // No change (already present, or contact line not found).
-      skipped.push(fact);
-      continue;
-    }
-    updated = next;
-    appended.push(fact);
+  // Typed facts land in ## Facts / ## Relationships and are injected into
+  // every reply as authoritative "TRUE — never contradict" ground truth. A
+  // WRONG one is a critical failure, so when the caller asks to defer, we do
+  // NOT write them here — they're returned as `pendingTyped` for the bridge to
+  // confirm with the owner ("save 'spouse: Mae'? reply yes") before persisting.
+  const pendingTyped: AutoFact[] = [];
+  if (opts.deferTypedFacts) {
+    pendingTyped.push(...typed);
+  } else {
+    const r = applyTypedFactsToProfile(updated, typed);
+    updated = r.updated;
+    appended.push(...r.appended);
+    skipped.push(...r.skipped);
   }
 
   // ── Generic auto-learn (unchanged dedup + managed-section append) ──
@@ -549,7 +556,8 @@ export async function maybeAutoUpdateOwnerProfile(
   }
 
   if (appended.length === 0 || updated === existing) {
-    return { appended: [], skipped };
+    // Nothing to WRITE, but there may still be typed facts awaiting confirm.
+    return { appended: [], skipped, pendingTyped };
   }
 
   try {
@@ -564,10 +572,96 @@ export async function maybeAutoUpdateOwnerProfile(
     opts.invalidate?.();
   } catch (err) {
     log?.warn({ err, path: opts.profilePath }, "couldn't write profile");
-    return { appended: [], skipped };
+    return { appended: [], skipped, pendingTyped };
   }
 
+  return { appended, skipped, pendingTyped };
+}
+
+/** Apply typed facts (## Facts key/value + ## Relationships contact rules) to a
+ *  profile string. Pure — returns the mutated content + which facts landed vs.
+ *  were no-ops (already present / contact line not found). */
+export function applyTypedFactsToProfile(
+  existing: string,
+  facts: AutoFact[],
+): { updated: string; appended: AutoFact[]; skipped: AutoFact[] } {
+  let updated = existing;
+  const appended: AutoFact[] = [];
+  const skipped: AutoFact[] = [];
+  for (const fact of facts) {
+    let next: string | null = null;
+    if (fact.fact) {
+      next = upsertFact(updated, fact.fact.key, fact.fact.value);
+    } else if (fact.contactRule) {
+      next = mergeContactRule(updated, fact.contactRule.contact, {
+        addressAs: fact.contactRule.addressAs,
+        never: fact.contactRule.never,
+      });
+    }
+    if (next === null) {
+      skipped.push(fact);
+      continue;
+    }
+    updated = next;
+    appended.push(fact);
+  }
+  return { updated, appended, skipped };
+}
+
+/**
+ * Persist typed facts the owner ALREADY confirmed. The bridge extracts typed
+ * facts with `deferTypedFacts`, DMs the owner to confirm, and calls this on a
+ * "yes". Reads + writes the profile 0600, invalidates the cache. Returns which
+ * facts actually landed.
+ */
+export async function applyConfirmedOwnerFacts(
+  facts: AutoFact[],
+  opts: { profilePath: string; invalidate?: () => void; logger?: Logger },
+): Promise<AutoUpdateResult> {
+  const log = opts.logger?.child({ component: "owner-profile-auto-update" });
+  if (facts.length === 0) return { appended: [], skipped: [] };
+  let existing = "";
+  if (existsSync(opts.profilePath)) {
+    try {
+      existing = await readFile(opts.profilePath, "utf8");
+    } catch (err) {
+      log?.warn({ err, path: opts.profilePath }, "couldn't read profile");
+      return { appended: [], skipped: facts };
+    }
+  }
+  const { updated, appended, skipped } = applyTypedFactsToProfile(existing, facts);
+  if (appended.length === 0 || updated === existing) {
+    return { appended: [], skipped };
+  }
+  try {
+    await writeFile(opts.profilePath, updated, { encoding: "utf8", mode: 0o600 });
+    try { await chmod(opts.profilePath, 0o600); } catch { /* best-effort */ }
+    opts.invalidate?.();
+    log?.info({ added: appended.length }, "owner facts confirmed + written");
+  } catch (err) {
+    log?.warn({ err, path: opts.profilePath }, "couldn't write confirmed facts");
+    return { appended: [], skipped };
+  }
   return { appended, skipped };
+}
+
+/**
+ * One-line DM asking the owner to confirm before typed facts are written as
+ * authoritative ground truth. "want me to save 'spouse: Mae'? reply yes".
+ */
+export function formatFactConfirmPrompt(facts: AutoFact[]): string {
+  const items = facts.map((f) => {
+    if (f.fact) return `'${f.fact.key}: ${f.fact.value}'`;
+    if (f.contactRule) {
+      const c = f.contactRule;
+      if (c.addressAs) return `'address ${c.contact} as ${c.addressAs}'`;
+      if (c.never && c.never.length) return `'never call ${c.contact} ${c.never.join("/")}'`;
+      return `'${c.contact}'`;
+    }
+    return `'${f.line}'`;
+  });
+  const list = items.length === 1 ? items[0] : items.join(", ");
+  return `want me to save ${list} to your profile? reply yes`;
 }
 
 /**

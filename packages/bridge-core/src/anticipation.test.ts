@@ -101,6 +101,16 @@ test("pre-meeting fires inside the 15-min window and beats other kinds", () => {
   assert.match(nudges[0].text, /10 min/);
 });
 
+test("pre-meeting nudge asks rather than asserting a completed action", () => {
+  const [n] = computeProactiveNudges({
+    now: NOW,
+    upcomingEvents: [{ title: "Board sync", startAt: NOW + 10 * MIN, eventId: "ev2" }],
+  });
+  // Must be phrased as a question/offer — never "pulling up the thread" (action claim).
+  assert.match(n.text, /want me to/i);
+  assert.doesNotMatch(n.text, /pulling up/i);
+});
+
 test("a meeting already started or beyond the window is dropped", () => {
   const nudges = computeProactiveNudges({
     now: NOW,

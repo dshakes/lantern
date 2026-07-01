@@ -45,6 +45,20 @@ export type SpouseResponse =
 const KINDS = new Set<SpouseItemKind>(["task", "shopping", "appointment", "reminder"]);
 
 /**
+ * Returns true when the message contains a time-of-day or calendar-date token
+ * that can plausibly ground a whenISO from the LLM. Conservative — false
+ * negatives (item becomes a plain todo) are safer than fabricated event times.
+ *
+ * ponytail: "may" excluded to avoid modal-verb false positives ("may I…");
+ * "May" appointments without a specific day/time correctly drop whenISO.
+ */
+function messageHasTemporalToken(text: string): boolean {
+  return /\b(\d{1,2}:\d{2}|\d{1,2}\s*[ap]m|noon|midnight|today|tomorrow|tonight|morning|evening|afternoon|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|june|july|august|september|october|november|december)\b/i.test(
+    text,
+  );
+}
+
+/**
  * Reason about a spouse message against the current open items and return the
  * right agentic response. `nowISO` anchors relative dates. Returns null on plain
  * chat / no LLM / any failure (caller falls back to the normal reply).
@@ -57,7 +71,8 @@ export async function handleSpouseMessage(
   const t = (text || "").replace(/\s+/g, " ").trim();
   if (!t || !llmCall) return null;
 
-  const open = (opts.openItems ?? []).slice(0, 30);
+  // ponytail: 100 is ample for one spouse's open list; split to paged lists if this ever becomes a real ceiling
+  const open = (opts.openItems ?? []).slice(0, 100);
   const openList = open.length
     ? open.map((it, i) => `[${i}] ${it.title}`).join("\n")
     : "(none currently open)";
@@ -70,14 +85,14 @@ export async function handleSpouseMessage(
     `- "actions": she's asking him to DO new one-off things (task/errand/shopping/appointment — may be MULTIPLE). Resolve relative times to ISO.\n` +
     `- "recurring": she wants a REPEATING reminder ("every evening remind him to take meds", "water the plants daily at 9am", "every Mon/Wed remind him to..."). Give cadence + owner-local time.\n` +
     `- "list": she's managing the SHARED LIST — "add milk to the list" (op:add), "take milk off the list" (op:remove), "what's on our list" (op:show). Items are the things.\n` +
-    `- "status": she's ASKING whether something is done / where it stands. Answer TRUTHFULLY from the open list above — if it's still open, say it's on his list (never claim it's done). Reference the real item.\n` +
+    `- "status": she's ASKING whether something is done / where it stands. Set statusIndex to the 0-based index of the open item she means, or -1 if it's not in the list. Code builds the reply — never claim it's done.\n` +
     `- "done": she's telling him an open item is now handled / no longer needed. Identify which open item indices.\n` +
     `- "chat": ordinary conversation, no task. \n\n` +
     `Return STRICT minified JSON, nothing else, ONE of:\n` +
     `{"type":"actions","items":[{"title":"<imperative,no 'you'>","kind":"task|shopping|appointment|reminder","urgency":"now|soon|normal","whenISO":"<ISO if timed>"}],"replyToSpouse":"<warm 1-line confirmation in ${opts.ownerName}'s casual voice>","ownerSummary":"<one line for ${opts.ownerName}>"}\n` +
     `{"type":"recurring","reminder":{"title":"<imperative>","cadence":"daily|weekly","timeHHMM":"<HH:MM 24h owner-local>","days":[<0-6 if weekly>]},"replyToSpouse":"<warm 1-line ack>","ownerSummary":"<one line>"}\n` +
     `{"type":"list","op":"add|remove|show","items":["<item>"],"replyToSpouse":"<warm 1-line ack>"}\n` +
-    `{"type":"status","replyToSpouse":"<truthful 1-line answer from the open list, ${opts.ownerName}'s casual voice>"}\n` +
+    `{"type":"status","statusIndex":<int: 0-based index of the matching open item, or -1 if not found>}\n` +
     `{"type":"done","doneIndices":[<int>],"replyToSpouse":"<warm 1-line ack>","ownerSummary":"<one line for ${opts.ownerName}>"}\n` +
     `{"type":"chat"}\n` +
     `Message:\n"""${t}"""\nJSON:`;
@@ -101,7 +116,13 @@ export async function handleSpouseMessage(
   const ownerSummary = typeof obj.ownerSummary === "string" ? obj.ownerSummary.trim() : "";
 
   if (obj.type === "status") {
-    return reply ? { type: "status", replyToSpouse: reply } : null;
+    // Fix A: answer is deterministic from real open-item state — never pass through LLM free-text
+    // which could fabricate "done" for something still pending.
+    const idx = typeof obj.statusIndex === "number" ? Math.round(obj.statusIndex) : -1;
+    if (idx >= 0 && idx < open.length) {
+      return { type: "status", replyToSpouse: `that's still on his list — ${open[idx].title}` };
+    }
+    return { type: "status", replyToSpouse: "i don't see that on his list, will check with him" };
   }
 
   if (obj.type === "recurring" && obj.reminder && typeof obj.reminder === "object") {
@@ -150,8 +171,12 @@ export async function handleSpouseMessage(
       const kind = KINDS.has(it.kind as SpouseItemKind) ? (it.kind as SpouseItemKind) : "task";
       const urgency =
         it.urgency === "now" || it.urgency === "soon" || it.urgency === "normal" ? it.urgency : "normal";
+      // Fix B: only accept whenISO when the raw message text contains a time/date token;
+      // otherwise the LLM is inventing a time not present in what she said.
       const whenISO =
-        typeof it.whenISO === "string" && !Number.isNaN(Date.parse(it.whenISO)) ? it.whenISO : undefined;
+        typeof it.whenISO === "string" && !Number.isNaN(Date.parse(it.whenISO)) && messageHasTemporalToken(t)
+          ? it.whenISO
+          : undefined;
       items.push({ title, kind, urgency, whenISO });
     }
     if (items.length === 0) return null;

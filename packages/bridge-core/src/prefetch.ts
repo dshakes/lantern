@@ -111,6 +111,30 @@ export function looksLikeAppointmentQuery(text: string): boolean {
   return APPOINTMENT_INTENT_RE.test(text);
 }
 
+const QUERY_STOPWORDS = new Set(["when", "what", "where", "who", "how", "why", "the", "my", "your", "his", "her", "is", "was", "are", "were", "this", "that", "year", "month", "week", "day", "today", "tomorrow", "next", "last", "have", "had", "has", "do", "did", "does", "in", "on", "at", "for", "of", "and", "or", "but", "a", "an"]);
+
+// Generic appointment/booking words that don't distinguish the specific query —
+// only concrete nouns (procedure names, provider types, services) do.
+// ponytail: flat set; extend when new filler patterns surface.
+const APPOINTMENT_FILLER = new Set(["appointment", "appointments", "booking", "bookings", "reservation", "meeting", "meetings", "event", "events", "rsvp", "standup", "sync", "call", "conference", "webinar", "appt", "scheduled", "schedule", "get", "open"]);
+
+/** Salient nouns from the query — concrete distinguishing terms, not generic appointment filler. */
+function extractSalientNouns(query: string): string[] {
+  return query
+    .toLowerCase()
+    .replace(/[?.!,;:]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length >= 4 && !QUERY_STOPWORDS.has(t) && !APPOINTMENT_FILLER.has(t));
+}
+
+/** True if the email's sender or subject contains any salient query noun.
+ *  Generic queries (no salient nouns) match all emails. */
+function emailMatchesSalientNouns(m: GmailMessage, salientNouns: string[]): boolean {
+  if (salientNouns.length === 0) return true;
+  const haystack = `${(m.subject || "").toLowerCase()} ${(m.from || "").toLowerCase()}`;
+  return salientNouns.some((n) => haystack.includes(n));
+}
+
 // Extract search keywords from the query. Lowercases, strips
 // question-style filler, expands medical/travel/work nouns to their
 // known synonyms.
@@ -125,11 +149,10 @@ export function expandKeywords(query: string): string[] {
   // Always include the raw "meaningful" token (the noun the user
   // typed). Heuristic: pick the longest non-stopword token in the
   // query.
-  const stopwords = new Set(["when", "what", "where", "who", "how", "why", "the", "my", "your", "his", "her", "is", "was", "are", "were", "this", "that", "year", "month", "week", "day", "today", "tomorrow", "next", "last", "have", "had", "has", "do", "did", "does", "in", "on", "at", "for", "of", "and", "or", "but", "a", "an"]);
   const tokens = lower
     .replace(/[?.!,;:]/g, " ")
     .split(/\s+/)
-    .filter((t) => t.length >= 4 && !stopwords.has(t));
+    .filter((t) => t.length >= 4 && !QUERY_STOPWORDS.has(t));
   // The longest content word is usually the topic noun. Add it.
   tokens.sort((a, b) => b.length - a.length);
   if (tokens.length > 0) expanded.add(tokens[0]);
@@ -196,13 +219,23 @@ export async function prefetchAppointmentContext(
     return db - da;
   });
   const gmailTop = flatGmail.slice(0, 8);
-  if (gmailTop.length > 0) {
+
+  // Only cite an email as the answer when its sender or subject actually names
+  // the specific procedure/provider the owner asked about — not just any email
+  // that matched the broad appointment category keyword.
+  const salientNouns = extractSalientNouns(query);
+  const relevantGmail = gmailTop.filter((m) => emailMatchesSalientNouns(m, salientNouns));
+  const hasUnrelatedEmails = gmailTop.length > 0 && relevantGmail.length === 0;
+
+  if (relevantGmail.length > 0) {
     sections.push("\n**Gmail (top matches, most recent first):**");
-    for (const m of gmailTop) {
+    for (const m of relevantGmail) {
       const datePart = m.date ? new Date(m.date).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "(undated)";
       sections.push(`  • [${datePart}] FROM: ${truncate(m.from, 60)} | SUBJ: ${truncate(m.subject, 80)}`);
       if (m.snippet) sections.push(`     ${truncate(m.snippet.replace(/\s+/g, " "), 300)}`);
     }
+  } else if (hasUnrelatedEmails) {
+    sections.push("\n**Gmail:** found some appointment emails but none from a relevant provider — want me to open them?");
   } else {
     sections.push("\n**Gmail:** no matches for: " + keywords.join(", "));
   }
