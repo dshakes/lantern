@@ -42,10 +42,33 @@ describe("article", () => {
     assert.equal(await fetchArticle("https://x.com/y", { fetchImpl: errImpl }), null);
   });
 
+  test("fetchArticle: content under 800 chars (paywall/nav stub) returns null", async () => {
+    // 700-char response — above old 200 floor but below new 800 floor
+    const stub = "Subscribe to read this article. Sign in to continue. ".repeat(13); // ~700 chars
+    const fetchImpl = (async () => ({ ok: true, text: async () => stub })) as unknown as typeof fetch;
+    assert.equal(await fetchArticle("https://example.com/paywalled", { fetchImpl }), null);
+  });
+
+  test("fetchArticle: content over 800 chars IS readable", async () => {
+    // ~1100 chars of plain article text — well above the 800-char floor
+    const body = "Speculative decoding dramatically reduces autoregressive LLM latency. ".repeat(16);
+    const fetchImpl = (async () => ({ ok: true, text: async () => body })) as unknown as typeof fetch;
+    const result = await fetchArticle("https://example.com/real-article", { fetchImpl });
+    assert.ok(result !== null, "should be readable");
+    assert.match(result!.text, /speculative decoding/i);
+  });
+
   test("buildArticleBlock: instructs grounding on real content, forbids generic", () => {
     const b = buildArticleBlock({ url: "https://x/p", text: "Speculative decoding at 85% acceptance.", via: "reader" }, "Kel", "Shekhar");
     assert.match(b, /READ it/);
     assert.match(b, /85%/);
     assert.match(b, /NEVER a generic/);
+  });
+
+  test("buildArticleBlock: contains paywall-stub guidance", () => {
+    const b = buildArticleBlock({ url: "https://x/p", text: "Subscribe to read more.", via: "direct" }, "Kel", "Shekhar");
+    assert.match(b, /paywall/i, "should mention paywall");
+    assert.match(b, /couldn't actually read it/i, "should instruct abstain on stub");
+    assert.match(b, /do NOT describe/i, "should forbid title-based fabrication");
   });
 });

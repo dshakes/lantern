@@ -16,6 +16,7 @@ import {
   recordAccept,
   recordIgnore,
   isActionableKind,
+  eventStartIso,
   LIFE_EVENT_SELF_PREFIXES,
   type LifeEventPrefs,
   type LifeEvent,
@@ -320,13 +321,15 @@ describe("owner-model-lite preference downgrade", () => {
 });
 
 describe("LLM fallback (injected hook)", () => {
-  test("ambiguous text consults the LLM and uses its verdict", async () => {
+  test("ambiguous text consults the LLM and uses its kind/urgency verdict", async () => {
     const e = await classifyLifeEvent("re: the thing from earlier", {
       ...opts,
       llmCall: async () => ({ kind: "bill", confidence: 0.7, urgency: "soon", fields: { amount: 50, currency: "USD" } }),
     });
-    assert.equal(e.kind, "bill");
-    assert.equal(e.fields.amount, 50);
+    assert.equal(e.kind, "bill");     // LLM kind accepted
+    assert.equal(e.urgency, "soon"); // LLM urgency accepted
+    // LLM-supplied amount is DISCARDED — raw text has no parseable dollar amount
+    assert.equal(e.fields.amount, undefined);
   });
 
   test("rules-confident text does NOT consult the LLM", async () => {
@@ -347,16 +350,17 @@ describe("LLM fallback (injected hook)", () => {
     assert.ok(["personal", "other"].includes(e.kind));
   });
 
-  test("a bill the regex misses is recovered by the LLM (no longer dropped)", async () => {
+  test("a bill the regex misses is recovered by the LLM (kind accepted; payee from deterministic parser)", async () => {
     // Phrasing with no BILL_RE/$ keyword — rules land on personal/other; the
     // widened gate hands it to the LLM, which recognizes it as a bill.
+    // "Acme" is not in KNOWN_PAYEES, so detectPayee returns undefined — correct.
     const e = await classifyLifeEvent("Your account with us is now past the grace window — kindly clear the outstanding before the 5th.", {
       ...opts,
       llmCall: makeLifeEventLlm(async () =>
         '{"kind":"bill","confidence":0.8,"urgency":"soon","fields":{"payee":"Acme"}}'),
     });
     assert.equal(e.kind, "bill");
-    assert.equal(e.fields.payee, "Acme");
+    assert.equal(e.fields.payee, undefined); // "Acme" not in KNOWN_PAYEES — deterministic parser finds nothing
   });
 });
 
@@ -377,6 +381,88 @@ describe("makeLifeEventLlm (structured adapter)", () => {
   test("non-JSON / throwing completion → null", async () => {
     assert.equal(await makeLifeEventLlm(async () => "no json here")("x"), null);
     assert.equal(await makeLifeEventLlm(async () => { throw new Error("x"); })("x"), null);
+  });
+});
+
+describe("Fix 1 — LLM classifier fields discarded in favor of deterministic parsers", () => {
+  // Ground-or-abstain: only assert field values that the raw text backs.
+  // The LLM supplies kind + urgency; field extraction always uses the parsers.
+  test("LLM hallucinated amount/payee are replaced by text-derived values", async () => {
+    // "GEICO sent me something about $84.20" — rules land on personal/other (no
+    // BILL_RE keyword), so the LLM fallback fires. LLM returns a WRONG amount
+    // and a WRONG payee that don't appear in the raw text; the fix ensures the
+    // output uses the text-derived values instead.
+    const e = await classifyLifeEvent("GEICO sent me something about $84.20", {
+      ...opts,
+      llmCall: async () => ({
+        kind: "bill" as const,
+        confidence: 0.8,
+        urgency: "soon" as const,
+        fields: { amount: 999, payee: "Unknown Corp" }, // hallucinated
+      }),
+    });
+    assert.equal(e.kind, "bill");       // LLM kind accepted
+    assert.equal(e.urgency, "soon");   // LLM urgency accepted
+    assert.equal(e.fields.amount, 84.2);  // from parseAmount on raw text
+    assert.equal(e.fields.payee, "GEICO"); // from detectPayee on raw text
+    // LLM's 999 / "Unknown Corp" must NOT appear
+    assert.notEqual(e.fields.amount, 999);
+    assert.notEqual(e.fields.payee, "Unknown Corp");
+  });
+
+  test("no deterministic match → field stays undefined (never falls back to LLM value)", async () => {
+    // Raw text has no parseable amount or known payee; correct output is empty fields.
+    const e = await classifyLifeEvent("please clear the outstanding balance", {
+      ...opts,
+      llmCall: async () => ({
+        kind: "bill" as const,
+        confidence: 0.75,
+        urgency: "soon" as const,
+        fields: { amount: 250, payee: "UnknownCo" }, // fabricated
+      }),
+    });
+    assert.equal(e.kind, "bill");
+    assert.equal(e.fields.amount, undefined);  // no $ in raw text
+    assert.equal(e.fields.payee, undefined);   // no known payee in raw text
+  });
+});
+
+describe("Fix 2 — resolveTime adjacency: non-adjacent time tokens must not become the booking time", () => {
+  // "call 9am-5pm to confirm your appointment Thursday" must NOT resolve to
+  // Thursday 09:00. The 9am is a business-hours range far from the date token.
+  // Only a time token within the adjacency window of the date is accepted.
+  const appt = (rawText: string): LifeEvent => ({
+    kind: "appointment" as const,
+    confidence: 0.8,
+    urgency: "soon" as const,
+    fields: {},
+    rawText,
+    channel: "iMessage",
+  });
+
+  test("non-adjacent time (business hours before date) → eventStartIso returns undefined", () => {
+    // NOW = 2026-06-25 (Thursday). Next Thursday = 2026-07-02.
+    // "9am" is 36+ chars before the "Thursday" token — outside the look-back window.
+    const iso = eventStartIso(appt("call 9am-5pm to confirm your appointment Thursday"), NOW);
+    assert.equal(iso, undefined, "non-adjacent 9am must not auto-book as Thursday 09:00");
+  });
+
+  test("adjacent time after date (Thursday at 2pm) → resolves correctly to 14:00", () => {
+    const iso = eventStartIso(appt("appointment Thursday at 2pm"), NOW);
+    assert.ok(iso, "should resolve to a concrete datetime");
+    assert.ok(iso!.includes("T14:00:00"), `expected T14:00:00, got ${iso}`);
+    assert.ok(iso!.startsWith("2026-07-02"), `expected next Thursday 2026-07-02, got ${iso}`);
+  });
+
+  test("adjacent time before date (at 2pm Thursday) → resolves correctly to 14:00", () => {
+    const iso = eventStartIso(appt("your visit at 2pm Thursday"), NOW);
+    assert.ok(iso, "should resolve — time is within look-back window of the date");
+    assert.ok(iso!.includes("T14:00:00"), `expected T14:00:00, got ${iso}`);
+  });
+
+  test("no time at all → eventStartIso returns undefined (not just wrong time)", () => {
+    const iso = eventStartIso(appt("appointment Thursday"), NOW);
+    assert.equal(iso, undefined, "date with no adjacent time → too vague to auto-book");
   });
 });
 

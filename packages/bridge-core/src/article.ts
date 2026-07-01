@@ -79,8 +79,8 @@ export async function fetchArticle(
   let text = raw ? stripHtml(raw) : "";
   let via: ArticleContent["via"] = "direct";
 
-  // 2) reader-proxy fallback when the direct text is thin (paywall / JS render)
-  if (text.length < 600) {
+  // 2) reader-proxy fallback when the direct text is thin (paywall / JS render / nav stub)
+  if (text.length < 800) {
     const reader = await get("https://r.jina.ai/" + url);
     const readerText = reader ? reader.replace(/\s+/g, " ").trim() : "";
     if (readerText.length > text.length) {
@@ -89,7 +89,7 @@ export async function fetchArticle(
     }
   }
 
-  if (text.length < 200) return null; // nothing real to ground on
+  if (text.length < 800) return null; // nothing real to ground on — likely paywall/nav stub
   return { url, text: text.slice(0, maxChars), via };
 }
 
@@ -98,6 +98,7 @@ export function buildArticleBlock(content: ArticleContent, contactLabel: string,
   return (
     `## Article ${contactLabel} just shared — you READ it; respond to its ACTUAL content, not the title\n` +
     `URL: ${content.url}\n"""\n${content.text}\n"""\n` +
+    `If the text above looks like a login wall, paywall, subscribe prompt, or nav-only stub — say you couldn't actually read it; do NOT describe or summarize it from the title or URL.\n` +
     `Reply as ${ownerName} would after actually reading it: ONE specific, substantive line — a real takeaway, an agree/push-back, or a sharp question about what it actually says. ` +
     `NEVER a generic "thanks, good one / will check it out / will let the team look" — that proves you didn't read it.`
   );

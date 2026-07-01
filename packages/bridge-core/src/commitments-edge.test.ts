@@ -156,6 +156,29 @@ describe("captureTaskWithLlm (regex fast-path + LLM recovery)", () => {
     assert.match(r!.title, /dry cleaning/);
   });
 
+  test("from is carried through the regex fast-path", async () => {
+    const r = await captureTaskWithLlm(
+      "don't forget to pick up the dry cleaning",
+      { from: "Sam" },
+      async () => "{}",
+    );
+    assert.equal(r?.from, "Sam");
+  });
+
+  test("from is carried through the LLM path", async () => {
+    const r = await captureTaskWithLlm(
+      "would be great if you grabbed milk on the way back",
+      { relationship: "wife", from: "Sam" },
+      async () => '{"isTask":true,"title":"grab milk on the way back","urgency":"normal"}',
+    );
+    assert.equal(r?.from, "Sam");
+  });
+
+  test("from is undefined when not provided", async () => {
+    const r = await captureTaskWithLlm("don't forget to pick up the dry cleaning", undefined);
+    assert.equal(r?.from, undefined);
+  });
+
   test("a task phrased outside the templates is recovered by the LLM", async () => {
     const r = await captureTaskWithLlm("would be great if you grabbed milk on the way back", { relationship: "wife" }, async () =>
       '{"isTask":true,"title":"grab milk on the way back","urgency":"normal"}');
@@ -182,6 +205,24 @@ describe("captureTaskWithLlm (regex fast-path + LLM recovery)", () => {
   test("malformed LLM output → null, never throws", async () => {
     assert.equal(await captureTaskWithLlm("it would help if you looked at the report", undefined, async () => "not json"), null);
     assert.equal(await captureTaskWithLlm("it would help if you looked at the report", undefined, async () => { throw new Error("x"); }), null);
+  });
+});
+
+describe("detectTaskCapture — source attribution", () => {
+  test("carries from when provided in ctx", () => {
+    const r = detectTaskCapture("Can you please call the doctor?", { from: "Mom" });
+    assert.ok(r !== null);
+    assert.equal(r?.from, "Mom");
+  });
+
+  test("from is undefined when ctx has no from", () => {
+    const r = detectTaskCapture("Can you please call the doctor?", { relationship: "mother" });
+    assert.equal(r?.from, undefined);
+  });
+
+  test("from is undefined when no ctx", () => {
+    const r = detectTaskCapture("Can you please call the doctor?");
+    assert.equal(r?.from, undefined);
   });
 });
 

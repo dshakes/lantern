@@ -252,6 +252,64 @@ function extractPhone(text: string): string | undefined {
   return m ? m[0].trim() : undefined;
 }
 
+// Re-derive scalar fields from raw text using ONLY deterministic parsers —
+// never the LLM's own field values, which can be hallucinated. Called by the
+// LLM fallback path in classifyLifeEvent after accepting the LLM's kind/urgency.
+function rederiveFields(kind: LifeEventKind, raw: string, now: Date): LifeEventFields {
+  const t = (raw || "").replace(/\s+/g, " ").trim();
+  const fields: LifeEventFields = {};
+  switch (kind) {
+    case "bill": {
+      const money = parseAmount(t);
+      if (money.amount !== undefined) { fields.amount = money.amount; fields.currency = money.currency; }
+      const dueDate = parseDueDate(t, now);
+      if (dueDate) fields.dueDate = dueDate;
+      const payee = detectPayee(t);
+      if (payee) fields.payee = payee;
+      break;
+    }
+    case "delivery": {
+      const carrier = detectCarrier(t);
+      if (carrier) fields.carrier = carrier;
+      const eta = parseEta(t);
+      if (eta) fields.eta = eta;
+      const trackMatch = t.match(TRACKING_RE);
+      if (trackMatch) fields.trackingNo = trackMatch[1];
+      const merchant = firstWordBrand(t);
+      if (merchant) fields.merchant = merchant;
+      break;
+    }
+    case "fraud_alert": {
+      const money = parseAmount(t);
+      if (money.amount !== undefined) { fields.amount = money.amount; fields.currency = money.currency; }
+      const payee = detectPayee(t);
+      if (payee) { fields.payee = payee; fields.merchant = payee; }
+      break;
+    }
+    case "otp": {
+      const code = extractCode(t);
+      if (code) fields.code = code;
+      break;
+    }
+    case "appointment":
+    case "travel": {
+      const eta = parseEta(t);
+      if (eta) { fields.time = eta; fields.eta = eta; }
+      break;
+    }
+    case "receipt": {
+      const money = parseAmount(t);
+      if (money.amount !== undefined) { fields.amount = money.amount; fields.currency = money.currency; }
+      const merchant = firstWordBrand(t);
+      if (merchant) fields.merchant = merchant;
+      break;
+    }
+    default:
+      break;
+  }
+  return fields;
+}
+
 // ── Core classifier ─────────────────────────────────────────────────────────
 
 /**
@@ -282,7 +340,7 @@ export async function classifyLifeEvent(text: string, opts: ClassifyOpts = {}): 
           kind: out.kind,
           confidence: out.confidence ?? 0.6,
           urgency: out.urgency ?? "fyi",
-          fields: out.fields ?? {},
+          fields: rederiveFields(out.kind, text || "", opts.now || new Date()),
           rawText: text || "",
           channel: opts.channel || "",
         };
@@ -882,11 +940,11 @@ export function idempotencyKeyFor(event: LifeEvent): string {
 // year-less dates + resolves relative words (today/tomorrow/weekday).
 export function eventStartIso(event: LifeEvent, now: Date = new Date()): string | undefined {
   const t = (event.rawText || "").replace(/\s+/g, " ");
-  const date = resolveDate(t, now);
-  if (!date) return undefined;
-  const time = resolveTime(t); // {h, m} or undefined
-  if (!time) return undefined; // a date with no time is too vague to auto-book
-  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate(), time.h, time.m, 0, 0);
+  const resolved = resolveDate(t, now);
+  if (!resolved) return undefined;
+  const time = resolveTime(t, resolved.end); // only consider time tokens adjacent to the date
+  if (!time) return undefined; // a date with no adjacent time is too vague to auto-book
+  const d = new Date(resolved.date.getFullYear(), resolved.date.getMonth(), resolved.date.getDate(), time.h, time.m, 0, 0);
   return localIso(d);
 }
 
@@ -894,11 +952,19 @@ const WEEKDAYS: Record<string, number> = {
   sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
 };
 
-function resolveDate(t: string, now: Date): Date | undefined {
+// Returns the resolved Date AND the char index immediately after the matched
+// date token — so resolveTime can restrict its search to an adjacent window.
+function resolveDate(t: string, now: Date): { date: Date; end: number } | undefined {
   const lc = t.toLowerCase();
   // Relative words first.
-  if (/\b(today|tonight)\b/.test(lc)) return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (/\btomorrow\b/.test(lc)) { const d = new Date(now); d.setDate(d.getDate() + 1); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  const todayM = lc.match(/\b(today|tonight)\b/);
+  if (todayM) return { date: new Date(now.getFullYear(), now.getMonth(), now.getDate()), end: todayM.index! + todayM[0].length };
+  const tomM = lc.match(/\btomorrow\b/);
+  if (tomM) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    return { date: new Date(d.getFullYear(), d.getMonth(), d.getDate()), end: tomM.index! + tomM[0].length };
+  }
   const wd = lc.match(/\b(sun|mon|tue|wed|thu|fri|sat)(?:day|nesday|rsday|urday)?\b/);
   if (wd) {
     const target = WEEKDAYS[wd[1]];
@@ -906,7 +972,7 @@ function resolveDate(t: string, now: Date): Date | undefined {
     let delta = (target - d.getDay() + 7) % 7;
     if (delta === 0) delta = 7; // next occurrence, not today
     d.setDate(d.getDate() + delta);
-    return d;
+    return { date: d, end: wd.index! + wd[0].length };
   }
   // "Jun 30" / "June 30, 2026"
   const named = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?/i);
@@ -916,7 +982,7 @@ function resolveDate(t: string, now: Date): Date | undefined {
     let year = named[3] ? parseInt(named[3], 10) : now.getFullYear();
     if (mo !== undefined && day >= 1 && day <= 31) {
       if (!named[3] && new Date(year, mo, day).getTime() < now.getTime() - 86_400_000) year += 1;
-      return new Date(year, mo, day);
+      return { date: new Date(year, mo, day), end: named.index! + named[0].length };
     }
   }
   // "6/30" / "06/30/2026"
@@ -927,14 +993,25 @@ function resolveDate(t: string, now: Date): Date | undefined {
     let year = numeric[3] ? (numeric[3].length === 2 ? 2000 + parseInt(numeric[3], 10) : parseInt(numeric[3], 10)) : now.getFullYear();
     if (mo >= 0 && mo <= 11 && day >= 1 && day <= 31) {
       if (!numeric[3] && new Date(year, mo, day).getTime() < now.getTime() - 86_400_000) year += 1;
-      return new Date(year, mo, day);
+      return { date: new Date(year, mo, day), end: numeric.index! + numeric[0].length };
     }
   }
   return undefined;
 }
 
-function resolveTime(t: string): { h: number; m: number } | undefined {
-  const m = t.match(/\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/i);
+// Asymmetric window around the date-token end: small look-back (handles "at 2pm
+// Thursday"), large look-ahead (handles "Thursday at 2pm"). The small look-back
+// is intentional: a large look-back would admit business-hours ranges like
+// "call 9am-5pm ... appointment Thursday" as the appointment time.
+// ponytail: window-based adjacency; owner-confirm-before-auto-book is the stronger follow-up owned by session.ts
+const TIME_ADJ_LOOKBACK = 15;
+const TIME_ADJ_LOOKAHEAD = 60;
+
+function resolveTime(t: string, dateEnd?: number): { h: number; m: number } | undefined {
+  const search = dateEnd !== undefined
+    ? t.slice(Math.max(0, dateEnd - TIME_ADJ_LOOKBACK), dateEnd + TIME_ADJ_LOOKAHEAD)
+    : t;
+  const m = search.match(/\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b/i);
   if (m) {
     let h = parseInt(m[1], 10);
     const min = m[2] ? parseInt(m[2], 10) : 0;
@@ -944,7 +1021,7 @@ function resolveTime(t: string): { h: number; m: number } | undefined {
     if (h >= 0 && h < 24 && min >= 0 && min < 60) return { h, m: min };
   }
   // 24h "14:30"
-  const m24 = t.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  const m24 = search.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
   if (m24) return { h: parseInt(m24[1], 10), m: parseInt(m24[2], 10) };
   return undefined;
 }

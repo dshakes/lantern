@@ -28,12 +28,50 @@ describe("handleSpouseMessage", () => {
     }
   });
 
-  test("status: answers truthfully from the open list (no fabricated done)", async () => {
-    const llm = async () =>
-      JSON.stringify({ type: "status", replyToSpouse: "not yet — the plumber's still on his list, i'll nudge him" });
+  test("status: known open item → deterministic reply references item title, never claims done", async () => {
+    // LLM identifies index 1 = "call the plumber"; code builds the reply from real state
+    const llm = async () => JSON.stringify({ type: "status", statusIndex: 1 });
     const r = await handleSpouseMessage("did you call the plumber yet?", { ...OPTS, openItems: OPEN }, llm);
     assert.equal(r?.type, "status");
-    if (r?.type === "status") assert.match(r.replyToSpouse, /plumber/);
+    if (r?.type === "status") {
+      assert.match(r.replyToSpouse, /plumber/);                          // references real item
+      assert.doesNotMatch(r.replyToSpouse, /done|yes|sorted|handled/i); // never fabricates completion
+    }
+  });
+
+  test("status: item not in open list → honest 'will check' reply", async () => {
+    const llm = async () => JSON.stringify({ type: "status", statusIndex: -1 });
+    const r = await handleSpouseMessage("did you pay the electricity bill?", { ...OPTS, openItems: OPEN }, llm);
+    assert.equal(r?.type, "status");
+    if (r?.type === "status") assert.match(r.replyToSpouse, /don't see|will check/i);
+  });
+
+  test("actions: message WITH temporal token keeps whenISO", async () => {
+    // "tomorrow at 3" has a temporal token → LLM-provided whenISO is trusted
+    const llm = async () =>
+      JSON.stringify({
+        type: "actions",
+        items: [{ title: "Kai's dentist", kind: "appointment", urgency: "normal", whenISO: "2026-07-02T15:00:00-04:00" }],
+        replyToSpouse: "added to the calendar",
+        ownerSummary: "Kai dentist tomorrow 3pm",
+      });
+    const r = await handleSpouseMessage("Kai's dentist tomorrow at 3", { ...OPTS, openItems: OPEN }, llm);
+    assert.equal(r?.type, "actions");
+    if (r?.type === "actions") assert.ok(r.items[0].whenISO, "whenISO should be kept when message has temporal token");
+  });
+
+  test("actions: message WITHOUT temporal token drops LLM-invented whenISO", async () => {
+    // No time/date in message → LLM's whenISO is fabricated; must be dropped → plain todo
+    const llm = async () =>
+      JSON.stringify({
+        type: "actions",
+        items: [{ title: "call Dr Smith for an appointment", kind: "appointment", urgency: "normal", whenISO: "2026-07-15T10:00:00-04:00" }],
+        replyToSpouse: "on it",
+        ownerSummary: "call Dr Smith",
+      });
+    const r = await handleSpouseMessage("can you call Dr Smith to set up an appointment", { ...OPTS, openItems: OPEN }, llm);
+    assert.equal(r?.type, "actions");
+    if (r?.type === "actions") assert.equal(r.items[0].whenISO, undefined);
   });
 
   test("done: maps her completion report to the real open-item ids", async () => {

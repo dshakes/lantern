@@ -62,8 +62,9 @@ import { isBotSelfMessage } from "@lantern/bridge-core/bot-self";
 import { detectLanguageHints, languageModalityHint, degradedVoiceAck } from "@lantern/bridge-core/language";
 import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPrefetchAdapter } from "@lantern/bridge-core/roster";
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
-import { MacActions, extractActionMarkers, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
+import { MacActions, extractActionMarkers, validateCalendarEvent, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, type PendingOffer } from "@lantern/bridge-core/humanize";
+import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
 import { styleBlockFor } from "@lantern/bridge-core/per-contact-style";
@@ -1153,6 +1154,13 @@ export class WhatsAppSession {
   // emitting a marker.
   private pendingOffers: Map<string, PendingOffer> = new Map();
   private static readonly OFFER_TTL_MS = 10 * 60_000;
+
+  // Typed owner-facts (spouse/anniversary/kids/naming-rules) extracted from a
+  // self-chat teach, HELD pending the owner's "yes" before they're written as
+  // authoritative "never contradict" ground truth. Without this a mis-extracted
+  // "spouse: Mae" would be injected into every reply, unretractable. Keyed by
+  // owner jid; one-shot; expires with OFFER_TTL_MS.
+  private pendingFactConfirm: Map<string, { facts: AutoFact[]; issuedAt: number }> = new Map();
   // B5 — inline draft editing. When a high-stakes / LOW-confidence reply is
   // drafted to the owner's self-chat for approval, we arm a pending-draft
   // entry keyed by the owner-control thread (ownJid). If the owner then types
@@ -4632,6 +4640,24 @@ export class WhatsAppSession {
     // the model is the router.
     if (self && !group && text) {
       const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
+      // FIRST: a bare "yes"/"no" here answers a pending "save 'spouse: Mae'?"
+      // DM — apply or drop the held typed facts. Must run BEFORE the trivial/
+      // greeting branch (which would otherwise route "yes" to natural chat).
+      const pf = this.pendingFactConfirm.get(jid);
+      if (pf && Date.now() - pf.issuedAt < WhatsAppSession.OFFER_TTL_MS) {
+        if (looksLikeConfirmation(text)) {
+          this.pendingFactConfirm.delete(jid);
+          void this.applyPendingOwnerFacts(jid, pf.facts).catch((err) =>
+            this.logger.error({ err }, "applyPendingOwnerFacts threw"));
+          return;
+        }
+        if (looksLikeRejection(text)) {
+          this.pendingFactConfirm.delete(jid);
+          void this.confirmToSelf("ok, skipped — didn't save that").catch(() => {});
+          return;
+        }
+        // Neither yes nor no → fall through; the pending confirm expires on TTL.
+      }
       // Acks/rejections AND greetings/small-talk skip the agentic tool
       // pipeline — they never need file/Gmail/Calendar tools, and routing
       // them to natural chat replies in a fraction of the time.
@@ -5323,6 +5349,11 @@ export class WhatsAppSession {
       );
       const result = await maybeAutoUpdateOwnerProfile(text, {
         profilePath: this.ownerProfileStore.getPath(),
+        // Typed facts (spouse/anniversary/kids/naming-rules) are injected as
+        // authoritative "never contradict" truth — CONFIRM before writing so a
+        // mis-extracted fact never lands unretractable. Generic notes still
+        // write async below.
+        deferTypedFacts: true,
         // Invalidate the in-memory profile cache the instant a fact (or a
         // per-contact naming rule) is written, so the very next reply sees
         // it without waiting for the cache TTL.
@@ -5340,6 +5371,13 @@ export class WhatsAppSession {
         },
         logger: this.logger as any,
       });
+      // Typed facts await the owner's explicit "yes" (see the self-chat
+      // dispatch intercept). Hold them + DM the confirm.
+      if (result.pendingTyped && result.pendingTyped.length > 0) {
+        const { formatFactConfirmPrompt } = await import("@lantern/bridge-core/owner-profile-auto-update");
+        this.pendingFactConfirm.set(jid, { facts: result.pendingTyped, issuedAt: Date.now() });
+        await this.confirmToSelf(formatFactConfirmPrompt(result.pendingTyped));
+      }
       if (result.appended.length === 0) {
         // Even when nothing was profile-worthy, the message may
         // still be a cross-contact context ping ("Sujith reached
@@ -5360,6 +5398,23 @@ export class WhatsAppSession {
       }
     } catch (err) {
       this.logger.warn({ err }, "owner-profile auto-update failed");
+    }
+  }
+
+  // Persist typed owner-facts the owner just confirmed with a "yes". Writes to
+  // ## Facts / ## Relationships and acks what landed.
+  private async applyPendingOwnerFacts(jid: string, facts: AutoFact[]): Promise<void> {
+    try {
+      const { applyConfirmedOwnerFacts, formatAck } = await import("@lantern/bridge-core/owner-profile-auto-update");
+      const res = await applyConfirmedOwnerFacts(facts, {
+        profilePath: this.ownerProfileStore.getPath(),
+        invalidate: () => this.ownerProfileStore.invalidate(),
+        logger: this.logger as any,
+      });
+      const ack = res.appended.length > 0 ? formatAck(res.appended) : "";
+      await this.confirmToSelf(ack || "saved 👍");
+    } catch (err) {
+      this.logger.warn({ err }, "applyConfirmedOwnerFacts failed");
     }
   }
 
@@ -5661,6 +5716,7 @@ export class WhatsAppSession {
       `  • The "device calendar" block is the SOURCE OF TRUTH for appointments (iCloud + Google + subscribed). If it's present, trust it over Gmail/files for "do I have an appointment".`,
       `  • You may ONLY say something doesn't exist ("no haircut appointment", "no such event") if the AUTHORITATIVE source for it is present below AND empty of it. If that source is ABSENT (not loaded this turn), do NOT deny it exists — say you'll check / ask a clarifying question instead. A confident "not found" when you didn't actually look is the worst failure.`,
       `  • Prefer "I don't see one on your calendar for the next N days" (scoped to what you checked) over a blanket "you have no appointment".`,
+      `  • Document field VALUES (passport #, license #, policy/account #, expiry date, dollar amount, any ID) MUST be quoted VERBATIM from the personal-docs file content shown below. If that specific field is NOT present in the extracted text (scanned/image-only file, or it didn't OCR), say "i couldn't read that field off the file — want me to pull up the file itself?" and offer the attachment. NEVER compute, complete, guess, or recall a document field value from memory or the filename — a fabricated number/date is a critical failure.`,
       ``,
       `# Voice`,
       `  • Direct answer first, lowercase, conversational. 1-3 short lines max.`,
@@ -5777,6 +5833,13 @@ export class WhatsAppSession {
     }
     if (this.macActions) {
       for (const ev of calendarEvents) {
+        const valid = validateCalendarEvent(ev);
+        if (!valid.ok) {
+          // The LLM wrote this datetime itself — never book a past/garbage marker.
+          this.logger.warn({ title: ev.title, start: ev.start, reason: valid.reason }, "calendar marker rejected — not booked");
+          await this.confirmToSelf(`(couldn't book "${ev.title}" — ${valid.reason})`);
+          continue;
+        }
         try {
           const res = await this.macActions.createCalendarEvent(ev);
           await this.confirmToSelf(res.ok ? `📅 added to calendar — ${res.detail || ev.title}` : `(calendar failed: ${res.reason})`);
