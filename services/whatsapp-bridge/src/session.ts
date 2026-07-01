@@ -126,6 +126,7 @@ import { contactPriority, type ContactSignals } from "@lantern/bridge-core/conta
 import {
   detectTaskCapture,
   captureTaskWithLlm,
+  detectOwnerCompletion,
   detectOutboundPromise,
   renderNudge,
   resolveReply,
@@ -2973,6 +2974,9 @@ export class WhatsAppSession {
           // queries, agentic actions) work identically.
           if (!isGroup && text && this.isOwnerChat(from)) {
             this.rememberOwnerSent(from, text);
+            // 3rd completion path: owner reports finishing a task in his own
+            // words → match + mark done (cheap-gated by a completion cue).
+            if (await this.maybeMarkOwnerCompletion(from, text)) continue;
             await this.handleOwnerMessage(from, text, msg.key);
             continue;
           }
@@ -9214,6 +9218,42 @@ export class WhatsAppSession {
    * timed ones), confirm to her in the owner's voice, DM the owner a heads-up.
    * Returns true when handled (caller skips the normal reply). Never throws.
    */
+  /**
+   * 3rd completion path — owner tells the bot he finished a task in natural
+   * language. Matches it to open items + marks done. Cheap completion-cue gate.
+   */
+  private async maybeMarkOwnerCompletion(from: string, text: string): Promise<boolean> {
+    if (
+      !/\b(did|done|finished|got|picked|grabbed|sorted|handled|called|sent|paid|booked|completed|took\s+care|wrapped|dropped\s+off|mailed|emailed)\b/i.test(
+        text,
+      )
+    )
+      return false;
+    try {
+      const open = await this.commitments.list({ status: "open", limit: 50 }).catch(() => []);
+      if (open.length === 0) return false;
+      const result = await detectOwnerCompletion(
+        text,
+        open.map((c) => ({ id: c.id, title: c.title })),
+        async (p) => {
+          try {
+            return (await this.agent.respondTo(`${from}::completion`, p, "", { withTools: false })) || "";
+          } catch {
+            return "";
+          }
+        },
+      );
+      if (!result) return false;
+      for (const id of result.doneIds) await this.commitments.done(id).catch(() => null);
+      await this.sendMessage(from, result.ack).catch(() => {});
+      this.logger.info({ done: result.doneIds.length }, "owner marked task(s) done via natural language");
+      return true;
+    } catch (err) {
+      this.logger.debug({ err }, "owner-completion check failed (no-op)");
+      return false;
+    }
+  }
+
   private async runSpouseAgent(from: string, text: string, displayName?: string): Promise<boolean> {
     try {
       const ownerName = (process.env.LANTERN_OWNER_NAME || "").split(/\s+/)[0] || "him";

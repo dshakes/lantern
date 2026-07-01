@@ -7,6 +7,7 @@ import { strict as assert } from "node:assert";
 import {
   detectTaskCapture,
   captureTaskWithLlm,
+  detectOwnerCompletion,
   detectOutboundPromise,
   renderNudge,
   resolveReply,
@@ -367,4 +368,27 @@ describe("resolveReply — no match", () => {
       assert.equal(resolveReply(text, PENDING, NOW), null);
     });
   }
+});
+
+describe("detectOwnerCompletion (3rd completion path)", () => {
+  const OPEN = [{ id: "c1", title: "pick up groceries" }, { id: "c2", title: "call the plumber" }];
+  test("matches a natural-language completion to the open item id", async () => {
+    const r = await detectOwnerCompletion("just grabbed the groceries", OPEN, async () =>
+      '{"done":[0],"ack":"nice, crossed off groceries"}');
+    assert.deepEqual(r?.doneIds, ["c1"]);
+    assert.match(r?.ack ?? "", /groceries/);
+  });
+  test("pre-filter: no completion cue → null (no LLM call)", async () => {
+    let called = false;
+    const r = await detectOwnerCompletion("what's the weather", OPEN, async () => { called = true; return "{}"; });
+    assert.equal(called, false);
+    assert.equal(r, null);
+  });
+  test("LLM says not-a-completion → null", async () => {
+    assert.equal(await detectOwnerCompletion("did you call the plumber?", OPEN, async () => '{"done":[]}'), null);
+  });
+  test("empty open list / no llm → null", async () => {
+    assert.equal(await detectOwnerCompletion("finished groceries", [], async () => '{"done":[0]}'), null);
+    assert.equal(await detectOwnerCompletion("finished groceries", OPEN, undefined), null);
+  });
 });
