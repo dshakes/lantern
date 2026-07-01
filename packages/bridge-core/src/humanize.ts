@@ -221,7 +221,12 @@ export interface PendingOffer {
 // Analyze a reply for what offer was just made. Returns null when
 // no offer is detectable. Mirrors the logic in ensureFollowUp so
 // the bridge can store an executable representation of the offer.
-export function detectOfferInReply(text: string, primaryDate?: DetectedDate): PendingOffer | null {
+// `rawSource` (optional): the original doc/source text the LLM answered FROM
+// (OCR output, chat snippet, etc.). When saving a document number to a note we
+// re-extract the id from here rather than from the LLM's reply, because the
+// model routinely mis-transcribes ids (O↔0, 1↔l/I). If no raw source is
+// threaded in, we store the reply's id EXACTLY as written — never reformatted.
+export function detectOfferInReply(text: string, primaryDate?: DetectedDate, rawSource?: string): PendingOffer | null {
   const t = text.trim();
   // Calendar reminder offer
   const calRe = /\b(?:add|set)\s+(?:a\s+)?(?:renewal\s+)?(?:reminder|event|calendar)\s+(\d+)\s+(day|days|month|months|week|weeks)\s+before/i;
@@ -252,10 +257,15 @@ export function detectOfferInReply(text: string, primaryDate?: DetectedDate): Pe
     if (idMatch) {
       const docMatch = t.match(/\b(passport|green\s*card|license|visa|insurance|policy|account|id)\b/i);
       const docType = docMatch ? docMatch[1].toLowerCase().replace(/\s+/g, "-") : "id";
+      // Ground truth for the id is the raw source, not the LLM's transcription.
+      // Prefer an id read straight from `rawSource`; else store the reply id verbatim.
+      // Require a digit so we grab the id, not an ALL-CAPS word ("PASSPORT").
+      const sourceId = rawSource?.match(/\b(?=[A-Z0-9-]*\d)([A-Z0-9-]{8,})\b/)?.[1];
+      const idToSave = sourceId ?? idMatch[1];
       return {
         kind: "save-note",
         noteTitle: `${docType} number`,
-        noteBody: `${docType}: ${idMatch[1]}\n\n(saved by Lantern on ${new Date().toLocaleString()})`,
+        noteBody: `${docType}: ${idToSave}\n\n(saved by Lantern on ${new Date().toLocaleString()})`,
         issuedAt: Date.now(),
       };
     }
@@ -326,10 +336,11 @@ export function looksLikeUndo(text: string): boolean {
 
 // Combined entry point: returns the polished reply AND the offer
 // (if any) so the caller can cache it for next-turn confirmation.
-export function humanizeWithOffer(text: string): { reply: string; offer: PendingOffer | null } {
+export function humanizeWithOffer(text: string, rawSource?: string): { reply: string; offer: PendingOffer | null } {
   const { text: dated, primaryDate } = humanizeDates(text);
   const reply = ensureFollowUp(dated, primaryDate);
-  // Detect the offer from the FINAL reply (post-follow-up append).
-  const offer = detectOfferInReply(reply, primaryDate);
+  // Detect the offer from the FINAL reply (post-follow-up append). `rawSource`,
+  // when the bridge has the underlying doc text, is the id ground truth.
+  const offer = detectOfferInReply(reply, primaryDate, rawSource);
   return { reply, offer };
 }

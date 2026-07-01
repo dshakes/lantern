@@ -428,6 +428,22 @@ describe("detectOwnerCompletion (3rd completion path)", () => {
   test("LLM says not-a-completion → null", async () => {
     assert.equal(await detectOwnerCompletion("did you call the plumber?", OPEN, async () => '{"done":[]}'), null);
   });
+  test("ambiguous multi-match → disambiguation prompt, does NOT auto-mark", async () => {
+    const items = [{ id: "c1", title: "call the plumber" }, { id: "c2", title: "call the electrician" }];
+    const r = await detectOwnerCompletion("called them back", items, async () =>
+      '{"done":[],"ambiguous":[0,1],"ack":""}');
+    assert.ok(r && "disambiguate" in r, "expected a disambiguation result");
+    const prompt = (r as { disambiguate: string }).disambiguate;
+    assert.match(prompt, /call the plumber/);
+    assert.match(prompt, /call the electrician/);
+    assert.ok(!("doneIds" in (r as object)), "must not mark anything done");
+  });
+  test("confident single match wins even when ambiguous list present", async () => {
+    const r = await detectOwnerCompletion("grabbed the groceries", OPEN, async () =>
+      '{"done":[0],"ambiguous":[1],"ack":"crossed off groceries"}');
+    assert.ok(r && "doneIds" in r);
+    assert.deepEqual((r as { doneIds: string[] }).doneIds, ["c1"]);
+  });
   test("empty open list / no llm → null", async () => {
     assert.equal(await detectOwnerCompletion("finished groceries", [], async () => '{"done":[0]}'), null);
     assert.equal(await detectOwnerCompletion("finished groceries", OPEN, undefined), null);

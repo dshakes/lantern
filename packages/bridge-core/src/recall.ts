@@ -80,11 +80,14 @@ export function assembleRelevantRecall(
   const candidates: Candidate[] = [];
 
   // Episodes: rank by topic + outcome overlap (same scoring as rankEpisodesByRelevance).
+  // An episode outcome is an LLM-extracted recollection, not verified fact — hedge
+  // it unless it carries a confident score, so the reply never asserts it as truth.
   for (const ep of sources.episodes ?? []) {
     const score = overlapHits(q, `${ep.topic ?? ""} ${ep.outcome}`);
     if (score < threshold) continue;
     const topic = ep.topic ? `${ep.topic}: ` : "";
-    candidates.push({ score, ts: ep.ts, line: `${topic}${ep.outcome}` });
+    const hedge = ep.confidence == null || ep.confidence < 0.5 ? " [unverified — from an earlier note]" : "";
+    candidates.push({ score, ts: ep.ts, line: `${topic}${ep.outcome}${hedge}` });
   }
 
   // Cross-thread topics: messages from other contacts that shared keywords.
