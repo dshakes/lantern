@@ -64,6 +64,7 @@ import { looksLikeRosterQuery, prefetchRoster, formatRosterBlock, type RosterPre
 import { planSubTasks, executeSubTasks, formatSubTaskBriefs, type SubTaskAdapters } from "@lantern/bridge-core/multi-agent";
 import { MacActions, extractActionMarkers, validateCalendarEvent, formatAppleCalendarBlock, type CalendarEventRead } from "@lantern/bridge-core/mac-actions";
 import { humanizeWithOffer, detectOfferInReply, looksLikeConfirmation, looksLikeRejection, looksLikeUndo, type PendingOffer } from "@lantern/bridge-core/humanize";
+import { resolvePendingBooking } from "@lantern/bridge-core/life-events";
 import type { AutoFact } from "@lantern/bridge-core/owner-profile-auto-update";
 import { defaultConnectorClient, prefetchAppointmentContext, looksLikeAppointmentQuery } from "@lantern/bridge-core/prefetch";
 import { OwnerProfileStore } from "@lantern/bridge-core/owner-profile";
@@ -1161,6 +1162,16 @@ export class WhatsAppSession {
   // "spouse: Mae" would be injected into every reply, unretractable. Keyed by
   // owner jid; one-shot; expires with OFFER_TTL_MS.
   private pendingFactConfirm: Map<string, { facts: AutoFact[]; issuedAt: number }> = new Map();
+  // CONFIRM-BEFORE-BOOK — a calendar event derived from a classified life-event
+  // is held here (never silently booked from an inferred time). DM'd to the
+  // owner; createCalendarEvent fires only on an in-TTL "yes". Keyed by owner
+  // jid; one-shot; expires with OFFER_TTL_MS.
+  private pendingBookingConfirm: Map<
+    string,
+    import("@lantern/bridge-core/life-events").PendingBooking & {
+      event: import("@lantern/bridge-core/life-events").LifeEvent;
+    }
+  > = new Map();
   // B5 — inline draft editing. When a high-stakes / LOW-confidence reply is
   // drafted to the owner's self-chat for approval, we arm a pending-draft
   // entry keyed by the owner-control thread (ownJid). If the owner then types
@@ -3531,37 +3542,63 @@ export class WhatsAppSession {
         })();
         return;
       }
+      // GA SAFETY GATE: never silently book an INFERRED time. Hold the booking
+      // and DM the owner to confirm; createCalendarEvent fires only on an in-TTL
+      // "yes" via the self-chat confirm intercept (see bookPendingCalendar).
       const startIso = eventStartIso(event);
       if (!startIso) return void this.autoActFallbackToSuggest(ownJid, event, rawText, "no concrete date/time");
       const title = event.kind === "travel" ? `Travel${event.fields.place ? ` — ${event.fields.place}` : ""}` : `Appointment${event.fields.place ? ` — ${event.fields.place}` : ""}`;
-      const res = await this.macActions.createCalendarEvent({
-        title, start: startIso, end: localPlus30(startIso),
+      const friendly = new Date(startIso).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      this.pendingBookingConfirm.set(ownJid, {
+        title, startIso, endIso: localPlus30(startIso),
         notes: `Auto-added by Lantern from: "${rawText.slice(0, 200)}"`,
+        lifeEventKind: event.kind, idempotencyKey, rawText,
+        issuedAt: Date.now(), event,
       });
-      if (!res.ok) return void this.autoActFallbackToSuggest(ownJid, event, rawText, res.reason);
-      markActed(idempotencyKey);
-      const friendly = new Date(startIso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-      const log = `📅 added to your calendar — ${title} ${friendly} · reply 'undo' to remove`;
-      await this.confirmToSelf(log).catch(() => {});
-      this.noteAutoAction(log);
-      this.armAutoActUndo(ownJid, event.kind, idempotencyKey, { undoTarget: "calendar", undoTitle: title, undoStartIso: startIso }, log, rawText);
-      // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
-      void (async () => {
-        try {
-          const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
-          await emitLifeEvent(event, "auto_acted", {
-            idempotencyKey,
-            actionTaken: `added to calendar — ${title}`,
-            summary: log,
-            poster: authedFetch as any,
-            log: this.logger as any,
-          });
-        } catch { /* best-effort */ }
-      })();
+      await this.confirmToSelf(`📅 book '${title}' — ${friendly}? reply yes to add`).catch(() => {});
     } catch (err) {
       this.logger.error({ err, kind: event.kind }, "auto-act execution threw — falling back to suggest");
       await this.autoActFallbackToSuggest(ownJid, event, rawText, "exception");
     }
+  }
+
+  // Fire a held calendar booking after the owner confirmed it — no LLM round
+  // trip. Mirrors the old inline auto-act book: create → markActed → ack → arm
+  // undo → emit. Only reached via the self-chat confirm intercept on a "yes".
+  private async bookPendingCalendar(
+    ownJid: string,
+    p: import("@lantern/bridge-core/life-events").PendingBooking & {
+      event: import("@lantern/bridge-core/life-events").LifeEvent;
+    },
+  ): Promise<void> {
+    if (!this.macActions) return;
+    const { markActed } = await import("@lantern/bridge-core/life-events-store");
+    const res = await this.macActions.createCalendarEvent({
+      title: p.title, start: p.startIso, end: p.endIso, notes: p.notes,
+    });
+    if (!res.ok) {
+      await this.confirmToSelf(`couldn't add it — ${res.reason}`).catch(() => {});
+      return;
+    }
+    markActed(p.idempotencyKey);
+    const friendly = new Date(p.startIso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    const log = `📅 added ✅ — ${p.title} ${friendly} · reply 'undo' to remove`;
+    await this.confirmToSelf(log).catch(() => {});
+    this.noteAutoAction(log);
+    this.armAutoActUndo(ownJid, p.lifeEventKind, p.idempotencyKey, { undoTarget: "calendar", undoTitle: p.title, undoStartIso: p.startIso }, log, p.rawText);
+    // Emit auto_acted to Automations dashboard (best-effort, fire-and-forget).
+    void (async () => {
+      try {
+        const { emitLifeEvent } = await import("@lantern/bridge-core/life-events-emit");
+        await emitLifeEvent(p.event, "auto_acted", {
+          idempotencyKey: p.idempotencyKey,
+          actionTaken: `added to calendar — ${p.title}`,
+          summary: log,
+          poster: authedFetch as any,
+          log: this.logger as any,
+        });
+      } catch { /* best-effort */ }
+    })();
   }
 
   // Arm the one-shot UNDO offer for an auto-action.
@@ -4640,7 +4677,27 @@ export class WhatsAppSession {
     // the model is the router.
     if (self && !group && text) {
       const nlEnabled = (process.env.LANTERN_OWNER_CHAT_NL || "on").toLowerCase() !== "off";
-      // FIRST: a bare "yes"/"no" here answers a pending "save 'spouse: Mae'?"
+      // FIRST: a bare "yes"/"no" here answers a pending calendar-booking confirm
+      // (GA safety gate: an inferred life-event time is never silently booked).
+      // Must run BEFORE the trivial/greeting branch so "yes" fires the book.
+      const pb = this.pendingBookingConfirm.get(jid);
+      if (pb) {
+        const outcome = resolvePendingBooking(pb, text, Date.now(), WhatsAppSession.OFFER_TTL_MS);
+        if (outcome === "book") {
+          this.pendingBookingConfirm.delete(jid);
+          void this.bookPendingCalendar(jid, pb).catch((err) =>
+            this.logger.error({ err }, "bookPendingCalendar threw"));
+          return;
+        }
+        if (outcome === "skip") {
+          this.pendingBookingConfirm.delete(jid);
+          void this.confirmToSelf("👍 skipped").catch(() => {});
+          return;
+        }
+        if (outcome === "expired") this.pendingBookingConfirm.delete(jid);
+        // "unrelated" → fall through; the confirm expires on TTL.
+      }
+      // NEXT: a bare "yes"/"no" here answers a pending "save 'spouse: Mae'?"
       // DM — apply or drop the held typed facts. Must run BEFORE the trivial/
       // greeting branch (which would otherwise route "yes" to natural chat).
       const pf = this.pendingFactConfirm.get(jid);

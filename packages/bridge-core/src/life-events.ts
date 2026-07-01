@@ -17,6 +17,8 @@
 //   * OWNER-FACING ONLY. Nothing here ever targets the third-party sender; the
 //     bridge routes every output to the owner self-chat exclusively.
 
+import { looksLikeConfirmation, looksLikeRejection } from "./humanize";
+
 export type LifeEventKind =
   | "bill"
   | "delivery"
@@ -1041,6 +1043,41 @@ function fnv1a(input: string): string {
     h = Math.imul(h, 0x01000193);
   }
   return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+// CONFIRM-BEFORE-BOOK — a calendar event derived from a classified life-event
+// (appointment/travel/…) is NEVER silently booked from an INFERRED time. The
+// bridge holds the proposed CalendarEvent args here, DMs the owner to confirm,
+// and fires createCalendarEvent only when the owner says yes within the TTL.
+export interface PendingBooking {
+  title: string;
+  startIso: string;
+  endIso: string;
+  notes?: string;
+  lifeEventKind: string;
+  idempotencyKey: string;
+  rawText: string;
+  issuedAt: number;
+}
+
+export type PendingBookingResolution = "book" | "skip" | "expired" | "unrelated";
+
+// Deterministic decision for a held pending-booking against an owner reply.
+//   "book"      — confirmed in-window (fire createCalendarEvent),
+//   "skip"      — rejected in-window (drop + ack),
+//   "expired"   — TTL lapsed (drop, never book),
+//   "unrelated" — no pending, or the reply is neither yes nor no (fall through).
+export function resolvePendingBooking(
+  pending: PendingBooking | undefined,
+  text: string,
+  now: number,
+  ttlMs: number,
+): PendingBookingResolution {
+  if (!pending) return "unrelated";
+  if (now - pending.issuedAt >= ttlMs) return "expired";
+  if (looksLikeConfirmation(text)) return "book";
+  if (looksLikeRejection(text)) return "skip";
+  return "unrelated";
 }
 
 // The owner-facing self-chat prefixes this module emits — exported so the
