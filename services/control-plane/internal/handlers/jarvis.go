@@ -207,12 +207,17 @@ func (h *JarvisHandler) phraseBrief(ctx context.Context, tenantID string, calend
 	if h.llm == nil {
 		return fallback
 	}
-	ownerName := getEnvOr("LANTERN_OWNER_NAME", "Ada")
+	ownerName := strings.TrimSpace(os.Getenv("LANTERN_OWNER_NAME"))
+	if ownerName == "" {
+		h.logger().Warn("LANTERN_OWNER_NAME not set; brief will use neutral phrasing (set this env var for personalised output)")
+		ownerName = "the owner"
+	}
 	system := strings.Join([]string{
-		"You are " + ownerName + "'s chief of staff. Write his brief from the data below.",
+		"You are " + ownerName + "'s chief of staff. Write a brief from the data below.",
 		"Terse, scannable, friendly. Plain text, no markdown headers. Group into short lines.",
 		"Lead with what's most time-sensitive (upcoming meetings, people waiting).",
-		"Don't invent anything not in the data. If a section is empty, skip it.",
+		"STRICT: quote names, times, and facts verbatim from the provided source data only.",
+		"Do NOT invent, infer, or elaborate beyond what the data states. If a section is empty, skip it.",
 		"Open with a one-line summary, then the details.",
 	}, "\n")
 	out, err := h.llm.CompleteInternal(ctx, tenantID, system, data.String(), 400)

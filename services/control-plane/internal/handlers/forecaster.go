@@ -52,10 +52,12 @@ type forecastResponse struct {
 	AgentName          string          `json:"agentName"`
 	Model              string          `json:"model"`
 	Provider           string          `json:"provider"`
-	EstimatedTokensIn  int64           `json:"estimatedTokensIn"`
-	EstimatedTokensOut int64           `json:"estimatedTokensOut"`
-	EstimatedCostUsd   float64         `json:"estimatedCostUsd"`
-	Confidence         float64         `json:"confidence"` // 0-1
+	EstimatedTokensIn  *int64          `json:"estimatedTokensIn,omitempty"`  // nil when no historical data
+	EstimatedTokensOut *int64          `json:"estimatedTokensOut,omitempty"` // nil when no historical data
+	EstimatedCostUsd   *float64        `json:"estimatedCostUsd,omitempty"`   // nil when no historical data
+	Confidence         float64         `json:"confidence"`                   // heuristic 0-1; see Calibrated
+	Calibrated         bool            `json:"calibrated"`                   // false when confidence is extrapolated with no run history
+	NoHistoricalData   bool            `json:"noHistoricalData,omitempty"`   // true when this agent has no completed runs to draw from
 	Reasoning          map[string]any  `json:"reasoning"`
 	Budget             *budgetSnapshot `json:"budget,omitempty"`
 	WouldExceedBudget  bool            `json:"wouldExceedBudget"`
@@ -110,19 +112,6 @@ func (h *ForecastHandler) Forecast(w http.ResponseWriter, r *http.Request) {
 	// 2. Input-size heuristic: ~1 token per 4 characters.
 	inputTokens := int64(math.Ceil(float64(len(req.Input)) / 4.0))
 
-	estTokensIn := hist.avgTokensIn + inputTokens
-	estTokensOut := hist.avgTokensOut
-
-	// 3. If we have no history, fall back to conservative defaults.
-	confidence := hist.confidence
-	if hist.runs == 0 {
-		estTokensIn = maxI64(inputTokens+500, 1500)
-		estTokensOut = 800
-		confidence = 0.3
-	}
-
-	estCost := estimateCost(provider, model, int(estTokensIn), int(estTokensOut))
-
 	reasoning := map[string]any{
 		"historical_runs":           hist.runs,
 		"historical_avg_cost_usd":   hist.avgCostUsd,
@@ -134,21 +123,36 @@ func (h *ForecastHandler) Forecast(w http.ResponseWriter, r *http.Request) {
 		"pricing_provider":          provider,
 	}
 
+	resp := forecastResponse{
+		AgentName:  req.AgentName,
+		Model:      model,
+		Provider:   provider,
+		Confidence: hist.confidence,
+		Reasoning:  reasoning,
+	}
+
+	// 3. Populate estimates only when we have real historical data.
+	// Zero-history → omit estimates entirely; fabricating numbers here would
+	// cause budget checks to block or pass based on invented token counts.
+	var estCostUsd float64
+	if hist.runs > 0 {
+		tokIn := hist.avgTokensIn + inputTokens
+		tokOut := hist.avgTokensOut
+		estCostUsd = estimateCost(provider, model, int(tokIn), int(tokOut))
+		costRounded := roundMoney(estCostUsd)
+		resp.EstimatedTokensIn = &tokIn
+		resp.EstimatedTokensOut = &tokOut
+		resp.EstimatedCostUsd = &costRounded
+		resp.Calibrated = true
+	} else {
+		resp.NoHistoricalData = true
+		reasoning["no_historical_data"] = true
+	}
+
 	// 4. Check against any configured budget.
 	budget, spentToday, runsToday, budgetErr := h.loadBudget(ctx, tenantID, req.AgentName)
 	if budgetErr != nil {
 		h.logger().Warn("budget lookup failed", zap.Error(budgetErr))
-	}
-
-	resp := forecastResponse{
-		AgentName:          req.AgentName,
-		Model:              model,
-		Provider:           provider,
-		EstimatedTokensIn:  estTokensIn,
-		EstimatedTokensOut: estTokensOut,
-		EstimatedCostUsd:   roundMoney(estCost),
-		Confidence:         confidence,
-		Reasoning:          reasoning,
 	}
 
 	if budget != nil {
@@ -166,14 +170,19 @@ func (h *ForecastHandler) Forecast(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Budget = &snap
 
-		// Evaluate blocking.
+		// Evaluate blocking. Cost comparisons are only valid when we have a
+		// calibrated estimate (hist.runs > 0). A null forecast means "unknown"
+		// — it must never auto-block; surface it to the caller instead.
 		var reasons []string
-		if budget.MaxCostUsdPerRun > 0 && estCost > budget.MaxCostUsdPerRun {
-			reasons = append(reasons, fmt.Sprintf("per-run cost $%.4f exceeds limit $%.4f", estCost, budget.MaxCostUsdPerRun))
+		if resp.Calibrated {
+			if budget.MaxCostUsdPerRun > 0 && estCostUsd > budget.MaxCostUsdPerRun {
+				reasons = append(reasons, fmt.Sprintf("per-run cost $%.4f exceeds limit $%.4f", estCostUsd, budget.MaxCostUsdPerRun))
+			}
+			if budget.MaxCostUsdPerDay > 0 && spentToday+estCostUsd > budget.MaxCostUsdPerDay {
+				reasons = append(reasons, fmt.Sprintf("daily cost would hit $%.4f exceeding $%.4f", spentToday+estCostUsd, budget.MaxCostUsdPerDay))
+			}
 		}
-		if budget.MaxCostUsdPerDay > 0 && spentToday+estCost > budget.MaxCostUsdPerDay {
-			reasons = append(reasons, fmt.Sprintf("daily cost would hit $%.4f exceeding $%.4f", spentToday+estCost, budget.MaxCostUsdPerDay))
-		}
+		// Run-count limit does not depend on cost estimates; always evaluated.
 		if budget.MaxRunsPerDay > 0 && runsToday >= budget.MaxRunsPerDay {
 			reasons = append(reasons, fmt.Sprintf("daily run limit reached (%d/%d)", runsToday, budget.MaxRunsPerDay))
 		}
@@ -222,7 +231,10 @@ func (h *ForecastHandler) historical(ctx context.Context, tenantID, agentName st
 		return s, err
 	}
 	// Confidence grows with sample size, asymptotic to 0.95.
-	s.confidence = math.Min(0.95, 0.3+0.03*math.Sqrt(float64(s.runs)))
+	// Zero runs → 0 (no data; the 0.3 floor was fabricated and misleading).
+	if s.runs > 0 {
+		s.confidence = math.Min(0.95, 0.3+0.03*math.Sqrt(float64(s.runs)))
+	}
 	return s, nil
 }
 
@@ -289,14 +301,27 @@ func (h *ForecastHandler) loadBudget(ctx context.Context, tenantID, agentName st
 
 func (h *ForecastHandler) recordForecast(ctx context.Context, tenantID, agentName string, resp forecastResponse) {
 	reasoningJSON, _ := json.Marshal(resp.Reasoning)
+	// cost_forecasts columns are NOT NULL — use 0 for absent estimates so the
+	// row is still persisted (reasoning JSONB carries no_historical_data=true).
+	var tokIn, tokOut int64
+	var costUsd float64
+	if resp.EstimatedTokensIn != nil {
+		tokIn = *resp.EstimatedTokensIn
+	}
+	if resp.EstimatedTokensOut != nil {
+		tokOut = *resp.EstimatedTokensOut
+	}
+	if resp.EstimatedCostUsd != nil {
+		costUsd = *resp.EstimatedCostUsd
+	}
 	err := h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		_, e := tx.Exec(ctx, `
 			INSERT INTO cost_forecasts
 			  (tenant_id, agent_name, estimated_tokens_in, estimated_tokens_out,
 			   estimated_cost_usd, confidence, reasoning, blocked_by_budget)
 			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
-		`, tenantID, agentName, resp.EstimatedTokensIn, resp.EstimatedTokensOut,
-			resp.EstimatedCostUsd, resp.Confidence, reasoningJSON, resp.WouldExceedBudget)
+		`, tenantID, agentName, tokIn, tokOut,
+			costUsd, resp.Confidence, reasoningJSON, resp.WouldExceedBudget)
 		return e
 	})
 	if err != nil {

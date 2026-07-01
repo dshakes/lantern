@@ -2064,6 +2064,14 @@ func (h *LlmProxyHandler) GenerateAgentSpec(w http.ResponseWriter, r *http.Reque
 		zap.String("description", req.Description),
 	)
 
+	// Inject the tenant's ACTUALLY installed connectors so the spec never
+	// references a connector the tenant hasn't set up.
+	installedConnectors := h.tenantInstalledConnectors(ctx, tenantID)
+	installedConnectorsLine := "none installed"
+	if len(installedConnectors) > 0 {
+		installedConnectorsLine = strings.Join(installedConnectors, ", ")
+	}
+
 	systemPrompt := `You are Lantern's agent architect. Given a user's description, generate a structured agent specification.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks, no explanation):
@@ -2084,7 +2092,7 @@ Output ONLY valid JSON with this exact structure (no markdown, no backticks, no 
 
 Valid step types: llm, tool, connector, condition, loop, approval
 Valid tools: web-search, python-exec, fs-read, fs-write, browser, code-interpreter
-Valid connectors: gmail, slack, github, linear, notion, stripe, google-calendar, jira, discord
+Installed connectors for this tenant (ONLY reference connectors from this list; do not invent connectors not installed): ` + installedConnectorsLine + `
 Valid surfaces: whatsapp, slack, discord, telegram, twilio, email, webchat
 Valid trigger types: manual, schedule, webhook, surface
 Valid isolation levels: trusted, standard, untrusted
@@ -2171,12 +2179,13 @@ func (h *LlmProxyHandler) GenerateAgentCode(w http.ResponseWriter, r *http.Reque
 		zap.String("tenant_id", tenantID),
 	)
 
-	systemPrompt := `You are Lantern's code generator. Given an agent specification JSON, generate production-ready TypeScript agent code using the @lantern/sdk.
+	systemPrompt := `You are Lantern's code generator. Given an agent specification JSON, generate TypeScript agent scaffold code using the @lantern/sdk.
 
 Output ONLY valid JSON with this exact structure (no markdown, no backticks):
 {
   "code": "// TypeScript code here",
-  "yaml": "// YAML config as a string"
+  "yaml": "// YAML config as a string",
+  "disclaimer": "This is a scaffold starting point. Verify all connector names match your installed connectors before deploying, and test the generated code against your environment."
 }
 
 The TypeScript code should:
@@ -2184,10 +2193,10 @@ The TypeScript code should:
 - Use the Agent class with proper typing
 - Implement each step using the step() function for durability
 - Use ctx.llm.generate() for LLM calls (never call models directly)
-- Use ctx.connectors.<name>.<action>() for connector calls
+- Use ctx.connectors.<name>.<action>() for connector calls — only reference connectors declared in the spec
 - Use ctx.mcp("<tool>").call() for tool invocations
 - Include proper error handling
-- Be clean, well-commented, production-quality code
+- Be clean, well-commented code
 
 The YAML should be a valid agent.yaml configuration matching the spec.
 
@@ -3532,4 +3541,32 @@ func (h *LlmProxyHandler) Transcribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, transcribeResponse{Text: result.Text, Provider: "openai"})
+}
+
+// tenantInstalledConnectors returns the connector_ids the tenant has actually
+// installed. Used by GenerateAgentSpec to ground the prompt in real state so
+// the LLM cannot reference connectors the tenant hasn't configured.
+// Best-effort: returns nil on any error (caller falls back to "none installed").
+func (h *LlmProxyHandler) tenantInstalledConnectors(ctx context.Context, tenantID string) []string {
+	// rls-exempt: explicit tenant_id filter; called from GenerateAgentSpec which
+	// is already tenant-authed. Reading connector_installs to ground an LLM
+	// prompt is a read-only best-effort operation, not a mutation path.
+	rows, err := h.srv.Pool.Query(ctx, `
+		SELECT connector_id FROM connector_installs
+		WHERE tenant_id = $1
+		ORDER BY connector_id
+	`, tenantID)
+	if err != nil {
+		h.logger().Debug("tenantInstalledConnectors query failed", zap.Error(err))
+		return nil
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
