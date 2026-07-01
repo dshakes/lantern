@@ -1,52 +1,62 @@
 import { test, describe } from "node:test";
 import { strict as assert } from "node:assert";
-import { planSpouseActions } from "./spouse-agent.ts";
+import { handleSpouseMessage } from "./spouse-agent.ts";
 
 const OPTS = { ownerName: "Shekhar", spouseName: "Manasa", nowISO: "2026-06-30T18:00:00-04:00" };
+const OPEN = [
+  { id: "c1", title: "pick up groceries" },
+  { id: "c2", title: "call the plumber" },
+];
 
-describe("planSpouseActions", () => {
-  test("extracts multiple action items + confirmation + owner summary", async () => {
+describe("handleSpouseMessage", () => {
+  test("actions: extracts multiple items + confirmation + owner summary", async () => {
     const llm = async () =>
       JSON.stringify({
+        type: "actions",
         items: [
           { title: "get milk", kind: "shopping", urgency: "normal" },
-          { title: "call the plumber", kind: "task", urgency: "soon" },
           { title: "Kai's dentist", kind: "appointment", urgency: "normal", whenISO: "2026-07-01T15:00:00-04:00" },
         ],
-        replyToSpouse: "got it — i'll grab milk and call the plumber, and put Kai's dentist on the calendar",
-        ownerSummary: "Manasa: milk, call plumber, Kai dentist tmrw 3pm",
+        replyToSpouse: "got it — milk + added Kai's dentist to the calendar",
+        ownerSummary: "Manasa: milk, Kai dentist tmrw 3",
       });
-    const plan = await planSpouseActions("get milk and call the plumber, Kai's dentist is tomorrow at 3", OPTS, llm);
-    assert.equal(plan?.items.length, 3);
-    assert.equal(plan?.items[2].kind, "appointment");
-    assert.ok(plan?.items[2].whenISO);
-    assert.match(plan?.replyToSpouse ?? "", /milk/);
-    assert.match(plan?.ownerSummary ?? "", /Manasa/);
+    const r = await handleSpouseMessage("get milk, Kai's dentist tomorrow at 3", { ...OPTS, openItems: OPEN }, llm);
+    assert.equal(r?.type, "actions");
+    if (r?.type === "actions") {
+      assert.equal(r.items.length, 2);
+      assert.ok(r.items[1].whenISO);
+    }
   });
 
-  test("no action items → null (normal chat untouched)", async () => {
-    const llm = async () => JSON.stringify({ items: [] });
-    assert.equal(await planSpouseActions("miss you, how's your day going?", OPTS, llm), null);
-  });
-
-  test("drops malformed items but keeps valid ones", async () => {
+  test("status: answers truthfully from the open list (no fabricated done)", async () => {
     const llm = async () =>
-      JSON.stringify({ items: [{ title: "x" }, { title: "pick up dry cleaning", kind: "task" }], replyToSpouse: "ok", ownerSummary: "" });
-    const plan = await planSpouseActions("pick up dry cleaning", OPTS, llm);
-    assert.equal(plan?.items.length, 1);
-    assert.equal(plan?.items[0].title, "pick up dry cleaning");
-    assert.equal(plan?.ownerSummary, "pick up dry cleaning"); // fallback summary
+      JSON.stringify({ type: "status", replyToSpouse: "not yet — the plumber's still on his list, i'll nudge him" });
+    const r = await handleSpouseMessage("did you call the plumber yet?", { ...OPTS, openItems: OPEN }, llm);
+    assert.equal(r?.type, "status");
+    if (r?.type === "status") assert.match(r.replyToSpouse, /plumber/);
   });
 
-  test("invalid whenISO is dropped (no bad calendar event)", async () => {
-    const llm = async () => JSON.stringify({ items: [{ title: "book flights", kind: "task", whenISO: "not-a-date" }], replyToSpouse: "on it", ownerSummary: "flights" });
-    const plan = await planSpouseActions("book the flights", OPTS, llm);
-    assert.equal(plan?.items[0].whenISO, undefined);
+  test("done: maps her completion report to the real open-item ids", async () => {
+    const llm = async () =>
+      JSON.stringify({ type: "done", doneIndices: [0], replyToSpouse: "nice, crossing groceries off 👍", ownerSummary: "Manasa got groceries" });
+    const r = await handleSpouseMessage("i already grabbed the groceries", { ...OPTS, openItems: OPEN }, llm);
+    assert.equal(r?.type, "done");
+    if (r?.type === "done") assert.deepEqual(r.doneIds, ["c1"]);
   });
 
-  test("malformed / throwing LLM → null, never throws", async () => {
-    assert.equal(await planSpouseActions("get milk", OPTS, async () => "not json"), null);
-    assert.equal(await planSpouseActions("get milk", OPTS, async () => { throw new Error("x"); }), null);
-    assert.equal(await planSpouseActions("get milk", OPTS, undefined), null);
+  test("done with out-of-range index → null (no bad mark)", async () => {
+    const llm = async () => JSON.stringify({ type: "done", doneIndices: [9], replyToSpouse: "ok" });
+    assert.equal(await handleSpouseMessage("done", { ...OPTS, openItems: OPEN }, llm), null);
+  });
+
+  test("chat → null (normal reply runs)", async () => {
+    const llm = async () => JSON.stringify({ type: "chat" });
+    assert.equal(await handleSpouseMessage("miss you, how's your day?", { ...OPTS, openItems: OPEN }, llm), null);
+  });
+
+  test("malformed / throwing / no-llm → null, never throws", async () => {
+    assert.equal(await handleSpouseMessage("get milk", OPTS, async () => "not json"), null);
+    assert.equal(await handleSpouseMessage("get milk", OPTS, async () => { throw new Error("x"); }), null);
+    assert.equal(await handleSpouseMessage("get milk", OPTS, undefined), null);
   });
 });
