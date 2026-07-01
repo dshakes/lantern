@@ -420,11 +420,12 @@ export function latestKnownLocation(
 }
 
 // Inner circle = the people the owner has granted EXTRA privileges to (truthful
-// location + agentic actions): spouse, siblings, and their families. Classified
-// from the owner's OWN relationship label (his data — set in owner-profile),
-// not a hardcoded contact list, so adding a labeled sibling extends it for free.
+// location + agentic actions): spouse, kids, siblings, and their families.
+// Classified from the owner's OWN relationship label (his data — set in
+// owner-profile), not a hardcoded contact list, so a newly-labeled family
+// member extends it for free.
 const INNER_CIRCLE_RE =
-  /\b(wife|husband|spouse|partner|brother|sister|sibling|bro|sis|in-?law|bava|vadina|maradalu|baava|niece|nephew|sister['’]?s|brother['’]?s)\b/i;
+  /\b(wife|husband|spouse|partner|son|daughter|kid|kids|child|children|koduku|kuthuru|brother|sister|sibling|bro|sis|in-?law|bava|vadina|maradalu|baava|niece|nephew|sister['’]?s|brother['’]?s)\b/i;
 
 /** True when the contact's relationship label puts them in the owner's inner
  *  circle (spouse / siblings / their family) — the tier allowed truthful

@@ -441,10 +441,10 @@ test("latestKnownLocation: returns the real place within window; null when stale
   assert.equal(latestKnownLocation([], { nowMs: NOW }), null);
 });
 
-test("isInnerCircle: spouse + siblings + family true; acquaintances false", () => {
-  for (const r of ["wife", "husband", "spouse", "brother", "sister", "sister-in-law", "brother's wife"])
+test("isInnerCircle: spouse + kids + siblings + family true; acquaintances false", () => {
+  for (const r of ["wife", "husband", "spouse", "son", "daughter", "elder brother", "sister", "sister-in-law", "brother's wife"])
     assert.equal(isInnerCircle(r), true, r);
-  for (const r of ["college friend", "manager", "dentist", "vendor", "", undefined])
+  for (const r of ["college friend", "manager", "dentist", "vendor", "friend", "", undefined])
     assert.equal(isInnerCircle(r as string), false, String(r));
 });
 
