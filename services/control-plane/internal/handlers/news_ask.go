@@ -78,9 +78,20 @@ func (h *NewsHandler) AskNews(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Q     string `json:"q"`
 		Limit int    `json:"limit"`
+		// Days scopes the corpus the LLM curates from. Tight (e.g. 3) for a
+		// "today's radar" so genuinely-old items can't be surfaced as recent;
+		// wide (30) for a topic/source search. Default 7, clamped 1..30.
+		Days int `json:"days"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	q := strings.TrimSpace(body.Q)
+	days := body.Days
+	if days <= 0 {
+		days = 7
+	}
+	if days > 30 {
+		days = 30
+	}
 	limit := body.Limit
 	if limit <= 0 || limit > 15 {
 		limit = 5
@@ -93,10 +104,10 @@ func (h *NewsHandler) AskNews(w http.ResponseWriter, r *http.Request) {
 			       score, published_at, created_at
 			FROM news_items
 			WHERE tenant_id = $1
-			  AND COALESCE(published_at, created_at) >= now() - interval '30 days'
+			  AND COALESCE(published_at, created_at) >= now() - make_interval(days => $2)
 			ORDER BY score DESC NULLS LAST, COALESCE(published_at, created_at) DESC
 			LIMIT 60
-		`, claims.TenantID)
+		`, claims.TenantID, days)
 		if qErr != nil {
 			return qErr
 		}
