@@ -464,6 +464,30 @@ test("latestKnownLocation: returns the real place within window; null when stale
     )?.place,
     "the gym",
   );
+
+  // CONNECTIVITY CONSUMPTION (iPhone posts these):
+  // "parked" (CarPlay disconnected) newer than a fresh driving → NOT on the road
+  // (driving ended); no destination geofence → honest unknown.
+  assert.equal(
+    latestKnownLocation(
+      [sig("device", 6, { detail: "driving" }), sig("device", 2, { detail: "parked" })],
+      { nowMs: NOW },
+    ),
+    null,
+  );
+  // "left home" (off home wifi) newest → OUT (not home), exact spot unknown.
+  assert.equal(
+    latestKnownLocation([sig("device", 5, { detail: "left home" })], { nowMs: NOW })?.place,
+    "out",
+  );
+  // home wifi connect (location:Home) newest → home.
+  assert.equal(
+    latestKnownLocation(
+      [sig("device", 20, { detail: "left home" }), sig("location", 3, { detail: "Home" })],
+      { nowMs: NOW },
+    )?.place,
+    "home",
+  );
 });
 
 test("isInnerCircle: spouse + kids + siblings + family true; acquaintances false", () => {
