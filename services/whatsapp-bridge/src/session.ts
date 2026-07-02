@@ -9289,6 +9289,7 @@ export class WhatsAppSession {
         if (!nv) {
           const params = new URLSearchParams({ limit: "20" });
           if (nq.window) { params.set("window", nq.window); params.set("sort", "popular"); }
+          else params.set("sort", "recent"); // plain "news" fallback → recency, not score-DESC all-time
           if (nq.category) params.set("category", nq.category);
           if (nq.source) params.set("source", nq.source);
           const news: NewsItemLite[] = [];

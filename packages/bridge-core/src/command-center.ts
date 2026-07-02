@@ -658,7 +658,8 @@ export function buildNews(items: NewsItemLite[], q?: NewsQuery): CenterView {
   for (const it of ranked) {
     const icon = (it.category && NEWS_CAT_ICON[it.category]) || "•";
     out.push({ n, ref: "news_item", id: it.url, icon, label: clip(it.title, 120), url: it.url, defaultAction: "save", actions: ["save"] });
-    lines.push(` ${n} ${icon} ${clip(it.title, 70)} — ${clip(it.source, 22)}`);
+    const date = it.publishedAt ? ` · ${fmtNewsDate(it.publishedAt)}` : "";
+    lines.push(` ${n} ${icon} ${clip(it.title, 70)} — ${clip(it.source, 22)}${date}`);
     if (it.url) lines.push(`    ${it.url}`);
     n++;
   }
@@ -785,8 +786,16 @@ export function selectTopDrops(
 
 /** A proactive DAILY news roundup — top diverse items, one push per day. Pure. */
 export function buildNewsDigest(items: NewsItemLite[], dayLabel: string): string {
-  if (!items.length) return `📰 AI news — ${dayLabel}: quiet day, nothing notable scanned.`;
-  const sorted = [...items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  // A "today's" digest must not surface week+-old items just because they scored
+  // high (the AI-radar staleness class). Drop anything not published in the last
+  // ~2 days; undated items can't be vouched-for as fresh, so drop them too.
+  const now = Date.now();
+  const fresh = items.filter((it) => {
+    const ms = it.publishedAt ? Date.parse(it.publishedAt) : NaN;
+    return Number.isFinite(ms) && now - ms <= 2 * 24 * 60 * 60 * 1000;
+  });
+  if (!fresh.length) return `📰 AI news — ${dayLabel}: quiet day, nothing notable in the last couple days.`;
+  const sorted = [...fresh].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const perSource = new Map<string, number>();
   const picked: NewsItemLite[] = [];
   for (const it of sorted) {
