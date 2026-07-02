@@ -397,28 +397,40 @@ export function latestKnownLocation(
     .sort((a, b) => b.ts - a.ts);
   const locSig = recent.find((s) => s.kind === "location");
   const devSig = recent.find((s) => s.kind === "device");
-  const isDriving = !!devSig && /carplay|driving/.test((devSig.detail || "").toLowerCase());
-  // Driving is only CONFIDENTLY current for a few minutes — CarPlay/car-Bluetooth
-  // posts while connected, but you park and walk in within seconds and no
-  // "disconnected" signal fires. A driving signal from 15+ min ago almost always
-  // means "arrived somewhere", NOT "still on the road" (the swimming-pool bug:
-  // said "driving" while the owner was inside). Beyond this window we do NOT
-  // assert driving.
+  const devDetail = (devSig?.detail || "").toLowerCase();
+  // Connectivity signals the iPhone posts (owner wires these as Shortcut
+  // automations): CarPlay/BT connected → "driving"; CarPlay/BT DISCONNECTED →
+  // "parked"; left home wifi → "left home"/"out". Consuming the disconnect +
+  // wifi signals is what lets us know driving ENDED and whether the owner is out.
+  const isDriving = !!devSig && /carplay|driving/.test(devDetail);
+  const isParked = !!devSig && /parked|disconnect(?:ed)?|arrived/.test(devDetail);
+  const isOut = !!devSig && /(left home|out and about|away from home|not home)/.test(devDetail);
+  // Driving is only CONFIDENTLY current for a few minutes — CarPlay posts while
+  // connected, but you park and walk in within seconds. Beyond this we do NOT
+  // assert driving (the swimming-pool bug: "driving" while the owner was inside).
   const DRIVING_CONFIDENT_MS = 10 * 60 * 1000;
-  const drivingIsNewest = isDriving && (!locSig || devSig!.ts >= locSig.ts);
+  const devTs = devSig?.ts ?? -Infinity;
+  const locTs = locSig?.ts ?? -Infinity;
+  const devNewest = devTs >= locTs;
+  const age = (ts: number) => Math.round((nowMs - ts) / 60000);
 
   // 1. Confidently on the road: a FRESH driving signal that's the newest thing.
-  if (drivingIsNewest && devSig!.ts >= nowMs - DRIVING_CONFIDENT_MS) {
-    return { place: "on the road", inTransit: true, ageMin: Math.round((nowMs - devSig!.ts) / 60000) };
+  if (isDriving && devNewest && devTs >= nowMs - DRIVING_CONFIDENT_MS) {
+    return { place: "on the road", inTransit: true, ageMin: age(devTs) };
   }
-  // 2. Drove away, then went quiet: a driving signal NEWER than the last known
-  //    place means the owner LEFT that place — so the old geofence is stale and
-  //    must NOT be served. Without a newer geofence we genuinely don't know where
-  //    they ended up → honest unknown ("you were driving a bit ago, not sure
-  //    exactly where now"), never a fabricated "on the road" or a stale place.
-  if (drivingIsNewest) return null;
+  // 2. Explicit "left home / out" is the newest signal → the owner is OUT (not
+  //    home), exact place unknown. This is the connectivity intelligence: off
+  //    home wifi + not driving = out.
+  if (isOut && devNewest) {
+    return { place: "out", inTransit: false, ageMin: age(devTs) };
+  }
+  // 3. Parked (CarPlay/BT disconnected) OR a stale/quiet driving signal is the
+  //    newest thing → the owner STOPPED driving and arrived somewhere, but with
+  //    no newer geofence we don't know where → honest unknown, never a fabricated
+  //    "on the road" or a stale pre-drive place.
+  if ((isParked || isDriving) && devNewest) return null;
 
-  // 3. A geofence that is the NEWEST signal → the owner is at / last seen at that
+  // 4. A geofence that is the NEWEST signal → the owner is at / last seen at that
   //    place (they haven't driven away since).
   if (!locSig) return null;
   const raw = (locSig.detail || "").trim();
@@ -474,7 +486,11 @@ export function formatOwnerLocationBlock(
     `"almost home", "heading back", "reached", "ping you when i'm close", or any made-up whereabouts. ` +
     `Fabricating where ${ownerName} is is the single worst failure; an honest "not sure" is always better.`;
   if (canShare && known) {
-    const where = known.inTransit ? "on the road (driving)" : `at ${known.place}`;
+    const where = known.inTransit
+      ? "on the road (driving)"
+      : known.place === "out"
+        ? "out (not home) — exact spot unknown"
+        : `at ${known.place}`;
     const age = known.ageMin <= 1 ? "just now" : `${known.ageMin} min ago`;
     return (
       `## ${ownerName}'s current location — TRUE, and you MAY share it plainly with ${contactLabel}\n` +
