@@ -320,7 +320,7 @@ export function presenceFromSignals(
   //      (b) no MORE-RECENT location or focus signal has superseded it. Arriving
   //          home (location:Home) or tapping Parked/Available (focus:Available)
   //          posts a newer signal → driving is no longer true → fall through.
-  const DRIVING_FRESH_MS = 30 * 60 * 1000; // 30 min backstop when no park/home signal fires
+  const DRIVING_FRESH_MS = 10 * 60 * 1000; // driving goes stale FAST — you park + walk in within minutes and no "disconnected" signal fires, so a 15+ min-old CarPlay signal is "arrived", not "still driving"
   const devSig = latest("device");
   const dev = (devSig?.detail || "").trim().toLowerCase();
   if (devSig && /carplay|driving/.test(dev)) {
@@ -397,16 +397,29 @@ export function latestKnownLocation(
     .sort((a, b) => b.ts - a.ts);
   const locSig = recent.find((s) => s.kind === "location");
   const devSig = recent.find((s) => s.kind === "device");
+  const isDriving = !!devSig && /carplay|driving/.test((devSig.detail || "").toLowerCase());
+  // Driving is only CONFIDENTLY current for a few minutes — CarPlay/car-Bluetooth
+  // posts while connected, but you park and walk in within seconds and no
+  // "disconnected" signal fires. A driving signal from 15+ min ago almost always
+  // means "arrived somewhere", NOT "still on the road" (the swimming-pool bug:
+  // said "driving" while the owner was inside). Beyond this window we do NOT
+  // assert driving.
+  const DRIVING_CONFIDENT_MS = 10 * 60 * 1000;
+  const drivingIsNewest = isDriving && (!locSig || devSig!.ts >= locSig.ts);
 
-  const DRIVING_FRESH_MS = 30 * 60 * 1000;
-  if (
-    devSig &&
-    /carplay|driving/.test((devSig.detail || "").toLowerCase()) &&
-    devSig.ts >= nowMs - DRIVING_FRESH_MS &&
-    (!locSig || devSig.ts >= locSig.ts)
-  ) {
-    return { place: "on the road", inTransit: true, ageMin: Math.round((nowMs - devSig.ts) / 60000) };
+  // 1. Confidently on the road: a FRESH driving signal that's the newest thing.
+  if (drivingIsNewest && devSig!.ts >= nowMs - DRIVING_CONFIDENT_MS) {
+    return { place: "on the road", inTransit: true, ageMin: Math.round((nowMs - devSig!.ts) / 60000) };
   }
+  // 2. Drove away, then went quiet: a driving signal NEWER than the last known
+  //    place means the owner LEFT that place — so the old geofence is stale and
+  //    must NOT be served. Without a newer geofence we genuinely don't know where
+  //    they ended up → honest unknown ("you were driving a bit ago, not sure
+  //    exactly where now"), never a fabricated "on the road" or a stale place.
+  if (drivingIsNewest) return null;
+
+  // 3. A geofence that is the NEWEST signal → the owner is at / last seen at that
+  //    place (they haven't driven away since).
   if (!locSig) return null;
   const raw = (locSig.detail || "").trim();
   if (!raw) return null;

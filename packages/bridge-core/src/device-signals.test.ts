@@ -439,6 +439,31 @@ test("latestKnownLocation: returns the real place within window; null when stale
   // Stale (8h) location → null (no fabrication)
   assert.equal(latestKnownLocation([sig("location", 480, { detail: "Office" })], { nowMs: NOW }), null);
   assert.equal(latestKnownLocation([], { nowMs: NOW }), null);
+
+  // THE SWIMMING-POOL BUG: drove somewhere 20 min ago, parked + went inside, no
+  // newer signal → must NOT say "on the road" (driving is stale). Honest unknown.
+  assert.equal(
+    latestKnownLocation([sig("device", 20, { detail: "driving" })], { nowMs: NOW }),
+    null,
+  );
+  // Drove AWAY from a known place (driving newer than the geofence) then quiet →
+  // the old place is stale (owner left it), do NOT serve it → null.
+  assert.equal(
+    latestKnownLocation(
+      [sig("location", 90, { detail: "Home" }), sig("device", 18, { detail: "driving" })],
+      { nowMs: NOW },
+    ),
+    null,
+  );
+  // Arrived: a geofence NEWER than the last driving signal → that place (arrived,
+  // not driving).
+  assert.equal(
+    latestKnownLocation(
+      [sig("device", 30, { detail: "driving" }), sig("location", 8, { detail: "Gym" })],
+      { nowMs: NOW },
+    )?.place,
+    "the gym",
+  );
 });
 
 test("isInnerCircle: spouse + kids + siblings + family true; acquaintances false", () => {
