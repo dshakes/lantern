@@ -125,16 +125,21 @@ test("buildNews caps one dominant source when unfiltered, but not when filtered"
 
 test("buildNewsDigest: top-8 cross-source, ≤2 per source, empty → quiet-day line", () => {
   assert.match(buildNewsDigest([], "today"), /quiet day/);
+  const fresh = new Date().toISOString();
   const items = [
-    ...Array.from({ length: 5 }, (_, i) => ({ source: "OpenAI Blog", title: `o${i}`, url: `https://o/${i}`, score: 90 - i })),
-    { source: "Anthropic", title: "a", url: "https://a", score: 80 },
-    { source: "HN", title: "h", url: "https://h", score: 70 },
-    { source: "AWS", title: "w", url: "https://w", score: 60 },
+    ...Array.from({ length: 5 }, (_, i) => ({ source: "OpenAI Blog", title: `o${i}`, url: `https://o/${i}`, score: 90 - i, publishedAt: fresh })),
+    { source: "Anthropic", title: "a", url: "https://a", score: 80, publishedAt: fresh },
+    { source: "HN", title: "h", url: "https://h", score: 70, publishedAt: fresh },
+    { source: "AWS", title: "w", url: "https://w", score: 60, publishedAt: fresh },
   ];
   const out = buildNewsDigest(items, "today");
   assert.match(out, /📰 AI news · today/);
   // OpenAI capped at 2 in the digest
   assert.equal((out.match(/https:\/\/o\//g) ?? []).length, 2);
+  // STALENESS GATE: week-old (or undated) items are dropped from a "today" digest
+  const old = new Date(Date.now() - 8 * 864e5).toISOString();
+  assert.match(buildNewsDigest([{ source: "X", title: "old", url: "https://old", score: 99, publishedAt: old }], "today"), /quiet day/);
+  assert.match(buildNewsDigest([{ source: "X", title: "undated", url: "https://u", score: 99 }], "today"), /quiet day/);
 });
 
 test("buildNews items are numbered + saveable", () => {

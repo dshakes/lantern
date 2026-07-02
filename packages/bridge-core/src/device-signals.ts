@@ -260,6 +260,7 @@ export function summarizeDeviceSignals(
   const summaryLine = buildDeviceSummaryLine({
     topApps,
     windowMs,
+    nowMs,
     location: latestOf("location"),
     focus: latestOf("focus"),
     device: latestOf("device"),
@@ -535,6 +536,9 @@ interface BuildLineInput {
   sleep?: DeviceSignal;
   workout?: DeviceSignal;
   nowPlaying?: DeviceSignal;
+  /** "Now" for freshness gating of transient enrichers (device/now_playing).
+   *  Defaults to Date.now(); pass in tests for determinism. */
+  nowMs?: number;
 }
 
 /** Map a raw device-state detail to a natural verb/noun. CarPlay → "driving";
@@ -570,6 +574,14 @@ export function buildDeviceSummaryLine(input: BuildLineInput): string {
   const { topApps, windowMs, location, focus, device, steps, sleep, workout, nowPlaying } =
     input;
   const when = windowLabel(windowMs);
+  // The line spans a 2h window, but TRANSIENT states (what you're playing, and
+  // driving/charging) read as "right now" — surfacing a 90-min-old track as
+  // "playing X" is stale. Gate those to a tight freshness; steps/sleep/workout/
+  // location are persistent enough to stand for the window.
+  const now = input.nowMs ?? Date.now();
+  const FRESH_MS = 20 * 60_000;
+  const isFresh = (s?: DeviceSignal): boolean =>
+    !!s && Number.isFinite(s.ts) && now - s.ts <= FRESH_MS;
 
   // Lead sentence: app usage (existing behavior).
   let lead = "";
@@ -603,7 +615,7 @@ export function buildDeviceSummaryLine(input: BuildLineInput): string {
     // Skip "off" — a Focus turning off isn't worth surfacing.
     if (mode && !/^off$/i.test(mode)) enrichers.push(`${mode} focus`);
   }
-  if (device) {
+  if (device && isFresh(device)) {
     const state = (device.detail || device.app || "").trim();
     if (state) enrichers.push(deviceStatePhrase(state));
   }
@@ -618,7 +630,7 @@ export function buildDeviceSummaryLine(input: BuildLineInput): string {
     // bare workout marker → generic "worked out".
     enrichers.push(workout.detail ? workout.detail : "worked out");
   }
-  if (nowPlaying) {
+  if (nowPlaying && isFresh(nowPlaying)) {
     enrichers.push(
       nowPlaying.detail ? `playing ${nowPlaying.detail}` : `playing in ${nowPlaying.app}`,
     );
