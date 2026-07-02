@@ -9277,10 +9277,13 @@ export class WhatsAppSession {
             ? `top ${nq.category} AI news`
             : nq.window
               ? `the most important AI news ${nq.window === "today" ? "today" : nq.window === "week" ? "this week" : "this month"}`
-              : "the most important recent AI news";
+              : "the most important AI news from the last day or two";
+        // Corpus window: a plain/"today" radar must NOT surface week+-old items as
+        // "today's" — scope tight; topic/source searches get the wide window.
+        const days = nq.source || nq.category ? 30 : nq.window === "week" ? 8 : nq.window === "month" ? 31 : nq.window === "today" ? 2 : 3;
         let nv: ReturnType<typeof buildNewsAsk> | undefined;
         try {
-          const r = await authedFetch("/v1/news/ask", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q, limit: 5 }) });
+          const r = await authedFetch("/v1/news/ask", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q, limit: 5, days }) });
           if (r.ok) nv = buildNewsAsk((await r.json()) as NewsAskResult);
         } catch { /* fall through */ }
         if (!nv) {
@@ -9752,7 +9755,7 @@ export class WhatsAppSession {
           // INTELLIGENT daily digest (parity with iMessage): LLM-curated majors.
           let digestText = "";
           try {
-            const ar = await authedFetch("/v1/news/ask", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: "the most important / major AI news from the last day or two — launches, model releases, and notable announcements only, skip minor version bumps", limit: 6 }) });
+            const ar = await authedFetch("/v1/news/ask", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ q: "the most important / major AI news from the last day or two — launches, model releases, and notable announcements only, skip minor version bumps", limit: 6, days: 3 }) });
             if (ar.ok) digestText = "🌅 today's AI radar\n\n" + buildNewsAsk((await ar.json()) as NewsAskResult).text;
           } catch { /* fall through */ }
           await this.sendSelf(digestText || buildNewsDigest(items, "today"));
