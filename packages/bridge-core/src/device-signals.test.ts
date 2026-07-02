@@ -475,6 +475,15 @@ test("latestKnownLocation: returns the real place within window; null when stale
     ),
     null,
   );
+  // Existing Lantern-Status-Available shortcut on CarPlay-Disconnect: a newer
+  // focus:Available ENDS driving (parked) → not on the road; no place → unknown.
+  assert.equal(
+    latestKnownLocation(
+      [sig("device", 5, { detail: "driving" }), sig("focus", 2, { detail: "Available" })],
+      { nowMs: NOW },
+    ),
+    null,
+  );
   // "left home" (off home wifi) newest → OUT (not home), exact spot unknown.
   assert.equal(
     latestKnownLocation([sig("device", 5, { detail: "left home" })], { nowMs: NOW })?.place,

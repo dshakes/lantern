@@ -409,9 +409,16 @@ export function latestKnownLocation(
   // connected, but you park and walk in within seconds. Beyond this we do NOT
   // assert driving (the swimming-pool bug: "driving" while the owner was inside).
   const DRIVING_CONFIDENT_MS = 10 * 60 * 1000;
+  const focusSig = recent.find((s) => s.kind === "focus");
   const devTs = devSig?.ts ?? -Infinity;
   const locTs = locSig?.ts ?? -Infinity;
-  const devNewest = devTs >= locTs;
+  const focusTs = focusSig?.ts ?? -Infinity;
+  // Driving is "current" only if NOTHING newer superseded it — a newer geofence
+  // (arrival) OR a newer focus/status (e.g. the existing Lantern-Status-Available
+  // shortcut fired on CarPlay Disconnect = you parked) both END driving. This is
+  // why attaching "CarPlay Disconnects" → Lantern-Status-Available works with no
+  // new shortcut: the focus:Available lands newer than the driving signal.
+  const devNewest = devTs >= locTs && devTs >= focusTs;
   const age = (ts: number) => Math.round((nowMs - ts) / 60000);
 
   // 1. Confidently on the road: a FRESH driving signal that's the newest thing.
