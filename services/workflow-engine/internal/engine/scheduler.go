@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,10 +31,14 @@ type Scheduler struct {
 	workerID     string
 	pollInterval time.Duration
 	dispatch     func(ctx context.Context, runID, tenantID, agentVersionID string) error
+	// runWG is the Engine's WaitGroup; dispatch goroutines add to it so
+	// Engine.Stop() can drain all in-flight runs before returning.
+	runWG *sync.WaitGroup
 }
 
-// NewScheduler creates a new Scheduler.
-func NewScheduler(pool *pgxpool.Pool, logger *zap.Logger, dispatch func(ctx context.Context, runID, tenantID, agentVersionID string) error) *Scheduler {
+// NewScheduler creates a new Scheduler. runWG is the Engine's WaitGroup;
+// every dispatch goroutine calls runWG.Add(1)/Done() so Engine.Stop() drains them.
+func NewScheduler(pool *pgxpool.Pool, logger *zap.Logger, runWG *sync.WaitGroup, dispatch func(ctx context.Context, runID, tenantID, agentVersionID string) error) *Scheduler {
 	hostname, _ := os.Hostname()
 	workerID := fmt.Sprintf("%s-%d", hostname, os.Getpid())
 
@@ -43,6 +48,7 @@ func NewScheduler(pool *pgxpool.Pool, logger *zap.Logger, dispatch func(ctx cont
 		workerID:     workerID,
 		pollInterval: defaultPollInterval,
 		dispatch:     dispatch,
+		runWG:        runWG,
 	}
 }
 
@@ -68,14 +74,16 @@ func (s *Scheduler) Start(ctx context.Context) {
 }
 
 // poll queries for queued/resumable runs and attempts to claim them.
-// Fair-share scheduling: we order by tenant_id to round-robin across tenants,
-// then by created_at within each tenant.
+// FIFO-global ordering: the oldest run across all tenants wins the next slot.
+// ponytail: true per-tenant fair-share (lateral join, one row per tenant) adds
+// query complexity with marginal benefit at current scale; revisit if tenant
+// starvation is observed under sustained multi-tenant load.
 func (s *Scheduler) poll(ctx context.Context) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, tenant_id, agent_version_id
 		FROM runs
 		WHERE status IN ('queued', 'resumable')
-		ORDER BY tenant_id, created_at ASC
+		ORDER BY created_at ASC
 		LIMIT 10
 	`)
 	if err != nil {
@@ -120,19 +128,31 @@ func (s *Scheduler) tryAcquireAndDispatch(ctx context.Context, runID, tenantID, 
 	// Derive a stable int64 lock key from the run_id using FNV hash.
 	lockKey := advisoryLockKey(runID)
 
+	// Acquire a dedicated connection. Postgres session-level advisory locks
+	// (pg_try_advisory_lock / pg_advisory_unlock) are bound to the specific
+	// backend connection that called them. Using s.pool directly lets the pool
+	// pick a different connection for the unlock, which silently no-ops and
+	// permanently leaks the lock for this run_id. We pin one conn for the full
+	// lock+work+unlock lifetime and release it on goroutine exit.
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire connection for advisory lock: %w", err)
+	}
+
 	// Try to acquire a session-level advisory lock (non-blocking).
 	var acquired bool
-	err := s.pool.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, lockKey).Scan(&acquired)
-	if err != nil {
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, lockKey).Scan(&acquired); err != nil {
+		conn.Release()
 		return fmt.Errorf("advisory lock query: %w", err)
 	}
 	if !acquired {
 		// Another worker already holds this run.
+		conn.Release()
 		return nil
 	}
 
 	// Record the lock in the run_locks table for visibility and expiry tracking.
-	if _, err := s.pool.Exec(ctx, `
+	if _, err := conn.Exec(ctx, `
 		INSERT INTO run_locks (run_id, worker_id, expires_at)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (run_id) DO UPDATE SET
@@ -140,8 +160,9 @@ func (s *Scheduler) tryAcquireAndDispatch(ctx context.Context, runID, tenantID, 
 			acquired_at = now(),
 			expires_at = $3
 	`, runID, s.workerID, time.Now().Add(lockDuration)); err != nil {
-		// Release the advisory lock on failure.
-		s.pool.Exec(ctx, `SELECT pg_advisory_unlock($1)`, lockKey) //nolint:errcheck
+		// Release the advisory lock on the same pinned connection before returning.
+		conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, lockKey) //nolint:errcheck
+		conn.Release()
 		return fmt.Errorf("record lock: %w", err)
 	}
 
@@ -151,13 +172,18 @@ func (s *Scheduler) tryAcquireAndDispatch(ctx context.Context, runID, tenantID, 
 		zap.String("worker_id", s.workerID),
 	)
 
-	// Dispatch in a goroutine. The advisory lock is released when done.
+	// Track the dispatch goroutine in the Engine's WaitGroup so Engine.Stop()
+	// drains all in-flight runs before returning. Add before spawning so
+	// wg.Wait() cannot return between spawn and Add.
+	s.runWG.Add(1)
 	go func() {
+		defer s.runWG.Done()
 		defer func() {
-			// Release advisory lock.
-			s.pool.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, lockKey) //nolint:errcheck
-			// Clean up the run_locks row.
-			s.pool.Exec(context.Background(), `DELETE FROM run_locks WHERE run_id = $1`, runID) //nolint:errcheck
+			// Unlock and clean up through the same pinned connection that
+			// acquired the lock; any other connection is a no-op unlock.
+			conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, lockKey)         //nolint:errcheck
+			conn.Exec(context.Background(), `DELETE FROM run_locks WHERE run_id = $1`, runID) //nolint:errcheck
+			conn.Release()
 		}()
 
 		if err := s.dispatch(ctx, runID, tenantID, agentVersionID); err != nil {
