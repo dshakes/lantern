@@ -28,6 +28,7 @@ import {
 
 import { useAuth } from "@/lib/auth";
 import { BridgeProvider, useBridge } from "@/components/personal/bridge-context";
+import { PageHeader } from "@/components/page-header";
 import type {
   BridgeChannel,
   ConnectionState,
@@ -150,34 +151,30 @@ function Header({
 }) {
   const { state, phoneNumber, displayName } = useBridge();
   return (
-    <header className="border-b border-zinc-800/80 bg-surface-1/60 backdrop-blur supports-[backdrop-filter]:bg-surface-1/40">
-      <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-8 py-5">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-medium tracking-tight text-zinc-50">
-              Personal
-            </h1>
-            {hideSwitcher ? (
-              <span className="rounded-full border border-zinc-700/50 bg-zinc-800/40 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-                applies to all channels
-              </span>
-            ) : (
-              <ChannelSwitcher channel={channel} onSwitch={onSwitch} />
-            )}
-          </div>
-          <p className="mt-1 text-sm text-zinc-400">
-            {hideSwitcher
-              ? "Settings here apply across WhatsApp + iMessage. The assistant honors them everywhere."
-              : channel === "whatsapp"
-                ? "Your personal assistant on WhatsApp — auto-reply, monitor group chats, prep your day."
-                : "Your personal assistant on iMessage — same brain, native macOS Messages.app integration."}
-          </p>
-        </div>
-        {!hideSwitcher && (
+    <PageHeader
+      title="Personal"
+      description={
+        hideSwitcher
+          ? "Settings here apply across WhatsApp + iMessage. The assistant honors them everywhere."
+          : channel === "whatsapp"
+            ? "Your personal assistant on WhatsApp — auto-reply, monitor group chats, prep your day."
+            : "Your personal assistant on iMessage — same brain, native macOS Messages.app integration."
+      }
+      badge={
+        hideSwitcher ? (
+          <span className="rounded-full border border-zinc-700/50 bg-zinc-800/40 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+            applies to all channels
+          </span>
+        ) : (
+          <ChannelSwitcher channel={channel} onSwitch={onSwitch} />
+        )
+      }
+      action={
+        hideSwitcher ? undefined : (
           <StatusPill state={state} phoneNumber={phoneNumber} displayName={displayName} />
-        )}
-      </div>
-    </header>
+        )
+      }
+    />
   );
 }
 

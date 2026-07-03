@@ -23,6 +23,8 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
+import { EmptyState } from "@/components/empty-state";
+
 interface RootInfo {
   path: string;
   displayPath: string;
@@ -267,9 +269,12 @@ function AuditCard({ audit }: { audit: Array<{ ts: string; action: string; data:
         </p>
       </div>
       {audit.length === 0 ? (
-        <div className="p-6 text-center text-xs text-zinc-500">
-          No activity yet. Text yourself a doc query to start.
-        </div>
+        <EmptyState
+          icon={Eye}
+          title="No activity yet"
+          description="Text yourself a doc query to start."
+          size="compact"
+        />
       ) : (
         <ul className="divide-y divide-zinc-800/60">
           {audit.map((e, i) => (
