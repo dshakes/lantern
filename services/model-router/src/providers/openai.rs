@@ -73,13 +73,20 @@ impl OpenAiProvider {
         ];
 
         Self {
-            client: Client::new(),
+            // connect + per-read timeouts (no total timeout: legitimate long
+            // streams must survive). A provider that accepts the connection
+            // but hangs the response would otherwise block failover forever.
+            client: Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .read_timeout(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap_or_default(),
             api_key,
             models,
         }
     }
 
-    fn map_error(&self, status: u16, body: &str) -> ProviderError {
+    fn map_error(&self, status: u16, body: &str, retry_after_ms: u64) -> ProviderError {
         // Upstream error bodies are untrusted and may carry operator/secret
         // detail; log at debug only, and never surface a raw auth-error body
         // to the caller or into run state.
@@ -87,7 +94,7 @@ impl OpenAiProvider {
         if status == 429 {
             ProviderError::RateLimited {
                 provider: self.name().into(),
-                retry_after_ms: 1000,
+                retry_after_ms,
             }
         } else if status == 401 || status == 403 {
             ProviderError::AuthError {
@@ -340,6 +347,33 @@ fn to_oai_tools(tools: &[proto::Tool]) -> Vec<OaiTool> {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Attaches `Idempotency-Key` when the key is non-empty; no-op otherwise.
+fn with_idempotency_key(builder: reqwest::RequestBuilder, key: &str) -> reqwest::RequestBuilder {
+    if key.is_empty() {
+        builder
+    } else {
+        builder.header("Idempotency-Key", key)
+    }
+}
+
+/// Parse the `Retry-After` response header into milliseconds.
+///
+/// Accepts integer seconds (RFC 7231 §7.1.3) and falls back to 1000 ms for
+/// HTTP-date values (adding an `httpdate` dep for the delta-seconds fast-path
+/// is YAGNI — most providers use integer seconds).
+fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> u64 {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(|secs| secs * 1000)
+        .unwrap_or(1000)
+}
+
+// ---------------------------------------------------------------------------
 // Provider impl
 // ---------------------------------------------------------------------------
 
@@ -390,27 +424,31 @@ impl Provider for OpenAiProvider {
 
         let started = std::time::Instant::now();
 
-        let resp = self
-            .client
-            .post(format!("{BASE_URL}/chat/completions"))
-            .bearer_auth(&self.api_key)
-            .json(&oai_req)
-            .send()
-            .await
-            .map_err(|e| ProviderError::NetworkError {
-                provider: self.name().into(),
-                detail: e.to_string(),
-            })?;
-
-        let status = resp.status().as_u16();
-        let body = resp.text().await.map_err(|e| ProviderError::NetworkError {
+        let resp = with_idempotency_key(
+            self.client
+                .post(format!("{BASE_URL}/chat/completions"))
+                .bearer_auth(&self.api_key),
+            &req.idempotency_key,
+        )
+        .json(&oai_req)
+        .send()
+        .await
+        .map_err(|e| ProviderError::NetworkError {
             provider: self.name().into(),
             detail: e.to_string(),
         })?;
 
+        let status = resp.status().as_u16();
         if status != 200 {
-            return Err(self.map_error(status, &body));
+            // Parse Retry-After before consuming the response body.
+            let retry_after_ms = parse_retry_after(resp.headers());
+            let body = resp.text().await.unwrap_or_default();
+            return Err(self.map_error(status, &body, retry_after_ms));
         }
+        let body = resp.text().await.map_err(|e| ProviderError::NetworkError {
+            provider: self.name().into(),
+            detail: e.to_string(),
+        })?;
 
         let oai: OaiChatResponse =
             serde_json::from_str(&body).map_err(|e| ProviderError::NetworkError {
@@ -484,7 +522,7 @@ impl Provider for OpenAiProvider {
         &self,
         model: &str,
         req: &CompleteRequest,
-    ) -> Result<BoxStream<'_, Result<CompleteChunk, ProviderError>>, ProviderError> {
+    ) -> Result<BoxStream<'static, Result<CompleteChunk, ProviderError>>, ProviderError> {
         tracing::Span::current().record("model", model);
 
         let oai_req = OaiChatRequest {
@@ -510,22 +548,25 @@ impl Provider for OpenAiProvider {
             stream: true,
         };
 
-        let resp = self
-            .client
-            .post(format!("{BASE_URL}/chat/completions"))
-            .bearer_auth(&self.api_key)
-            .json(&oai_req)
-            .send()
-            .await
-            .map_err(|e| ProviderError::NetworkError {
-                provider: self.name().into(),
-                detail: e.to_string(),
-            })?;
+        let resp = with_idempotency_key(
+            self.client
+                .post(format!("{BASE_URL}/chat/completions"))
+                .bearer_auth(&self.api_key),
+            &req.idempotency_key,
+        )
+        .json(&oai_req)
+        .send()
+        .await
+        .map_err(|e| ProviderError::NetworkError {
+            provider: self.name().into(),
+            detail: e.to_string(),
+        })?;
 
         let status = resp.status().as_u16();
         if status != 200 {
+            let retry_after_ms = parse_retry_after(resp.headers());
             let body = resp.text().await.unwrap_or_default();
-            return Err(self.map_error(status, &body));
+            return Err(self.map_error(status, &body, retry_after_ms));
         }
 
         let provider_name: String = self.name().into();
@@ -711,14 +752,15 @@ impl Provider for OpenAiProvider {
             })?;
 
         let status = resp.status().as_u16();
+        if status != 200 {
+            let retry_after_ms = parse_retry_after(resp.headers());
+            let body = resp.text().await.unwrap_or_default();
+            return Err(self.map_error(status, &body, retry_after_ms));
+        }
         let body = resp.text().await.map_err(|e| ProviderError::NetworkError {
             provider: self.name().into(),
             detail: e.to_string(),
         })?;
-
-        if status != 200 {
-            return Err(self.map_error(status, &body));
-        }
 
         let oai: OaiEmbedResponse =
             serde_json::from_str(&body).map_err(|e| ProviderError::NetworkError {
@@ -749,5 +791,33 @@ impl Provider for OpenAiProvider {
             total_tokens: oai.usage.total_tokens,
             cost_usd,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_idempotency_key;
+
+    fn dummy_builder() -> reqwest::RequestBuilder {
+        reqwest::Client::new().get("http://example.com")
+    }
+
+    #[test]
+    fn idempotency_header_set_when_key_present() {
+        let req = with_idempotency_key(dummy_builder(), "run-1:step-2:1")
+            .build()
+            .unwrap();
+        assert_eq!(
+            req.headers().get("Idempotency-Key").unwrap(),
+            "run-1:step-2:1"
+        );
+    }
+
+    #[test]
+    fn idempotency_header_absent_when_key_empty() {
+        let req = with_idempotency_key(dummy_builder(), "")
+            .build()
+            .unwrap();
+        assert!(req.headers().get("Idempotency-Key").is_none());
     }
 }

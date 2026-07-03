@@ -128,6 +128,14 @@ type Deps struct {
 	// (LLM, connector, subagent), making re-runs idempotent on replay.
 	// When nil (e.g. in tests that don't opt in), each node always executes.
 	CompletedStep func(ctx context.Context, runID, stepID string) (output map[string]any, done bool, err error)
+
+	// ConfidenceGate, when non-nil, enables confidence-gated execution for
+	// side-effecting nodes (tool, connector, and ai-step nodes that declare
+	// requiresConfidence=true). When score < Threshold the node is diverted
+	// to the human-approval mechanism (WaitForApproval) rather than
+	// auto-executing. When nil (the default), the feature is completely
+	// bypassed. Controlled at the call site via LANTERN_CONFIDENCE_GATE.
+	ConfidenceGate *ConfidenceGate
 }
 
 // ApprovalDisposition reports what the human did with an approval step.
@@ -366,6 +374,15 @@ func executeNode(ctx context.Context, runID string, deps Deps, emit emitFn, node
 				return cached, nil
 			}
 			// On error we fall through and re-execute — safe to retry.
+		}
+	}
+
+	// Confidence gate: evaluate confidence and optionally route to human
+	// approval before executing any side-effecting node. Bypassed entirely
+	// when deps.ConfidenceGate is nil (default — LANTERN_CONFIDENCE_GATE off).
+	if deps.ConfidenceGate != nil && isConfidenceGated(node) {
+		if err := runConfidenceGate(ctx, runID, deps, emit, node, vars); err != nil {
+			return nil, err
 		}
 	}
 

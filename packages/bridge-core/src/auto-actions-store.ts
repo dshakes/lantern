@@ -7,7 +7,7 @@
 // windowed to the last 24h. Best-effort: any I/O failure degrades to empty,
 // never throws.
 
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface AutoActionEntry {
@@ -23,11 +23,17 @@ export interface DidAction {
 
 const FILE = "auto-actions.jsonl";
 const WINDOW_MS = 24 * 3_600_000;
+const MAX_LINES = 200; // reads only ever use the last 24h / 50 entries — cap the disk too
 
 /** Append one auto-action to the on-disk recap log. Best-effort. */
 export function recordAutoAction(stateDir: string, text: string, now: number = Date.now()): void {
   try {
-    appendFileSync(join(stateDir, FILE), JSON.stringify({ text, ts: now }) + "\n", { mode: 0o600 });
+    const p = join(stateDir, FILE);
+    appendFileSync(p, JSON.stringify({ text, ts: now }) + "\n", { mode: 0o600 });
+    const lines = readFileSync(p, "utf8").split("\n").filter(Boolean);
+    if (lines.length > MAX_LINES * 2) {
+      writeFileSync(p, lines.slice(-MAX_LINES).join("\n") + "\n", { mode: 0o600 });
+    }
   } catch {
     /* best-effort — recap is non-critical */
   }

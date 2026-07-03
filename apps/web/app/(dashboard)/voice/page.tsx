@@ -8,7 +8,7 @@
 // Real audio streaming requires the provider's webhook to point at
 // /v1/voice/webhook/{provider} on this control-plane.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Phone,
   PhoneCall,
@@ -21,6 +21,7 @@ import {
 import clsx from "clsx";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/button";
+import { ConfirmModal } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 
@@ -56,6 +57,8 @@ export default function VoicePage() {
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [unlinkTarget, setUnlinkTarget] = useState<VoiceNumber | null>(null);
+  const reloadErroredRef = useRef(false);
 
   const reload = async () => {
     try {
@@ -65,9 +68,19 @@ export default function VoicePage() {
       ]);
       setNumbers(n as VoiceNumber[]);
       setCalls(c as VoiceCall[]);
+    } catch (err) {
+      // listVoiceNumbers/listVoiceCalls already return [] on failure, so this
+      // only fires on something unexpected. Toast once per outage, not every
+      // 15s poll, so a sustained API blip doesn't spam the corner.
+      if (!reloadErroredRef.current) {
+        reloadErroredRef.current = true;
+        toast.error(`Failed to refresh voice data — ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
     } finally {
       setLoading(false);
     }
+    reloadErroredRef.current = false;
   };
 
   useEffect(() => {
@@ -162,19 +175,7 @@ export default function VoicePage() {
                     {n.status}
                   </span>
                   <button
-                    onClick={async () => {
-                      if (!confirm(`Unlink ${n.phoneNumber}?`)) return;
-                      setDeleting(n.id);
-                      try {
-                        await api.deleteVoiceNumber(n.id);
-                        toast.info(`Unlinked ${n.phoneNumber}`);
-                        reload();
-                      } catch (err) {
-                        toast.error(err instanceof Error ? err.message : "Could not unlink");
-                      } finally {
-                        setDeleting(null);
-                      }
-                    }}
+                    onClick={() => setUnlinkTarget(n)}
                     disabled={deleting === n.id}
                     className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
                     title="Unlink"
@@ -244,6 +245,29 @@ export default function VoicePage() {
           )}
         </section>
       </div>
+
+      <ConfirmModal
+        open={unlinkTarget !== null}
+        title={`Unlink ${unlinkTarget?.phoneNumber}?`}
+        confirmLabel="Unlink"
+        tone="danger"
+        confirming={deleting === unlinkTarget?.id}
+        onCancel={() => setUnlinkTarget(null)}
+        onConfirm={async () => {
+          if (!unlinkTarget) return;
+          setDeleting(unlinkTarget.id);
+          try {
+            await api.deleteVoiceNumber(unlinkTarget.id);
+            toast.info(`Unlinked ${unlinkTarget.phoneNumber}`);
+            reload();
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Could not unlink");
+          } finally {
+            setDeleting(null);
+            setUnlinkTarget(null);
+          }
+        }}
+      />
     </div>
   );
 }

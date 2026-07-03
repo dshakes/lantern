@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -14,6 +15,11 @@ import (
 	lanternv1 "github.com/dshakes/lantern/gen/go/lantern/v1"
 	"github.com/dshakes/lantern/services/workflow-engine/internal/journal"
 )
+
+// ErrRunNotFound is returned when a run does not exist or belongs to a
+// different tenant. Callers should map this to codes.NotFound (not
+// codes.PermissionDenied) to avoid leaking whether the run ID exists at all.
+var ErrRunNotFound = errors.New("run not found")
 
 // Engine is the core workflow execution engine. It manages a pool of worker
 // goroutines that pick up queued runs, replay their journals, and execute
@@ -50,7 +56,9 @@ func NewEngine(pool *pgxpool.Pool, rdb *redis.Client, logger *zap.Logger, worker
 
 	eng.streamer = NewEventStreamer(rdb, logger)
 	eng.executor = NewStepExecutor(pool, eng.streamer, logger, modelClient, runtimeClient)
-	eng.scheduler = NewScheduler(pool, logger, eng.dispatchRun)
+	// Pass &eng.wg so dispatch goroutines are tracked by the same WaitGroup
+	// that Stop() waits on — guarantees all in-flight runs drain on shutdown.
+	eng.scheduler = NewScheduler(pool, logger, &eng.wg, eng.dispatchRun)
 
 	return eng
 }
@@ -162,18 +170,40 @@ func (e *Engine) dispatchRun(ctx context.Context, runID, tenantID, agentVersionI
 	// linear workflow by reading steps from the run's manifest.
 	err = e.executeRunWorkflow(ctx, state)
 
+	// Terminal journal writes use a fresh detached context. The execution ctx
+	// is cancelled on shutdown (or when the run itself was cancelled); writing
+	// through it would fail immediately and strand the run at status='running'
+	// with no recovery signal.
+	journalCtx, journalCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer journalCancel()
+
 	// Terminal state.
 	if err != nil {
 		if ctx.Err() != nil {
 			// Context cancelled — the run was cancelled externally.
-			e.journalRunCancelled(ctx, state) //nolint:errcheck
+			if jErr := e.journalRunCancelled(journalCtx, state); jErr != nil {
+				e.logger.Error("failed to persist run_cancelled — run may strand at status=running",
+					zap.String("run_id", state.RunID),
+					zap.Error(jErr),
+				)
+			}
 			return nil
 		}
-		e.journalRunFailed(ctx, state, err) //nolint:errcheck
+		if jErr := e.journalRunFailed(journalCtx, state, err); jErr != nil {
+			e.logger.Error("failed to persist run_failed — run may strand at status=running",
+				zap.String("run_id", state.RunID),
+				zap.Error(jErr),
+			)
+		}
 		return nil
 	}
 
-	e.journalRunSucceeded(ctx, state) //nolint:errcheck
+	if jErr := e.journalRunSucceeded(journalCtx, state); jErr != nil {
+		e.logger.Error("failed to persist run_succeeded — run may strand at status=running",
+			zap.String("run_id", state.RunID),
+			zap.Error(jErr),
+		)
+	}
 	return nil
 }
 
@@ -266,45 +296,53 @@ func (e *Engine) ExecuteRun(ctx context.Context, runID, tenantID, agentVersionID
 	return e.dispatchRun(ctx, runID, tenantID, agentVersionID)
 }
 
-// ResumeRun resumes a paused run. The run is expected to have a pending
-// signal or sleep that was satisfied.
-func (e *Engine) ResumeRun(ctx context.Context, runID string) error {
-	// Load run metadata.
-	var tenantID, agentVersionID, status string
+// ResumeRun resumes a paused run. callerTenantID must match the run's
+// tenant_id; any mismatch returns ErrRunNotFound (no existence leak).
+func (e *Engine) ResumeRun(ctx context.Context, runID, callerTenantID string) error {
+	// Load run metadata scoped to the caller's tenant.
+	var agentVersionID, runStatus string
 	err := e.pool.QueryRow(ctx, `
-		SELECT tenant_id, agent_version_id, status FROM runs WHERE id = $1
-	`, runID).Scan(&tenantID, &agentVersionID, &status)
+		SELECT agent_version_id, status FROM runs WHERE id = $1 AND tenant_id = $2
+	`, runID, callerTenantID).Scan(&agentVersionID, &runStatus)
 	if err != nil {
-		return fmt.Errorf("load run: %w", err)
+		// No row means either the run doesn't exist or belongs to another tenant —
+		// return the same error in both cases (ErrRunNotFound, not a permission error).
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 	}
 
-	if status != "paused" && status != "resumable" {
-		return fmt.Errorf("run %s is in status %s, expected paused or resumable", runID, status)
+	if runStatus != "paused" && runStatus != "resumable" {
+		return fmt.Errorf("run %s is in status %s, expected paused or resumable", runID, runStatus)
 	}
 
-	// Update to resumable so the scheduler picks it up.
+	// Update to resumable so the scheduler picks it up, still scoped by tenant.
 	if _, err := e.pool.Exec(ctx, `
-		UPDATE runs SET status = 'resumable' WHERE id = $1
-	`, runID); err != nil {
+		UPDATE runs SET status = 'resumable' WHERE id = $1 AND tenant_id = $2
+	`, runID, callerTenantID); err != nil {
 		return fmt.Errorf("update run status: %w", err)
 	}
 
 	e.logger.Info("run marked for resume",
 		zap.String("run_id", runID),
-		zap.String("tenant_id", tenantID),
+		zap.String("tenant_id", callerTenantID),
 	)
 
 	return nil
 }
 
 // SignalRun delivers an external signal to a running or paused run.
-func (e *Engine) SignalRun(ctx context.Context, runID, signalName string, value json.RawMessage) error {
-	// First, try to deliver to an active in-memory run.
+// callerTenantID must match the run's tenant_id; any mismatch returns
+// ErrRunNotFound (no existence leak).
+func (e *Engine) SignalRun(ctx context.Context, runID, callerTenantID, signalName string, value json.RawMessage) error {
+	// First, try to deliver to an active in-memory run. Always verify the
+	// tenant before touching the state — the map is keyed by run_id alone.
 	e.mu.RLock()
 	state, active := e.runs[runID]
 	e.mu.RUnlock()
 
 	if active {
+		if state.TenantID != callerTenantID {
+			return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
+		}
 		var parsed any
 		json.Unmarshal(value, &parsed) //nolint:errcheck
 		if state.DeliverSignal(signalName, parsed) {
@@ -316,8 +354,16 @@ func (e *Engine) SignalRun(ctx context.Context, runID, signalName string, value 
 		}
 	}
 
-	// Run is not active or no waiter for this signal. Store the signal in the
-	// journal so it's picked up when the run resumes.
+	// Run is not active or no waiter for this signal. Verify ownership via the
+	// DB before writing to the journal.
+	var exists bool
+	if err := e.pool.QueryRow(ctx, `
+		SELECT true FROM runs WHERE id = $1 AND tenant_id = $2
+	`, runID, callerTenantID).Scan(&exists); err != nil {
+		return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
+	}
+
+	// Store the signal in the journal so it's picked up when the run resumes.
 	tx, err := e.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -335,11 +381,11 @@ func (e *Engine) SignalRun(ctx context.Context, runID, signalName string, value 
 		return fmt.Errorf("journal signal: %w", err)
 	}
 
-	// If the run is paused, mark it as resumable.
+	// If the run is paused, mark it as resumable, scoped to the caller's tenant.
 	if _, err := tx.Exec(ctx, `
 		UPDATE runs SET status = 'resumable'
-		WHERE id = $1 AND status = 'paused'
-	`, runID); err != nil {
+		WHERE id = $1 AND tenant_id = $2 AND status = 'paused'
+	`, runID, callerTenantID); err != nil {
 		return fmt.Errorf("update run status: %w", err)
 	}
 
@@ -355,23 +401,28 @@ func (e *Engine) SignalRun(ctx context.Context, runID, signalName string, value 
 	return nil
 }
 
-// CancelRun cancels a running or paused run.
-func (e *Engine) CancelRun(ctx context.Context, runID string) error {
-	// If the run is active in memory, cancel it.
+// CancelRun cancels a running or paused run. callerTenantID must match the
+// run's tenant_id; any mismatch returns ErrRunNotFound (no existence leak).
+func (e *Engine) CancelRun(ctx context.Context, runID, callerTenantID string) error {
+	// If the run is active in memory, verify tenant before mutating state.
 	e.mu.RLock()
 	state, active := e.runs[runID]
 	e.mu.RUnlock()
 
 	if active {
+		if state.TenantID != callerTenantID {
+			return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
+		}
 		state.SetStatus("cancelled")
 		// The execution loop checks status and will exit.
 	}
 
-	// Update the database.
+	// Update the database, scoped by tenant_id so a cross-tenant caller
+	// modifies nothing even if the in-memory check was bypassed.
 	tag, err := e.pool.Exec(ctx, `
 		UPDATE runs SET status = 'cancelled', finished_at = now()
-		WHERE id = $1 AND status IN ('queued', 'running', 'paused', 'resumable')
-	`, runID)
+		WHERE id = $1 AND tenant_id = $2 AND status IN ('queued', 'running', 'paused', 'resumable')
+	`, runID, callerTenantID)
 	if err != nil {
 		return fmt.Errorf("update run status: %w", err)
 	}

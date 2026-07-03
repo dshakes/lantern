@@ -116,6 +116,32 @@ pub enum HarnessReport {
     Audit(AuditEvent),
 }
 
+impl HarnessReport {
+    /// True when this report is a security-critical audit that must never be
+    /// silently dropped. Four event kinds qualify:
+    ///
+    /// - `secret_vend` — a secret was successfully vended to the workload.
+    /// - `secret_access_denied` — an unauthorized peer attempted secret access.
+    /// - `egress_preflight` — the boot-time enforcement preflight denied or warned.
+    /// - `egress` with `decision == "deny"` — a connect was blocked by the allowlist.
+    ///
+    /// The exact action strings are the ones written by secrets.rs and egress.rs;
+    /// any mismatch here silently loses the forensic trail, so they must stay in sync.
+    #[must_use]
+    pub fn is_security_audit(&self) -> bool {
+        match self {
+            HarnessReport::Audit(a) => {
+                a.action == "secret_vend"
+                    || a.action == "secret_access_denied"
+                    || a.action == "egress_preflight"
+                    || (a.action == "egress"
+                        && a.attrs.get("decision").map(String::as_str) == Some("deny"))
+            }
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LogLine {
     pub vm_id: String,

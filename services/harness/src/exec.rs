@@ -33,7 +33,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 use crate::manager_client::ManagerClient;
-use crate::proto::{self, AuditEvent, HarnessReport, pb};
+use crate::proto::{self, pb, AuditEvent, HarnessReport};
 
 /// Default listen address for the in-guest exec server.
 pub const DEFAULT_EXEC_ADDR: &str = "0.0.0.0:50056";
@@ -495,10 +495,45 @@ impl pb::runtime_harness_server::RuntimeHarness for ExecService {
     }
 }
 
+/// Verify `Authorization: Bearer <token>` on every Exec RPC call.
+///
+/// When `expected` is empty (dev path — guarded by the prod check in `run()`)
+/// the interceptor is a transparent pass-through so tests work without a token.
+#[allow(clippy::result_large_err)]
+fn check_bearer_token(
+    req: tonic::Request<()>,
+    expected: &str,
+) -> Result<tonic::Request<()>, tonic::Status> {
+    if expected.is_empty() {
+        return Ok(req);
+    }
+    let ok = req
+        .metadata()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|t| t == expected)
+        .unwrap_or(false);
+    if ok {
+        Ok(req)
+    } else {
+        Err(tonic::Status::unauthenticated(
+            "exec: invalid or missing bearer token",
+        ))
+    }
+}
+
 /// Bind and serve the in-guest exec server. Address comes from
 /// `LANTERN_HARNESS_EXEC_ADDR` (default [`DEFAULT_EXEC_ADDR`]). Runs until
 /// process exit; the caller spawns it and the harness tolerates failure
 /// (the workload always runs even if exec is unavailable).
+///
+/// # Security
+///
+/// `LANTERN_HARNESS_EXEC_TOKEN` must be set in prod/staging: the Exec RPC
+/// accepts arbitrary shell commands as the harness uid; anything on the guest
+/// tap interface can reach it.  In dev (token unset) a SECURITY warning is
+/// logged; in prod a missing token is fatal (mirrors the TLS prod guard).
 pub async fn run(vm_id: String, manager: ManagerClient) -> Result<()> {
     let addr_raw = std::env::var("LANTERN_HARNESS_EXEC_ADDR")
         .unwrap_or_else(|_| DEFAULT_EXEC_ADDR.to_string());
@@ -506,12 +541,36 @@ pub async fn run(vm_id: String, manager: ManagerClient) -> Result<()> {
         .parse()
         .with_context(|| format!("exec: invalid LANTERN_HARNESS_EXEC_ADDR '{addr_raw}'"))?;
 
+    let exec_token = std::env::var("LANTERN_HARNESS_EXEC_TOKEN").unwrap_or_default();
+    if exec_token.is_empty() {
+        if crate::tls::is_prod_env() {
+            anyhow::bail!(
+                "exec: LANTERN_HARNESS_EXEC_TOKEN must be set in production \
+                 (LANTERN_ENV={}) — the Exec RPC is reachable on the guest tap \
+                 interface and would accept commands without authentication",
+                std::env::var("LANTERN_ENV").unwrap_or_default()
+            );
+        }
+        tracing::warn!(
+            %addr,
+            "exec: LANTERN_HARNESS_EXEC_TOKEN unset — Exec RPC is UNAUTHENTICATED \
+             (dev path). Set in production so only the manager can run exec commands."
+        );
+    }
+
     tracing::info!(%addr, "exec: in-guest exec server listening");
 
-    let svc =
-        pb::runtime_harness_server::RuntimeHarnessServer::new(ExecService::new(vm_id, manager));
+    let svc = ExecService::new(vm_id, manager);
+    // ponytail: always use with_interceptor; the interceptor is a no-op when
+    // the token is empty (dev path, guarded by the prod bail above).
+    let token_for_interceptor = exec_token;
     tonic::transport::Server::builder()
-        .add_service(svc)
+        .add_service(
+            pb::runtime_harness_server::RuntimeHarnessServer::with_interceptor(
+                svc,
+                move |req: tonic::Request<()>| check_bearer_token(req, &token_for_interceptor),
+            ),
+        )
         .serve(addr)
         .await
         .context("exec: server exited")?;

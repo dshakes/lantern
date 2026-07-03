@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 
 import { useBridge } from "@/components/personal/bridge-context";
+import { Skeleton } from "@/components/skeleton";
 import type { ActivityEvent, ConnectionState } from "@/lib/bridge-types";
 import { listDrafts, listVIPs } from "@/lib/whatsapp-personal-client";
 import { api } from "@/lib/api";
@@ -278,7 +279,7 @@ export default function PersonalOverview() {
         {loadingLife ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-24 animate-pulse rounded-xl border border-zinc-800/80 bg-surface-1" />
+              <Skeleton key={i} className="h-24 rounded-xl border border-zinc-800/80" />
             ))}
           </div>
         ) : (
@@ -304,7 +305,7 @@ export default function PersonalOverview() {
           {loadingLife ? (
             <div className="space-y-3 py-2">
               {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-10 animate-pulse rounded-lg bg-surface-3/40" />
+                <Skeleton key={i} className="h-10 rounded-lg bg-surface-3/40" />
               ))}
             </div>
           ) : commitments.length === 0 ? (

@@ -123,6 +123,7 @@ impl ModelRouter {
     /// Rank candidate (provider, model) pairs for a given capability and
     /// optimization target, over the STARTUP provider set. Kept for callers
     /// (and tests) that route against the env providers.
+    #[allow(dead_code)]
     fn rank_candidates(
         &self,
         capability: Capability,
@@ -258,18 +259,12 @@ impl ModelRouter {
                         escalated = !errors.is_empty(),
                         "stream connected"
                     );
-                    // We need to convert the stream to 'static lifetime.
-                    // The provider is behind an Arc, so it lives long enough.
-                    // SAFETY: The stream borrows from provider which is Arc'd and lives
-                    // in self.providers. We transmute the lifetime to 'static. This is
-                    // safe because the ModelRouter (and its Arc<dyn Provider>) outlive
-                    // any individual RPC.
-                    let static_stream: BoxStream<'static, Result<CompleteChunk, ProviderError>> =
-                        unsafe { std::mem::transmute(stream) };
+                    // stream is already BoxStream<'static, _> — provider impls
+                    // move all state into the stream closure; no self-borrow.
                     return Ok((
                         model_info.model_id.clone(),
                         model_info.quality_score as i32,
-                        static_stream,
+                        stream,
                     ));
                 }
                 Err(e) => {
@@ -472,7 +467,8 @@ mod tests {
             &self,
             _model: &str,
             _req: &CompleteRequest,
-        ) -> Result<BoxStream<'_, Result<CompleteChunk, ProviderError>>, ProviderError> {
+        ) -> Result<BoxStream<'static, Result<CompleteChunk, ProviderError>>, ProviderError>
+        {
             Ok(Box::pin(stream::empty()))
         }
 

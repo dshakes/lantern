@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -929,7 +930,9 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	if deliveryEmail != "" {
 		// Side-effect dedup: skip the email if a prior attempt already sent it.
 		emailIdemKey := idempotencyKey(runID, "email_delivery", 1)
+		h.inFlightRuns.Add(1)
 		go func() {
+			defer h.inFlightRuns.Done()
 			claimed, claimErr := claimSideEffect(ctx, h.srv.Pool, emailIdemKey, runID, tenantID, "email_delivery")
 			if claimErr != nil {
 				h.logger().Warn("email delivery: side-effect claim error",
@@ -959,7 +962,9 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		// Side-effect dedup: compute an idempotency key for this delivery so
 		// a crash-replay doesn't double-send the WhatsApp message.
 		idemKey := idempotencyKey(runID, "whatsapp_self", 1)
+		h.inFlightRuns.Add(1)
 		go func() {
+			defer h.inFlightRuns.Done()
 			claimed, claimErr := claimSideEffect(ctx, h.srv.Pool, idemKey, runID, tenantID, "whatsapp_self")
 			if claimErr != nil {
 				h.logger().Warn("whatsapp delivery: side-effect claim error",
@@ -1529,10 +1534,13 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 	logStep("save_output", "running", "Saving results")
 	outputJSON, _ := json.Marshal(map[string]string{"result": result})
 	// rls-exempt: inline executor — runs write keyed by id (authorized run).
-	_, _ = h.srv.Pool.Exec(ctx,
+	if _, upErr := h.srv.Pool.Exec(ctx,
 		`UPDATE runs SET status = 'succeeded', finished_at = now(), output = $2::jsonb, tokens_in = $3, tokens_out = $4, cost_usd = $5 WHERE id = $1`,
 		runID, string(outputJSON), tokensIn, tokensOut, costUsd,
-	)
+	); upErr != nil {
+		h.logger().Error("inline executor: failed to mark run succeeded",
+			zap.String("run_id", runID), zap.Error(upErr))
+	}
 
 	logStep("complete", "completed", fmt.Sprintf("Run finished: %d tokens, $%.4f", tokensIn+tokensOut, costUsd))
 
@@ -1879,6 +1887,10 @@ func (h *RESTHandler) runWorkflowIfPresent(ctx context.Context, runID, tenantID,
 		// journal_events so already-finished nodes are skipped — the walk
 		// resumes from the first incomplete step instead of restarting.
 		CompletedStep: h.journalCompletedStep,
+		// Confidence gate: when LANTERN_CONFIDENCE_GATE is set, evaluate
+		// heuristic confidence for side-effecting nodes before executing them.
+		// Nil by default so the feature is completely opt-in per deployment.
+		ConfidenceGate: buildConfidenceGate(),
 	}
 
 	res, runErr := workflow.Run(ctx, runID, deps, def, input)
@@ -2516,6 +2528,33 @@ func agentToMap(a *lanternv1.Agent) map[string]any {
 		m["status"] = "archived"
 	}
 	return m
+}
+
+// buildConfidenceGate constructs the confidence gate config from env vars.
+// Returns nil when LANTERN_CONFIDENCE_GATE is not set (feature off by default).
+// Pattern mirrors modelRouterEnabled() in llm_proxy_router.go.
+//
+// Env vars:
+//
+//	LANTERN_CONFIDENCE_GATE           "1"/"true"/"on" to enable (default: off)
+//	LANTERN_CONFIDENCE_GATE_THRESHOLD float in (0, 1]; default 0.75
+func buildConfidenceGate() *workflow.ConfidenceGate {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LANTERN_CONFIDENCE_GATE"))) {
+	case "1", "true", "on", "yes":
+		// enabled — fall through
+	default:
+		return nil
+	}
+	threshold := 0.75
+	if s := strings.TrimSpace(os.Getenv("LANTERN_CONFIDENCE_GATE_THRESHOLD")); s != "" {
+		if f, err := strconv.ParseFloat(s, 64); err == nil && f > 0 && f <= 1 {
+			threshold = f
+		}
+	}
+	return &workflow.ConfidenceGate{
+		Estimator: workflow.VerbalizationHeuristic{DefaultConfidence: 0.9},
+		Threshold: threshold,
+	}
 }
 
 func runToMap(r *lanternv1.Run) map[string]any {

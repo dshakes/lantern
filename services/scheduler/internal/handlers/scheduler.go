@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -43,9 +42,11 @@ func (s *SchedulerService) logger() *zap.Logger {
 	return s.srv.Logger.Named("scheduler_service")
 }
 
-// setRLSTenantID sets the session variable used by Postgres RLS policies.
+// setRLSTenantID sets the transaction-local session variable used by Postgres
+// RLS policies. The parameterized form prevents SQL injection via a
+// metadata-supplied tenant_id (the previous fmt.Sprintf form was vulnerable).
 func setRLSTenantID(ctx context.Context, tx pgx.Tx, tenantID string) error {
-	_, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL app.tenant_id = '%s'", tenantID))
+	_, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenantID)
 	return err
 }
 

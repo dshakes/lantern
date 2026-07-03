@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -1029,10 +1028,4 @@ func mustMarshal(v any) json.RawMessage {
 		panic(fmt.Sprintf("mustMarshal: %v", err))
 	}
 	return b
-}
-
-// setRLSTenantID sets the session variable used by Postgres RLS policies.
-func setRLSTenantID(ctx context.Context, tx pgx.Tx, tenantID string) error {
-	_, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL app.tenant_id = '%s'", tenantID))
-	return err
 }

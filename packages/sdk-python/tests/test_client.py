@@ -454,3 +454,111 @@ class TestRehearsals:
         body = json.loads(req.content)
         assert body["agentName"] == "a"
         assert body["includeFailures"] is True
+
+
+# ---------------------------------------------------------------------------
+# REGRESSION: list endpoints return BARE camelCase JSON arrays (the real
+# control-plane shape: writeJSON(w, 200, <slice>)). The SDK used to assume a
+# wrapped {"key": [...]} dict — .get() on a list raised AttributeError — and
+# snake_case keys, so every list() call crashed against the real API.
+# ---------------------------------------------------------------------------
+
+
+class TestBareArrayListResponses:
+    async def test_agents_list_parses_bare_camelcase_array(self):
+        t = _MockTransport(
+            body=[
+                {"id": "a1", "name": "triage", "createdAt": "2026-01-01T00:00:00Z", "currentVersionId": "v1"},
+            ]
+        )
+        c = _client(t)
+        resp = await c.agents.list()
+        assert len(resp.agents) == 1
+        assert resp.agents[0].name == "triage"
+        assert resp.agents[0].current_version_id == "v1"
+
+    async def test_runs_list_parses_bare_camelcase_array(self):
+        t = _MockTransport(
+            body=[
+                {
+                    "id": "r1",
+                    "tenantId": "t1",
+                    "agentId": "a1",
+                    "status": "succeeded",
+                    "costUsd": 0.25,
+                    "tokensIn": 100,
+                    "tokensOut": 50,
+                    "createdAt": "2026-01-01T00:00:00Z",
+                }
+            ]
+        )
+        c = _client(t)
+        resp = await c.runs.list()
+        assert len(resp.runs) == 1
+        assert resp.runs[0].tenant_id == "t1"
+        assert resp.runs[0].cost_usd == 0.25
+
+    async def test_sessions_list_parses_bare_camelcase_array(self):
+        t = _MockTransport(
+            body=[
+                {
+                    "id": "s1",
+                    "agentId": "a1",
+                    "tenantId": "t1",
+                    "status": "active",
+                    "createdAt": "2026-01-01T00:00:00Z",
+                }
+            ]
+        )
+        c = _client(t)
+        resp = await c.sessions.list()
+        assert len(resp.sessions) == 1
+        assert resp.sessions[0].agent_id == "a1"
+
+    async def test_connectors_list_parses_bare_camelcase_array(self):
+        t = _MockTransport(
+            body=[
+                {"id": "i1", "connectorId": "slack", "displayName": "Slack", "status": "active"},
+            ]
+        )
+        c = _client(t)
+        resp = await c.connectors.list()
+        assert len(resp.connectors) == 1
+        assert resp.connectors[0].connector_id == "slack"
+
+    async def test_wrapped_dict_shape_still_accepted(self):
+        t = _MockTransport(
+            body={
+                "agents": [{"id": "a1", "name": "n", "createdAt": "2026-01-01T00:00:00Z"}],
+                "nextPageToken": "tok",
+            }
+        )
+        c = _client(t)
+        resp = await c.agents.list()
+        assert len(resp.agents) == 1
+        assert resp.next_page_token == "tok"
+
+
+# ---------------------------------------------------------------------------
+# REGRESSION: create bodies must send camelCase `agentName`. The handlers
+# (rest.go CreateRun, sessions.go CreateSession) decode `agentName` only —
+# a snake_case `agent_name` was silently dropped, creating an agent-less run.
+# ---------------------------------------------------------------------------
+
+
+class TestCreateWireContract:
+    async def test_runs_create_sends_agentName(self):
+        t = _MockTransport(body={"id": "r1", "tenantId": "t1", "agentId": "a1", "status": "queued", "createdAt": "2026-01-01T00:00:00Z"})
+        c = _client(t)
+        await c.runs.create(agent="triage", input={"q": "hi"})
+        body = json.loads(_last(t).content)
+        assert body["agentName"] == "triage"
+        assert "agent_name" not in body
+
+    async def test_sessions_create_sends_agentName(self):
+        t = _MockTransport(body={"id": "s1", "agentId": "a1", "tenantId": "t1", "status": "active", "createdAt": "2026-01-01T00:00:00Z"})
+        c = _client(t)
+        await c.sessions.create(agent="triage")
+        body = json.loads(_last(t).content)
+        assert body["agentName"] == "triage"
+        assert "agent_name" not in body

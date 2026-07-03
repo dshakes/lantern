@@ -185,20 +185,27 @@ export function useRun(id: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [isDemo, setIsDemo] = useState(false);
+  // Guards against a slow response for a stale `id` (e.g. the user navigated
+  // from run A to run B before A's fetch resolved) overwriting the currently
+  // viewed run with the wrong data.
+  const requestId = useRef(0);
 
   const refresh = useCallback(async () => {
+    const thisRequest = ++requestId.current;
     setLoading(true);
     setError(null);
     try {
       const data = await api.getRun(id);
+      if (requestId.current !== thisRequest) return;
       setRun(data);
       setIsDemo(false);
     } catch (err) {
+      if (requestId.current !== thisRequest) return;
       // getRun already falls back to mock data inside api.ts,
       // so if we get here the run truly doesn't exist
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setLoading(false);
+      if (requestId.current === thisRequest) setLoading(false);
     }
   }, [id]);
 

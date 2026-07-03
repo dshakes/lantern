@@ -288,6 +288,25 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 // turnHint is the optional G1 complexity hint ("trivial"|"hard"|""). When
 // LANTERN_COMPLEXITY_ROUTING=1 this overrides the server-side classifier.
 func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage, systemHint, turnHint string, noTools, readOnlyTools bool) {
+	// P0: a panic in the tool-call loop (arbitrary user/LLM/tool input) must
+	// not crash the whole process and kill all tenants. Recover, log, and
+	// publish an error event so the session's SSE listeners know it stopped.
+	defer func() {
+		if r := recover(); r != nil {
+			h.logger().Error("session processMessage panicked — recovered, server protected",
+				zap.String("session_id", sessionID),
+				zap.String("tenant_id", tenantID),
+				zap.String("agent", agentName),
+				zap.Any("panic", r),
+			)
+			h.publishEvent(sessionID, "agent.error", map[string]string{
+				"error":     fmt.Sprintf("internal error: %v", r),
+				"sessionId": sessionID,
+			})
+			h.publishEvent(sessionID, "session.status_idle", map[string]string{})
+		}
+	}()
+
 	ctx := context.Background()
 	ctx = middleware.InjectTenantID(ctx, tenantID)
 

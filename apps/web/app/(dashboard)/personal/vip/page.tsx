@@ -18,6 +18,8 @@ import {
   type VIPEntry,
 } from "@/lib/whatsapp-personal-client";
 import { useToast } from "@/components/toast";
+import { EmptyState } from "@/components/empty-state";
+import { Skeleton } from "@/components/skeleton";
 
 export default function VIPPage() {
   const [vips, setVips] = useState<VIPEntry[]>([]);
@@ -119,7 +121,12 @@ export default function VIPPage() {
         {loading ? (
           <SkeletonRows />
         ) : vips.length === 0 ? (
-          <EmptyState />
+          <EmptyState
+            icon={Star}
+            title="No VIPs yet"
+            description="Add contacts above. Once a contact is VIP, the assistant queues drafts for your approval instead of auto-sending."
+            size="compact"
+          />
         ) : (
           <ul className="divide-y divide-zinc-800/60">
             {vips.map((v) => (
@@ -247,29 +254,17 @@ function AddVIPForm({
 
 // --------------------------------------------------------------------- empty
 
-function EmptyState() {
-  return (
-    <div className="flex flex-col items-center justify-center py-12 text-center">
-      <Star className="h-6 w-6 text-zinc-600" />
-      <div className="mt-3 text-sm text-zinc-300">No VIPs yet</div>
-      <p className="mt-1 max-w-md text-xs text-zinc-500">
-        Add contacts above. Once a contact is VIP, the assistant queues drafts for your approval instead of auto-sending.
-      </p>
-    </div>
-  );
-}
-
 function SkeletonRows() {
   return (
     <ul className="divide-y divide-zinc-800/60">
       {[0, 1, 2].map((i) => (
         <li key={i} className="flex items-center gap-4 px-4 py-3">
-          <div className="h-9 w-9 animate-pulse rounded-lg bg-zinc-800" />
+          <Skeleton className="h-9 w-9 rounded-lg" />
           <div className="flex-1 space-y-2">
-            <div className="h-3 w-32 animate-pulse rounded bg-zinc-800" />
-            <div className="h-2.5 w-24 animate-pulse rounded bg-zinc-800/60" />
+            <Skeleton className="h-3 w-32" />
+            <Skeleton className="h-2.5 w-24" />
           </div>
-          <div className="h-7 w-20 animate-pulse rounded bg-zinc-800" />
+          <Skeleton className="h-7 w-20" />
         </li>
       ))}
     </ul>

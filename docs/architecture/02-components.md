@@ -105,9 +105,11 @@ See [`05-workflow-engine.md`](05-workflow-engine.md) for the deep dive.
 | **Internal surface** | gRPC: `Schedule`, `Cancel`, `Stream`, `WarmPool`, `Snapshot` |
 | **SLO** | Cold start p99 ≤ 200ms (warm pool), ≤ 1.5s (cold); availability 99.95% |
 
-Owns all interaction with physical compute. Translates "schedule this run on this isolation class" into a concrete backend (K8s Job, Firecracker microVM, Kata pod, Wasmtime invocation, devcontainer). Owns warm pools and snapshot/restore for fast cold starts.
+Owns all interaction with physical compute. Translates "schedule this run on this isolation class" into a Kubernetes pod with the appropriate `runtimeClassName` ([ADR 0009](../adr/0009-kubernetes-default-runtime-substrate.md)). Owns warm pools and snapshot/restore for fast cold starts.
 
-For each isolation class:
+> **Substrate update (2026-06-18):** [ADR 0009](../adr/0009-kubernetes-default-runtime-substrate.md) supersedes the class→backend mapping below. Kubernetes is now the default substrate; isolation is a `runtimeClassName` on the pod, not five separate backends. The authoritative current mapping is: `TRUSTED` → `runc`; `STANDARD`/`UNTRUSTED` → `gvisor`; `HOSTILE` → `kata-qemu`/`kata-fc` (dedicated pool); `WASM` → `crun+wasm`; `DEVCONTAINER` → long-lived pod + PVC, `gvisor`. The table below (Firecracker as STANDARD default) reflects the ADR 0002 design and remains for historical context.
+
+For each isolation class (ADR 0002 design — see ADR 0009 for current mapping):
 
 | Class | Backend | Cold start target | Warm start target |
 |---|---|---|---|

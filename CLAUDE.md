@@ -53,7 +53,7 @@ These are **load-bearing**. Violating them silently will cause incidents. If you
 4. **Streaming is end-to-end.** Token streams flow runtime -> gateway -> SDK -> dashboard with no buffering points other than backpressure-aware channels. No service may collect a full response and then forward.
 5. **Untrusted code runs in a microVM.** User-supplied code, Python `exec`, browser automation, anything that loads packages from the internet -- Firecracker or Kata only. Never a bare pod.
 6. **Models are addressed by capability, not name.** SDK code says `model: "auto"` or `model: "reasoning-large"`. The model router maps to a concrete vendor model. Never hardcode `gpt-5` in service code.
-7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `lantern-t-<tenant_id>`. No cross-tenant joins, ever. The control-plane gRPC port (`:50051`) is a **trust boundary**: only callers presenting the shared service token (`x-lantern-service-token`, validated against `LANTERN_GRPC_SERVICE_TOKEN`) may set a `tenant_id`. Without that interceptor any caller reachable to `:50051` could spoof any tenant. See the wiring env vars below; mTLS is the stronger follow-up, the shared token is the pragmatic GA step.
+7. **Multi-tenant by default.** Every row has `tenant_id`; every gRPC call carries a `tenant_id` in metadata; every K8s namespace is `lantern-t-<tenant_id>`. No cross-tenant joins, ever. The control-plane (`:50051`), **workflow-engine (`:50052`), and runtime-scheduler (`:50055`)** gRPC ports are all **trust boundaries**: only callers presenting the shared service token (`x-lantern-service-token`, validated against `LANTERN_GRPC_SERVICE_TOKEN`) may set a `tenant_id`. Without that interceptor any caller reachable to those ports could spoof any tenant. Additionally, every run-mutating engine RPC (`CancelRun`/`ResumeRun`/`SignalRun`) scopes its DB access by the interceptor-verified `tenant_id` and returns `NotFound` on mismatch (no existence leak) — the token gate alone is not enough; the queries must filter too. See the wiring env vars below; mTLS is the stronger follow-up, the shared token is the pragmatic GA step.
 8. **Idempotency is required for every external side-effect.** Webhook deliveries, model API calls, K8s create -- all carry an idempotency key derived from `(run_id, step_id, attempt)`. LLM provider calls (OpenAI + Anthropic, in `internal/handlers/llm_proxy.go`) now send an `Idempotency-Key` header on every request builder: the inline executor stamps a run-scoped base (`WithLLMIdempotencyBase`, from `idempotencyKey(run_id, "llm:main", attempt)`) onto the ctx, so a rate-limit backoff retry to the same provider — or a crash-replay — dedups at the provider instead of double-billing; failover targets get a per-provider-suffixed key. Ad-hoc `/v1/completions` (no run) falls back to a deterministic hash of `(provider, model, messages)`. Key derivation lives in `internal/handlers/llm_idempotency.go`; it is a one-way hash of identifiers (never carries secret material).
 9. **Observability is not optional.** Every service emits OTel traces with `tenant_id`, `run_id`, `step_id`, `agent_version`. A service that can't be traced is broken. In the control-plane, **both entry points emit enriched spans**: HTTP requests are wrapped by `otelhttp.NewHandler` (span name = low-cardinality route template, e.g. `GET /v1/runs/{id}/events`), and gRPC methods get spans from the tracing interceptors. Both funnel through `internal/middleware.EnrichSpan` to stamp `lantern.tenant_id` / `lantern.user_id` / `lantern.run_id` / `lantern.step_id` — use that helper (and those exact keys) for any new span enrichment so HTTP/gRPC/step spans stay filterable by the same attributes. All of it is no-op-safe when telemetry is disabled (no OTLP endpoint / `LANTERN_OTEL_ENABLED` unset).
 10. **Secrets never appear in logs, traces, or run state.** Use the `lantern.secret/...` ref form; the runtime resolves at execution time.
@@ -516,6 +516,45 @@ REST SSE path `GetRunEvents` (`internal/handlers/run_events.go`) exactly:
 same query, ordering, tenant-ownership gate, poll interval, and
 `isRunTerminal` stop condition.
 
+#### Confidence-gated execution (`LANTERN_CONFIDENCE_GATE`)
+
+Before a side-effecting node executes, the interpreter can evaluate a confidence
+score and route low-confidence steps to the human-approval mechanism instead of
+auto-executing. Feature is **default OFF**; enable per-deployment.
+
+**Gated node types:**
+- `tool` and `connector` — always gated when the feature is on.
+- `ai-step` — only gated when `node.Data["requiresConfidence"] = true` (for
+  action-driving steps whose LLM output is itself an instruction to act).
+
+**When score >= threshold:** node executes normally.
+**When score < threshold:** `WaitForApproval` is called (same path as the
+`approval` node / W11a takeover). The side effect does NOT execute until a human
+grants. If `WaitForApproval` is nil (no handler wired), the step auto-approves
+so unattended workflows still complete.
+
+**Journal events:** every gated step emits `confidence_evaluated` with
+`{score, threshold, decision ("execute"|"divert"), node_type, estimator}`.
+Diverted-then-approved steps additionally emit the normal `step_completed` after
+the human grants. Diverted-then-denied steps emit `step_failed`.
+
+**Current estimator:** `VerbalizationHeuristic` — scans prior step text outputs
+for LLM self-reported confidence patterns (e.g. "Confidence: 85%",
+"I am 70% confident", "Confidence: High"). Falls back to `DefaultConfidence=0.9`
+when no pattern is found. This is a HEURISTIC, not statistically calibrated. The
+`ConfidenceEstimator` interface in `internal/workflow/confidence.go` is the clean
+seam for a calibrated estimator (self-consistency, logit-based) in a later phase.
+
+**Env vars (control-plane):**
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `LANTERN_CONFIDENCE_GATE` | _(off)_ | `1`/`true`/`on` enables gating. Default OFF. |
+| `LANTERN_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution. |
+
+Rollout: enable on non-production agents first → inspect `confidence_evaluated`
+events in the run waterfall → tune threshold → then enable on production traffic.
+
 #### Durable workflow engine step dispatch (`services/workflow-engine`)
 
 The dormant durable engine's leaf executors
@@ -789,7 +828,14 @@ agents in `examples/headless-agents/{01-hello,02-web-scraper,03-stateful-researc
   **refuses to start**. When unset in dev it warns and allows unauthenticated
   calls (so `make dev` works). Health-check + `DataPlaneService` methods are
   exempt (the latter has its own bootstrap-token + JWT auth). mTLS is the stronger
-  follow-up; the shared token is the GA step.
+  follow-up; the shared token is the GA step. **The same interceptor now guards
+  the workflow-engine gRPC port (`:50052`) and the runtime-scheduler gRPC port
+  (`:50055`)** — both previously trusted a metadata `tenant_id` with no credential
+  check (cross-tenant run-control / microVM-compute takeover). Both run the
+  service-auth interceptor before tenant extraction, fail-closed in prod, and the
+  control-plane caller (`internal/handlers/runtime.go`) attaches the token as
+  `PerRPCCredentials`. Set `LANTERN_GRPC_SERVICE_TOKEN` to the **same value** on
+  control-plane, gateway, workflow-engine, and runtime-scheduler.
 
 Real protoc Go codegen at `gen/go/lantern/v1/` is hand-maintained stubs.
 These are **tracked in git** (NOT gitignored) — they are a build-critical Go

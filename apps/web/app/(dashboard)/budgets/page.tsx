@@ -17,7 +17,7 @@ import { useToast } from "@/components/toast";
 import { Skeleton } from "@/components/skeleton";
 import { PageHeader, CountBadge } from "@/components/page-header";
 import { Button } from "@/components/button";
-import { Modal, ModalField } from "@/components/modal";
+import { ConfirmModal, Modal, ModalField } from "@/components/modal";
 import { EmptyState } from "@/components/empty-state";
 import { BudgetsIllustration } from "@/components/illustrations";
 import { AgentAvatar } from "@/components/agent-avatar";
@@ -75,13 +75,15 @@ export default function BudgetsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [editing, setEditing] = useState<DraftBudget | null>(null);
   const [saving, setSaving] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [bs, as] = await Promise.all([
-        api.listBudgets().catch(() => [] as Budget[]),
-        api.listAgents().catch(() => [] as Agent[]),
+        api.listBudgets(),
+        api.listAgents(),
       ]);
       setBudgets(bs);
       setAgents(as);
@@ -120,13 +122,16 @@ export default function BudgetsPage() {
   };
 
   const remove = async (agentName: string) => {
-    if (!confirm(`Remove budget for "${agentName}"?`)) return;
+    setRemoving(true);
     try {
       await api.deleteBudget(agentName);
       toast.success("Budget removed");
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setRemoving(false);
+      setRemoveTarget(null);
     }
   };
 
@@ -185,7 +190,7 @@ export default function BudgetsPage() {
                 key={b.agentName}
                 budget={b}
                 onEdit={() => setEditing(toDraft(b))}
-                onDelete={() => remove(b.agentName)}
+                onDelete={() => setRemoveTarget(b.agentName)}
               />
             ))}
           </div>
@@ -335,6 +340,16 @@ export default function BudgetsPage() {
           </div>
         )}
       </Modal>
+
+      <ConfirmModal
+        open={removeTarget !== null}
+        title={`Remove budget for "${removeTarget}"?`}
+        confirmLabel="Remove"
+        tone="danger"
+        confirming={removing}
+        onCancel={() => setRemoveTarget(null)}
+        onConfirm={() => removeTarget && remove(removeTarget)}
+      />
     </div>
   );
 }

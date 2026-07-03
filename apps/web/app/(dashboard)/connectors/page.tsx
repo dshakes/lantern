@@ -7,7 +7,8 @@ import clsx from "clsx";
 import { useToast } from "@/components/toast";
 import { HeaderSkeleton, Skeleton } from "@/components/skeleton";
 import { PageHeader } from "@/components/page-header";
-import { api } from "@/lib/api";
+import { api, type McpServer as CatalogMcpServer, type McpAttachment } from "@/lib/api";
+import type { Agent } from "@/lib/mock-data";
 
 // ---------------------------------------------------------------------------
 // Types & helpers
@@ -72,21 +73,11 @@ const connectors: ConnectorDef[] = [
 
 const categories = ["All", "Communication", "Email & Calendar", "Docs & Storage", "Dev Tools", "CRM & Sales", "Commerce"];
 const STORAGE_KEY = "lantern_connectors";
-const MCP_STORAGE_KEY = "lantern_mcp_servers";
 
-interface McpServer {
-  id: string;
-  name: string;
-  url: string;
-  description: string;
-  addedAt: string;
-}
-
-function loadMcpServers(): McpServer[] {
-  if (typeof window === "undefined") return [];
-  try { const r = localStorage.getItem(MCP_STORAGE_KEY); if (!r) return []; return JSON.parse(r) as McpServer[]; } catch { return []; }
-}
-function saveMcpServers(servers: McpServer[]) { if (typeof window !== "undefined") localStorage.setItem(MCP_STORAGE_KEY, JSON.stringify(servers)); }
+// An MCP attachment tagged with the agent it belongs to — the backend only
+// models "server X attached to agent Y" (see /v1/agents/{name}/mcp-servers),
+// there's no tenant-wide attachment, so this page aggregates across agents.
+type McpAttachmentRow = McpAttachment & { agentName: string };
 
 function loadStates(): Record<string, ConnectorState> {
   if (typeof window === "undefined") return {};
@@ -138,11 +129,17 @@ export default function ConnectorsPage() {
   const [disconnecting, setDisconnecting] = useState(false);
   const [oauthErr, setOauthErr] = useState("");
 
-  // MCP Marketplace
-  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+  // MCP Marketplace — real curated catalog (GET /v1/mcp/servers) attached
+  // per-agent (POST /v1/agents/{name}/mcp-servers). No tenant-wide "register
+  // a custom MCP server by URL" endpoint exists on the backend, so this UI
+  // matches what's actually there: pick an agent + a catalog server.
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [catalog, setCatalog] = useState<CatalogMcpServer[]>([]);
+  const [attachments, setAttachments] = useState<McpAttachmentRow[]>([]);
   const [showMcpModal, setShowMcpModal] = useState(false);
-  const [mcpForm, setMcpForm] = useState({ url: "", name: "", description: "" });
+  const [mcpForm, setMcpForm] = useState({ agentName: "", slug: "" });
   const [mcpErrors, setMcpErrors] = useState<Record<string, string>>({});
+  const [mcpSaving, setMcpSaving] = useState(false);
   const [mcpSearch, setMcpSearch] = useState("");
 
   const loadData = useCallback(async () => {
@@ -170,7 +167,30 @@ export default function ConnectorsPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadData(); setMcpServers(loadMcpServers()); }, [loadData]);
+  const loadMcp = useCallback(async () => {
+    try {
+      const [ag, cat] = await Promise.all([api.listAgents(), api.listMcpServers()]);
+      setAgents(ag);
+      setCatalog(cat);
+      const perAgent = await Promise.all(
+        ag.map(async (a) => {
+          try {
+            const atts = await api.listAgentMcpServers(a.name);
+            return atts.map((att) => ({ ...att, agentName: a.name }));
+          } catch {
+            return [];
+          }
+        }),
+      );
+      setAttachments(perAgent.flat());
+    } catch {
+      setAgents([]);
+      setCatalog([]);
+      setAttachments([]);
+    }
+  }, []);
+
+  useEffect(() => { loadData(); loadMcp(); }, [loadData, loadMcp]);
 
   // Deep-link auto-open: ?install=<id> opens the matching connector's
   // install modal. Used by /agents/{name}/setup so users land directly
@@ -298,48 +318,60 @@ export default function ConnectorsPage() {
 
   const handleDisconnect = async () => {
     if (!mc) return; setDisconnecting(true); const s = states[mc.id];
-    try { if (usingApi && s?.backendId) { await api.uninstallConnector(s.backendId); await loadData(); setDisconnecting(false); setMc(null); toast.info(`${mc.name} disconnected`); return; } } catch { /* fall back */ }
-    await new Promise((r) => setTimeout(r, 600));
-    const up = { ...states }; delete up[mc.id]; setStates(up); saveStates(up); setDisconnecting(false); setMc(null); toast.info(`${mc.name} disconnected`);
+    if (!usingApi || !s?.backendId) { setDisconnecting(false); return; }
+    try {
+      await api.uninstallConnector(s.backendId);
+      await loadData();
+      setDisconnecting(false); setMc(null); toast.info(`${mc.name} disconnected`);
+    } catch (e) {
+      // Surface the real failure and keep the connector installed rather
+      // than deleting it locally and claiming success.
+      const msg = e instanceof Error ? e.message : String(e);
+      setDisconnecting(false);
+      toast.error(`Failed to disconnect ${mc.name} — ${msg}`);
+    }
   };
 
-  const filteredMcpServers = useMemo(() => {
-    if (!mcpSearch.trim()) return mcpServers;
+  const filteredAttachments = useMemo(() => {
+    if (!mcpSearch.trim()) return attachments;
     const q = mcpSearch.toLowerCase();
-    return mcpServers.filter((s) => s.name.toLowerCase().includes(q) || s.url.toLowerCase().includes(q) || s.description.toLowerCase().includes(q));
-  }, [mcpServers, mcpSearch]);
+    return attachments.filter((a) => a.serverName.toLowerCase().includes(q) || a.agentName.toLowerCase().includes(q) || a.category.toLowerCase().includes(q));
+  }, [attachments, mcpSearch]);
 
-  const handleAddMcp = () => {
+  const handleAddMcp = async () => {
     const errs: Record<string, string> = {};
-    if (!mcpForm.url.trim()) errs.url = "Server URL is required";
-    else if (!/^https?:\/\/.+/.test(mcpForm.url.trim())) errs.url = "Must be a valid HTTP(S) URL";
-    if (!mcpForm.name.trim()) errs.name = "Name is required";
-    if (mcpServers.some((s) => s.url === mcpForm.url.trim())) errs.url = "This server URL is already added";
+    if (!mcpForm.agentName) errs.agentName = "Pick an agent";
+    if (!mcpForm.slug) errs.slug = "Pick an MCP server";
     setMcpErrors(errs);
     if (Object.keys(errs).length > 0) return;
 
-    const server: McpServer = {
-      id: `mcp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      name: mcpForm.name.trim(),
-      url: mcpForm.url.trim(),
-      description: mcpForm.description.trim(),
-      addedAt: new Date().toISOString(),
-    };
-    const updated = [...mcpServers, server];
-    setMcpServers(updated);
-    saveMcpServers(updated);
-    setShowMcpModal(false);
-    setMcpForm({ url: "", name: "", description: "" });
-    setMcpErrors({});
-    toast.success(`MCP server "${server.name}" added -- its tools are now available to agents`);
+    setMcpSaving(true);
+    try {
+      await api.attachMcpServer(mcpForm.agentName, { slug: mcpForm.slug });
+      setShowMcpModal(false);
+      setMcpForm({ agentName: "", slug: "" });
+      setMcpErrors({});
+      await loadMcp();
+      const server = catalog.find((s) => s.slug === mcpForm.slug);
+      toast.success(`${server?.name ?? mcpForm.slug} attached to ${mcpForm.agentName}`);
+    } catch (e) {
+      // Surface the real failure rather than pretending the server is attached.
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`Failed to attach MCP server — ${msg}`);
+    } finally {
+      setMcpSaving(false);
+    }
   };
 
-  const handleRemoveMcp = (id: string) => {
-    const server = mcpServers.find((s) => s.id === id);
-    const updated = mcpServers.filter((s) => s.id !== id);
-    setMcpServers(updated);
-    saveMcpServers(updated);
-    toast.info(`${server?.name ?? "MCP server"} removed`);
+  const handleRemoveMcp = async (row: McpAttachmentRow) => {
+    try {
+      await api.detachMcpServer(row.agentName, row.serverSlug);
+      await loadMcp();
+      toast.info(`${row.serverName} detached from ${row.agentName}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`Failed to detach ${row.serverName} — ${msg}`);
+    }
   };
 
   if (loading) return (
@@ -387,7 +419,7 @@ export default function ConnectorsPage() {
             a single-line strip with a "+ Add" button; only the populated
             grid expands the section. Previous design had a 400px-tall
             empty card that screamed at the user. */}
-        {mcpServers.length === 0 ? (
+        {attachments.length === 0 ? (
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-surface-1 px-4 py-3">
             <div className="flex items-center gap-3">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500/10">
@@ -395,12 +427,14 @@ export default function ConnectorsPage() {
               </div>
               <div>
                 <p className="text-sm font-medium text-zinc-100">MCP servers</p>
-                <p className="text-xs text-zinc-500">Attach an MCP server to expose its tools to every agent in this workspace.</p>
+                <p className="text-xs text-zinc-500">Attach a server from Lantern's curated MCP catalog to one of your agents.</p>
               </div>
             </div>
             <button
-              onClick={() => { setShowMcpModal(true); setMcpForm({ url: "", name: "", description: "" }); setMcpErrors({}); }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-surface-2"
+              onClick={() => { setShowMcpModal(true); setMcpForm({ agentName: "", slug: "" }); setMcpErrors({}); }}
+              disabled={agents.length === 0}
+              title={agents.length === 0 ? "Create an agent first" : undefined}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Plus className="h-3 w-3" />
               Add MCP server
@@ -415,12 +449,14 @@ export default function ConnectorsPage() {
                 </div>
                 <div>
                   <h2 className="text-sm font-semibold text-zinc-100">MCP servers</h2>
-                  <p className="text-xs text-zinc-500">{mcpServers.length} attached · tools available to every agent</p>
+                  <p className="text-xs text-zinc-500">{attachments.length} attached across {agents.length} agent{agents.length === 1 ? "" : "s"}</p>
                 </div>
               </div>
               <button
-                onClick={() => { setShowMcpModal(true); setMcpForm({ url: "", name: "", description: "" }); setMcpErrors({}); }}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400"
+                onClick={() => { setShowMcpModal(true); setMcpForm({ agentName: "", slug: "" }); setMcpErrors({}); }}
+                disabled={agents.length === 0}
+                title={agents.length === 0 ? "Create an agent first" : undefined}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-lantern-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-lantern-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Plus className="h-3.5 w-3.5" />
                 Add server
@@ -428,27 +464,27 @@ export default function ConnectorsPage() {
             </div>
             <div className="relative mb-3 max-w-sm">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
-              <input type="text" value={mcpSearch} onChange={(e) => setMcpSearch(e.target.value)} placeholder="Search MCP servers..."
+              <input type="text" value={mcpSearch} onChange={(e) => setMcpSearch(e.target.value)} placeholder="Search by server or agent..."
                 className="w-full rounded-lg border border-zinc-800 bg-surface-0 py-1.5 pl-8 pr-3 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/30" />
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {filteredMcpServers.map((server) => (
-                <div key={server.id} className="group rounded-xl border border-zinc-800 bg-surface-0 p-4 transition-colors hover:border-zinc-700">
+              {filteredAttachments.map((row) => (
+                <div key={`${row.agentName}:${row.serverSlug}`} className="group rounded-xl border border-zinc-800 bg-surface-0 p-4 transition-colors hover:border-zinc-700">
                   <div className="flex items-start justify-between">
                     <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500/10">
                       <Server className="h-4 w-4 text-lantern-400" />
                     </div>
                     <button
-                      onClick={() => handleRemoveMcp(server.id)}
+                      onClick={() => handleRemoveMcp(row)}
                       className="rounded p-1 text-zinc-600 opacity-0 transition-all hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
-                      title="Remove server"
+                      title="Detach server"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <h3 className="mt-2 text-sm font-medium text-zinc-200 truncate">{server.name}</h3>
-                  <p className="mt-0.5 text-[11px] text-zinc-500 truncate">{server.url}</p>
-                  {server.description && <p className="mt-1 text-[11px] text-zinc-600 line-clamp-2">{server.description}</p>}
+                  <h3 className="mt-2 text-sm font-medium text-zinc-200 truncate">{row.serverName}</h3>
+                  <p className="mt-0.5 text-[11px] text-zinc-500 truncate">{row.category} · {row.transport}</p>
+                  <p className="mt-1 text-[11px] text-zinc-600">Attached to <span className="text-zinc-300">{row.agentName}</span></p>
                   <div className="mt-2 flex items-center gap-1.5">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                     <span className="text-[10px] text-emerald-400/70">Connected</span>
@@ -541,50 +577,42 @@ export default function ConnectorsPage() {
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lantern-500/10"><Server className="h-4 w-4 text-lantern-400" /></div>
                 <div>
                   <h2 className="text-lg font-semibold text-zinc-100">Add MCP Server</h2>
-                  <p className="text-xs text-zinc-500">Point at any MCP-compatible server to use its tools</p>
+                  <p className="text-xs text-zinc-500">Attach a server from the curated catalog to one of your agents</p>
                 </div>
               </div>
-              <button onClick={() => setShowMcpModal(false)} className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"><X className="h-5 w-5" /></button>
+              <button onClick={() => setShowMcpModal(false)} aria-label="Close" className="rounded-lg p-1 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"><X className="h-5 w-5" /></button>
             </div>
             <div className="px-6 py-5 space-y-4">
               <div>
-                <label className="mb-1.5 flex items-center gap-1 text-sm font-medium text-zinc-300">Server URL <span className="text-red-400">*</span></label>
-                <input
-                  type="text"
-                  value={mcpForm.url}
-                  onChange={(e) => { setMcpForm((p) => ({ ...p, url: e.target.value })); setMcpErrors((p) => { const n = { ...p }; delete n.url; return n; }); }}
-                  placeholder="https://mcp.example.com/sse"
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
-                />
-                {mcpErrors.url && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{mcpErrors.url}</p>}
-                <p className="mt-1 text-[11px] text-zinc-600">The SSE or WebSocket endpoint of the MCP server</p>
+                <label className="mb-1.5 flex items-center gap-1 text-sm font-medium text-zinc-300">Agent <span className="text-red-400">*</span></label>
+                <select
+                  value={mcpForm.agentName}
+                  onChange={(e) => { setMcpForm((p) => ({ ...p, agentName: e.target.value })); setMcpErrors((p) => { const n = { ...p }; delete n.agentName; return n; }); }}
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+                >
+                  <option value="">Select an agent…</option>
+                  {agents.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
+                </select>
+                {mcpErrors.agentName && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{mcpErrors.agentName}</p>}
               </div>
               <div>
-                <label className="mb-1.5 flex items-center gap-1 text-sm font-medium text-zinc-300">Name <span className="text-red-400">*</span></label>
-                <input
-                  type="text"
-                  value={mcpForm.name}
-                  onChange={(e) => { setMcpForm((p) => ({ ...p, name: e.target.value })); setMcpErrors((p) => { const n = { ...p }; delete n.name; return n; }); }}
-                  placeholder="e.g. My Custom Tools"
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
-                />
-                {mcpErrors.name && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{mcpErrors.name}</p>}
-              </div>
-              <div>
-                <label className="mb-1.5 text-sm font-medium text-zinc-300">Description</label>
-                <input
-                  type="text"
-                  value={mcpForm.description}
-                  onChange={(e) => setMcpForm((p) => ({ ...p, description: e.target.value }))}
-                  placeholder="What tools does this server provide?"
-                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
-                />
+                <label className="mb-1.5 flex items-center gap-1 text-sm font-medium text-zinc-300">MCP Server <span className="text-red-400">*</span></label>
+                <select
+                  value={mcpForm.slug}
+                  onChange={(e) => { setMcpForm((p) => ({ ...p, slug: e.target.value })); setMcpErrors((p) => { const n = { ...p }; delete n.slug; return n; }); }}
+                  className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30"
+                >
+                  <option value="">Select a server…</option>
+                  {catalog.map((s) => <option key={s.slug} value={s.slug}>{s.name} — {s.category}</option>)}
+                </select>
+                {mcpErrors.slug && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{mcpErrors.slug}</p>}
+                <p className="mt-1 text-[11px] text-zinc-600">From Lantern's curated MCP catalog — custom/self-hosted servers aren't supported yet.</p>
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-6 py-4">
               <button onClick={() => setShowMcpModal(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200">Cancel</button>
-              <button onClick={handleAddMcp} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400">
-                <Plus className="h-3.5 w-3.5" />Add Server
+              <button onClick={handleAddMcp} disabled={mcpSaving} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-lantern-400 disabled:opacity-50">
+                {mcpSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}Add Server
               </button>
             </div>
           </div>

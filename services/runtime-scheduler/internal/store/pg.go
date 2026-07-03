@@ -102,10 +102,17 @@ func (s *WriteThroughStore) loadNodes(ctx context.Context, deadline time.Duratio
 }
 
 func (s *WriteThroughStore) loadVMs(ctx context.Context) error {
+	// Filter out terminal states so a VM that reached TERMINATED or FAILED
+	// (but whose sched_vms row wasn't cleaned up, e.g. due to a crash mid-delete)
+	// doesn't resurrect as a live, quota-consuming entry on the next boot.
 	rows, err := s.pool.Query(ctx, `
 		SELECT vm_id, tenant_id, node_name, state, reason,
 		       spec, availability_zone, created_at, last_event_at, last_heartbeat_at
-		FROM sched_vms`)
+		FROM sched_vms
+		WHERE state NOT IN ($1, $2)`,
+		int32(lanternv1.VmState_VM_STATE_TERMINATED),
+		int32(lanternv1.VmState_VM_STATE_FAILED),
+	)
 	if err != nil {
 		return fmt.Errorf("query sched_vms: %w", err)
 	}

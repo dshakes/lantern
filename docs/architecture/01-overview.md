@@ -8,7 +8,7 @@ Lantern is a serverless platform for running production AI agents reliably at an
 
 ## Design principles
 
-1. **One bundle, many runtimes.** A single declarative agent bundle (see [`AGENT.md`](../../AGENT.md)) runs identically on K8s Job, Firecracker, Kata, Wasm, devcontainer, or local dev.
+1. **One bundle, Kubernetes substrate.** A single declarative agent bundle (see [`AGENT.md`](../../AGENT.md)) runs on Kubernetes. Isolation strength is declared in the bundle (`isolation.class`) and expressed as a `runtimeClassName` on the pod — `runc` for trusted first-party code, gVisor for standard/untrusted workloads, Kata microVM for hostile workloads. See [ADR 0009](../adr/0009-kubernetes-default-runtime-substrate.md).
 2. **Durable by default.** Every step is journaled; every restart resumes; every external side-effect is idempotent.
 3. **Streaming end-to-end.** Tokens flow runtime → gateway → SDK → dashboard with no buffering point. Backpressure is honored at every hop.
 4. **Capability-addressed models.** SDK code says `model: "reasoning-large"`; the router picks the vendor at runtime based on cost, latency, availability, and policy.
@@ -51,17 +51,19 @@ Lantern is a serverless platform for running production AI agents reliably at an
                              │                  ▼
               ┌──────────────▼─────────────┐  ┌────────────────────┐
               │  Runtime Manager (Rust)    │  │  Memory Service    │
-              │  K8s · Firecracker · Kata  │  │  Postgres+pgvector │
-              │  Wasmtime · Devcontainer   │  │  Redis · S3        │
+              │  K8s substrate             │  │  Postgres+pgvector │
+              │  isolation via RuntimeClass│  │  Redis · S3        │
               │  snapshot/restore · seccomp│  │  core/recall/arch  │
               └──────────────┬─────────────┘  └────────────────────┘
                              │
-        ┌────────────────────┼─────────────────┬─────────────────┬───────────────────┐
-        │                    │                 │                 │                   │
-   ┌────▼────┐    ┌──────────▼─────┐   ┌───────▼─────┐   ┌──────▼───────┐   ┌───────▼────────┐
-   │ K8s Job │    │ Firecracker VM │   │ Kata Cont.  │   │  Wasmtime    │   │ DevContainer   │
-   │ trusted │    │  untrusted     │   │  hostile    │   │   pure-fn    │   │  long-lived    │
-   └─────────┘    └────────────────┘   └─────────────┘   └──────────────┘   └────────────────┘
+        ┌────────────────────┼──────────────────────┬─────────────────────┐
+        │                    │                      │                     │
+   ┌────▼──────────┐   ┌─────▼────────────────┐   ┌──────▼──────────┐   ┌────▼────────────┐
+   │ pod/runc      │   │ pod/gVisor           │   │ pod/kata-qemu   │   │ pod/crun+wasm   │
+   │  TRUSTED      │   │  STANDARD /          │   │  (or kata-fc)   │   │  (or in-process │
+   │               │   │  UNTRUSTED           │   │  HOSTILE;       │   │  Wasmtime)      │
+   └───────────────┘   └──────────────────────┘   │  dedicated pool │   │  WASM           │
+                                                   └─────────────────┘   └─────────────────┘
 
   Cross-cutting:
    ─ Notifier (Go) ─ webhook · email · slack · sms · push
@@ -85,7 +87,7 @@ The durable execution heart of Lantern. Event-sourced: every step start, step co
 
 ### Runtime Manager (Rust)
 
-Owns all interaction with physical compute. Receives "schedule this run on this isolation class" gRPC calls from the workflow engine. Translates to a K8s Job, a Firecracker microVM, a Kata pod, a Wasmtime invocation, or a devcontainer attach. Owns snapshot/restore for fast cold start (<200ms target). Enforces seccomp + egress filtering for untrusted classes. Streams stdout/stderr/events back over gRPC to the engine and gateway.
+Owns all interaction with physical compute. Receives "schedule this run on this isolation class" gRPC calls from the workflow engine and runtime scheduler. Builds a Kubernetes pod spec and sets `runtimeClassName` from the isolation class ([ADR 0009](../adr/0009-kubernetes-default-runtime-substrate.md)): `runc` (TRUSTED), `gvisor` (STANDARD/UNTRUSTED), `kata-qemu` or `kata-fc` (HOSTILE), `crun+wasm` (WASM). Fail-closed: never downgrades UNTRUSTED/HOSTILE to a bare pod. Owns warm pools and snapshot/restore for fast cold starts (<200ms target). Enforces seccomp + egress filtering for untrusted classes. Streams stdout/stderr/events back over gRPC to the engine and gateway.
 
 ### Model Router (Rust)
 
@@ -123,44 +125,81 @@ Cron triggers, delayed jobs, retries-with-backoff queue, dead-letter queue. Impl
 
 ## End-to-end run lifecycle
 
+There are two distinct execution paths depending on how the run is invoked.
+
+### Path A — Inline run (`POST /v1/runs` · SDK · REST)
+
+The control-plane workflow interpreter owns the execution loop. No VM is spawned for the agent itself; tool steps dispatch to the runtime manager for isolated in-VM execution.
+
 ```
-1. User runs `lantern run my-agent --input '{...}'`
-   └─▶ CLI → Gateway → Control Plane: POST /v1/runs
+1. Caller (SDK / REST) → Gateway → Control Plane: POST /v1/runs
 
 2. Control Plane:
    ├─ validates input against agent.input.schema
    ├─ checks tenant quota and per-user concurrency
-   ├─ creates a `runs` row with status=queued and a fresh run_id
-   └─ enqueues a workflow on the Workflow Engine
+   ├─ creates a `runs` row (status=queued, fresh run_id)
+   └─ dispatches to the inline workflow interpreter
 
-3. Workflow Engine:
-   ├─ creates the journal for this run
-   ├─ writes RunStarted event
-   └─ asks Runtime Manager to schedule the entrypoint step
+3. Workflow interpreter (in-process, control-plane):
+   ├─ creates the journal, writes RunStarted event
+   └─ for each workflow node:
+      ├─ LLM nodes:  ctx.llm.* → Model Router → provider → streams tokens back
+      ├─ Tool nodes: → Runtime Manager ExecTool (isolated in-VM execution) → result
+      └─ each step result written to journal_events (replay resumes here on crash)
+
+4. Streaming happens concurrently:
+   Control Plane → Gateway → SDK / Dashboard
+   Tokens, tool calls, step events, and log lines stream live with backpressure.
+
+5. On completion:
+   ├─ Control Plane writes RunCompleted (or RunFailed), persists final output
+   ├─ Notifier sends configured notifications
+   └─ Billing records usage events
+
+6. On crash / restart:
+   ├─ Recovery sweep re-drives runs with status=running and no live lock
+   └─ Interpreter resumes at the first uncompleted step (journal replay)
+```
+
+### Path B — Headless microVM run (`POST /v1/runtime/schedule` · `lantern run` CLI)
+
+The agent bundle runs as a process inside a hardened Kubernetes pod; the harness is PID 1. The workflow engine journals every step; crash-replay resumes at the first incomplete node.
+
+```
+1. `lantern run my-agent.yaml --input '{...}'`
+   └─▶ CLI → Gateway → Control Plane: POST /v1/runtime/schedule
+
+2. Control Plane:
+   ├─ validates the AgentSpec, checks tenant quota (402 if exceeded)
+   └─ forwards to Runtime Scheduler
+
+3. Runtime Scheduler:
+   ├─ 5-factor placement (warm pool / region / cost / health / fair-share)
+   └─ dispatches to Runtime Manager on the selected node
 
 4. Runtime Manager:
-   ├─ consults agent.isolation.class (e.g., "untrusted")
-   ├─ selects the matching backend (Firecracker)
+   ├─ consults isolation.class (e.g., "standard")
+   ├─ builds K8s pod spec; sets runtimeClassName (e.g., "gvisor")
    ├─ either restores from a warm snapshot (~28ms) or cold-boots (~150ms)
-   ├─ injects the bundle, env, secrets, and a one-shot exec token
-   └─ starts the agent process; opens a gRPC stream for stdout/events
+   ├─ injects the bundle, env, secrets, and a per-instance Ed25519 identity
+   └─ starts the harness (PID 1); harness starts the agent process
 
-5. Agent process executes user code:
-   ├─ each step() call hits the engine over gRPC
+5. Agent process executes user code inside the pod:
+   ├─ each step() call hits the Workflow Engine over gRPC
    │  ├─ if step result already in journal → returned (replay)
    │  └─ otherwise → engine writes StepStarted, executes the side-effect, writes StepCompleted
    ├─ each ctx.llm.* call goes to Model Router → provider → streams tokens back
-   └─ each tool call goes to the appropriate runtime (web, fs, python, etc.)
+   └─ egress is enforced by the harness; deny-default unless declared in agent.yaml
 
 6. Streaming happens concurrently:
-   Runtime → Engine → Gateway → SDK / Dashboard
-   Tokens, tool calls, step events, log lines all stream live with backpressure.
+   Harness → Runtime Manager → Gateway → SDK / Dashboard
+   Tokens, tool calls, step events, and log lines all stream live with backpressure.
 
 7. On completion:
    ├─ Engine writes RunCompleted (or RunFailed) and persists final output
    ├─ Notifier sends configured notifications
    ├─ Billing records usage events
-   └─ Runtime Manager tears down the sandbox (or returns it to a warm pool)
+   └─ Runtime Manager terminates the pod (or returns it to a warm pool)
 
 8. On failure / crash anywhere:
    ├─ Engine replays the journal on the next available worker
@@ -168,7 +207,7 @@ Cron triggers, delayed jobs, retries-with-backoff queue, dead-letter queue. Impl
    └─ Anything past the last successful step is re-attempted with backoff
 
 9. On user cancel:
-   ├─ Gateway → Control Plane → Engine → Runtime Manager → SIGTERM the sandbox
+   ├─ Gateway → Control Plane → Engine → Runtime Manager → SIGTERM the pod
    ├─ Engine writes RunCancelled
    └─ Streaming clients receive a final cancel event
 ```
@@ -197,7 +236,7 @@ We promise:
 
 ## Security model (one paragraph; full doc in `10-security.md`)
 
-mTLS between every internal service. JWT for user requests. API keys for SDK requests, scoped per agent. Secrets resolved at runtime by the runtime manager from a per-tenant KMS-backed store; secrets never appear in journals, logs, traces, or run outputs. Untrusted code runs in Firecracker microVMs with seccomp deny-by-default and an egress allowlist. Signed agent bundles via cosign, verified before scheduling. Per-tenant K8s namespaces with NetworkPolicies. Tenant-isolated database rows; tenant-isolated S3 prefixes; per-tenant encryption keys for memory and bundles.
+mTLS between every internal service. JWT for user requests. API keys for SDK requests, scoped per agent. Secrets resolved at runtime by the runtime manager from a per-tenant KMS-backed store; secrets never appear in journals, logs, traces, or run outputs. Untrusted code runs in hardened Kubernetes pods (`gVisor` RuntimeClass) with seccomp deny-by-default and an egress allowlist; hostile code runs in Kata microVM pods on dedicated nodes. Neither is ever downgraded to a bare `runc` pod. Signed agent bundles via cosign, verified before scheduling. Per-tenant K8s namespaces with NetworkPolicies. Tenant-isolated database rows; tenant-isolated S3 prefixes; per-tenant encryption keys for memory and bundles.
 
 ## What's intentionally NOT in this architecture
 
