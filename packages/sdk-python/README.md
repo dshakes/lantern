@@ -266,10 +266,9 @@ lantern-runner --agent hello-world --input '{"name": "World"}'
 
 ## Parity note
 
-The Python SDK covers agents, runs, sessions, and connectors — the same HTTP surface
-as the TypeScript SDK. The TypeScript SDK additionally exposes `budgets`, `evalSuites`,
-`evalRuns`, `experiments`, and `marketplace` namespaces. Those endpoints are callable
-today via raw `client._request(...)` calls; typed helper classes are planned for a
-follow-up release. The agent definition layer (`@agent`, `step`, `tool`) mirrors the
-TypeScript surface except that `zod` schema validation is replaced by plain Python
-type hints and pydantic models.
+The Python SDK's management surface (`agents`, `runs`, `sessions`, `connectors`,
+`budgets`, `evals`, `experiments`, `marketplace`, `mcp`, `receipts`, `feedback`,
+`rehearsals`) is at parity with the TypeScript SDK's HTTP surface — all typed,
+none require raw `client._request(...)` calls. The agent definition layer
+(`@agent`, `step`, `tool`) mirrors the TypeScript surface except that `zod`
+schema validation is replaced by plain Python type hints and pydantic models.

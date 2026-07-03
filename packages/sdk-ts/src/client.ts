@@ -23,6 +23,7 @@ import type {
   SignedReceipt,
   StreamEvent,
 } from "./types.js";
+import { isNetworkError, withRetry } from "./retry.js";
 
 export interface LanternClientConfig {
   baseUrl?: string;
@@ -48,16 +49,25 @@ export class LanternClient {
   }
 
   private async fetch<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers: { ...this.headers(), ...init?.headers },
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new LanternApiError(res.status, body);
-    }
-    if (res.status === 204) return undefined as T;
-    return res.json() as Promise<T>;
+    return withRetry(
+      async () => {
+        const res = await fetch(`${this.baseUrl}${path}`, {
+          ...init,
+          headers: { ...this.headers(), ...init?.headers },
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          throw new LanternApiError(res.status, body);
+        }
+        if (res.status === 204) return undefined as T;
+        return res.json() as Promise<T>;
+      },
+      {
+        // 429/503 only — never 4xx auth/validation, never other 5xx.
+        shouldRetry: (err) =>
+          (err instanceof LanternApiError && (err.status === 429 || err.status === 503)) || isNetworkError(err),
+      },
+    );
   }
 
   /** Builds a `?a=1&b=2` query string, dropping undefined/null values. */
