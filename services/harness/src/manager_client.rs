@@ -92,9 +92,17 @@ impl ManagerClient {
             g.report_tx.clone()
         };
         if let Some(tx) = tx {
-            // Best-effort: if the buffer is full we drop. Reports are
-            // observability, never load-bearing for workload progress.
-            let _ = tx.try_send(r);
+            if r.is_security_audit() {
+                // Security audit events MUST NOT be dropped — block until the
+                // channel has room. Audits are low-volume; bounded blocking is
+                // fine and preferable to losing the forensic trail.
+                let _ = tx.send(r).await;
+            } else {
+                // Best-effort: observability frames (stdout/stderr, OTLP,
+                // metrics) may be dropped under load; they must never
+                // back-pressure or evict security audit events.
+                let _ = tx.try_send(r);
+            }
         }
     }
 
@@ -453,6 +461,67 @@ impl ManagerClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::{AuditEvent, LogLine};
+
+    /// Security audit events (secret_vend, etc.) MUST NOT be dropped when the
+    /// shared report channel is full. A workload flooding stdout must not evict
+    /// its own egress-deny / secret_access_denied forensic trail.
+    ///
+    /// This test fills a single-slot channel with a non-audit log frame, then
+    /// enqueues a security audit. Without the fix `try_send` drops the audit;
+    /// with it `send().await` blocks until a drainer frees the slot.
+    #[tokio::test]
+    async fn security_audit_not_dropped_on_full_channel() {
+        use std::sync::Arc;
+        use tokio::sync::mpsc;
+        use tokio::sync::Mutex as TokioMutex;
+
+        let client =
+            ManagerClient::new("127.0.0.1:1".to_string(), "vm-audit-drop-test".to_string());
+        // Single-slot channel: fills immediately after the first enqueue.
+        let (tx, rx) = mpsc::channel::<HarnessReport>(1);
+        client.set_report_channel(tx).await;
+
+        // Fill the channel with a non-audit log line.
+        client
+            .enqueue_report(HarnessReport::Log(LogLine {
+                vm_id: "vm-1".into(),
+                at_unix_ms: 0,
+                stream: "stdout".into(),
+                text: "filler".into(),
+                attrs: Default::default(),
+            }))
+            .await;
+
+        // Share rx with a background drainer that frees the slot after a delay.
+        let rx = Arc::new(TokioMutex::new(rx));
+        let rx_drain = Arc::clone(&rx);
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
+            rx_drain.lock().await.recv().await; // drain the filler
+        });
+
+        // This MUST block (not drop) until the drainer frees a slot.
+        let audit = HarnessReport::Audit(AuditEvent {
+            vm_id: "vm-1".into(),
+            action: "secret_vend".into(),
+            at_unix_ms: 0,
+            attrs: Default::default(),
+        });
+        client.enqueue_report(audit).await;
+
+        // After enqueue_report returns the audit must be in the channel.
+        let received = rx
+            .lock()
+            .await
+            .try_recv()
+            .expect("security audit must have been enqueued, not dropped");
+        if let HarnessReport::Audit(a) = received {
+            assert_eq!(a.action, "secret_vend");
+        } else {
+            panic!("expected Audit(secret_vend), got {received:?}");
+        }
+    }
 
     /// When LANTERN_ALLOW_SECRET_STUB is not set, vend_secret must fail if
     /// the manager is unreachable rather than returning any value.
