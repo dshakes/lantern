@@ -290,20 +290,22 @@ impl EgressPolicy {
         true
     }
 
-    /// Post-connect DNS-rebinding guard: resolve the target and verify the
-    /// resolved IP is not in a private/metadata range.
+    /// Resolve `target` ("host:port") **once**, validate that none of the
+    /// resolved addresses fall in a private/metadata range, and return the
+    /// validated `SocketAddr`s together with the decision.
     ///
-    /// Called after `evaluate()` allows the connection but before the TCP
-    /// splice begins.  Prevents an allow-listed hostname from being resolved
-    /// at connect time to a private IP (DNS rebinding / SSRF).
-    pub async fn check_resolved_ip(&self, target: &str) -> Decision {
-        // Resolve the target.  `target` is "host:port" suitable for
-        // `tokio::net::lookup_host`.
+    /// Callers MUST connect directly to the returned addresses and MUST NOT
+    /// pass the original hostname string to `TcpStream::connect` — doing so
+    /// re-resolves the name and reopens the DNS-rebinding / SSRF window.
+    pub async fn resolve_and_check_ip(
+        &self,
+        target: &str,
+    ) -> (Decision, Vec<std::net::SocketAddr>) {
         let addrs = match tokio::net::lookup_host(target).await {
             Ok(a) => a.collect::<Vec<_>>(),
             Err(e) => {
                 tracing::warn!(target = target, error = %e, "egress: DNS resolution failed");
-                return Decision::Deny("DNS resolution failed");
+                return (Decision::Deny("DNS resolution failed"), vec![]);
             }
         };
 
@@ -315,11 +317,14 @@ impl EgressPolicy {
                     "egress: CONNECT rejected — allowlisted hostname resolves to \
                      private/metadata IP (DNS rebinding / SSRF attempt)"
                 );
-                return Decision::Deny("hostname resolves to private/metadata IP");
+                return (
+                    Decision::Deny("hostname resolves to private/metadata IP"),
+                    vec![],
+                );
             }
         }
 
-        Decision::Allow
+        (Decision::Allow, addrs)
     }
 
     async fn audit(&self, host: &str, port: u16, decision: &Decision) {
@@ -635,8 +640,10 @@ async fn handle_connect(
         Decision::Allow => {}
     }
 
-    // H4 (b): post-allowlist DNS-rebinding check.
-    let ip_decision = policy.check_resolved_ip(target).await;
+    // H4 (b): resolve once, validate, connect to the returned SocketAddr.
+    // Never pass `target` (hostname string) to TcpStream::connect — a second
+    // DNS resolution there reopens the DNS-rebinding / SSRF window.
+    let (ip_decision, resolved_addrs) = policy.resolve_and_check_ip(target).await;
     policy.audit(&host, port, &ip_decision).await;
     match ip_decision {
         Decision::Deny(reason) => {
@@ -647,7 +654,7 @@ async fn handle_connect(
         Decision::Allow => {}
     }
 
-    let upstream = match TcpStream::connect(target).await {
+    let upstream = match connect_validated(&resolved_addrs).await {
         Ok(s) => s,
         Err(e) => {
             let _ = write_half
@@ -736,8 +743,9 @@ async fn handle_plain_http(
     }
 
     let target = format!("{hostname}:{port}");
-    // Post-allowlist DNS-rebinding guard.
-    let ip_decision = policy.check_resolved_ip(&target).await;
+    // Resolve once, validate, connect to the returned SocketAddr — same fix
+    // as handle_connect; never re-resolve the hostname string.
+    let (ip_decision, resolved_addrs) = policy.resolve_and_check_ip(&target).await;
     policy.audit(&hostname, port, &ip_decision).await;
     match ip_decision {
         Decision::Deny(reason) => {
@@ -748,7 +756,7 @@ async fn handle_plain_http(
         Decision::Allow => {}
     }
 
-    let mut upstream = match TcpStream::connect(&target).await {
+    let mut upstream = match connect_validated(&resolved_addrs).await {
         Ok(s) => s,
         Err(e) => {
             let _ = write_half
@@ -771,6 +779,24 @@ async fn handle_plain_http(
     let t2 = tokio::io::copy(&mut up_r, &mut write_half);
     let _ = tokio::join!(t1, t2);
     Ok(())
+}
+
+/// Connect to the first reachable address from a pre-validated list.
+///
+/// Callers MUST supply addresses returned by
+/// `EgressPolicy::resolve_and_check_ip` — never a freshly-resolved hostname —
+/// to prevent DNS-rebinding SSRF. Tries each address in order and returns on
+/// the first success.
+async fn connect_validated(addrs: &[std::net::SocketAddr]) -> std::io::Result<TcpStream> {
+    let mut last_err =
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "no resolved addresses");
+    for addr in addrs {
+        match TcpStream::connect(addr).await {
+            Ok(s) => return Ok(s),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
 }
 
 /// Copy bytes from `reader` to `writer` with token-bucket throttling at
@@ -1443,5 +1469,47 @@ mod tests {
             preflight_decision(true, false, false),
             PreflightOutcome::WarnOnly
         );
+    }
+
+    // ---- Bug 1 fix: resolve_and_check_ip returns validated SocketAddrs ----
+
+    /// Private IP literals must be rejected AND return no addresses so the
+    /// caller has nothing to connect to even if it ignores the Decision.
+    #[tokio::test]
+    async fn resolve_and_check_ip_rejects_private_ip_literal() {
+        let policy = make_policy(vec![]);
+        let (decision, addrs) = policy.resolve_and_check_ip("10.0.0.1:443").await;
+        assert!(
+            matches!(decision, Decision::Deny(_)),
+            "private IP must be denied"
+        );
+        assert!(
+            addrs.is_empty(),
+            "deny must return no addresses to connect to"
+        );
+    }
+
+    /// A public IP literal must be allowed and the exact resolved address
+    /// returned so the caller can connect without re-resolving the hostname.
+    /// `lookup_host` on an IP literal never makes a network DNS query — it
+    /// parses the address in-process — so this test needs no network.
+    #[tokio::test]
+    async fn resolve_and_check_ip_allows_public_ip_and_returns_addr() {
+        let policy = make_policy(vec![]);
+        let (decision, addrs) = policy.resolve_and_check_ip("8.8.8.8:443").await;
+        assert!(
+            matches!(decision, Decision::Allow),
+            "public IP must be allowed"
+        );
+        assert!(
+            !addrs.is_empty(),
+            "allow must return the resolved addresses"
+        );
+        for addr in &addrs {
+            assert!(
+                !is_private_or_metadata(addr.ip()),
+                "returned address {addr} must not be in a private range"
+            );
+        }
     }
 }
