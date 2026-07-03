@@ -97,6 +97,15 @@ func (h *NewsHandler) AskNews(w http.ResponseWriter, r *http.Request) {
 		limit = 5
 	}
 
+	// For a RADAR (tight window), rank RECENCY-WEIGHTED: decay score by age so a
+	// big 3-day-old launch (e.g. Sonnet 5, score 88) doesn't dominate "today's"
+	// radar for days — today's items lead unless the old one is overwhelmingly
+	// bigger. For a wide topic/source search, keep pure score so an important
+	// older item is still findable.
+	orderBy := "score DESC NULLS LAST, COALESCE(published_at, created_at) DESC"
+	if days <= 3 {
+		orderBy = "(COALESCE(score,0)::float / (1 + EXTRACT(EPOCH FROM (now() - COALESCE(published_at, created_at))) / 86400.0)) DESC, COALESCE(published_at, created_at) DESC"
+	}
 	corpus := make([]newsCorpusItem, 0, 60)
 	err = h.srv.WithTenant(ctx, func(tx pgx.Tx) error {
 		rows, qErr := tx.Query(ctx, `
@@ -105,7 +114,7 @@ func (h *NewsHandler) AskNews(w http.ResponseWriter, r *http.Request) {
 			FROM news_items
 			WHERE tenant_id = $1
 			  AND COALESCE(published_at, created_at) >= now() - make_interval(days => $2)
-			ORDER BY score DESC NULLS LAST, COALESCE(published_at, created_at) DESC
+			ORDER BY `+orderBy+`
 			LIMIT 60
 		`, claims.TenantID, days)
 		if qErr != nil {
