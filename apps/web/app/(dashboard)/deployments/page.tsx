@@ -945,7 +945,8 @@ function DeploymentsSection({ deployments, planes }: { deployments: DeploymentRo
       <h2 className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
         <Layers className="h-3.5 w-3.5 text-zinc-500" /> Deployments
       </h2>
-      <div className="overflow-hidden rounded-xl bg-surface-1">
+      {/* Desktop: table, unchanged */}
+      <div className="hidden overflow-hidden rounded-xl bg-surface-1 md:block">
         <table className="data-table">
           <thead>
             <tr><th>Agent</th><th>Version</th><th>Environment</th><th>Data plane</th><th>Status</th><th>Deployed</th></tr>
@@ -972,6 +973,34 @@ function DeploymentsSection({ deployments, planes }: { deployments: DeploymentRo
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile: stacked cards, same data */}
+      <div className="space-y-2 md:hidden">
+        {deployments.map((d) => (
+          <div key={d.id} className="rounded-lg bg-surface-1 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-sm font-medium text-zinc-100">{d.agentName}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <StateDot state={d.status === "live" ? "running" : d.status === "failed" ? "failed" : "spawning"} />
+                <span className={clsx("text-xs capitalize",
+                  d.status === "live" && "text-emerald-400",
+                  d.status === "deploying" && "text-lantern-400",
+                  d.status === "failed" && "text-red-400",
+                )}>{d.status}</span>
+              </div>
+            </div>
+            <div className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-2">
+              <Detail label="Version" value={d.version} mono />
+              <div>
+                <p className="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">Environment</p>
+                <EnvBadge env={d.environment} />
+              </div>
+              <Detail label="Data plane" value={planeName(d.planeId) ?? "—"} mono />
+              <Detail label="Deployed" value={timeAgoSec(d.deployedAgoSec)} />
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );
