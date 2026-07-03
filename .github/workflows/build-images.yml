@@ -58,7 +58,7 @@ jobs:
             context: services/model-router
             file: services/model-router/Dockerfile
           - image: runtime-manager
-            context: services/runtime-manager
+            context: .
             file: services/runtime-manager/Dockerfile
           - image: web   # dashboard — Helm pulls .../lantern/web (apps/web)
             context: apps/web
