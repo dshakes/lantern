@@ -360,7 +360,9 @@ func TestDB_VMPersistAndLoad(t *testing.T) {
 }
 
 // TestDB_VMStateUpdatePersists verifies that UpdateVMState writes the new
-// state to Postgres (reload reads it back).
+// state to Postgres (reload reads it back). Uses a non-terminal target state
+// (RUNNING) because loadVMs deliberately skips TERMINATED/FAILED rows on
+// reload — that skip is covered by TestDB_LoadVMs_FiltersTerminalStates.
 func TestDB_VMStateUpdatePersists(t *testing.T) {
 	pool, dbURL := openTestPool(t)
 	defer pool.Close()
@@ -379,7 +381,7 @@ func TestDB_VMStateUpdatePersists(t *testing.T) {
 		NodeName: "n1",
 	}
 	wt.CreateVM(vm)
-	wt.UpdateVMState("vm-state-upd", lanternv1.VmState_VM_STATE_TERMINATED, "done", nil, time.Now().UTC())
+	wt.UpdateVMState("vm-state-upd", lanternv1.VmState_VM_STATE_RUNNING, "started", nil, time.Now().UTC())
 
 	mem2 := cluster.NewInMemoryStore()
 	wt2 := store.NewWriteThroughStore(mem2, pool, testLogger(t))
@@ -392,8 +394,8 @@ func TestDB_VMStateUpdatePersists(t *testing.T) {
 	if !ok {
 		t.Fatal("vm-state-upd not found after LoadFromDB")
 	}
-	if got.State != lanternv1.VmState_VM_STATE_TERMINATED {
-		t.Errorf("state: got %v, want TERMINATED", got.State)
+	if got.State != lanternv1.VmState_VM_STATE_RUNNING {
+		t.Errorf("state: got %v, want RUNNING", got.State)
 	}
 }
 
