@@ -152,7 +152,7 @@ spec:
 ```bash
 lantern run my-agent.yaml --input '{"task": "summarize the news"}'
 # → vm_id: vm_01abc...
-lantern logs --vm vm_01abc -f
+lantern vm logs vm_01abc -f
 # → [harness] booted in 340ms  [workload] summarizing…  [workload] done
 ```
 
@@ -182,7 +182,7 @@ Four end-to-end demo agents: [`examples/headless-agents/`](examples/headless-age
 | **Prometheus alerts + Grafana dashboards** | [`infra/monitoring/`](infra/monitoring/) |
 | **Demo agents** | [`examples/headless-agents/`](examples/headless-agents/) |
 | **Manual runtime test walkthrough** | [`examples/headless-agents/MANUAL-TEST.md`](examples/headless-agents/MANUAL-TEST.md) |
-| **Docs site** (full reference, served at `:3002` in dev) | `apps/docs/` · `make dashboard-dev` |
+| **Docs site** (full reference, served at `:3002` in dev) | `apps/docs/` · `make docs-dev` |
 | **Personal assistant setup** | [`docs/personal/BOT-SETUP.md`](docs/personal/BOT-SETUP.md) |
 | **Repo conventions + invariants** | [`CLAUDE.md`](CLAUDE.md) |
 
@@ -553,9 +553,9 @@ lantern run <agent.yaml>             schedule a headless microVM agent
 lantern test --agent=x --suite=y     run an eval suite
   --against=last-green               fail CI on regression
   --set-baseline                     pin this run as the new baseline
-  --rehearse                         replay past failures against the current version
-lantern deploy --agent=x --env=prod  ship to managed cloud
-lantern logs --run=<id> -f           tail the event stream
+lantern deploy                       simulated for now — use the dashboard Deploy button to ship
+lantern logs <run-id> -f             tail the event stream
+lantern vm logs <vm-id> -f           tail a headless microVM's logs
 lantern login                        token-based auth
 ```
 
