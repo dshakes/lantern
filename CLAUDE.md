@@ -516,6 +516,45 @@ REST SSE path `GetRunEvents` (`internal/handlers/run_events.go`) exactly:
 same query, ordering, tenant-ownership gate, poll interval, and
 `isRunTerminal` stop condition.
 
+#### Confidence-gated execution (`LANTERN_CONFIDENCE_GATE`)
+
+Before a side-effecting node executes, the interpreter can evaluate a confidence
+score and route low-confidence steps to the human-approval mechanism instead of
+auto-executing. Feature is **default OFF**; enable per-deployment.
+
+**Gated node types:**
+- `tool` and `connector` — always gated when the feature is on.
+- `ai-step` — only gated when `node.Data["requiresConfidence"] = true` (for
+  action-driving steps whose LLM output is itself an instruction to act).
+
+**When score >= threshold:** node executes normally.
+**When score < threshold:** `WaitForApproval` is called (same path as the
+`approval` node / W11a takeover). The side effect does NOT execute until a human
+grants. If `WaitForApproval` is nil (no handler wired), the step auto-approves
+so unattended workflows still complete.
+
+**Journal events:** every gated step emits `confidence_evaluated` with
+`{score, threshold, decision ("execute"|"divert"), node_type, estimator}`.
+Diverted-then-approved steps additionally emit the normal `step_completed` after
+the human grants. Diverted-then-denied steps emit `step_failed`.
+
+**Current estimator:** `VerbalizationHeuristic` — scans prior step text outputs
+for LLM self-reported confidence patterns (e.g. "Confidence: 85%",
+"I am 70% confident", "Confidence: High"). Falls back to `DefaultConfidence=0.9`
+when no pattern is found. This is a HEURISTIC, not statistically calibrated. The
+`ConfidenceEstimator` interface in `internal/workflow/confidence.go` is the clean
+seam for a calibrated estimator (self-consistency, logit-based) in a later phase.
+
+**Env vars (control-plane):**
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `LANTERN_CONFIDENCE_GATE` | _(off)_ | `1`/`true`/`on` enables gating. Default OFF. |
+| `LANTERN_CONFIDENCE_GATE_THRESHOLD` | `0.75` | Minimum score [0,1] for auto-execution. |
+
+Rollout: enable on non-production agents first → inspect `confidence_evaluated`
+events in the run waterfall → tune threshold → then enable on production traffic.
+
 #### Durable workflow engine step dispatch (`services/workflow-engine`)
 
 The dormant durable engine's leaf executors
