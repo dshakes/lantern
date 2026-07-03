@@ -1,6 +1,6 @@
 export { agent } from "./agent.js";
 export { step, setStepRuntime } from "./step.js";
-export { LanternClient } from "./client.js";
+export { LanternClient, LanternApiError } from "./client.js";
 export { tool } from "./tools.js";
 
 // Runtime subsystem
@@ -85,4 +85,27 @@ export type {
   TriggerKind,
   IsolationClass,
   ToolCallMessage,
+  Session,
+  SessionMessage,
+  SessionEvent,
+  PersistedToolCall,
+  ConnectorInfo,
+  ConnectorResult,
+  BudgetPolicy,
+  EvalCase,
+  EvalSuite,
+  EvalCaseResult,
+  EvalRun,
+  EvalBaseline,
+  Experiment,
+  MarketplaceAgent,
+  McpServer,
+  McpAttachment,
+  ReceiptPayload,
+  SignedReceipt,
+  ReceiptVerifyResult,
+  FeedbackEntry,
+  FeedbackSummary,
+  RehearseResponse,
+  ForecastResult,
 } from "./types.js";

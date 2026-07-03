@@ -5,16 +5,32 @@ All public data models use Pydantic v2. Enums use StrEnum (Python 3.11+).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
+
+
+class ApiModel(BaseModel):
+    """Base for all wire-facing models.
+
+    The control-plane REST API emits camelCase keys (``tenantId``,
+    ``createdAt``, ``costUsd``); SDK code uses snake_case attributes. The
+    alias generator maps between them; ``populate_by_name`` keeps snake_case
+    construction (tests, callers) working too. Explicit ``Field(alias=...)``
+    entries still win over the generator.
+    """
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
+
 
 class Capability(StrEnum):
     REASONING_FRONTIER = "reasoning-frontier"
@@ -117,13 +133,14 @@ class RouteStrategy(StrEnum):
 # Data models
 # ---------------------------------------------------------------------------
 
-class ToolCallMessage(BaseModel):
+
+class ToolCallMessage(ApiModel):
     id: str
     name: str
     arguments: str
 
 
-class Message(BaseModel):
+class Message(ApiModel):
     role: MessageRole
     content: str
     name: str | None = None
@@ -131,13 +148,13 @@ class Message(BaseModel):
     tool_call_id: str | None = None
 
 
-class ToolDef(BaseModel):
+class ToolDef(ApiModel):
     name: str
     description: str
     parameters: dict[str, Any]
 
 
-class RetryPolicy(BaseModel):
+class RetryPolicy(ApiModel):
     max_attempts: int | None = None
     initial_interval: str | None = None
     backoff: float | None = None
@@ -145,19 +162,19 @@ class RetryPolicy(BaseModel):
     non_retryable: list[str] | None = None
 
 
-class StepOptions(BaseModel):
+class StepOptions(ApiModel):
     retry: RetryPolicy | None = None
     timeout: str | None = None
 
 
-class MemoryConfig(BaseModel):
+class MemoryConfig(ApiModel):
     kind: str  # "vector" | "kv"
     name: str
     scope: str  # "tenant" | "user" | "agent" | "run"
     embedding: Capability | None = None
 
 
-class ResourceLimits(BaseModel):
+class ResourceLimits(ApiModel):
     cpu: str | None = None
     memory: str | None = None
     gpu: str | None = None
@@ -167,19 +184,19 @@ class ResourceLimits(BaseModel):
     max_cost_usd: float | None = None
 
 
-class IsolationConfig(BaseModel):
+class IsolationConfig(ApiModel):
     isolation_class: IsolationClass = Field(alias="class", default=IsolationClass.STANDARD)
 
     model_config = {"populate_by_name": True}
 
 
-class RunError(BaseModel):
+class RunError(ApiModel):
     code: str
     message: str
     step_id: str | None = None
 
 
-class Run(BaseModel):
+class Run(ApiModel):
     id: str
     tenant_id: str
     agent_id: str
@@ -196,7 +213,7 @@ class Run(BaseModel):
     labels: dict[str, str] = Field(default_factory=dict)
 
 
-class AgentInfo(BaseModel):
+class AgentInfo(ApiModel):
     id: str
     name: str
     description: str | None = None
@@ -205,7 +222,7 @@ class AgentInfo(BaseModel):
     labels: dict[str, str] = Field(default_factory=dict)
 
 
-class StreamEvent(BaseModel):
+class StreamEvent(ApiModel):
     run_id: str
     step_id: str | None = None
     seq: int
@@ -214,7 +231,7 @@ class StreamEvent(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
-class MemoryEntry(BaseModel):
+class MemoryEntry(ApiModel):
     id: str
     text: str
     score: float
@@ -222,7 +239,7 @@ class MemoryEntry(BaseModel):
     created_at: datetime
 
 
-class ApprovalRequest(BaseModel):
+class ApprovalRequest(ApiModel):
     reason: str
     approvers: list[str] | None = None
     quorum: int | None = None
@@ -230,51 +247,51 @@ class ApprovalRequest(BaseModel):
     policy: str | None = None
 
 
-class AskOptions(BaseModel):
+class AskOptions(ApiModel):
     surface: str | None = None
     message: str
     options: list[str] | None = None
     timeout: str | None = None
 
 
-class NotifyOptions(BaseModel):
+class NotifyOptions(ApiModel):
     channel: str
     message: str
     attachments: list[Any] | None = None
 
 
-class OptimizeWeights(BaseModel):
+class OptimizeWeights(ApiModel):
     cost_weight: float
     latency_weight: float
     accuracy_weight: float
 
 
-class ContextBudget(BaseModel):
+class ContextBudget(ApiModel):
     max_input_tokens: int | None = None
     target_input_tokens: int | None = None
     keep_recent_n: int | None = None
     reserve_for_output: int | None = None
 
 
-class CompactionConfig(BaseModel):
+class CompactionConfig(ApiModel):
     fresh_for_turns: int | None = None
     compact_for_turns: int | None = None
     sketch_for_turns: int | None = None
 
 
-class RecallConfig(BaseModel):
+class RecallConfig(ApiModel):
     top_k: int | None = None
     threshold: float | None = None
 
 
-class ContextConfig(BaseModel):
+class ContextConfig(ApiModel):
     budget: ContextBudget | None = None
     compaction: CompactionConfig | None = None
     recall: RecallConfig | None = None
     prefix_cache: str | None = None  # "anthropic" | "openai" | "auto"
 
 
-class ContextBuildOpts(BaseModel):
+class ContextBuildOpts(ApiModel):
     system: str
     tools: list[ToolDef] | None = None
     history: list[Message] = Field(default_factory=list)
@@ -283,7 +300,7 @@ class ContextBuildOpts(BaseModel):
     budget: ContextBudget | None = None
 
 
-class BuiltContext(BaseModel):
+class BuiltContext(ApiModel):
     messages: list[Message]
     tokens_estimate: int = 0
     dropped_count: int = 0
@@ -296,7 +313,7 @@ class BuiltContext(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class SessionConfig(BaseModel):
+class SessionConfig(ApiModel):
     """Configuration for interactive multi-turn sessions."""
 
     enabled: bool = True
@@ -305,7 +322,7 @@ class SessionConfig(BaseModel):
     durable: bool = True
 
 
-class GuardrailConfig(BaseModel):
+class GuardrailConfig(ApiModel):
     """Configuration for PII blocking, content filtering, and topic restrictions."""
 
     block_pii: bool = False
@@ -313,7 +330,7 @@ class GuardrailConfig(BaseModel):
     blocked_topics: list[str] = Field(default_factory=list)
 
 
-class SessionMessage(BaseModel):
+class SessionMessage(ApiModel):
     """A message in a session."""
 
     id: str
@@ -323,7 +340,7 @@ class SessionMessage(BaseModel):
     created_at: datetime
 
 
-class Session(BaseModel):
+class Session(ApiModel):
     """A multi-turn interactive session."""
 
     id: str
@@ -336,7 +353,7 @@ class Session(BaseModel):
     updated_at: datetime | None = None
 
 
-class ConnectorAction(BaseModel):
+class ConnectorAction(ApiModel):
     """A single action exposed by a connector."""
 
     id: str
@@ -345,7 +362,7 @@ class ConnectorAction(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
-class ConnectorInfo(BaseModel):
+class ConnectorInfo(ApiModel):
     """Metadata about an installed connector."""
 
     id: str
@@ -356,7 +373,7 @@ class ConnectorInfo(BaseModel):
     installed_at: datetime | None = None
 
 
-class ConnectorResult(BaseModel):
+class ConnectorResult(ApiModel):
     """Result of executing a connector action."""
 
     success: bool
@@ -368,7 +385,8 @@ class ConnectorResult(BaseModel):
 # LLM option models
 # ---------------------------------------------------------------------------
 
-class LlmOptions(BaseModel):
+
+class LlmOptions(ApiModel):
     prompt: str | None = None
     messages: list[Message] | None = None
     capability: Capability | None = None
@@ -394,7 +412,8 @@ class LlmStreamOptions(LlmOptions):
 # Agent config model
 # ---------------------------------------------------------------------------
 
-class AgentConfig(BaseModel):
+
+class AgentConfig(ApiModel):
     name: str
     version: str = "0.1.0"
     description: str = ""
@@ -415,6 +434,7 @@ class AgentConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Protocol / interface types for context objects
 # ---------------------------------------------------------------------------
+
 
 class LlmClient:
     """Interface for LLM operations available in AgentContext."""
@@ -531,7 +551,7 @@ class ConnectorClient:
     async def call(self, connector_id: str, action_id: str, input: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
-    def __getitem__(self, connector_id: str) -> "_ConnectorNamespace":
+    def __getitem__(self, connector_id: str) -> _ConnectorNamespace:
         return _ConnectorNamespace(self, connector_id)
 
 
@@ -543,13 +563,14 @@ class _ConnectorNamespace:
     def __getitem__(self, action_id: str) -> Callable[..., Awaitable[dict[str, Any]]]:
         async def _call(input: dict[str, Any]) -> dict[str, Any]:
             return await self._client.call(self._connector_id, action_id, input)
+
         return _call
 
 
 class McpClient:
     """MCP client: mcp("server_id").call("method", params)."""
 
-    def __call__(self, server_id: str) -> "_McpNamespace":
+    def __call__(self, server_id: str) -> _McpNamespace:
         return _McpNamespace(server_id)
 
 
@@ -567,7 +588,7 @@ class _McpNamespace:
 class A2aClient:
     """A2A client: a2a("agent_card_url").submit(input=..., timeout=...)."""
 
-    def __call__(self, agent_card_url: str) -> "_A2aNamespace":
+    def __call__(self, agent_card_url: str) -> _A2aNamespace:
         return _A2aNamespace(agent_card_url)
 
 
@@ -665,10 +686,12 @@ class AgentContext:
 
     def random(self) -> float:
         import random
+
         return random.random()
 
     def uuid(self) -> str:
         import uuid
+
         return str(uuid.uuid4())
 
 
