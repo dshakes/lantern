@@ -100,6 +100,7 @@ impl Drop for SdkShutdown {
 // ---------------------------------------------------------------------------
 
 /// Adapter: reads `traceparent` / `tracestate` from a tonic `MetadataMap`.
+#[allow(dead_code)]
 struct MetadataExtractor<'a>(&'a MetadataMap);
 
 impl Extractor for MetadataExtractor<'_> {
@@ -119,6 +120,7 @@ impl Extractor for MetadataExtractor<'_> {
 }
 
 /// Adapter: writes `traceparent` / `tracestate` into a tonic `MetadataMap`.
+#[allow(dead_code)]
 struct MetadataInjector<'a>(&'a mut MetadataMap);
 
 impl Injector for MetadataInjector<'_> {
@@ -139,6 +141,7 @@ impl Injector for MetadataInjector<'_> {
 ///
 /// Returns a root context when no `traceparent` header is present, so callers
 /// can always use the returned context as the parent for a new span.
+#[allow(dead_code)]
 pub fn extract_from_metadata(metadata: &MetadataMap) -> Context {
     global::get_text_map_propagator(|prop| prop.extract(&MetadataExtractor(metadata)))
 }

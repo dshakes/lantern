@@ -51,6 +51,8 @@ async fn main() -> anyhow::Result<()> {
     let sessions = SessionStore::new(redis);
 
     // Build adapter registry — only register adapters whose credentials are present.
+    // Prod/staging gate: fail closed when a signing secret is unset — an adapter
+    // that accepts all inbound without verification is a forged-webhook vector.
     let mut adapters: HashMap<SurfaceId, Arc<dyn SurfaceAdapter>> = HashMap::new();
     // Typed Twilio handle for URL-aware signature verification in routes.
     let mut twilio_adapter_typed: Option<Arc<adapters::twilio::TwilioAdapter>> = None;
@@ -58,10 +60,7 @@ async fn main() -> anyhow::Result<()> {
     if let (Some(signing_secret), Some(bot_token)) =
         (&config.slack_signing_secret, &config.slack_bot_token)
     {
-        let adapter = adapters::slack::SlackAdapter::new(
-            signing_secret.clone(),
-            bot_token.clone(),
-        );
+        let adapter = adapters::slack::SlackAdapter::new(signing_secret.clone(), bot_token.clone());
         adapters.insert(SurfaceId::Slack, Arc::new(adapter));
         tracing::info!("registered Slack adapter");
     }
@@ -71,6 +70,14 @@ async fn main() -> anyhow::Result<()> {
         &config.whatsapp_api_token,
         &config.whatsapp_phone_number_id,
     ) {
+        if config.whatsapp_app_secret.is_none() && is_prod_env() {
+            anyhow::bail!(
+                "WHATSAPP_APP_SECRET must be set in production (LANTERN_ENV={:?}) — \
+                 WhatsApp POST webhooks would be accepted without X-Hub-Signature-256 \
+                 verification, allowing forged inbound messages",
+                std::env::var("LANTERN_ENV").unwrap_or_default()
+            );
+        }
         // M1: pass app_secret (distinct from verify_token) for POST signature verification.
         let adapter = adapters::whatsapp::WhatsAppAdapter::new(
             verify_token.clone(),
@@ -86,6 +93,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if let Some(bot_token) = &config.telegram_bot_token {
+        if config.telegram_secret_token.is_none() && is_prod_env() {
+            anyhow::bail!(
+                "TELEGRAM_SECRET_TOKEN must be set in production (LANTERN_ENV={:?}) — \
+                 Telegram webhooks would be accepted without X-Telegram-Bot-Api-Secret-Token \
+                 verification, allowing forged inbound messages",
+                std::env::var("LANTERN_ENV").unwrap_or_default()
+            );
+        }
         // C3: pass secret_token for X-Telegram-Bot-Api-Secret-Token verification.
         let adapter = adapters::telegram::TelegramAdapter::new(
             bot_token.clone(),
@@ -103,6 +118,14 @@ async fn main() -> anyhow::Result<()> {
         &config.twilio_auth_token,
         &config.twilio_phone_number,
     ) {
+        if config.twilio_webhook_base_url.is_none() && is_prod_env() {
+            anyhow::bail!(
+                "SURFACE_GATEWAY_BASE_URL must be set in production (LANTERN_ENV={:?}) — \
+                 Twilio webhooks fall back to header-presence-only verification without it, \
+                 allowing forged signatures from any sender that includes an x-twilio-signature header",
+                std::env::var("LANTERN_ENV").unwrap_or_default()
+            );
+        }
         // H5: pass webhook_base_url so routes can do URL-aware HMAC-SHA1 verification.
         let adapter = Arc::new(adapters::twilio::TwilioAdapter::new(
             account_sid.clone(),
@@ -121,10 +144,8 @@ async fn main() -> anyhow::Result<()> {
     if let (Some(bot_token), Some(public_key)) =
         (&config.discord_bot_token, &config.discord_public_key)
     {
-        let adapter = adapters::discord::DiscordAdapter::new(
-            bot_token.clone(),
-            public_key.clone(),
-        );
+        let adapter =
+            adapters::discord::DiscordAdapter::new(bot_token.clone(), public_key.clone());
         adapters.insert(SurfaceId::Discord, Arc::new(adapter));
         tracing::info!("registered Discord adapter");
     }
@@ -229,6 +250,20 @@ fn build_cors(origins: &[String]) -> CorsLayer {
             .allow_methods(tower_http::cors::Any)
             .allow_headers(tower_http::cors::Any)
     }
+}
+
+/// Returns true when `LANTERN_ENV` indicates a production-like environment.
+/// Mirrors the same helper in services/harness/src/tls.rs and
+/// services/gateway/src/tls.rs — one function per binary so crates stay
+/// self-contained.
+fn is_prod_env() -> bool {
+    matches!(
+        std::env::var("LANTERN_ENV")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str(),
+        "prod" | "production" | "staging"
+    )
 }
 
 async fn shutdown_signal() {
