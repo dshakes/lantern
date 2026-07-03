@@ -56,7 +56,9 @@ func NewEngine(pool *pgxpool.Pool, rdb *redis.Client, logger *zap.Logger, worker
 
 	eng.streamer = NewEventStreamer(rdb, logger)
 	eng.executor = NewStepExecutor(pool, eng.streamer, logger, modelClient, runtimeClient)
-	eng.scheduler = NewScheduler(pool, logger, eng.dispatchRun)
+	// Pass &eng.wg so dispatch goroutines are tracked by the same WaitGroup
+	// that Stop() waits on — guarantees all in-flight runs drain on shutdown.
+	eng.scheduler = NewScheduler(pool, logger, &eng.wg, eng.dispatchRun)
 
 	return eng
 }
@@ -168,18 +170,40 @@ func (e *Engine) dispatchRun(ctx context.Context, runID, tenantID, agentVersionI
 	// linear workflow by reading steps from the run's manifest.
 	err = e.executeRunWorkflow(ctx, state)
 
+	// Terminal journal writes use a fresh detached context. The execution ctx
+	// is cancelled on shutdown (or when the run itself was cancelled); writing
+	// through it would fail immediately and strand the run at status='running'
+	// with no recovery signal.
+	journalCtx, journalCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer journalCancel()
+
 	// Terminal state.
 	if err != nil {
 		if ctx.Err() != nil {
 			// Context cancelled — the run was cancelled externally.
-			e.journalRunCancelled(ctx, state) //nolint:errcheck
+			if jErr := e.journalRunCancelled(journalCtx, state); jErr != nil {
+				e.logger.Error("failed to persist run_cancelled — run may strand at status=running",
+					zap.String("run_id", state.RunID),
+					zap.Error(jErr),
+				)
+			}
 			return nil
 		}
-		e.journalRunFailed(ctx, state, err) //nolint:errcheck
+		if jErr := e.journalRunFailed(journalCtx, state, err); jErr != nil {
+			e.logger.Error("failed to persist run_failed — run may strand at status=running",
+				zap.String("run_id", state.RunID),
+				zap.Error(jErr),
+			)
+		}
 		return nil
 	}
 
-	e.journalRunSucceeded(ctx, state) //nolint:errcheck
+	if jErr := e.journalRunSucceeded(journalCtx, state); jErr != nil {
+		e.logger.Error("failed to persist run_succeeded — run may strand at status=running",
+			zap.String("run_id", state.RunID),
+			zap.Error(jErr),
+		)
+	}
 	return nil
 }
 
