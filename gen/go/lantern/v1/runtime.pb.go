@@ -1057,9 +1057,12 @@ type ScheduleRequest struct {
 	ColdStartBudget *durationpb.Duration   `protobuf:"bytes,3,opt,name=cold_start_budget,json=coldStartBudget,proto3" json:"cold_start_budget,omitempty"`
 	// If true, scheduler reserves the slot but doesn't spawn yet —
 	// caller commits via Spawn(handle) on the manager service.
-	ReserveOnly   bool `protobuf:"varint,4,opt,name=reserve_only,json=reserveOnly,proto3" json:"reserve_only,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ReserveOnly bool `protobuf:"varint,4,opt,name=reserve_only,json=reserveOnly,proto3" json:"reserve_only,omitempty"`
+	// Idempotency key — repeated requests with the same key return the original
+	// VmHandle so client retries after a timeout don't double-create a billed VM.
+	IdempotencyKey string `protobuf:"bytes,5,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ScheduleRequest) Reset() {
@@ -1118,6 +1121,13 @@ func (x *ScheduleRequest) GetReserveOnly() bool {
 		return x.ReserveOnly
 	}
 	return false
+}
+
+func (x *ScheduleRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
 }
 
 type EventsRequest struct {

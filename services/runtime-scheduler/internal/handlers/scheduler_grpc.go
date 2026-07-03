@@ -12,6 +12,7 @@ package handlers
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,6 +53,13 @@ type alwaysLeader struct{}
 
 func (alwaysLeader) IsLeader() bool { return true }
 
+// idempotentEntry caches the result of a Schedule call keyed by
+// idempotency_key so client retries after a timeout get the same VmHandle.
+type idempotentEntry struct {
+	handle    *lanternv1.VmHandle
+	expiresAt time.Time
+}
+
 // SchedulerService implements lanternv1.RuntimeSchedulerServer.
 type SchedulerService struct {
 	lanternv1.UnimplementedRuntimeSchedulerServer
@@ -64,6 +72,10 @@ type SchedulerService struct {
 	SnapshotPersister SnapshotPersister
 	Elector           Elector
 	Metrics           *metrics.Registry
+
+	// idempotentMu guards idempotentVMs for concurrent Schedule calls.
+	idempotentMu  sync.Mutex
+	idempotentVMs map[string]idempotentEntry // idempotency_key -> cached handle
 }
 
 // NewSchedulerService constructs the service. Caller must wire all deps.
@@ -81,6 +93,7 @@ func NewSchedulerService(
 		Logger:        logger.Named("scheduler_grpc"),
 		TenantHardCap: tenantHardCap,
 		Elector:       alwaysLeader{},
+		idempotentVMs: make(map[string]idempotentEntry),
 	}
 }
 
@@ -99,6 +112,21 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 			s.Metrics.ScheduleTotal.WithLabelValues("standby").Inc()
 		}
 		return nil, status.Error(codes.Unavailable, "not the leader — retry on another replica")
+	}
+
+	// Idempotency: a repeated request with the same key returns the original
+	// VmHandle so client retries after a timeout don't double-create a billed VM.
+	if req != nil && req.IdempotencyKey != "" {
+		s.idempotentMu.Lock()
+		entry, exists := s.idempotentVMs[req.IdempotencyKey]
+		s.idempotentMu.Unlock()
+		if exists && time.Now().Before(entry.expiresAt) {
+			s.Logger.Info("schedule: returning cached handle for idempotency key",
+				zap.String("idempotency_key", req.IdempotencyKey),
+				zap.String("vm_id", entry.handle.VmId),
+			)
+			return entry.handle, nil
+		}
 	}
 
 	tenantID, err := middleware.MustTenantID(ctx)
@@ -185,6 +213,23 @@ func (s *SchedulerService) Schedule(ctx context.Context, req *lanternv1.Schedule
 	if s.Metrics != nil {
 		s.Metrics.ActiveVMs.Inc()
 		s.Metrics.ScheduleTotal.WithLabelValues("ok").Inc()
+	}
+
+	// Record idempotency entry so retries return the same handle (24 h TTL).
+	if req.IdempotencyKey != "" {
+		s.idempotentMu.Lock()
+		s.idempotentVMs[req.IdempotencyKey] = idempotentEntry{
+			handle:    handle,
+			expiresAt: time.Now().Add(24 * time.Hour),
+		}
+		// Lazy eviction: prune expired entries on each successful insert.
+		now := time.Now()
+		for k, v := range s.idempotentVMs {
+			if now.After(v.expiresAt) {
+				delete(s.idempotentVMs, k)
+			}
+		}
+		s.idempotentMu.Unlock()
 	}
 
 	// Emit PENDING then dispatch the spawn.
@@ -308,16 +353,24 @@ func (s *SchedulerService) Terminate(ctx context.Context, req *lanternv1.Termina
 		Reason: req.Reason,
 	})
 
-	// Forward to manager (stub).
+	// Forward to manager. An unreachable manager means the VM is still
+	// running — do NOT free the quota slot or mark TERMINATED; leave the VM
+	// in DRAINING so the caller can retry and the quota is not fabricated.
 	node, _ := s.Store.GetNode(vm.NodeName)
-	_, _ = s.Dialer.Stop(ctx, node.Address, &lanternv1.StopRequest{
+	if _, err := s.Dialer.Stop(ctx, node.Address, &lanternv1.StopRequest{
 		VmId:   req.VmId,
 		Grace:  req.Grace,
 		Reason: req.Reason,
-	})
+	}); err != nil {
+		s.Logger.Error("terminate: manager Stop failed — VM left draining; retry Terminate",
+			zap.String("vm_id", req.VmId),
+			zap.String("node", vm.NodeName),
+			zap.Error(err),
+		)
+		return nil, status.Errorf(codes.Unavailable, "manager unreachable for vm %s: %v", req.VmId, err)
+	}
 
-	// Optimistic transition to terminated. In production the manager would
-	// confirm and the harness would close.
+	// Manager confirmed stop; transition to terminated and free quota.
 	s.Store.UpdateVMState(req.VmId, lanternv1.VmState_VM_STATE_TERMINATED, req.Reason, nil, time.Now().UTC())
 	s.emit(tenantID, &lanternv1.StatusEvent{
 		VmId:   req.VmId,

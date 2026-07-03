@@ -49,6 +49,15 @@ func (e *Engine) Pick(spec *lanternv1.AgentSpec, hint *lanternv1.PlacementHint, 
 		if n.Draining {
 			return nil, fmt.Errorf("hinted node %q is draining", hint.Node)
 		}
+		// Capacity check — the hint is "still validated" (see comment on Pick).
+		// GetNode already applies pending reservations to the returned copy.
+		requiredVcpu, requiredMem := requiredCapacity(spec)
+		if requiredVcpu > 0 && n.FreeVcpuMillis < requiredVcpu {
+			return nil, fmt.Errorf("hinted node %q has insufficient vCPU (need %d m, free %d m)", hint.Node, requiredVcpu, n.FreeVcpuMillis)
+		}
+		if requiredMem > 0 && n.FreeMemoryBytes < requiredMem {
+			return nil, fmt.Errorf("hinted node %q has insufficient memory (need %d B, free %d B)", hint.Node, requiredMem, n.FreeMemoryBytes)
+		}
 		snap := cluster.BuildNodeSnapshot(n)
 		score := scoring.ScoreNode(snap, wl, e.Weights)
 		return &Decision{
