@@ -104,7 +104,7 @@ curl -X POST http://localhost:8080/v1/runtime/schedule \
 ## Step 3 — Watch logs
 
 ```bash
-lantern logs --vm=<vm_id> -f
+lantern vm logs <vm_id> -f
 ```
 
 Or via the dashboard at `http://localhost:3001/runtime/<vm_id>` — live log stream,

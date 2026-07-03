@@ -31,8 +31,8 @@ Note: this is a spike — the actual build/upload/deploy pipeline is wired later
 
 			if isJSON() {
 				return printJSON(map[string]any{
-					"status":  "deployed",
-					"message": "spike — deploy pipeline not yet wired",
+					"status":  "simulated",
+					"message": "spike — deploy pipeline not yet wired; nothing was shipped",
 					"config":  string(agentYAML),
 				})
 			}
@@ -58,8 +58,8 @@ Note: this is a spike — the actual build/upload/deploy pipeline is wired later
 			}
 
 			fmt.Fprintln(os.Stderr)
-			printSuccess("Deployed successfully!")
-			printWarning("This is a spike — the deploy pipeline is not yet wired to the backend.")
+			printWarning("SIMULATED deploy — the pipeline is not yet wired to the backend; nothing was shipped.")
+			printInfo("To run an agent for real today: `lantern run <spec.yaml>` (headless microVM) or the dashboard's Deploy button.")
 
 			if watch {
 				printInfo("--watch mode: would watch for file changes and re-deploy (not yet implemented)")
