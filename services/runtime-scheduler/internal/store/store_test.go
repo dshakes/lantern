@@ -440,6 +440,66 @@ func TestDB_SnapshotPersists(t *testing.T) {
 	}
 }
 
+// TestDB_LoadVMs_FiltersTerminalStates verifies that loadVMs (called by
+// LoadFromDB) skips TERMINATED and FAILED VMs so a stale row does not
+// resurrect as a live, quota-consuming zombie on restart.
+func TestDB_LoadVMs_FiltersTerminalStates(t *testing.T) {
+	pool, dbURL := openTestPool(t)
+	defer pool.Close()
+	migrateDB(t, pool)
+	cleanupTables(t, dbURL)
+	t.Cleanup(func() { cleanupTables(t, dbURL) })
+
+	_, wt := newWriteThrough(t, pool)
+
+	// Create two VMs: one TERMINATED (zombie candidate) and one RUNNING.
+	terminated := &cluster.VM{
+		Handle:   &lanternv1.VmHandle{VmId: "vm-term", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:t", TenantId: "t-term"},
+		State:    lanternv1.VmState_VM_STATE_PENDING,
+		TenantID: "t-term",
+		NodeName: "n1",
+	}
+	running := &cluster.VM{
+		Handle:   &lanternv1.VmHandle{VmId: "vm-run", Node: "n1", CreatedAt: timestamppb.Now()},
+		Spec:     &lanternv1.AgentSpec{ImageDigest: "sha256:r", TenantId: "t-run"},
+		State:    lanternv1.VmState_VM_STATE_RUNNING,
+		TenantID: "t-run",
+		NodeName: "n1",
+	}
+	wt.CreateVM(terminated)
+	wt.CreateVM(running)
+
+	// Transition the first VM to TERMINATED in DB but do NOT call DeleteVM
+	// (simulating a crash mid-delete that left the row behind).
+	wt.UpdateVMState("vm-term", lanternv1.VmState_VM_STATE_TERMINATED, "done", nil, time.Now().UTC())
+
+	// Reload into a fresh store.
+	mem2 := cluster.NewInMemoryStore()
+	wt2 := store.NewWriteThroughStore(mem2, pool, testLogger(t))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := wt2.LoadFromDB(ctx, cluster.HeartbeatDeadline); err != nil {
+		t.Fatalf("LoadFromDB: %v", err)
+	}
+
+	// TERMINATED VM must not appear in memory.
+	if _, ok := wt2.GetVM("vm-term"); ok {
+		t.Error("terminated VM was resurrected by LoadFromDB — zombie not filtered")
+	}
+	// RUNNING VM must be present.
+	if _, ok := wt2.GetVM("vm-run"); !ok {
+		t.Error("running VM missing after LoadFromDB")
+	}
+	// Quota counts: only the RUNNING vm's tenant should have count 1.
+	if got := wt2.TenantLiveVMs("t-term"); got != 0 {
+		t.Errorf("terminated tenant quota: got %d, want 0", got)
+	}
+	if got := wt2.TenantLiveVMs("t-run"); got != 1 {
+		t.Errorf("running tenant quota: got %d, want 1", got)
+	}
+}
+
 // TestDB_DeleteVMRemovesRow verifies that DeleteVM removes the sched_vms row.
 func TestDB_DeleteVMRemovesRow(t *testing.T) {
 	pool, dbURL := openTestPool(t)
