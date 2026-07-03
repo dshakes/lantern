@@ -1,0 +1,24 @@
+# cargo-audit configuration for runtime-manager.
+#
+# quick-xml 0.37.5 is pulled TRANSITIVELY, and only, via object_store's `aws`
+# feature (object_store -> quick-xml, for parsing S3 XML responses). We do not
+# depend on quick-xml directly.
+#
+# Both advisories are fixed in quick-xml >=0.41 — BUT no released object_store
+# uses it yet: even the latest object_store 0.14.0 pins quick-xml 0.40.x
+# (verified 2026-07-03). There is therefore no upstream bump that clears these
+# today; forcing quick-xml 0.41 via [patch] risks a build break against
+# object_store's pinned API for no proven benefit.
+#
+# Reachability: both are DoS-class parsing bugs triggered only by malformed XML
+# from the object-store BACKEND (an S3/GCS list/get response). runtime-manager
+# talks only to its own configured, trusted snapshot bucket — never an
+# attacker-controlled endpoint — so the exposure is outside our threat model.
+#
+# ACTION: drop these ignores once object_store releases a version depending on
+# quick-xml >=0.41 and we bump to it.
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0194", # quick-xml: quadratic runtime on duplicate attribute names
+    "RUSTSEC-2026-0195", # quick-xml: unbounded namespace-declaration allocation (DoS)
+]
