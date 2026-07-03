@@ -20,10 +20,6 @@
     "./runner": {
       "import": "./dist/runner.js",
       "types": "./dist/runner.d.ts"
-    },
-    "./connectors": {
-      "import": "./dist/connectors/index.js",
-      "types": "./dist/connectors/index.d.ts"
     }
   },
   "scripts": {

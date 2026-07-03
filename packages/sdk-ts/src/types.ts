@@ -378,3 +378,305 @@ export interface Agent {
   createdAt: Date;
   labels: Record<string, string>;
 }
+
+// ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+
+export interface PersistedToolCall {
+  name: string;
+  args: string;
+  result?: string;
+  error?: string;
+  status: string;
+}
+
+export interface SessionMessage {
+  role: string;
+  content: string;
+  timestamp: string;
+  toolCalls?: PersistedToolCall[];
+}
+
+export interface Session {
+  id: string;
+  tenantId: string;
+  agentName: string;
+  status: string;
+  messages: SessionMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Event shape published on the session SSE stream (`type`/`data`/`timestamp`) —
+ *  distinct from the run `StreamEvent` shape (`kind`/`seq`/`runId`). */
+export interface SessionEvent {
+  type: string;
+  data: Record<string, unknown>;
+  timestamp: string;
+}
+
+// ---------------------------------------------------------------------------
+// Connectors
+// ---------------------------------------------------------------------------
+
+export interface ConnectorInfo {
+  id: string;
+  tenantId: string;
+  connectorId: string;
+  displayName: string;
+  status: string;
+  config: Record<string, unknown>;
+  scopes: string[];
+  installedAt: string;
+  updatedAt: string;
+  authMethod: string;
+  installedBy?: string;
+}
+
+export interface ConnectorResult {
+  connector: string;
+  action: string;
+  data: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Budgets
+// ---------------------------------------------------------------------------
+
+export interface BudgetPolicy {
+  agentName: string;
+  maxCostUsdPerDay?: number;
+  maxCostUsdPerRun?: number;
+  maxTokensPerDay?: number;
+  maxRunsPerDay?: number;
+  toolLimits?: Record<string, number>;
+  hardFail: boolean;
+  notifyAtPct: number;
+  updatedAt?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Eval suites / runs / baselines
+// ---------------------------------------------------------------------------
+
+export interface EvalCase {
+  name: string;
+  input: string;
+  expected?: string;
+  assert?: Record<string, unknown>;
+  weight?: number;
+}
+
+export interface EvalSuite {
+  id: string;
+  agentName: string;
+  name: string;
+  description?: string;
+  cases: EvalCase[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EvalCaseResult {
+  name: string;
+  passed: boolean;
+  score: number;
+  actual?: string;
+  expected?: string;
+  error?: string;
+  latencyMs?: number;
+  costUsd?: number;
+}
+
+export interface EvalRun {
+  id: string;
+  suiteId: string;
+  agentName: string;
+  agentVersion?: string;
+  commitSha?: string;
+  branch?: string;
+  passed: boolean;
+  score: number;
+  casesTotal: number;
+  casesPassed: number;
+  caseResults?: EvalCaseResult[];
+  durationMs: number;
+  totalCostUsd: number;
+  createdAt: string;
+  baselineScore?: number;
+  regressed: boolean;
+}
+
+export interface EvalBaseline {
+  agentName: string;
+  branch: string;
+  evalRunId: string;
+  score: number;
+  setAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Experiments
+// ---------------------------------------------------------------------------
+
+export interface Experiment {
+  id: string;
+  agentName: string;
+  name: string;
+  variantAVersion: string;
+  variantBVersion: string;
+  trafficSplitB: number;
+  evalSuiteId?: string;
+  autoPromote: boolean;
+  minRunsToPromote: number;
+  status: string;
+  winner?: string;
+  aRuns: number;
+  bRuns: number;
+  aScore?: number;
+  bScore?: number;
+  startedAt: string;
+  concludedAt?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace
+// ---------------------------------------------------------------------------
+
+export interface MarketplaceAgent {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  tags: string[];
+  manifest: Record<string, unknown>;
+  card: Record<string, unknown>;
+  readme?: string;
+  forksCount: number;
+  starsCount: number;
+  starred: boolean;
+  publishedAt: string;
+  author: string;
+}
+
+// ---------------------------------------------------------------------------
+// MCP registry
+// ---------------------------------------------------------------------------
+
+export interface McpServer {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  transport: string;
+  url?: string;
+  command?: string;
+  authType: string;
+  manifest: Record<string, unknown>;
+  tags: string[];
+  official: boolean;
+  installsCount: number;
+}
+
+export interface McpAttachment {
+  serverSlug: string;
+  serverName: string;
+  category: string;
+  transport: string;
+  authType: string;
+  config: Record<string, unknown>;
+  attachedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Receipts
+// ---------------------------------------------------------------------------
+
+export interface ReceiptPayload {
+  agentName: string;
+  agentVersion?: string;
+  costUsd: number;
+  issuedAt: string;
+  journalHash: string;
+  model?: string;
+  provider?: string;
+  runId: string;
+  status: string;
+  tenantId: string;
+  tokensIn: number;
+  tokensOut: number;
+  version: number;
+}
+
+export interface SignedReceipt {
+  payload: ReceiptPayload;
+  signature: string;
+  algorithm: string;
+}
+
+export interface ReceiptVerifyResult {
+  valid: boolean;
+  reason?: string;
+  runId?: string;
+  issuedAt?: string;
+  tenantId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Feedback
+// ---------------------------------------------------------------------------
+
+export interface FeedbackEntry {
+  runId: string;
+  agentName?: string;
+  score: number;
+  comment?: string;
+  preferredOutput?: string;
+  source: string;
+  createdAt: string;
+}
+
+export interface FeedbackSummary {
+  agentName: string;
+  totalFeedback: number;
+  avgScore: number;
+  thumbsUp: number;
+  thumbsDown: number;
+  runsWithPreferredOutput: number;
+  last7DaysAvgScore: number;
+}
+
+// ---------------------------------------------------------------------------
+// Rehearsals
+// ---------------------------------------------------------------------------
+
+export interface RehearseResponse {
+  agentName: string;
+  window: string;
+  cases: Record<string, unknown>[];
+  count: number;
+  reason?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Cost forecast
+// ---------------------------------------------------------------------------
+
+export interface ForecastResult {
+  agentName: string;
+  model: string;
+  provider: string;
+  estimatedTokensIn: number;
+  estimatedTokensOut: number;
+  estimatedCostUsd: number;
+  confidence: number;
+  calibrated?: boolean;
+  noHistoricalData?: boolean;
+  reasoning?: unknown;
+  budget?: unknown;
+  wouldExceedBudget: boolean;
+  blockReason?: string;
+}
