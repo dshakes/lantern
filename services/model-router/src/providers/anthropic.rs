@@ -71,14 +71,14 @@ impl AnthropicProvider {
         }
     }
 
-    fn map_error(&self, status: u16, body: &str) -> ProviderError {
+    fn map_error(&self, status: u16, body: &str, retry_after_ms: u64) -> ProviderError {
         // Untrusted upstream body: log at debug only, never surface a raw
         // auth-error body to the caller or into run state.
         tracing::debug!(provider = self.name(), status, body, "provider error response");
         if status == 429 {
             ProviderError::RateLimited {
                 provider: self.name().into(),
-                retry_after_ms: 1000,
+                retry_after_ms,
             }
         } else if status == 401 || status == 403 {
             ProviderError::AuthError {
@@ -103,6 +103,24 @@ impl AnthropicProvider {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Parse the `Retry-After` response header into milliseconds.
+///
+/// Accepts integer seconds (RFC 7231 §7.1.3); falls back to 1000 ms for
+/// HTTP-date values (adding an `httpdate` dep for this is YAGNI — providers
+/// use integer seconds).
+fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> u64 {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(|secs| secs * 1000)
+        .unwrap_or(1000)
 }
 
 // ---------------------------------------------------------------------------
@@ -409,14 +427,15 @@ impl Provider for AnthropicProvider {
         })?;
 
         let status = resp.status().as_u16();
+        if status != 200 {
+            let retry_after_ms = parse_retry_after(resp.headers());
+            let body = resp.text().await.unwrap_or_default();
+            return Err(self.map_error(status, &body, retry_after_ms));
+        }
         let body = resp.text().await.map_err(|e| ProviderError::NetworkError {
             provider: self.name().into(),
             detail: e.to_string(),
         })?;
-
-        if status != 200 {
-            return Err(self.map_error(status, &body));
-        }
 
         let anthropic: AnthropicChatResponse =
             serde_json::from_str(&body).map_err(|e| ProviderError::NetworkError {
@@ -486,7 +505,7 @@ impl Provider for AnthropicProvider {
         &self,
         model: &str,
         req: &CompleteRequest,
-    ) -> Result<BoxStream<'_, Result<CompleteChunk, ProviderError>>, ProviderError> {
+    ) -> Result<BoxStream<'static, Result<CompleteChunk, ProviderError>>, ProviderError> {
         tracing::Span::current().record("model", model);
 
         let (system, messages) = to_anthropic_messages(&req.messages);
@@ -535,8 +554,9 @@ impl Provider for AnthropicProvider {
 
         let status = resp.status().as_u16();
         if status != 200 {
+            let retry_after_ms = parse_retry_after(resp.headers());
             let body = resp.text().await.unwrap_or_default();
-            return Err(self.map_error(status, &body));
+            return Err(self.map_error(status, &body, retry_after_ms));
         }
 
         let provider_name: String = self.name().into();

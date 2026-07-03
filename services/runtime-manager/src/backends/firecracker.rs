@@ -2071,7 +2071,16 @@ impl FirecrackerBackend {
         // reference, so the in-VM harness can present it on the
         // harness↔manager mTLS channel. Issuance is cryptographic identity,
         // not topology — VendSecret rejects any cert whose CN != vm_id.
-        provision_vm_cert(cfg)?;
+        //
+        // provision_vm_cert uses std::fs + std::process::Command; wrap in
+        // spawn_blocking so we don't block the async executor.
+        {
+            let cfg_clone = cfg.clone();
+            tokio::task::spawn_blocking(move || provision_vm_cert(&cfg_clone))
+                .await
+                .context("cert provisioning task join")?
+                .with_context(|| format!("provision vm cert for '{}'", cfg.vm_id))?;
+        }
 
         // Step 0.5: ensure the host runtime dirs for the API socket and the
         // vsock UDS exist. Firecracker binds the vsock host-side Unix socket
@@ -2130,11 +2139,17 @@ impl FirecrackerBackend {
         // SendCtrlAltDel (ADR-0006 §Lifecycle). The process otherwise runs
         // until SendCtrlAltDel or natural exit.
         let child = spawn_firecracker_process(&spawn_cfg).await?;
-        if let Some(prev) = self.processes.insert(&cfg.vm_id, child) {
+        if let Some(mut prev) = self.processes.insert(&cfg.vm_id, child) {
             // vm_ids are UUIDs, so a collision means a prior boot for the same
             // id never got reaped. Kill the stale handle defensively.
-            let mut prev = prev;
-            let _ = prev.force_kill();
+            // Propagate — booting on top of a stale process we can't kill is
+            // worse than failing fast (force_kill is idempotent for dead procs).
+            prev.force_kill().with_context(|| {
+                format!(
+                    "force-kill stale process on collision: {}",
+                    cfg.vm_id
+                )
+            })?;
             tracing::warn!(vm_id = %cfg.vm_id, "process table collision; killed stale child");
         }
 
@@ -2267,7 +2282,8 @@ impl FirecrackerBackend {
         })
         .await?;
         if let Some(mut prev) = self.processes.insert(&vm_id, child) {
-            let _ = prev.force_kill();
+            prev.force_kill()
+                .with_context(|| format!("force-kill stale process on collision: {vm_id}"))?;
             tracing::warn!(vm_id = %vm_id, "process table collision; killed stale child");
         }
 

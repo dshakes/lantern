@@ -16,34 +16,19 @@ pub enum ProviderError {
     },
 
     #[error("authentication error for {provider}: {message}")]
-    AuthError {
-        provider: String,
-        message: String,
-    },
+    AuthError { provider: String, message: String },
 
     #[error("invalid request to {provider}: {message}")]
-    InvalidRequest {
-        provider: String,
-        message: String,
-    },
+    InvalidRequest { provider: String, message: String },
 
     #[error("request to {provider} timed out after {elapsed_ms}ms")]
-    Timeout {
-        provider: String,
-        elapsed_ms: u64,
-    },
+    Timeout { provider: String, elapsed_ms: u64 },
 
     #[error("network error communicating with {provider}: {detail}")]
-    NetworkError {
-        provider: String,
-        detail: String,
-    },
+    NetworkError { provider: String, detail: String },
 
     #[error("unsupported operation on {provider}: {message}")]
-    Unsupported {
-        provider: String,
-        message: String,
-    },
+    Unsupported { provider: String, message: String },
 }
 
 impl ProviderError {
@@ -69,13 +54,10 @@ pub enum RouterError {
         capability: String,
         errors: ProviderFailures,
     },
-
-    #[error("budget exceeded for tenant {tenant_id}: limit {limit_usd}, used {used_usd}")]
-    BudgetExceeded {
-        tenant_id: String,
-        limit_usd: f64,
-        used_usd: f64,
-    },
+    // ponytail: BudgetExceeded intentionally absent — budget enforcement is
+    // control-plane-only (the CP checks agent_budgets before dispatching to
+    // this service).  The router never constructs this error; adding it here
+    // would be dead code and a misleading API surface.
 }
 
 /// Collects error messages from multiple failed providers for display.
@@ -97,15 +79,8 @@ impl fmt::Display for ProviderFailures {
 impl From<RouterError> for tonic::Status {
     fn from(err: RouterError) -> tonic::Status {
         match &err {
-            RouterError::NoProvider { .. } => {
-                tonic::Status::not_found(err.to_string())
-            }
-            RouterError::AllProvidersFailed { .. } => {
-                tonic::Status::unavailable(err.to_string())
-            }
-            RouterError::BudgetExceeded { .. } => {
-                tonic::Status::resource_exhausted(err.to_string())
-            }
+            RouterError::NoProvider { .. } => tonic::Status::not_found(err.to_string()),
+            RouterError::AllProvidersFailed { .. } => tonic::Status::unavailable(err.to_string()),
         }
     }
 }
@@ -113,27 +88,15 @@ impl From<RouterError> for tonic::Status {
 impl From<ProviderError> for tonic::Status {
     fn from(err: ProviderError) -> tonic::Status {
         match &err {
-            ProviderError::RateLimited { .. } => {
-                tonic::Status::resource_exhausted(err.to_string())
-            }
-            ProviderError::ServerError { .. } => {
-                tonic::Status::unavailable(err.to_string())
-            }
-            ProviderError::AuthError { .. } => {
-                tonic::Status::unauthenticated(err.to_string())
-            }
+            ProviderError::RateLimited { .. } => tonic::Status::resource_exhausted(err.to_string()),
+            ProviderError::ServerError { .. } => tonic::Status::unavailable(err.to_string()),
+            ProviderError::AuthError { .. } => tonic::Status::unauthenticated(err.to_string()),
             ProviderError::InvalidRequest { .. } => {
                 tonic::Status::invalid_argument(err.to_string())
             }
-            ProviderError::Timeout { .. } => {
-                tonic::Status::deadline_exceeded(err.to_string())
-            }
-            ProviderError::NetworkError { .. } => {
-                tonic::Status::unavailable(err.to_string())
-            }
-            ProviderError::Unsupported { .. } => {
-                tonic::Status::unimplemented(err.to_string())
-            }
+            ProviderError::Timeout { .. } => tonic::Status::deadline_exceeded(err.to_string()),
+            ProviderError::NetworkError { .. } => tonic::Status::unavailable(err.to_string()),
+            ProviderError::Unsupported { .. } => tonic::Status::unimplemented(err.to_string()),
         }
     }
 }

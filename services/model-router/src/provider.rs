@@ -53,17 +53,18 @@ pub trait Provider: Send + Sync {
         req: &CompleteRequest,
     ) -> Result<CompleteResponse, ProviderError>;
 
-    /// Streaming completion. Returns a stream of chunks.
+    /// Streaming completion. Returns a `'static` stream of chunks.
+    ///
+    /// The `'static` bound is required so `ModelRouter::complete_stream` can
+    /// return the stream to its caller without an `unsafe transmute`. All
+    /// concrete provider impls satisfy this because they move (not borrow) all
+    /// state into the stream closure — no self-borrow crosses the await point.
     async fn complete_stream(
         &self,
         model: &str,
         req: &CompleteRequest,
-    ) -> Result<BoxStream<'_, Result<CompleteChunk, ProviderError>>, ProviderError>;
+    ) -> Result<BoxStream<'static, Result<CompleteChunk, ProviderError>>, ProviderError>;
 
     /// Embedding. Providers that don't support embeddings should return `Unsupported`.
-    async fn embed(
-        &self,
-        model: &str,
-        req: &EmbedRequest,
-    ) -> Result<EmbedResponse, ProviderError>;
+    async fn embed(&self, model: &str, req: &EmbedRequest) -> Result<EmbedResponse, ProviderError>;
 }

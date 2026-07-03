@@ -567,17 +567,13 @@ impl RuntimeManagerGrpc {
                     artifacts.push((name, bytes));
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        path = %path,
-                        error = %e,
-                        "snapshot: artifact file not readable; storing empty bytes"
-                    );
-                    let name = std::path::Path::new(path)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(path)
-                        .to_string();
-                    artifacts.push((name, vec![]));
+                    // An unreadable artifact must fail the snapshot — silently
+                    // storing empty bytes would produce a sha256 over truncated
+                    // data, and a later Restore would boot garbage without
+                    // knowing the snapshot was corrupt.
+                    return Err(Status::internal(format!(
+                        "snapshot: artifact file not readable — {path}: {e}"
+                    )));
                 }
             }
         }
