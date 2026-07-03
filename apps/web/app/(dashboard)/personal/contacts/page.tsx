@@ -9,6 +9,9 @@ import Link from "next/link";
 import { Clock, Play, UserMinus } from "lucide-react";
 
 import { useBridge } from "@/components/personal/bridge-context";
+import { PageHeader } from "@/components/page-header";
+import { EmptyState } from "@/components/empty-state";
+import { Button } from "@/components/button";
 
 export default function ContactsPage() {
   const { state, bot, busy, resumeContact, clearAllPauses } = useBridge();
@@ -44,37 +47,31 @@ export default function ContactsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-zinc-800/80 bg-surface-1 p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-medium text-zinc-50">Paused contacts</h2>
-            <p className="mt-1 max-w-2xl text-sm text-zinc-400">
-              When you type in a thread, the assistant steps aside for that contact for 60 minutes. Pauses listed here will auto-expire — or you can resume them now.
-            </p>
-          </div>
-          {pausedEntries.length > 0 && (
-            <button
-              type="button"
+      <PageHeader
+        title="Paused contacts"
+        description="When you type in a thread, the assistant steps aside for that contact for 60 minutes. Pauses listed here will auto-expire — or you can resume them now."
+        action={
+          pausedEntries.length > 0 ? (
+            <Button
+              variant="secondary"
               onClick={clearAllPauses}
               disabled={busy.clearingPauses}
-              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
             >
               {busy.clearingPauses ? "Resuming…" : "Resume all"}
-            </button>
-          )}
-        </div>
-      </div>
+            </Button>
+          ) : undefined
+        }
+      />
 
-      <div className="rounded-2xl border border-zinc-800/80 bg-surface-1">
-        {pausedEntries.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <UserMinus className="h-6 w-6 text-zinc-600" />
-            <div className="mt-3 text-sm text-zinc-300">Nothing paused</div>
-            <p className="mt-1 max-w-sm text-xs text-zinc-500">
-              When you reply manually to a contact, that contact gets paused for 60 minutes and shows up here.
-            </p>
-          </div>
-        ) : (
+      {pausedEntries.length === 0 ? (
+        <EmptyState
+          size="compact"
+          icon={UserMinus}
+          title="Nothing paused"
+          description="When you reply manually to a contact, that contact gets paused for 60 minutes and shows up here."
+        />
+      ) : (
+        <div className="rounded-2xl border border-zinc-800/80 bg-surface-1">
           <ul className="divide-y divide-zinc-800/60">
             {pausedEntries.map(({ jid, until }) => (
               <li
@@ -112,8 +109,8 @@ export default function ContactsPage() {
               </li>
             ))}
           </ul>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

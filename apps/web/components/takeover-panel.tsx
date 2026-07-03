@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { api } from "@/lib/api";
+import { Button } from "@/components/button";
+import { Modal, ModalField } from "@/components/modal";
 import { useToast } from "@/components/toast";
 
 interface Takeover {
@@ -38,6 +40,8 @@ export function TakeoverPanel({ runId }: { runId: string }) {
   const [takeovers, setTakeovers] = useState<Takeover[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
+  const [grantTarget, setGrantTarget] = useState<Takeover | null>(null);
+  const [notesInput, setNotesInput] = useState("");
 
   const load = async () => {
     try {
@@ -60,6 +64,22 @@ export function TakeoverPanel({ runId }: { runId: string }) {
   const open = takeovers.filter((t) => t.status === "pending" || t.status === "granted");
   const closed = takeovers.filter((t) => t.status !== "pending" && t.status !== "granted");
 
+  const confirmGrant = async () => {
+    if (!grantTarget) return;
+    const id = grantTarget.id;
+    setActing(id);
+    try {
+      await api.grantTakeover(runId, id, notesInput);
+      toast.success("Granted — workflow resumes");
+      load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not grant");
+    } finally {
+      setActing(null);
+      setGrantTarget(null);
+    }
+  };
+
   if (!loading && takeovers.length === 0) return null;
 
   return (
@@ -80,18 +100,9 @@ export function TakeoverPanel({ runId }: { runId: string }) {
             key={t.id}
             t={t}
             acting={acting}
-            onGrant={async () => {
-              const notes = prompt("Notes for the agent (optional):") ?? "";
-              setActing(t.id);
-              try {
-                await api.grantTakeover(runId, t.id, notes);
-                toast.success("Granted — workflow resumes");
-                load();
-              } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Could not grant");
-              } finally {
-                setActing(null);
-              }
+            onGrant={() => {
+              setNotesInput("");
+              setGrantTarget(t);
             }}
             onRelease={async () => {
               setActing(t.id);
@@ -108,6 +119,42 @@ export function TakeoverPanel({ runId }: { runId: string }) {
           />
         ))}
       </ul>
+
+      <Modal
+        open={grantTarget !== null}
+        onClose={() => setGrantTarget(null)}
+        title="Grant takeover"
+        description="Optional notes are recorded in the run's journal as the approval reason."
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setGrantTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={confirmGrant}
+              loading={grantTarget != null && acting === grantTarget.id}
+            >
+              Grant
+            </Button>
+          </>
+        }
+      >
+        <ModalField label="Notes for the agent" hint="Optional">
+          <input
+            type="text"
+            autoFocus
+            value={notesInput}
+            onChange={(e) => setNotesInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") confirmGrant();
+            }}
+            placeholder="e.g. approved, proceed with the refund"
+            className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+          />
+        </ModalField>
+      </Modal>
     </section>
   );
 }

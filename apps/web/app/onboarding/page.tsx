@@ -120,10 +120,33 @@ function InlineError({ message }: { message: string }) {
 // Onboarding page
 // ---------------------------------------------------------------------------
 
+// sessionStorage key for wizard resume state. Deliberately excludes the raw
+// provider key inputs (openaiKey/anthropicKey) — those are secrets and
+// already persisted server-side once saved; only the resumable step/agent
+// state is cached here.
+const WIZARD_STATE_KEY = "lantern_onboarding_wizard";
+
+interface WizardState {
+  step: number;
+  agentName: string;
+  selectedTemplate: string;
+  agentCreated: boolean;
+}
+
+function loadWizardState(): WizardState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(WIZARD_STATE_KEY);
+    return raw ? (JSON.parse(raw) as WizardState) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function OnboardingPage() {
   const router = useRouter();
   const toast = useToast();
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(() => loadWizardState()?.step ?? 0);
 
   // Step 2: LLM provider
   const [openaiKey, setOpenaiKey] = useState("");
@@ -145,12 +168,26 @@ export default function OnboardingPage() {
   const [skipAck, setSkipAck] = useState(false);
 
   // Step 3: Create agent
-  const [selectedTemplate, setSelectedTemplate] = useState("research");
-  const [agentName, setAgentName] = useState("my-first-agent");
+  const [selectedTemplate, setSelectedTemplate] = useState(() => loadWizardState()?.selectedTemplate ?? "research");
+  const [agentName, setAgentName] = useState(() => loadWizardState()?.agentName ?? "my-first-agent");
   const [creatingAgent, setCreatingAgent] = useState(false);
   // Set ONLY on a real 2xx from createAgent — gates the success banner.
-  const [agentCreated, setAgentCreated] = useState(false);
+  const [agentCreated, setAgentCreated] = useState(() => loadWizardState()?.agentCreated ?? false);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // Persist resumable wizard state so a reload after Step 2 (agent already
+  // created) doesn't restart at Step 0 and re-attempt the create call.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      sessionStorage.setItem(
+        WIZARD_STATE_KEY,
+        JSON.stringify({ step, agentName, selectedTemplate, agentCreated }),
+      );
+    } catch {
+      // sessionStorage unavailable — wizard just won't resume across reload
+    }
+  }, [step, agentName, selectedTemplate, agentCreated]);
 
   // Step 4: Run it
   const [inputJson, setInputJson] = useState("");
@@ -274,6 +311,7 @@ export default function OnboardingPage() {
       // affect whether anything actually runs.
       if (typeof window !== "undefined") {
         localStorage.setItem("lantern_onboarding_complete", "true");
+        try { sessionStorage.removeItem(WIZARD_STATE_KEY); } catch {}
       }
       toast.success("Run succeeded — taking you to your agents");
       router.push("/agents");

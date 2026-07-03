@@ -22,6 +22,8 @@ import {
 
 import { useBridge } from "@/components/personal/bridge-context";
 import type { GroupRow } from "@/lib/bridge-types";
+import { EmptyState } from "@/components/empty-state";
+import { Skeleton } from "@/components/skeleton";
 
 export default function GroupsPage() {
   const { state, bot, busy, monitorGroup, unmonitorGroup, refreshGroups } =
@@ -230,38 +232,50 @@ function EmptyGroupList({
 }) {
   if (query) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center text-sm text-zinc-400">
-        <Search className="h-6 w-6 text-zinc-600" />
-        <div className="mt-3">No groups match &quot;{query}&quot;.</div>
-      </div>
+      <EmptyState
+        icon={Search}
+        title="No matches"
+        description={`No groups match "${query}".`}
+        size="compact"
+      />
     );
   }
   if (!loaded) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center text-sm text-zinc-400">
-        <RefreshCw className="h-6 w-6 animate-spin text-zinc-600" />
-        <div className="mt-3">Loading your groups…</div>
-      </div>
+      <ul className="divide-y divide-zinc-800/60">
+        {[0, 1, 2].map((i) => (
+          <li key={i} className="flex items-center gap-4 px-4 py-3">
+            <Skeleton className="h-9 w-9 rounded-lg" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-3 w-40" />
+              <Skeleton className="h-2.5 w-24" />
+            </div>
+          </li>
+        ))}
+      </ul>
     );
   }
   return (
-    <div className="flex flex-col items-center justify-center py-12 text-center text-sm text-zinc-400">
-      <Users className="h-6 w-6 text-zinc-600" />
-      <div className="mt-3 text-zinc-300">No groups discovered yet</div>
-      <p className="mt-1 max-w-md text-xs text-zinc-500">
-        The bridge fetches your group list once after pairing. If it&apos;s empty, your phone may not have synced groups to the linked-device yet. Try refreshing in a few seconds.
-      </p>
-      <button
-        type="button"
-        onClick={onRefresh}
-        disabled={refreshing}
-        className="mt-4 inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
-      >
-        <RefreshCw
-          className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`}
-        />
-        Refresh now
-      </button>
+    <div className="py-2">
+      <EmptyState
+        icon={Users}
+        title="No groups discovered yet"
+        description="The bridge fetches your group list once after pairing. If it's empty, your phone may not have synced groups to the linked-device yet. Try refreshing in a few seconds."
+        size="compact"
+      />
+      <div className="flex justify-center">
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+        >
+          <RefreshCw
+            className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`}
+          />
+          Refresh now
+        </button>
+      </div>
     </div>
   );
 }
