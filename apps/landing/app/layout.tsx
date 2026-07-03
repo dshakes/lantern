@@ -11,6 +11,8 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "/",
   },
+  // og:image / twitter:image come from app/opengraph-image.tsx +
+  // app/twitter-image.tsx (Next auto-injects the hashed URLs).
   openGraph: {
     title: "Lantern — Production AI agents with predictable cost",
     description:
@@ -18,14 +20,12 @@ export const metadata: Metadata = {
     type: "website",
     url: baseUrl,
     siteName: "Lantern",
-    images: [{ url: "/og-image.png", width: 1200, height: 630 }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Lantern — Production AI agents with predictable cost",
     description:
       "Forecast cost, catch regressions in CI, deploy in your VPC. Open source.",
-    images: ["/og-image.png"],
   },
 };
 
