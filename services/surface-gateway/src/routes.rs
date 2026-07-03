@@ -40,6 +40,9 @@ pub fn build_router(state: RouteState) -> Router {
         )
         .route("/webhooks/discord", post(discord_webhook))
         .route("/healthz", get(healthz))
+        // The Helm readinessProbe hits /readyz — without this route every
+        // pod fails readiness and no webhook traffic is ever routed.
+        .route("/readyz", get(readyz))
         .with_state(state)
 }
 
@@ -49,6 +52,10 @@ pub fn build_router(state: RouteState) -> Router {
 
 async fn healthz() -> impl IntoResponse {
     (StatusCode::OK, "ok")
+}
+
+async fn readyz() -> impl IntoResponse {
+    (StatusCode::OK, "ready")
 }
 
 // ---------------------------------------------------------------------------

@@ -57,6 +57,17 @@ impl HandleRegistry {
         if old_id == new_id {
             return true;
         }
+        // Invariant #8: refuse to overwrite an already-live entry at new_id.
+        // Doing so would orphan the existing backend workload — it would be
+        // removed from the registry with no way to stop or track it.
+        if self.handles.contains_key(new_id) {
+            tracing::warn!(
+                old_id = %old_id,
+                new_id = %new_id,
+                "rekey: target key already occupied — refusing to overwrite live handle"
+            );
+            return false;
+        }
         if let Some((_, info)) = self.handles.remove(old_id) {
             tracing::info!(
                 old_id = %old_id,
@@ -223,6 +234,44 @@ mod tests {
     fn rekey_missing_returns_false() {
         let reg = HandleRegistry::new();
         assert!(!reg.rekey("non-existent", "new-id"));
+    }
+
+    /// Rekey must refuse to overwrite an already-live entry at new_id (invariant
+    /// #8). If it silently overwrote, the existing backend workload would be
+    /// removed from the registry with no way to stop or track it.
+    #[test]
+    fn rekey_occupied_target_refuses() {
+        let reg = HandleRegistry::new();
+        // Register two independent handles.
+        reg.register(make_info("backend-new", "run-new", "tenant-z"));
+        reg.register(make_info("backend-old", "run-old", "tenant-z"));
+
+        // Rekey "backend-old" → "wire-id", leaving "backend-new" untouched.
+        assert!(
+            reg.rekey("backend-old", "wire-id"),
+            "first rekey must succeed"
+        );
+        assert!(
+            reg.get("wire-id").is_some(),
+            "wire-id must be accessible after first rekey"
+        );
+
+        // Attempt to rekey "backend-new" → "wire-id" (already occupied). Must refuse.
+        let ok = reg.rekey("backend-new", "wire-id");
+        assert!(!ok, "rekey into an occupied key must return false");
+
+        // The existing "wire-id" entry must still refer to the ORIGINAL handle.
+        let wire_info = reg.get("wire-id").expect("wire-id must still be present");
+        assert_eq!(
+            wire_info.handle_id, "backend-old",
+            "wire-id must still point to the original handle, not the interloper"
+        );
+
+        // "backend-new" must still be accessible under its old key (not moved).
+        assert!(
+            reg.get("backend-new").is_some(),
+            "backend-new must remain accessible after refused rekey"
+        );
     }
 
     #[test]

@@ -58,7 +58,14 @@ impl AnthropicProvider {
         ];
 
         Self {
-            client: Client::new(),
+            // connect + per-read timeouts (no total timeout: legitimate long
+            // streams must survive). A provider that accepts the connection
+            // but hangs the response would otherwise block failover forever.
+            client: Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .read_timeout(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap_or_default(),
             api_key,
             models,
         }
@@ -317,6 +324,19 @@ fn to_anthropic_tools(tools: &[proto::Tool]) -> Vec<AnthropicTool> {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Attaches `Idempotency-Key` when the key is non-empty; no-op otherwise.
+fn with_idempotency_key(builder: reqwest::RequestBuilder, key: &str) -> reqwest::RequestBuilder {
+    if key.is_empty() {
+        builder
+    } else {
+        builder.header("Idempotency-Key", key)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Provider impl
 // ---------------------------------------------------------------------------
 
@@ -372,19 +392,21 @@ impl Provider for AnthropicProvider {
 
         let started = std::time::Instant::now();
 
-        let resp = self
-            .client
-            .post(format!("{BASE_URL}/messages"))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", API_VERSION)
-            .header("content-type", "application/json")
-            .json(&anthropic_req)
-            .send()
-            .await
-            .map_err(|e| ProviderError::NetworkError {
-                provider: self.name().into(),
-                detail: e.to_string(),
-            })?;
+        let resp = with_idempotency_key(
+            self.client
+                .post(format!("{BASE_URL}/messages"))
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", API_VERSION)
+                .header("content-type", "application/json"),
+            &req.idempotency_key,
+        )
+        .json(&anthropic_req)
+        .send()
+        .await
+        .map_err(|e| ProviderError::NetworkError {
+            provider: self.name().into(),
+            detail: e.to_string(),
+        })?;
 
         let status = resp.status().as_u16();
         let body = resp.text().await.map_err(|e| ProviderError::NetworkError {
@@ -495,19 +517,21 @@ impl Provider for AnthropicProvider {
             stream: true,
         };
 
-        let resp = self
-            .client
-            .post(format!("{BASE_URL}/messages"))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", API_VERSION)
-            .header("content-type", "application/json")
-            .json(&anthropic_req)
-            .send()
-            .await
-            .map_err(|e| ProviderError::NetworkError {
-                provider: self.name().into(),
-                detail: e.to_string(),
-            })?;
+        let resp = with_idempotency_key(
+            self.client
+                .post(format!("{BASE_URL}/messages"))
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", API_VERSION)
+                .header("content-type", "application/json"),
+            &req.idempotency_key,
+        )
+        .json(&anthropic_req)
+        .send()
+        .await
+        .map_err(|e| ProviderError::NetworkError {
+            provider: self.name().into(),
+            detail: e.to_string(),
+        })?;
 
         let status = resp.status().as_u16();
         if status != 200 {
@@ -761,5 +785,33 @@ impl Provider for AnthropicProvider {
             provider: self.name().into(),
             message: "Anthropic does not provide an embeddings API".into(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_idempotency_key;
+
+    fn dummy_builder() -> reqwest::RequestBuilder {
+        reqwest::Client::new().get("http://example.com")
+    }
+
+    #[test]
+    fn idempotency_header_set_when_key_present() {
+        let req = with_idempotency_key(dummy_builder(), "run-1:step-2:1")
+            .build()
+            .unwrap();
+        assert_eq!(
+            req.headers().get("Idempotency-Key").unwrap(),
+            "run-1:step-2:1"
+        );
+    }
+
+    #[test]
+    fn idempotency_header_absent_when_key_empty() {
+        let req = with_idempotency_key(dummy_builder(), "")
+            .build()
+            .unwrap();
+        assert!(req.headers().get("Idempotency-Key").is_none());
     }
 }

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::adapter::SurfaceAdapter;
+use crate::control_plane::ControlPlaneClient;
 use crate::error::AppError;
 use crate::session::SessionStore;
 use crate::tenant_resolver::TenantResolver;
@@ -14,12 +15,16 @@ use crate::types::{EventKind, SurfaceEvent, SurfaceId, SurfaceMessage};
 pub struct Dispatcher {
     adapters: HashMap<SurfaceId, Arc<dyn SurfaceAdapter>>,
     sessions: SessionStore,
-    control_plane_addr: String,
-    http: reqwest::Client,
+    /// gRPC client for the control-plane RunService.  Points to :50051
+    /// (gRPC port) with x-lantern-service-token auth (invariant #7).
+    control_plane: ControlPlaneClient,
+    /// Name of the Lantern agent that handles inbound surface messages.
+    /// Set LANTERN_AGENT_NAME; run creation returns an error when unset.
+    agent_name: Option<String>,
     /// Resolves each inbound event's platform-native id (chat_id, team_id,
-    /// phone_number_id, …) to the real Lantern tenant UUID.  Without this step,
-    /// runs would be dispatched under the platform's own identifiers, breaking
-    /// multi-tenant isolation.
+    /// phone_number_id, …) to the real Lantern tenant UUID.  Without this
+    /// step runs would be dispatched under the platform's own identifiers,
+    /// breaking multi-tenant isolation.
     tenant_resolver: TenantResolver,
 }
 
@@ -27,14 +32,15 @@ impl Dispatcher {
     pub fn new(
         adapters: HashMap<SurfaceId, Arc<dyn SurfaceAdapter>>,
         sessions: SessionStore,
-        control_plane_addr: String,
+        control_plane: ControlPlaneClient,
+        agent_name: Option<String>,
         tenant_resolver: TenantResolver,
     ) -> Self {
         Self {
             adapters,
             sessions,
-            control_plane_addr,
-            http: reqwest::Client::new(),
+            control_plane,
+            agent_name,
             tenant_resolver,
         }
     }
@@ -70,23 +76,29 @@ impl Dispatcher {
         );
         let _enter = span.enter();
 
-        // Handle approval responses separately — they resolve a pending approval
-        // regardless of whether there's an active run on this session.
+        // Look up the session first — needed for both the active-run check and
+        // the approval-response path (which needs the active_run_id).
+        let session = self
+            .sessions
+            .get_or_create(event.surface, &event.user_id, &event.tenant_id)
+            .await?;
+
+        // Handle approval responses — signal the active run with the outcome.
         if let EventKind::ApprovalResponse {
             ref request_id,
             approved,
         } = event.kind
         {
             return self
-                .resolve_approval(&event.tenant_id, request_id, approved, &event.user_id)
+                .resolve_approval(
+                    &event.tenant_id,
+                    &session,
+                    request_id,
+                    approved,
+                    &event.user_id,
+                )
                 .await;
         }
-
-        // Look up the session to check for an active run.
-        let session = self
-            .sessions
-            .get_or_create(event.surface, &event.user_id, &event.tenant_id)
-            .await?;
 
         if let Some(ref run_id) = session.active_run_id {
             tracing::info!(run_id = %run_id, "signalling active run");
@@ -104,7 +116,7 @@ impl Dispatcher {
         };
 
         let run_id = self
-            .create_run(&event.tenant_id, &session.session_id, &input, &event)
+            .create_run(&event.tenant_id, &session.session_id, &input)
             .await?;
 
         self.sessions
@@ -143,122 +155,71 @@ impl Dispatcher {
         run_id: &str,
         event: &SurfaceEvent,
     ) -> Result<(), AppError> {
-        let payload = serde_json::to_value(event)
-            .map_err(|e| AppError::Internal(format!("serialize event: {e}")))?;
-
-        let url = format!(
-            "{}/api/v1/tenants/{}/runs/{}/signal",
-            self.control_plane_addr, tenant_id, run_id
-        );
-
-        let resp = self
-            .http
-            .post(&url)
-            .json(&serde_json::json!({
-                "signal": "surface_message",
-                "payload": payload,
-            }))
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AppError::Upstream(format!(
-                "signal run failed ({status}): {body}"
-            )));
-        }
-
-        Ok(())
+        let text = match &event.kind {
+            EventKind::Message { text, .. } => text.as_str(),
+            _ => "",
+        };
+        self.control_plane
+            .signal_run(
+                tenant_id,
+                run_id,
+                "surface_message",
+                &[("text", text), ("event_id", event.id.as_str())],
+            )
+            .await
     }
 
-    /// Resolve a pending approval in the workflow engine.
+    /// Resolve a pending approval by signalling the active run.
+    ///
+    /// The session's `active_run_id` is the run waiting for the approval.
+    /// `RunService.SignalRun` is currently `Unimplemented` on the server —
+    /// the call is still authenticated and correctly formed; it will start
+    /// succeeding once the server-side handler is wired.
     async fn resolve_approval(
         &self,
         tenant_id: &str,
+        session: &crate::session::Session,
         request_id: &str,
         approved: bool,
         approver: &str,
     ) -> Result<(), AppError> {
-        let url = format!(
-            "{}/api/v1/tenants/{}/approvals/{}/resolve",
-            self.control_plane_addr, tenant_id, request_id
-        );
+        let run_id = session.active_run_id.as_deref().ok_or_else(|| {
+            AppError::NotFound(format!(
+                "approval response for request {request_id} but no active run in session"
+            ))
+        })?;
 
-        let resp = self
-            .http
-            .post(&url)
-            .json(&serde_json::json!({
-                "approved": approved,
-                "resolved_by": approver,
-            }))
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AppError::Upstream(format!(
-                "resolve approval failed ({status}): {body}"
-            )));
-        }
-
-        tracing::info!(
-            request_id = %request_id,
-            approved = approved,
-            approver = %approver,
-            "resolved approval"
-        );
-
-        Ok(())
+        let approved_str = if approved { "true" } else { "false" };
+        self.control_plane
+            .signal_run(
+                tenant_id,
+                run_id,
+                "approval_response",
+                &[
+                    ("request_id", request_id),
+                    ("approved", approved_str),
+                    ("approver", approver),
+                ],
+            )
+            .await
     }
 
-    /// Create a new workflow run via the control plane API.
+    /// Create a new workflow run via the control-plane gRPC RunService.
     async fn create_run(
         &self,
         tenant_id: &str,
         session_id: &str,
         input: &str,
-        event: &SurfaceEvent,
     ) -> Result<String, AppError> {
-        let url = format!(
-            "{}/api/v1/tenants/{}/runs",
-            self.control_plane_addr, tenant_id
-        );
+        let agent_name = self.agent_name.as_deref().ok_or_else(|| {
+            AppError::Internal(
+                "LANTERN_AGENT_NAME is not set — cannot create run without an agent name"
+                    .to_string(),
+            )
+        })?;
 
-        let resp = self
-            .http
-            .post(&url)
-            .json(&serde_json::json!({
-                "input": input,
-                "session_id": session_id,
-                "surface": event.surface,
-                "metadata": {
-                    "surface_event_id": event.id,
-                    "surface_user_id": event.user_id,
-                },
-            }))
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AppError::Upstream(format!(
-                "create run failed ({status}): {body}"
-            )));
-        }
-
-        #[derive(serde::Deserialize)]
-        struct CreateRunResponse {
-            run_id: String,
-        }
-
-        let body: CreateRunResponse = resp
-            .json()
+        self.control_plane
+            .create_run(tenant_id, agent_name, session_id, input)
             .await
-            .map_err(|e| AppError::Upstream(format!("invalid create run response: {e}")))?;
-
-        Ok(body.run_id)
     }
 }
