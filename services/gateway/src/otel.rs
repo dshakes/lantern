@@ -120,6 +120,7 @@ impl Extractor for HeaderExtractor<'_> {
 }
 
 /// Adapter: writes propagation headers into an HTTP `HeaderMap` for outbound calls.
+#[allow(dead_code)]
 pub struct HeaderInjector<'a>(pub &'a mut axum::http::HeaderMap);
 
 impl Injector for HeaderInjector<'_> {
