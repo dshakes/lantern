@@ -121,13 +121,25 @@ Braintrust/Langfuse are bolt-on evals. Nobody ships Lantern's closed loop
 (route → run → meter → eval → receipt → improve) end-to-end. The moat is making
 that loop *measurably trustworthy*. Ranked by customer value × feasibility:
 
-1. **Calibrated per-step confidence, gated to the existing approval node.**
-   Attach a calibrated confidence score (verbalized + self-consistency + logit
-   signals; see arXiv 2602.05073, 2601.15778) to every side-effecting
-   `journal_events` step. Above threshold → auto-execute; below → route to the
-   already-built human-takeover/approval machinery. This is the literal product
-   motto, implemented on infrastructure that already exists (journal, approval
-   nodes, takeover). *The single highest-leverage build.*
+1. **Confidence-gated execution — increment 1 shipped (2026-07-03).**
+   The infrastructure wiring is complete: `ConfidenceEstimator` interface +
+   `ConfidenceGate` config wired into `workflow.Deps`; gating logic in
+   `executeNode` calls the estimator before any `tool` or `connector` node (and
+   any `ai-step` that sets `requiresConfidence=true`) and routes below-threshold
+   steps to the existing `WaitForApproval` takeover mechanism rather than
+   auto-executing. A `confidence_evaluated` journal event (score, threshold,
+   decision) lands in every gated step so the run waterfall can render it.
+   Feature is behind `LANTERN_CONFIDENCE_GATE` (default OFF). One heuristic
+   estimator ships (`VerbalizationHeuristic`). **What's deferred:**
+   - **Statistical calibration** (self-consistency sampling, logit-based scoring
+     per arXiv 2602.05073 / 2601.15778) — the `ConfidenceEstimator` interface is
+     the drop-in seam. Shipping a new impl requires: sample N completions, score
+     agreement rate, verify calibration on the `eval_runs` baseline. That's a
+     separate increment once the eval/A-B infrastructure is validated.
+   - Calibrating the verbalization heuristic against real LLM outputs (today it
+     pattern-matches common self-report phrases; a calibration pass compares
+     parsed scores vs actual outcome correctness in `eval_runs.cases_result`).
+   - Per-agent threshold config via the DB/API (today: env-wide, default 0.75).
 2. **pass^k + policy-adherence eval gating** (tau2-bench pattern): run each eval
    case k times, score policy/budget adherence not just task completion, gate the
    existing HTTP-422 CI baseline on pass^k — kills flaky single-run gates and adds
