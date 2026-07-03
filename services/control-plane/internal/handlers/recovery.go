@@ -290,6 +290,13 @@ func RunRecoverySweepAsync(ctx context.Context, h *RESTHandler, log *zap.Logger)
 		return
 	}
 	go func() {
+		// P0: a panic from a poisoned run payload must not crash the process.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error("startup recovery sweep panicked — recovered, server protected",
+					zap.Any("panic", r))
+			}
+		}()
 		// Small delay so the HTTP server finishes starting first, making
 		// /readyz requests return before we begin DB-heavy work.
 		select {
@@ -330,11 +337,21 @@ func RunRecoveryLoop(ctx context.Context, h *RESTHandler, log *zap.Logger, inter
 		defer ticker.Stop()
 
 		for {
-			recovered, skipped := h.RecoverOrphanedRuns(ctx)
-			log.Info("recovery sweep",
-				zap.Int("recovered", recovered),
-				zap.Int("skipped", skipped),
-			)
+			// P0: wrap each sweep so a panic from a poisoned run payload
+			// doesn't kill the loop — log loudly and continue to next tick.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Error("recovery sweep panicked — recovered, continuing loop",
+							zap.Any("panic", r))
+					}
+				}()
+				recovered, skipped := h.RecoverOrphanedRuns(ctx)
+				log.Info("recovery sweep",
+					zap.Int("recovered", recovered),
+					zap.Int("skipped", skipped),
+				)
+			}()
 
 			select {
 			case <-ctx.Done():

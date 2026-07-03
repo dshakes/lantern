@@ -396,7 +396,7 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
-		req, _ := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(bodyBytes))
+		req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		// Invariant #8: dedup token (run-scoped base when present, else payload hash).
@@ -404,7 +404,7 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 			{"role": "user", "content": prompt},
 		}))
 
-		resp, httpErr := http.DefaultClient.Do(req)
+		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
 			err = httpErr
 			return
@@ -462,7 +462,7 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
-		req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(bodyBytes))
+		req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
@@ -471,7 +471,7 @@ func (h *LlmProxyHandler) callLLMSyncDetailed(
 			{"role": "user", "content": prompt},
 		}))
 
-		resp, httpErr := http.DefaultClient.Do(req)
+		resp, httpErr := h.llmHTTPClient().Do(req)
 		if httpErr != nil {
 			err = httpErr
 			return

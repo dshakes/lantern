@@ -819,6 +819,25 @@ impl pb::runtime_manager_server::RuntimeManager for RuntimeManagerGrpc {
             .map(|s| !s.restore_snapshot_id.is_empty())
             .unwrap_or(false);
 
+        // Idempotency guard (invariant #8): if the scheduler pre-allocated a wire
+        // vm_id and it is already live in the registry, return the existing handle
+        // without re-scheduling. This prevents a client-side Spawn timeout/retry
+        // from booting a second VM with the same secrets and orphaning the first.
+        if let Some(ref h) = pre_handle
+            && !h.vm_id.is_empty()
+            && self.registry.get(&h.vm_id).is_some()
+        {
+            tracing::info!(
+                vm_id = %h.vm_id,
+                "spawn: idempotent return — vm_id already registered"
+            );
+            return Ok(Response::new(pb::SpawnResponse {
+                handle: Some(h.clone()),
+                boot_duration: Some(prost_types::Duration { seconds: 0, nanos: 0 }),
+                from_snapshot,
+            }));
+        }
+
         let mut internal = spawn_to_schedule(&req)?;
 
         // Inject the W3C traceparent into the workload's env so the in-VM
@@ -2809,6 +2828,88 @@ mod tests {
             .expect("run_id-only call should be accepted")
             .into_inner();
         assert_eq!(resp.status, pb::ToolStatus::Unavailable as i32, "got {}", resp.status);
+    }
+
+    // -----------------------------------------------------------------------
+    // Spawn idempotency (invariant #8)
+    //
+    // A scheduler-side Spawn call that times out on the client while the
+    // manager already started the workload must NOT spawn a second VM on
+    // retry. The fix: if the pre-allocated wire vm_id is already in the
+    // registry, return the existing handle without touching the backend.
+    // -----------------------------------------------------------------------
+
+    fn make_spawn_request_with_handle(
+        tenant_id: &str,
+        run_id: &str,
+        wire_vm_id: &str,
+    ) -> pb::SpawnRequest {
+        pb::SpawnRequest {
+            handle: Some(pb::VmHandle {
+                vm_id: wire_vm_id.to_string(),
+                node: "node-1".to_string(),
+                availability_zone: String::new(),
+                created_at: None,
+            }),
+            spec: Some(pb::AgentSpec {
+                image_digest: "sha256:idem".to_string(),
+                isolation: 1, // TRUSTED
+                limits: None,
+                network: 0,
+                egress_rules: vec![],
+                secrets: vec![],
+                labels: HashMap::new(),
+                preferred_regions: vec![],
+                idempotent: false,
+                restore_snapshot_id: String::new(),
+                tenant_id: tenant_id.to_string(),
+                agent_version_id: String::new(),
+                run_id: run_id.to_string(),
+                command: vec![],
+                args: vec![],
+                env: HashMap::new(),
+            }),
+        }
+    }
+
+    /// First Spawn registers the vm_id; a retry with the same wire vm_id
+    /// returns the same handle without spawning a second backend workload.
+    #[tokio::test]
+    async fn spawn_with_preallocated_vm_id_is_idempotent() {
+        use pb::runtime_manager_server::RuntimeManager as _;
+
+        let resolver = Arc::new(HashMapSecretResolver::new(HashMap::new()));
+        let svc = RuntimeManagerGrpc::new(
+            NamedStub::arc("docker"),
+            crate::pool::PoolConfig::default(),
+            resolver,
+        );
+
+        let req1 = make_spawn_request_with_handle("tenant-idem", "run-idem", "wire-vm-idem");
+        let resp1 = svc
+            .spawn(Request::new(req1))
+            .await
+            .expect("first spawn must succeed")
+            .into_inner();
+        let vm_id_1 = resp1.handle.as_ref().expect("handle present").vm_id.clone();
+        assert_eq!(vm_id_1, "wire-vm-idem", "first spawn must return the wire vm_id");
+        assert_eq!(svc.registry.len(), 1, "exactly one handle after first spawn");
+
+        // Simulate the client-side timeout → retry with the same wire vm_id.
+        let req2 = make_spawn_request_with_handle("tenant-idem", "run-idem", "wire-vm-idem");
+        let resp2 = svc
+            .spawn(Request::new(req2))
+            .await
+            .expect("idempotent retry must succeed")
+            .into_inner();
+        let vm_id_2 = resp2.handle.as_ref().expect("handle present").vm_id.clone();
+        assert_eq!(vm_id_2, "wire-vm-idem", "retry must return the same wire vm_id");
+        // The registry must NOT have grown — no second backend workload was spawned.
+        assert_eq!(
+            svc.registry.len(),
+            1,
+            "registry must still have exactly one handle after idempotent retry"
+        );
     }
 
     // -----------------------------------------------------------------------

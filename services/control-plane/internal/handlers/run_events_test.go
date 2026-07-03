@@ -34,7 +34,8 @@ func TestIsRunTerminal(t *testing.T) {
 	}{
 		{"succeeded", true},
 		{"failed", true},
-		{"canceled", true},
+		{"cancelled", true}, // canonical DB spelling (two-L)
+		{"canceled", true},  // belt-and-braces one-L variant
 		{"queued", false},
 		{"running", false},
 		{"", false},

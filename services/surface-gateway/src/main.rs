@@ -1,6 +1,7 @@
 mod adapter;
 mod adapters;
 mod config;
+mod control_plane;
 mod dispatcher;
 mod error;
 mod routes;
@@ -18,6 +19,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::adapter::SurfaceAdapter;
 use crate::config::Config;
+use crate::control_plane::ControlPlaneClient;
 use crate::dispatcher::Dispatcher;
 use crate::routes::RouteState;
 use crate::session::SessionStore;
@@ -152,10 +154,24 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    if config.agent_name.is_none() {
+        tracing::warn!(
+            "LANTERN_AGENT_NAME is not set — run creation will fail for every inbound \
+             message; set this to the Lantern agent name for this deployment"
+        );
+    }
+
+    let control_plane = ControlPlaneClient::connect(
+        &config.control_plane_addr,
+        config.service_token.clone(),
+    )
+    .await?;
+
     let dispatcher = Arc::new(Dispatcher::new(
         adapters.clone(),
         sessions,
-        config.control_plane_addr.clone(),
+        control_plane,
+        config.agent_name.clone(),
         tenant_resolver,
     ));
 

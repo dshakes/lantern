@@ -929,7 +929,9 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 	if deliveryEmail != "" {
 		// Side-effect dedup: skip the email if a prior attempt already sent it.
 		emailIdemKey := idempotencyKey(runID, "email_delivery", 1)
+		h.inFlightRuns.Add(1)
 		go func() {
+			defer h.inFlightRuns.Done()
 			claimed, claimErr := claimSideEffect(ctx, h.srv.Pool, emailIdemKey, runID, tenantID, "email_delivery")
 			if claimErr != nil {
 				h.logger().Warn("email delivery: side-effect claim error",
@@ -959,7 +961,9 @@ func (h *RESTHandler) executeRunInline(runID, tenantID, agentName string, input 
 		// Side-effect dedup: compute an idempotency key for this delivery so
 		// a crash-replay doesn't double-send the WhatsApp message.
 		idemKey := idempotencyKey(runID, "whatsapp_self", 1)
+		h.inFlightRuns.Add(1)
 		go func() {
+			defer h.inFlightRuns.Done()
 			claimed, claimErr := claimSideEffect(ctx, h.srv.Pool, idemKey, runID, tenantID, "whatsapp_self")
 			if claimErr != nil {
 				h.logger().Warn("whatsapp delivery: side-effect claim error",
@@ -1529,10 +1533,13 @@ DO NOT respond with "I don't have access" — the tools are right here. Call the
 	logStep("save_output", "running", "Saving results")
 	outputJSON, _ := json.Marshal(map[string]string{"result": result})
 	// rls-exempt: inline executor — runs write keyed by id (authorized run).
-	_, _ = h.srv.Pool.Exec(ctx,
+	if _, upErr := h.srv.Pool.Exec(ctx,
 		`UPDATE runs SET status = 'succeeded', finished_at = now(), output = $2::jsonb, tokens_in = $3, tokens_out = $4, cost_usd = $5 WHERE id = $1`,
 		runID, string(outputJSON), tokensIn, tokensOut, costUsd,
-	)
+	); upErr != nil {
+		h.logger().Error("inline executor: failed to mark run succeeded",
+			zap.String("run_id", runID), zap.Error(upErr))
+	}
 
 	logStep("complete", "completed", fmt.Sprintf("Run finished: %d tokens, $%.4f", tokensIn+tokensOut, costUsd))
 
