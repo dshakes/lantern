@@ -29,6 +29,7 @@ import { EmptyState } from "@/components/empty-state";
 import { PageSkeleton } from "@/components/skeleton";
 import { PageHeader, CountBadge, DemoBadge } from "@/components/page-header";
 import { Button } from "@/components/button";
+import { HealthRing } from "@/components/health-ring";
 import { Modal } from "@/components/modal";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentsIllustration } from "@/components/illustrations";
@@ -484,7 +485,7 @@ function AgentCard({
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter") onNavigate(agent.name); }}
     >
-      {/* Top row: avatar + name + status pill */}
+      {/* Top row: avatar + name + status pill, health ring at rest (right) */}
       <div className="flex items-center gap-2.5">
         <AgentAvatar name={agent.name} status={stats.lastRun?.status} size="md" />
         <div className="min-w-0 flex-1">
@@ -492,10 +493,21 @@ function AgentCard({
             {agent.name}
           </h3>
           <span className={clsx("mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium", sc.bg, sc.text)}>
-            <span className={clsx("h-1.5 w-1.5 rounded-full", sc.dot)} />
+            <span className={clsx("relative flex h-1.5 w-1.5")}>
+              {displayStatus === "active" && (
+                <span className={clsx("absolute inline-flex h-full w-full rounded-full opacity-75 motion-safe:animate-ping", sc.dot)} />
+              )}
+              <span className={clsx("relative inline-flex h-1.5 w-1.5 rounded-full", sc.dot)} />
+            </span>
             {sc.label}
           </span>
         </div>
+        {hasRuns && (
+          <HealthRing
+            value={stats.successRate}
+            className="transition-opacity duration-150 group-hover:opacity-0"
+          />
+        )}
       </div>
 
       {/* One-line description from catalog or agent record */}

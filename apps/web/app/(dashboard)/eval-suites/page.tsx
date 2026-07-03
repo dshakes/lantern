@@ -258,90 +258,149 @@ export default function EvalSuitesPage() {
               </p>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
-              <table className="w-full text-sm">
-                <thead className="border-b border-zinc-800 bg-surface-0/50">
-                  <tr className="text-[10px] uppercase tracking-[0.15em] text-zinc-500">
-                    <th className="px-4 py-2.5 text-left font-medium">Agent</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Branch</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Score</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Cases</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Cost</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Status</th>
-                    <th className="px-4 py-2.5 text-right font-medium"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.slice(0, 30).map((r) => (
-                    <tr
-                      key={r.id}
-                      className="border-b border-zinc-900 text-[13px] last:border-0 hover:bg-surface-0/50"
-                    >
-                      <td className="px-4 py-2.5 font-medium text-zinc-200">
-                        {r.agentName}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-zinc-400">
-                          <GitBranch className="h-3 w-3 text-zinc-600" />
-                          {r.branch || "—"}
-                          {r.commitSha && (
-                            <span className="text-zinc-600">
-                              @{r.commitSha.slice(0, 7)}
-                            </span>
-                          )}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums text-zinc-100">
-                        {r.score.toFixed(3)}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-[12px] text-zinc-400">
-                        <span
-                          className={clsx(
-                            r.casesPassed === r.casesTotal
-                              ? "text-emerald-400"
-                              : "text-amber-400",
-                          )}
-                        >
-                          {r.casesPassed}
-                        </span>
-                        <span className="text-zinc-600">/{r.casesTotal}</span>
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-[12px] text-zinc-400">
-                        ${r.totalCostUsd.toFixed(4)}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span
-                          className={clsx(
-                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
-                            r.passed
-                              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
-                              : "border-red-500/20 bg-red-500/10 text-red-400",
-                          )}
-                        >
-                          {r.passed ? (
-                            <Check className="h-3 w-3" />
-                          ) : (
-                            <AlertTriangle className="h-3 w-3" />
-                          )}
-                          {r.passed ? "Pass" : "Fail"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          icon={<Pin className="h-3 w-3" />}
-                          onClick={() => pinBaseline(r)}
-                          loading={pinning === r.id}
-                        >
-                          Pin baseline
-                        </Button>
-                      </td>
+            <>
+              {/* Desktop: table, unchanged */}
+              <div className="hidden overflow-hidden rounded-xl border border-zinc-800 bg-surface-1 md:block">
+                <table className="w-full text-sm">
+                  <thead className="border-b border-zinc-800 bg-surface-0/50">
+                    <tr className="text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+                      <th className="px-4 py-2.5 text-left font-medium">Agent</th>
+                      <th className="px-4 py-2.5 text-left font-medium">Branch</th>
+                      <th className="px-4 py-2.5 text-right font-medium">Score</th>
+                      <th className="px-4 py-2.5 text-right font-medium">Cases</th>
+                      <th className="px-4 py-2.5 text-right font-medium">Cost</th>
+                      <th className="px-4 py-2.5 text-left font-medium">Status</th>
+                      <th className="px-4 py-2.5 text-right font-medium"></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {runs.slice(0, 30).map((r) => (
+                      <tr
+                        key={r.id}
+                        className="border-b border-zinc-900 text-[13px] last:border-0 hover:bg-surface-0/50"
+                      >
+                        <td className="px-4 py-2.5 font-medium text-zinc-200">
+                          {r.agentName}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-zinc-400">
+                            <GitBranch className="h-3 w-3 text-zinc-600" />
+                            {r.branch || "—"}
+                            {r.commitSha && (
+                              <span className="text-zinc-600">
+                                @{r.commitSha.slice(0, 7)}
+                              </span>
+                            )}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono font-semibold tabular-nums text-zinc-100">
+                          {r.score.toFixed(3)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono text-[12px] text-zinc-400">
+                          <span
+                            className={clsx(
+                              r.casesPassed === r.casesTotal
+                                ? "text-emerald-400"
+                                : "text-amber-400",
+                            )}
+                          >
+                            {r.casesPassed}
+                          </span>
+                          <span className="text-zinc-600">/{r.casesTotal}</span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono text-[12px] text-zinc-400">
+                          ${r.totalCostUsd.toFixed(4)}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span
+                            className={clsx(
+                              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                              r.passed
+                                ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
+                                : "border-red-500/20 bg-red-500/10 text-red-400",
+                            )}
+                          >
+                            {r.passed ? (
+                              <Check className="h-3 w-3" />
+                            ) : (
+                              <AlertTriangle className="h-3 w-3" />
+                            )}
+                            {r.passed ? "Pass" : "Fail"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={<Pin className="h-3 w-3" />}
+                            onClick={() => pinBaseline(r)}
+                            loading={pinning === r.id}
+                          >
+                            Pin baseline
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile: stacked cards, same data */}
+              <div className="space-y-2 md:hidden">
+                {runs.slice(0, 30).map((r) => (
+                  <div key={r.id} className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-zinc-200">{r.agentName}</span>
+                      <span
+                        className={clsx(
+                          "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                          r.passed
+                            ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
+                            : "border-red-500/20 bg-red-500/10 text-red-400",
+                        )}
+                      >
+                        {r.passed ? <Check className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+                        {r.passed ? "Pass" : "Fail"}
+                      </span>
+                    </div>
+                    <div className="mt-2.5 flex items-center gap-1.5 font-mono text-[11px] text-zinc-400">
+                      <GitBranch className="h-3 w-3 text-zinc-600" />
+                      {r.branch || "—"}
+                      {r.commitSha && <span className="text-zinc-600">@{r.commitSha.slice(0, 7)}</span>}
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-x-3 gap-y-2.5">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-zinc-500">Score</p>
+                        <p className="font-mono text-xs font-semibold tabular-nums text-zinc-100">{r.score.toFixed(3)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-zinc-500">Cases</p>
+                        <p className="font-mono text-xs tabular-nums">
+                          <span className={r.casesPassed === r.casesTotal ? "text-emerald-400" : "text-amber-400"}>
+                            {r.casesPassed}
+                          </span>
+                          <span className="text-zinc-600">/{r.casesTotal}</span>
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-zinc-500">Cost</p>
+                        <p className="font-mono text-xs tabular-nums text-zinc-200">${r.totalCostUsd.toFixed(4)}</p>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<Pin className="h-3 w-3" />}
+                      onClick={() => pinBaseline(r)}
+                      loading={pinning === r.id}
+                      className="mt-3 w-full justify-center"
+                    >
+                      Pin baseline
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </Section>
       </div>
