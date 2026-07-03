@@ -22,13 +22,11 @@ Logs: ~/Library/Logs/Lantern/dashboard.{out,err}.log
   <key>RunAtLoad</key>
   <true/>
 
+  <!-- Always restart, regardless of how the process exited. A clean exit
+       (e.g. the next-server getting SIGTERM'd) previously left the dashboard
+       down because Crashed-only KeepAlive doesn't respawn a status-0 exit. -->
   <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-    <key>Crashed</key>
-    <true/>
-  </dict>
+  <true/>
 
   <key>ThrottleInterval</key>
   <integer>15</integer>
