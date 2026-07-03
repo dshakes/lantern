@@ -7200,8 +7200,10 @@ export class WhatsAppSession {
         "Output ONLY the corrected reply. No preface, no explanation, no markdown headers.",
       ].join("\n");
 
+      // Isolated session key: this critique turn must NEVER land in the
+      // contact's live session history (the hint embeds all needed context).
       const retried = await this.agent.respondTo(
-        jid,
+        `${jid}::critique`,
         meta.inboundText,
         critiqueSystemHint,
         { withTools: false }, // critique should fix style/clarity, not run more tool calls

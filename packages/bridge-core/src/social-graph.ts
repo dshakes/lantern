@@ -36,6 +36,7 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { Logger } from "pino";
 import { canonicalHandle } from "./canonical-handle.js";
+import { trimJsonlBytes } from "./jsonl-trim.js";
 
 // 0600 — tagged messages store verbatim message text (PII). Match the
 // OCR-cache standard.
@@ -80,6 +81,7 @@ export class SocialGraph {
       const fresh = !existsSync(this.path);
       await appendFile(this.path, JSON.stringify(row) + "\n", { encoding: "utf8", mode: FILE_MODE });
       if (fresh) { try { await chmod(this.path, FILE_MODE); } catch { /* best-effort */ } }
+      await trimJsonlBytes(this.path, MAX_FILE_BYTES); // keep the DISK bounded, not just the read
       this.cache = null;
       this.cachedAt = 0;
     } catch (err) {
