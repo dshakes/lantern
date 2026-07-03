@@ -12,6 +12,7 @@ import Link from "next/link";
 import { ArrowLeftRight, Check, ShieldCheck, AlertTriangle, ExternalLink } from "lucide-react";
 import clsx from "clsx";
 import { PageHeader } from "@/components/page-header";
+import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 
 interface Invocation {
@@ -32,19 +33,28 @@ interface Invocation {
 type Role = "buyer" | "seller";
 
 export default function InvocationsPage() {
+  const toast = useToast();
   const [role, setRole] = useState<Role>("buyer");
   const [invocations, setInvocations] = useState<Invocation[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setInvocations(null);
+    setError(null);
     api.listMarketplaceInvocations(role).then((data) => {
       if (!cancelled) setInvocations(data as Invocation[]);
+    }).catch((err) => {
+      if (cancelled) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      setInvocations([]);
+      toast.error(`Failed to load invocations — ${msg}`);
     });
     return () => {
       cancelled = true;
     };
-  }, [role]);
+  }, [role, toast]);
 
   const totals = useMemo(() => {
     if (!invocations) return { count: 0, costUsd: 0, succeeded: 0 };
@@ -83,6 +93,10 @@ export default function InvocationsPage() {
         {invocations === null ? (
           <div className="rounded-xl border border-zinc-800 bg-surface-1 p-6 text-[12px] text-zinc-500">
             Loading…
+          </div>
+        ) : error ? (
+          <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-6 text-[12px] text-red-300">
+            Failed to load invocations — {error}
           </div>
         ) : invocations.length === 0 ? (
           <div className="rounded-xl border border-zinc-800 bg-surface-1 p-8 text-center text-[12px] text-zinc-500">

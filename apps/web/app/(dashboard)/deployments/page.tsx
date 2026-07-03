@@ -266,6 +266,7 @@ export default function DeploymentsPage() {
   const [planes, setPlanes] = useState<PlaneRow[]>([]);
   const [deployments, setDeployments] = useState<DeploymentRow[]>([]);
   const [usingDemo, setUsingDemo] = useState(false);
+  const [planesErrored, setPlanesErrored] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<number>(Date.now());
   const [refreshing, setRefreshing] = useState(false);
 
@@ -284,7 +285,7 @@ export default function DeploymentsPage() {
   const loadData = useCallback(async () => {
     let realPlanes: PlaneRow[] = [];
     let realDeps: DeploymentRow[] = [];
-    let planesErrored = false;
+    let errored = false;
 
     try {
       const dp = await api.listDataPlanes();
@@ -312,7 +313,7 @@ export default function DeploymentsPage() {
         version: null,
       }));
     } catch {
-      planesErrored = true;
+      errored = true;
     }
 
     try {
@@ -336,11 +337,12 @@ export default function DeploymentsPage() {
     setPlanes(realPlanes);
     setDeployments(realDeps);
     setUsingDemo(false);
-    void planesErrored;
+    setPlanesErrored(errored);
+    if (errored) toast.error("Failed to load data planes — the control-plane API was unreachable");
 
     setLoading(false);
     setLastUpdated(Date.now());
-  }, []);
+  }, [toast]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -436,9 +438,13 @@ export default function DeploymentsPage() {
         {/* PRIMARY: data-plane fleet + region map */}
         {planes.length === 0 ? (
           <EmptyState
-            icon={Server}
-            title="No data planes registered"
-            description="Connect a Kubernetes data plane (EKS, GKE, or AKS) so agents run inside your VPC. Use the Terraform + Helm onboarding below, then click Connect data plane."
+            icon={planesErrored ? AlertTriangle : Server}
+            title={planesErrored ? "Couldn't load data planes" : "No data planes registered"}
+            description={
+              planesErrored
+                ? "The control-plane API was unreachable, so this may not be the real list. Retry once it's back."
+                : "Connect a Kubernetes data plane (EKS, GKE, or AKS) so agents run inside your VPC. Use the Terraform + Helm onboarding below, then click Connect data plane."
+            }
             actionLabel="Connect data plane"
             onAction={() => setShowAddPlane(true)}
           />

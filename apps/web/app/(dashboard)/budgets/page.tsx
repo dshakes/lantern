@@ -80,8 +80,8 @@ export default function BudgetsPage() {
     setLoading(true);
     try {
       const [bs, as] = await Promise.all([
-        api.listBudgets().catch(() => [] as Budget[]),
-        api.listAgents().catch(() => [] as Agent[]),
+        api.listBudgets(),
+        api.listAgents(),
       ]);
       setBudgets(bs);
       setAgents(as);

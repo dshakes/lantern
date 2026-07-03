@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, Loader2, ArrowRight } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -63,8 +63,11 @@ export default function LoginPage() {
   const [demoLoading, setDemoLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isAuthenticated) router.replace(nextPath);
+  }, [isAuthenticated, nextPath, router]);
+
   if (isAuthenticated) {
-    router.replace(nextPath);
     return null;
   }
 
