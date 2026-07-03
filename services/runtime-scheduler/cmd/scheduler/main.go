@@ -188,15 +188,45 @@ func main() {
 		}
 	}()
 
+	// --- Service-token auth startup guard ---
+	// In prod, the gRPC server must refuse calls without the shared token
+	// (LANTERN_GRPC_SERVICE_TOKEN). Without this guard the :50055 gRPC port is
+	// reachable by any in-cluster caller who can supply an arbitrary tenant_id,
+	// enabling cross-tenant microVM compute takeover. In dev (LANTERN_ENV unset)
+	// we warn and allow unauthenticated calls so `make dev` keeps working.
+	if cfg.ServiceToken == "" {
+		if dialer.IsProd() {
+			logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is required in production — " +
+				"without it any in-cluster caller can spoof tenant_id on the gRPC port")
+		}
+		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN unset — gRPC service-token check disabled (dev mode)")
+	}
+
+	// --- Node-heartbeat token startup guard ---
+	// In prod, the REST heartbeat endpoint (:8085 POST /v1/nodes/heartbeat) must
+	// require the shared token so unauthenticated callers cannot inject fake node
+	// capacity and bias the placement engine. In dev the token is optional.
+	if cfg.NodeToken == "" {
+		if dialer.IsProd() {
+			logger.Fatal("SCHEDULER_NODE_TOKEN is required in production — " +
+				"without it any in-cluster caller can inject fake node capacity via the heartbeat endpoint")
+		}
+		logger.Warn("SCHEDULER_NODE_TOKEN unset — node heartbeat token check disabled (dev mode)")
+	}
+
 	grpcServer := grpc.NewServer(
 		// otelgrpc.NewServerHandler extracts the incoming W3C traceparent header
 		// and starts a server span, continuing the distributed trace from the
 		// control-plane. Safe when tracing is disabled: creates no-op spans.
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.ChainUnaryInterceptor(
+			// Service-token check runs BEFORE tenant extraction so an
+			// unauthenticated caller can never set tenant_id.
+			middleware.UnaryServiceAuthInterceptor(logger, cfg.ServiceToken),
 			middleware.UnaryTenantInterceptor(logger),
 		),
 		grpc.ChainStreamInterceptor(
+			middleware.StreamServiceAuthInterceptor(logger, cfg.ServiceToken),
 			middleware.StreamTenantInterceptor(logger),
 		),
 	)
@@ -284,10 +314,14 @@ func main() {
 // ---------------------------------------------------------------------
 
 type config struct {
-	GRPCAddr        string
-	HTTPAddr        string
-	JWTSecret       string
-	NodeToken       string
+	GRPCAddr  string
+	HTTPAddr  string
+	JWTSecret string
+	NodeToken string
+	// ServiceToken is the shared secret that callers must present as
+	// x-lantern-service-token in gRPC metadata. When empty the check is
+	// disabled (dev mode); the startup guard aborts in prod.
+	ServiceToken    string
 	LogLevel        string
 	TenantMaxVMs    int
 	WeightWarmPool  float64
@@ -304,6 +338,7 @@ func loadConfig() config {
 		HTTPAddr:        envOrDefault("HTTP_ADDR", ":8085"),
 		JWTSecret:       envOrDefault("JWT_SECRET", "lantern-dev-jwt-secret-do-not-use-in-production"),
 		NodeToken:       os.Getenv("SCHEDULER_NODE_TOKEN"),
+		ServiceToken:    os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"),
 		LogLevel:        envOrDefault("LOG_LEVEL", "info"),
 		TenantMaxVMs:    envInt("SCHEDULER_TENANT_MAX_VMS", 20),
 		WeightWarmPool:  envFloat("SCHEDULER_WEIGHT_WARM_POOL", def.WarmPool),

@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -93,7 +94,12 @@ func (c *Client) CreateRun(ctx context.Context, tenantID, agentName string, inpu
 		return "", fmt.Errorf("runclient: build request for agent %q (tenant %s): %w", agentName, tenantID, err)
 	}
 
-	run, err := c.rpc.CreateRun(outgoingContext(ctx, tenantID, c.serviceToken), req)
+	// Bound the outbound RPC: without a deadline one slow/hung control-plane
+	// call stalls the single cron-ticker goroutine for ALL tenants' schedules.
+	rpcCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	run, err := c.rpc.CreateRun(outgoingContext(rpcCtx, tenantID, c.serviceToken), req)
 	if err != nil {
 		return "", fmt.Errorf("runclient: CreateRun agent %q (tenant %s): %w", agentName, tenantID, err)
 	}

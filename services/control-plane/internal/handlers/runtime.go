@@ -139,13 +139,37 @@ type grpcSchedulerClient struct {
 	mgrClients map[string]lanternv1.RuntimeManagerClient
 }
 
-// NewGRPCSchedulerClient dials the scheduler service. Plain insecure for now —
-// scheduler runs inside the cluster, TLS terminates at the edge.
-func NewGRPCSchedulerClient(addr string, logger *zap.Logger) (*grpcSchedulerClient, error) {
-	conn, err := grpc.NewClient(addr,
+// schedulerTokenCreds attaches the shared service token to every outbound gRPC
+// call as x-lantern-service-token metadata, matching the runtime-scheduler's
+// UnaryServiceAuthInterceptor expectation. When the token is empty nothing is
+// attached (dev pass-through — the startup guard on the scheduler side aborts
+// in prod when the token is unset).
+type schedulerTokenCreds struct{ token string }
+
+func (c schedulerTokenCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
+	if c.token == "" {
+		return nil, nil
+	}
+	return map[string]string{"x-lantern-service-token": c.token}, nil
+}
+
+// RequireTransportSecurity returns false: the scheduler link is an in-cluster
+// hop where TLS terminates at the gateway/service-mesh sidecar.
+func (c schedulerTokenCreds) RequireTransportSecurity() bool { return false }
+
+// NewGRPCSchedulerClient dials the scheduler service. serviceToken, when
+// non-empty, is attached as x-lantern-service-token on every RPC so the
+// scheduler's service-auth interceptor accepts the call. Read it from
+// LANTERN_GRPC_SERVICE_TOKEN at the call site.
+func NewGRPCSchedulerClient(addr, serviceToken string, logger *zap.Logger) (*grpcSchedulerClient, error) {
+	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
-	)
+	}
+	if serviceToken != "" {
+		opts = append(opts, grpc.WithPerRPCCredentials(schedulerTokenCreds{token: serviceToken}))
+	}
+	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dial scheduler %s: %w", addr, err)
 	}
@@ -480,7 +504,7 @@ func NewRuntimeHandler(srv *server.Server, auth *AuthHandler) *RuntimeHandler {
 	}
 	logger := srv.Logger.Named("runtime")
 	if addr := os.Getenv("LANTERN_SCHEDULER_GRPC_ADDR"); addr != "" {
-		c, err := NewGRPCSchedulerClient(addr, logger.Named("scheduler_grpc"))
+		c, err := NewGRPCSchedulerClient(addr, os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"), logger.Named("scheduler_grpc"))
 		if err != nil {
 			logger.Warn("falling back to stub scheduler client",
 				zap.String("addr", addr), zap.Error(err))
