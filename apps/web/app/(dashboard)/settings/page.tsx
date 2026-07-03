@@ -542,7 +542,8 @@ function ApiKeysTab({ keys, copiedKeyId, onCreateClick, onCopyPrefix, onRevokeCl
         <button onClick={onCreateClick} className="inline-flex items-center gap-2 rounded-lg bg-lantern-500 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-lantern-400">Create API Key</button>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
+      {/* Desktop: table, unchanged */}
+      <div className="hidden overflow-hidden rounded-xl border border-zinc-800 bg-surface-1 md:block">
         <table className="data-table">
           <thead><tr><th>Name</th><th>Key Prefix</th><th>Scopes</th><th>Created</th><th>Last Used</th><th>Status</th><th className="w-24"></th></tr></thead>
           <tbody>
@@ -569,15 +570,72 @@ function ApiKeysTab({ keys, copiedKeyId, onCreateClick, onCopyPrefix, onRevokeCl
         </table>
       </div>
 
+      {/* Mobile: stacked cards, same data */}
+      <div className="space-y-2 md:hidden">
+        {activeKeys.length === 0 && (
+          <div className="rounded-xl border border-zinc-800 bg-surface-1 py-8 text-center text-sm text-zinc-500">
+            No active API keys. Create one to get started.
+          </div>
+        )}
+        {activeKeys.map((key) => (
+          <div key={key.id} className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-sm font-medium text-zinc-300">{key.name}</span>
+              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />Active
+              </span>
+            </div>
+            <div className="mt-2 flex items-center gap-1.5">
+              <code className="rounded bg-surface-3 px-2 py-0.5 font-mono text-xs text-zinc-400">{key.prefix}...</code>
+              <button onClick={() => onCopyPrefix(key)} className="text-zinc-600 transition-colors hover:text-zinc-400">
+                {copiedKeyId === key.id ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            {key.scopes.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {key.scopes.map((s) => <span key={s} className="rounded bg-surface-3 px-1.5 py-0.5 text-[11px] text-zinc-500">{s}</span>)}
+              </div>
+            )}
+            <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-zinc-500">Created</p>
+                <p className="text-xs text-zinc-200">{format(new Date(key.createdAt), "MMM d, yyyy")}</p>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-zinc-500">Last used</p>
+                <p className="text-xs text-zinc-200">{key.lastUsed}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => onRevokeClick(key)}
+              className="mt-3 flex w-full items-center justify-center gap-1 rounded-lg py-2 text-xs text-red-400 transition-colors hover:bg-red-500/10"
+            >
+              <Trash2 className="h-3 w-3" />Revoke
+            </button>
+          </div>
+        ))}
+      </div>
+
       {revokedKeys.length > 0 && (
         <div>
           <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">Revoked Keys</h4>
-          <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1 opacity-60">
+          {/* Desktop: table, unchanged */}
+          <div className="hidden overflow-hidden rounded-xl border border-zinc-800 bg-surface-1 opacity-60 md:block">
             <table className="data-table"><tbody>
               {revokedKeys.map((key) => (
                 <tr key={key.id}><td className="font-medium text-zinc-500">{key.name}</td><td><code className="rounded bg-surface-3 px-2 py-0.5 font-mono text-xs text-zinc-600 line-through">{key.prefix}...</code></td><td className="text-zinc-600">Revoked</td></tr>
               ))}
             </tbody></table>
+          </div>
+          {/* Mobile: stacked cards, same data */}
+          <div className="space-y-2 opacity-60 md:hidden">
+            {revokedKeys.map((key) => (
+              <div key={key.id} className="flex items-center justify-between rounded-xl border border-zinc-800 bg-surface-1 p-4">
+                <span className="truncate text-sm font-medium text-zinc-500">{key.name}</span>
+                <code className="rounded bg-surface-3 px-2 py-0.5 font-mono text-xs text-zinc-600 line-through">{key.prefix}...</code>
+                <span className="text-xs text-zinc-600">Revoked</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -630,7 +688,8 @@ function TeamTab({ members, onInviteClick, onChangeRole, onRemoveClick }: { memb
         <button onClick={onInviteClick} className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-300 transition-colors hover:bg-surface-3">Invite Member</button>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
+      {/* Desktop: table, unchanged */}
+      <div className="hidden overflow-hidden rounded-xl border border-zinc-800 bg-surface-1 md:block">
         <table className="data-table">
           <thead><tr><th>Member</th><th>Email</th><th>Role</th><th>Joined</th><th className="w-20"></th></tr></thead>
           <tbody>
@@ -660,6 +719,44 @@ function TeamTab({ members, onInviteClick, onChangeRole, onRemoveClick }: { memb
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile: stacked cards, same data */}
+      <div className="space-y-2 md:hidden">
+        {members.length === 0 && (
+          <div className="rounded-xl border border-zinc-800 bg-surface-1 py-8 text-center text-sm text-zinc-500">
+            No team members yet. Invite someone to collaborate on your agents.
+          </div>
+        )}
+        {members.map((member) => (
+          <div key={member.id} className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xs font-medium text-zinc-400">{member.name.split(" ").map((n) => n[0]).join("")}</div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-zinc-200">{member.name}</p>
+                <p className="truncate text-xs text-zinc-400">{member.email}</p>
+              </div>
+              {member.role === "owner" && (
+                <span className={clsx("shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium", roleBadgeColors[member.role])}>Owner</span>
+              )}
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-zinc-500">Joined</p>
+                <p className="text-xs text-zinc-200">{format(new Date(member.joinedAt), "MMM d, yyyy")}</p>
+              </div>
+              {member.role !== "owner" && (
+                <div className="flex items-center gap-2">
+                  <select value={member.role} onChange={(e) => onChangeRole(member.id, e.target.value)}
+                    className="rounded-lg border border-zinc-700 bg-surface-2 px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-lantern-500 focus:ring-1 focus:ring-lantern-500/30">
+                    <option value="admin">Admin</option><option value="member">Developer</option><option value="viewer">Viewer</option>
+                  </select>
+                  <button onClick={() => onRemoveClick(member)} className="inline-flex items-center gap-1 rounded px-2 py-2 text-xs text-red-400 transition-colors hover:bg-red-500/10"><Trash2 className="h-3 w-3" />Remove</button>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -739,36 +836,87 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
         </div>
         <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
           {fleetUsage ? (
-            <table className="data-table">
-              <thead><tr><th>Agent</th><th>Runs</th><th>Cost</th></tr></thead>
-              <tbody>
-                {fleetUsage.byAgent.sort((a, b) => b.costUsd - a.costUsd).map((row) => (
-                  <tr key={row.agentName}>
-                    <td className="font-medium text-zinc-300">{row.agentName}</td>
-                    <td className="text-zinc-400">{row.runs}</td>
-                    <td className="font-medium text-zinc-200">${row.costUsd.toFixed(2)}</td>
-                  </tr>
-                ))}
+            <>
+              {/* Desktop: table, unchanged */}
+              <table className="data-table hidden md:table">
+                <thead><tr><th>Agent</th><th>Runs</th><th>Cost</th></tr></thead>
+                <tbody>
+                  {fleetUsage.byAgent.sort((a, b) => b.costUsd - a.costUsd).map((row) => (
+                    <tr key={row.agentName}>
+                      <td className="font-medium text-zinc-300">{row.agentName}</td>
+                      <td className="text-zinc-400">{row.runs}</td>
+                      <td className="font-medium text-zinc-200">${row.costUsd.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                  {fleetUsage.byAgent.length === 0 && (
+                    <tr><td colSpan={3} className="text-center text-zinc-500">No agent cost data yet</td></tr>
+                  )}
+                  {fleetUsage.byAgent.length > 0 && (
+                    <tr className="border-t border-zinc-700">
+                      <td className="font-semibold text-zinc-100">Total</td>
+                      <td className="text-zinc-400">{fleetUsage.periods.total.runs}</td>
+                      <td className="font-semibold text-lantern-400">${fleetUsage.periods.total.costUsd.toFixed(2)}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+
+              {/* Mobile: stacked cards, same data */}
+              <div className="divide-y divide-zinc-800 md:hidden">
                 {fleetUsage.byAgent.length === 0 && (
-                  <tr><td colSpan={3} className="text-center text-zinc-500">No agent cost data yet</td></tr>
+                  <p className="py-6 text-center text-sm text-zinc-500">No agent cost data yet</p>
                 )}
+                {fleetUsage.byAgent.sort((a, b) => b.costUsd - a.costUsd).map((row) => (
+                  <div key={row.agentName} className="flex items-center justify-between px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-zinc-300">{row.agentName}</p>
+                      <p className="text-[11px] text-zinc-500">{row.runs} runs</p>
+                    </div>
+                    <span className="text-sm font-medium text-zinc-200">${row.costUsd.toFixed(2)}</span>
+                  </div>
+                ))}
                 {fleetUsage.byAgent.length > 0 && (
-                  <tr className="border-t border-zinc-700">
-                    <td className="font-semibold text-zinc-100">Total</td>
-                    <td className="text-zinc-400">{fleetUsage.periods.total.runs}</td>
-                    <td className="font-semibold text-lantern-400">${fleetUsage.periods.total.costUsd.toFixed(2)}</td>
-                  </tr>
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-100">Total</p>
+                      <p className="text-[11px] text-zinc-500">{fleetUsage.periods.total.runs} runs</p>
+                    </div>
+                    <span className="text-sm font-semibold text-lantern-400">${fleetUsage.periods.total.costUsd.toFixed(2)}</span>
+                  </div>
                 )}
-              </tbody>
-            </table>
+              </div>
+            </>
           ) : (
-            <table className="data-table">
-              <thead><tr><th>Agent</th><th>Runs</th><th>Tokens</th><th>Cost</th></tr></thead>
-              <tbody>
-                {costByAgent.map((row) => <tr key={row.agent}><td className="font-medium text-zinc-300">{row.agent}</td><td className="text-zinc-400">{row.runs}</td><td className="text-zinc-400">{row.tokens}</td><td className="font-medium text-zinc-200">{row.cost}</td></tr>)}
-                <tr className="border-t border-zinc-700"><td className="font-semibold text-zinc-100">Total</td><td className="text-zinc-400">348</td><td className="text-zinc-400">2.1M</td><td className="font-semibold text-lantern-400">$12.47</td></tr>
-              </tbody>
-            </table>
+            <>
+              {/* Desktop: table, unchanged */}
+              <table className="data-table hidden md:table">
+                <thead><tr><th>Agent</th><th>Runs</th><th>Tokens</th><th>Cost</th></tr></thead>
+                <tbody>
+                  {costByAgent.map((row) => <tr key={row.agent}><td className="font-medium text-zinc-300">{row.agent}</td><td className="text-zinc-400">{row.runs}</td><td className="text-zinc-400">{row.tokens}</td><td className="font-medium text-zinc-200">{row.cost}</td></tr>)}
+                  <tr className="border-t border-zinc-700"><td className="font-semibold text-zinc-100">Total</td><td className="text-zinc-400">348</td><td className="text-zinc-400">2.1M</td><td className="font-semibold text-lantern-400">$12.47</td></tr>
+                </tbody>
+              </table>
+
+              {/* Mobile: stacked cards, same data */}
+              <div className="divide-y divide-zinc-800 md:hidden">
+                {costByAgent.map((row) => (
+                  <div key={row.agent} className="flex items-center justify-between px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-zinc-300">{row.agent}</p>
+                      <p className="text-[11px] text-zinc-500">{row.runs} runs · {row.tokens} tokens</p>
+                    </div>
+                    <span className="text-sm font-medium text-zinc-200">{row.cost}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-zinc-100">Total</p>
+                    <p className="text-[11px] text-zinc-500">348 runs · 2.1M tokens</p>
+                  </div>
+                  <span className="text-sm font-semibold text-lantern-400">$12.47</span>
+                </div>
+              </div>
+            </>
           )}
         </div>
       </div>

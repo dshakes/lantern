@@ -207,6 +207,20 @@ function MiniBar({ value, max, color }: { value: number; max: number; color: str
 }
 
 // ---------------------------------------------------------------------------
+// Mobile card label/value pair — used by the stacked-card fallback for
+// tables hidden below md.
+// ---------------------------------------------------------------------------
+
+function MetricField({ label, value, tone }: { label: string; value: string; tone?: "danger" }) {
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</p>
+      <p className={clsx("text-xs tabular-nums", tone === "danger" ? "text-red-400" : "text-zinc-200")}>{value}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -461,61 +475,94 @@ export default function EvaluationsPage() {
               <p className="text-sm text-zinc-500">No agent data yet. Run some agents to see metrics.</p>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-zinc-800">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-zinc-800 bg-surface-1">
-                    <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500">Agent</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">Runs</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">Success rate</th>
-                    <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 md:table-cell">Avg cost</th>
-                    <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 lg:table-cell">Avg latency</th>
-                    <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 md:table-cell">Total cost</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">Errors</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/50">
-                  {mergedAgentMetrics.map((a) => (
-                    <tr key={a.name} className="bg-surface-0 transition-colors hover:bg-surface-1">
-                      <td className="px-4 py-3">
-                        <span className="font-medium text-zinc-200">{a.name}</span>
-                      </td>
-                      <td className="px-4 py-3 text-right text-zinc-400">{a.totalRuns}</td>
-                      <td className="px-4 py-3 text-right">
-                        <span
-                          className={clsx(
-                            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
-                            a.successRate >= 0.9
-                              ? "bg-emerald-500/10 text-emerald-400"
-                              : a.successRate >= 0.7
-                              ? "bg-amber-500/10 text-amber-400"
-                              : "bg-red-500/10 text-red-400",
-                          )}
-                        >
-                          {pct(a.successRate)}
-                        </span>
-                      </td>
-                      <td className="hidden px-4 py-3 text-right text-zinc-400 md:table-cell">
-                        {fmtUsd(a.avgCost)}
-                      </td>
-                      <td className="hidden px-4 py-3 text-right text-zinc-400 lg:table-cell">
-                        {fmtDuration(a.avgLatencyMs)}
-                      </td>
-                      <td className="hidden px-4 py-3 text-right text-zinc-400 md:table-cell">
-                        {fmtUsd(a.totalCost)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {a.failed > 0 ? (
-                          <span className="text-red-400">{a.failed}</span>
-                        ) : (
-                          <span className="text-zinc-600">0</span>
-                        )}
-                      </td>
+            <>
+              {/* Desktop: table, unchanged */}
+              <div className="hidden overflow-hidden rounded-xl border border-zinc-800 md:block">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-zinc-800 bg-surface-1">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500">Agent</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">Runs</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">Success rate</th>
+                      <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 md:table-cell">Avg cost</th>
+                      <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 lg:table-cell">Avg latency</th>
+                      <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 md:table-cell">Total cost</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">Errors</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/50">
+                    {mergedAgentMetrics.map((a) => (
+                      <tr key={a.name} className="bg-surface-0 transition-colors hover:bg-surface-1">
+                        <td className="px-4 py-3">
+                          <span className="font-medium text-zinc-200">{a.name}</span>
+                        </td>
+                        <td className="px-4 py-3 text-right text-zinc-400">{a.totalRuns}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span
+                            className={clsx(
+                              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+                              a.successRate >= 0.9
+                                ? "bg-emerald-500/10 text-emerald-400"
+                                : a.successRate >= 0.7
+                                ? "bg-amber-500/10 text-amber-400"
+                                : "bg-red-500/10 text-red-400",
+                            )}
+                          >
+                            {pct(a.successRate)}
+                          </span>
+                        </td>
+                        <td className="hidden px-4 py-3 text-right text-zinc-400 md:table-cell">
+                          {fmtUsd(a.avgCost)}
+                        </td>
+                        <td className="hidden px-4 py-3 text-right text-zinc-400 lg:table-cell">
+                          {fmtDuration(a.avgLatencyMs)}
+                        </td>
+                        <td className="hidden px-4 py-3 text-right text-zinc-400 md:table-cell">
+                          {fmtUsd(a.totalCost)}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {a.failed > 0 ? (
+                            <span className="text-red-400">{a.failed}</span>
+                          ) : (
+                            <span className="text-zinc-600">0</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile: stacked cards, same data */}
+              <div className="space-y-2 md:hidden">
+                {mergedAgentMetrics.map((a) => (
+                  <div key={a.name} className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-zinc-200">{a.name}</span>
+                      <span
+                        className={clsx(
+                          "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+                          a.successRate >= 0.9
+                            ? "bg-emerald-500/10 text-emerald-400"
+                            : a.successRate >= 0.7
+                            ? "bg-amber-500/10 text-amber-400"
+                            : "bg-red-500/10 text-red-400",
+                        )}
+                      >
+                        {pct(a.successRate)}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2.5">
+                      <MetricField label="Runs" value={String(a.totalRuns)} />
+                      <MetricField label="Errors" value={String(a.failed)} tone={a.failed > 0 ? "danger" : undefined} />
+                      <MetricField label="Avg cost" value={fmtUsd(a.avgCost)} />
+                      <MetricField label="Total cost" value={fmtUsd(a.totalCost)} />
+                      <MetricField label="Avg latency" value={fmtDuration(a.avgLatencyMs)} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
 
@@ -604,40 +651,59 @@ export default function EvaluationsPage() {
               <p className="text-sm text-zinc-500">No model usage data yet.</p>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-zinc-800">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-zinc-800 bg-surface-1">
-                    <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500">Model</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">Runs</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">Total cost</th>
-                    <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 md:table-cell">Avg cost</th>
-                    <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 md:table-cell">Tokens in</th>
-                    <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 md:table-cell">Tokens out</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-800/50">
-                  {modelMetrics.map((m) => (
-                    <tr key={m.model} className="bg-surface-0 transition-colors hover:bg-surface-1">
-                      <td className="px-4 py-3">
-                        <span className="font-medium text-zinc-200">{m.model}</span>
-                      </td>
-                      <td className="px-4 py-3 text-right text-zinc-400">{m.runs}</td>
-                      <td className="px-4 py-3 text-right text-zinc-400">{fmtUsd(m.totalCost)}</td>
-                      <td className="hidden px-4 py-3 text-right text-zinc-400 md:table-cell">
-                        {fmtUsd(m.avgCost)}
-                      </td>
-                      <td className="hidden px-4 py-3 text-right text-zinc-400 md:table-cell">
-                        {fmt(m.totalTokensIn, 0)}
-                      </td>
-                      <td className="hidden px-4 py-3 text-right text-zinc-400 md:table-cell">
-                        {fmt(m.totalTokensOut, 0)}
-                      </td>
+            <>
+              {/* Desktop: table, unchanged */}
+              <div className="hidden overflow-hidden rounded-xl border border-zinc-800 md:block">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-zinc-800 bg-surface-1">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500">Model</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">Runs</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">Total cost</th>
+                      <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 md:table-cell">Avg cost</th>
+                      <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 md:table-cell">Tokens in</th>
+                      <th className="hidden px-4 py-3 text-right text-xs font-medium text-zinc-500 md:table-cell">Tokens out</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/50">
+                    {modelMetrics.map((m) => (
+                      <tr key={m.model} className="bg-surface-0 transition-colors hover:bg-surface-1">
+                        <td className="px-4 py-3">
+                          <span className="font-medium text-zinc-200">{m.model}</span>
+                        </td>
+                        <td className="px-4 py-3 text-right text-zinc-400">{m.runs}</td>
+                        <td className="px-4 py-3 text-right text-zinc-400">{fmtUsd(m.totalCost)}</td>
+                        <td className="hidden px-4 py-3 text-right text-zinc-400 md:table-cell">
+                          {fmtUsd(m.avgCost)}
+                        </td>
+                        <td className="hidden px-4 py-3 text-right text-zinc-400 md:table-cell">
+                          {fmt(m.totalTokensIn, 0)}
+                        </td>
+                        <td className="hidden px-4 py-3 text-right text-zinc-400 md:table-cell">
+                          {fmt(m.totalTokensOut, 0)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile: stacked cards, same data */}
+              <div className="space-y-2 md:hidden">
+                {modelMetrics.map((m) => (
+                  <div key={m.model} className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
+                    <span className="text-sm font-medium text-zinc-200">{m.model}</span>
+                    <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2.5">
+                      <MetricField label="Runs" value={String(m.runs)} />
+                      <MetricField label="Total cost" value={fmtUsd(m.totalCost)} />
+                      <MetricField label="Avg cost" value={fmtUsd(m.avgCost)} />
+                      <MetricField label="Tokens in" value={fmt(m.totalTokensIn, 0)} />
+                      <MetricField label="Tokens out" value={fmt(m.totalTokensOut, 0)} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
 

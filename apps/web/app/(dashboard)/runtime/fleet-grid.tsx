@@ -224,8 +224,9 @@ export function FleetGrid({
         </div>
       )}
 
-      {/* Grid — soft surface, no hard outline; separation via tint + spacing */}
-      <div className="overflow-hidden rounded-xl bg-surface-1">
+      {/* Grid — soft surface, no hard outline; separation via tint + spacing.
+          Desktop only; mobile gets the stacked-card list below. */}
+      <div className="hidden overflow-hidden rounded-xl bg-surface-1 md:block">
         <div className="max-h-[58vh] overflow-auto">
           <table className="w-full border-collapse text-sm">
             <thead className="sticky top-0 z-10 bg-surface-1 text-[10px] uppercase tracking-wide text-zinc-500">
@@ -344,6 +345,107 @@ export function FleetGrid({
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Mobile: stacked cards, same rows/data/handlers as the desktop grid */}
+      <div className="space-y-2 md:hidden">
+        {filtered.map((v) => {
+          const ss = STATE_STYLES[v.state] ?? STATE_STYLES.pending;
+          const s = series[v.vmId];
+          const hb = heartbeatTone(v.lastHeartbeatAt);
+          const live = v.state === "running" || v.state === "draining";
+          const selectable = v.state !== "terminated" && v.state !== "failed";
+          const cpuNow = s?.cpu.slice(-1)[0];
+          const memNow = s?.mem.slice(-1)[0];
+          return (
+            <div
+              key={v.vmId}
+              onClick={() => onOpen(v)}
+              className={clsx(
+                "cursor-pointer rounded-lg bg-surface-1 p-3.5 transition-colors",
+                selected.has(v.vmId) && "bg-lantern-500/[0.05]",
+              )}
+            >
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={selected.has(v.vmId)}
+                  onChange={() => toggleOne(v.vmId)}
+                  onClick={(e) => e.stopPropagation()}
+                  disabled={!selectable}
+                  aria-label={`Select ${v.vmId}`}
+                  className="mt-1 h-4 w-4 shrink-0 accent-lantern-400 disabled:opacity-30"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-zinc-100">{v.name || "workload"}</div>
+                      <div className="font-mono text-[10px] text-zinc-600">{v.vmId}</div>
+                    </div>
+                    <span className={clsx("inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium", ss.text)}>
+                      <StateDot state={v.state} />
+                      {ss.label}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2.5">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">Tier</p>
+                      <IsolationBadge cls={v.isolationClass} dense />
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">$/hr</p>
+                      <p className="font-mono text-xs tabular-nums text-zinc-200">
+                        {v.costHr != null ? `$${v.costHr.toFixed(3)}` : "—"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">Node</p>
+                      <p className="font-mono text-xs text-zinc-200">{v.node || "—"}</p>
+                      {v.region && <p className="text-[10px] text-zinc-600">{v.region}</p>}
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">Age · HB</p>
+                      <p className="text-xs tabular-nums text-zinc-200">
+                        {v.createdAt ? formatDistanceToNowStrict(new Date(v.createdAt)) : "—"}
+                      </p>
+                      <span className="mt-0.5 inline-flex items-center gap-1.5 text-[10px] tabular-nums text-zinc-600">
+                        <span className={clsx("h-1.5 w-1.5 rounded-full", hb.dot)} />
+                        {hb.label}
+                      </span>
+                    </div>
+                    {isDemo && live && s && (
+                      <div className="col-span-2">
+                        <p className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Resources</p>
+                        <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-2">
+                            <span className="w-7 font-mono text-[9px] uppercase tracking-wide text-zinc-600">cpu</span>
+                            <Sparkline data={s.cpu} color="var(--color-accent)" width={48} height={14} />
+                            <span className="w-8 font-mono text-[10px] tabular-nums text-zinc-400">
+                              {cpuNow != null ? `${(cpuNow * 100).toFixed(0)}%` : "—"}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-7 font-mono text-[9px] uppercase tracking-wide text-zinc-600">mem</span>
+                            <Sparkline data={s.mem} color="rgba(161,161,170,0.7)" width={48} height={14} />
+                            <span className="w-8 font-mono text-[10px] tabular-nums text-zinc-400">
+                              {memNow != null ? `${(memNow * 100).toFixed(0)}%` : "—"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {filtered.length === 0 && (
+          <div className="rounded-lg bg-surface-1 px-4 py-12 text-center text-[12px] text-zinc-600">
+            No workloads match the current filter.
+          </div>
+        )}
       </div>
 
       <ConfirmModal
