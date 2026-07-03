@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"go.uber.org/zap"
@@ -134,7 +135,10 @@ func (s *WorkflowService) ResumeRun(req *lanternv1.ResumeRunRequest, stream lant
 	}
 
 	// Resume the run.
-	if err := s.srv.Engine.ResumeRun(ctx, req.GetRunId()); err != nil {
+	if err := s.srv.Engine.ResumeRun(ctx, req.GetRunId(), tenantID); err != nil {
+		if errors.Is(err, engine.ErrRunNotFound) {
+			return status.Errorf(codes.NotFound, "run not found: %s", req.GetRunId())
+		}
 		return status.Errorf(codes.Internal, "failed to resume run: %v", err)
 	}
 
@@ -191,7 +195,10 @@ func (s *WorkflowService) SignalRun(ctx context.Context, req *lanternv1.SignalRu
 		valueBytes = json.RawMessage("{}")
 	}
 
-	if err := s.srv.Engine.SignalRun(ctx, req.GetRunId(), req.GetSignalName(), valueBytes); err != nil {
+	if err := s.srv.Engine.SignalRun(ctx, req.GetRunId(), tenantID, req.GetSignalName(), valueBytes); err != nil {
+		if errors.Is(err, engine.ErrRunNotFound) {
+			return nil, status.Errorf(codes.NotFound, "run not found: %s", req.GetRunId())
+		}
 		return nil, status.Errorf(codes.Internal, "failed to signal run: %v", err)
 	}
 
@@ -214,7 +221,10 @@ func (s *WorkflowService) CancelRun(ctx context.Context, req *lanternv1.CancelRu
 		zap.String("run_id", req.GetId()),
 	)
 
-	if err := s.srv.Engine.CancelRun(ctx, req.GetId()); err != nil {
+	if err := s.srv.Engine.CancelRun(ctx, req.GetId(), tenantID); err != nil {
+		if errors.Is(err, engine.ErrRunNotFound) {
+			return nil, status.Errorf(codes.NotFound, "run not found: %s", req.GetId())
+		}
 		return nil, status.Errorf(codes.Internal, "failed to cancel run: %v", err)
 	}
 

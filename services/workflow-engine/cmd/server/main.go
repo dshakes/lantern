@@ -37,6 +37,17 @@ func main() {
 	logger := mustInitLogger(cfg.LogLevel)
 	defer logger.Sync() //nolint:errcheck
 
+	// Fail closed in production; warn and continue in dev (LANTERN_ENV unset).
+	// Without a service token any caller reachable to :50052 can forge any
+	// tenant_id because the token check is what guards the tenant interceptor.
+	prod := isProdEnv()
+	if prod && cfg.GRPCServiceToken == "" {
+		logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC port (:50052) would accept any caller-supplied tenant_id; set a strong random shared token (same value as the control-plane)")
+	}
+	if !prod && cfg.GRPCServiceToken == "" {
+		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
@@ -124,12 +135,15 @@ func main() {
 	}
 
 	// --- gRPC server ---
+	grpcServiceToken := cfg.GRPCServiceToken
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
+			middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
 			middleware.UnaryTenantInterceptor(logger),
 			unaryTracingInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
+			middleware.StreamServiceAuthInterceptor(logger, grpcServiceToken),
 			middleware.StreamTenantInterceptor(logger),
 			streamTracingInterceptor(),
 		),
@@ -233,6 +247,7 @@ type config struct {
 	Workers            int
 	ModelRouterAddr    string
 	RuntimeManagerAddr string
+	GRPCServiceToken   string
 }
 
 func loadConfig() config {
@@ -249,7 +264,15 @@ func loadConfig() config {
 		Workers:            workers,
 		ModelRouterAddr:    envOrDefault("LANTERN_MODEL_ROUTER_ADDR", "model-router:50053"),
 		RuntimeManagerAddr: envOrDefault("LANTERN_RUNTIME_MANAGER_ADDR", "runtime-manager:50054"),
+		GRPCServiceToken:   os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"),
 	}
+}
+
+// isProdEnv reports whether the server is running in a production-like
+// environment (LANTERN_ENV=prod|production|staging).
+func isProdEnv() bool {
+	e := os.Getenv("LANTERN_ENV")
+	return e == "prod" || e == "production" || e == "staging"
 }
 
 func envOrDefault(key, fallback string) string {

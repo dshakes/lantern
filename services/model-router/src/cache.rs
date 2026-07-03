@@ -37,6 +37,11 @@ impl PromptCache {
 
         let mut hasher = Sha256::new();
 
+        // Tenant-scope the key (invariant #7): two tenants sending identical
+        // prompts must never share a cached response or its cost attribution.
+        hasher.update(req.tenant_id.as_bytes());
+        hasher.update(b"|");
+
         // Hash capability.
         hasher.update(req.capability.to_le_bytes());
 
