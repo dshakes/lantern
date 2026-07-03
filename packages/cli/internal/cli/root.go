@@ -25,12 +25,14 @@ func NewRootCommand(version, commit, date string) *cobra.Command {
 		Use:   "lantern",
 		Short: "Lantern CLI — production runtime for AI agents",
 		Long: `Lantern is an open-source platform for building, running, and managing
-production AI agents with multi-LLM routing, managed sessions, real API
-connectors, visual workflows, and cron scheduling.
+production AI agents with multi-LLM routing, cost forecasting, and
+eval-in-CI.
 
-The lantern CLI lets you create and manage agents, start interactive
-sessions, trigger runs, stream logs, connect APIs, schedule jobs,
-and deploy agent code from your terminal.`,
+The lantern CLI lets you create and manage agents, trigger and inspect
+runs, stream run logs, run eval suites against a branch baseline, and
+deploy agent code from your terminal. Interactive sessions, connector
+integrations, and cron scheduling are available today via the SDKs and
+dashboard — not yet as CLI subcommands.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),

@@ -64,6 +64,8 @@ func newTestCommand() *cobra.Command {
 		against  string
 		setBase  bool
 		jsonOut  bool
+		rehearse bool
+		window   string
 	)
 
 	cmd := &cobra.Command{
@@ -74,19 +76,30 @@ results to the control plane. If --against=last-green is set and the
 current score is a regression vs. the branch baseline, the command
 exits with a non-zero status so CI can fail the build.
 
+--rehearse replays past failed/low-score production runs (POST
+/v1/runs/rehearse) against the agent instead of a hand-written suite,
+catching regressions on the exact inputs that broke it in production.
+
 Example:
   lantern test --agent=email-triage --suite=core
   lantern test --agent=email-triage --suite=core --against=last-green
   lantern test --agent=email-triage --suite=core --set-baseline
+  lantern test --agent=email-triage --rehearse --window=7d
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if agent == "" || suite == "" {
-				return fmt.Errorf("--agent and --suite are required")
-			}
 			base := deriveRESTURL(flags.apiURL)
 			token := resolveToken()
 			if token == "" {
 				return fmt.Errorf("not authenticated — run `lantern login` or set LANTERN_API_KEY")
+			}
+			if rehearse {
+				if agent == "" {
+					return fmt.Errorf("--agent is required")
+				}
+				return runRehearsal(cmd.Context(), base, token, agent, window, jsonOut)
+			}
+			if agent == "" || suite == "" {
+				return fmt.Errorf("--agent and --suite are required")
 			}
 
 			// 1. Pull the suite definition.
@@ -169,7 +182,83 @@ Example:
 	cmd.Flags().StringVar(&against, "against", "", "Comparison mode: last-green")
 	cmd.Flags().BoolVar(&setBase, "set-baseline", false, "Pin this run as the branch baseline")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON results")
+	cmd.Flags().BoolVar(&rehearse, "rehearse", false, "Replay past failed/low-score production runs instead of a suite")
+	cmd.Flags().StringVar(&window, "window", "7d", "Time window for --rehearse (e.g. 24h, 7d, 4w)")
 	return cmd
+}
+
+// rehearseCase mirrors rehearseCase in
+// services/control-plane/internal/handlers/rehearse.go.
+type rehearseCase struct {
+	OriginalRunID  string          `json:"originalRunId"`
+	OriginalStatus string          `json:"originalStatus"`
+	Input          json.RawMessage `json:"input"`
+}
+
+type rehearseResp struct {
+	Cases  []rehearseCase `json:"cases"`
+	Count  int            `json:"count"`
+	Reason string         `json:"reason,omitempty"`
+}
+
+// runRehearsal pulls synthetic test cases from past failed/low-score
+// production runs (POST /v1/runs/rehearse) and replays each against the
+// agent, reporting pass/fail. A case "passes" if the replayed run succeeds —
+// rehearsal has no hand-written assertion, only "does this input still
+// break the agent".
+func runRehearsal(ctx context.Context, base, token, agent, window string, jsonOut bool) error {
+	reqBody, _ := json.Marshal(map[string]any{"agentName": agent, "window": window})
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/runs/rehearse", bytes.NewReader(reqBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("rehearse: %w", err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	if res.StatusCode != 200 {
+		return fmt.Errorf("rehearse: %d %s", res.StatusCode, string(raw))
+	}
+	var rr rehearseResp
+	if err := json.Unmarshal(raw, &rr); err != nil {
+		return err
+	}
+	if rr.Count == 0 {
+		fmt.Println("no rehearsal cases:", rr.Reason)
+		return nil
+	}
+
+	failed := 0
+	for _, c := range rr.Cases {
+		runBody, _ := json.Marshal(map[string]any{"agentName": agent, "input": c.Input})
+		rreq, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/v1/runs", bytes.NewReader(runBody))
+		rreq.Header.Set("Authorization", "Bearer "+token)
+		rreq.Header.Set("Content-Type", "application/json")
+		rres, err := (&http.Client{Timeout: 120 * time.Second}).Do(rreq)
+		ok := err == nil
+		if ok {
+			var run struct {
+				Status string `json:"status"`
+			}
+			b, _ := io.ReadAll(rres.Body)
+			rres.Body.Close()
+			ok = rres.StatusCode == 200 && json.Unmarshal(b, &run) == nil && run.Status == "succeeded"
+		}
+		mark := "PASS"
+		if !ok {
+			mark = "FAIL"
+			failed++
+		}
+		if !jsonOut {
+			fmt.Printf("  [%s] replay of %s (originally %s)\n", mark, c.OriginalRunID, c.OriginalStatus)
+		}
+	}
+	fmt.Printf("\nRehearsed %d cases from prior failures: %d passed, %d failed\n", rr.Count, rr.Count-failed, failed)
+	if failed > 0 {
+		return fmt.Errorf("%d/%d rehearsal cases still failing", failed, rr.Count)
+	}
+	return nil
 }
 
 func resolveToken() string {
@@ -246,6 +335,7 @@ func runCase(ctx context.Context, base, token, agent string, c evalCase) caseRes
 //   - If `assert.contains` is present, the case passes when `actual` contains it.
 //   - Else if `expected` is present, exact substring match.
 //   - Else pass on non-empty output.
+//
 // Score is 1.0 on pass, 0.0 on fail. (Fractional scoring is for the server side.)
 func scoreCase(c evalCase, actual string) (bool, float64) {
 	if need, ok := c.Assert["contains"].(string); ok && need != "" {

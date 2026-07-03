@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import random
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -11,6 +13,19 @@ import httpx
 
 from lantern.errors import LanternApiError
 from lantern.types import AgentInfo, ConnectorInfo, ConnectorResult, Run, Session, SessionMessage, StreamEvent
+
+# Bounded exponential backoff with full jitter, mirroring
+# packages/bridge-core/src/retry.ts. Only 429/503 and network-layer
+# failures are transient; 4xx auth/validation errors are never retried.
+_RETRY_MAX_ATTEMPTS = 3
+_RETRY_BASE_DELAY_S = 0.5
+_RETRY_MAX_DELAY_S = 4.0
+_RETRYABLE_STATUS = {429, 503}
+
+
+def _retry_backoff_s(attempt: int) -> float:
+    ceiling = min(_RETRY_MAX_DELAY_S, _RETRY_BASE_DELAY_S * 2**attempt)
+    return random.uniform(0, ceiling)
 
 
 class LanternClient:
@@ -98,7 +113,6 @@ class LanternClient:
         body: Any = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        client = await self._get_client()
         kwargs: dict[str, Any] = {}
         if body is not None:
             kwargs["content"] = json.dumps(body)
@@ -106,13 +120,26 @@ class LanternClient:
             # Filter out None values
             kwargs["params"] = {k: str(v) for k, v in params.items() if v is not None}
 
-        resp = await client.request(method, path, **kwargs)
-        if not resp.is_success:
-            raise LanternApiError(resp.status_code, resp.text)
+        for attempt in range(_RETRY_MAX_ATTEMPTS):
+            client = await self._get_client()
+            try:
+                resp = await client.request(method, path, **kwargs)
+            except httpx.TransportError:
+                if attempt + 1 >= _RETRY_MAX_ATTEMPTS:
+                    raise
+                await asyncio.sleep(_retry_backoff_s(attempt))
+                continue
 
-        if resp.status_code == 204 or not resp.content:
-            return None
-        return resp.json()
+            if resp.is_success:
+                if resp.status_code == 204 or not resp.content:
+                    return None
+                return resp.json()
+
+            if resp.status_code in _RETRYABLE_STATUS and attempt + 1 < _RETRY_MAX_ATTEMPTS:
+                await asyncio.sleep(_retry_backoff_s(attempt))
+                continue
+
+            raise LanternApiError(resp.status_code, resp.text)
 
     @staticmethod
     def _items(data: Any, key: str) -> list[Any]:
