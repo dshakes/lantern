@@ -187,11 +187,14 @@ export default function SettingsPage() {
 
   // General
   const handleSaveGeneral = async () => {
+    // No backend endpoint for workspace-level settings yet — this only
+    // persists to this browser. Toast copy says so rather than implying
+    // it synced anywhere.
     setGeneralSaving(true);
     await new Promise((r) => setTimeout(r, 500));
     saveLS("general", general);
     setGeneralSaving(false);
-    toast("success", "Workspace settings saved");
+    toast("success", "Workspace settings saved on this device");
   };
 
   // API Keys

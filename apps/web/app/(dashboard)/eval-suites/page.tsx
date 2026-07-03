@@ -54,9 +54,9 @@ export default function EvalSuitesPage() {
     setLoading(true);
     try {
       const [s, r, as] = await Promise.all([
-        api.listEvalSuites().catch(() => [] as EvalSuite[]),
-        api.listEvalRuns().catch(() => [] as EvalRun[]),
-        api.listAgents().catch(() => [] as Agent[]),
+        api.listEvalSuites(),
+        api.listEvalRuns(),
+        api.listAgents(),
       ]);
       setSuites(s);
       setRuns(r);

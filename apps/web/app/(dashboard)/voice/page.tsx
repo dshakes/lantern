@@ -8,7 +8,7 @@
 // Real audio streaming requires the provider's webhook to point at
 // /v1/voice/webhook/{provider} on this control-plane.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Phone,
   PhoneCall,
@@ -56,6 +56,7 @@ export default function VoicePage() {
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const reloadErroredRef = useRef(false);
 
   const reload = async () => {
     try {
@@ -65,9 +66,19 @@ export default function VoicePage() {
       ]);
       setNumbers(n as VoiceNumber[]);
       setCalls(c as VoiceCall[]);
+    } catch (err) {
+      // listVoiceNumbers/listVoiceCalls already return [] on failure, so this
+      // only fires on something unexpected. Toast once per outage, not every
+      // 15s poll, so a sustained API blip doesn't spam the corner.
+      if (!reloadErroredRef.current) {
+        reloadErroredRef.current = true;
+        toast.error(`Failed to refresh voice data — ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
     } finally {
       setLoading(false);
     }
+    reloadErroredRef.current = false;
   };
 
   useEffect(() => {

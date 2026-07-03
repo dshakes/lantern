@@ -127,6 +127,7 @@ export function AiAssistButton({
         </span>
         <button
           onClick={() => { setOpen(false); setPrompt(""); setResult(null); setError(null); }}
+          aria-label="Close"
           className="text-zinc-500 hover:text-zinc-300"
         >
           <X className="h-3.5 w-3.5" />

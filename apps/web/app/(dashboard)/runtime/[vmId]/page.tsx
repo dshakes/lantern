@@ -51,6 +51,11 @@ export default function RuntimeVmPage() {
   // doesn't toast-spam every 5 seconds.
   useEffect(() => {
     if (!vmId) return;
+    // Navigating from one VM's page to another's re-runs this effect with a
+    // new vmId — drop the previous VM's detail/logs so stale data doesn't
+    // bleed into the new page while the first load is in flight.
+    setDetail(null);
+    setLogs([]);
     let cancelled = false;
     let lastError = "";
     const load = async () => {
