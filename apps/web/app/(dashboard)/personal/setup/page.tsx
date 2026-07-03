@@ -11,6 +11,7 @@ import { CheckCircle2, RefreshCw, ScanLine, ShieldCheck, Trash2, Unplug } from "
 
 import { useBridge } from "@/components/personal/bridge-context";
 import type { ConnectionState } from "@/lib/bridge-types";
+import { ConfirmModal } from "@/components/modal";
 
 export default function SetupPage() {
   const bridge = useBridge();
@@ -81,17 +82,18 @@ export default function SetupPage() {
 
       <Instructions />
 
-      {confirmReset && (
-        <ConfirmModal
-          title="Reset the bridge?"
-          description="This wipes the paired session entirely. You'll need to scan a new QR. Your settings (monitored groups, paused contacts) are preserved."
-          onCancel={() => setConfirmReset(false)}
-          onConfirm={async () => {
-            setConfirmReset(false);
-            await reset();
-          }}
-        />
-      )}
+      <ConfirmModal
+        open={confirmReset}
+        title="Reset the bridge?"
+        description="This wipes the paired session entirely. You'll need to scan a new QR. Your settings (monitored groups, paused contacts) are preserved."
+        confirmLabel="Reset bridge"
+        tone="danger"
+        onCancel={() => setConfirmReset(false)}
+        onConfirm={async () => {
+          setConfirmReset(false);
+          await reset();
+        }}
+      />
     </div>
   );
 }
@@ -361,45 +363,6 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
       </span>
       <span>{children}</span>
     </li>
-  );
-}
-
-// -------------------------------------------------------------------- confirm modal
-
-function ConfirmModal({
-  title,
-  description,
-  onCancel,
-  onConfirm,
-}: {
-  title: string;
-  description: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-xl border border-zinc-800 bg-surface-1 p-6 shadow-2xl">
-        <h3 className="text-lg font-medium text-zinc-50">{title}</h3>
-        <p className="mt-2 text-sm text-zinc-400">{description}</p>
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className="rounded-lg bg-rose-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-400"
-          >
-            Reset bridge
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 

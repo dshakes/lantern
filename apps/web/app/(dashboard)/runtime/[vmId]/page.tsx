@@ -14,6 +14,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import clsx from "clsx";
 import { Button } from "@/components/button";
+import { ConfirmModal } from "@/components/modal";
 import { PageHeader } from "@/components/page-header";
 import { PageSkeleton } from "@/components/skeleton";
 import { useToast } from "@/components/toast";
@@ -45,12 +46,18 @@ export default function RuntimeVmPage() {
   const [detail, setDetail] = useState<VmDetail | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [terminating, setTerminating] = useState(false);
+  const [confirmTerminate, setConfirmTerminate] = useState(false);
   const logBoxRef = useRef<HTMLDivElement>(null);
 
   // Initial + polling load of details + audit. Dedup errors so a 401 / 500
   // doesn't toast-spam every 5 seconds.
   useEffect(() => {
     if (!vmId) return;
+    // Navigating from one VM's page to another's re-runs this effect with a
+    // new vmId — drop the previous VM's detail/logs so stale data doesn't
+    // bleed into the new page while the first load is in flight.
+    setDetail(null);
+    setLogs([]);
     let cancelled = false;
     let lastError = "";
     const load = async () => {
@@ -103,7 +110,6 @@ export default function RuntimeVmPage() {
 
   const terminate = useCallback(async () => {
     if (!vmId) return;
-    if (!confirm(`Terminate ${vmId}? This drains the VM and releases its slot.`)) return;
     setTerminating(true);
     try {
       await runtimeApi.del(`/v1/runtime/vms/${vmId}`);
@@ -114,6 +120,7 @@ export default function RuntimeVmPage() {
       }
     } finally {
       setTerminating(false);
+      setConfirmTerminate(false);
     }
   }, [vmId, toast]);
 
@@ -138,11 +145,22 @@ export default function RuntimeVmPage() {
         }
         action={
           active ? (
-            <Button variant="danger" size="sm" loading={terminating} onClick={terminate} icon={<StopCircle className="h-3.5 w-3.5" />}>
+            <Button variant="danger" size="sm" loading={terminating} onClick={() => setConfirmTerminate(true)} icon={<StopCircle className="h-3.5 w-3.5" />}>
               Terminate
             </Button>
           ) : null
         }
+      />
+
+      <ConfirmModal
+        open={confirmTerminate}
+        title={`Terminate ${vmId}?`}
+        description="This drains the VM and releases its slot."
+        confirmLabel="Terminate"
+        tone="danger"
+        confirming={terminating}
+        onCancel={() => setConfirmTerminate(false)}
+        onConfirm={terminate}
       />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

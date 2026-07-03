@@ -8,7 +8,7 @@
 /** Base class for all Lantern SDK errors. */
 export class LanternError extends Error {
   /** Machine-readable error code. */
-  public readonly code: string;
+  public code: string;
 
   constructor(code: string, message: string) {
     super(message);

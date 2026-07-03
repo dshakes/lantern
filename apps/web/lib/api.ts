@@ -721,6 +721,10 @@ class LanternAPI {
     // fabricated step_started → step_completed events to fake activity.
     let onEvent: ((event: StreamEvent) => void) | null = null;
     let closed = false;
+    // The server (run_events.go) replays the full journal from seq 0 on
+    // every fresh connection, including a reconnect after a dropped one —
+    // dedupe on seq so a reconnect doesn't re-append events already shown.
+    let lastSeq = -1;
 
     let es: EventSource | null = null;
     try {
@@ -730,15 +734,22 @@ class LanternAPI {
         if (closed) return;
         try {
           const event = JSON.parse(msg.data) as StreamEvent;
+          if (typeof event.seq === "number") {
+            if (event.seq <= lastSeq) return;
+            lastSeq = event.seq;
+          }
           event.ts = new Date(event.ts);
           onEvent?.(event);
         } catch {
           /* drop malformed frames */
         }
       };
-      es.onerror = () => {
-        if (es) es.close();
-      };
+      // Do NOT close on error — closing here permanently kills the stream
+      // for the rest of a long-running run on a single transient network
+      // blip. Let EventSource's native reconnect run its course; the seq
+      // dedup above makes a reconnect's full-journal replay a no-op once
+      // we've already seen everything.
+      es.onerror = () => {};
     } catch {
       // EventSource construction failed — leave es null; consumer never
       // receives events, which is the correct empty-stream behavior.
@@ -1736,25 +1747,12 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     environment: string;
     deployedAt: string;
   }> {
-    try {
-      return await this.request(`/v1/agents/${encodeURIComponent(agentName)}/deploy`, {
-        method: "POST",
-      });
-    } catch {
-      notifySimulated("deployAgent");
-      const deployUrl = typeof window !== "undefined" && window.location.hostname === "localhost"
-        ? `http://localhost:8080/v1/agents/${agentName}/a2a/invoke`
-        : `https://agents.lantern.run/${agentName}`;
-      return {
-        id: `dep_${Date.now()}`,
-        tenantId: DEMO_USER.tenantId,
-        agentName,
-        status: "live",
-        url: deployUrl,
-        environment: "cloud",
-        deployedAt: new Date().toISOString(),
-      };
-    }
+    // Real API only. A deploy failure must surface as a real error — a
+    // fabricated "live" status here would lie about an agent actually being
+    // reachable at an invented URL.
+    return this.request(`/v1/agents/${encodeURIComponent(agentName)}/deploy`, {
+      method: "POST",
+    });
   }
 
   async getCloudDeployment(agentName: string): Promise<{
@@ -1776,13 +1774,11 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
   }
 
   async stopCloudDeployment(agentName: string): Promise<void> {
-    try {
-      await this.request(`/v1/agents/${encodeURIComponent(agentName)}/deploy/stop`, {
-        method: "POST",
-      });
-    } catch {
-      notifySimulated("stopCloudDeployment");
-    }
+    // Real API only — swallowing a failure here would tell the caller the
+    // deployment stopped when it's still live and billing.
+    await this.request(`/v1/agents/${encodeURIComponent(agentName)}/deploy/stop`, {
+      method: "POST",
+    });
   }
 
   connectSessionEvents(sessionId: string): EventSource {
@@ -2000,8 +1996,8 @@ Ensure the code string and yaml string are properly escaped for JSON (newlines a
     });
   }
 
-  async listAgentMcpServers(agentName: string): Promise<McpServer[]> {
-    return this.request<McpServer[]>(
+  async listAgentMcpServers(agentName: string): Promise<McpAttachment[]> {
+    return this.request<McpAttachment[]>(
       `/v1/agents/${encodeURIComponent(agentName)}/mcp-servers`,
     );
   }
@@ -2289,6 +2285,20 @@ export interface McpServer {
   endpoint?: string;
   tools?: string[];
   installsCount?: number;
+}
+
+// Shape returned by GET/POST /v1/agents/{name}/mcp-servers — an attachment
+// of a curated catalog McpServer to one specific agent (see mcp_registry.go
+// attachmentDTO). Distinct from McpServer: no id/description/tools, but has
+// per-attachment config + timestamp.
+export interface McpAttachment {
+  serverSlug: string;
+  serverName: string;
+  category: string;
+  transport: string;
+  authType: string;
+  config: Record<string, unknown>;
+  attachedAt: string;
 }
 
 export interface ReceiptPayload {

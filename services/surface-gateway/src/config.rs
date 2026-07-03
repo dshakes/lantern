@@ -34,6 +34,13 @@ pub struct Config {
     pub log_level: String,
     /// Comma-separated allowed CORS origins. Defaults to "http://localhost:3001".
     pub allowed_origins: Vec<String>,
+    /// Shared service token sent as `x-lantern-service-token` on every gRPC call
+    /// to the control-plane.  Must match LANTERN_GRPC_SERVICE_TOKEN on the
+    /// control-plane (invariant #7).  Dev: unset is fine; prod: required.
+    pub service_token: String,
+    /// Name of the Lantern agent that handles inbound surface messages.
+    /// Set LANTERN_AGENT_NAME.  Required — run creation fails without it.
+    pub agent_name: Option<String>,
     /// Lantern tenant UUID that owns this surface-gateway deployment.
     ///
     /// Inbound webhook events carry platform-native identifiers (Telegram chat_id,
@@ -62,6 +69,8 @@ impl Config {
             .unwrap_or_else(|_| "http://localhost:50051".to_string());
 
         let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+        let service_token = std::env::var("LANTERN_GRPC_SERVICE_TOKEN").unwrap_or_default();
+        let agent_name = std::env::var("LANTERN_AGENT_NAME").ok();
 
         Ok(Config {
             listen_addr,
@@ -88,6 +97,8 @@ impl Config {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect(),
+            service_token,
+            agent_name,
             lantern_tenant_id: std::env::var("LANTERN_TENANT_ID").ok(),
         })
     }

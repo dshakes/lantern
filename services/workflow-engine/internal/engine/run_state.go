@@ -31,7 +31,7 @@ type RunState struct {
 	Status         string
 	Journal        []journal.JournalEntry
 	StepResults    map[string]*StepResult  // cached step results for replay
-	Signals        map[string]chan any      // pending signal waiters
+	Signals        map[string]chan any     // pending signal waiters
 	Queries        map[string]QueryHandler // registered query handlers
 	mu             sync.Mutex
 }
@@ -144,12 +144,13 @@ func (rs *RunState) ReplayFromJournal(entries []journal.JournalEntry) {
 	for _, e := range entries {
 		switch e.Kind {
 		case journal.KindStepCompleted:
+			cacheKey := stepCacheKey(e.StepID, e.Attempt)
 			var result StepResult
 			if json.Unmarshal(e.Payload, &result) == nil {
-				rs.StepResults[e.StepID] = &result
+				rs.StepResults[cacheKey] = &result
 			} else {
 				// Fallback: store with raw payload as output.
-				rs.StepResults[e.StepID] = &StepResult{
+				rs.StepResults[cacheKey] = &StepResult{
 					StepID:  e.StepID,
 					Attempt: e.Attempt,
 					Output:  e.Payload,
@@ -159,7 +160,7 @@ func (rs *RunState) ReplayFromJournal(entries []journal.JournalEntry) {
 		case journal.KindStepFailed:
 			var result StepResult
 			if json.Unmarshal(e.Payload, &result) == nil {
-				rs.StepResults[e.StepID] = &result
+				rs.StepResults[stepCacheKey(e.StepID, e.Attempt)] = &result
 			}
 
 		case journal.KindRunSucceeded:

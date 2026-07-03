@@ -1,4 +1,4 @@
-module github.com/dshakes/lantern/sdk-go
+module github.com/dshakes/lantern/packages/sdk-go
 
 go 1.23
 

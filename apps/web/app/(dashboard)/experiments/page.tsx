@@ -52,8 +52,8 @@ export default function ExperimentsPage() {
     setLoading(true);
     try {
       const [es, as] = await Promise.all([
-        api.listExperiments().catch(() => [] as Experiment[]),
-        api.listAgents().catch(() => [] as Agent[]),
+        api.listExperiments(),
+        api.listAgents(),
       ]);
       setExperiments(es);
       setAgents(as);

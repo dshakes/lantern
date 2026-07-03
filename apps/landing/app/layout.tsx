@@ -1,22 +1,31 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
+const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://lantern.run";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(baseUrl),
   title: "Lantern — Production AI agents with predictable cost",
   description:
     "Forecast run cost before dispatch. Catch eval regressions in CI. Deploy in your own VPC. Open-source, Apache 2.0, provider-agnostic.",
+  alternates: {
+    canonical: "/",
+  },
   openGraph: {
     title: "Lantern — Production AI agents with predictable cost",
     description:
       "Forecast cost, catch regressions in CI, deploy in your VPC. Open source.",
     type: "website",
-    url: "https://lantern.run",
+    url: baseUrl,
+    siteName: "Lantern",
+    images: [{ url: "/og-image.png", width: 1200, height: 630 }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Lantern — Production AI agents with predictable cost",
     description:
       "Forecast cost, catch regressions in CI, deploy in your VPC. Open source.",
+    images: ["/og-image.png"],
   },
 };
 

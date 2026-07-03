@@ -38,7 +38,7 @@ const forecast = await lantern.runs.forecast({
 
 // 4. Run
 const run = await lantern.runs.create({
-  agentName: "triage",
+  agent: "triage",
   input: { email: "..." },
 });
 ```
@@ -52,6 +52,12 @@ const run = await lantern.runs.create({
 | `lantern.evalSuites.upsert(...)` + `lantern.evalRuns.record(...)` | Declarative eval suites. Record returns `{ regressed: true }` when the score drops below branch baseline. Pairs with `lantern test --against=last-green` in CI. |
 | `lantern.experiments.create(...)` | Deterministic A/B splits. Auto-promote on >2% lift. |
 | `lantern.marketplace.*` | Publish / fork / star agents across tenants. |
+| `lantern.sessions.*` | Interactive multi-turn agent sessions (create, send message, SSE events). |
+| `lantern.connectors.*` | Install, execute, and test the 17 first-party connector actions. |
+| `lantern.mcp.*` | Browse the curated MCP server registry and attach servers to an agent. |
+| `lantern.receipts.*` | Issue and verify Ed25519-signed proof-of-execution receipts. |
+| `lantern.feedback.*` | Submit and aggregate per-run RLHF reactions (1-5 score). |
+| `lantern.rehearsals.pull(...)` | Replay past failed/low-score runs as synthetic test cases before a merge. |
 
 ## Surfaces
 
@@ -66,29 +72,22 @@ const run = await lantern.runs.create({
 import { agent, step, tool } from "@lantern/sdk";
 import { z } from "zod";
 
-const classify = tool({
-  name: "classify",
-  description: "Classify an email",
-  input: z.object({ subject: z.string(), body: z.string() }),
-  async run({ subject, body }) {
-    return { label: "billing" }; // your logic
-  },
-});
-
 export default agent({
   name: "triage",
   model: "auto", // capability alias, resolved by the model router
-  tools: [classify],
-  async handle({ input, ctx }) {
-    const label = await step("classify", () =>
-      classify.run(input),
+  tools: [tool.web], // built-in web search/fetch — see src/tools.ts for the full set
+  async run({ input, ctx }) {
+    // step() makes this call durable — retried on failure, replayed on
+    // resume, metered for cost attribution.
+    return step("classify", () =>
+      ctx.llm.json({
+        prompt: `Classify this support email: ${JSON.stringify(input)}`,
+        schema: z.object({ label: z.string() }),
+      }),
     );
-    return { ...label };
   },
 });
 ```
-
-Every `step()` is durable — retried on failure, replayed on resume, metered for cost attribution.
 
 ## Environment
 

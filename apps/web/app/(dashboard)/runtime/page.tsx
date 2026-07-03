@@ -137,7 +137,13 @@ export default function RuntimePage() {
           }
         }),
       );
-      toast.success(`Termination requested for ${ok}/${ids.length} workload(s)`);
+      if (ok === ids.length) {
+        toast.success(`Termination requested for ${ok}/${ids.length} workload(s)`);
+      } else if (ok > 0) {
+        toast.warning(`Termination requested for ${ok}/${ids.length} workload(s) — some failed`);
+      } else {
+        toast.error(`Termination failed for all ${ids.length} workload(s)`);
+      }
       load();
     },
     [usingDemo, toast, load],

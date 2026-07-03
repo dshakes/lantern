@@ -37,6 +37,8 @@ import {
   type Draft,
 } from "@/lib/whatsapp-personal-client";
 import { useToast } from "@/components/toast";
+import { EmptyState } from "@/components/empty-state";
+import { Skeleton } from "@/components/skeleton";
 
 type StatusTab = "pending" | "approved" | "edited" | "discarded";
 type ChannelFilter = "all" | "whatsapp" | "imessage";
@@ -198,7 +200,13 @@ export default function DraftsPage() {
         {loading ? (
           <SkeletonCards />
         ) : filtered.length === 0 ? (
-          <EmptyState tab={tab} />
+          <EmptyState
+            icon={Inbox}
+            title={EMPTY_COPY[tab].title}
+            description={EMPTY_COPY[tab].hint}
+            size="compact"
+            {...(tab === "pending" ? { actionLabel: "Manage VIPs", actionHref: "/personal/vip" } : {})}
+          />
         ) : (
           <ul className="divide-y divide-zinc-800/60">
             {filtered.map((d) => (
@@ -478,42 +486,24 @@ function ResolvedBadge({ status }: { status: Draft["status"] }) {
 
 // ----------------------------------------------------------- empty state
 
-function EmptyState({ tab }: { tab: StatusTab }) {
-  const all: Record<StatusTab, { title: string; hint: string }> = {
-    pending: {
-      title: "No drafts to review",
-      hint: "When a VIP contact messages you, the assistant's draft will appear here for your call.",
-    },
-    approved: {
-      title: "Nothing sent yet",
-      hint: "Drafts you approve land here.",
-    },
-    edited: {
-      title: "Nothing edited yet",
-      hint: "Drafts you tweak before sending land here.",
-    },
-    discarded: {
-      title: "Nothing discarded yet",
-      hint: "Drafts you decided not to send land here.",
-    },
-  };
-  const copy = all[tab];
-  return (
-    <div className="flex flex-col items-center justify-center py-12 text-center">
-      <Inbox className="h-6 w-6 text-zinc-600" />
-      <div className="mt-3 text-sm text-zinc-300">{copy.title}</div>
-      <p className="mt-1 max-w-md text-xs text-zinc-500">{copy.hint}</p>
-      {tab === "pending" && (
-        <Link
-          href="/personal/vip"
-          className="mt-4 inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
-        >
-          Manage VIPs
-        </Link>
-      )}
-    </div>
-  );
-}
+const EMPTY_COPY: Record<StatusTab, { title: string; hint: string }> = {
+  pending: {
+    title: "No drafts to review",
+    hint: "When a VIP contact messages you, the assistant's draft will appear here for your call.",
+  },
+  approved: {
+    title: "Nothing sent yet",
+    hint: "Drafts you approve land here.",
+  },
+  edited: {
+    title: "Nothing edited yet",
+    hint: "Drafts you tweak before sending land here.",
+  },
+  discarded: {
+    title: "Nothing discarded yet",
+    hint: "Drafts you decided not to send land here.",
+  },
+};
 
 function SkeletonCards() {
   return (
@@ -521,9 +511,9 @@ function SkeletonCards() {
       {[0, 1].map((i) => (
         <li key={i} className="px-5 py-5">
           <div className="space-y-3">
-            <div className="h-3 w-32 animate-pulse rounded bg-zinc-800" />
-            <div className="h-16 animate-pulse rounded-lg bg-zinc-800/60" />
-            <div className="h-20 animate-pulse rounded-lg bg-zinc-800/50" />
+            <Skeleton className="h-3 w-32" />
+            <Skeleton className="h-16 rounded-lg" />
+            <Skeleton className="h-20 rounded-lg" />
           </div>
         </li>
       ))}

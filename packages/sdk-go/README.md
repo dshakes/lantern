@@ -83,7 +83,7 @@ if apiErr := (&lantern.APIError{}); errors.As(err, &apiErr) {
 
 ## Coverage
 
-Agents · Runs · Forecasts · Budgets · Eval suites + runs + baselines. MCP registry, marketplace, and experiments are planned — the TypeScript SDK currently tracks the full surface.
+Agents · Runs · Forecasts · Sessions · Connectors · Budgets · Eval suites + runs + baselines · A/B experiments · Marketplace · MCP registry · Verifiable receipts · Run feedback · Rehearsals.
 
 ## License
 

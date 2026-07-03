@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 )
@@ -20,9 +22,10 @@ const DefaultBaseURL = "https://api.lantern.run"
 
 // Client talks to a Lantern control plane over HTTPS.
 type Client struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL     string
+	apiKey      string
+	http        *http.Client
+	maxAttempts int
 }
 
 // Option configures a Client.
@@ -39,17 +42,48 @@ func WithAPIKey(k string) Option { return func(c *Client) { c.apiKey = k } }
 // WithHTTPClient injects a custom *http.Client (for testing or custom transport).
 func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.http = h } }
 
+// WithMaxRetries sets the maximum number of attempts (including the first)
+// for requests that fail with a transient error (429, 503, or a network
+// error). Defaults to 3. Set to 1 to disable retries.
+func WithMaxRetries(n int) Option { return func(c *Client) { c.maxAttempts = n } }
+
 // New constructs a Client.
 func New(opts ...Option) *Client {
 	c := &Client{
-		baseURL: getenv("LANTERN_API_URL", DefaultBaseURL),
-		apiKey:  os.Getenv("LANTERN_API_KEY"),
-		http:    &http.Client{Timeout: 60 * time.Second},
+		baseURL:     getenv("LANTERN_API_URL", DefaultBaseURL),
+		apiKey:      os.Getenv("LANTERN_API_KEY"),
+		http:        &http.Client{Timeout: 60 * time.Second},
+		maxAttempts: 3,
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
+	if c.maxAttempts < 1 {
+		c.maxAttempts = 1
+	}
 	return c
+}
+
+// retryBaseDelay and retryMaxDelay bound the full-jitter exponential backoff
+// between retries: delay = random(0, min(retryMaxDelay, retryBaseDelay*2^attempt)).
+const (
+	retryBaseDelay = 500 * time.Millisecond
+	retryMaxDelay  = 4 * time.Second
+)
+
+// isRetryableStatus reports whether an HTTP status warrants a retry.
+// 429/503 only — never 4xx auth/validation errors, and never other 5xx
+// (those usually indicate a bug, not transient load).
+func isRetryableStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable
+}
+
+func retryBackoff(attempt int) time.Duration {
+	ceiling := retryBaseDelay * time.Duration(int64(1)<<uint(attempt))
+	if ceiling > retryMaxDelay {
+		ceiling = retryMaxDelay
+	}
+	return time.Duration(rand.Int63n(int64(ceiling)))
 }
 
 // APIError represents a non-2xx response from the API.
@@ -71,29 +105,29 @@ type Agent struct {
 }
 
 type Run struct {
-	ID          string          `json:"id"`
-	AgentName   string          `json:"agentName,omitempty"`
-	Status      string          `json:"status"`
-	Input       json.RawMessage `json:"input,omitempty"`
-	Output      json.RawMessage `json:"output,omitempty"`
-	CostUsd     float64         `json:"costUsd"`
-	TokensIn    int64           `json:"tokensIn"`
-	TokensOut   int64           `json:"tokensOut"`
-	CreatedAt   time.Time       `json:"createdAt,omitempty"`
-	FinishedAt  *time.Time      `json:"finishedAt,omitempty"`
+	ID         string          `json:"id"`
+	AgentName  string          `json:"agentName,omitempty"`
+	Status     string          `json:"status"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	Output     json.RawMessage `json:"output,omitempty"`
+	CostUsd    float64         `json:"costUsd"`
+	TokensIn   int64           `json:"tokensIn"`
+	TokensOut  int64           `json:"tokensOut"`
+	CreatedAt  time.Time       `json:"createdAt,omitempty"`
+	FinishedAt *time.Time      `json:"finishedAt,omitempty"`
 }
 
 type Forecast struct {
-	AgentName          string          `json:"agentName"`
-	Model              string          `json:"model"`
-	Provider           string          `json:"provider"`
-	EstimatedTokensIn  int64           `json:"estimatedTokensIn"`
-	EstimatedTokensOut int64           `json:"estimatedTokensOut"`
-	EstimatedCostUsd   float64         `json:"estimatedCostUsd"`
-	Confidence         float64         `json:"confidence"`
-	WouldExceedBudget  bool            `json:"wouldExceedBudget"`
-	BlockReason        string          `json:"blockReason,omitempty"`
-	Reasoning          map[string]any  `json:"reasoning,omitempty"`
+	AgentName          string         `json:"agentName"`
+	Model              string         `json:"model"`
+	Provider           string         `json:"provider"`
+	EstimatedTokensIn  int64          `json:"estimatedTokensIn"`
+	EstimatedTokensOut int64          `json:"estimatedTokensOut"`
+	EstimatedCostUsd   float64        `json:"estimatedCostUsd"`
+	Confidence         float64        `json:"confidence"`
+	WouldExceedBudget  bool           `json:"wouldExceedBudget"`
+	BlockReason        string         `json:"blockReason,omitempty"`
+	Reasoning          map[string]any `json:"reasoning,omitempty"`
 }
 
 type Budget struct {
@@ -169,8 +203,8 @@ func (c *Client) DeleteAgent(ctx context.Context, name string) error {
 
 // RunOptions controls CreateRun.
 type RunOptions struct {
-	AgentName string          `json:"agentName"`
-	Input     any             `json:"input,omitempty"`
+	AgentName string            `json:"agentName"`
+	Input     any               `json:"input,omitempty"`
 	Labels    map[string]string `json:"labels,omitempty"`
 }
 
@@ -197,6 +231,136 @@ func (c *Client) ForecastRun(ctx context.Context, agentName, input string) (*For
 		"agentName": agentName, "input": input,
 	}, &out)
 	return &out, err
+}
+
+// ---------- Sessions ----------
+
+// SessionMessage is one turn in a session's message history.
+type SessionMessage struct {
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Timestamp string `json:"timestamp,omitempty"`
+}
+
+// Session is an interactive multi-turn agent session.
+type Session struct {
+	ID        string           `json:"id"`
+	TenantID  string           `json:"tenantId,omitempty"`
+	AgentName string           `json:"agentName"`
+	Status    string           `json:"status"`
+	Messages  []SessionMessage `json:"messages,omitempty"`
+	CreatedAt time.Time        `json:"createdAt,omitempty"`
+	UpdatedAt time.Time        `json:"updatedAt,omitempty"`
+}
+
+// CreateSession starts a new interactive session for an agent.
+func (c *Client) CreateSession(ctx context.Context, agentName string, metadata map[string]any) (*Session, error) {
+	var out Session
+	err := c.do(ctx, http.MethodPost, "/v1/sessions", map[string]any{
+		"agentName": agentName, "metadata": metadata,
+	}, &out)
+	return &out, err
+}
+
+// GetSession fetches a session by id.
+func (c *Client) GetSession(ctx context.Context, id string) (*Session, error) {
+	var out Session
+	err := c.do(ctx, http.MethodGet, "/v1/sessions/"+id, nil, &out)
+	return &out, err
+}
+
+// ListSessions returns all sessions for the authenticated tenant.
+func (c *Client) ListSessions(ctx context.Context) ([]Session, error) {
+	var out []Session
+	err := c.do(ctx, http.MethodGet, "/v1/sessions", nil, &out)
+	return out, err
+}
+
+// SendSessionMessage posts a user message to a session. The control plane
+// generates the assistant's reply asynchronously and acknowledges with 202
+// ("processing") rather than returning the reply inline — call GetSession or
+// stream /v1/sessions/{id}/events to observe the result.
+func (c *Client) SendSessionMessage(ctx context.Context, sessionID, content string) error {
+	return c.do(ctx, http.MethodPost, "/v1/sessions/"+sessionID+"/messages", map[string]string{
+		"content": content,
+	}, nil)
+}
+
+// StopSession stops a running session.
+func (c *Client) StopSession(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/v1/sessions/"+id+"/stop", nil, nil)
+}
+
+// DeleteSession deletes a session.
+func (c *Client) DeleteSession(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/sessions/"+id, nil, nil)
+}
+
+// ---------- Connectors ----------
+
+// ConnectorInstall is an installed connector integration.
+type ConnectorInstall struct {
+	ID          string         `json:"id"`
+	TenantID    string         `json:"tenantId,omitempty"`
+	ConnectorID string         `json:"connectorId"`
+	DisplayName string         `json:"displayName"`
+	Status      string         `json:"status"`
+	Config      map[string]any `json:"config,omitempty"`
+	Scopes      []string       `json:"scopes,omitempty"`
+	AuthMethod  string         `json:"authMethod,omitempty"`
+	InstalledBy string         `json:"installedBy,omitempty"`
+	InstalledAt time.Time      `json:"installedAt,omitempty"`
+	UpdatedAt   time.Time      `json:"updatedAt,omitempty"`
+}
+
+// InstallConnector installs a connector integration for the tenant.
+func (c *Client) InstallConnector(ctx context.Context, connectorID, displayName string, config map[string]any, scopes []string) (*ConnectorInstall, error) {
+	var out ConnectorInstall
+	err := c.do(ctx, http.MethodPost, "/v1/connectors/install", map[string]any{
+		"connectorId": connectorID, "displayName": displayName, "config": config, "scopes": scopes,
+	}, &out)
+	return &out, err
+}
+
+// ListConnectors returns installed connectors for the tenant.
+func (c *Client) ListConnectors(ctx context.Context) ([]ConnectorInstall, error) {
+	var out []ConnectorInstall
+	err := c.do(ctx, http.MethodGet, "/v1/connectors", nil, &out)
+	return out, err
+}
+
+// GetConnector fetches an installed connector by id.
+func (c *Client) GetConnector(ctx context.Context, id string) (*ConnectorInstall, error) {
+	var out ConnectorInstall
+	err := c.do(ctx, http.MethodGet, "/v1/connectors/"+id, nil, &out)
+	return &out, err
+}
+
+// TestConnectorResult is the outcome of a connector connectivity test.
+type TestConnectorResult struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// TestConnector verifies an installed connector's stored credentials still work.
+func (c *Client) TestConnector(ctx context.Context, id string) (*TestConnectorResult, error) {
+	var out TestConnectorResult
+	err := c.do(ctx, http.MethodPost, "/v1/connectors/"+id+"/test", nil, &out)
+	return &out, err
+}
+
+// UninstallConnector removes an installed connector.
+func (c *Client) UninstallConnector(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/connectors/"+id, nil, nil)
+}
+
+// ExecuteConnectorAction runs a connector action (e.g. "send_message" on the
+// slack connector) with the given params, per the server contract
+// (POST /v1/connectors/{connectorId}/execute?action={action}).
+func (c *Client) ExecuteConnectorAction(ctx context.Context, connectorID, action string, params map[string]any) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.do(ctx, http.MethodPost, "/v1/connectors/"+connectorID+"/execute?action="+url.QueryEscape(action), params, &out)
+	return out, err
 }
 
 // ---------- Budgets ----------
@@ -272,23 +436,23 @@ func (c *Client) SetEvalBaseline(ctx context.Context, agentName, branch, evalRun
 
 // Experiment is an A/B test between two agent versions with optional auto-promotion.
 type Experiment struct {
-	ID                string     `json:"id,omitempty"`
-	AgentName         string     `json:"agentName"`
-	Name              string     `json:"name"`
-	VariantAVersion   string     `json:"variantAVersion"`
-	VariantBVersion   string     `json:"variantBVersion"`
-	TrafficSplitB     int        `json:"trafficSplitB"`
-	EvalSuiteID       string     `json:"evalSuiteId,omitempty"`
-	AutoPromote       bool       `json:"autoPromote"`
-	MinRunsToPromote  int        `json:"minRunsToPromote,omitempty"`
-	Status            string     `json:"status,omitempty"`
-	Winner            string     `json:"winner,omitempty"`
-	ARuns             int        `json:"aRuns,omitempty"`
-	BRuns             int        `json:"bRuns,omitempty"`
-	AScore            *float64   `json:"aScore,omitempty"`
-	BScore            *float64   `json:"bScore,omitempty"`
-	StartedAt         time.Time  `json:"startedAt,omitempty"`
-	ConcludedAt       *time.Time `json:"concludedAt,omitempty"`
+	ID               string     `json:"id,omitempty"`
+	AgentName        string     `json:"agentName"`
+	Name             string     `json:"name"`
+	VariantAVersion  string     `json:"variantAVersion"`
+	VariantBVersion  string     `json:"variantBVersion"`
+	TrafficSplitB    int        `json:"trafficSplitB"`
+	EvalSuiteID      string     `json:"evalSuiteId,omitempty"`
+	AutoPromote      bool       `json:"autoPromote"`
+	MinRunsToPromote int        `json:"minRunsToPromote,omitempty"`
+	Status           string     `json:"status,omitempty"`
+	Winner           string     `json:"winner,omitempty"`
+	ARuns            int        `json:"aRuns,omitempty"`
+	BRuns            int        `json:"bRuns,omitempty"`
+	AScore           *float64   `json:"aScore,omitempty"`
+	BScore           *float64   `json:"bScore,omitempty"`
+	StartedAt        time.Time  `json:"startedAt,omitempty"`
+	ConcludedAt      *time.Time `json:"concludedAt,omitempty"`
 }
 
 // CreateExperiment starts a new A/B experiment.
@@ -317,16 +481,16 @@ func (c *Client) ConcludeExperiment(ctx context.Context, id, winner string, prom
 
 // MarketplaceAgent is a publicly published agent available for forking.
 type MarketplaceAgent struct {
-	Slug         string         `json:"slug"`
-	Name         string         `json:"name"`
-	Description  string         `json:"description"`
-	Category     string         `json:"category"`
-	Tags         []string       `json:"tags,omitempty"`
-	StarsCount   int            `json:"starsCount"`
-	ForksCount   int            `json:"forksCount"`
-	Author       string         `json:"author,omitempty"`
-	Manifest     map[string]any `json:"manifest,omitempty"`
-	PublishedAt  time.Time      `json:"publishedAt"`
+	Slug        string         `json:"slug"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Category    string         `json:"category"`
+	Tags        []string       `json:"tags,omitempty"`
+	StarsCount  int            `json:"starsCount"`
+	ForksCount  int            `json:"forksCount"`
+	Author      string         `json:"author,omitempty"`
+	Manifest    map[string]any `json:"manifest,omitempty"`
+	PublishedAt time.Time      `json:"publishedAt"`
 }
 
 // ListMarketplace returns published agents matching the optional category/query filters.
@@ -544,35 +708,62 @@ func (c *Client) Rehearse(ctx context.Context, agentName string, opts RehearseOp
 // ---------- internals ----------
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
-	var reqBody io.Reader
+	var bodyBytes []byte
 	if body != nil {
 		buf, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("lantern: marshal body: %w", err)
 		}
-		reqBody = bytes.NewReader(buf)
+		bodyBytes = buf
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
-	if err != nil {
-		return err
+
+	var lastErr error
+	for attempt := 0; attempt < c.maxAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryBackoff(attempt - 1)):
+			}
+		}
+
+		var reqBody io.Reader
+		if bodyBytes != nil {
+			reqBody = bytes.NewReader(bodyBytes)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if c.apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		}
+
+		res, err := c.http.Do(req)
+		if err != nil {
+			lastErr = err
+			continue // network error: retry
+		}
+		if isRetryableStatus(res.StatusCode) {
+			b, _ := io.ReadAll(res.Body)
+			res.Body.Close()
+			lastErr = &APIError{Status: res.StatusCode, Body: string(b)}
+			continue
+		}
+		if res.StatusCode >= 400 {
+			b, _ := io.ReadAll(res.Body)
+			res.Body.Close()
+			return &APIError{Status: res.StatusCode, Body: string(b)}
+		}
+		if out == nil {
+			res.Body.Close()
+			return nil
+		}
+		defer res.Body.Close()
+		return json.NewDecoder(res.Body).Decode(out)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
-	res, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode >= 400 {
-		b, _ := io.ReadAll(res.Body)
-		return &APIError{Status: res.StatusCode, Body: string(b)}
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(res.Body).Decode(out)
+	return lastErr
 }
 
 func getenv(k, fallback string) string {

@@ -459,22 +459,39 @@ impl ControlPlaneClient {
         })
     }
 
-    fn inject_tenant_metadata<T>(&self, request: &mut Request<T>, claims: &Claims) {
+    /// Inject tenant-scoped metadata headers required by the control-plane
+    /// trust boundary.  Fails closed: `x-tenant-id` is a security boundary;
+    /// a malformed JWT claim that cannot be turned into a valid gRPC metadata
+    /// value must produce an error, not silently drop the header and let the
+    /// control-plane fall back to its own defaults.
+    fn inject_tenant_metadata<T>(
+        &self,
+        request: &mut Request<T>,
+        claims: &Claims,
+    ) -> Result<(), AppError> {
         let metadata = request.metadata_mut();
-        if let Ok(val) = claims.tenant_id.parse() {
-            metadata.insert("x-tenant-id", val);
-        }
+
+        let tenant_val = claims
+            .tenant_id
+            .parse::<tonic::metadata::MetadataValue<tonic::metadata::Ascii>>()
+            .map_err(|_| {
+                AppError::BadRequest(format!(
+                    "invalid tenant_id in JWT claims: {:?}",
+                    claims.tenant_id
+                ))
+            })?;
+        metadata.insert("x-tenant-id", tenant_val);
+
         if let Ok(val) = claims.user_id.parse() {
             metadata.insert("x-user-id", val);
         }
         // Authenticate to the control-plane gRPC trust boundary. Only attached
         // when configured; the control-plane fails closed in prod if it expects
         // a token and the header is missing/wrong.
-        if !self.service_token.is_empty() {
-            if let Ok(val) = self.service_token.parse() {
-                metadata.insert("x-lantern-service-token", val);
-            }
+        if !self.service_token.is_empty() && let Ok(val) = self.service_token.parse() {
+            metadata.insert("x-lantern-service-token", val);
         }
+        Ok(())
     }
 
     // -- Agent RPCs --
@@ -486,7 +503,7 @@ impl ControlPlaneClient {
     ) -> Result<Agent, AppError> {
         let mut client = AgentServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        self.inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims)?;
         client
             .create_agent(request)
             .await
@@ -501,7 +518,7 @@ impl ControlPlaneClient {
     ) -> Result<Agent, AppError> {
         let mut client = AgentServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        self.inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims)?;
         client
             .get_agent(request)
             .await
@@ -516,7 +533,7 @@ impl ControlPlaneClient {
     ) -> Result<ListAgentsResponse, AppError> {
         let mut client = AgentServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        self.inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims)?;
         client
             .list_agents(request)
             .await
@@ -531,7 +548,7 @@ impl ControlPlaneClient {
     ) -> Result<DeleteAgentResponse, AppError> {
         let mut client = AgentServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        self.inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims)?;
         client
             .delete_agent(request)
             .await
@@ -548,7 +565,7 @@ impl ControlPlaneClient {
     ) -> Result<Run, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        self.inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims)?;
         client
             .create_run(request)
             .await
@@ -559,7 +576,7 @@ impl ControlPlaneClient {
     pub async fn get_run(&self, claims: &Claims, req: GetRunRequest) -> Result<Run, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        self.inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims)?;
         client
             .get_run(request)
             .await
@@ -574,7 +591,7 @@ impl ControlPlaneClient {
     ) -> Result<ListRunsResponse, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        self.inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims)?;
         client
             .list_runs(request)
             .await
@@ -589,7 +606,7 @@ impl ControlPlaneClient {
     ) -> Result<Run, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        self.inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims)?;
         client
             .cancel_run(request)
             .await
@@ -604,7 +621,7 @@ impl ControlPlaneClient {
     ) -> Result<Streaming<StreamEvent>, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        self.inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims)?;
         client
             .stream_run_events(request)
             .await
@@ -619,7 +636,7 @@ impl ControlPlaneClient {
     ) -> Result<SignalRunResponse, AppError> {
         let mut client = RunServiceClient::new(self.channel.clone());
         let mut request = Request::new(req);
-        self.inject_tenant_metadata(&mut request, claims);
+        self.inject_tenant_metadata(&mut request, claims)?;
         client
             .signal_run(request)
             .await

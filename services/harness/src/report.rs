@@ -44,18 +44,8 @@ pub fn channel() -> (mpsc::Sender<HarnessReport>, mpsc::Receiver<HarnessReport>)
 const RECONNECT_MIN: Duration = Duration::from_millis(500);
 const RECONNECT_MAX: Duration = Duration::from_secs(15);
 
-/// Is this report security-critical and therefore must leave a local WARN
-/// trail even if forwarding fails? True for secret vends and egress *denials*.
-fn is_security_audit(rep: &HarnessReport) -> bool {
-    match rep {
-        HarnessReport::Audit(a) => {
-            a.action == "secret_vend"
-                || (a.action == "egress"
-                    && a.attrs.get("decision").map(String::as_str) == Some("deny"))
-        }
-        _ => false,
-    }
-}
+// is_security_audit lives as HarnessReport::is_security_audit() in proto.rs so
+// manager_client.rs can use it without creating a circular module dependency.
 
 /// Emit the guaranteed local trail for a security-critical audit. NEVER logs
 /// secret values — `AuditEvent.attrs` for `secret_vend` carry only env_name /
@@ -154,7 +144,7 @@ async fn forward_until_break(
         };
 
         // SECURITY: guaranteed local trail BEFORE any forward attempt.
-        if is_security_audit(&rep) {
+        if rep.is_security_audit() {
             log_security_audit(&rep);
         }
 
@@ -164,7 +154,7 @@ async fn forward_until_break(
             return true;
         }
 
-        if is_security_audit(&rep) {
+        if rep.is_security_audit() {
             // Audit events MUST NOT be dropped on a full buffer — block until
             // there's room (or the receiver is gone, signalling reconnect).
             match fwd_tx.send(rep).await {
@@ -236,20 +226,44 @@ mod tests {
         })
     }
 
+    fn secret_access_denied() -> HarnessReport {
+        let mut attrs = HashMap::new();
+        attrs.insert("peer_uid".into(), "31337".into());
+        attrs.insert("decision".into(), "deny".into());
+        HarnessReport::Audit(AuditEvent {
+            vm_id: "vm-1".into(),
+            action: "secret_access_denied".into(),
+            at_unix_ms: now_unix_ms(),
+            attrs,
+        })
+    }
+
+    fn egress_preflight_deny() -> HarnessReport {
+        let mut attrs = HashMap::new();
+        attrs.insert("decision".into(), "deny".into());
+        attrs.insert("preflight".into(), "fail_closed".into());
+        HarnessReport::Audit(AuditEvent {
+            vm_id: "vm-1".into(),
+            action: "egress_preflight".into(),
+            at_unix_ms: now_unix_ms(),
+            attrs,
+        })
+    }
+
     #[test]
     fn secret_vend_is_security_audit() {
-        assert!(is_security_audit(&secret_vend()));
+        assert!(secret_vend().is_security_audit());
     }
 
     #[test]
     fn egress_deny_is_security_audit() {
-        assert!(is_security_audit(&egress_deny()));
+        assert!(egress_deny().is_security_audit());
     }
 
     #[test]
     fn egress_allow_is_not_security_audit() {
         // Allowed egress is routine; it does not need the WARN fail-safe trail.
-        assert!(!is_security_audit(&egress_allow()));
+        assert!(!egress_allow().is_security_audit());
     }
 
     #[test]
@@ -261,7 +275,24 @@ mod tests {
             text: "hello".into(),
             attrs: HashMap::new(),
         });
-        assert!(!is_security_audit(&log));
+        assert!(!log.is_security_audit());
+    }
+
+    // Bug 3 fix: these two event kinds were previously missing from the match.
+    #[test]
+    fn secret_access_denied_is_security_audit() {
+        assert!(
+            secret_access_denied().is_security_audit(),
+            "secret_access_denied must be treated as a security audit"
+        );
+    }
+
+    #[test]
+    fn egress_preflight_is_security_audit() {
+        assert!(
+            egress_preflight_deny().is_security_audit(),
+            "egress_preflight must be treated as a security audit"
+        );
     }
 
     /// When the RPC task has already finished (transport gone), a security

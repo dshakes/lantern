@@ -12,6 +12,7 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -175,8 +176,11 @@ type heartbeatBody struct {
 
 // POST /v1/nodes/heartbeat
 func (h *RESTHandler) NodeHeartbeat(w http.ResponseWriter, r *http.Request, expectedToken string) {
+	// Constant-time compare to prevent timing-based token enumeration.
+	// When expectedToken is empty the check is skipped (dev mode); the startup
+	// guard in cmd/scheduler/main.go aborts in prod when the token is unset.
 	if expectedToken != "" {
-		if r.Header.Get("X-Scheduler-Token") != expectedToken {
+		if subtle.ConstantTimeCompare([]byte(expectedToken), []byte(r.Header.Get("X-Scheduler-Token"))) != 1 {
 			writeErr(w, http.StatusUnauthorized, "invalid X-Scheduler-Token")
 			return
 		}

@@ -253,9 +253,11 @@ func (h *RESTHandler) GetRunEvents(w http.ResponseWriter, r *http.Request) {
 
 // isRunTerminal reports whether the given run status string is a terminal state.
 // Terminal runs will never emit new journal_events.
+// Accept both spellings: the DB persists "cancelled" (two-L British); "canceled"
+// (one-L) is kept for belt-and-braces in case any old writer used it.
 func isRunTerminal(status string) bool {
 	switch status {
-	case "succeeded", "failed", "canceled":
+	case "succeeded", "failed", "cancelled", "canceled":
 		return true
 	default:
 		return false

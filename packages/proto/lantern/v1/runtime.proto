@@ -199,6 +199,9 @@ message ScheduleRequest {
   // If true, scheduler reserves the slot but doesn't spawn yet —
   // caller commits via Spawn(handle) on the manager service.
   bool reserve_only            = 4;
+  // Idempotency key — repeated requests with the same key return the original
+  // VmHandle so client retries after a timeout don't double-create a billed VM.
+  string idempotency_key       = 5;
 }
 
 message EventsRequest {

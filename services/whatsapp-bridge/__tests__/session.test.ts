@@ -13,6 +13,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
+// Must precede the session.js import: enables the opt-in pause-expiry warning
+// (LANTERN_PAUSE_WARN) that the grace-period ticker tests assert.
+import "./helpers/enable-pause-warn.js";
 import { WhatsAppSession, contactReplyWantsCalendar } from "../src/session.js";
 
 const logger = pino({ level: "silent" });

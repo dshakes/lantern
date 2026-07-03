@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import clsx from "clsx";
 import { Button } from "@/components/button";
+import { ConfirmModal } from "@/components/modal";
 import { useToast } from "@/components/toast";
 
 // ---------------------------------------------------------------------------
@@ -560,6 +561,11 @@ export function WhatsAppPairing({
   // Wall-clock ticker so countdowns and "just now" labels update without
   // re-mounting children. 500ms is smooth enough; lower has no benefit.
   const [now, setNow] = useState(Date.now());
+  // Confirmation modals for the two destructive reset triggers below —
+  // "Forget device" resets directly; "Re-pair" has its own wording, then
+  // runs the same underlying reset.
+  const [confirmForgetOpen, setConfirmForgetOpen] = useState(false);
+  const [confirmRepairOpen, setConfirmRepairOpen] = useState(false);
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(id);
@@ -913,14 +919,6 @@ export function WhatsAppPairing({
   // paired phone number — confusing if the user wanted to pair a different
   // account. Confirmed before firing because it's destructive.
   const handleReset = useCallback(async () => {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        "Forget this WhatsApp device? You'll need to scan a new QR code on your phone to pair again."
-      )
-    ) {
-      return;
-    }
     try {
       await fetch(proxyUrl(`/session/${tenantId}/reset`), {
         method: "POST",
@@ -1408,12 +1406,7 @@ export function WhatsAppPairing({
                 </p>
               </div>
               <Button
-                onClick={async () => {
-                  if (typeof window !== "undefined" && !window.confirm(
-                    "Re-pair WhatsApp for full history sync? You'll need to scan a new QR on your phone. The bot will be offline for ~30s while you re-pair."
-                  )) return;
-                  await handleReset();
-                }}
+                onClick={() => setConfirmRepairOpen(true)}
                 variant="secondary"
                 size="sm"
                 icon={<RefreshCw className="h-3 w-3" />}
@@ -1438,7 +1431,7 @@ export function WhatsAppPairing({
                 </p>
               </div>
               <Button
-                onClick={handleReset}
+                onClick={() => setConfirmForgetOpen(true)}
                 variant="danger"
                 size="sm"
                 icon={<Trash2 className="h-3 w-3" />}
@@ -1513,6 +1506,32 @@ export function WhatsAppPairing({
           ) : null}
         </div>
       </details>
+
+      <ConfirmModal
+        open={confirmRepairOpen}
+        title="Re-pair for full history sync?"
+        description="You'll need to scan a new QR on your phone. The bot will be offline for ~30s while you re-pair."
+        confirmLabel="Re-pair"
+        tone="danger"
+        onCancel={() => setConfirmRepairOpen(false)}
+        onConfirm={async () => {
+          setConfirmRepairOpen(false);
+          await handleReset();
+        }}
+      />
+
+      <ConfirmModal
+        open={confirmForgetOpen}
+        title="Forget this device?"
+        description="You'll need to scan a new QR code on your phone to pair again."
+        confirmLabel="Forget device"
+        tone="danger"
+        onCancel={() => setConfirmForgetOpen(false)}
+        onConfirm={async () => {
+          setConfirmForgetOpen(false);
+          await handleReset();
+        }}
+      />
     </div>
   );
 }

@@ -24,6 +24,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import clsx from "clsx";
 import { Button } from "@/components/button";
+import { ConfirmModal } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { runtimeApi, UnauthorizedError } from "@/lib/runtime-api";
 import type { VmRow } from "@/lib/runtime-types";
@@ -453,6 +454,7 @@ function AuditTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
 function LifecycleTab({ vm, isDemo, onTerminated }: { vm: VmRow; isDemo: boolean; onTerminated: () => void }) {
   const toast = useToast();
   const [terminating, setTerminating] = useState(false);
+  const [confirmTerminate, setConfirmTerminate] = useState(false);
   const active = vm.state !== "terminated" && vm.state !== "failed";
 
   const STEPS: { state: string; label: string }[] = [
@@ -466,7 +468,6 @@ function LifecycleTab({ vm, isDemo, onTerminated }: { vm: VmRow; isDemo: boolean
   const curIdx = order.indexOf(vm.state);
 
   const terminate = useCallback(async () => {
-    if (!confirm(`Terminate ${vm.name || vm.vmId}? This drains the VM and releases its slot.`)) return;
     setTerminating(true);
     try {
       if (isDemo) {
@@ -483,6 +484,7 @@ function LifecycleTab({ vm, isDemo, onTerminated }: { vm: VmRow; isDemo: boolean
       }
     } finally {
       setTerminating(false);
+      setConfirmTerminate(false);
     }
   }, [vm, isDemo, toast, onTerminated]);
 
@@ -528,10 +530,21 @@ function LifecycleTab({ vm, isDemo, onTerminated }: { vm: VmRow; isDemo: boolean
       </div>
 
       {active && (
-        <Button variant="danger" size="md" loading={terminating} onClick={terminate} icon={<StopCircle className="h-3.5 w-3.5" />}>
+        <Button variant="danger" size="md" loading={terminating} onClick={() => setConfirmTerminate(true)} icon={<StopCircle className="h-3.5 w-3.5" />}>
           Terminate workload
         </Button>
       )}
+
+      <ConfirmModal
+        open={confirmTerminate}
+        title={`Terminate ${vm.name || vm.vmId}?`}
+        description="This drains the VM and releases its slot."
+        confirmLabel="Terminate"
+        tone="danger"
+        confirming={terminating}
+        onCancel={() => setConfirmTerminate(false)}
+        onConfirm={terminate}
+      />
     </div>
   );
 }

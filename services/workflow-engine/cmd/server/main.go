@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
@@ -36,6 +37,17 @@ func main() {
 
 	logger := mustInitLogger(cfg.LogLevel)
 	defer logger.Sync() //nolint:errcheck
+
+	// Fail closed in production; warn and continue in dev (LANTERN_ENV unset).
+	// Without a service token any caller reachable to :50052 can forge any
+	// tenant_id because the token check is what guards the tenant interceptor.
+	prod := isProdEnv()
+	if prod && cfg.GRPCServiceToken == "" {
+		logger.Fatal("LANTERN_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC port (:50052) would accept any caller-supplied tenant_id; set a strong random shared token (same value as the control-plane)")
+	}
+	if !prod && cfg.GRPCServiceToken == "" {
+		logger.Warn("LANTERN_GRPC_SERVICE_TOKEN is unset — workflow-engine gRPC accepts unauthenticated callers (acceptable in dev, required in production)")
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
@@ -124,12 +136,15 @@ func main() {
 	}
 
 	// --- gRPC server ---
+	grpcServiceToken := cfg.GRPCServiceToken
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
+			middleware.UnaryServiceAuthInterceptor(logger, grpcServiceToken),
 			middleware.UnaryTenantInterceptor(logger),
 			unaryTracingInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
+			middleware.StreamServiceAuthInterceptor(logger, grpcServiceToken),
 			middleware.StreamTenantInterceptor(logger),
 			streamTracingInterceptor(),
 		),
@@ -233,6 +248,7 @@ type config struct {
 	Workers            int
 	ModelRouterAddr    string
 	RuntimeManagerAddr string
+	GRPCServiceToken   string
 }
 
 func loadConfig() config {
@@ -249,7 +265,15 @@ func loadConfig() config {
 		Workers:            workers,
 		ModelRouterAddr:    envOrDefault("LANTERN_MODEL_ROUTER_ADDR", "model-router:50053"),
 		RuntimeManagerAddr: envOrDefault("LANTERN_RUNTIME_MANAGER_ADDR", "runtime-manager:50054"),
+		GRPCServiceToken:   os.Getenv("LANTERN_GRPC_SERVICE_TOKEN"),
 	}
+}
+
+// isProdEnv reports whether the server is running in a production-like
+// environment (LANTERN_ENV=prod|production|staging).
+func isProdEnv() bool {
+	e := os.Getenv("LANTERN_ENV")
+	return e == "prod" || e == "production" || e == "staging"
 }
 
 func envOrDefault(key, fallback string) string {
@@ -277,7 +301,15 @@ func mustInitLogger(level string) *zap.Logger {
 	return logger
 }
 
-// unaryTracingInterceptor returns a gRPC unary interceptor that creates OTel spans.
+// runIDer is satisfied by any proto request that carries a run_id field.
+// Used to extract lantern.run_id for span enrichment without type-switching
+// on every concrete request type.
+type runIDer interface{ GetRunId() string }
+
+// unaryTracingInterceptor returns a gRPC unary interceptor that creates OTel
+// spans enriched with lantern.tenant_id and, where the request carries it,
+// lantern.run_id (invariant #9). The tenant_id is already in ctx because
+// UnaryTenantInterceptor runs before this one in the chain.
 func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 	tracer := otel.Tracer("lantern.workflow-engine")
 	return func(
@@ -288,11 +320,28 @@ func unaryTracingInterceptor() grpc.UnaryServerInterceptor {
 	) (any, error) {
 		ctx, span := tracer.Start(ctx, info.FullMethod)
 		defer span.End()
+
+		var attrs []attribute.KeyValue
+		if tid, ok := middleware.TenantIDFromContext(ctx); ok && tid != "" {
+			attrs = append(attrs, attribute.String("lantern.tenant_id", tid))
+		}
+		if r, ok := req.(runIDer); ok {
+			if rid := r.GetRunId(); rid != "" {
+				attrs = append(attrs, attribute.String("lantern.run_id", rid))
+			}
+		}
+		if len(attrs) > 0 {
+			span.SetAttributes(attrs...)
+		}
+
 		return handler(ctx, req)
 	}
 }
 
-// streamTracingInterceptor returns a gRPC stream interceptor that creates OTel spans.
+// streamTracingInterceptor returns a gRPC stream interceptor that creates OTel
+// spans enriched with lantern.tenant_id (invariant #9). run_id is not
+// available at the stream interceptor level (it arrives in the first message,
+// not in the metadata); handlers enrich their own spans when they know it.
 func streamTracingInterceptor() grpc.StreamServerInterceptor {
 	tracer := otel.Tracer("lantern.workflow-engine")
 	return func(
@@ -303,6 +352,11 @@ func streamTracingInterceptor() grpc.StreamServerInterceptor {
 	) error {
 		ctx, span := tracer.Start(ss.Context(), info.FullMethod)
 		defer span.End()
+
+		if tid, ok := middleware.TenantIDFromContext(ctx); ok && tid != "" {
+			span.SetAttributes(attribute.String("lantern.tenant_id", tid))
+		}
+
 		wrapped := &wrappedStream{ServerStream: ss, ctx: ctx}
 		return handler(srv, wrapped)
 	}

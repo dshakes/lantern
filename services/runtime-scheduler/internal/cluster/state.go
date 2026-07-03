@@ -13,6 +13,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -86,6 +88,21 @@ type ClusterStore interface {
 	Publish(ev *lanternv1.StatusEvent, tenantID string)
 }
 
+// capReservation holds the pending capacity subtracted from a node by a
+// Schedule call before the next heartbeat reconciles the real free capacity.
+type capReservation struct {
+	vcpuMillis int64
+	memBytes   int64
+}
+
+// vmCapEntry records the capacity a single VM reserved so DeleteVM can
+// release it accurately without waiting for the next heartbeat.
+type vmCapEntry struct {
+	nodeName   string
+	vcpuMillis int64
+	memBytes   int64
+}
+
 // InMemoryStore is the default ClusterStore. All maps are guarded by mu.
 type InMemoryStore struct {
 	mu          sync.RWMutex
@@ -93,6 +110,12 @@ type InMemoryStore struct {
 	vms         map[string]*VM
 	tenantVMs   map[string]int
 	subscribers map[string]map[string]subscriber // tenantID -> id -> sub
+
+	// nodeReservations tracks aggregate pending capacity per node between
+	// Pick() and the next heartbeat (which provides the real free capacity).
+	// Guarded by mu. ponytail: in-process map; reconciled on each heartbeat.
+	nodeReservations map[string]capReservation
+	vmCapReserved    map[string]vmCapEntry // keyed by vm_id
 }
 
 type subscriber struct {
@@ -103,10 +126,12 @@ type subscriber struct {
 // NewInMemoryStore returns a freshly initialized in-memory cluster store.
 func NewInMemoryStore() *InMemoryStore {
 	return &InMemoryStore{
-		nodes:       make(map[string]*Node),
-		vms:         make(map[string]*VM),
-		tenantVMs:   make(map[string]int),
-		subscribers: make(map[string]map[string]subscriber),
+		nodes:            make(map[string]*Node),
+		vms:              make(map[string]*VM),
+		tenantVMs:        make(map[string]int),
+		subscribers:      make(map[string]map[string]subscriber),
+		nodeReservations: make(map[string]capReservation),
+		vmCapReserved:    make(map[string]vmCapEntry),
 	}
 }
 
@@ -130,6 +155,10 @@ func (s *InMemoryStore) UpsertNode(n Node) {
 	}
 	cp := n
 	s.nodes[n.Name] = &cp
+	// Heartbeat provides accurate free capacity from the manager — clear any
+	// pending reservation for this node. The FreeVcpuMillis/FreeMemoryBytes
+	// in the heartbeat already reflect running VMs.
+	delete(s.nodeReservations, n.Name)
 }
 
 func (s *InMemoryStore) RemoveNode(name string) {
@@ -143,7 +172,9 @@ func (s *InMemoryStore) ListNodes() []Node {
 	defer s.mu.RUnlock()
 	out := make([]Node, 0, len(s.nodes))
 	for _, n := range s.nodes {
-		out = append(out, *n)
+		cp := *n
+		s.applyReservation(&cp)
+		out = append(out, cp)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -156,7 +187,24 @@ func (s *InMemoryStore) GetNode(name string) (Node, bool) {
 	if !ok {
 		return Node{}, false
 	}
-	return *n, true
+	cp := *n
+	s.applyReservation(&cp)
+	return cp, true
+}
+
+// applyReservation subtracts pending capacity reservations from a node copy.
+// Must be called under mu (read or write lock).
+func (s *InMemoryStore) applyReservation(n *Node) {
+	if r, ok := s.nodeReservations[n.Name]; ok {
+		n.FreeVcpuMillis -= r.vcpuMillis
+		if n.FreeVcpuMillis < 0 {
+			n.FreeVcpuMillis = 0
+		}
+		n.FreeMemoryBytes -= r.memBytes
+		if n.FreeMemoryBytes < 0 {
+			n.FreeMemoryBytes = 0
+		}
+	}
 }
 
 // MarkDrainingIfStale finds nodes whose last heartbeat is older than
@@ -188,6 +236,23 @@ func (s *InMemoryStore) CreateVM(v *VM) {
 	s.vms[v.Handle.VmId] = v
 	if n, ok := s.nodes[v.NodeName]; ok {
 		n.RunningVms++
+	}
+	// Reserve capacity atomically so the next Pick() sees reduced free capacity
+	// before the node's next heartbeat reconciles the real value.
+	if v.Spec != nil && v.Spec.Limits != nil {
+		vcpu := parseVcpuMillisCluster(v.Spec.Limits.Vcpu)
+		mem := parseMemBytesCluster(v.Spec.Limits.Memory)
+		if vcpu > 0 || mem > 0 {
+			r := s.nodeReservations[v.NodeName]
+			r.vcpuMillis += vcpu
+			r.memBytes += mem
+			s.nodeReservations[v.NodeName] = r
+			s.vmCapReserved[v.Handle.VmId] = vmCapEntry{
+				nodeName:   v.NodeName,
+				vcpuMillis: vcpu,
+				memBytes:   mem,
+			}
+		}
 	}
 }
 
@@ -248,6 +313,25 @@ func (s *InMemoryStore) DeleteVM(vmID string) bool {
 	delete(s.vms, vmID)
 	if n, exists := s.nodes[v.NodeName]; exists && n.RunningVms > 0 {
 		n.RunningVms--
+	}
+	// Release the pending capacity reservation so subsequent Pick() calls
+	// see the freed capacity even before the next heartbeat.
+	if cap, ok := s.vmCapReserved[vmID]; ok {
+		r := s.nodeReservations[cap.nodeName]
+		r.vcpuMillis -= cap.vcpuMillis
+		if r.vcpuMillis < 0 {
+			r.vcpuMillis = 0
+		}
+		r.memBytes -= cap.memBytes
+		if r.memBytes < 0 {
+			r.memBytes = 0
+		}
+		if r.vcpuMillis == 0 && r.memBytes == 0 {
+			delete(s.nodeReservations, cap.nodeName)
+		} else {
+			s.nodeReservations[cap.nodeName] = r
+		}
+		delete(s.vmCapReserved, vmID)
 	}
 	return true
 }
@@ -358,6 +442,62 @@ func BuildNodeSnapshot(n Node) scoring.NodeSnapshot {
 		FreeVcpuMillis:     n.FreeVcpuMillis,
 		FreeMemoryBytes:    n.FreeMemoryBytes,
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Capacity parsing helpers (mirrors placement/quantities.go; kept here so
+// cluster has no import on placement and the reservation logic is self-contained).
+// ---------------------------------------------------------------------------
+
+// parseVcpuMillisCluster parses K8s-style CPU strings ("500m", "2") into millis.
+func parseVcpuMillisCluster(s string) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	if strings.HasSuffix(s, "m") {
+		n, err := strconv.ParseInt(strings.TrimSuffix(s, "m"), 10, 64)
+		if err != nil {
+			return 0
+		}
+		return n
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return int64(f * 1000)
+}
+
+// parseMemBytesCluster parses K8s-style memory strings ("512Mi", "2Gi") into bytes.
+func parseMemBytesCluster(s string) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	var mul int64 = 1
+	num := s
+	switch {
+	case strings.HasSuffix(s, "Ki"):
+		mul, num = 1024, strings.TrimSuffix(s, "Ki")
+	case strings.HasSuffix(s, "Mi"):
+		mul, num = 1024*1024, strings.TrimSuffix(s, "Mi")
+	case strings.HasSuffix(s, "Gi"):
+		mul, num = 1024*1024*1024, strings.TrimSuffix(s, "Gi")
+	case strings.HasSuffix(s, "Ti"):
+		mul, num = 1024*1024*1024*1024, strings.TrimSuffix(s, "Ti")
+	case strings.HasSuffix(s, "K"):
+		mul, num = 1000, strings.TrimSuffix(s, "K")
+	case strings.HasSuffix(s, "M"):
+		mul, num = 1000*1000, strings.TrimSuffix(s, "M")
+	case strings.HasSuffix(s, "G"):
+		mul, num = 1000*1000*1000, strings.TrimSuffix(s, "G")
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(num), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n * mul
 }
 
 // StartHeartbeatReaper periodically calls MarkDrainingIfStale. Cancel

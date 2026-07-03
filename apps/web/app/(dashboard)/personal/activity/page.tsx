@@ -5,7 +5,6 @@
 // anything when I wasn't looking" in real time.
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import {
   AlertCircle,
   ArrowDownToLine,
@@ -20,6 +19,8 @@ import {
 } from "lucide-react";
 
 import { useBridge } from "@/components/personal/bridge-context";
+import { PageHeader } from "@/components/page-header";
+import { EmptyState } from "@/components/empty-state";
 import type { ActivityEvent, ActivityKind } from "@/lib/bridge-types";
 
 const FILTERS: { id: "all" | ActivityKind; label: string }[] = [
@@ -44,65 +45,58 @@ export default function ActivityPage() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-zinc-800/80 bg-surface-1 p-6">
-        <h2 className="text-lg font-medium text-zinc-50">Live activity</h2>
-        <p className="mt-1 max-w-2xl text-sm text-zinc-400">
-          Every incoming DM, every reply your assistant sends, every monitor toggle. Real-time, capped at the last 200 events.
-        </p>
-        <div className="mt-4 flex flex-wrap items-center gap-1.5">
-          <Filter className="h-3.5 w-3.5 text-zinc-500" />
-          {FILTERS.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              onClick={() => setFilter(f.id)}
-              className={`rounded-md px-2 py-1 text-xs transition-colors ${
-                filter === f.id
-                  ? "bg-violet-500/15 text-violet-200 border border-violet-500/30"
-                  : "border border-zinc-800 text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
+      <PageHeader
+        title="Live activity"
+        description="Every incoming DM, every reply your assistant sends, every monitor toggle. Real-time, capped at the last 200 events."
+      />
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Filter className="h-3.5 w-3.5 text-zinc-500" />
+        {FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            onClick={() => setFilter(f.id)}
+            className={`rounded-md px-2 py-1 text-xs transition-colors ${
+              filter === f.id
+                ? "bg-violet-500/15 text-violet-200 border border-violet-500/30"
+                : "border border-zinc-800 text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
       </div>
 
-      <div className="rounded-2xl border border-zinc-800/80 bg-surface-1">
-        {offline ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center text-sm text-zinc-400">
-            <AlertCircle className="h-6 w-6 text-zinc-600" />
-            <div className="mt-3 text-zinc-300">Bridge isn&apos;t live</div>
-            <p className="mt-1 max-w-md text-xs text-zinc-500">
-              The activity feed populates while the bridge is connected.{" "}
-              <Link href="/personal/setup" className="underline">
-                Pair to start
-              </Link>
-              .
-            </p>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center text-sm text-zinc-400">
-            <MessageSquare className="h-6 w-6 text-zinc-600" />
-            <div className="mt-3 text-zinc-300">
-              {filter === "all"
-                ? "Nothing yet"
-                : "No matching events"}
-            </div>
-            <p className="mt-1 max-w-md text-xs text-zinc-500">
-              {filter === "all"
-                ? "When the bridge sees a message or fires a reply, it'll show up here."
-                : "Try a different filter."}
-            </p>
-          </div>
-        ) : (
+      {offline ? (
+        <EmptyState
+          size="compact"
+          icon={AlertCircle}
+          title="Bridge isn't live"
+          description="The activity feed populates while the bridge is connected."
+          actionLabel="Pair to start"
+          actionHref="/personal/setup"
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          size="compact"
+          icon={MessageSquare}
+          title={filter === "all" ? "Nothing yet" : "No matching events"}
+          description={
+            filter === "all"
+              ? "When the bridge sees a message or fires a reply, it'll show up here."
+              : "Try a different filter."
+          }
+        />
+      ) : (
+        <div className="rounded-2xl border border-zinc-800/80 bg-surface-1">
           <ul className="divide-y divide-zinc-800/60">
             {filtered.map((e) => (
               <FeedRow key={e.id} event={e} />
             ))}
           </ul>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -208,6 +208,10 @@ impl SecretCache {
             .with_context(|| format!("bind {:?}", self.socket_path))?;
 
         // P2-B7 (1): announce the peer-auth posture once at startup.
+        // P2-B7 (2): prod startup guard — LANTERN_WORKLOAD_UID must be set in
+        // production so peer-auth is actually enforced (mirrors the TLS guard
+        // in tls.rs).  An unset uid in prod means ANY in-VM process can vend
+        // secrets, which is a complete bypass of the secrets trust boundary.
         match expected_workload_uid() {
             Some(uid) => {
                 tracing::info!(
@@ -218,6 +222,15 @@ impl SecretCache {
                 );
             }
             None => {
+                if crate::tls::is_prod_env() {
+                    eprintln!(
+                        "FATAL: LANTERN_WORKLOAD_UID must be set in production \
+                         (LANTERN_ENV={}) — secrets socket peer authentication is disabled. \
+                         The manager MUST inject this env var at spawn time.",
+                        std::env::var("LANTERN_ENV").unwrap_or_default()
+                    );
+                    std::process::exit(1);
+                }
                 tracing::warn!(
                     path = ?self.socket_path,
                     "secrets: socket listening WITHOUT peer authentication — \

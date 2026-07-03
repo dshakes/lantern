@@ -25,7 +25,7 @@ import { useToast } from "@/components/toast";
 import { Skeleton } from "@/components/skeleton";
 import { PageHeader, CountBadge } from "@/components/page-header";
 import { Button } from "@/components/button";
-import { Modal, ModalField } from "@/components/modal";
+import { ConfirmModal, Modal, ModalField } from "@/components/modal";
 import { EmptyState } from "@/components/empty-state";
 import { EvalIllustration } from "@/components/illustrations";
 import type { Agent } from "@/lib/mock-data";
@@ -49,14 +49,18 @@ export default function EvalSuitesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [pinning, setPinning] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [pinTarget, setPinTarget] = useState<EvalRun | null>(null);
+  const [branchInput, setBranchInput] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [s, r, as] = await Promise.all([
-        api.listEvalSuites().catch(() => [] as EvalSuite[]),
-        api.listEvalRuns().catch(() => [] as EvalRun[]),
-        api.listAgents().catch(() => [] as Agent[]),
+        api.listEvalSuites(),
+        api.listEvalRuns(),
+        api.listAgents(),
       ]);
       setSuites(s);
       setRuns(r);
@@ -87,22 +91,28 @@ export default function EvalSuitesPage() {
   };
 
   const remove = async (id: string, name: string) => {
-    if (!confirm(`Delete suite "${name}"?`)) return;
+    setDeleting(true);
     try {
       await api.deleteEvalSuite(id);
       toast.success("Suite deleted");
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
     }
   };
 
-  const pinBaseline = async (run: EvalRun) => {
-    const branch = prompt(
-      `Pin this run as the baseline for which branch?`,
-      run.branch || "main",
-    );
-    if (!branch) return;
+  const pinBaseline = (run: EvalRun) => {
+    setBranchInput(run.branch || "main");
+    setPinTarget(run);
+  };
+
+  const confirmPinBaseline = async () => {
+    const run = pinTarget;
+    const branch = branchInput.trim();
+    if (!run || !branch) return;
     setPinning(run.id);
     try {
       await api.setEvalBaseline({
@@ -115,6 +125,7 @@ export default function EvalSuitesPage() {
       toast.error(err instanceof Error ? err.message : "Pin failed");
     }
     setPinning(null);
+    setPinTarget(null);
   };
 
   const updateCase = (idx: number, patch: Partial<EvalCase>) => {
@@ -219,7 +230,7 @@ export default function EvalSuitesPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => remove(s.id, s.name)}
+                      onClick={() => setDeleteTarget({ id: s.id, name: s.name })}
                       className="text-zinc-500 hover:text-red-400"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -499,6 +510,53 @@ export default function EvalSuitesPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <ConfirmModal
+        open={deleteTarget !== null}
+        title={`Delete suite "${deleteTarget?.name}"?`}
+        confirmLabel="Delete"
+        tone="danger"
+        confirming={deleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && remove(deleteTarget.id, deleteTarget.name)}
+      />
+
+      <Modal
+        open={pinTarget !== null}
+        onClose={() => setPinTarget(null)}
+        title="Pin baseline"
+        description="Pin this run as the baseline for which branch?"
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPinTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={confirmPinBaseline}
+              loading={pinTarget != null && pinning === pinTarget.id}
+              disabled={!branchInput.trim()}
+            >
+              Pin
+            </Button>
+          </>
+        }
+      >
+        <ModalField label="Branch">
+          <input
+            type="text"
+            autoFocus
+            value={branchInput}
+            onChange={(e) => setBranchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && branchInput.trim()) confirmPinBaseline();
+            }}
+            placeholder="main"
+            className="w-full rounded-lg border border-zinc-700 bg-surface-2 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lantern-500"
+          />
+        </ModalField>
       </Modal>
     </div>
   );

@@ -82,10 +82,11 @@ func TestStepReplayFromJournal(t *testing.T) {
 
 	state.ReplayFromJournal(entries)
 
-	// The step result should be available in the cache.
-	cached, ok := state.HasStepResult("step-x")
+	// The step result must be keyed by "stepID:attempt" so executeAttempt's
+	// stepCacheKey lookup hits after a crash-resume (the bug was bare stepID).
+	cached, ok := state.HasStepResult("step-x:1")
 	if !ok {
-		t.Fatal("expected step-x to be cached after replay")
+		t.Fatal("expected step-x:1 to be cached after replay (bare step-x would miss — crash-resume bug)")
 	}
 	if cached.StepID != "step-x" {
 		t.Errorf("expected StepID=step-x, got %q", cached.StepID)
@@ -193,6 +194,52 @@ func TestRunState_Signals(t *testing.T) {
 	delivered = state.DeliverSignal("approval:step-1", nil)
 	if delivered {
 		t.Error("expected second delivery to fail")
+	}
+}
+
+// TestReplayFromJournal_CacheKeyAlignment is a regression test for the
+// crash-resume double-execution bug: ReplayFromJournal was keying by bare
+// stepID, but executeAttempt looks up "stepID:attempt". After a process
+// restart the cache never hit, so every completed step re-executed.
+func TestReplayFromJournal_CacheKeyAlignment(t *testing.T) {
+	state := engine.NewRunState("run-crash", "tenant-1", "v1")
+
+	entries := []journal.JournalEntry{
+		{RunID: "run-crash", Seq: 1, Kind: journal.KindRunStarted, Payload: []byte(`{}`)},
+		{
+			RunID:   "run-crash",
+			Seq:     2,
+			Kind:    journal.KindStepCompleted,
+			StepID:  "step-1",
+			Attempt: 1,
+			Payload: []byte(`{"step_id":"step-1","attempt":1,"output":{"x":1}}`),
+		},
+		{
+			RunID:   "run-crash",
+			Seq:     3,
+			Kind:    journal.KindStepCompleted,
+			StepID:  "step-2",
+			Attempt: 2, // a retry that succeeded on attempt 2
+			Payload: []byte(`{"step_id":"step-2","attempt":2,"output":{"y":2}}`),
+		},
+	}
+
+	state.ReplayFromJournal(entries)
+
+	// Must hit with the same key format stepCacheKey uses: "stepID:attempt"
+	for _, tc := range []struct {
+		key  string
+		miss string
+	}{
+		{"step-1:1", "step-1"},
+		{"step-2:2", "step-2"},
+	} {
+		if _, ok := state.HasStepResult(tc.key); !ok {
+			t.Errorf("cache miss for %q — crash-resume would re-execute step", tc.key)
+		}
+		if _, ok := state.HasStepResult(tc.miss); ok {
+			t.Errorf("unexpected cache hit for bare key %q — key format mismatch", tc.miss)
+		}
 	}
 }
 

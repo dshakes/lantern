@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import random
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -11,6 +13,19 @@ import httpx
 
 from lantern.errors import LanternApiError
 from lantern.types import AgentInfo, ConnectorInfo, ConnectorResult, Run, Session, SessionMessage, StreamEvent
+
+# Bounded exponential backoff with full jitter, mirroring
+# packages/bridge-core/src/retry.ts. Only 429/503 and network-layer
+# failures are transient; 4xx auth/validation errors are never retried.
+_RETRY_MAX_ATTEMPTS = 3
+_RETRY_BASE_DELAY_S = 0.5
+_RETRY_MAX_DELAY_S = 4.0
+_RETRYABLE_STATUS = {429, 503}
+
+
+def _retry_backoff_s(attempt: int) -> float:
+    ceiling = min(_RETRY_MAX_DELAY_S, _RETRY_BASE_DELAY_S * 2**attempt)
+    return random.uniform(0, ceiling)
 
 
 class LanternClient:
@@ -98,7 +113,6 @@ class LanternClient:
         body: Any = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        client = await self._get_client()
         kwargs: dict[str, Any] = {}
         if body is not None:
             kwargs["content"] = json.dumps(body)
@@ -106,13 +120,41 @@ class LanternClient:
             # Filter out None values
             kwargs["params"] = {k: str(v) for k, v in params.items() if v is not None}
 
-        resp = await client.request(method, path, **kwargs)
-        if not resp.is_success:
+        for attempt in range(_RETRY_MAX_ATTEMPTS):
+            client = await self._get_client()
+            try:
+                resp = await client.request(method, path, **kwargs)
+            except httpx.TransportError:
+                if attempt + 1 >= _RETRY_MAX_ATTEMPTS:
+                    raise
+                await asyncio.sleep(_retry_backoff_s(attempt))
+                continue
+
+            if resp.is_success:
+                if resp.status_code == 204 or not resp.content:
+                    return None
+                return resp.json()
+
+            if resp.status_code in _RETRYABLE_STATUS and attempt + 1 < _RETRY_MAX_ATTEMPTS:
+                await asyncio.sleep(_retry_backoff_s(attempt))
+                continue
+
             raise LanternApiError(resp.status_code, resp.text)
 
-        if resp.status_code == 204 or not resp.content:
-            return None
-        return resp.json()
+    @staticmethod
+    def _items(data: Any, key: str) -> list[Any]:
+        """Normalize a list response.
+
+        The control-plane list endpoints return a BARE JSON array
+        (writeJSON(w, 200, <slice>)); a wrapped ``{key: [...]}`` shape is
+        accepted too for forward-compat. Anything else yields [].
+        """
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            items = data.get(key, [])
+            return items if isinstance(items, list) else []
+        return []
 
     async def _sse_stream(
         self,
@@ -199,8 +241,9 @@ class LanternClient:
                     "pageToken": page_token,
                 },
             )
-            agents = [AgentInfo.model_validate(a) for a in data.get("agents", [])]
-            return AgentListResponse(agents=agents, next_page_token=data.get("nextPageToken"))
+            agents = [AgentInfo.model_validate(a) for a in LanternClient._items(data, "agents")]
+            token = data.get("nextPageToken") if isinstance(data, dict) else None
+            return AgentListResponse(agents=agents, next_page_token=token)
 
         async def delete(self, name: str) -> None:
             await self._c._request("DELETE", f"/v1/agents/{name}")
@@ -223,7 +266,9 @@ class LanternClient:
             idempotency_key: str | None = None,
         ) -> Run | AsyncIterator[StreamEvent]:
             payload: dict[str, Any] = {
-                "agent_name": agent,
+                # Handler decodes camelCase `agentName` (rest.go CreateRun);
+                # snake_case is silently dropped → an agent-less run.
+                "agentName": agent,
                 "input": input,
                 "labels": labels or {},
             }
@@ -259,8 +304,9 @@ class LanternClient:
                     "pageToken": page_token,
                 },
             )
-            runs = [Run.model_validate(r) for r in data.get("runs", [])]
-            return RunListResponse(runs=runs, next_page_token=data.get("nextPageToken"))
+            runs = [Run.model_validate(r) for r in LanternClient._items(data, "runs")]
+            token = data.get("nextPageToken") if isinstance(data, dict) else None
+            return RunListResponse(runs=runs, next_page_token=token)
 
         async def cancel(self, id: str, reason: str = "") -> Run:
             data = await self._c._request("POST", f"/v1/runs/{id}/cancel", body={"reason": reason})
@@ -332,7 +378,9 @@ class LanternClient:
                 "POST",
                 "/v1/sessions",
                 body={
-                    "agent_name": agent,
+                    # Handler decodes camelCase `agentName` (sessions.go
+                    # CreateSession:79); snake_case is silently dropped.
+                    "agentName": agent,
                     "metadata": metadata or {},
                 },
             )
@@ -362,8 +410,9 @@ class LanternClient:
                     "pageToken": page_token,
                 },
             )
-            sessions = [Session.model_validate(s) for s in data.get("sessions", [])]
-            return SessionListResponse(sessions=sessions, next_page_token=data.get("nextPageToken"))
+            sessions = [Session.model_validate(s) for s in LanternClient._items(data, "sessions")]
+            token = data.get("nextPageToken") if isinstance(data, dict) else None
+            return SessionListResponse(sessions=sessions, next_page_token=token)
 
         async def send_message(
             self,
@@ -433,8 +482,9 @@ class LanternClient:
                     "pageToken": page_token,
                 },
             )
-            items = [ConnectorInfo.model_validate(c) for c in data.get("connectors", [])]
-            return ConnectorListResponse(connectors=items, next_page_token=data.get("nextPageToken"))
+            items = [ConnectorInfo.model_validate(c) for c in LanternClient._items(data, "connectors")]
+            token = data.get("nextPageToken") if isinstance(data, dict) else None
+            return ConnectorListResponse(connectors=items, next_page_token=token)
 
         async def get(self, connector_id: str) -> ConnectorInfo:
             """Get details for an installed connector."""

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { formatDistanceToNowStrict } from "date-fns";
 import clsx from "clsx";
+import { ConfirmModal } from "@/components/modal";
 import type { VmRow, VmState } from "@/lib/runtime-types";
 import { initialSeries, advance } from "@/lib/runtime-metrics";
 import { StateDot, STATE_STYLES, IsolationBadge, Sparkline } from "./cockpit-ui";
@@ -53,6 +54,7 @@ export function FleetGrid({
   const [sortKey, setSortKey] = useState<SortKey>("state");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmBulkTerminate, setConfirmBulkTerminate] = useState(false);
 
   // ---- live simulated series per demo row (CPU/mem), advanced every tick.
   const [series, setSeries] = useState<Record<string, { cpu: number[]; mem: number[] }>>({});
@@ -212,12 +214,7 @@ export function FleetGrid({
               Clear
             </button>
             <button
-              onClick={() => {
-                if (confirm(`Terminate ${selected.size} workload(s)? This drains them and releases their slots.`)) {
-                  onTerminateSelected([...selected]);
-                  setSelected(new Set());
-                }
-              }}
+              onClick={() => setConfirmBulkTerminate(true)}
               className="inline-flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1 text-[11px] font-medium text-red-300/90 transition-colors hover:bg-red-500/15"
             >
               <StopCircle className="h-3.5 w-3.5" />
@@ -348,6 +345,20 @@ export function FleetGrid({
           </table>
         </div>
       </div>
+
+      <ConfirmModal
+        open={confirmBulkTerminate}
+        title={`Terminate ${selected.size} workload(s)?`}
+        description="This drains them and releases their slots."
+        confirmLabel="Terminate"
+        tone="danger"
+        onCancel={() => setConfirmBulkTerminate(false)}
+        onConfirm={() => {
+          onTerminateSelected([...selected]);
+          setSelected(new Set());
+          setConfirmBulkTerminate(false);
+        }}
+      />
     </div>
   );
 }
