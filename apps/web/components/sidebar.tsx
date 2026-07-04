@@ -117,7 +117,7 @@ export function Sidebar() {
     >
       {/* Brand + collapse — the logo links straight to /agents (the workspace
           home). Standard webapp pattern: clicking the logo goes home. */}
-      <div className={clsx("flex items-center px-4 pt-4", collapsed ? "justify-center" : "gap-3")}>
+      <div className={clsx("flex px-4 pt-4", collapsed ? "flex-col items-center gap-2" : "items-center gap-3")}>
         <Link
           href="/agents"
           className={clsx(
@@ -168,10 +168,11 @@ export function Sidebar() {
         {collapsed && (
           <button
             onClick={() => setCollapsed(false)}
-            className="absolute left-4 top-14 rounded-md p-1 text-zinc-500 transition-colors duration-150 hover:bg-surface-3 hover:text-zinc-300"
-            title="Expand"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition-colors duration-150 hover:bg-surface-3 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50"
+            title="Expand sidebar"
+            aria-label="Expand sidebar"
           >
-            <PanelLeft className="h-3.5 w-3.5" />
+            <PanelLeft className="h-4 w-4" />
           </button>
         )}
       </div>
