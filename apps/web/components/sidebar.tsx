@@ -108,12 +108,11 @@ export function Sidebar() {
         collapsed ? "w-16" : "w-64"
       )}
     >
-      {/* Brand + collapse — the brand block is a Link to "/", which
-          re-routes to the most-recent agent. Standard webapp pattern:
-          clicking the logo goes home. */}
+      {/* Brand + collapse — the logo links straight to /agents (the workspace
+          home). Standard webapp pattern: clicking the logo goes home. */}
       <div className={clsx("flex items-center px-4 pt-4", collapsed ? "justify-center" : "gap-3")}>
         <Link
-          href="/"
+          href="/agents"
           className={clsx(
             "group flex items-center gap-3 rounded-lg -mx-1 px-1 py-0.5 transition-colors duration-150 hover:bg-surface-3/60",
             collapsed && "mx-0 px-0"
