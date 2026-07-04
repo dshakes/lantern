@@ -565,7 +565,7 @@ function AgentCard({
           className={catalogEntry ? clsx("rounded-lg ring-2 ring-offset-2 ring-offset-surface-1", toneRingCls[catalogEntry.tone]) : undefined}
         />
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-semibold text-zinc-100 group-hover:text-white">
+          <h3 className="truncate text-sm font-semibold text-zinc-100 group-hover:text-zinc-50">
             {agent.name}
           </h3>
           <span className={clsx("mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium", sc.bg, sc.text)}>
