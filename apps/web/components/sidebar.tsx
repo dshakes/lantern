@@ -152,7 +152,7 @@ export function Sidebar() {
           <>
             <span className="flex-1" />
             {isDemoMode && (
-              <span className="rounded-full bg-lantern-500/10 px-2 py-0.5 text-[11px] font-medium text-lantern-300">
+              <span className="rounded-full bg-lantern-500/10 px-2 py-0.5 text-[12px] font-medium text-lantern-300">
                 demo
               </span>
             )}
@@ -199,9 +199,9 @@ export function Sidebar() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search agents…"
-                className="w-full rounded-lg border border-zinc-800 bg-surface-0 py-1.5 pl-8 pr-7 text-[11px] text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors duration-150 focus:border-lantern-500/40"
+                className="w-full rounded-lg border border-zinc-800 bg-surface-0 py-1.5 pl-8 pr-7 text-[12px] text-zinc-200 placeholder:text-zinc-600 outline-none transition-colors duration-150 focus:border-lantern-500/40"
               />
-              <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-zinc-700 bg-surface-2 px-1 font-mono text-[11px] text-zinc-500">
+              <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-zinc-700 bg-surface-2 px-1 font-mono text-[12px] text-zinc-500">
                 /
               </kbd>
             </div>
@@ -212,7 +212,7 @@ export function Sidebar() {
       {/* Agent list — the primary nav. */}
       <nav className={clsx("mt-3 flex-1 overflow-y-auto", collapsed ? "px-2" : "px-2")}>
         {!collapsed && (
-          <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-zinc-600">
+          <p className="px-2 pb-1 text-[12px] font-medium uppercase tracking-wider text-zinc-600">
             Agents
             {agents.length > 0 && <span className="ml-2 text-zinc-700">{agents.length}</span>}
           </p>
@@ -225,7 +225,7 @@ export function Sidebar() {
           </div>
         ) : sortedAgents.length === 0 ? (
           !collapsed && (
-            <p className="px-2 py-1 text-[11px] text-zinc-500">
+            <p className="px-2 py-1 text-[12px] text-zinc-500">
               No agents yet. <Link href="/agents/create" className="text-lantern-400 hover:text-lantern-300">Create one →</Link>
             </p>
           )
@@ -269,7 +269,7 @@ export function Sidebar() {
                   href="/agents"
                   className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium text-lantern-400 transition-colors hover:bg-surface-3/60 hover:text-lantern-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
                 >
-                  <span className="flex h-5 w-5 items-center justify-center rounded-md border border-lantern-500/30 text-[10px] tabular-nums">+{hiddenCount}</span>
+                  <span className="flex h-5 w-5 items-center justify-center rounded-md border border-lantern-500/30 text-[11px] tabular-nums">+{hiddenCount}</span>
                   View all {agents.length} agents
                 </Link>
               </li>
@@ -347,16 +347,16 @@ export function Sidebar() {
             collapsed && "justify-center px-0"
           )}
         >
-          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-3 text-[11px] font-semibold text-zinc-300">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-3 text-[12px] font-semibold text-zinc-300">
             {(user?.name ?? "U").slice(0, 1).toUpperCase()}
           </div>
           {!collapsed && (
             <>
               <div className="flex flex-1 flex-col items-start overflow-hidden">
-                <span className="truncate text-[11px] font-medium text-zinc-200">
+                <span className="truncate text-[12px] font-medium text-zinc-200">
                   {user?.name ?? "User"}
                 </span>
-                <span className="truncate text-[11px] text-zinc-500">
+                <span className="truncate text-[12px] text-zinc-500">
                   {user?.email ?? "user@lantern.dev"}
                 </span>
               </div>
@@ -368,8 +368,8 @@ export function Sidebar() {
         {showMenu && (
           <div className="modal-content absolute bottom-full left-3 right-3 mb-1 overflow-hidden rounded-lg border border-zinc-800 bg-surface-2 shadow-xl">
             <div className="px-3 py-2.5">
-              <p className="text-[11px] font-medium text-zinc-200">{user?.email ?? "user@lantern.dev"}</p>
-              <p className="text-[11px] text-zinc-500">{user?.role ?? "owner"}</p>
+              <p className="text-[12px] font-medium text-zinc-200">{user?.email ?? "user@lantern.dev"}</p>
+              <p className="text-[12px] text-zinc-500">{user?.role ?? "owner"}</p>
             </div>
             <div className="border-t border-zinc-800">
               <Link

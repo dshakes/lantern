@@ -122,6 +122,7 @@
 }
 
 html {
+  font-size: 17px;
   scroll-behavior: smooth;
   color-scheme: dark;
 }

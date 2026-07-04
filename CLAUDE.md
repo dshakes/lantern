@@ -172,7 +172,7 @@ When editing dashboard pages, **reuse these primitives** instead of hand-rolling
 
 Rule: if you're writing Tailwind classes like `rounded-xl border border-zinc-800 bg-surface-1 px-5 py-4` for header/modal/button chrome, stop and use the primitive.
 
-**Theming (light + dark, YC-flat).** The dashboard is theme-aware. **Light is the
+**Theming (light + dark, YC-flat).** The dashboard is theme-aware. **Dark is the
 default**; a `☀/☾` toggle in the top bar flips `data-theme` on `<html>` (persisted
 to `localStorage['lantern-theme']`; a no-flash inline script in `app/layout.tsx`
 sets it pre-paint). The flip is **central**: `app/globals.css` remaps the neutral

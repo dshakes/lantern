@@ -172,7 +172,7 @@ export default function DraftsPage() {
 
         {drafts.length > 0 && (
           <div className="flex items-center gap-1 border-b border-zinc-800/60 px-4 py-2">
-            <span className="mr-1 text-[10px] uppercase tracking-wide text-zinc-500">channel</span>
+            <span className="mr-1 text-[11px] uppercase tracking-wide text-zinc-500">channel</span>
             <FilterChip active={channelFilter === "all"} onClick={() => setChannelFilter("all")}>
               all <span className="text-zinc-500">({drafts.length})</span>
             </FilterChip>
@@ -329,11 +329,11 @@ function DraftCard({
             <span className="text-sm font-medium text-zinc-100">{senderLabel}</span>
             <ChannelBadge channel={draft.channel} />
             {senderLabel !== prettyJid(draft.jid) && (
-              <span className="font-mono text-[10px] text-zinc-600">
+              <span className="font-mono text-[11px] text-zinc-600">
                 {prettyJid(draft.jid)}
               </span>
             )}
-            <span className="ml-auto flex items-center gap-1 text-[10px] uppercase tracking-wide text-zinc-500">
+            <span className="ml-auto flex items-center gap-1 text-[11px] uppercase tracking-wide text-zinc-500">
               <Clock className="h-3 w-3" />
               {timeAgo(draft.createdAt)}
             </span>
@@ -341,7 +341,7 @@ function DraftCard({
 
           {/* Inbound */}
           <div className="mt-3 rounded-lg border border-zinc-800/60 bg-zinc-900/40 p-3">
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-zinc-500">
+            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-zinc-500">
               <Inbox className="h-3 w-3" />
               They wrote
             </div>
@@ -353,7 +353,7 @@ function DraftCard({
           {/* Draft / Edit */}
           <div className="mt-3 rounded-lg border border-violet-500/30 bg-violet-500/[0.03] p-3">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-violet-300">
+              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-violet-300">
                 <FileText className="h-3 w-3" />
                 Assistant draft
               </div>
@@ -361,7 +361,7 @@ function DraftCard({
                 <button
                   type="button"
                   onClick={() => { setEditText(draft.draftText); setEditing(true); }}
-                  className="inline-flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-0.5 text-[10px] text-zinc-400 hover:text-zinc-200"
+                  className="inline-flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400 hover:text-zinc-200"
                 >
                   <Edit3 className="h-3 w-3" /> Edit
                 </button>
@@ -431,7 +431,7 @@ function DraftCard({
       )}
 
       {!isPending && (
-        <div className="mt-3 flex items-center gap-2 text-[10px] uppercase tracking-wide text-zinc-500">
+        <div className="mt-3 flex items-center gap-2 text-[11px] uppercase tracking-wide text-zinc-500">
           <ResolvedBadge status={draft.status} />
         </div>
       )}
@@ -446,7 +446,7 @@ function ChannelBadge({ channel }: { channel: Draft["channel"] }) {
   const isWA = channel === "whatsapp";
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${
+      className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] font-medium ${
         isWA
           ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
           : "border-blue-500/30 bg-blue-500/10 text-blue-300"

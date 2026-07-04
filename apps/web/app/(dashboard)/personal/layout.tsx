@@ -162,7 +162,7 @@ function Header({
       }
       badge={
         hideSwitcher ? (
-          <span className="rounded-full border border-zinc-700/50 bg-zinc-800/40 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+          <span className="rounded-full border border-zinc-700/50 bg-zinc-800/40 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
             applies to all channels
           </span>
         ) : (

@@ -80,7 +80,7 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
     <div className="fixed bottom-6 right-6 z-50 flex flex-col w-[380px] h-[520px] rounded-2xl border border-zinc-800 bg-surface-1 shadow-2xl overflow-hidden">
       {/* Preview badge */}
       <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
-        <span className="rounded-full bg-amber-500/10 border border-amber-500/30 px-3 py-0.5 text-[10px] font-medium text-amber-400">
+        <span className="rounded-full bg-amber-500/10 border border-amber-500/30 px-3 py-0.5 text-[11px] font-medium text-amber-400">
           This is a preview
         </span>
       </div>
@@ -93,7 +93,7 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
           </div>
           <div>
             <p className="text-sm font-medium text-zinc-100">Lantern Agent</p>
-            <p className="text-[10px] text-emerald-400">Online</p>
+            <p className="text-[11px] text-emerald-400">Online</p>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -144,7 +144,7 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
             >
               <p className="text-xs leading-relaxed whitespace-pre-line">{msg.text}</p>
               <p className={clsx(
-                "mt-1 text-[10px]",
+                "mt-1 text-[11px]",
                 msg.role === "agent" ? "text-zinc-600" : "text-lantern-400/50"
               )}>
                 {msg.time}
@@ -190,7 +190,7 @@ export function WebChatWidget({ onClose }: { onClose: () => void }) {
             <Send className="h-3.5 w-3.5" />
           </button>
         </div>
-        <p className="mt-1.5 text-center text-[10px] text-zinc-600">
+        <p className="mt-1.5 text-center text-[11px] text-zinc-600">
           Powered by Lantern
         </p>
       </div>

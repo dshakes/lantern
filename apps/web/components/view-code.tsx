@@ -64,7 +64,7 @@ export function ViewCode({ title, snippets, variant = "button", className }: Vie
         className={clsx(
           variant === "icon"
             ? "rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-surface-3 hover:text-zinc-300"
-            : "inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1 text-[11px] font-medium text-zinc-400 transition-colors hover:border-zinc-600 hover:bg-surface-3 hover:text-zinc-200",
+            : "inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1 text-[12px] font-medium text-zinc-400 transition-colors hover:border-zinc-600 hover:bg-surface-3 hover:text-zinc-200",
           className
         )}
         title="View SDK code"
@@ -99,7 +99,7 @@ export function ViewCode({ title, snippets, variant = "button", className }: Vie
                   key={lang}
                   onClick={() => setActive(lang)}
                   className={clsx(
-                    "rounded-t-md px-3 py-1.5 text-[11px] font-medium transition-colors",
+                    "rounded-t-md px-3 py-1.5 text-[12px] font-medium transition-colors",
                     active === lang
                       ? "bg-surface-0 text-zinc-100"
                       : "text-zinc-500 hover:text-zinc-300"
@@ -126,7 +126,7 @@ export function ViewCode({ title, snippets, variant = "button", className }: Vie
               </button>
             </div>
 
-            <div className="border-t border-zinc-800 px-4 py-2 text-[11px] text-zinc-500">
+            <div className="border-t border-zinc-800 px-4 py-2 text-[12px] text-zinc-500">
               <span>
                 Install:&nbsp;
                 <code className="font-mono text-zinc-400">

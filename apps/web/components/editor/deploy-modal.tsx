@@ -79,7 +79,7 @@ export function DeployModal({ open, onClose, agentName }: DeployModalProps) {
             <div className="space-y-4 px-5 py-4">
               {/* Environment */}
               <div>
-                <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                <label className="mb-1.5 block text-[12px] font-medium uppercase tracking-wider text-zinc-500">
                   Target Environment
                 </label>
                 <div className="flex gap-2">
@@ -105,7 +105,7 @@ export function DeployModal({ open, onClose, agentName }: DeployModalProps) {
 
               {/* Deploy message */}
               <div>
-                <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                <label className="mb-1.5 block text-[12px] font-medium uppercase tracking-wider text-zinc-500">
                   Deploy Message (optional)
                 </label>
                 <input

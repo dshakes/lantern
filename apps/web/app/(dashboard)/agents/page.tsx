@@ -259,7 +259,7 @@ export default function AgentsPage() {
         <p className="mt-1 max-w-sm text-center text-xs text-zinc-500">
           {error.message}. Make sure the control-plane API is reachable.
         </p>
-        <code className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-[11px] text-zinc-300">
+        <code className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-[12px] text-zinc-300">
           lantern dev
         </code>
         <Button size="sm" variant="secondary" className="mt-4" icon={<RefreshCw className="h-3 w-3" />} onClick={() => window.location.reload()}>
@@ -353,8 +353,8 @@ export default function AgentsPage() {
             </div>
 
             {/* Exec model legend */}
-            <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[11px] text-zinc-500">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600">Runs as</span>
+            <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[12px] text-zinc-500">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600">Runs as</span>
               <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-sky-400" />Scheduled · Lantern cron</span>
               <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-violet-400" />Bridge loop · on your Mac</span>
               <span className="flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />Reactive · per inbound message</span>
@@ -372,7 +372,7 @@ export default function AgentsPage() {
                   placeholder="Search agents…"
                   className="w-full rounded-lg border border-zinc-800 bg-surface-1 py-2 pl-9 pr-12 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none transition-all duration-150 focus:border-lantern-500/60 focus:bg-surface-2 focus:ring-2 focus:ring-lantern-500/30"
                 />
-                <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-zinc-700 bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-zinc-500">
+                <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-zinc-700 bg-surface-2 px-1.5 py-0.5 font-mono text-[12px] text-zinc-500">
                   /
                 </kbd>
               </div>
@@ -489,7 +489,7 @@ export default function AgentsPage() {
         }
       >
         {confirmDelete && (
-          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-[11px] text-red-300">
+          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-[12px] text-red-300">
             Type <code className="rounded bg-surface-0 px-1 font-mono text-red-200">{confirmDelete.name}</code> in your head one more time before clicking Delete agent.
           </div>
         )}
@@ -504,7 +504,7 @@ export default function AgentsPage() {
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="mb-3 flex items-center gap-3 text-[10px] font-semibold uppercase tracking-widest text-zinc-600">
+    <h2 className="mb-3 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-widest text-zinc-600">
       <span className="h-px flex-1 bg-zinc-800" />
       {children}
       <span className="h-px flex-1 bg-zinc-800" />
@@ -568,7 +568,7 @@ function AgentCard({
           <h3 className="truncate text-sm font-semibold text-zinc-100 group-hover:text-zinc-50">
             {agent.name}
           </h3>
-          <span className={clsx("mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium", sc.bg, sc.text)}>
+          <span className={clsx("mt-0.5 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[12px] font-medium", sc.bg, sc.text)}>
             <span className={clsx("relative flex h-1.5 w-1.5")}>
               {displayStatus === "active" && (
                 <span className={clsx("absolute inline-flex h-full w-full rounded-full opacity-75 motion-safe:animate-ping", sc.dot)} />
@@ -587,21 +587,21 @@ function AgentCard({
       </div>
 
       {/* One-line description from catalog or agent record */}
-      <p className="mt-3 line-clamp-2 text-[11px] leading-relaxed text-zinc-400">
+      <p className="mt-3 line-clamp-2 text-[12px] leading-relaxed text-zinc-400">
         {catalogEntry?.whatItDoes ?? agent.description}
       </p>
 
       {/* Exec-model + cadence chips (catalog agents only) */}
       {catalogEntry && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <span className={clsx("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", execChipCls[catalogEntry.execModel ?? "scheduled"])}>
+          <span className={clsx("rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide", execChipCls[catalogEntry.execModel ?? "scheduled"])}>
             {execLabels[catalogEntry.execModel ?? "scheduled"]}
           </span>
-          <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-zinc-500">
+          <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-zinc-500">
             {catalogEntry.cadence}
           </span>
           {PERSONAL_RUN_META[agent.name] && (
-            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-zinc-500">
+            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-zinc-500">
               {PERSONAL_RUN_META[agent.name].via}
             </span>
           )}
@@ -609,7 +609,7 @@ function AgentCard({
       )}
 
       {/* Footer: runs + success rate + last-run time */}
-      <div className="mt-3 flex items-center justify-between border-t border-zinc-800/60 pt-2.5 text-[11px]">
+      <div className="mt-3 flex items-center justify-between border-t border-zinc-800/60 pt-2.5 text-[12px]">
         <div className="flex items-center gap-3 text-zinc-500">
           <span className="inline-flex items-center gap-1 tabular-nums">
             <Play className="h-3 w-3" />
@@ -733,7 +733,7 @@ function Stat({
           </div>
         )}
         {live && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-1.5 text-[11px] font-medium text-teal-300">
+          <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-1.5 text-[12px] font-medium text-teal-300">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-400" />
             live
           </span>
@@ -761,7 +761,7 @@ function Stat({
       {/* Mono micro-label */}
       <p className="mc-micro-label mt-1.5">{label}</p>
       {/* Hint */}
-      {hint && <p className="mt-0.5 text-[11px] text-zinc-600">{hint}</p>}
+      {hint && <p className="mt-0.5 text-[12px] text-zinc-600">{hint}</p>}
     </div>
   );
 }
@@ -820,17 +820,17 @@ function ActivityStream({ runs }: { runs: Run[] }) {
         <h3 className="text-xs font-semibold text-zinc-300">Live activity</h3>
       </div>
       {items.length === 0 ? (
-        <p className="py-6 text-center text-[11px] text-zinc-600">No activity yet</p>
+        <p className="py-6 text-center text-[12px] text-zinc-600">No activity yet</p>
       ) : (
         <ul className="space-y-3">
           {items.map((run) => (
             <li key={run.id} className="flex items-start gap-2">
               <span className={clsx("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", activityDotCls[run.status])} />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[11px] leading-snug text-zinc-300">
+                <p className="truncate text-[12px] leading-snug text-zinc-300">
                   <span className="font-medium text-zinc-100">{run.agentName}</span> {activityVerb(run)}
                 </p>
-                <p className="text-[10px] text-zinc-600">
+                <p className="text-[11px] text-zinc-600">
                   {formatDistanceToNow(new Date(run.startedAt ?? run.createdAt), { addSuffix: true })}
                 </p>
               </div>

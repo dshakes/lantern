@@ -41,7 +41,7 @@ export default function AgentWhatsAppPage() {
       <div className="mx-auto w-full max-w-[1400px] px-6 py-6 md:px-8">
         <Link
           href={`/agents/${encodeURIComponent(name)}/channels`}
-          className="mb-4 inline-flex items-center gap-1 text-[11px] text-zinc-500 transition-colors duration-150 hover:text-zinc-300"
+          className="mb-4 inline-flex items-center gap-1 text-[12px] text-zinc-500 transition-colors duration-150 hover:text-zinc-300"
         >
           <ArrowLeft className="h-3 w-3" />
           Channels

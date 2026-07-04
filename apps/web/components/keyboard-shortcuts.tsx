@@ -145,14 +145,14 @@ export function KeyboardShortcuts() {
             if (items.length === 0) return null;
             return (
               <section key={group} className="px-5 py-4">
-                <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                <h3 className="mb-2 text-[12px] font-medium uppercase tracking-wider text-zinc-500">
                   {group}
                 </h3>
                 <ul className="space-y-1.5">
                   {items.map((s) => (
                     <li key={s.combo} className="flex items-center justify-between gap-3">
                       <span className="text-xs text-zinc-300">{s.description}</span>
-                      <kbd className="rounded-md border border-zinc-700 bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-zinc-300">
+                      <kbd className="rounded-md border border-zinc-700 bg-surface-2 px-2 py-0.5 font-mono text-[12px] text-zinc-300">
                         {s.combo}
                       </kbd>
                     </li>
@@ -162,7 +162,7 @@ export function KeyboardShortcuts() {
             );
           })}
         </div>
-        <div className="border-t border-zinc-800 px-5 py-2.5 text-[11px] text-zinc-500">
+        <div className="border-t border-zinc-800 px-5 py-2.5 text-[12px] text-zinc-500">
           Press <kbd className="rounded border border-zinc-700 bg-surface-2 px-1.5 text-zinc-300">?</kbd> anywhere to open this.
         </div>
       </div>

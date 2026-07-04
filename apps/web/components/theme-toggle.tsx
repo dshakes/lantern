@@ -1,7 +1,7 @@
 "use client";
 
 // Light/dark toggle. Theme lives as `data-theme` on <html> (see the no-flash
-// script in the root layout); light is the default. We only flip the attribute
+// script in the root layout); dark is the default (light via the toggle). We only flip the attribute
 // + persist — globals.css does the rest via the [data-theme="light"] token remap.
 import { useEffect, useState } from "react";
 import { Sun, Moon } from "lucide-react";

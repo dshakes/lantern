@@ -50,7 +50,7 @@ export default function DashboardLayout({
         <header className="mc-glass relative flex h-14 shrink-0 items-center gap-3 border-b border-zinc-800 bg-surface-1 px-4 md:px-6">
           {/* Mobile: Lantern wordmark → home (sidebar is hidden under md). */}
           <Link href="/agents" aria-label="Lantern — home" className="flex items-center gap-2 md:hidden">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-lantern-500 text-[13px] font-bold text-white">L</span>
+            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-lantern-500 text-[14px] font-bold text-white">L</span>
             <span className="text-[15px] font-semibold tracking-tight text-zinc-50">Lantern</span>
           </Link>
 
@@ -69,7 +69,7 @@ export default function DashboardLayout({
           >
             <Search className="h-3.5 w-3.5 shrink-0" />
             <span className="hidden truncate text-xs md:inline">Search agents, runs, actions…</span>
-            <kbd className="ml-auto hidden shrink-0 rounded border border-zinc-700 bg-surface-3 px-1 text-[10px] font-medium md:inline-block">
+            <kbd className="ml-auto hidden shrink-0 rounded border border-zinc-700 bg-surface-3 px-1 text-[11px] font-medium md:inline-block">
               &#8984;K
             </kbd>
           </button>
@@ -88,14 +88,14 @@ export default function DashboardLayout({
                 onClick={() => setShowUserMenu(!showUserMenu)}
                 className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-surface-2 py-1 pl-1 pr-2.5 transition-colors hover:border-zinc-700"
               >
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[linear-gradient(135deg,#2dd4bf,#38bdf8_50%,#818cf8)] text-[10px] font-bold text-zinc-950">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[linear-gradient(135deg,#2dd4bf,#38bdf8_50%,#818cf8)] text-[11px] font-bold text-zinc-950">
                   {user?.name ? user.name.charAt(0).toUpperCase() : <User className="h-3 w-3" />}
                 </span>
                 <span className="hidden flex-col items-start leading-tight sm:flex">
-                  <span className="max-w-[140px] truncate text-[11px] font-medium text-zinc-200">
+                  <span className="max-w-[140px] truncate text-[12px] font-medium text-zinc-200">
                     {user?.name || "User"}
                   </span>
-                  <span className="max-w-[140px] truncate text-[11px] text-zinc-500">
+                  <span className="max-w-[140px] truncate text-[12px] text-zinc-500">
                     {user?.email || "user@lantern.dev"}
                   </span>
                 </span>
@@ -106,7 +106,7 @@ export default function DashboardLayout({
                     <p className="text-sm font-medium text-zinc-200 truncate">{user?.name || "User"}</p>
                     <p className="text-xs text-zinc-500 truncate">{user?.email || "user@lantern.dev"}</p>
                     {isDemoMode && (
-                      <span className="mt-1 inline-block rounded-full bg-lantern-500/10 px-2 py-0.5 text-[10px] text-lantern-400">demo mode</span>
+                      <span className="mt-1 inline-block rounded-full bg-lantern-500/10 px-2 py-0.5 text-[11px] text-lantern-400">demo mode</span>
                     )}
                   </div>
                   <div className="py-1">

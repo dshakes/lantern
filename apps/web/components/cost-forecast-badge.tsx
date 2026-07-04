@@ -47,7 +47,7 @@ export function CostForecastBadge({ agentName, input = "", className }: Props) {
     return (
       <span
         className={clsx(
-          "inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-surface-1 px-2.5 py-1 text-[11px] text-zinc-500",
+          "inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-surface-1 px-2.5 py-1 text-[12px] text-zinc-500",
           className,
         )}
       >
@@ -65,7 +65,7 @@ export function CostForecastBadge({ agentName, input = "", className }: Props) {
   return (
     <span
       className={clsx(
-        "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-mono",
+        "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] font-mono",
         blocked
           ? "border-red-500/40 bg-red-500/10 text-red-300"
           : "border-zinc-800 bg-surface-1 text-zinc-300",
