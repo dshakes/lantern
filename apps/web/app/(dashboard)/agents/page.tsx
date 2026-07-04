@@ -33,9 +33,11 @@ import { HealthRing } from "@/components/health-ring";
 import { Modal } from "@/components/modal";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentsIllustration } from "@/components/illustrations";
+import { Sparkline } from "@/components/charts/sparkline";
 import { getLastAgent, clearLastAgent } from "@/lib/last-agent";
 import { AGENT_CATALOG } from "@/lib/agent-catalog";
 import type { Agent, Run } from "@/lib/mock-data";
+import { bucketRunsByTime } from "./stat-buckets";
 
 // ---------------------------------------------------------------------------
 // Status display
@@ -181,31 +183,55 @@ export default function AgentsPage() {
     otherAgents:   filtered.filter((a) => !(a.name in AGENT_CATALOG)),
   }), [filtered]);
 
+  // Real-only sparkline series — buckets the actual runs list into ~12
+  // slices over the last 24h. null when there's too little data to bucket
+  // meaningfully; the tile renders no sparkline in that case (see stat-buckets.ts).
+  const buckets = useMemo(() => bucketRunsByTime(runs), [runs]);
+
   // Aggregate stats — real numbers from /v1/usage (fleet rollup), fallback to run list.
   const aggregate = useMemo(() => {
     const live = runs.filter((r) => r.status === "running" || r.status === "paused").length;
 
-    const p = fleetUsage?.periods.today;
-    if (p) {
-      const terminal = p.succeeded + p.failed;
-      return {
-        total: agents.length, live,
-        runsToday: p.runs, failedToday: p.failed,
-        totalCostToday: p.costUsd,
-        successRateToday: terminal > 0 ? Math.round((p.succeeded / terminal) * 100) : null,
-      };
+    const today = fleetUsage?.periods.today;
+    const week = fleetUsage?.periods.week; // trailing 7-day rollup (control-plane usage.go) — safe to /7
+
+    const base = today
+      ? { runsToday: today.runs, succeededToday: today.succeeded, failedToday: today.failed, totalCostToday: today.costUsd }
+      : (() => {
+          const since = Date.now() - 24 * 3600_000;
+          const runsToday = runs.filter((r) => new Date(r.createdAt).getTime() >= since);
+          return {
+            runsToday: runsToday.length,
+            succeededToday: runsToday.filter((r) => r.status === "succeeded").length,
+            failedToday: runsToday.filter((r) => r.status === "failed").length,
+            totalCostToday: runsToday.reduce((s, r) => s + (r.costUsd ?? 0), 0),
+          };
+        })();
+
+    const terminalToday = base.succeededToday + base.failedToday;
+    const successRateToday = terminalToday > 0 ? Math.round((base.succeededToday / terminalToday) * 100) : null;
+
+    // Deltas only exist when there's a real week baseline to compare against
+    // (the fleet-usage endpoint's trailing 7-day rollup). No week data, no
+    // fallback-path data → no delta pill, never an invented number.
+    let runsDeltaPct: number | null = null;
+    let costDeltaPct: number | null = null;
+    let successDeltaPts: number | null = null;
+    if (week) {
+      const avgDailyRuns = week.runs / 7;
+      if (avgDailyRuns > 0) runsDeltaPct = Math.round(((base.runsToday - avgDailyRuns) / avgDailyRuns) * 100);
+
+      const avgDailyCost = week.costUsd / 7;
+      if (avgDailyCost > 0) costDeltaPct = Math.round(((base.totalCostToday - avgDailyCost) / avgDailyCost) * 100);
+
+      const terminalWeek = week.succeeded + week.failed;
+      if (terminalWeek > 0 && terminalToday > 0) {
+        const successRateWeek = (week.succeeded / terminalWeek) * 100;
+        successDeltaPts = Math.round(successRateToday! - successRateWeek);
+      }
     }
 
-    const today = Date.now() - 24 * 3600_000;
-    const runsToday = runs.filter((r) => new Date(r.createdAt).getTime() >= today);
-    const succeededToday = runsToday.filter((r) => r.status === "succeeded").length;
-    const failedToday    = runsToday.filter((r) => r.status === "failed").length;
-    const totalCostToday = runsToday.reduce((s, r) => s + (r.costUsd ?? 0), 0);
-    return {
-      total: agents.length, live,
-      runsToday: runsToday.length, failedToday, totalCostToday,
-      successRateToday: runsToday.length > 0 ? Math.round((succeededToday / runsToday.length) * 100) : null,
-    };
+    return { total: agents.length, live, ...base, successRateToday, runsDeltaPct, costDeltaPct, successDeltaPts };
   }, [agents, runs, fleetUsage]);
 
   // `/` keyboard shortcut — focus search (Linear/GitHub-style).
@@ -266,17 +292,22 @@ export default function AgentsPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      {/* Page header — title + badges only. Create button lives in the toolbar below. */}
-      <PageHeader
-        title="Agents"
-        description="Every agent you've deployed — click into one for sessions, runs, budgets, and channels."
-        badge={
-          <>
-            {agents.length > 0 && <CountBadge count={agents.length} />}
-            {isDemo && <DemoBadge />}
-          </>
-        }
-      />
+      {/* Page header — title + badges only. Create button lives in the toolbar below.
+          Ambient aurora glow sits behind it; header itself goes transparent so it shows through. */}
+      <div className="relative overflow-hidden">
+        <div aria-hidden className="mc-aurora" />
+        <PageHeader
+          className="relative z-10 !bg-transparent"
+          title="Agents"
+          description="Every agent you've deployed — click into one for sessions, runs, budgets, and channels."
+          badge={
+            <>
+              {agents.length > 0 && <CountBadge count={agents.length} />}
+              {isDemo && <DemoBadge />}
+            </>
+          }
+        />
+      </div>
 
       <div className="flex-1 p-8">
         {agents.length === 0 ? (
@@ -298,7 +329,8 @@ export default function AgentsPage() {
           <>
             <NowRunningStrip runs={runs} />
 
-            {/* Stats strip — 4 tiles with icons, big numbers, subtle gradient sheen */}
+            {/* Stats strip — 4 dense glass tiles. Real data only: see stat-buckets.ts
+                for the sparkline bucketing and the aggregate memo above for deltas. */}
             <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat
                 icon={<Bot className="h-3.5 w-3.5 text-zinc-400" />}
@@ -313,6 +345,10 @@ export default function AgentsPage() {
                 label="Runs today"
                 value={aggregate.runsToday.toLocaleString()}
                 hint={aggregate.successRateToday != null ? `${aggregate.successRateToday}% succeeded` : "—"}
+                delta={aggregate.runsDeltaPct != null ? { value: aggregate.runsDeltaPct } : undefined}
+                sparkline={buckets?.runCounts}
+                sparklineStroke="rgb(56 189 248)"
+                sparklineFill="rgba(56, 189, 248, 0.12)"
               />
               <Stat
                 icon={<DollarSign className="h-3.5 w-3.5 text-emerald-400" />}
@@ -320,13 +356,23 @@ export default function AgentsPage() {
                 label="Cost today"
                 value={`$${aggregate.totalCostToday.toFixed(2)}`}
                 hint={aggregate.runsToday > 0 ? `~$${(aggregate.totalCostToday / aggregate.runsToday).toFixed(4)}/run` : "no runs yet"}
+                delta={aggregate.costDeltaPct != null ? { value: aggregate.costDeltaPct } : undefined}
+                sparkline={buckets?.costs}
+                sparklineStroke="rgb(52 211 153)"
+                sparklineFill="rgba(52, 211, 153, 0.12)"
               />
               <Stat
-                icon={<AlertCircle className="h-3.5 w-3.5 text-red-400" />}
-                label="Failed today"
-                value={String(aggregate.failedToday)}
-                hint={aggregate.failedToday > 0 ? "click to filter" : aggregate.runsToday > 0 ? "all clean" : "no runs yet"}
-                tone={aggregate.failedToday > 0 ? "danger" : undefined}
+                icon={<TrendingUp className="h-3.5 w-3.5 text-teal-400" />}
+                iconBg="bg-teal-500/10"
+                label="Success"
+                value={aggregate.successRateToday != null ? `${aggregate.successRateToday}%` : "—"}
+                hint={
+                  aggregate.successRateToday != null
+                    ? `${aggregate.succeededToday}/${aggregate.succeededToday + aggregate.failedToday} runs`
+                    : aggregate.runsToday > 0 ? "no terminal runs yet" : "no runs yet"
+                }
+                delta={aggregate.successDeltaPts != null ? { value: aggregate.successDeltaPts, unit: "pts" } : undefined}
+                tone={aggregate.successRateToday != null && aggregate.successRateToday < 80 ? "danger" : undefined}
               />
             </div>
 
@@ -526,7 +572,7 @@ function AgentCard({
   return (
     <div
       className={clsx(
-        "group relative cursor-pointer rounded-xl border border-zinc-800 bg-surface-1 p-4 transition-all duration-200 hover:-translate-y-px hover:border-zinc-700 hover:bg-surface-2/60 hover:shadow-lg",
+        "group relative mc-glass cursor-pointer rounded-xl border border-white/[0.07] bg-white/[0.024] p-4 backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.12] hover:shadow-lg",
         statusStripeCls[displayStatus],
       )}
       onClick={() => onNavigate(agent.name)}
@@ -678,6 +724,10 @@ function Stat({
   tone,
   icon,
   iconBg,
+  delta,
+  sparkline,
+  sparklineStroke,
+  sparklineFill,
 }: {
   label: string;
   value: string;
@@ -686,49 +736,67 @@ function Stat({
   tone?: "danger";
   icon?: React.ReactNode;
   iconBg?: string;
+  /** Real comparison only — omit the prop entirely when there's no honest baseline. */
+  delta?: { value: number; unit?: "pts" };
+  /** Real bucketed series only (see stat-buckets.ts) — omit when there's too little data. */
+  sparkline?: number[];
+  sparklineStroke?: string;
+  sparklineFill?: string;
 }) {
   const isDanger = tone === "danger";
   return (
     <div className={clsx(
-      "group relative overflow-hidden rounded-xl border bg-surface-1 p-4 transition-all duration-150",
-      isDanger ? "border-red-500/30 hover:border-red-500/50" : "border-zinc-800 hover:border-zinc-700",
+      "group relative mc-glass overflow-hidden rounded-xl border p-4 backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5",
+      isDanger ? "border-red-500/25 bg-red-500/[0.03] hover:border-red-500/40" : "border-white/[0.07] bg-white/[0.024] hover:border-white/[0.12]",
     )}>
-      {/* Gradient sheen on hover */}
-      <div
-        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
-        style={{
-          background: isDanger
-            ? "linear-gradient(135deg, rgba(248,113,113,0.08), transparent 60%)"
-            : "linear-gradient(135deg, rgba(124,109,248,0.06), transparent 60%)",
-        }}
-      />
-      <div className="relative">
-        {/* Icon square + live pill row */}
-        <div className="mb-3 flex items-center justify-between">
-          {icon && (
-            <div className={clsx(
-              "flex h-7 w-7 items-center justify-center rounded-lg",
-              isDanger ? "bg-red-500/10" : (iconBg ?? "bg-surface-2"),
-            )}>
-              {icon}
-            </div>
-          )}
+      {/* Icon square + live/delta pill row */}
+      <div className="mb-3 flex items-center justify-between">
+        {icon && (
+          <div className={clsx(
+            "flex h-7 w-7 items-center justify-center rounded-lg",
+            isDanger ? "bg-red-500/10" : (iconBg ?? "bg-white/[0.05]"),
+          )}>
+            {icon}
+          </div>
+        )}
+        <div className="flex items-center gap-1.5">
           {live && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-lantern-500/15 px-1.5 text-[11px] font-medium text-lantern-300">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-lantern-400" />
+            <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-1.5 text-[11px] font-medium text-teal-300">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-400" />
               live
             </span>
           )}
+          {delta != null && delta.value !== 0 && (
+            <span className={clsx(
+              "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums",
+              delta.value > 0 ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400",
+            )}>
+              {delta.value > 0 ? "▲" : "▼"}{Math.abs(delta.value)}{delta.unit === "pts" ? "pt" : "%"}
+            </span>
+          )}
         </div>
-        {/* Big number */}
-        <p className={clsx("text-2xl font-semibold leading-none tabular-nums", isDanger ? "text-red-300" : "text-zinc-100")}>
-          {value}
-        </p>
-        {/* Label */}
-        <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">{label}</p>
-        {/* Hint */}
-        {hint && <p className="mt-0.5 text-[11px] text-zinc-600">{hint}</p>}
       </div>
+      {/* Big number */}
+      <p className={clsx("text-2xl font-semibold leading-none tabular-nums", isDanger ? "text-red-300" : "text-zinc-100")}>
+        {value}
+      </p>
+      {/* Mono micro-label */}
+      <p className="mc-micro-label mt-1.5">{label}</p>
+      {/* Hint */}
+      {hint && <p className="mt-0.5 text-[11px] text-zinc-600">{hint}</p>}
+      {/* Real sparkline only — hidden below sm where the tile is too narrow to render one honestly */}
+      {sparkline && sparkline.length > 0 && (
+        <div className="mt-3 hidden sm:block">
+          <Sparkline
+            data={sparkline}
+            width={90}
+            height={26}
+            strokeWidth={1.5}
+            stroke={sparklineStroke ?? "rgb(56 189 248)"}
+            fill={sparklineFill ?? "rgba(56, 189, 248, 0.12)"}
+          />
+        </div>
+      )}
     </div>
   );
 }
