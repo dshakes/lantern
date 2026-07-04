@@ -83,8 +83,10 @@ export function AgentLoop({ title, cadence, stages, tone, ownerFacing, execModel
         style={{ display: "block", overflow: "visible" }}
       >
         <defs>
-          <marker id={mid} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
-            <path d="M0,0 L0,7 L7,3.5z" fill={c.stroke} />
+          {/* userSpaceOnUse so the head is a fixed, crisp size — not scaled
+              (and made chunky) by the line's strokeWidth. */}
+          <marker id={mid} markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+            <path d="M1,1 L8,4.5 L1,8 Z" fill={c.stroke} />
           </marker>
         </defs>
 
