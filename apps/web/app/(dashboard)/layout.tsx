@@ -46,9 +46,16 @@ export default function DashboardLayout({
       </div>
       <div className="flex flex-1 flex-col overflow-hidden pb-14 md:pb-0">
         {/* Top bar */}
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 bg-surface-1 px-6">
-          {/* Left: Breadcrumbs */}
-          <Breadcrumbs />
+        <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 bg-surface-1 px-4 md:px-6">
+          {/* Mobile: Lantern wordmark → home (sidebar is hidden under md). */}
+          <Link href="/agents" aria-label="Lantern — home" className="flex items-center gap-2 md:hidden">
+            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-lantern-500 text-[13px] font-bold text-white">L</span>
+            <span className="text-[15px] font-semibold tracking-tight text-white">Lantern</span>
+          </Link>
+          {/* Desktop: breadcrumbs (they're too cramped for a phone). */}
+          <div className="hidden md:block">
+            <Breadcrumbs />
+          </div>
 
           {/* Right: Search hint, Notifications, User avatar.
               `ml-auto` keeps this pinned to the right even when
