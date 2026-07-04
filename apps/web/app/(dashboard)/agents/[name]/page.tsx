@@ -137,6 +137,24 @@ function ModelSelect({ value, onChange, className }: { value: string; onChange: 
 }
 
 // ---------------------------------------------------------------------------
+// HeaderStat — one chip in the header's dense glass summary row
+// ---------------------------------------------------------------------------
+
+function HeaderStat({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: string; tone?: "warn" }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className={clsx("flex h-6 w-6 items-center justify-center rounded-md", tone === "warn" ? "bg-amber-500/10" : "bg-white/[0.05]")}>
+        {icon}
+      </div>
+      <div className="leading-tight">
+        <p className="text-sm font-semibold tabular-nums text-zinc-100">{value}</p>
+        <p className="mc-micro-label">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Tabs
 // ---------------------------------------------------------------------------
 
@@ -1036,89 +1054,94 @@ export default function AgentDetailPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      {/* Header — modernized: avatar + status pill + catalog meta row */}
-      <div className="border-b border-zinc-800 bg-surface-1 px-8 py-5">
-        <button
-          onClick={() => router.push("/agents")}
-          className="mb-4 inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-600 transition-colors hover:text-zinc-300"
-        >
-          <ArrowLeft className="h-3 w-3" /> All agents
-        </button>
+      {/* Header — mission-control treatment: ambient aurora behind, dense
+          glass summary row below (matches app/(dashboard)/agents/page.tsx). */}
+      <div className="relative overflow-hidden border-b border-zinc-800">
+        <div aria-hidden className="mc-aurora" />
+        <div className="relative z-10 px-8 py-5">
+          <button
+            onClick={() => router.push("/agents")}
+            className="mb-4 inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-600 transition-colors hover:text-zinc-300"
+          >
+            <ArrowLeft className="h-3 w-3" /> All agents
+          </button>
 
-        <div className="flex items-start gap-4">
-          <AgentAvatar name={agent.name} status={agentRuns[0]?.status} size="lg" />
-          <div className="min-w-0 flex-1">
-            {/* Name + status pill */}
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-xl font-semibold leading-tight text-zinc-100">{agent.name}</h1>
-              <span className={clsx(
-                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
-                agent.status === "active" ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-500/10 text-zinc-400",
-              )}>
-                <span className={clsx("h-1.5 w-1.5 rounded-full", agent.status === "active" ? "bg-emerald-400" : "bg-zinc-500")} />
-                {agent.status === "active" ? "Active" : "Idle"}
-              </span>
-            </div>
+          <div className="flex items-start gap-4">
+            <AgentAvatar name={agent.name} status={agentRuns[0]?.status} size="lg" />
+            <div className="min-w-0 flex-1">
+              {/* Name + status pill */}
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="text-xl font-semibold leading-tight text-zinc-100">{agent.name}</h1>
+                <span className={clsx(
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                  agent.status === "active" ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-500/10 text-zinc-400",
+                )}>
+                  <span className={clsx("h-1.5 w-1.5 rounded-full", agent.status === "active" ? "bg-emerald-400" : "bg-zinc-500")} />
+                  {agent.status === "active" ? "Active" : "Idle"}
+                </span>
+              </div>
 
-            {/* Description */}
-            {agent.description && (
-              <p className="mt-1 text-xs leading-relaxed text-zinc-500">{agent.description}</p>
-            )}
-
-            {/* Compact meta row — catalog exec-model + cadence + run stats */}
-            <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500">
-              {(() => {
-                const entry = AGENT_CATALOG[name];
-                if (!entry) return null;
-                const eLabels: Record<string, string> = { scheduled: "Scheduled", bridge: "Bridge", reactive: "Reactive" };
-                const eColors: Record<string, string> = {
-                  scheduled: "text-sky-300 bg-sky-500/10 border border-sky-500/20",
-                  bridge:    "text-violet-300 bg-violet-500/10 border border-violet-500/20",
-                  reactive:  "text-emerald-300 bg-emerald-500/10 border border-emerald-500/20",
-                };
-                return (
-                  <>
-                    <span className={clsx("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", eColors[entry.execModel ?? "scheduled"])}>
-                      {eLabels[entry.execModel ?? "scheduled"]}
-                    </span>
-                    <span className="text-zinc-700">·</span>
-                    <span>{entry.cadence}</span>
-                  </>
-                );
-              })()}
-              {healthStats.total > 0 && (
-                <>
-                  <span className="text-zinc-700">·</span>
-                  <span>{healthStats.total} runs</span>
-                  <span className="text-zinc-700">·</span>
-                  <span className={healthStats.successRate >= 80 ? "text-emerald-400" : "text-amber-400"}>
-                    {healthStats.successRate}% success
-                  </span>
-                  <span className="text-zinc-700">·</span>
-                  <span>${totalCost.toFixed(4)} total</span>
-                </>
+              {/* Description */}
+              {agent.description && (
+                <p className="mt-1 text-xs leading-relaxed text-zinc-500">{agent.description}</p>
               )}
             </div>
           </div>
-        </div>
 
-        {/* Tab strip */}
-        <div className="mt-5 flex flex-wrap items-center gap-1">
-          {tabs.map((tab) => (
-            <button key={tab.key} onClick={() => setActiveTab(tab.key)} className={clsx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors", activeTab === tab.key ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:bg-surface-2 hover:text-zinc-300")}>
-              <tab.icon className="h-3.5 w-3.5" /> {tab.label}
-            </button>
-          ))}
-          {/* Route tabs — link to sub-pages instead of toggling in-place. */}
-          {routeTabs.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => router.push(`/agents/${encodeURIComponent(name)}${tab.suffix}`)}
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-500 transition-colors hover:bg-surface-2 hover:text-zinc-300"
-            >
-              <tab.icon className="h-3.5 w-3.5" /> {tab.label}
-            </button>
-          ))}
+          {/* Summary row — dense glass strip, real run/cost data only */}
+          <div className="mc-glass mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-white/[0.07] bg-white/[0.024] px-4 py-3 backdrop-blur-xl">
+            {(() => {
+              const entry = AGENT_CATALOG[name];
+              if (!entry) return null;
+              const eLabels: Record<string, string> = { scheduled: "Scheduled", bridge: "Bridge", reactive: "Reactive" };
+              const eColors: Record<string, string> = {
+                scheduled: "text-sky-300 bg-sky-500/10 border border-sky-500/20",
+                bridge:    "text-violet-300 bg-violet-500/10 border border-violet-500/20",
+                reactive:  "text-emerald-300 bg-emerald-500/10 border border-emerald-500/20",
+              };
+              return (
+                <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+                  <span className={clsx("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", eColors[entry.execModel ?? "scheduled"])}>
+                    {eLabels[entry.execModel ?? "scheduled"]}
+                  </span>
+                  <span>{entry.cadence}</span>
+                </div>
+              );
+            })()}
+            {healthStats.total > 0 ? (
+              <>
+                <HeaderStat icon={<Play className="h-3.5 w-3.5 text-zinc-400" />} label="Runs" value={String(healthStats.total)} />
+                <HeaderStat
+                  icon={<TrendingUp className={clsx("h-3.5 w-3.5", healthStats.successRate >= 80 ? "text-emerald-400" : "text-amber-400")} />}
+                  label="Success"
+                  value={`${healthStats.successRate}%`}
+                  tone={healthStats.successRate >= 80 ? undefined : "warn"}
+                />
+                <HeaderStat icon={<DollarSign className="h-3.5 w-3.5 text-emerald-400" />} label="Cost" value={`$${totalCost.toFixed(4)}`} />
+              </>
+            ) : (
+              <span className="text-[11px] text-zinc-600">No runs yet</span>
+            )}
+          </div>
+
+          {/* Tab strip */}
+          <div className="mt-5 flex flex-wrap items-center gap-1">
+            {tabs.map((tab) => (
+              <button key={tab.key} onClick={() => setActiveTab(tab.key)} className={clsx("inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors", activeTab === tab.key ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:bg-surface-2 hover:text-zinc-300")}>
+                <tab.icon className="h-3.5 w-3.5" /> {tab.label}
+              </button>
+            ))}
+            {/* Route tabs — link to sub-pages instead of toggling in-place. */}
+            {routeTabs.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => router.push(`/agents/${encodeURIComponent(name)}${tab.suffix}`)}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-500 transition-colors hover:bg-surface-2 hover:text-zinc-300"
+              >
+                <tab.icon className="h-3.5 w-3.5" /> {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

@@ -226,7 +226,7 @@ export function FleetGrid({
 
       {/* Grid — soft surface, no hard outline; separation via tint + spacing.
           Desktop only; mobile gets the stacked-card list below. */}
-      <div className="hidden overflow-hidden rounded-xl bg-surface-1 md:block">
+      <div className="mc-glass hidden overflow-hidden rounded-xl border border-white/[0.07] bg-white/[0.024] backdrop-blur-xl md:block">
         <div className="max-h-[58vh] overflow-auto">
           <table className="w-full border-collapse text-sm">
             <thead className="sticky top-0 z-10 bg-surface-1 text-[10px] uppercase tracking-wide text-zinc-500">
@@ -362,8 +362,8 @@ export function FleetGrid({
               key={v.vmId}
               onClick={() => onOpen(v)}
               className={clsx(
-                "cursor-pointer rounded-lg bg-surface-1 p-3.5 transition-colors",
-                selected.has(v.vmId) && "bg-lantern-500/[0.05]",
+                "group relative mc-glass cursor-pointer rounded-lg border border-white/[0.07] bg-white/[0.024] p-3.5 backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.12]",
+                selected.has(v.vmId) && "border-lantern-500/25 bg-lantern-500/[0.05]",
               )}
             >
               <div className="flex items-start gap-3">

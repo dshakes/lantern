@@ -26,6 +26,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  DollarSign,
   Gauge,
   Inbox as InboxIcon,
   Layers,
@@ -156,14 +157,19 @@ export default function MissionControlPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
-      <PageHeader
-        title="Mission Control"
-        description="Fleet-wide operations across every agent — health, spend, live work, and what needs you. All metrics derived from real runs."
-      />
+      {/* Ambient aurora glow behind the transparent header — same pattern as the Agents page. */}
+      <div className="relative overflow-hidden">
+        <div aria-hidden className="mc-aurora" />
+        <PageHeader
+          className="relative z-10 !bg-transparent"
+          title="Mission Control"
+          description="Fleet-wide operations across every agent — health, spend, live work, and what needs you. All metrics derived from real runs."
+        />
+      </div>
 
       <CommandStrip summary={displaySummary} lastUpdated={lastUpdated} loading={loading} />
 
-      <div className="flex-1 px-6 pb-10 pt-6 md:px-8">
+      <div className="flex-1 px-6 pb-10 pt-5 md:px-8">
         {/* Section switch — fleet is primary, activity feed preserved behind a tab. */}
         <div className="mb-6 flex flex-wrap items-center gap-2">
           <div className="flex items-center rounded-lg bg-surface-2 p-0.5 text-xs" role="group" aria-label="View">
@@ -228,49 +234,87 @@ function CommandStrip({
   const live = summary.liveRuns > 0;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-12 gap-y-3 border-b border-zinc-800/40 px-6 py-4 md:px-8">
-      <div className="flex items-center gap-2">
-        <span className="relative inline-flex h-1.5 w-1.5">
-          {live && <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-emerald-500/70" />}
-          <span className={clsx("relative inline-flex h-1.5 w-1.5 rounded-full", live ? "bg-emerald-500/80" : "bg-zinc-600")} />
-        </span>
-        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">{live ? "Live" : "Idle"}</span>
-      </div>
-
-      <Metric label="Agents" value={String(summary.agentCount)} />
-      <Metric label="In flight" value={String(summary.liveRuns)} />
-      <Metric label="Alerts" value={String(summary.alertCount)} tone={summary.alertCount > 0 ? "warn" : "neutral"} />
-
-      <div className="flex items-baseline gap-2.5">
-        <span className="text-[11px] uppercase tracking-wide text-zinc-500">Spend today</span>
-        <span className="font-mono text-[15px] font-medium tabular-nums text-zinc-200">
-          {usd(summary.costTodayUsd)}
-          <span className="ml-0.5 text-[10px] font-normal text-zinc-500">/day</span>
-        </span>
-      </div>
-
-      <div className="ml-auto flex items-center gap-3 text-[11px] text-zinc-500">
+    <div className="px-6 pt-6 md:px-8">
+      <div className="mb-2 flex items-center justify-end text-[11px] text-zinc-500">
         <span className="tabular-nums">{loading ? "loading…" : `updated ${agoS}s ago`}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile
+          icon={<Gauge className="h-3.5 w-3.5 text-zinc-400" />}
+          label="Agents"
+          value={String(summary.agentCount)}
+          hint={live ? `${summary.liveRuns} live` : "all idle"}
+          live={live}
+        />
+        <StatTile
+          icon={<Play className="h-3.5 w-3.5 text-sky-400" />}
+          iconBg="bg-sky-500/10"
+          label="In flight"
+          value={String(summary.liveRuns)}
+          hint={live ? "running now" : "nothing running"}
+        />
+        <StatTile
+          icon={<AlertTriangle className="h-3.5 w-3.5 text-amber-400" />}
+          iconBg="bg-amber-500/10"
+          label="Alerts"
+          value={String(summary.alertCount)}
+          hint={summary.alertCount > 0 ? "needs a look" : "all clear"}
+          tone={summary.alertCount > 0 ? "danger" : undefined}
+        />
+        <StatTile
+          icon={<DollarSign className="h-3.5 w-3.5 text-emerald-400" />}
+          iconBg="bg-emerald-500/10"
+          label="Spend today"
+          value={usd(summary.costTodayUsd)}
+          hint="across the fleet"
+        />
       </div>
     </div>
   );
 }
 
-function Metric({
+// Dense glass stat tile — same tokens as the Agents page's Stat component.
+function StatTile({
   label,
   value,
-  tone = "neutral",
+  hint,
+  live,
+  tone,
+  icon,
+  iconBg,
 }: {
   label: string;
   value: string;
-  tone?: "neutral" | "warn";
+  hint?: string;
+  live?: boolean;
+  tone?: "danger";
+  icon?: React.ReactNode;
+  iconBg?: string;
 }) {
+  const isDanger = tone === "danger";
   return (
-    <div className="flex items-baseline gap-2.5">
-      <span className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</span>
-      <span className={clsx("font-mono text-[15px] font-medium tabular-nums", tone === "warn" ? "text-amber-400/90" : "text-zinc-200")}>
-        {value}
-      </span>
+    <div
+      className={clsx(
+        "group relative mc-glass overflow-hidden rounded-xl border p-4 backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5",
+        isDanger ? "border-red-500/25 bg-red-500/[0.03] hover:border-red-500/40" : "border-white/[0.07] bg-white/[0.024] hover:border-white/[0.12]",
+      )}
+    >
+      <div className="mb-3 flex items-center justify-between">
+        {icon && (
+          <div className={clsx("flex h-7 w-7 items-center justify-center rounded-lg", isDanger ? "bg-red-500/10" : (iconBg ?? "bg-white/[0.05]"))}>
+            {icon}
+          </div>
+        )}
+        {live && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-1.5 text-[11px] font-medium text-teal-300">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-400" />
+            live
+          </span>
+        )}
+      </div>
+      <p className={clsx("text-2xl font-semibold leading-none tabular-nums", isDanger ? "text-red-300" : "text-zinc-100")}>{value}</p>
+      <p className="mc-micro-label mt-1.5">{label}</p>
+      {hint && <p className="mt-0.5 text-[11px] text-zinc-600">{hint}</p>}
     </div>
   );
 }
@@ -397,7 +441,7 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
   );
 
   return (
-    <li className="overflow-hidden rounded-xl bg-surface-1 transition-colors duration-150 hover:bg-surface-2/50">
+    <li className="mc-glass overflow-hidden rounded-xl border border-white/[0.07] bg-white/[0.024] backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.12] hover:shadow-lg">
       <button
         onClick={() => setExpanded((e) => !e)}
         aria-expanded={expanded}
@@ -479,7 +523,7 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
           {agentRuns.length === 0 ? (
             <p className="px-4 pb-3 text-[11px] text-zinc-600">No runs.</p>
           ) : (
-            <ul className="divide-y divide-zinc-800/40">
+            <ul className="space-y-1.5 px-3 pb-3">
               {agentRuns.map((run) => (
                 <CompactRunRow key={run.id} run={run} />
               ))}
@@ -504,7 +548,7 @@ function AlertsPanel({ alerts, fleet, totalCostToday }: { alerts: Alert[]; fleet
   const budgetTone = budgetPct >= 90 ? "bg-red-500/70" : budgetPct >= 70 ? "bg-zinc-400" : "bg-lantern-400/80";
 
   return (
-    <div className="rounded-xl bg-surface-1">
+    <div className="mc-glass rounded-xl border border-white/[0.07] bg-white/[0.024] backdrop-blur-xl">
       <div className="flex items-center gap-2 px-4 pb-2 pt-3.5">
         <AlertTriangle className={clsx("h-3.5 w-3.5", alerts.length > 0 ? "text-amber-400/90" : "text-zinc-500")} />
         <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Alerts</span>
@@ -576,7 +620,7 @@ function ActionQueue({
 }) {
   const accent = tone === "warn" ? "text-amber-400/90" : "text-zinc-500";
   return (
-    <div className="rounded-xl bg-surface-1">
+    <div className="mc-glass rounded-xl border border-white/[0.07] bg-white/[0.024] backdrop-blur-xl">
       <div className="flex items-center gap-2 px-4 pb-2 pt-3.5">
         <span className={accent}>{icon}</span>
         <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">{title}</span>
@@ -585,7 +629,7 @@ function ActionQueue({
       {runs.length === 0 ? (
         <p className="px-4 pb-3.5 text-[11px] text-zinc-500">{emptyHint}</p>
       ) : (
-        <ul className="divide-y divide-zinc-800/40 pb-1">
+        <ul className="space-y-1.5 px-3 pb-3">
           {runs.slice(0, 6).map((run) => (
             <CompactRunRow key={run.id} run={run} showAgent />
           ))}
@@ -600,7 +644,10 @@ function CompactRunRow({ run, showAgent }: { run: Run; showAgent?: boolean }) {
   const summary = summarizeInput(run.input);
   return (
     <li>
-      <Link href={`/runs/${run.id}`} className="flex items-center gap-2.5 px-4 py-2.5 transition-colors duration-150 hover:bg-surface-2/60">
+      <Link
+        href={`/runs/${run.id}`}
+        className="mc-glass flex items-center gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5 backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.12] hover:shadow-lg"
+      >
         <StatusDot />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -650,7 +697,7 @@ function ActivityFeed({ runs }: { runs: Run[] }) {
               <span className="ml-2 text-zinc-700">·</span>
               <span className="ml-2 tabular-nums text-zinc-600">{g.runs.length}</span>
             </h3>
-            <ul className="divide-y divide-zinc-800/40 overflow-hidden rounded-xl bg-surface-1">
+            <ul className="space-y-1.5">
               {sessions.map((s, idx) => (
                 <SessionEntry
                   key={s.key}
@@ -682,11 +729,11 @@ function SessionEntry({ group, groupedWithPrev }: { group: SessionGroup; grouped
   const StatusDot = statusDotFor(agg.status);
 
   return (
-    <li>
+    <li className="mc-glass overflow-hidden rounded-xl border border-white/[0.07] bg-white/[0.024] backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.12] hover:shadow-lg">
       <button
         onClick={() => setExpanded((e) => !e)}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors duration-150 hover:bg-surface-2/60"
+        className="flex w-full items-center gap-3 px-4 py-2.5 text-left"
       >
         {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-600" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-600" />}
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface-2">
@@ -724,7 +771,12 @@ function RunRow({ run, groupedWithPrev, nested = false }: { run: Run; groupedWit
     <li>
       <Link
         href={`/runs/${run.id}`}
-        className={clsx("flex items-center gap-3 py-2.5 transition-colors duration-150 hover:bg-surface-2/60", nested ? "pl-12 pr-4" : "px-4")}
+        className={clsx(
+          "flex items-center gap-3 transition-all duration-200",
+          nested
+            ? "py-2.5 pl-12 pr-4 hover:bg-surface-2/60"
+            : "mc-glass rounded-xl border border-white/[0.07] bg-white/[0.024] px-4 py-2.5 backdrop-blur-xl hover:-translate-y-0.5 hover:border-white/[0.12] hover:shadow-lg",
+        )}
       >
         <AgentAvatar name={run.agentName} dimmed={groupedWithPrev} status={run.status} />
         <div className="min-w-0 flex-1">
