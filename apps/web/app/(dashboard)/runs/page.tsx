@@ -290,7 +290,7 @@ function RunRow({
         <button onClick={() => onToggleRun(run.id)} aria-expanded={expanded} className="flex flex-1 items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-surface-2 rounded-l-lg">
           {expanded ? <ChevronDown className="h-3.5 w-3.5 text-zinc-500 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 text-zinc-500 shrink-0" />}
           <AgentAvatar name={run.agentName} status={run.status} size="sm" />
-          <button onClick={(e) => { e.stopPropagation(); onOpenAgent(run.agentName); }} className="text-xs font-medium text-zinc-200 hover:text-white">{run.agentName}</button>
+          <button onClick={(e) => { e.stopPropagation(); onOpenAgent(run.agentName); }} className="text-xs font-medium text-zinc-200 hover:text-zinc-50">{run.agentName}</button>
           <StatusBadge status={run.status} />
           <span className="font-mono text-[11px] text-zinc-600 hidden sm:inline">{run.id.slice(0, 12)}</span>
           <span className="ml-auto text-[11px] text-zinc-400 tabular-nums">{dur}</span>

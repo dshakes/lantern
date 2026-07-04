@@ -852,3 +852,52 @@ input[type="range"]::-webkit-slider-thumb {
   .mc-stagger > *:nth-child(7) { animation-delay: 240ms; }
   .mc-stagger > *:nth-child(n+8) { animation-delay: 280ms; }
 }
+
+/* ===========================================================================
+   YC light theme — flip the whole app centrally by remapping the neutral
+   scale under [data-theme="light"]. Tailwind v4 emits every color as a CSS
+   var (--color-zinc-800 etc.), so redefining the scale here re-skins all
+   ~2,900 zinc/surface utilities without touching a single component.
+   Dark stays the default (no selector). Accent (lantern) is theme-neutral.
+   =========================================================================== */
+:root[data-theme="light"] {
+  /* Surfaces: off-white page, white cards, soft greys for hover/borders. */
+  --color-surface-0: #f6f6f8;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f1f1f4;
+  --color-surface-3: #e9e9ee;
+  --color-surface-4: #dedee5;
+  /* Neutral scale inverted: low n = dark (text), high n = light (bg/border). */
+  --color-zinc-50:  #18181b;
+  --color-zinc-100: #1f1f23;
+  --color-zinc-200: #303036;
+  --color-zinc-300: #52525b;
+  --color-zinc-400: #6b6b78;  /* muted text — readable on light */
+  --color-zinc-500: #8a8a97;
+  --color-zinc-600: #b4b4bd;
+  --color-zinc-700: #d6d6dd;
+  --color-zinc-800: #e6e6ec;  /* hairline borders */
+  --color-zinc-900: #f1f1f4;
+  --color-zinc-950: #f8f8fa;
+  color-scheme: light;
+}
+:root[data-theme="light"] body { background: var(--color-surface-0); color: #18181b; }
+
+/* All-in YC flat style: neutralize the mission-control glass + aurora GLOBALLY
+   so every page that already uses .mc-glass / .mc-aurora becomes a calm flat
+   product surface — no per-page edits. Flat solid card, hairline border, and a
+   soft shadow in light; the ambient aurora is dropped entirely. */
+.mc-aurora { display: none !important; }
+.mc-glass {
+  background: var(--color-surface-1);
+  border-color: var(--color-zinc-800);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.mc-glass::before, .mc-glass::after { display: none !important; }
+:root[data-theme="light"] .mc-glass {
+  box-shadow: 0 1px 2px rgba(20, 20, 40, .05), 0 8px 24px -14px rgba(20, 20, 40, .12);
+}
+:root[data-theme="light"] .mc-glass:hover {
+  box-shadow: 0 2px 4px rgba(20, 20, 40, .06), 0 18px 40px -18px rgba(20, 20, 40, .20);
+}

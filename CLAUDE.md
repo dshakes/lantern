@@ -172,6 +172,21 @@ When editing dashboard pages, **reuse these primitives** instead of hand-rolling
 
 Rule: if you're writing Tailwind classes like `rounded-xl border border-zinc-800 bg-surface-1 px-5 py-4` for header/modal/button chrome, stop and use the primitive.
 
+**Theming (light + dark, YC-flat).** The dashboard is theme-aware. **Light is the
+default**; a `☀/☾` toggle in the top bar flips `data-theme` on `<html>` (persisted
+to `localStorage['lantern-theme']`; a no-flash inline script in `app/layout.tsx`
+sets it pre-paint). The flip is **central**: `app/globals.css` remaps the neutral
+scale under `:root[data-theme="light"]` (Tailwind v4 emits every `--color-zinc-*` /
+`--color-surface-*` as a CSS var), so ~2,900 utilities re-skin with no per-component
+edits. Two rules that keep this working:
+- **Use tokens for foreground/chrome, never literal `text-white` / `bg-white/[x]` /
+  `border-white/[x]` on a neutral surface** — literals don't flip and go invisible in
+  light. `text-white` is correct ONLY on a colored bg (buttons, badges). For neutral
+  foreground use `text-zinc-50` (dark in light, near-white in dark).
+- The mission-control classes `.mc-glass` / `.mc-aurora` are now **flat** (glass blur
+  + ambient aurora removed globally in `globals.css`) for the clean "YC product" look
+  — don't re-add `backdrop-blur` glass or aurora glows; use the flat `.mc-glass` card.
+
 Dashboard pages live in `apps/web/app/(dashboard)/`. Key pages include:
 
 - `/agents` -- agent list + create + detail with sessions, runs, workflow editor, cost-forecast badge on the Run tab
