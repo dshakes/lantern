@@ -23,7 +23,7 @@ export default function RootLayout({
         {/* No-flash theme init: set data-theme before paint. Light is default. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem('lantern-theme')||'light';document.documentElement.dataset.theme=t;}catch(e){document.documentElement.dataset.theme='light';}`,
+            __html: `try{var t=localStorage.getItem('lantern-theme')||'dark';document.documentElement.dataset.theme=t;}catch(e){document.documentElement.dataset.theme='dark';}`,
           }}
         />
         <link
