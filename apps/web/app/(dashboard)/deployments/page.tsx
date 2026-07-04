@@ -182,7 +182,7 @@ function CloudBadge({ cloud, dense }: { cloud: string; dense?: boolean }) {
   return (
     <span className={clsx(
       "inline-flex items-center rounded-md font-mono font-medium uppercase",
-      dense ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[11px]",
+      dense ? "px-1.5 py-0.5 text-[11px]" : "px-2 py-0.5 text-[12px]",
       s.cls,
     )}>
       {s.label}
@@ -199,7 +199,7 @@ function EnvBadge({ env }: { env: string }) {
     development: "bg-zinc-500",
   };
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-md bg-surface-2 px-2 py-0.5 text-[11px] font-medium capitalize text-zinc-400">
+    <span className="inline-flex items-center gap-1.5 rounded-md bg-surface-2 px-2 py-0.5 text-[12px] font-medium capitalize text-zinc-400">
       <span className={clsx("h-1.5 w-1.5 rounded-full", dot[env] ?? "bg-zinc-500")} />
       {env}
     </span>
@@ -209,7 +209,7 @@ function EnvBadge({ env }: { env: string }) {
 // Heartbeat freshness. Quiet by default — only true staleness/offline carries a
 // muted red; fresh reads neutral (we don't paint healthy telemetry green).
 function Heartbeat({ ago, offline }: { ago: number | null; offline?: boolean }) {
-  if (ago === null) return <span className="font-mono text-[11px] text-zinc-600">—</span>;
+  if (ago === null) return <span className="font-mono text-[12px] text-zinc-600">—</span>;
   const stale = offline || ago > 120;
   const tone = stale ? "text-red-400/90" : "text-zinc-400";
   let label: string;
@@ -220,7 +220,7 @@ function Heartbeat({ ago, offline }: { ago: number | null; offline?: boolean }) 
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={clsx("h-1.5 w-1.5 rounded-full", stale ? "bg-red-500/70" : "bg-emerald-500/70 animate-pulse")} />
-      <span className={clsx("font-mono text-[11px] tabular-nums", tone)}>{label}</span>
+      <span className={clsx("font-mono text-[12px] tabular-nums", tone)}>{label}</span>
     </span>
   );
 }
@@ -228,11 +228,11 @@ function Heartbeat({ ago, offline }: { ago: number | null; offline?: boolean }) 
 // mTLS tunnel health — a quiet implicit chip. Down carries a muted red; up reads
 // neutral, not a saturated green pill.
 function TunnelBadge({ tunnel }: { tunnel: "up" | "down" | null }) {
-  if (tunnel === null) return <span className="font-mono text-[11px] text-zinc-600">—</span>;
+  if (tunnel === null) return <span className="font-mono text-[12px] text-zinc-600">—</span>;
   const up = tunnel === "up";
   return (
     <span className={clsx(
-      "inline-flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium",
+      "inline-flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium",
       up ? "text-zinc-400" : "text-red-400/90",
     )} title="Outbound control → data-plane mTLS tunnel">
       <Network className={clsx("h-2.5 w-2.5", up ? "text-zinc-500" : "text-red-400/80")} />
@@ -452,7 +452,7 @@ export default function DeploymentsPage() {
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
           {/* Fleet (centerpiece) */}
           <section className="min-w-0">
-            <h2 className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+            <h2 className="mb-3 flex items-center gap-2 text-[12px] font-medium uppercase tracking-wide text-zinc-400">
               <Server className="h-3.5 w-3.5 text-zinc-500" /> Data plane fleet
             </h2>
             <div className="space-y-2.5">
@@ -641,7 +641,7 @@ function CommandStrip({
           <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-emerald-500/70" />
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500/80" />
         </span>
-        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Live</span>
+        <span className="text-[12px] font-medium uppercase tracking-wide text-zinc-400">Live</span>
       </div>
 
       <Metric label="Data planes" value={stats.total} />
@@ -653,7 +653,7 @@ function CommandStrip({
       <Metric label="Workloads" value={stats.workloads} />
       <Metric label="Agents" value={stats.agents} />
 
-      <div className="ml-auto flex items-center gap-3 text-[11px] text-zinc-500">
+      <div className="ml-auto flex items-center gap-3 text-[12px] text-zinc-500">
         {usingDemo && (
           <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 font-medium text-zinc-400">
             <AlertTriangle className="h-3 w-3 text-zinc-500" />
@@ -679,7 +679,7 @@ function Metric({
     tone === "danger" ? "text-red-400/90" : tone === "warn" ? "text-amber-300/90" : "text-zinc-200";
   return (
     <div className="flex items-baseline gap-2.5">
-      <span className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</span>
+      <span className="text-[12px] uppercase tracking-wide text-zinc-500">{label}</span>
       <span className={clsx("font-mono text-[15px] font-medium tabular-nums", valueTone)}>{value}</span>
     </div>
   );
@@ -725,7 +725,7 @@ function PlaneCard({
               <span className="truncate text-sm font-semibold text-zinc-100">{plane.name}</span>
               <StatePill state={planeVmState(plane.status)} />
             </div>
-            <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-zinc-500">
+            <div className="mt-0.5 flex items-center gap-2 font-mono text-[12px] text-zinc-500">
               <span>{plane.region}</span>
               {plane.clusterName && <><span className="text-zinc-700">·</span><span className="truncate">{plane.clusterName}</span></>}
             </div>
@@ -741,14 +741,14 @@ function PlaneCard({
           <div className="w-28">
             {cpuUtil !== null ? (
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[10px] text-zinc-600">vCPU</span>
+                <span className="font-mono text-[11px] text-zinc-600">vCPU</span>
                 <div className="flex-1"><UtilBar value={cpuUtil} tone={capTone(cpuUtil)} /></div>
               </div>
             ) : (
-              <span className="font-mono text-[11px] text-zinc-600">—</span>
+              <span className="font-mono text-[12px] text-zinc-600">—</span>
             )}
           </div>
-          <div className="flex w-20 items-center gap-1.5 text-[11px] text-zinc-400">
+          <div className="flex w-20 items-center gap-1.5 text-[12px] text-zinc-400">
             <Layers className="h-3 w-3 text-zinc-600" />
             <span className="font-mono tabular-nums">{plane.workloadCount ?? "—"}</span>
             <span className="text-zinc-600">wl</span>
@@ -766,11 +766,11 @@ function PlaneCard({
             <Detail label="Data-plane version" value={plane.version ?? "—"} mono />
             <Detail label="Nodes" value={plane.nodes != null ? String(plane.nodes) : "—"} mono />
             <div>
-              <p className="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">Tunnel</p>
+              <p className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Tunnel</p>
               <TunnelBadge tunnel={plane.tunnel} />
             </div>
             <div>
-              <p className="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">Last heartbeat</p>
+              <p className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Last heartbeat</p>
               <Heartbeat ago={plane.heartbeatAgoSec} offline={offline} />
             </div>
             <Detail label="Agents" value={String(plane.agentCount)} mono />
@@ -799,7 +799,7 @@ function PlaneCard({
 
           {/* Deployments on this plane */}
           <div className="mt-4">
-            <p className="mb-2 text-[10px] uppercase tracking-wide text-zinc-500">Deployed here</p>
+            <p className="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">Deployed here</p>
             {deployments.length === 0 ? (
               <p className="text-xs text-zinc-600">
                 {plane.demo ? "No deployments on this plane." : "Deployment-to-plane mapping not reported by the API."}
@@ -810,9 +810,9 @@ function PlaneCard({
                   <div key={d.id} className="flex items-center gap-3 rounded-lg bg-surface-0 px-3 py-2">
                     <StateDot state={d.status === "live" ? "running" : d.status === "failed" ? "failed" : "spawning"} />
                     <span className="text-xs font-medium text-zinc-200">{d.agentName}</span>
-                    <span className="font-mono text-[11px] text-zinc-500">{d.version}</span>
+                    <span className="font-mono text-[12px] text-zinc-500">{d.version}</span>
                     <EnvBadge env={d.environment} />
-                    <span className="ml-auto text-[11px] text-zinc-600">{timeAgoSec(d.deployedAgoSec)}</span>
+                    <span className="ml-auto text-[12px] text-zinc-600">{timeAgoSec(d.deployedAgoSec)}</span>
                   </div>
                 ))}
               </div>
@@ -823,7 +823,7 @@ function PlaneCard({
           <div className="mt-4 flex justify-end">
             <button
               onClick={onRemove}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-surface-2 px-2.5 py-1 text-[11px] text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400/90"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-surface-2 px-2.5 py-1 text-[12px] text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400/90"
             >
               <Trash2 className="h-3 w-3" /> Disconnect
             </button>
@@ -837,7 +837,7 @@ function PlaneCard({
 function Detail({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <p className="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">{label}</p>
+      <p className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">{label}</p>
       <p className={clsx("text-sm text-zinc-200", mono && "font-mono text-[12px]")}>{value}</p>
     </div>
   );
@@ -846,9 +846,9 @@ function Detail({ label, value, mono }: { label: string; value: string; mono?: b
 function CapacityRow({ label, util, detail }: { label: string; util: number; detail: string }) {
   return (
     <div className="flex items-center gap-3">
-      <span className="w-14 font-mono text-[11px] text-zinc-500">{label}</span>
+      <span className="w-14 font-mono text-[12px] text-zinc-500">{label}</span>
       <div className="flex-1"><UtilBar value={util} tone={capTone(util)} /></div>
-      <span className="w-24 text-right font-mono text-[11px] tabular-nums text-zinc-500">{detail}</span>
+      <span className="w-24 text-right font-mono text-[12px] tabular-nums text-zinc-500">{detail}</span>
     </div>
   );
 }
@@ -871,7 +871,7 @@ function RegionMap({ planes }: { planes: PlaneRow[] }) {
 
   return (
     <div className="rounded-xl bg-surface-1">
-      <div className="flex items-center gap-2 border-b border-zinc-800/40 px-5 py-3.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+      <div className="flex items-center gap-2 border-b border-zinc-800/40 px-5 py-3.5 text-[12px] font-medium uppercase tracking-wide text-zinc-400">
         <Globe2 className="h-3.5 w-3.5 text-zinc-500" /> Where agents run
       </div>
       <div className="space-y-5 p-5">
@@ -879,7 +879,7 @@ function RegionMap({ planes }: { planes: PlaneRow[] }) {
           <div key={cloud}>
             <div className="mb-2 flex items-center gap-2">
               <CloudBadge cloud={cloud} dense />
-              <span className="text-[10px] text-zinc-600">
+              <span className="text-[11px] text-zinc-600">
                 {regions.size} region{regions.size === 1 ? "" : "s"}
               </span>
             </div>
@@ -905,13 +905,13 @@ function RegionMap({ planes }: { planes: PlaneRow[] }) {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <StateDot state={planeVmState(worst)} />
-                        <span className="font-mono text-[11px] text-zinc-200">{region}</span>
+                        <span className="font-mono text-[12px] text-zinc-200">{region}</span>
                       </div>
-                      <span className="font-mono text-[10px] tabular-nums text-zinc-500">
+                      <span className="font-mono text-[11px] tabular-nums text-zinc-500">
                         {rps.length} plane{rps.length === 1 ? "" : "s"}
                       </span>
                     </div>
-                    <div className="mt-1.5 flex items-center gap-3 text-[10px] text-zinc-500">
+                    <div className="mt-1.5 flex items-center gap-3 text-[11px] text-zinc-500">
                       <span className="inline-flex items-center gap-1">
                         <Layers className="h-2.5 w-2.5" />
                         {anyWorkloads ? `${workloads} workloads` : "—"}
@@ -942,7 +942,7 @@ function DeploymentsSection({ deployments, planes }: { deployments: DeploymentRo
 
   return (
     <section>
-      <h2 className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+      <h2 className="mb-3 flex items-center gap-2 text-[12px] font-medium uppercase tracking-wide text-zinc-400">
         <Layers className="h-3.5 w-3.5 text-zinc-500" /> Deployments
       </h2>
       {/* Desktop: table, unchanged */}
@@ -957,7 +957,7 @@ function DeploymentsSection({ deployments, planes }: { deployments: DeploymentRo
                 <td><span className="font-medium text-zinc-100">{d.agentName}</span></td>
                 <td><span className="font-mono text-xs text-zinc-400">{d.version}</span></td>
                 <td><EnvBadge env={d.environment} /></td>
-                <td><span className="font-mono text-[11px] text-zinc-400">{planeName(d.planeId) ?? "—"}</span></td>
+                <td><span className="font-mono text-[12px] text-zinc-400">{planeName(d.planeId) ?? "—"}</span></td>
                 <td>
                   <div className="flex items-center gap-1.5">
                     <StateDot state={d.status === "live" ? "running" : d.status === "failed" ? "failed" : "spawning"} />
@@ -993,7 +993,7 @@ function DeploymentsSection({ deployments, planes }: { deployments: DeploymentRo
             <div className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-2">
               <Detail label="Version" value={d.version} mono />
               <div>
-                <p className="mb-1 text-[10px] uppercase tracking-wide text-zinc-500">Environment</p>
+                <p className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Environment</p>
                 <EnvBadge env={d.environment} />
               </div>
               <Detail label="Data plane" value={planeName(d.planeId) ?? "—"} mono />

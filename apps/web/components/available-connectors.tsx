@@ -126,7 +126,7 @@ export function AvailableConnectors() {
                     <Plus className="h-3 w-3 text-zinc-600 transition-colors group-hover:text-lantern-400" />
                   )}
                 </p>
-                <p className="truncate text-[11px] text-zinc-500">{c.description}</p>
+                <p className="truncate text-[12px] text-zinc-500">{c.description}</p>
               </div>
             </Link>
           );

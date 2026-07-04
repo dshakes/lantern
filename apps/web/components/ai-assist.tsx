@@ -109,7 +109,7 @@ export function AiAssistButton({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1 rounded-md bg-lantern-500/10 px-2 py-1 text-[11px] font-medium text-lantern-400 transition-colors hover:bg-lantern-500/20"
+        className="inline-flex items-center gap-1 rounded-md bg-lantern-500/10 px-2 py-1 text-[12px] font-medium text-lantern-400 transition-colors hover:bg-lantern-500/20"
         title="Generate with AI"
       >
         <Sparkles className="h-3 w-3" />

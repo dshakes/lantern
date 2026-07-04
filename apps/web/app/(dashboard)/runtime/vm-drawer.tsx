@@ -147,7 +147,7 @@ function DrawerHeader({ vm, isDemo, onClose }: { vm: VmRow; isDemo: boolean; onC
           <StatePill state={vm.state} />
           <IsolationBadge cls={vm.isolationClass} />
         </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] text-zinc-500">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[12px] text-zinc-500">
           <span className="text-zinc-400">{vm.vmId}</span>
           <span>·</span>
           <span>{vm.node || "unscheduled"}</span>
@@ -157,7 +157,7 @@ function DrawerHeader({ vm, isDemo, onClose }: { vm: VmRow; isDemo: boolean; onC
       <div className="flex shrink-0 items-center gap-1.5">
         <Link
           href={`/runtime/${vm.vmId}`}
-          className="inline-flex items-center gap-1.5 rounded-md bg-surface-2 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:bg-surface-3"
+          className="inline-flex items-center gap-1.5 rounded-md bg-surface-2 px-2.5 py-1 text-[12px] text-zinc-300 transition-colors hover:bg-surface-3"
         >
           <ExternalLink className="h-3 w-3" />
           Full page
@@ -216,7 +216,7 @@ function LogsTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
 
   return (
     <div className="space-y-2.5">
-      <div className="flex items-center justify-between text-[11px] text-zinc-500">
+      <div className="flex items-center justify-between text-[12px] text-zinc-500">
         <span className="flex items-center gap-1.5">
           <span className={clsx("h-1.5 w-1.5 rounded-full", active ? "bg-emerald-500/70 animate-pulse" : "bg-zinc-600")} />
           {active ? "streaming" : "stream closed"}
@@ -226,7 +226,7 @@ function LogsTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
       </div>
       <div
         ref={boxRef}
-        className="h-[60vh] overflow-y-auto rounded-lg bg-surface-0 p-4 font-mono text-[11px] leading-relaxed text-zinc-300"
+        className="h-[60vh] overflow-y-auto rounded-lg bg-surface-0 p-4 font-mono text-[12px] leading-relaxed text-zinc-300"
       >
         {logs.length === 0 ? (
           <div className="text-zinc-600">Waiting for log lines…</div>
@@ -291,12 +291,12 @@ function ExecTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+      <div className="flex items-center gap-2 text-[12px] text-zinc-500">
         <TerminalSquare className="h-3.5 w-3.5" />
         One-shot exec into the workload
         {isDemo && <span className="rounded bg-surface-2 px-1.5 py-0.5 text-zinc-400">simulated</span>}
       </div>
-      <div className="min-h-[200px] space-y-3 rounded-lg bg-surface-0 p-4 font-mono text-[11px] text-zinc-300">
+      <div className="min-h-[200px] space-y-3 rounded-lg bg-surface-0 p-4 font-mono text-[12px] text-zinc-300">
         {history.length === 0 && <div className="text-zinc-600">No commands yet. Try `ls`, `ps`, `cat /etc/hostname`.</div>}
         {history.map((h, i) => (
           <div key={i}>
@@ -350,7 +350,7 @@ function MetricsTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
       <div className="rounded-lg bg-surface-0 p-10 text-center">
         <Gauge className="mx-auto mb-2.5 h-5 w-5 text-zinc-600" />
         <div className="text-[12px] text-zinc-400">No live metrics for this workload</div>
-        <div className="mt-1.5 text-[11px] leading-relaxed text-zinc-600">
+        <div className="mt-1.5 text-[12px] leading-relaxed text-zinc-600">
           Per-VM CPU/memory/network telemetry needs a metrics endpoint on the harness. Until then real workloads
           render <span className="font-mono text-zinc-500">—</span> (never fabricated).
         </div>
@@ -364,7 +364,7 @@ function MetricsTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
 
   return (
     <div className="space-y-4">
-      <div className="text-[11px] text-zinc-500">
+      <div className="text-[12px] text-zinc-500">
         Live utilisation
         <span className="ml-1 rounded bg-surface-2 px-1.5 py-0.5 text-zinc-400">simulated</span>
       </div>
@@ -374,16 +374,16 @@ function MetricsTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="rounded-lg bg-surface-0 p-4">
-          <div className="text-[10px] uppercase tracking-wide text-zinc-500">Cost rate</div>
+          <div className="text-[11px] uppercase tracking-wide text-zinc-500">Cost rate</div>
           <div className="mt-1.5 font-mono text-lg tabular-nums text-zinc-100">${cost.toFixed(3)}/hr</div>
-          <div className="mt-0.5 text-[10px] text-zinc-600">≈ ${(cost * 24).toFixed(2)}/day</div>
+          <div className="mt-0.5 text-[11px] text-zinc-600">≈ ${(cost * 24).toFixed(2)}/day</div>
         </div>
         <div className="rounded-lg bg-surface-0 p-4">
-          <div className="text-[10px] uppercase tracking-wide text-zinc-500">Network</div>
+          <div className="text-[11px] uppercase tracking-wide text-zinc-500">Network</div>
           <div className="mt-1.5 font-mono text-lg tabular-nums text-zinc-100">
             {(cpuNow * 18 + 2).toFixed(1)} MB/s
           </div>
-          <div className="mt-0.5 text-[10px] text-zinc-600">egress within allowlist</div>
+          <div className="mt-0.5 text-[11px] text-zinc-600">egress within allowlist</div>
         </div>
       </div>
     </div>
@@ -394,8 +394,8 @@ function MetricCard({ label, value, series, color }: { label: string; value: str
   return (
     <div className="rounded-lg bg-surface-0 p-4">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</span>
-        <span className="font-mono text-[13px] tabular-nums text-zinc-100">{value}</span>
+        <span className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</span>
+        <span className="font-mono text-[14px] tabular-nums text-zinc-100">{value}</span>
       </div>
       <div className="mt-2.5">
         <Sparkline data={series} color={color} width={220} height={44} />
@@ -435,7 +435,7 @@ function AuditTab({ vm, isDemo }: { vm: VmRow; isDemo: boolean }) {
   return (
     <ul className="space-y-2">
       {events.map((e) => (
-        <li key={e.id} className="rounded-lg bg-surface-0 px-3.5 py-2.5 text-[11px]">
+        <li key={e.id} className="rounded-lg bg-surface-0 px-3.5 py-2.5 text-[12px]">
           <div className="flex items-center justify-between">
             <span className="font-mono font-medium text-zinc-200">{e.action}</span>
             <span className="text-zinc-500">{formatDistanceToNow(new Date(e.at), { addSuffix: true })}</span>
@@ -491,7 +491,7 @@ function LifecycleTab({ vm, isDemo, onTerminated }: { vm: VmRow; isDemo: boolean
   return (
     <div className="space-y-6">
       <div className="rounded-lg bg-surface-0 p-4">
-        <div className="mb-3.5 text-[11px] uppercase tracking-wide text-zinc-500">State timeline</div>
+        <div className="mb-3.5 text-[12px] uppercase tracking-wide text-zinc-500">State timeline</div>
         <ol className="space-y-3.5">
           {STEPS.map((s, i) => {
             const done = vm.state === "failed" ? i <= curIdx : i < curIdx;
@@ -525,8 +525,8 @@ function LifecycleTab({ vm, isDemo, onTerminated }: { vm: VmRow; isDemo: boolean
       </div>
 
       <div className="rounded-lg bg-surface-0 p-4">
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-zinc-500">Spec</div>
-        <pre className="overflow-x-auto font-mono text-[11px] text-zinc-400">{JSON.stringify(vm.spec ?? {}, null, 2)}</pre>
+        <div className="mb-2 text-[12px] uppercase tracking-wide text-zinc-500">Spec</div>
+        <pre className="overflow-x-auto font-mono text-[12px] text-zinc-400">{JSON.stringify(vm.spec ?? {}, null, 2)}</pre>
       </div>
 
       {active && (
@@ -552,8 +552,8 @@ function LifecycleTab({ vm, isDemo, onTerminated }: { vm: VmRow; isDemo: boolean
 function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="rounded-lg bg-surface-0 px-3.5 py-2.5">
-      <div className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
-      <div className={clsx("mt-0.5 text-zinc-200", mono && "font-mono text-[11px]")}>{value}</div>
+      <div className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className={clsx("mt-0.5 text-zinc-200", mono && "font-mono text-[12px]")}>{value}</div>
     </div>
   );
 }

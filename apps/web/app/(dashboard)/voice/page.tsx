@@ -132,7 +132,7 @@ export default function VoicePage() {
           <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
             <Phone className="h-3.5 w-3.5" />
             Linked numbers
-            <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-zinc-400">{numbers.length}</span>
+            <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[11px] text-zinc-400">{numbers.length}</span>
           </h2>
           {loading ? (
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-6 text-[12px] text-zinc-500">
@@ -148,15 +148,15 @@ export default function VoicePage() {
                 <li key={n.id} className="flex items-center gap-3 px-4 py-3">
                   <Phone className="h-4 w-4 text-zinc-500" />
                   <div className="min-w-0 flex-1">
-                    <p className="font-mono text-[13px] text-zinc-100">{n.phoneNumber}</p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                    <p className="font-mono text-[14px] text-zinc-100">{n.phoneNumber}</p>
+                    <p className="mt-0.5 text-[12px] text-zinc-500">
                       <span className="text-zinc-300">{n.agentName}</span>
                       <span className="mx-1.5 text-zinc-700">·</span>
                       via {n.provider}
                       {n.displayName && <><span className="mx-1.5 text-zinc-700">·</span>{n.displayName}</>}
                     </p>
                     {n.lastError && (
-                      <p className="mt-1 text-[11px] text-red-300">
+                      <p className="mt-1 text-[12px] text-red-300">
                         <AlertCircle className="mr-1 inline h-3 w-3" />
                         {n.lastError}
                       </p>
@@ -164,7 +164,7 @@ export default function VoicePage() {
                   </div>
                   <span
                     className={clsx(
-                      "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                      "rounded-full px-2 py-0.5 text-[11px] font-medium",
                       n.status === "active"
                         ? "bg-emerald-500/10 text-emerald-300"
                         : n.status === "error"
@@ -193,7 +193,7 @@ export default function VoicePage() {
           <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
             <PhoneCall className="h-3.5 w-3.5" />
             Recent calls
-            <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-zinc-400">{calls.length}</span>
+            <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[11px] text-zinc-400">{calls.length}</span>
           </h2>
           {calls.length === 0 ? (
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-8 text-center text-[12px] text-zinc-500">
@@ -215,7 +215,7 @@ export default function VoicePage() {
                     <p className="font-mono text-[12px] text-zinc-200">
                       {c.from} → {c.to}
                     </p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                    <p className="mt-0.5 text-[12px] text-zinc-500">
                       {c.agentName}
                       <span className="mx-1.5 text-zinc-700">·</span>
                       {c.direction}
@@ -225,13 +225,13 @@ export default function VoicePage() {
                     </p>
                   </div>
                   {c.costUsd > 0 && (
-                    <span className="text-[11px] text-zinc-400 tabular-nums">
+                    <span className="text-[12px] text-zinc-400 tabular-nums">
                       ${c.costUsd.toFixed(4)}
                     </span>
                   )}
                   <span
                     className={clsx(
-                      "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                      "rounded-full px-2 py-0.5 text-[11px] font-medium",
                       c.status === "completed" && "bg-emerald-500/10 text-emerald-300",
                       c.status === "failed" && "bg-red-500/10 text-red-300",
                       (c.status === "ringing" || c.status === "active") && "bg-lantern-500/10 text-lantern-300"
@@ -382,7 +382,7 @@ function AddNumberCard({
         <Button variant="ghost" size="sm" onClick={onCancel}>
           Cancel
         </Button>
-        <p className="ml-auto text-[11px] text-zinc-500">
+        <p className="ml-auto text-[12px] text-zinc-500">
           Webhook to set in Twilio: <code className="text-zinc-400">/v1/voice/webhook/twilio</code>
         </p>
       </div>
@@ -401,9 +401,9 @@ function Field({
 }) {
   return (
     <div>
-      <label className="mb-1 block text-[11px] font-medium text-zinc-400">{label}</label>
+      <label className="mb-1 block text-[12px] font-medium text-zinc-400">{label}</label>
       {children}
-      {hint && <p className="mt-1 text-[10px] text-zinc-600">{hint}</p>}
+      {hint && <p className="mt-1 text-[11px] text-zinc-600">{hint}</p>}
     </div>
   );
 }

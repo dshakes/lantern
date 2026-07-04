@@ -137,7 +137,7 @@ export default function RuntimeVmPage() {
         secondaryAction={
           <button
             onClick={() => router.push("/runtime")}
-            className="inline-flex items-center gap-1.5 rounded border border-zinc-700 bg-surface-2 px-2.5 py-1 text-[11px] text-zinc-300 hover:bg-surface-3"
+            className="inline-flex items-center gap-1.5 rounded border border-zinc-700 bg-surface-2 px-2.5 py-1 text-[12px] text-zinc-300 hover:bg-surface-3"
           >
             <ArrowLeft className="h-3 w-3" />
             Back
@@ -168,7 +168,7 @@ export default function RuntimeVmPage() {
         <div className="lg:col-span-2 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium text-zinc-300">Live logs</h3>
-            <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+            <div className="flex items-center gap-2 text-[12px] text-zinc-500">
               <span className={clsx("h-1.5 w-1.5 rounded-full", active ? "bg-emerald-400 animate-pulse" : "bg-zinc-600")} />
               {active ? "streaming" : "stream closed"}
               <span className="text-zinc-700">·</span>
@@ -177,7 +177,7 @@ export default function RuntimeVmPage() {
           </div>
           <div
             ref={logBoxRef}
-            className="h-[500px] overflow-y-auto rounded-xl border border-zinc-800 bg-black p-3 font-mono text-[11px] leading-relaxed text-zinc-300"
+            className="h-[500px] overflow-y-auto rounded-xl border border-zinc-800 bg-black p-3 font-mono text-[12px] leading-relaxed text-zinc-300"
           >
             {logs.length === 0 ? (
               <div className="text-zinc-600">Waiting for log lines…</div>
@@ -194,7 +194,7 @@ export default function RuntimeVmPage() {
         {/* Right rail: spec + audit */}
         <div className="space-y-4">
           <Section title="Spec" icon={<Cpu className="h-3.5 w-3.5" />}>
-            <pre className="overflow-x-auto rounded bg-surface-0 p-3 font-mono text-[11px] text-zinc-300">
+            <pre className="overflow-x-auto rounded bg-surface-0 p-3 font-mono text-[12px] text-zinc-300">
               {JSON.stringify(v.spec ?? {}, null, 2)}
             </pre>
           </Section>
@@ -205,7 +205,7 @@ export default function RuntimeVmPage() {
             ) : (
               <ul className="space-y-1.5">
                 {detail.events.map((e) => (
-                  <li key={e.id} className="rounded bg-surface-0 px-2 py-1.5 text-[11px]">
+                  <li key={e.id} className="rounded bg-surface-0 px-2 py-1.5 text-[12px]">
                     <div className="flex items-center justify-between">
                       <span className="font-medium text-zinc-200">{e.action}</span>
                       <span className="text-zinc-500">{formatDistanceToNow(new Date(e.at), { addSuffix: true })}</span>
@@ -233,7 +233,7 @@ export default function RuntimeVmPage() {
 function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
-      <div className="mb-2 flex items-center gap-1.5 text-[11px] uppercase text-zinc-500">
+      <div className="mb-2 flex items-center gap-1.5 text-[12px] uppercase text-zinc-500">
         {icon}
         {title}
       </div>

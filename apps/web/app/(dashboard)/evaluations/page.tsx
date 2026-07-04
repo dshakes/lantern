@@ -177,7 +177,7 @@ function StatCard({
         {trend && trend !== "neutral" && (
           <span
             className={clsx(
-              "inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-medium",
+              "inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-medium",
               trend === "up" ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400",
             )}
           >
@@ -188,7 +188,7 @@ function StatCard({
       </div>
       <p className="mt-3 text-2xl font-semibold text-zinc-100">{value}</p>
       <p className="mt-0.5 text-xs text-zinc-500">{label}</p>
-      {subValue && <p className="mt-1 text-[11px] text-zinc-600">{subValue}</p>}
+      {subValue && <p className="mt-1 text-[12px] text-zinc-600">{subValue}</p>}
     </div>
   );
 }
@@ -214,7 +214,7 @@ function MiniBar({ value, max, color }: { value: number; max: number; color: str
 function MetricField({ label, value, tone }: { label: string; value: string; tone?: "danger" }) {
   return (
     <div>
-      <p className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</p>
+      <p className="text-[12px] uppercase tracking-wide text-zinc-500">{label}</p>
       <p className={clsx("text-xs tabular-nums", tone === "danger" ? "text-red-400" : "text-zinc-200")}>{value}</p>
     </div>
   );
@@ -389,7 +389,7 @@ export default function EvaluationsPage() {
                 key={range}
                 onClick={() => setTimeRange(range)}
                 className={clsx(
-                  "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  "rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors",
                   timeRange === range
                     ? "bg-surface-3 text-zinc-100"
                     : "text-zinc-500 hover:text-zinc-300",
@@ -734,7 +734,7 @@ export default function EvaluationsPage() {
                           <p className="truncate text-xs font-medium text-zinc-300">
                             {r.agentName ?? r.agentId}
                           </p>
-                          <p className="truncate text-[11px] text-zinc-500">
+                          <p className="truncate text-[12px] text-zinc-500">
                             {r.error?.message ?? "Unknown error"}
                           </p>
                         </div>

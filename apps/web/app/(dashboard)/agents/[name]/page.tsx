@@ -1061,7 +1061,7 @@ export default function AgentDetailPage() {
         <div className="relative z-10 px-8 py-5">
           <button
             onClick={() => router.push("/agents")}
-            className="mb-4 inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-600 transition-colors hover:text-zinc-300"
+            className="mb-4 inline-flex items-center gap-1.5 text-[12px] font-medium text-zinc-600 transition-colors hover:text-zinc-300"
           >
             <ArrowLeft className="h-3 w-3" /> All agents
           </button>
@@ -1073,7 +1073,7 @@ export default function AgentDetailPage() {
               <div className="flex flex-wrap items-center gap-2.5">
                 <h1 className="text-xl font-semibold leading-tight text-zinc-100">{agent.name}</h1>
                 <span className={clsx(
-                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] font-medium",
                   agent.status === "active" ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-500/10 text-zinc-400",
                 )}>
                   <span className={clsx("h-1.5 w-1.5 rounded-full", agent.status === "active" ? "bg-emerald-400" : "bg-zinc-500")} />
@@ -1100,8 +1100,8 @@ export default function AgentDetailPage() {
                 reactive:  "text-emerald-300 bg-emerald-500/10 border border-emerald-500/20",
               };
               return (
-                <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-                  <span className={clsx("rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", eColors[entry.execModel ?? "scheduled"])}>
+                <div className="flex items-center gap-2 text-[12px] text-zinc-500">
+                  <span className={clsx("rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide", eColors[entry.execModel ?? "scheduled"])}>
                     {eLabels[entry.execModel ?? "scheduled"]}
                   </span>
                   <span>{entry.cadence}</span>
@@ -1120,7 +1120,7 @@ export default function AgentDetailPage() {
                 <HeaderStat icon={<DollarSign className="h-3.5 w-3.5 text-emerald-400" />} label="Cost" value={`$${totalCost.toFixed(4)}`} />
               </>
             ) : (
-              <span className="text-[11px] text-zinc-600">No runs yet</span>
+              <span className="text-[12px] text-zinc-600">No runs yet</span>
             )}
           </div>
 
@@ -1180,7 +1180,7 @@ export default function AgentDetailPage() {
                 <div className="rounded-xl border border-zinc-800 bg-surface-1 px-5 py-4">
                   <p className="mb-3 text-sm text-zinc-300">{entry.whatItDoes}</p>
                   <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-                    <span className={clsx("rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", execColors[entry.execModel ?? "scheduled"])}>
+                    <span className={clsx("rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide", execColors[entry.execModel ?? "scheduled"])}>
                       {execLabels[entry.execModel ?? "scheduled"]}
                     </span>
                     <span>runs: <span className="text-zinc-300">{entry.cadence}</span></span>
@@ -1198,17 +1198,17 @@ export default function AgentDetailPage() {
                 </div>
                 <div>
                   <p className="text-sm font-medium text-zinc-200">Managed Agent <span className="text-emerald-400">&#183;</span> Running on Lantern Cloud</p>
-                  <p className="text-[10px] text-zinc-500">Zero-setup execution -- no code deployment required</p>
+                  <p className="text-[11px] text-zinc-500">Zero-setup execution -- no code deployment required</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-medium text-zinc-400">
+                <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] font-medium text-zinc-400">
                   {envRuntime === "node22" ? "Node.js 22" : envRuntime === "python312" ? "Python 3.12" : "Custom"}
                 </span>
-                <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-medium text-zinc-400">
+                <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] font-medium text-zinc-400">
                   {envMemory === "256mb" ? "256MB RAM" : envMemory === "512mb" ? "512MB RAM" : envMemory === "1gb" ? "1GB RAM" : "2GB RAM"}
                 </span>
-                <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-medium text-zinc-400">
+                <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] font-medium text-zinc-400">
                   {envTimeout} timeout
                 </span>
               </div>
@@ -1219,7 +1219,7 @@ export default function AgentDetailPage() {
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><BookOpen className="h-4 w-4 text-teal-400" /> Instructions</h3>
                 <div className="flex items-center gap-2">
-                  {instructionsDirty && <span className="text-[10px] text-amber-400">Unsaved</span>}
+                  {instructionsDirty && <span className="text-[11px] text-amber-400">Unsaved</span>}
                   <button
                     disabled={generatingInstructions}
                     onClick={async () => {
@@ -1230,14 +1230,14 @@ export default function AgentDetailPage() {
                       } catch { toast.error("LLM unavailable"); }
                       setGeneratingInstructions(false);
                     }}
-                    className="inline-flex items-center gap-1 rounded-md bg-teal-500/10 px-2 py-1 text-[10px] font-medium text-teal-400 hover:bg-teal-500/20 disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-md bg-teal-500/10 px-2 py-1 text-[11px] font-medium text-teal-400 hover:bg-teal-500/20 disabled:opacity-50"
                   >
                     {generatingInstructions ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Sparkles className="h-2.5 w-2.5" />}
                     {generatingInstructions ? "Generating..." : "Generate with AI"}
                   </button>
                 </div>
               </div>
-              <p className="mb-2 text-[10px] text-zinc-600">Define what this agent does — its goals, constraints, and scope.</p>
+              <p className="mb-2 text-[11px] text-zinc-600">Define what this agent does — its goals, constraints, and scope.</p>
               <textarea
                 value={instructions}
                 onChange={(e) => { setInstructions(e.target.value); setInstructionsDirty(true); }}
@@ -1254,7 +1254,7 @@ export default function AgentDetailPage() {
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300">
                   <Bot className="h-4 w-4 text-teal-400" /> Identity
-                  <span className="text-[10px] font-normal text-zinc-600">-- avatar + voice shown in WhatsApp + chat</span>
+                  <span className="text-[11px] font-normal text-zinc-600">-- avatar + voice shown in WhatsApp + chat</span>
                 </h3>
                 <button
                   onClick={handleSaveIdentity}
@@ -1284,11 +1284,11 @@ export default function AgentDetailPage() {
                       <Bot className="h-7 w-7 text-zinc-500" />
                     </div>
                   )}
-                  <p className="text-[10px] text-zinc-600">Preview</p>
+                  <p className="text-[11px] text-zinc-600">Preview</p>
                 </div>
                 <div className="space-y-3">
                   <div>
-                    <label className="mb-1 block text-[11px] font-medium text-zinc-500">Avatar URL</label>
+                    <label className="mb-1 block text-[12px] font-medium text-zinc-500">Avatar URL</label>
                     <input
                       type="url"
                       value={avatarUrl}
@@ -1298,7 +1298,7 @@ export default function AgentDetailPage() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-[11px] font-medium text-zinc-500">
+                    <label className="mb-1 block text-[12px] font-medium text-zinc-500">
                       Style ("my voice")
                       <span className="ml-1 font-normal text-zinc-600">-- short rules the agent follows on every reply</span>
                     </label>
@@ -1313,13 +1313,13 @@ export default function AgentDetailPage() {
                   </div>
                 </div>
               </div>
-              {identityDirty && <p className="mt-2 text-[11px] text-amber-400">Unsaved changes</p>}
+              {identityDirty && <p className="mt-2 text-[12px] text-amber-400">Unsaved changes</p>}
             </div>
 
             {/* System Prompt (how the agent behaves) */}
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
               <div className="mb-3 flex items-center justify-between">
-                <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><MessageSquare className="h-4 w-4 text-indigo-400" /> System Prompt <span className="text-[10px] font-normal text-zinc-600">-- personality, tone, output format</span></h3>
+                <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><MessageSquare className="h-4 w-4 text-indigo-400" /> System Prompt <span className="text-[11px] font-normal text-zinc-600">-- personality, tone, output format</span></h3>
                 <div className="flex items-center gap-2">
                   <button onClick={handleOptimizePrompt} disabled={optimizingPrompt || !systemPrompt.trim()} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 px-3 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-500/10 disabled:opacity-50">
                     {optimizingPrompt ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />} Optimize
@@ -1331,12 +1331,12 @@ export default function AgentDetailPage() {
                 </div>
               </div>
               <textarea value={systemPrompt} onChange={(e) => { setSystemPrompt(e.target.value); setPromptDirty(true); }} rows={6} spellCheck={false} placeholder="You are a helpful assistant that responds in a professional tone. Always format output as structured bullet points..." className="w-full resize-y rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-sm leading-relaxed text-zinc-300 placeholder:text-zinc-600 outline-none focus:border-lantern-500/50 focus:ring-1 focus:ring-lantern-500/20" />
-              {promptDirty && <p className="mt-1.5 text-[11px] text-amber-400">Unsaved changes</p>}
+              {promptDirty && <p className="mt-1.5 text-[12px] text-amber-400">Unsaved changes</p>}
 
               {/* Version History */}
               {promptVersions.length > 0 && (
                 <div className="mt-3">
-                  <button onClick={() => setShowVersionHistory(!showVersionHistory)} className="flex items-center gap-1.5 text-[11px] text-zinc-500 hover:text-zinc-300">
+                  <button onClick={() => setShowVersionHistory(!showVersionHistory)} className="flex items-center gap-1.5 text-[12px] text-zinc-500 hover:text-zinc-300">
                     <History className="h-3 w-3" /> Version History ({promptVersions.length})
                     {showVersionHistory ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                   </button>
@@ -1345,10 +1345,10 @@ export default function AgentDetailPage() {
                       {promptVersions.map((v, i) => (
                         <button key={i} onClick={() => { setSystemPrompt(v.prompt); setPromptDirty(true); toast.info(`Restored version ${v.version}`); }} className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left hover:bg-surface-2">
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-mono text-zinc-500">v{v.version}</span>
-                            <span className="max-w-xs truncate text-[11px] text-zinc-400">{v.prompt.slice(0, 60)}...</span>
+                            <span className="text-[11px] font-mono text-zinc-500">v{v.version}</span>
+                            <span className="max-w-xs truncate text-[12px] text-zinc-400">{v.prompt.slice(0, 60)}...</span>
                           </div>
-                          <span className="shrink-0 text-[10px] text-zinc-600">{formatVersionDate(v.savedAt)}</span>
+                          <span className="shrink-0 text-[11px] text-zinc-600">{formatVersionDate(v.savedAt)}</span>
                         </button>
                       ))}
                     </div>
@@ -1362,7 +1362,7 @@ export default function AgentDetailPage() {
               <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
                 <h4 className="mb-2 text-xs font-medium text-zinc-500">Model</h4>
                 <p className="text-sm font-medium text-zinc-200">{settingsModel === "auto" ? "Auto (recommended)" : settingsModel}</p>
-                <button onClick={() => setActiveTab("settings")} className="mt-2 text-[11px] text-indigo-400 hover:text-indigo-300">Change</button>
+                <button onClick={() => setActiveTab("settings")} className="mt-2 text-[12px] text-indigo-400 hover:text-indigo-300">Change</button>
               </div>
               <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
                 <h4 className="mb-2 text-xs font-medium text-zinc-500">Connectors</h4>
@@ -1371,14 +1371,14 @@ export default function AgentDetailPage() {
                 ) : (
                   <p className="text-sm text-zinc-500">None attached</p>
                 )}
-                <button onClick={() => router.push("/connectors")} className="mt-2 text-[11px] text-indigo-400 hover:text-indigo-300">Manage</button>
+                <button onClick={() => router.push("/connectors")} className="mt-2 text-[12px] text-indigo-400 hover:text-indigo-300">Manage</button>
               </div>
               <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
                 <h4 className="mb-2 text-xs font-medium text-zinc-500">Privacy</h4>
                 <p className="flex items-center gap-1.5 text-sm font-medium text-zinc-200">
                   {settingsEncrypt ? <><Lock className="h-3.5 w-3.5 text-lantern-400" /> Encrypted</> : settingsAuditLog ? <><Shield className="h-3.5 w-3.5 text-blue-400" /> Audit-logged</> : "Standard"}
                 </p>
-                <p className="mt-0.5 text-[10px] text-zinc-500">Data encrypted at rest</p>
+                <p className="mt-0.5 text-[11px] text-zinc-500">Data encrypted at rest</p>
               </div>
             </div>
 
@@ -1396,11 +1396,11 @@ export default function AgentDetailPage() {
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><Users className="h-4 w-4 text-violet-400" /> Sub-agents</h3>
-                <button onClick={() => setShowAddSubAgent(!showAddSubAgent)} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:bg-surface-3">
+                <button onClick={() => setShowAddSubAgent(!showAddSubAgent)} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1 text-[12px] font-medium text-zinc-400 hover:bg-surface-3">
                   <Plus className="h-3 w-3" /> Add
                 </button>
               </div>
-              <p className="mb-3 text-[10px] text-zinc-600">Connect other agents that this agent can invoke during execution (agent handoff).</p>
+              <p className="mb-3 text-[11px] text-zinc-600">Connect other agents that this agent can invoke during execution (agent handoff).</p>
 
               {showAddSubAgent && (
                 <div className="mb-3 space-y-2 rounded-lg border border-violet-500/20 bg-violet-500/5 p-3">
@@ -1408,8 +1408,8 @@ export default function AgentDetailPage() {
                   <input type="text" value={newSubAgentDesc} onChange={(e) => setNewSubAgentDesc(e.target.value)} placeholder="Description (e.g., Handles deep research tasks)" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-violet-500/50" />
                   <input type="text" value={newSubAgentCondition} onChange={(e) => setNewSubAgentCondition(e.target.value)} placeholder="Handoff condition (e.g., when user asks for research)" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-violet-500/50" />
                   <div className="flex items-center gap-2">
-                    <button onClick={handleAddSubAgent} className="rounded-lg bg-violet-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-violet-500">Link Agent</button>
-                    <button onClick={() => setShowAddSubAgent(false)} className="text-[11px] text-zinc-500 hover:text-zinc-300">Cancel</button>
+                    <button onClick={handleAddSubAgent} className="rounded-lg bg-violet-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-violet-500">Link Agent</button>
+                    <button onClick={() => setShowAddSubAgent(false)} className="text-[12px] text-zinc-500 hover:text-zinc-300">Cancel</button>
                   </div>
                 </div>
               )}
@@ -1423,8 +1423,8 @@ export default function AgentDetailPage() {
                       <Network className="h-4 w-4 shrink-0 text-violet-400" />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-medium text-zinc-200">{sa.targetAgentName}</p>
-                        {sa.description && <p className="text-[10px] text-zinc-500">{sa.description}</p>}
-                        {sa.handoffCondition && <p className="text-[10px] text-zinc-600">Condition: {sa.handoffCondition}</p>}
+                        {sa.description && <p className="text-[11px] text-zinc-500">{sa.description}</p>}
+                        {sa.handoffCondition && <p className="text-[11px] text-zinc-600">Condition: {sa.handoffCondition}</p>}
                       </div>
                       <button onClick={() => handleRemoveSubAgent(sa.id)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10"><X className="h-3 w-3" /></button>
                     </div>
@@ -1437,19 +1437,19 @@ export default function AgentDetailPage() {
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><Brain className="h-4 w-4 text-amber-400" /> Memory</h3>
-                <button onClick={() => setShowAddMemory(!showAddMemory)} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:bg-surface-3">
+                <button onClick={() => setShowAddMemory(!showAddMemory)} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1 text-[12px] font-medium text-zinc-400 hover:bg-surface-3">
                   <Plus className="h-3 w-3" /> Add
                 </button>
               </div>
-              <p className="mb-3 text-[10px] text-zinc-600">Key-value facts that persist across runs. The agent remembers these in every conversation.</p>
+              <p className="mb-3 text-[11px] text-zinc-600">Key-value facts that persist across runs. The agent remembers these in every conversation.</p>
 
               {showAddMemory && (
                 <div className="mb-3 space-y-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
                   <input type="text" value={newMemKey} onChange={(e) => setNewMemKey(e.target.value)} placeholder="Key (e.g., user_name, preferred_language)" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-amber-500/50" />
                   <input type="text" value={newMemValue} onChange={(e) => setNewMemValue(e.target.value)} placeholder="Value (e.g., Alice, English)" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-amber-500/50" />
                   <div className="flex items-center gap-2">
-                    <button onClick={handleAddMemory} className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-amber-500">Save Entry</button>
-                    <button onClick={() => setShowAddMemory(false)} className="text-[11px] text-zinc-500 hover:text-zinc-300">Cancel</button>
+                    <button onClick={handleAddMemory} className="rounded-lg bg-amber-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-amber-500">Save Entry</button>
+                    <button onClick={() => setShowAddMemory(false)} className="text-[12px] text-zinc-500 hover:text-zinc-300">Cancel</button>
                   </div>
                 </div>
               )}
@@ -1462,8 +1462,8 @@ export default function AgentDetailPage() {
                     <div key={entry.id} className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-[11px] font-medium text-amber-400">{entry.key}</span>
-                          <span className="text-[10px] text-zinc-600">{entry.source === "auto" ? "(auto)" : ""}</span>
+                          <span className="font-mono text-[12px] font-medium text-amber-400">{entry.key}</span>
+                          <span className="text-[11px] text-zinc-600">{entry.source === "auto" ? "(auto)" : ""}</span>
                         </div>
                         <p className="text-xs text-zinc-300">{entry.value}</p>
                       </div>
@@ -1514,22 +1514,22 @@ export default function AgentDetailPage() {
                 <h3 className="mb-3 flex items-center gap-2 text-sm font-medium text-zinc-300"><Activity className="h-4 w-4 text-teal-400" /> Health</h3>
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                   <div className="rounded-lg bg-surface-0 p-3">
-                    <p className="text-[10px] font-medium text-zinc-500">Success Rate</p>
+                    <p className="text-[11px] font-medium text-zinc-500">Success Rate</p>
                     <p className="mt-1 flex items-center gap-1 text-lg font-semibold text-zinc-100">{healthStats.successRate}%
                       {healthStats.trend === "up" && <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />}
                       {healthStats.trend === "down" && <TrendingDown className="h-3.5 w-3.5 text-red-400" />}
                     </p>
                   </div>
                   <div className="rounded-lg bg-surface-0 p-3">
-                    <p className="text-[10px] font-medium text-zinc-500">Avg Cost / Run</p>
+                    <p className="text-[11px] font-medium text-zinc-500">Avg Cost / Run</p>
                     <p className="mt-1 text-lg font-semibold text-zinc-100">{formatCost(healthStats.avgCost)}</p>
                   </div>
                   <div className="rounded-lg bg-surface-0 p-3">
-                    <p className="text-[10px] font-medium text-zinc-500">Avg Duration</p>
+                    <p className="text-[11px] font-medium text-zinc-500">Avg Duration</p>
                     <p className="mt-1 text-lg font-semibold text-zinc-100">{formatDuration(healthStats.avgDuration)}</p>
                   </div>
                   <div className="rounded-lg bg-surface-0 p-3">
-                    <p className="text-[10px] font-medium text-zinc-500">Total Runs</p>
+                    <p className="text-[11px] font-medium text-zinc-500">Total Runs</p>
                     <p className="mt-1 text-lg font-semibold text-zinc-100">{healthStats.total}</p>
                   </div>
                 </div>
@@ -1541,8 +1541,8 @@ export default function AgentDetailPage() {
               <div className="flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-medium text-zinc-300"><FileText className="h-4 w-4 text-zinc-400" /> Documentation</h3>
                 <div className="flex items-center gap-2">
-                  {agentDocs && <button onClick={() => setShowDocs(!showDocs)} className="text-[11px] text-zinc-500 hover:text-zinc-300">{showDocs ? "Hide" : "Show"}</button>}
-                  <button onClick={handleGenerateDocs} disabled={generatingDocs} className="inline-flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50">
+                  {agentDocs && <button onClick={() => setShowDocs(!showDocs)} className="text-[12px] text-zinc-500 hover:text-zinc-300">{showDocs ? "Hide" : "Show"}</button>}
+                  <button onClick={handleGenerateDocs} disabled={generatingDocs} className="inline-flex items-center gap-1 text-[12px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50">
                     {generatingDocs ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />} {agentDocs ? "Regenerate" : "Generate"}
                   </button>
                 </div>
@@ -1564,25 +1564,25 @@ export default function AgentDetailPage() {
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-medium text-zinc-300">Session</h3>
                 {sessionConnected ? (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Connected
                   </span>
                 ) : sessionId ? (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">
                     <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> Reconnecting...
                   </span>
                 ) : (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-700/50 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-700/50 px-2 py-0.5 text-[11px] font-medium text-zinc-500">
                     Local mode
                   </span>
                 )}
                 {sessionStatus === "thinking" && (
-                  <span className="inline-flex items-center gap-1.5 text-[10px] text-lantern-400">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-lantern-400">
                     <Brain className="h-3 w-3 animate-pulse" /> Processing...
                   </span>
                 )}
                 {isEmailAgent && (
-                  <label className="inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-zinc-500">
+                  <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-zinc-500">
                     <button type="button" role="switch" aria-checked={chatIncludeEmails} onClick={() => setChatIncludeEmails(!chatIncludeEmails)} className={clsx("relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors", chatIncludeEmails ? "bg-indigo-500" : "bg-zinc-700")}>
                       <span className={clsx("inline-block h-2.5 w-2.5 rounded-full bg-white transition-transform", chatIncludeEmails ? "translate-x-3.5" : "translate-x-0.5")} />
                     </button>
@@ -1597,7 +1597,7 @@ export default function AgentDetailPage() {
                     setSessionId(null); setSessionConnected(false);
                     localStorage.removeItem(`lantern_session_${name}`);
                     toast.success("Session ended");
-                  }} className="text-[11px] text-zinc-500 hover:text-amber-400">End session</button>
+                  }} className="text-[12px] text-zinc-500 hover:text-amber-400">End session</button>
                 )}
                 <button onClick={() => {
                   setChatMessages([]); saveChat(name, []);
@@ -1607,7 +1607,7 @@ export default function AgentDetailPage() {
                     localStorage.removeItem(`lantern_session_${name}`);
                   }
                   toast.success("Conversation cleared");
-                }} className="text-[11px] text-zinc-500 hover:text-red-400">Clear conversation</button>
+                }} className="text-[12px] text-zinc-500 hover:text-red-400">Clear conversation</button>
               </div>
             </div>
 
@@ -1617,7 +1617,7 @@ export default function AgentDetailPage() {
                 <div className="flex h-full flex-col items-center justify-center gap-2">
                   <Brain className="h-8 w-8 text-zinc-700" />
                   <p className="text-sm text-zinc-600">Start a conversation with {name}</p>
-                  <p className="text-[10px] text-zinc-700">
+                  <p className="text-[11px] text-zinc-700">
                     {sessionConnected ? "Session active -- messages are persisted server-side" : "Messages will be sent to the LLM directly"}
                   </p>
                 </div>
@@ -1634,16 +1634,16 @@ export default function AgentDetailPage() {
                           const [connectorId, action] = tc.name.split("__");
                           return (
                             <details key={ti} className="group rounded-lg border border-zinc-700/60 bg-surface-1/60">
-                              <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-[11px] [&::-webkit-details-marker]:hidden">
+                              <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-[12px] [&::-webkit-details-marker]:hidden">
                                 {tc.status === "started" && <Loader2 className="h-3 w-3 animate-spin text-zinc-500" />}
                                 {tc.status === "completed" && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
                                 {tc.status === "failed" && <AlertCircle className="h-3 w-3 text-red-400" />}
                                 <span className="text-zinc-400">Used</span>
                                 <span className="font-medium text-zinc-200">{connectorId}</span>
                                 <span className="text-zinc-600">·</span>
-                                <span className="font-mono text-[10px] text-zinc-400">{action}</span>
+                                <span className="font-mono text-[11px] text-zinc-400">{action}</span>
                               </summary>
-                              <div className="border-t border-zinc-800 px-2.5 py-2 text-[10px] text-zinc-500">
+                              <div className="border-t border-zinc-800 px-2.5 py-2 text-[11px] text-zinc-500">
                                 {tc.args && tc.args !== "{}" && (
                                   <>
                                     <p className="font-medium text-zinc-400">Args</p>
@@ -1672,11 +1672,11 @@ export default function AgentDetailPage() {
                     {/* Code block run buttons in assistant messages */}
                     {msg.role === "assistant" && extractCodeBlocks(msg.content).map((block, bi) => (
                       <div key={bi} className="mt-2">
-                        <button onClick={() => handleRunCodeBlock(i * 100 + bi, block.code, block.language)} className="inline-flex items-center gap-1 rounded bg-surface-3 px-2 py-0.5 text-[10px] text-cyan-400 hover:bg-surface-2">
+                        <button onClick={() => handleRunCodeBlock(i * 100 + bi, block.code, block.language)} className="inline-flex items-center gap-1 rounded bg-surface-3 px-2 py-0.5 text-[11px] text-cyan-400 hover:bg-surface-2">
                           <Play className="h-2.5 w-2.5" /> Run {block.language}
                         </button>
                         {codeBlockResults[i * 100 + bi] && (
-                          <pre className={clsx("mt-1 rounded bg-surface-1 p-2 text-[10px]", codeBlockResults[i * 100 + bi].error ? "text-red-400" : "text-zinc-400")}>{codeBlockResults[i * 100 + bi].output}</pre>
+                          <pre className={clsx("mt-1 rounded bg-surface-1 p-2 text-[11px]", codeBlockResults[i * 100 + bi].error ? "text-red-400" : "text-zinc-400")}>{codeBlockResults[i * 100 + bi].output}</pre>
                         )}
                       </div>
                     ))}
@@ -1703,7 +1703,7 @@ export default function AgentDetailPage() {
             {chatFiles.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {chatFiles.map((f, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-2 py-1 text-[10px] text-zinc-300">
+                  <span key={i} className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-2 py-1 text-[11px] text-zinc-300">
                     <Paperclip className="h-2.5 w-2.5" /> {f.name}
                     <button onClick={() => setChatFiles(prev => prev.filter((_, j) => j !== i))} className="ml-0.5 text-zinc-500 hover:text-red-400"><X className="h-2.5 w-2.5" /></button>
                   </span>
@@ -1713,7 +1713,7 @@ export default function AgentDetailPage() {
             {chatStreaming && sessionConnected && (
               <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-lantern-500/5 border border-lantern-500/20 px-3 py-1.5">
                 <Zap className="h-3 w-3 text-lantern-400" />
-                <span className="text-[10px] text-lantern-400">Agent is responding -- you can send another message to steer the conversation</span>
+                <span className="text-[11px] text-lantern-400">Agent is responding -- you can send another message to steer the conversation</span>
               </div>
             )}
             <div className="mt-3 flex items-center gap-2">
@@ -1801,15 +1801,15 @@ export default function AgentDetailPage() {
                           <div key={run.id} className="space-y-2 rounded-lg border border-zinc-800 bg-surface-0 p-3">
                             <div className="flex items-center gap-2">
                               <StatusBadge status={run.status} />
-                              <span className="font-mono text-[10px] text-zinc-500">{run.id.slice(0, 12)}</span>
+                              <span className="font-mono text-[11px] text-zinc-500">{run.id.slice(0, 12)}</span>
                             </div>
-                            <div className="flex gap-3 text-[10px] text-zinc-500">
+                            <div className="flex gap-3 text-[11px] text-zinc-500">
                               <span>{formatDuration(dur)}</span>
                               <span>{formatCost(run.costUsd)}</span>
                               <span>{(run.tokensIn + run.tokensOut).toLocaleString()} tokens</span>
                             </div>
                             <div className="max-h-40 overflow-auto rounded border border-zinc-800 bg-surface-1 p-2">
-                              <pre className="whitespace-pre-wrap text-[11px] text-zinc-300 font-sans">{getOutput(run).slice(0, 500)}</pre>
+                              <pre className="whitespace-pre-wrap text-[12px] text-zinc-300 font-sans">{getOutput(run).slice(0, 500)}</pre>
                             </div>
                           </div>
                         );
@@ -1833,9 +1833,9 @@ export default function AgentDetailPage() {
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-zinc-500">{agentRuns.length} run{agentRuns.length !== 1 ? "s" : ""}</span>
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-zinc-600">Page {runsPage + 1} of {Math.ceil(agentRuns.length / RUNS_PER_PAGE)}</span>
-                    <button onClick={() => setRunsPage(p => Math.max(0, p - 1))} disabled={runsPage === 0} className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-surface-3 disabled:opacity-30">Prev</button>
-                    <button onClick={() => setRunsPage(p => Math.min(Math.ceil(agentRuns.length / RUNS_PER_PAGE) - 1, p + 1))} disabled={(runsPage + 1) * RUNS_PER_PAGE >= agentRuns.length} className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-surface-3 disabled:opacity-30">Next</button>
+                    <span className="text-[11px] text-zinc-600">Page {runsPage + 1} of {Math.ceil(agentRuns.length / RUNS_PER_PAGE)}</span>
+                    <button onClick={() => setRunsPage(p => Math.max(0, p - 1))} disabled={runsPage === 0} className="rounded px-1.5 py-0.5 text-[11px] text-zinc-500 hover:bg-surface-3 disabled:opacity-30">Prev</button>
+                    <button onClick={() => setRunsPage(p => Math.min(Math.ceil(agentRuns.length / RUNS_PER_PAGE) - 1, p + 1))} disabled={(runsPage + 1) * RUNS_PER_PAGE >= agentRuns.length} className="rounded px-1.5 py-0.5 text-[11px] text-zinc-500 hover:bg-surface-3 disabled:opacity-30">Next</button>
                   </div>
                 </div>
                 <div className="grid grid-cols-[auto_1fr_100px_80px_140px_auto] gap-4 px-4 py-2 text-xs font-medium text-zinc-500">
@@ -1854,8 +1854,8 @@ export default function AgentDetailPage() {
                           <StatusBadge status={run.status} />
                           <span className="font-mono text-xs text-zinc-500 hidden sm:inline">{run.id.slice(0, 12)}</span>
                           <span className="text-xs text-zinc-400 ml-auto">{dur}</span>
-                          <span className="font-mono text-[11px] text-zinc-500">{formatCost(run.costUsd)}</span>
-                          <span className="text-[11px] text-zinc-600 hidden md:inline">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
+                          <span className="font-mono text-[12px] text-zinc-500">{formatCost(run.costUsd)}</span>
+                          <span className="text-[12px] text-zinc-600 hidden md:inline">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
                         </button>
                         {/* Delete — visible on hover or when confirming */}
                         <div className={clsx("flex items-center pr-2", confirmingDelete ? "opacity-100" : "opacity-0 group-hover:opacity-100 transition-opacity")}>
@@ -1868,11 +1868,11 @@ export default function AgentDetailPage() {
                                   finally { setDeletingRunId(null); }
                                 }}
                                 disabled={deletingRunId === run.id}
-                                className="rounded px-2 py-1 text-[10px] font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20"
+                                className="rounded px-2 py-1 text-[11px] font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20"
                               >
                                 {deletingRunId === run.id ? "..." : "Yes"}
                               </button>
-                              <button onClick={() => setDeletingRunId(null)} className="rounded px-2 py-1 text-[10px] text-zinc-500 hover:text-zinc-300">No</button>
+                              <button onClick={() => setDeletingRunId(null)} className="rounded px-2 py-1 text-[11px] text-zinc-500 hover:text-zinc-300">No</button>
                             </div>
                           ) : (
                             <button onClick={() => setDeletingRunId(`confirm_${run.id}`)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10" title="Delete">
@@ -1893,7 +1893,7 @@ export default function AgentDetailPage() {
                           {/* Output */}
                           {run.output ? (
                             <div>
-                              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Result</p>
+                              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Result</p>
                               <div className="max-h-80 overflow-auto rounded-lg border border-emerald-500/10 bg-emerald-500/[0.02] p-4">
                                 {(() => {
                                   const raw = typeof run.output === "string" ? run.output : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>) ? String((run.output as Record<string, unknown>).result) : JSON.stringify(run.output, null, 2);
@@ -1936,13 +1936,13 @@ export default function AgentDetailPage() {
                   <AiAssistButton mode="cron" value={settingsCron} onChange={setSettingsCron} placeholder="e.g., every weekday at 9am" />
                 </div>
                 <input type="text" value={settingsCron} onChange={(e) => setSettingsCron(e.target.value)} placeholder="0 9 * * 1-5" className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 font-mono placeholder:text-zinc-600 outline-none focus:border-lantern-500/50" />
-                {settingsCron && <p className="mt-1 text-[10px] text-zinc-500">{describeCron(settingsCron)}</p>}
-                {nextFireAt && <p className="mt-1 text-[10px] text-zinc-500">Next fire: {new Date(nextFireAt).toLocaleString()}</p>}
+                {settingsCron && <p className="mt-1 text-[11px] text-zinc-500">{describeCron(settingsCron)}</p>}
+                {nextFireAt && <p className="mt-1 text-[11px] text-zinc-500">Next fire: {new Date(nextFireAt).toLocaleString()}</p>}
               </div>
 
               <div className="border-t border-zinc-800 pt-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <div><label className="text-xs font-medium text-zinc-300">Email delivery</label><p className="text-[10px] text-zinc-500">Send run output via email</p></div>
+                  <div><label className="text-xs font-medium text-zinc-300">Email delivery</label><p className="text-[11px] text-zinc-500">Send run output via email</p></div>
                   <button type="button" role="switch" aria-checked={deliveryEmailEnabled} onClick={() => setDeliveryEmailEnabled(!deliveryEmailEnabled)} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", deliveryEmailEnabled ? "bg-lantern-500" : "bg-zinc-700")}>
                     <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", deliveryEmailEnabled ? "translate-x-4" : "translate-x-0.5")} />
                   </button>
@@ -1986,7 +1986,7 @@ export default function AgentDetailPage() {
                 ].map((level) => (
                   <label key={level.value} className={clsx("flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition-all", settingsIsolation === level.value ? "border-lantern-500/50 bg-lantern-500/5" : "border-zinc-800 hover:border-zinc-600")}>
                     <input type="radio" name="isolation" value={level.value} checked={settingsIsolation === level.value} onChange={(e) => setSettingsIsolation(e.target.value)} className="accent-lantern-500" />
-                    <div><div className="text-xs font-medium text-zinc-200">{level.label}</div><div className="text-[10px] text-zinc-500">{level.desc}</div></div>
+                    <div><div className="text-xs font-medium text-zinc-200">{level.label}</div><div className="text-[11px] text-zinc-500">{level.desc}</div></div>
                   </label>
                 ))}
               </div>
@@ -1999,7 +1999,7 @@ export default function AgentDetailPage() {
                 <h3 className="text-sm font-semibold text-zinc-200">Environment</h3>
                 <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-medium text-emerald-400">Managed</span>
               </div>
-              <p className="text-[10px] text-zinc-500">Configure the managed runtime environment for this agent. Changes are saved locally and will apply to future deployments.</p>
+              <p className="text-[11px] text-zinc-500">Configure the managed runtime environment for this agent. Changes are saved locally and will apply to future deployments.</p>
               <div className="space-y-3">
                 <div>
                   <label className="mb-1 block text-xs text-zinc-400">Runtime</label>
@@ -2070,20 +2070,20 @@ export default function AgentDetailPage() {
                 </select>
               </div>
               <div className="flex items-center justify-between">
-                <div><span className="text-xs font-medium text-zinc-300">{"\uD83D\uDD12"} Encrypt all run data</span><p className="text-[10px] text-zinc-500">End-to-end encryption for all inputs and outputs</p></div>
+                <div><span className="text-xs font-medium text-zinc-300">{"\uD83D\uDD12"} Encrypt all run data</span><p className="text-[11px] text-zinc-500">End-to-end encryption for all inputs and outputs</p></div>
                 <button type="button" role="switch" aria-checked={settingsEncrypt} onClick={() => setSettingsEncrypt(!settingsEncrypt)} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", settingsEncrypt ? "bg-lantern-500" : "bg-zinc-700")}>
                   <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", settingsEncrypt ? "translate-x-4" : "translate-x-0.5")} />
                 </button>
               </div>
               <div className="flex items-center justify-between">
-                <div><span className="text-xs font-medium text-zinc-300">{"\uD83D\uDEE1\uFE0F"} Enable audit logging</span><p className="text-[10px] text-zinc-500">Full audit trail for compliance</p></div>
+                <div><span className="text-xs font-medium text-zinc-300">{"\uD83D\uDEE1\uFE0F"} Enable audit logging</span><p className="text-[11px] text-zinc-500">Full audit trail for compliance</p></div>
                 <button type="button" role="switch" aria-checked={settingsAuditLog} onClick={() => setSettingsAuditLog(!settingsAuditLog)} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", settingsAuditLog ? "bg-lantern-500" : "bg-zinc-700")}>
                   <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", settingsAuditLog ? "translate-x-4" : "translate-x-0.5")} />
                 </button>
               </div>
               <div className="flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2">
-                <span className="text-[10px] font-medium text-zinc-400">Data residency:</span>
-                <span className="rounded bg-surface-3 px-2 py-0.5 text-[10px] font-medium text-zinc-300">US-East-1</span>
+                <span className="text-[11px] font-medium text-zinc-400">Data residency:</span>
+                <span className="rounded bg-surface-3 px-2 py-0.5 text-[11px] font-medium text-zinc-300">US-East-1</span>
               </div>
             </div>
 
@@ -2091,11 +2091,11 @@ export default function AgentDetailPage() {
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-200"><Plug className="h-4 w-4 text-cyan-400" /> MCP Servers</h3>
-                <button onClick={() => setShowAddMcp(!showAddMcp)} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:bg-surface-3">
+                <button onClick={() => setShowAddMcp(!showAddMcp)} className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1 text-[12px] font-medium text-zinc-400 hover:bg-surface-3">
                   <Plus className="h-3 w-3" /> Add Server
                 </button>
               </div>
-              <p className="text-[10px] text-zinc-500">Connect to Model Context Protocol servers to give the agent access to external tools and data sources.</p>
+              <p className="text-[11px] text-zinc-500">Connect to Model Context Protocol servers to give the agent access to external tools and data sources.</p>
 
               {showAddMcp && (
                 <div className="space-y-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
@@ -2113,8 +2113,8 @@ export default function AgentDetailPage() {
                     <input type="password" value={newMcpToken} onChange={(e) => setNewMcpToken(e.target.value)} placeholder={newMcpAuth === "bearer" ? "Bearer token" : "API key"} className="w-full rounded-lg border border-zinc-800 bg-surface-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-cyan-500/50" />
                   )}
                   <div className="flex items-center gap-2">
-                    <button onClick={handleAddMcpServer} className="rounded-lg bg-cyan-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-cyan-500">Add Server</button>
-                    <button onClick={() => setShowAddMcp(false)} className="text-[11px] text-zinc-500 hover:text-zinc-300">Cancel</button>
+                    <button onClick={handleAddMcpServer} className="rounded-lg bg-cyan-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-cyan-500">Add Server</button>
+                    <button onClick={() => setShowAddMcp(false)} className="text-[12px] text-zinc-500 hover:text-zinc-300">Cancel</button>
                   </div>
                 </div>
               )}
@@ -2131,7 +2131,7 @@ export default function AgentDetailPage() {
                           <span className="text-xs font-medium text-zinc-200">{server.name}</span>
                           <span className={clsx("rounded-full px-1.5 py-0.5 text-[9px] font-medium", server.status === "connected" ? "bg-emerald-500/10 text-emerald-400" : server.status === "error" ? "bg-red-500/10 text-red-400" : "bg-zinc-700 text-zinc-500")}>{server.status}</span>
                         </div>
-                        <p className="font-mono text-[10px] text-zinc-500 truncate">{server.url}</p>
+                        <p className="font-mono text-[11px] text-zinc-500 truncate">{server.url}</p>
                         {server.tools && server.tools.length > 0 && (
                           <div className="mt-1 flex flex-wrap gap-1">
                             {server.tools.map((tool) => (
@@ -2141,7 +2141,7 @@ export default function AgentDetailPage() {
                         )}
                       </div>
                       <div className="flex items-center gap-1">
-                        <button onClick={() => handleTestMcpServer(server.id)} disabled={testingMcpId === server.id} className="rounded-lg border border-zinc-700 px-2 py-1 text-[10px] font-medium text-zinc-400 hover:bg-surface-3 disabled:opacity-50">
+                        <button onClick={() => handleTestMcpServer(server.id)} disabled={testingMcpId === server.id} className="rounded-lg border border-zinc-700 px-2 py-1 text-[11px] font-medium text-zinc-400 hover:bg-surface-3 disabled:opacity-50">
                           {testingMcpId === server.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Test"}
                         </button>
                         <button onClick={() => handleRemoveMcpServer(server.id)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10"><X className="h-3 w-3" /></button>
@@ -2155,22 +2155,22 @@ export default function AgentDetailPage() {
             {/* Safety & Guardrails */}
             <div className="rounded-xl border border-zinc-800 bg-surface-1 p-5 space-y-4">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-200"><ShieldAlert className="h-4 w-4 text-amber-400" /> Safety & Guardrails</h3>
-              <p className="text-[10px] text-zinc-500">Client-side filters applied to agent output before display</p>
+              <p className="text-[11px] text-zinc-500">Client-side filters applied to agent output before display</p>
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div><span className="text-xs font-medium text-zinc-300">Enable content filtering</span><p className="text-[10px] text-zinc-500">Flag and redact potential secrets in output</p></div>
+                  <div><span className="text-xs font-medium text-zinc-300">Enable content filtering</span><p className="text-[11px] text-zinc-500">Flag and redact potential secrets in output</p></div>
                   <button type="button" role="switch" aria-checked={guardrails.contentFilter} onClick={() => handleSaveGuardrails({ ...guardrails, contentFilter: !guardrails.contentFilter })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.contentFilter ? "bg-lantern-500" : "bg-zinc-700")}>
                     <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", guardrails.contentFilter ? "translate-x-4" : "translate-x-0.5")} />
                   </button>
                 </div>
                 <div className="flex items-center justify-between">
-                  <div><span className="text-xs font-medium text-zinc-300">Block PII in output</span><p className="text-[10px] text-zinc-500">Redact emails, phone numbers, SSNs, card numbers</p></div>
+                  <div><span className="text-xs font-medium text-zinc-300">Block PII in output</span><p className="text-[11px] text-zinc-500">Redact emails, phone numbers, SSNs, card numbers</p></div>
                   <button type="button" role="switch" aria-checked={guardrails.blockPII} onClick={() => handleSaveGuardrails({ ...guardrails, blockPII: !guardrails.blockPII })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.blockPII ? "bg-lantern-500" : "bg-zinc-700")}>
                     <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", guardrails.blockPII ? "translate-x-4" : "translate-x-0.5")} />
                   </button>
                 </div>
                 <div className="flex items-center justify-between">
-                  <div><span className="text-xs font-medium text-zinc-300">Block toxic content</span><p className="text-[10px] text-zinc-500">Block output containing harmful or toxic content</p></div>
+                  <div><span className="text-xs font-medium text-zinc-300">Block toxic content</span><p className="text-[11px] text-zinc-500">Block output containing harmful or toxic content</p></div>
                   <button type="button" role="switch" aria-checked={guardrails.blockToxic} onClick={() => handleSaveGuardrails({ ...guardrails, blockToxic: !guardrails.blockToxic })} className={clsx("relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors", guardrails.blockToxic ? "bg-lantern-500" : "bg-zinc-700")}>
                     <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", guardrails.blockToxic ? "translate-x-4" : "translate-x-0.5")} />
                   </button>
@@ -2185,7 +2185,7 @@ export default function AgentDetailPage() {
                 </div>
               </div>
               {hasActiveGuardrails(guardrails) && (
-                <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-[10px] text-amber-400">
+                <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] text-amber-400">
                   <ShieldAlert className="h-3 w-3" /> Guardrails active -- output will be filtered
                 </div>
               )}
@@ -2203,7 +2203,7 @@ export default function AgentDetailPage() {
                   <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", sharing.isPublic ? "translate-x-4" : "translate-x-0.5")} />
                 </button>
               </div>
-              <p className="text-[10px] text-zinc-500">{sharing.isPublic ? "Anyone with the link can access this agent" : "This agent is private"}</p>
+              <p className="text-[11px] text-zinc-500">{sharing.isPublic ? "Anyone with the link can access this agent" : "This agent is private"}</p>
               {sharing.isPublic && (
                 <>
                   <div>
@@ -2227,7 +2227,7 @@ export default function AgentDetailPage() {
                     <Link className="h-4 w-4 text-violet-400 shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-zinc-300">Public ID: {sharing.publicId}</p>
-                      <p className="text-[10px] text-zinc-500">Access: {sharing.accessLevel === "view" ? "View only" : sharing.accessLevel === "run" ? "Can run" : "Can fork"}</p>
+                      <p className="text-[11px] text-zinc-500">Access: {sharing.accessLevel === "view" ? "View only" : sharing.accessLevel === "run" ? "Can run" : "Can fork"}</p>
                     </div>
                   </div>
                 </>
@@ -2246,7 +2246,7 @@ export default function AgentDetailPage() {
                   <span className={clsx("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", a2aEnabled ? "translate-x-4" : "translate-x-0.5")} />
                 </button>
               </div>
-              <p className="text-[10px] text-zinc-500">Publish this agent as an A2A Agent Card so other agents and platforms can discover and invoke it.</p>
+              <p className="text-[11px] text-zinc-500">Publish this agent as an A2A Agent Card so other agents and platforms can discover and invoke it.</p>
               {a2aEnabled && (
                 <>
                   <div>
@@ -2260,7 +2260,7 @@ export default function AgentDetailPage() {
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Agent Card Preview</label>
-                    <pre className="rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-[10px] text-zinc-500 overflow-x-auto leading-relaxed max-h-40 overflow-y-auto">{JSON.stringify({ name, description: agent?.description || "", version: "0.1.0", capabilities: ["text-generation"], endpoint: `https://api.lantern.run/v1/agents/${name}/a2a/invoke`, auth: { type: "bearer", description: "Lantern API key" }, inputSchema: (() => { try { return JSON.parse(a2aInputSchema); } catch { return {}; } })(), outputSchema: (() => { try { return JSON.parse(a2aOutputSchema); } catch { return {}; } })(), provider: { name: "Lantern", url: "https://lantern.run" } }, null, 2)}</pre>
+                    <pre className="rounded-lg border border-zinc-800 bg-surface-0 p-3 font-mono text-[11px] text-zinc-500 overflow-x-auto leading-relaxed max-h-40 overflow-y-auto">{JSON.stringify({ name, description: agent?.description || "", version: "0.1.0", capabilities: ["text-generation"], endpoint: `https://api.lantern.run/v1/agents/${name}/a2a/invoke`, auth: { type: "bearer", description: "Lantern API key" }, inputSchema: (() => { try { return JSON.parse(a2aInputSchema); } catch { return {}; } })(), outputSchema: (() => { try { return JSON.parse(a2aOutputSchema); } catch { return {}; } })(), provider: { name: "Lantern", url: "https://lantern.run" } }, null, 2)}</pre>
                   </div>
                   <div>
                     <label className="mb-1 block text-xs text-zinc-400">Input Schema (JSON)</label>
@@ -2282,7 +2282,7 @@ export default function AgentDetailPage() {
                 {cloudDeployStatus === "live" && <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-medium text-emerald-400">Live</span>}
                 {cloudDeployStatus === "stopped" && <span className="rounded-full bg-zinc-500/10 px-2 py-0.5 text-[9px] font-medium text-zinc-400">Stopped</span>}
               </div>
-              <p className="text-[10px] text-zinc-500">Deploy this agent to Lantern Cloud for managed hosting with usage-based billing. No infrastructure to manage.</p>
+              <p className="text-[11px] text-zinc-500">Deploy this agent to Lantern Cloud for managed hosting with usage-based billing. No infrastructure to manage.</p>
               {cloudDeployStatus === "not_deployed" && (
                 <button onClick={async () => { setDeploying(true); try { const result = await api.deployAgent(name); setCloudDeployStatus(result.status); setCloudDeployUrl(result.url); localStorage.setItem(`lantern_deploy_${name}`, JSON.stringify({ status: result.status, url: result.url })); toast.success("Agent deployed to Lantern Cloud"); } catch (err) { toast.error(`Deploy failed — ${err instanceof Error ? err.message : String(err)}`); } finally { setDeploying(false); } }} disabled={deploying} className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50">
                   {deploying ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Deploying...</> : <><Cloud className="h-3.5 w-3.5" /> Deploy to Cloud</>}
@@ -2300,11 +2300,11 @@ export default function AgentDetailPage() {
                     </div>
                   </div>
                   <div className="rounded-lg border border-zinc-800 bg-surface-0 p-3 space-y-2">
-                    <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Usage This Month</span>
+                    <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Usage This Month</span>
                     <div className="grid grid-cols-3 gap-3">
-                      <div><p className="text-lg font-semibold text-zinc-100">142</p><p className="text-[10px] text-zinc-500">Sessions</p></div>
-                      <div><p className="text-lg font-semibold text-zinc-100">48.2k</p><p className="text-[10px] text-zinc-500">Tokens</p></div>
-                      <div><p className="text-lg font-semibold text-zinc-100">3.2h</p><p className="text-[10px] text-zinc-500">Compute</p></div>
+                      <div><p className="text-lg font-semibold text-zinc-100">142</p><p className="text-[11px] text-zinc-500">Sessions</p></div>
+                      <div><p className="text-lg font-semibold text-zinc-100">48.2k</p><p className="text-[11px] text-zinc-500">Tokens</p></div>
+                      <div><p className="text-lg font-semibold text-zinc-100">3.2h</p><p className="text-[11px] text-zinc-500">Compute</p></div>
                     </div>
                     <div className="flex items-center gap-2 pt-1 border-t border-zinc-800">
                       <DollarSign className="h-3 w-3 text-zinc-500" />

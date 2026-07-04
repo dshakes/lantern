@@ -75,7 +75,7 @@ const typeColors: Record<NodeType, string> = {
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
-    <label className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+    <label className="mb-1 block text-[12px] font-medium uppercase tracking-wider text-zinc-500">
       {children}
     </label>
   );
@@ -83,7 +83,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 
 function FieldHelp({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mt-1 flex items-start gap-1 text-[10px] leading-relaxed text-zinc-600">
+    <p className="mt-1 flex items-start gap-1 text-[11px] leading-relaxed text-zinc-600">
       <HelpCircle className="mt-0.5 h-3 w-3 shrink-0" />
       <span>{children}</span>
     </p>
@@ -92,7 +92,7 @@ function FieldHelp({ children }: { children: React.ReactNode }) {
 
 function FieldError({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mt-1 text-[10px] text-red-400">{children}</p>
+    <p className="mt-1 text-[11px] text-red-400">{children}</p>
   );
 }
 
@@ -370,7 +370,7 @@ function AiStepConfig({
         <button
           onClick={handleTestPrompt}
           disabled={testState === "loading" || !data.prompt.trim()}
-          className="inline-flex items-center gap-1.5 rounded-md border border-indigo-500/30 px-2.5 py-1.5 text-[11px] font-medium text-indigo-400 transition-colors hover:bg-indigo-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="inline-flex items-center gap-1.5 rounded-md border border-indigo-500/30 px-2.5 py-1.5 text-[12px] font-medium text-indigo-400 transition-colors hover:bg-indigo-500/10 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {testState === "loading" ? (
             <>
@@ -385,7 +385,7 @@ function AiStepConfig({
           )}
         </button>
         {testState === "done" && testOutput && (
-          <pre className="mt-2 max-h-32 overflow-auto rounded border border-zinc-700/50 bg-surface-0 p-2 text-[10px] leading-relaxed text-zinc-400">
+          <pre className="mt-2 max-h-32 overflow-auto rounded border border-zinc-700/50 bg-surface-0 p-2 text-[11px] leading-relaxed text-zinc-400">
             {testOutput}
           </pre>
         )}
@@ -498,11 +498,11 @@ function ConditionConfig({
       <div className="flex gap-2">
         <div className="flex items-center gap-1.5 rounded bg-emerald-500/10 px-2 py-1">
           <div className="h-2 w-2 rounded-full bg-emerald-400" />
-          <span className="text-[10px] text-emerald-400">True</span>
+          <span className="text-[11px] text-emerald-400">True</span>
         </div>
         <div className="flex items-center gap-1.5 rounded bg-red-500/10 px-2 py-1">
           <div className="h-2 w-2 rounded-full bg-red-400" />
-          <span className="text-[10px] text-red-400">False</span>
+          <span className="text-[11px] text-red-400">False</span>
         </div>
       </div>
     </div>
@@ -770,7 +770,7 @@ function ConnectorConfig({
       {/* Dynamic action-specific input fields */}
       {actionFields.length > 0 && (
         <div className="space-y-2 rounded-lg border border-zinc-700/50 bg-surface-0/50 p-3">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-600">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-600">
             Action Parameters
           </span>
           {actionFields.map((field) => {

@@ -56,12 +56,12 @@ export function DemoModeBanner() {
             className="text-left text-[12px] font-medium text-amber-200 hover:text-amber-100"
           >
             {summary}
-            <span className="ml-2 text-[11px] text-amber-300/70">
+            <span className="ml-2 text-[12px] text-amber-300/70">
               · Lantern API offline — values you see are local mocks
             </span>
           </button>
           {expanded && (
-            <ul className="mt-1.5 space-y-0.5 text-[11px] text-amber-200/80">
+            <ul className="mt-1.5 space-y-0.5 text-[12px] text-amber-200/80">
               {uniqueOps.slice(0, 10).map((op) => (
                 <li key={op}>
                   <code className="rounded bg-amber-500/10 px-1 py-0.5">{op}</code>
@@ -77,7 +77,7 @@ export function DemoModeBanner() {
         </div>
         <Link
           href="/settings"
-          className="rounded-md border border-amber-500/30 px-2 py-0.5 text-[11px] font-medium text-amber-200 hover:bg-amber-500/10"
+          className="rounded-md border border-amber-500/30 px-2 py-0.5 text-[12px] font-medium text-amber-200 hover:bg-amber-500/10"
         >
           Check API status
         </Link>

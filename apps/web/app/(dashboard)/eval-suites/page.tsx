@@ -200,11 +200,11 @@ export default function EvalSuitesPage() {
                         <p className="truncate text-sm font-semibold text-zinc-100">
                           {s.name}
                         </p>
-                        <span className="font-mono text-[10px] text-zinc-500">
+                        <span className="font-mono text-[11px] text-zinc-500">
                           {s.agentName}
                         </span>
                       </div>
-                      <p className="text-[11px] text-zinc-500">
+                      <p className="text-[12px] text-zinc-500">
                         {s.cases.length} case{s.cases.length === 1 ? "" : "s"}
                         {s.description && ` · ${s.description}`}
                       </p>
@@ -251,7 +251,7 @@ export default function EvalSuitesPage() {
               <p className="text-sm text-zinc-400">No runs yet.</p>
               <p className="mt-2 text-xs text-zinc-500">
                 Execute{" "}
-                <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-zinc-300">
+                <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[12px] text-zinc-300">
                   lantern test --suite=name
                 </code>{" "}
                 in CI to record one.
@@ -263,7 +263,7 @@ export default function EvalSuitesPage() {
               <div className="hidden overflow-hidden rounded-xl border border-zinc-800 bg-surface-1 md:block">
                 <table className="w-full text-sm">
                   <thead className="border-b border-zinc-800 bg-surface-0/50">
-                    <tr className="text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+                    <tr className="text-[11px] uppercase tracking-[0.15em] text-zinc-500">
                       <th className="px-4 py-2.5 text-left font-medium">Agent</th>
                       <th className="px-4 py-2.5 text-left font-medium">Branch</th>
                       <th className="px-4 py-2.5 text-right font-medium">Score</th>
@@ -277,13 +277,13 @@ export default function EvalSuitesPage() {
                     {runs.slice(0, 30).map((r) => (
                       <tr
                         key={r.id}
-                        className="border-b border-zinc-900 text-[13px] last:border-0 hover:bg-surface-0/50"
+                        className="border-b border-zinc-900 text-[14px] last:border-0 hover:bg-surface-0/50"
                       >
                         <td className="px-4 py-2.5 font-medium text-zinc-200">
                           {r.agentName}
                         </td>
                         <td className="px-4 py-2.5">
-                          <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-zinc-400">
+                          <span className="inline-flex items-center gap-1.5 font-mono text-[12px] text-zinc-400">
                             <GitBranch className="h-3 w-3 text-zinc-600" />
                             {r.branch || "—"}
                             {r.commitSha && (
@@ -314,7 +314,7 @@ export default function EvalSuitesPage() {
                         <td className="px-4 py-2.5">
                           <span
                             className={clsx(
-                              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
                               r.passed
                                 ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
                                 : "border-red-500/20 bg-red-500/10 text-red-400",
@@ -353,7 +353,7 @@ export default function EvalSuitesPage() {
                       <span className="truncate text-sm font-medium text-zinc-200">{r.agentName}</span>
                       <span
                         className={clsx(
-                          "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                          "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
                           r.passed
                             ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
                             : "border-red-500/20 bg-red-500/10 text-red-400",
@@ -363,18 +363,18 @@ export default function EvalSuitesPage() {
                         {r.passed ? "Pass" : "Fail"}
                       </span>
                     </div>
-                    <div className="mt-2.5 flex items-center gap-1.5 font-mono text-[11px] text-zinc-400">
+                    <div className="mt-2.5 flex items-center gap-1.5 font-mono text-[12px] text-zinc-400">
                       <GitBranch className="h-3 w-3 text-zinc-600" />
                       {r.branch || "—"}
                       {r.commitSha && <span className="text-zinc-600">@{r.commitSha.slice(0, 7)}</span>}
                     </div>
                     <div className="mt-3 grid grid-cols-3 gap-x-3 gap-y-2.5">
                       <div>
-                        <p className="text-[11px] uppercase tracking-wide text-zinc-500">Score</p>
+                        <p className="text-[12px] uppercase tracking-wide text-zinc-500">Score</p>
                         <p className="font-mono text-xs font-semibold tabular-nums text-zinc-100">{r.score.toFixed(3)}</p>
                       </div>
                       <div>
-                        <p className="text-[11px] uppercase tracking-wide text-zinc-500">Cases</p>
+                        <p className="text-[12px] uppercase tracking-wide text-zinc-500">Cases</p>
                         <p className="font-mono text-xs tabular-nums">
                           <span className={r.casesPassed === r.casesTotal ? "text-emerald-400" : "text-amber-400"}>
                             {r.casesPassed}
@@ -383,7 +383,7 @@ export default function EvalSuitesPage() {
                         </p>
                       </div>
                       <div>
-                        <p className="text-[11px] uppercase tracking-wide text-zinc-500">Cost</p>
+                        <p className="text-[12px] uppercase tracking-wide text-zinc-500">Cost</p>
                         <p className="font-mono text-xs tabular-nums text-zinc-200">${r.totalCostUsd.toFixed(4)}</p>
                       </div>
                     </div>
@@ -485,7 +485,7 @@ export default function EvalSuitesPage() {
 
             <div className="border-t border-zinc-800 pt-4">
               <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-500">
+                <h3 className="text-[12px] font-medium uppercase tracking-[0.15em] text-zinc-500">
                   Cases ({editing.cases.length})
                 </h3>
                 <Button
@@ -517,7 +517,7 @@ export default function EvalSuitesPage() {
                     className="space-y-2 rounded-lg border border-zinc-800 bg-surface-0 p-3"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded bg-surface-3 font-mono text-[10px] text-zinc-500">
+                      <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded bg-surface-3 font-mono text-[11px] text-zinc-500">
                         {idx + 1}
                       </span>
                       <input
@@ -638,10 +638,10 @@ function Section({
         <div className="flex items-baseline gap-2">
           <h2 className="text-sm font-medium text-zinc-200">{title}</h2>
           {count != null && count > 0 && (
-            <span className="text-[11px] font-mono text-zinc-600">{count}</span>
+            <span className="text-[12px] font-mono text-zinc-600">{count}</span>
           )}
         </div>
-        {subtitle && <p className="text-[11px] text-zinc-500">{subtitle}</p>}
+        {subtitle && <p className="text-[12px] text-zinc-500">{subtitle}</p>}
       </div>
       {children}
     </section>

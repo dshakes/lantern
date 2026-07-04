@@ -262,8 +262,8 @@ export function FlightRecorder({
 
           {/* As-of readout (or hint when idle) */}
           {engaged && asOf ? (
-            <div className="flex shrink-0 items-center gap-3 text-[11px] tabular-nums text-zinc-400">
-              <span className="font-mono text-[10px] font-medium text-lantern-300">
+            <div className="flex shrink-0 items-center gap-3 text-[12px] tabular-nums text-zinc-400">
+              <span className="font-mono text-[11px] font-medium text-lantern-300">
                 T+{fmtMs(cursorMs!)}
               </span>
               <span title="Cumulative cost as of T" className="text-zinc-300">
@@ -287,20 +287,20 @@ export function FlightRecorder({
               <button
                 type="button"
                 onClick={reset}
-                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-zinc-500 transition-colors hover:bg-surface-2 hover:text-zinc-300"
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-zinc-500 transition-colors hover:bg-surface-2 hover:text-zinc-300"
               >
                 <RotateCcw className="h-3 w-3" /> live
               </button>
             </div>
           ) : (
-            <span className="shrink-0 text-[10px] text-zinc-600">
+            <span className="shrink-0 text-[11px] text-zinc-600">
               drag to time-travel · ▶ to replay
             </span>
           )}
         </div>
 
         {/* ---- Signals line — subtle, one row ---- */}
-        <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800/40 px-4 py-2.5 text-[10px]">
+        <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800/40 px-4 py-2.5 text-[11px]">
           <span className="text-[9px] font-medium uppercase tracking-wide text-zinc-500">
             Signals
           </span>
@@ -351,7 +351,7 @@ export function FlightRecorder({
                 else reset();
               }}
               className={clsx(
-                "ml-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium transition-colors",
+                "ml-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
                 replayOpen
                   ? "bg-surface-3 text-zinc-200"
                   : "bg-surface-2 text-zinc-400 hover:bg-surface-3 hover:text-zinc-200",
@@ -456,10 +456,10 @@ function ReasoningReplay({
       <div className="mb-2.5 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Brain className="h-3.5 w-3.5 text-lantern-300" />
-          <span className="text-[11px] font-medium text-zinc-200">
+          <span className="text-[12px] font-medium text-zinc-200">
             Reasoning replay
           </span>
-          <span className="text-[10px] tabular-nums text-zinc-500">
+          <span className="text-[11px] tabular-nums text-zinc-500">
             {idx + 1} / {spans.length}
           </span>
         </div>
@@ -492,7 +492,7 @@ function ReasoningReplay({
           </button>
         </div>
       </div>
-      <p className="mb-1.5 truncate text-[10px] font-medium text-zinc-500">
+      <p className="mb-1.5 truncate text-[11px] font-medium text-zinc-500">
         {span?.name}
       </p>
       <p className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-[12px] leading-relaxed text-zinc-300">

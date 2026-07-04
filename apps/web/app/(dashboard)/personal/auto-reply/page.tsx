@@ -202,7 +202,7 @@ function Rule({ n, title, body }: { n: number; title: string; body: string }) {
   return (
     <div className="rounded-lg border border-zinc-800/60 bg-zinc-900/30 p-3">
       <div className="flex items-start gap-3">
-        <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-700 text-[10px] text-zinc-400">
+        <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-700 text-[11px] text-zinc-400">
           {n}
         </span>
         <div>

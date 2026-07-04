@@ -147,7 +147,7 @@ export function Tabs({
             {tab.badge != null && (
               <span
                 className={clsx(
-                  "rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
+                  "rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums",
                   isActive
                     ? "bg-lantern-500/20 text-lantern-200"
                     : "bg-surface-3 text-zinc-500"
@@ -160,7 +160,7 @@ export function Tabs({
         );
         const baseCls = clsx(
           "relative inline-flex items-center gap-1.5 transition-colors duration-150",
-          size === "sm" ? "h-7 px-2.5 text-[11px]" : "h-9 px-3 text-[12px]",
+          size === "sm" ? "h-7 px-2.5 text-[12px]" : "h-9 px-3 text-[12px]",
           "font-medium",
           tab.disabled && "cursor-not-allowed opacity-40",
           variant === "underline"

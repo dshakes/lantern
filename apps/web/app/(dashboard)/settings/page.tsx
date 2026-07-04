@@ -475,7 +475,7 @@ function SettingsSection({
       <header className="mb-4">
         <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
         {description && (
-          <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
+          <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-500">
             {description}
           </p>
         )}
@@ -500,7 +500,7 @@ function Field({
         {label}
       </label>
       {children}
-      {hint && <p className="mt-1 text-[11px] text-zinc-500">{hint}</p>}
+      {hint && <p className="mt-1 text-[12px] text-zinc-500">{hint}</p>}
     </div>
   );
 }
@@ -509,7 +509,7 @@ function StickySaveBar({ saving, onSave }: { saving: boolean; onSave: () => void
   return (
     <div className="pointer-events-none sticky bottom-0 -mx-6 mt-6 flex justify-end px-6 pb-4 md:-mx-8 md:px-8">
       <div className="pointer-events-auto inline-flex items-center gap-3 rounded-xl border border-zinc-800 bg-surface-1/95 px-4 py-2 shadow-xl backdrop-blur-md">
-        <span className="text-[11px] text-zinc-500">Unsaved changes</span>
+        <span className="text-[12px] text-zinc-500">Unsaved changes</span>
         <Button
           variant="primary"
           size="md"
@@ -559,7 +559,7 @@ function ApiKeysTab({ keys, copiedKeyId, onCreateClick, onCopyPrefix, onRevokeCl
                     </button>
                   </div>
                 </td>
-                <td><div className="flex flex-wrap gap-1">{key.scopes.map((s) => <span key={s} className="rounded bg-surface-3 px-1.5 py-0.5 text-[11px] text-zinc-500">{s}</span>)}</div></td>
+                <td><div className="flex flex-wrap gap-1">{key.scopes.map((s) => <span key={s} className="rounded bg-surface-3 px-1.5 py-0.5 text-[12px] text-zinc-500">{s}</span>)}</div></td>
                 <td className="text-zinc-500">{format(new Date(key.createdAt), "MMM d, yyyy")}</td>
                 <td className="text-zinc-500">{key.lastUsed}</td>
                 <td><span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />Active</span></td>
@@ -593,16 +593,16 @@ function ApiKeysTab({ keys, copiedKeyId, onCreateClick, onCopyPrefix, onRevokeCl
             </div>
             {key.scopes.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
-                {key.scopes.map((s) => <span key={s} className="rounded bg-surface-3 px-1.5 py-0.5 text-[11px] text-zinc-500">{s}</span>)}
+                {key.scopes.map((s) => <span key={s} className="rounded bg-surface-3 px-1.5 py-0.5 text-[12px] text-zinc-500">{s}</span>)}
               </div>
             )}
             <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
               <div>
-                <p className="text-[11px] uppercase tracking-wide text-zinc-500">Created</p>
+                <p className="text-[12px] uppercase tracking-wide text-zinc-500">Created</p>
                 <p className="text-xs text-zinc-200">{format(new Date(key.createdAt), "MMM d, yyyy")}</p>
               </div>
               <div>
-                <p className="text-[11px] uppercase tracking-wide text-zinc-500">Last used</p>
+                <p className="text-[12px] uppercase tracking-wide text-zinc-500">Last used</p>
                 <p className="text-xs text-zinc-200">{key.lastUsed}</p>
               </div>
             </div>
@@ -742,7 +742,7 @@ function TeamTab({ members, onInviteClick, onChangeRole, onRemoveClick }: { memb
             </div>
             <div className="mt-3 flex items-center justify-between gap-2">
               <div>
-                <p className="text-[11px] uppercase tracking-wide text-zinc-500">Joined</p>
+                <p className="text-[12px] uppercase tracking-wide text-zinc-500">Joined</p>
                 <p className="text-xs text-zinc-200">{format(new Date(member.joinedAt), "MMM d, yyyy")}</p>
               </div>
               {member.role !== "owner" && (
@@ -810,7 +810,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
       <div>
         <div className="mb-4 flex items-center gap-2">
           <h3 className="text-sm font-semibold text-zinc-100">Usage This Month</h3>
-          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">Sample data</span>
+          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">Sample data</span>
         </div>
         <div className="rounded-xl border border-zinc-800 bg-surface-1 p-6">
           <div className="grid grid-cols-2 gap-6">
@@ -820,7 +820,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
                 <div key={item.label}>
                   <div className="flex items-baseline justify-between"><p className="text-sm font-medium text-zinc-300">{item.label}</p><p className="text-xs text-zinc-500">{item.format(item.used)} / {item.format(item.limit)}</p></div>
                   <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-surface-3"><div className={clsx("h-full rounded-full transition-all", pct > 90 ? "bg-red-500" : pct > 70 ? "bg-amber-500" : "bg-lantern-500")} style={{ width: `${pct}%` }} /></div>
-                  <p className="mt-1 text-right text-[11px] text-zinc-600">{pct.toFixed(0)}% used</p>
+                  <p className="mt-1 text-right text-[12px] text-zinc-600">{pct.toFixed(0)}% used</p>
                 </div>
               );
             })}
@@ -832,7 +832,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
       <div>
         <div className="mb-4 flex items-center gap-2">
           <h3 className="text-sm font-semibold text-zinc-100">Cost Breakdown by Agent</h3>
-          {!fleetUsage && <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">Sample data</span>}
+          {!fleetUsage && <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">Sample data</span>}
         </div>
         <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
           {fleetUsage ? (
@@ -870,7 +870,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
                   <div key={row.agentName} className="flex items-center justify-between px-4 py-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-zinc-300">{row.agentName}</p>
-                      <p className="text-[11px] text-zinc-500">{row.runs} runs</p>
+                      <p className="text-[12px] text-zinc-500">{row.runs} runs</p>
                     </div>
                     <span className="text-sm font-medium text-zinc-200">${row.costUsd.toFixed(2)}</span>
                   </div>
@@ -879,7 +879,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
                   <div className="flex items-center justify-between px-4 py-3">
                     <div>
                       <p className="text-sm font-semibold text-zinc-100">Total</p>
-                      <p className="text-[11px] text-zinc-500">{fleetUsage.periods.total.runs} runs</p>
+                      <p className="text-[12px] text-zinc-500">{fleetUsage.periods.total.runs} runs</p>
                     </div>
                     <span className="text-sm font-semibold text-lantern-400">${fleetUsage.periods.total.costUsd.toFixed(2)}</span>
                   </div>
@@ -903,7 +903,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
                   <div key={row.agent} className="flex items-center justify-between px-4 py-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-zinc-300">{row.agent}</p>
-                      <p className="text-[11px] text-zinc-500">{row.runs} runs · {row.tokens} tokens</p>
+                      <p className="text-[12px] text-zinc-500">{row.runs} runs · {row.tokens} tokens</p>
                     </div>
                     <span className="text-sm font-medium text-zinc-200">{row.cost}</span>
                   </div>
@@ -911,7 +911,7 @@ function BillingTab({ billing, setBilling, onSetBudget, onToggleHardLimit, fleet
                 <div className="flex items-center justify-between px-4 py-3">
                   <div>
                     <p className="text-sm font-semibold text-zinc-100">Total</p>
-                    <p className="text-[11px] text-zinc-500">348 runs · 2.1M tokens</p>
+                    <p className="text-[12px] text-zinc-500">348 runs · 2.1M tokens</p>
                   </div>
                   <span className="text-sm font-semibold text-lantern-400">$12.47</span>
                 </div>

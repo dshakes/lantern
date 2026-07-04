@@ -57,11 +57,11 @@ export function CapacityMap({
   return (
     <div className="rounded-xl bg-surface-1">
       <div className="flex items-center justify-between border-b border-zinc-800/40 px-5 py-3.5">
-        <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+        <div className="flex items-center gap-2 text-[12px] font-medium uppercase tracking-wide text-zinc-400">
           <Boxes className="h-3.5 w-3.5 text-zinc-500" />
           Capacity map
         </div>
-        <div className="flex items-center gap-4 text-[11px]">
+        <div className="flex items-center gap-4 text-[12px]">
           <span className="flex items-center gap-1.5">
             <Server className="h-3 w-3 text-zinc-500" />
             <span className="text-zinc-500">nodes</span>
@@ -83,12 +83,12 @@ export function CapacityMap({
         {[...byRegion.entries()].map(([region, nodes]) => (
           <div key={region}>
             <div className="mb-2.5 flex items-center gap-2">
-              <span className="font-mono text-[11px] text-zinc-300">{region}</span>
-              <span className="text-[10px] text-zinc-600">
+              <span className="font-mono text-[12px] text-zinc-300">{region}</span>
+              <span className="text-[11px] text-zinc-600">
                 {nodes.length} node{nodes.length === 1 ? "" : "s"}
               </span>
               {warm?.regions?.[region] != null && (
-                <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] text-zinc-400">
+                <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[11px] text-zinc-400">
                   +{warm.regions[region]} warm
                 </span>
               )}
@@ -108,7 +108,7 @@ export function CapacityMap({
                   >
                     <div className="mb-2.5 flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-mono text-[11px] text-zinc-200">{n.name}</span>
+                        <span className="font-mono text-[12px] text-zinc-200">{n.name}</span>
                         {hot && <span className="h-1.5 w-1.5 rounded-full bg-red-500/60" title="high utilisation" />}
                         {n.draining && (
                           <span className="rounded bg-surface-2 px-1 py-0.5 text-[9px] uppercase tracking-wide text-zinc-400">
@@ -116,7 +116,7 @@ export function CapacityMap({
                           </span>
                         )}
                       </div>
-                      <span className="font-mono text-[10px] tabular-nums text-zinc-500">
+                      <span className="font-mono text-[11px] tabular-nums text-zinc-500">
                         {n.running_vms} vm{n.running_vms === 1 ? "" : "s"}
                       </span>
                     </div>
@@ -146,11 +146,11 @@ export function CapacityMap({
 function UtilRow({ label, util, detail }: { label: string; util: number; detail: string }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="w-9 font-mono text-[10px] text-zinc-600">{label}</span>
+      <span className="w-9 font-mono text-[11px] text-zinc-600">{label}</span>
       <div className="flex-1">
         <UtilBar value={util} tone={tone(util)} />
       </div>
-      <span className="w-16 text-right font-mono text-[10px] tabular-nums text-zinc-500">{detail}</span>
+      <span className="w-16 text-right font-mono text-[11px] tabular-nums text-zinc-500">{detail}</span>
     </div>
   );
 }

@@ -471,7 +471,7 @@ export default function SurfacesPage() {
         description="How users talk to your agent. Connect WhatsApp, Telegram, Slack, Discord, email, or embed a web chat widget. One agent can serve all of them."
         badge={
           connectedCount > 0 ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[12px] font-medium text-emerald-400">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
               {connectedCount} connected
             </span>
@@ -540,19 +540,19 @@ export default function SurfacesPage() {
                 {surface.id === "whatsapp" && (
                   <div className="mt-2">
                     {whatsappBridgeRunning === true && (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-400">
+                      <span className="inline-flex items-center gap-1.5 text-[12px] text-emerald-400">
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
                         Bridge running
                       </span>
                     )}
                     {whatsappBridgeRunning === false && (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-400">
+                      <span className="inline-flex items-center gap-1.5 text-[12px] text-amber-400">
                         <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
                         Bridge not running &mdash; <code className="text-zinc-400">make run-whatsapp</code>
                       </span>
                     )}
                     {whatsappBridgeRunning === null && (
-                      <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500">
+                      <span className="inline-flex items-center gap-1.5 text-[12px] text-zinc-500">
                         <Loader2 className="h-3 w-3 animate-spin" />
                         Checking bridge...
                       </span>
@@ -644,7 +644,7 @@ export default function SurfacesPage() {
 
                   {whatsappTab === "personal" && (
                     <div className="space-y-3">
-                      <p className="text-[11px] text-zinc-500 leading-relaxed">
+                      <p className="text-[12px] text-zinc-500 leading-relaxed">
                         Pair your personal WhatsApp by scanning a QR code. Great for development and testing.
                       </p>
                       <WhatsAppPairing tenantId={whatsappTenantId} />
@@ -689,7 +689,7 @@ export default function SurfacesPage() {
                     <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{fieldErrors[field.key]}</p>
                   )}
                   {field.helpText && !fieldErrors[field.key] && (
-                    <p className="mt-1 text-[11px] text-zinc-600">
+                    <p className="mt-1 text-[12px] text-zinc-600">
                       {field.helpUrl ? <a href={field.helpUrl} target="_blank" rel="noopener noreferrer" className="text-lantern-400/70 hover:text-lantern-400 underline underline-offset-2">{field.helpText}</a> : field.helpText}
                     </p>
                   )}

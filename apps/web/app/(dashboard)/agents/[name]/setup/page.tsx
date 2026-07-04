@@ -153,12 +153,12 @@ export default function AgentSetupPage({ params }: PageProps) {
         description="Connect the tools and channels this agent needs before its first run."
         badge={
           status.ready ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[12px] font-medium text-emerald-400">
               <CheckCircle2 className="h-3 w-3" />
               Ready
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[12px] font-medium text-amber-400">
               {doneCount} / {items.length} done
             </span>
           )

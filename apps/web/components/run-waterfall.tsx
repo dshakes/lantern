@@ -294,13 +294,13 @@ export function RunWaterfall({
         <div className="flex items-center gap-2">
           <ListTree className="h-3.5 w-3.5 text-zinc-500" />
           <h3 className="text-[12px] font-semibold text-zinc-200">Trace</h3>
-          <span className="text-[10px] text-zinc-500">
+          <span className="text-[11px] text-zinc-500">
             {spans.length} span{spans.length === 1 ? "" : "s"} · {lanes.length} lane
             {lanes.length === 1 ? "" : "s"} · total {formatMs(scaleEnd)}
           </span>
         </div>
         {totals && (
-          <div className="flex items-center gap-3 text-[11px] text-zinc-400">
+          <div className="flex items-center gap-3 text-[12px] text-zinc-400">
             {(totals.tokensIn != null || totals.tokensOut != null) && (
               <span title="Tokens in / out">
                 {formatTokens(totals.tokensIn ?? 0)} → {formatTokens(totals.tokensOut ?? 0)} tok
@@ -426,7 +426,7 @@ function LaneRow({
           labelW,
         )}
       >
-        <span className={clsx("text-[10px] font-semibold uppercase tracking-wide", accent)}>
+        <span className={clsx("text-[11px] font-semibold uppercase tracking-wide", accent)}>
           {lane.meta.label}
         </span>
         <span className="text-[9px] tabular-nums text-zinc-600">
@@ -562,7 +562,7 @@ function LaneSpan({
           >
             <span
               className={clsx(
-                "truncate text-[10px] font-medium",
+                "truncate text-[11px] font-medium",
                 reasoning ? "text-violet-100" : "text-zinc-100",
               )}
             >
@@ -577,7 +577,7 @@ function LaneSpan({
         </div>
 
         {/* Numeric badges — only render when non-zero so simple steps stay clean. */}
-        <div className="flex shrink-0 items-center gap-2 text-[10px] tabular-nums text-zinc-500">
+        <div className="flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-zinc-500">
           {(span.tokensIn > 0 || span.tokensOut > 0) && (
             <span title="Tokens in / out">
               {formatTokens(span.tokensIn)}→{formatTokens(span.tokensOut)}
@@ -593,7 +593,7 @@ function LaneSpan({
       {expanded && (
         <div className="space-y-1.5 border-y border-zinc-800 bg-surface-0 px-6 py-3">
           {span.errorMessage && (
-            <div className="rounded border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-[11px] text-red-300">
+            <div className="rounded border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-[12px] text-red-300">
               {span.errorMessage}
             </div>
           )}
@@ -601,7 +601,7 @@ function LaneSpan({
           {reasonText && (
             <div className="flex items-start gap-2 rounded border border-violet-500/20 bg-violet-500/5 px-2 py-1.5">
               <Brain className="mt-0.5 h-3 w-3 shrink-0 text-violet-400" />
-              <p className="min-w-0 whitespace-pre-wrap break-words text-[11px] leading-relaxed text-violet-100/90">
+              <p className="min-w-0 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-violet-100/90">
                 {reasonText.length > 600 ? `${reasonText.slice(0, 600)}…` : reasonText}
               </p>
             </div>
@@ -621,7 +621,7 @@ function LaneSpan({
               <EventLine key={`${span.id}-${idx}`} event={e} />
             ))}
           {span.events.length <= 2 && !span.errorMessage && !reasonText && (
-            <p className="text-[11px] text-zinc-500">
+            <p className="text-[12px] text-zinc-500">
               No sub-events recorded for this span.
             </p>
           )}
@@ -640,7 +640,7 @@ function RetryAttempts({ attempts }: { attempts: Span[] }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[10px] font-medium text-amber-300"
+        className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] font-medium text-amber-300"
       >
         {open ? (
           <ChevronDown className="h-3 w-3" />
@@ -655,7 +655,7 @@ function RetryAttempts({ attempts }: { attempts: Span[] }) {
           {attempts.map((a, i) => (
             <li
               key={`${a.id}-retry-${i}`}
-              className="flex items-center gap-2 text-[10px] text-zinc-400"
+              className="flex items-center gap-2 text-[11px] text-zinc-400"
             >
               {a.status === "failed" ? (
                 <XCircle className="h-3 w-3 shrink-0 text-red-400" />
@@ -702,7 +702,7 @@ function EventLine({ event }: { event: StreamEvent }) {
   }, [event]);
 
   return (
-    <div className="flex items-start gap-2 text-[11px]">
+    <div className="flex items-start gap-2 text-[12px]">
       <span className="mt-0.5 shrink-0">{iconFor(event.kind)}</span>
       <span className="min-w-0 flex-1 truncate text-zinc-300">{summary}</span>
     </div>

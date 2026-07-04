@@ -165,7 +165,7 @@ const STAGE_LABEL: Record<Stage, string> = {
 function Stepper({ stage, error }: { stage: Stage; error?: boolean }) {
   const activeIdx = STAGE_ORDER.indexOf(stage);
   return (
-    <div className="flex items-center gap-2 text-[11px]">
+    <div className="flex items-center gap-2 text-[12px]">
       {STAGE_ORDER.map((s, idx) => {
         const isActive = idx === activeIdx;
         const isDone = idx < activeIdx;
@@ -173,7 +173,7 @@ function Stepper({ stage, error }: { stage: Stage; error?: boolean }) {
           <div key={s} className="flex items-center gap-2">
             <span
               className={clsx(
-                "flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold transition-colors",
+                "flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold transition-colors",
                 isDone && "bg-emerald-500/15 text-emerald-400",
                 isActive && !error && "bg-lantern-500/20 text-lantern-300 ring-2 ring-lantern-500/30",
                 isActive && error && "bg-red-500/20 text-red-300 ring-2 ring-red-500/30",
@@ -222,7 +222,7 @@ function StatePill({ state }: { state: ConnectionState }) {
   return (
     <span
       className={clsx(
-        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium",
+        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[12px] font-medium",
         v.cls
       )}
     >
@@ -278,7 +278,7 @@ function GroupPicker({
       <div className="flex items-center justify-between gap-2">
         <p className="text-[12px] font-semibold text-zinc-200">Monitored groups</p>
         <div className="flex items-center gap-2">
-          <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400">
+          <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[11px] font-semibold text-zinc-400">
             {monitoredCount} / {allGroups?.length ?? "?"}
           </span>
           <button
@@ -294,9 +294,9 @@ function GroupPicker({
       </div>
 
       {allGroups === null && loading ? (
-        <p className="mt-3 text-[11px] text-zinc-500">Loading groups from WhatsApp…</p>
+        <p className="mt-3 text-[12px] text-zinc-500">Loading groups from WhatsApp…</p>
       ) : (allGroups?.length ?? 0) === 0 ? (
-        <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+        <p className="mt-2 text-[12px] leading-relaxed text-zinc-500">
           No groups found. If you're definitely in groups on WhatsApp,
           click the refresh icon — sometimes Baileys takes a moment to
           sync the group list after pairing.
@@ -338,7 +338,7 @@ function GroupPicker({
                       </span>
                       <span className="truncate text-[12px] text-zinc-200">{g.name}</span>
                     </div>
-                    <span className="shrink-0 text-[10px] text-zinc-500">
+                    <span className="shrink-0 text-[11px] text-zinc-500">
                       {busy ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : (
@@ -350,7 +350,7 @@ function GroupPicker({
               );
             })}
             {filtered.length === 0 && (
-              <li className="px-2 py-3 text-center text-[11px] text-zinc-500">
+              <li className="px-2 py-3 text-center text-[12px] text-zinc-500">
                 No matches for &ldquo;{search}&rdquo;.
               </li>
             )}
@@ -358,12 +358,12 @@ function GroupPicker({
           {remaining > 0 && (
             <button
               onClick={() => setShowAll(true)}
-              className="mt-2 w-full text-center text-[11px] text-zinc-500 hover:text-zinc-300"
+              className="mt-2 w-full text-center text-[12px] text-zinc-500 hover:text-zinc-300"
             >
               Show {remaining} more
             </button>
           )}
-          <p className="mt-2 text-[11px] text-zinc-500">
+          <p className="mt-2 text-[12px] text-zinc-500">
             Checked groups auto-reply when you&apos;re @mentioned or quoted.
             Unchecked groups are ignored entirely.
           </p>
@@ -397,7 +397,7 @@ function CopyableCommand({ cmd }: { cmd: string }) {
         navigator.clipboard.writeText(cmd);
         toast.success("Copied to clipboard");
       }}
-      className="group inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-surface-0 px-2 py-1 font-mono text-[11px] text-zinc-300 transition-colors hover:border-zinc-700 hover:text-zinc-100"
+      className="group inline-flex items-center gap-1.5 rounded-md border border-zinc-800 bg-surface-0 px-2 py-1 font-mono text-[12px] text-zinc-300 transition-colors hover:border-zinc-700 hover:text-zinc-100"
     >
       <span className="truncate">{cmd}</span>
       <Copy className="h-3 w-3 shrink-0 text-zinc-500 group-hover:text-zinc-300" />
@@ -474,7 +474,7 @@ function ActivityRow({
           {event.summary}
         </p>
         {event.detail && (
-          <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-zinc-500">
+          <p className="mt-0.5 line-clamp-2 break-words text-[12px] text-zinc-500">
             {event.detail}
           </p>
         )}
@@ -486,7 +486,7 @@ function ActivityRow({
             onPauseContact!(event.jid!);
           }}
           disabled={isPausing}
-          className="shrink-0 rounded-md border border-zinc-700/60 px-1.5 py-0.5 text-[10px] text-zinc-400 opacity-0 transition-all hover:border-amber-500/40 hover:text-amber-300 group-hover:opacity-100 disabled:opacity-50"
+          className="shrink-0 rounded-md border border-zinc-700/60 px-1.5 py-0.5 text-[11px] text-zinc-400 opacity-0 transition-all hover:border-amber-500/40 hover:text-amber-300 group-hover:opacity-100 disabled:opacity-50"
           title="Pause auto-reply for this contact for 60 minutes"
         >
           {isPausing ? (
@@ -496,7 +496,7 @@ function ActivityRow({
           )}
         </button>
       )}
-      <span className="shrink-0 text-[10px] text-zinc-600 tabular-nums">
+      <span className="shrink-0 text-[11px] text-zinc-600 tabular-nums">
         {formatRelative(event.timestamp, now)}
       </span>
     </li>
@@ -1153,7 +1153,7 @@ export function WhatsAppPairing({
                 Start the bridge service in a terminal from the repo root:
               </p>
               <CopyableCommand cmd="make run-whatsapp-bridge" />
-              <p className="text-[11px] leading-relaxed text-zinc-500">
+              <p className="text-[12px] leading-relaxed text-zinc-500">
                 The bridge listens on <code className="text-zinc-400">:3100</code> and runs on
                 your machine — your WhatsApp credentials never leave this host.
               </p>
@@ -1235,7 +1235,7 @@ export function WhatsAppPairing({
             <p className="text-sm font-medium text-amber-200">Reconnecting to WhatsApp…</p>
           </div>
           {stateReason && (
-            <p className="text-[11px] text-zinc-500">{stateReason}</p>
+            <p className="text-[12px] text-zinc-500">{stateReason}</p>
           )}
         </div>
       )}
@@ -1350,7 +1350,7 @@ export function WhatsAppPairing({
               <h3 className="text-sm font-semibold text-zinc-100">
                 Check from your phone
               </h3>
-              <span className="text-[11px] text-zinc-500">
+              <span className="text-[12px] text-zinc-500">
                 · text these to yourself anytime
               </span>
             </header>
@@ -1367,14 +1367,14 @@ export function WhatsAppPairing({
                   key={row.cmd}
                   className="flex items-start gap-3 rounded-lg border border-zinc-800/60 bg-surface-2/40 px-3 py-2"
                 >
-                  <code className="shrink-0 rounded bg-surface-3 px-2 py-0.5 font-mono text-[11px] text-lantern-300">
+                  <code className="shrink-0 rounded bg-surface-3 px-2 py-0.5 font-mono text-[12px] text-lantern-300">
                     {row.cmd}
                   </code>
                   <span className="text-zinc-400">{row.what}</span>
                 </li>
               ))}
             </ul>
-            <p className="mt-3 text-[11px] text-zinc-500">
+            <p className="mt-3 text-[12px] text-zinc-500">
               These commands work in your self-chat. The bridge reacts with
               an emoji so you know it received them even when offline.
             </p>
@@ -1399,7 +1399,7 @@ export function WhatsAppPairing({
                   like &ldquo;who came on my Japan trip&rdquo; from your real
                   group conversations.
                 </p>
-                <p className="mt-2 text-[11px] text-zinc-600">
+                <p className="mt-2 text-[12px] text-zinc-600">
                   Bot stays linked to the same phone — only the cached
                   session is wiped. You'll see a fresh QR; scan it from
                   your phone exactly like the first time.
@@ -1463,11 +1463,11 @@ export function WhatsAppPairing({
             )}
             Diagnostics
           </span>
-          <span className="text-[11px] text-zinc-600">
+          <span className="text-[12px] text-zinc-600">
             tenant <code className="text-zinc-400">{tenantId.slice(0, 8)}…</code>
           </span>
         </summary>
-        <div className="space-y-2 border-t border-zinc-800 px-4 py-3 text-[11px] text-zinc-400">
+        <div className="space-y-2 border-t border-zinc-800 px-4 py-3 text-[12px] text-zinc-400">
           <DiagRow label="Bridge URL" value={bridgeUrl} />
           <DiagRow label="State" value={`${state}${stateReason ? ` — ${stateReason}` : ""}`} />
           <DiagRow
@@ -1589,13 +1589,13 @@ function PairingPanel({
               ) : (
                 <div className="flex h-56 w-56 flex-col items-center justify-center gap-2 text-zinc-500">
                   <Loader2 className="h-6 w-6 animate-spin" />
-                  <span className="text-[11px]">
+                  <span className="text-[12px]">
                     {state === "connecting" ? "Finishing up…" : "Generating QR…"}
                   </span>
                 </div>
               )}
               {state === "qr_ready" && qrRemainingSec > 0 && (
-                <div className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white">
+                <div className="absolute right-2 top-2 flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">
                   <svg width="14" height="14" viewBox="0 0 50 50" className="-rotate-90">
                     <circle
                       cx="25"
@@ -1622,7 +1622,7 @@ function PairingPanel({
               )}
             </div>
           </div>
-          <p className="text-[10px] text-zinc-500">
+          <p className="text-[11px] text-zinc-500">
             Auto-refreshes if the code expires
           </p>
         </div>
@@ -1661,7 +1661,7 @@ function PairingPanel({
               Cancel
             </Button>
           </div>
-          <p className="pt-2 text-[11px] leading-relaxed text-zinc-500">
+          <p className="pt-2 text-[12px] leading-relaxed text-zinc-500">
             Pairing creates a Linked Device under your WhatsApp account — same as
             WhatsApp Web. You can unlink it at any time from your phone or with
             the Disconnect button after pairing.
@@ -1802,7 +1802,7 @@ function ConnectedPanel({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-[12px] font-semibold text-zinc-200">Auto-reply</p>
-              <p className="mt-0.5 text-[11px] text-zinc-500">
+              <p className="mt-0.5 text-[12px] text-zinc-500">
                 {muted
                   ? "Silent for every contact."
                   : pausedCount > 0
@@ -1856,7 +1856,7 @@ function ConnectedPanel({
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
             <p className="text-[12px] font-semibold text-zinc-200">Send a test message</p>
-            <p className="text-[11px] leading-relaxed text-zinc-500">
+            <p className="text-[12px] leading-relaxed text-zinc-500">
               {testMode === "idle" &&
                 "Send any message to your own WhatsApp number to confirm the bridge is receiving."}
               {testMode === "waiting" && (
@@ -1879,7 +1879,7 @@ function ConnectedPanel({
             </Button>
           )}
           {testMode === "waiting" && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-lantern-500/10 px-2 py-1 text-[11px] font-medium text-lantern-300">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-lantern-500/10 px-2 py-1 text-[12px] font-medium text-lantern-300">
               <Loader2 className="h-3 w-3 animate-spin" />
               Waiting
             </span>
@@ -1896,7 +1896,7 @@ function ConnectedPanel({
       <div className="overflow-hidden rounded-xl border border-zinc-800 bg-surface-1">
         <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-2.5">
           <p className="text-[12px] font-semibold text-zinc-200">Live activity</p>
-          <span className="text-[10px] text-zinc-600">
+          <span className="text-[11px] text-zinc-600">
             Streaming · last {activity.length}
           </span>
         </div>
@@ -1928,7 +1928,7 @@ function ConnectedPanel({
         <summary className="cursor-pointer px-4 py-2.5 text-[12px] text-zinc-400 hover:text-zinc-200">
           Quick commands (from your phone)
         </summary>
-        <div className="space-y-1.5 border-t border-zinc-800 px-4 py-3 text-[11px] leading-relaxed text-zinc-400">
+        <div className="space-y-1.5 border-t border-zinc-800 px-4 py-3 text-[12px] leading-relaxed text-zinc-400">
           <p>
             In <span className="font-medium text-zinc-300">Message Yourself</span>:{" "}
             <code className="rounded bg-surface-0 px-1 text-zinc-300">/bot off</code> ·{" "}

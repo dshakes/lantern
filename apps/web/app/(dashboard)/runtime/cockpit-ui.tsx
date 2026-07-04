@@ -64,7 +64,7 @@ export function IsolationBadge({ cls, dense }: { cls: string; dense?: boolean })
   return (
     <span
       title={`${cls} · ${is.backend}`}
-      className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] font-medium text-zinc-400"
+      className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] font-medium text-zinc-400"
     >
       <Shield className={clsx("text-zinc-500", dense ? "h-2.5 w-2.5" : "h-3 w-3")} />
       {is.label}
@@ -89,7 +89,7 @@ export function Sparkline({
   height?: number;
 }) {
   if (!data || data.length < 2) {
-    return <span className="font-mono text-[11px] text-zinc-600">—</span>;
+    return <span className="font-mono text-[12px] text-zinc-600">—</span>;
   }
   const n = data.length;
   const stepX = width / (n - 1);

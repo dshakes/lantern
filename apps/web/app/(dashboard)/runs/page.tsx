@@ -135,7 +135,7 @@ export default function RunsPage() {
             </div>
             <h3 className="mt-4 text-sm font-semibold text-zinc-100">Couldn&apos;t load runs</h3>
             <p className="mt-1 max-w-sm text-center text-xs text-zinc-500">{error.message}. Check that the control-plane API is reachable.</p>
-            <code className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-[11px] text-zinc-300">lantern dev</code>
+            <code className="mt-3 rounded-lg border border-zinc-800 bg-surface-0 px-3 py-1.5 font-mono text-[12px] text-zinc-300">lantern dev</code>
           </div>
         ) : filtered.length === 0 ? (
           <EmptyState
@@ -158,7 +158,7 @@ export default function RunsPage() {
                 )}
               </span>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-zinc-600">Page {page + 1} of {totalPages}</span>
+                <span className="text-[11px] text-zinc-600">Page {page + 1} of {totalPages}</span>
                 <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:bg-surface-3 disabled:opacity-30">Prev</button>
                 <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:bg-surface-3 disabled:opacity-30">Next</button>
               </div>
@@ -244,14 +244,14 @@ function RunGroup({
         <Layers className="h-3.5 w-3.5 text-lantern-400 shrink-0" />
         <span className="text-xs font-medium text-zinc-200">{agg.agentLabel}</span>
         <StatusBadge status={agg.status} />
-        <span className="rounded-md bg-surface-3 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-zinc-400">
+        <span className="rounded-md bg-surface-3 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-400">
           {agg.count} runs
         </span>
-        <span className="ml-auto text-[11px] text-zinc-400 tabular-nums">
+        <span className="ml-auto text-[12px] text-zinc-400 tabular-nums">
           {agg.durationMs !== null ? formatDuration(agg.durationMs) : "--"}
         </span>
-        <span className="font-mono text-[11px] text-zinc-500 tabular-nums">{formatCost(agg.totalCost)}</span>
-        <span className="hidden text-[11px] tabular-nums text-zinc-600 md:inline">
+        <span className="font-mono text-[12px] text-zinc-500 tabular-nums">{formatCost(agg.totalCost)}</span>
+        <span className="hidden text-[12px] tabular-nums text-zinc-600 md:inline">
           {format(agg.latestAt, "MMM d, HH:mm")}
         </span>
       </button>
@@ -292,17 +292,17 @@ function RunRow({
           <AgentAvatar name={run.agentName} status={run.status} size="sm" />
           <button onClick={(e) => { e.stopPropagation(); onOpenAgent(run.agentName); }} className="text-xs font-medium text-zinc-200 hover:text-zinc-50">{run.agentName}</button>
           <StatusBadge status={run.status} />
-          <span className="font-mono text-[11px] text-zinc-600 hidden sm:inline">{run.id.slice(0, 12)}</span>
-          <span className="ml-auto text-[11px] text-zinc-400 tabular-nums">{dur}</span>
-          <span className="font-mono text-[11px] text-zinc-500 tabular-nums">{formatCost(run.costUsd)}</span>
-          <span className="text-[11px] text-zinc-600 hidden md:inline tabular-nums">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
+          <span className="font-mono text-[12px] text-zinc-600 hidden sm:inline">{run.id.slice(0, 12)}</span>
+          <span className="ml-auto text-[12px] text-zinc-400 tabular-nums">{dur}</span>
+          <span className="font-mono text-[12px] text-zinc-500 tabular-nums">{formatCost(run.costUsd)}</span>
+          <span className="text-[12px] text-zinc-600 hidden md:inline tabular-nums">{run.startedAt ? format(new Date(run.startedAt), "MMM d, HH:mm") : "--"}</span>
         </button>
         {/* Delete */}
         <div className={clsx("flex items-center pr-2", confirming ? "opacity-100" : "opacity-0 group-hover:opacity-100 transition-opacity")}>
           {confirming ? (
             <div className="flex items-center gap-1">
-              <button onClick={() => onDelete(run.id)} disabled={deletingRunId === run.id} className="rounded px-2 py-1 text-[10px] font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20">{deletingRunId === run.id ? "..." : "Yes"}</button>
-              <button onClick={() => onConfirmDelete(null)} className="rounded px-2 py-1 text-[10px] text-zinc-500 hover:text-zinc-300">No</button>
+              <button onClick={() => onDelete(run.id)} disabled={deletingRunId === run.id} className="rounded px-2 py-1 text-[11px] font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20">{deletingRunId === run.id ? "..." : "Yes"}</button>
+              <button onClick={() => onConfirmDelete(null)} className="rounded px-2 py-1 text-[11px] text-zinc-500 hover:text-zinc-300">No</button>
             </div>
           ) : (
             <button onClick={() => onConfirmDelete(`confirm_${run.id}`)} className="rounded p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10" title="Delete"><Trash2 className="h-3 w-3" /></button>
@@ -321,7 +321,7 @@ function RunRow({
           {/* Output */}
           {run.output ? (
             <div>
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Result</p>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Result</p>
               <div className="max-h-80 overflow-auto rounded-lg border border-emerald-500/10 bg-emerald-500/[0.02] p-4">
                 <pre className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200 font-sans">
                   {cleanOutput(typeof run.output === "string" ? run.output : typeof run.output === "object" && run.output !== null && "result" in (run.output as Record<string, unknown>) ? String((run.output as Record<string, unknown>).result) : JSON.stringify(run.output, null, 2))}

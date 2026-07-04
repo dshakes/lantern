@@ -142,7 +142,7 @@ export function OneClickTemplates() {
         <h2 className="text-sm font-semibold text-zinc-100">
           One-click recipes
         </h2>
-        <span className="text-[11px] text-zinc-500">
+        <span className="text-[12px] text-zinc-500">
           · agent + schedule + budget, configured atomically
         </span>
       </div>
@@ -163,25 +163,25 @@ export function OneClickTemplates() {
                 <div className={clsx("flex h-10 w-10 items-center justify-center rounded-xl", visual.bg)}>
                   <Icon className={clsx("h-5 w-5", visual.tint)} />
                 </div>
-                <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-medium text-zinc-400">
+                <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[12px] font-medium text-zinc-400">
                   {t.cronExpr}
                 </span>
               </div>
               <h3 className="text-sm font-semibold text-zinc-100">{t.name}</h3>
-              <p className="mt-1 flex-1 text-[11px] leading-relaxed text-zinc-500">
+              <p className="mt-1 flex-1 text-[12px] leading-relaxed text-zinc-500">
                 {t.description}
               </p>
 
               {/* Required connectors with live install state. */}
               <div className="mt-4 flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] text-zinc-600">needs:</span>
+                <span className="text-[12px] text-zinc-600">needs:</span>
                 {(t.connectors ?? []).map((c) => {
                   const ok = installed.has(c);
                   return (
                     <span
                       key={c}
                       className={clsx(
-                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[12px] font-medium",
                         ok
                           ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
                           : "border-zinc-700 bg-surface-2 text-zinc-400"
@@ -195,7 +195,7 @@ export function OneClickTemplates() {
                 {(t.surfaces ?? []).map((s) => (
                   <span
                     key={s}
-                    className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-zinc-400"
+                    className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-surface-2 px-2 py-0.5 text-[12px] font-medium text-zinc-400"
                   >
                     {s}
                   </span>
@@ -216,7 +216,7 @@ export function OneClickTemplates() {
                   </>
                 )}
               </button>
-              <p className="mt-2 text-[11px] text-zinc-600">
+              <p className="mt-2 text-[12px] text-zinc-600">
                 creates the agent + ${t.maxCostUsdDay.toFixed(2)}/day hard-cap budget + the cron
               </p>
             </article>

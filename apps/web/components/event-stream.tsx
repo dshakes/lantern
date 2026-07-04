@@ -211,7 +211,7 @@ function StepFailedEvent({ data }: { data: Record<string, unknown> }) {
             <>
               <button
                 onClick={() => setShowStack(!showStack)}
-                className="mt-2 flex items-center gap-1 text-[11px] text-red-300/60 transition-colors hover:text-red-300"
+                className="mt-2 flex items-center gap-1 text-[12px] text-red-300/60 transition-colors hover:text-red-300"
               >
                 <ChevronDown
                   className={clsx(
@@ -222,7 +222,7 @@ function StepFailedEvent({ data }: { data: Record<string, unknown> }) {
                 {showStack ? "Hide" : "Show"} stack trace
               </button>
               {showStack && (
-                <pre className="mt-2 overflow-x-auto rounded bg-red-950/30 p-2 font-mono text-[11px] leading-relaxed text-red-300/70">
+                <pre className="mt-2 overflow-x-auto rounded bg-red-950/30 p-2 font-mono text-[12px] leading-relaxed text-red-300/70">
                   {String(data.stackTrace)}
                 </pre>
               )}
@@ -258,13 +258,13 @@ function StreamingTextBlock({ text }: { text: string }) {
 function LlmCompleteEvent({ data }: { data: Record<string, unknown> }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="rounded bg-purple-500/10 px-2 py-0.5 text-[11px] font-medium text-purple-400">
+      <span className="rounded bg-purple-500/10 px-2 py-0.5 text-[12px] font-medium text-purple-400">
         {String(data.model)}
       </span>
-      <span className="text-[11px] text-zinc-500">
+      <span className="text-[12px] text-zinc-500">
         {formatTokens(data.tokensIn as number)} in / {formatTokens(data.tokensOut as number)} out
       </span>
-      <span className="text-[11px] text-zinc-500">
+      <span className="text-[12px] text-zinc-500">
         {formatCost(data.costUsd as number)}
       </span>
     </div>
@@ -301,7 +301,7 @@ function LogEvent({ data }: { data: Record<string, unknown> }) {
     <div className="flex items-start gap-2">
       <span
         className={clsx(
-          "mt-px rounded px-1.5 py-0.5 text-[10px] font-medium uppercase",
+          "mt-px rounded px-1.5 py-0.5 text-[11px] font-medium uppercase",
           level === "info" && "bg-zinc-700/50 text-zinc-400",
           level === "warn" && "bg-yellow-500/10 text-yellow-400",
           level === "error" && "bg-red-500/10 text-red-400"
@@ -439,13 +439,13 @@ function EndEvent({ data }: { data: Record<string, unknown> }) {
         )}
         Run {status}
       </span>
-      <span className="text-[11px] text-zinc-500">
+      <span className="text-[12px] text-zinc-500">
         {formatDuration(data.totalDurationMs as number)}
       </span>
-      <span className="text-[11px] text-zinc-500">
+      <span className="text-[12px] text-zinc-500">
         {formatTokens((data.totalTokensIn as number) + (data.totalTokensOut as number))} tokens
       </span>
-      <span className="text-[11px] text-zinc-500">
+      <span className="text-[12px] text-zinc-500">
         {formatCost(data.totalCostUsd as number)}
       </span>
     </div>
@@ -574,7 +574,7 @@ export function EventStream({
               </div>
               <div className="min-w-0 flex-1">{renderEventContent(event)}</div>
               <div className="flex-shrink-0">
-                <span className="font-mono text-[10px] text-zinc-600">
+                <span className="font-mono text-[11px] text-zinc-600">
                   {formatTime(event.ts)}
                 </span>
               </div>
@@ -596,7 +596,7 @@ export function EventStream({
                 <StreamingTextBlock text={streamingText} />
               </div>
               <div className="flex-shrink-0">
-                <span className="font-mono text-[10px] text-zinc-600">now</span>
+                <span className="font-mono text-[11px] text-zinc-600">now</span>
               </div>
             </div>
           )}
@@ -629,7 +629,7 @@ export function EventStream({
 
 export function EventCountBadge({ count }: { count: number }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-medium text-zinc-400">
+    <span className="inline-flex items-center gap-1 rounded-full bg-surface-3 px-2 py-0.5 text-[12px] font-medium text-zinc-400">
       {count} events
     </span>
   );
