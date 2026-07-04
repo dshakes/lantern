@@ -177,7 +177,7 @@ export function Sidebar() {
           <div className="px-4 pt-4">
             <Link
               href="/agents/create"
-              className="group flex w-full items-center gap-2 rounded-lg border border-lantern-500/30 bg-lantern-500/10 px-3 py-2 text-xs font-medium text-lantern-200 transition-all duration-150 hover:border-lantern-500/50 hover:bg-lantern-500/15 hover:shadow-sm"
+              className="group flex w-full items-center gap-2 rounded-lg border border-lantern-500/30 bg-lantern-500/10 px-3 py-2 text-xs font-medium text-lantern-200 transition-all duration-150 hover:border-lantern-500/50 hover:bg-lantern-500/15 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
             >
               <Plus className="h-4 w-4 transition-transform duration-150 group-hover:rotate-90" />
               New agent
@@ -233,7 +233,7 @@ export function Sidebar() {
                   <Link
                     href={href}
                     className={clsx(
-                      "group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-150",
+                      "group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1",
                       isActive
                         ? "bg-surface-3 text-zinc-100"
                         : "text-zinc-400 hover:bg-surface-3/60 hover:text-zinc-100",
@@ -261,7 +261,7 @@ export function Sidebar() {
               <li>
                 <Link
                   href="/agents"
-                  className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium text-lantern-400 transition-colors hover:bg-surface-3/60 hover:text-lantern-300"
+                  className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium text-lantern-400 transition-colors hover:bg-surface-3/60 hover:text-lantern-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1"
                 >
                   <span className="flex h-5 w-5 items-center justify-center rounded-md border border-lantern-500/30 text-[10px] tabular-nums">+{hiddenCount}</span>
                   View all {agents.length} agents
@@ -417,7 +417,7 @@ function SecondaryLink({
     <Link
       href={href}
       className={clsx(
-        "flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors duration-150",
+        "flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lantern-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-1",
         active
           ? "bg-surface-3 text-zinc-100"
           : "text-zinc-400 hover:bg-surface-3/60 hover:text-zinc-100",
