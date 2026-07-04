@@ -71,6 +71,13 @@ export function Sidebar() {
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [agents, search]);
 
+  // Scale gate: when NOT searching, the rail shows only the most-recent few —
+  // the full roster is the /agents grid. Searching reveals every match.
+  const AGENT_CAP = 7;
+  const isSearching = search.trim().length > 0;
+  const shownAgents = isSearching ? sortedAgents : sortedAgents.slice(0, AGENT_CAP);
+  const hiddenCount = isSearching ? 0 : Math.max(0, sortedAgents.length - AGENT_CAP);
+
   // Click-outside for user menu.
   useEffect(() => {
     if (!showMenu) return;
@@ -119,8 +126,18 @@ export function Sidebar() {
           )}
           aria-label="Home"
         >
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-lantern-400 to-lantern-600 shadow-md transition-transform duration-150 group-hover:scale-105">
-            <span className="text-xs font-bold text-white leading-none">L</span>
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center transition-transform duration-150 group-hover:scale-105">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+              <defs>
+                <linearGradient id="lantern-mark" x1="3" y1="3" x2="23" y2="23" gradientUnits="userSpaceOnUse">
+                  <stop stopColor="#2dd4bf" />
+                  <stop offset="0.5" stopColor="#38bdf8" />
+                  <stop offset="1" stopColor="#818cf8" />
+                </linearGradient>
+              </defs>
+              <rect x="6.5" y="6.5" width="13" height="13" rx="3" transform="rotate(45 13 13)" fill="url(#lantern-mark)" />
+              <rect x="10.5" y="10.5" width="5" height="5" rx="1.5" transform="rotate(45 13 13)" fill="#0d0d12" opacity="0.85" />
+            </svg>
           </div>
           {!collapsed && (
             <span className="text-base font-semibold tracking-tight text-white">Lantern</span>
@@ -208,7 +225,7 @@ export function Sidebar() {
           )
         ) : (
           <ul className="space-y-0.5">
-            {sortedAgents.map((agent) => {
+            {shownAgents.map((agent) => {
               const href = `/agents/${encodeURIComponent(agent.name)}`;
               const isActive = pathname === href || pathname.startsWith(href + "/");
               return (
@@ -238,6 +255,19 @@ export function Sidebar() {
                 </li>
               );
             })}
+            {/* Scale gate: the sidebar shows recent agents only; the full,
+                searchable roster lives on /agents. Keeps the rail usable at 50+. */}
+            {!collapsed && hiddenCount > 0 && (
+              <li>
+                <Link
+                  href="/agents"
+                  className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium text-lantern-400 transition-colors hover:bg-surface-3/60 hover:text-lantern-300"
+                >
+                  <span className="flex h-5 w-5 items-center justify-center rounded-md border border-lantern-500/30 text-[10px] tabular-nums">+{hiddenCount}</span>
+                  View all {agents.length} agents
+                </Link>
+              </li>
+            )}
           </ul>
         )}
       </nav>
