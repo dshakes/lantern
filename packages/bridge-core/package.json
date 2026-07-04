@@ -68,6 +68,7 @@
     "./device-signals": "./src/device-signals.ts",
     "./commitments-edge": "./src/commitments-edge.ts",
     "./proactive-loops": "./src/proactive-loops.ts",
+    "./live-watch": "./src/live-watch.ts",
     "./digest-compose": "./src/digest-compose.ts",
     "./doc-ingest": "./src/doc-ingest.ts",
     "./recall": "./src/recall.ts",

@@ -35,6 +35,8 @@ const BOT_SELF_PREFIXES: string[] = [
   "📎 grabbing it",
   "⏳",                      // any hourglass-prefixed waiting nudge
   "🪙 no monitored groups",
+  "📡 watching:",            // live-watch registered (owner transparency ping)
+  "📡 followed up with",     // live-watch resolved — follow-up recap
 
   // ── Action confirmations ──
   "📅 added to calendar",
