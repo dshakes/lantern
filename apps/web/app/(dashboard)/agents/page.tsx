@@ -193,7 +193,6 @@ export default function AgentsPage() {
     const live = runs.filter((r) => r.status === "running" || r.status === "paused").length;
 
     const today = fleetUsage?.periods.today;
-    const week = fleetUsage?.periods.week; // trailing 7-day rollup (control-plane usage.go) — safe to /7
 
     const base = today
       ? { runsToday: today.runs, succeededToday: today.succeeded, failedToday: today.failed, totalCostToday: today.costUsd }
@@ -211,27 +210,7 @@ export default function AgentsPage() {
     const terminalToday = base.succeededToday + base.failedToday;
     const successRateToday = terminalToday > 0 ? Math.round((base.succeededToday / terminalToday) * 100) : null;
 
-    // Deltas only exist when there's a real week baseline to compare against
-    // (the fleet-usage endpoint's trailing 7-day rollup). No week data, no
-    // fallback-path data → no delta pill, never an invented number.
-    let runsDeltaPct: number | null = null;
-    let costDeltaPct: number | null = null;
-    let successDeltaPts: number | null = null;
-    if (week) {
-      const avgDailyRuns = week.runs / 7;
-      if (avgDailyRuns > 0) runsDeltaPct = Math.round(((base.runsToday - avgDailyRuns) / avgDailyRuns) * 100);
-
-      const avgDailyCost = week.costUsd / 7;
-      if (avgDailyCost > 0) costDeltaPct = Math.round(((base.totalCostToday - avgDailyCost) / avgDailyCost) * 100);
-
-      const terminalWeek = week.succeeded + week.failed;
-      if (terminalWeek > 0 && terminalToday > 0) {
-        const successRateWeek = (week.succeeded / terminalWeek) * 100;
-        successDeltaPts = Math.round(successRateToday! - successRateWeek);
-      }
-    }
-
-    return { total: agents.length, live, ...base, successRateToday, runsDeltaPct, costDeltaPct, successDeltaPts };
+    return { total: agents.length, live, ...base, successRateToday };
   }, [agents, runs, fleetUsage]);
 
   // `/` keyboard shortcut — focus search (Linear/GitHub-style).
@@ -330,7 +309,7 @@ export default function AgentsPage() {
             <NowRunningStrip runs={runs} />
 
             {/* Stats strip — 4 dense glass tiles. Real data only: see stat-buckets.ts
-                for the sparkline bucketing and the aggregate memo above for deltas. */}
+                for the sparkline bucketing. */}
             <div className="mc-stagger mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat
                 icon={<Bot className="h-3.5 w-3.5 text-zinc-400" />}
@@ -345,7 +324,6 @@ export default function AgentsPage() {
                 label="Runs today"
                 value={aggregate.runsToday.toLocaleString()}
                 hint={aggregate.successRateToday != null ? `${aggregate.successRateToday}% succeeded` : "—"}
-                delta={aggregate.runsDeltaPct != null ? { value: aggregate.runsDeltaPct } : undefined}
                 sparkline={buckets?.runCounts}
                 sparklineStroke="rgb(56 189 248)"
                 sparklineFill="rgba(56, 189, 248, 0.12)"
@@ -356,7 +334,6 @@ export default function AgentsPage() {
                 label="Cost today"
                 value={`$${aggregate.totalCostToday.toFixed(2)}`}
                 hint={aggregate.runsToday > 0 ? `~$${(aggregate.totalCostToday / aggregate.runsToday).toFixed(4)}/run` : "no runs yet"}
-                delta={aggregate.costDeltaPct != null ? { value: aggregate.costDeltaPct } : undefined}
                 sparkline={buckets?.costs}
                 sparklineStroke="rgb(52 211 153)"
                 sparklineFill="rgba(52, 211, 153, 0.12)"
@@ -371,7 +348,6 @@ export default function AgentsPage() {
                     ? `${aggregate.succeededToday}/${aggregate.succeededToday + aggregate.failedToday} runs`
                     : aggregate.runsToday > 0 ? "no terminal runs yet" : "no runs yet"
                 }
-                delta={aggregate.successDeltaPts != null ? { value: aggregate.successDeltaPts, unit: "pts" } : undefined}
                 tone={aggregate.successRateToday != null && aggregate.successRateToday < 80 ? "danger" : undefined}
               />
             </div>
@@ -724,7 +700,6 @@ function Stat({
   tone,
   icon,
   iconBg,
-  delta,
   sparkline,
   sparklineStroke,
   sparklineFill,
@@ -736,8 +711,6 @@ function Stat({
   tone?: "danger";
   icon?: React.ReactNode;
   iconBg?: string;
-  /** Real comparison only — omit the prop entirely when there's no honest baseline. */
-  delta?: { value: number; unit?: "pts" };
   /** Real bucketed series only (see stat-buckets.ts) — omit when there's too little data. */
   sparkline?: number[];
   sparklineStroke?: string;
@@ -746,11 +719,11 @@ function Stat({
   const isDanger = tone === "danger";
   return (
     <div className={clsx(
-      "group relative mc-glass overflow-hidden rounded-xl border p-4 backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5",
+      "group relative mc-glass overflow-hidden rounded-xl border px-4 py-3 backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5",
       isDanger ? "border-red-500/25 bg-red-500/[0.03] hover:border-red-500/40" : "border-white/[0.07] bg-white/[0.024] hover:border-white/[0.12]",
     )}>
-      {/* Icon square + live/delta pill row */}
-      <div className="mb-3 flex items-center justify-between">
+      {/* Icon square + live pill row */}
+      <div className="mb-2 flex items-center justify-between">
         {icon && (
           <div className={clsx(
             "flex h-7 w-7 items-center justify-center rounded-lg",
@@ -759,44 +732,36 @@ function Stat({
             {icon}
           </div>
         )}
-        <div className="flex items-center gap-1.5">
-          {live && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-1.5 text-[11px] font-medium text-teal-300">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-400" />
-              live
-            </span>
-          )}
-          {delta != null && delta.value !== 0 && (
-            <span className={clsx(
-              "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums",
-              delta.value > 0 ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400",
-            )}>
-              {delta.value > 0 ? "▲" : "▼"}{Math.abs(delta.value)}{delta.unit === "pts" ? "pt" : "%"}
-            </span>
-          )}
-        </div>
+        {live && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-1.5 text-[11px] font-medium text-teal-300">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-400" />
+            live
+          </span>
+        )}
       </div>
-      {/* Big number */}
-      <p className={clsx("text-2xl font-semibold leading-none tabular-nums", isDanger ? "text-red-300" : "text-zinc-100")}>
-        {value}
-      </p>
+      {/* Big number, sparkline inline bottom-right of the same row */}
+      <div className="flex items-end justify-between gap-2">
+        <p className={clsx("text-2xl font-semibold leading-none tabular-nums", isDanger ? "text-red-300" : "text-zinc-100")}>
+          {value}
+        </p>
+        {/* Real sparkline only — hidden below sm where the tile is too narrow to render one honestly */}
+        {sparkline && sparkline.length > 0 && (
+          <div className="hidden shrink-0 sm:block">
+            <Sparkline
+              data={sparkline}
+              width={64}
+              height={20}
+              strokeWidth={1.5}
+              stroke={sparklineStroke ?? "rgb(56 189 248)"}
+              fill={sparklineFill ?? "rgba(56, 189, 248, 0.12)"}
+            />
+          </div>
+        )}
+      </div>
       {/* Mono micro-label */}
       <p className="mc-micro-label mt-1.5">{label}</p>
       {/* Hint */}
       {hint && <p className="mt-0.5 text-[11px] text-zinc-600">{hint}</p>}
-      {/* Real sparkline only — hidden below sm where the tile is too narrow to render one honestly */}
-      {sparkline && sparkline.length > 0 && (
-        <div className="mt-3 hidden sm:block">
-          <Sparkline
-            data={sparkline}
-            width={90}
-            height={26}
-            strokeWidth={1.5}
-            stroke={sparklineStroke ?? "rgb(56 189 248)"}
-            fill={sparklineFill ?? "rgba(56, 189, 248, 0.12)"}
-          />
-        </div>
-      )}
     </div>
   );
 }
