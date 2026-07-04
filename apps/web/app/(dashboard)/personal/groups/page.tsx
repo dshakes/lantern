@@ -188,7 +188,7 @@ function GroupRowItem({
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm text-zinc-100">{group.name}</div>
-        <div className="mt-0.5 truncate font-mono text-[10px] text-zinc-600">
+        <div className="mt-0.5 truncate font-mono text-[11px] text-zinc-600">
           {group.participants > 0 ? `${group.participants} members · ` : ""}
           {group.jid}
         </div>

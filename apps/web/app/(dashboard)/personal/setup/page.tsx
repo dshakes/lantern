@@ -132,7 +132,7 @@ function Stepper({ state }: { state: ConnectionState }) {
         return (
           <li key={s.id} className="flex flex-1 items-center gap-2">
             <div
-              className={`flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-medium transition-colors ${
+              className={`flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-medium transition-colors ${
                 done
                   ? active
                     ? "border-violet-500 bg-violet-500/20 text-violet-200"
@@ -188,7 +188,7 @@ function PairingCard({
     <div className="rounded-2xl border border-zinc-800/80 bg-surface-1 p-8">
       <div className="grid grid-cols-1 gap-8 md:grid-cols-2 md:items-center">
         <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-violet-300">
+          <div className="inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-violet-300">
             <ScanLine className="h-3 w-3" /> WhatsApp linked device
           </div>
           <h2 className="mt-4 text-2xl font-medium text-zinc-50">
@@ -256,7 +256,7 @@ function QrSlot({
             className="h-64 w-64 rounded bg-white p-2"
           />
           {typeof secondsLeft === "number" && (
-            <span className="absolute bottom-3 right-3 rounded-full bg-zinc-900/90 px-2 py-0.5 font-mono text-[10px] text-zinc-400">
+            <span className="absolute bottom-3 right-3 rounded-full bg-zinc-900/90 px-2 py-0.5 font-mono text-[11px] text-zinc-400">
               {secondsLeft}s
             </span>
           )}
@@ -358,7 +358,7 @@ function Instructions() {
 function Step({ n, children }: { n: number; children: React.ReactNode }) {
   return (
     <li className="flex gap-3">
-      <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-700 text-[10px] text-zinc-400">
+      <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-700 text-[11px] text-zinc-400">
         {n}
       </span>
       <span>{children}</span>

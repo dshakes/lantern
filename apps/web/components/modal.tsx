@@ -206,7 +206,7 @@ export function ModalField({
         {label}
       </label>
       {children}
-      {hint && <p className="mt-1 text-[11px] text-zinc-600">{hint}</p>}
+      {hint && <p className="mt-1 text-[12px] text-zinc-600">{hint}</p>}
     </div>
   );
 }

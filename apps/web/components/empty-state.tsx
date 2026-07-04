@@ -114,7 +114,7 @@ export function EmptyState({
           <div className="flex flex-wrap items-center justify-center gap-1.5">
             {suggestions.map((s, i) => {
               const cls =
-                "rounded-full border border-zinc-800 bg-surface-1 px-3 py-1 text-[11px] text-zinc-400 transition-colors duration-150 hover:border-lantern-500/40 hover:bg-lantern-500/5 hover:text-lantern-200";
+                "rounded-full border border-zinc-800 bg-surface-1 px-3 py-1 text-[12px] text-zinc-400 transition-colors duration-150 hover:border-lantern-500/40 hover:bg-lantern-500/5 hover:text-lantern-200";
               if (s.href) {
                 return (
                   <Link key={i} href={s.href} className={cls}>

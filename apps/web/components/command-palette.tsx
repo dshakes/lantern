@@ -628,7 +628,7 @@ export function CommandPalette() {
             spellCheck={false}
             className="flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
           />
-          <kbd className="hidden h-5 items-center rounded border border-zinc-700 bg-surface-2 px-1.5 text-[10px] font-medium text-zinc-500 sm:inline-flex">
+          <kbd className="hidden h-5 items-center rounded border border-zinc-700 bg-surface-2 px-1.5 text-[11px] font-medium text-zinc-500 sm:inline-flex">
             ESC
           </kbd>
         </div>
@@ -647,7 +647,7 @@ export function CommandPalette() {
             <div className="mx-2 mb-2 rounded-xl border border-lantern-500/25 bg-lantern-500/[0.07] px-3.5 py-3">
               <div className="flex items-center gap-1.5 pb-1">
                 <Sparkles className="h-3 w-3 text-lantern-400" aria-hidden />
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-lantern-300/90">
+                <span className="text-[12px] font-semibold uppercase tracking-wider text-lantern-300/90">
                   Ask Lantern
                 </span>
               </div>
@@ -655,7 +655,7 @@ export function CommandPalette() {
                 {answer.text}
               </p>
               {answer.summary && (
-                <p className="mt-1.5 text-[11px] text-zinc-500">{answer.summary}</p>
+                <p className="mt-1.5 text-[12px] text-zinc-500">{answer.summary}</p>
               )}
             </div>
           )}
@@ -725,12 +725,12 @@ export function CommandPalette() {
                         <span className="block truncate">{item.label}</span>
                       </span>
                       {item.meta && (
-                        <span className="hidden shrink-0 truncate text-[11px] text-zinc-500 sm:block">
+                        <span className="hidden shrink-0 truncate text-[12px] text-zinc-500 sm:block">
                           {item.meta}
                         </span>
                       )}
                       {item.agentic ? (
-                        <span className="flex shrink-0 items-center gap-1 rounded-md border border-lantern-500/30 bg-lantern-500/10 px-1.5 py-0.5 text-[10px] font-medium text-lantern-300">
+                        <span className="flex shrink-0 items-center gap-1 rounded-md border border-lantern-500/30 bg-lantern-500/10 px-1.5 py-0.5 text-[11px] font-medium text-lantern-300">
                           {thinking ? (
                             <Loader2 className="h-2.5 w-2.5 animate-spin" aria-hidden />
                           ) : (
@@ -739,7 +739,7 @@ export function CommandPalette() {
                           {thinking ? "thinking" : "act"}
                         </span>
                       ) : item.shortcut ? (
-                        <kbd className="hidden h-5 min-w-[20px] shrink-0 items-center justify-center rounded border border-zinc-700 bg-surface-2 px-1 text-[10px] font-medium text-zinc-500 sm:inline-flex">
+                        <kbd className="hidden h-5 min-w-[20px] shrink-0 items-center justify-center rounded border border-zinc-700 bg-surface-2 px-1 text-[11px] font-medium text-zinc-500 sm:inline-flex">
                           {item.shortcut}
                         </kbd>
                       ) : (
@@ -760,25 +760,25 @@ export function CommandPalette() {
 
         {/* Footer hint */}
         <div className="flex items-center gap-4 border-t border-white/[0.07] px-4 py-2.5">
-          <span className="flex items-center gap-1.5 text-[11px] text-zinc-600">
-            <kbd className="rounded border border-zinc-700 bg-surface-2 px-1 text-[10px]">
+          <span className="flex items-center gap-1.5 text-[12px] text-zinc-600">
+            <kbd className="rounded border border-zinc-700 bg-surface-2 px-1 text-[11px]">
               &uarr;&darr;
             </kbd>
             navigate
           </span>
-          <span className="flex items-center gap-1.5 text-[11px] text-zinc-600">
-            <kbd className="rounded border border-zinc-700 bg-surface-2 px-1 text-[10px]">
+          <span className="flex items-center gap-1.5 text-[12px] text-zinc-600">
+            <kbd className="rounded border border-zinc-700 bg-surface-2 px-1 text-[11px]">
               &crarr;
             </kbd>
             to select
           </span>
-          <span className="flex items-center gap-1.5 text-[11px] text-zinc-600">
-            <kbd className="rounded border border-zinc-700 bg-surface-2 px-1 text-[10px]">
+          <span className="flex items-center gap-1.5 text-[12px] text-zinc-600">
+            <kbd className="rounded border border-zinc-700 bg-surface-2 px-1 text-[11px]">
               esc
             </kbd>
             to close
           </span>
-          <span className="ml-auto flex items-center gap-1.5 text-[11px] text-lantern-400/80">
+          <span className="ml-auto flex items-center gap-1.5 text-[12px] text-lantern-400/80">
             <CircleDot className="h-2.5 w-2.5" aria-hidden />
             Ask Lantern ✨
           </span>

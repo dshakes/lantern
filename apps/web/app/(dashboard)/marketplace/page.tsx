@@ -208,7 +208,7 @@ function CategoryChip({
     <button
       onClick={onClick}
       className={clsx(
-        "shrink-0 rounded-full border px-3 py-1 text-[11px] font-medium capitalize transition-all",
+        "shrink-0 rounded-full border px-3 py-1 text-[12px] font-medium capitalize transition-all",
         active
           ? "border-lantern-500/40 bg-lantern-500/10 text-lantern-300"
           : "border-zinc-800 bg-surface-1 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200",
@@ -239,11 +239,11 @@ function AgentCard({
           <h3 className="truncate text-sm font-semibold tracking-tight text-zinc-100">
             {agent.name}
           </h3>
-          <p className="mt-0.5 text-[10px] text-zinc-500">
+          <p className="mt-0.5 text-[11px] text-zinc-500">
             by <span className="text-zinc-400">{agent.author}</span>
           </p>
         </div>
-        <span className="shrink-0 rounded-full border border-zinc-800 bg-surface-2 px-2 py-0.5 text-[10px] font-medium capitalize text-zinc-400">
+        <span className="shrink-0 rounded-full border border-zinc-800 bg-surface-2 px-2 py-0.5 text-[11px] font-medium capitalize text-zinc-400">
           {agent.category}
         </span>
       </div>
@@ -255,7 +255,7 @@ function AgentCard({
           {agent.tags.slice(0, 3).map((tag) => (
             <span
               key={tag}
-              className="rounded-md bg-surface-2/60 px-1.5 py-0.5 font-mono text-[10px] text-zinc-500"
+              className="rounded-md bg-surface-2/60 px-1.5 py-0.5 font-mono text-[11px] text-zinc-500"
             >
               {tag}
             </span>
@@ -263,7 +263,7 @@ function AgentCard({
         </div>
       )}
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-zinc-800 pt-3">
-        <div className="flex items-center gap-3 font-mono text-[11px] text-zinc-500">
+        <div className="flex items-center gap-3 font-mono text-[12px] text-zinc-500">
           <span className="inline-flex items-center gap-1">
             <Star
               className={clsx(

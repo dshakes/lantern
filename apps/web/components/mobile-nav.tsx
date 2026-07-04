@@ -91,7 +91,7 @@ export function MobileNav() {
                     )}
                   >
                     <Icon className="h-5 w-5" />
-                    <span className="text-[11px] font-medium leading-tight">{item.label}</span>
+                    <span className="text-[12px] font-medium leading-tight">{item.label}</span>
                   </Link>
                 );
               })}
@@ -120,7 +120,7 @@ export function MobileNav() {
                 )}
               >
                 <Icon className="h-5 w-5" />
-                <span className="text-[10px] font-medium">{item.label}</span>
+                <span className="text-[11px] font-medium">{item.label}</span>
                 {isActive && <span className="absolute inset-x-6 top-0 h-0.5 rounded-full bg-lantern-400" />}
               </Link>
             );
@@ -135,7 +135,7 @@ export function MobileNav() {
             )}
           >
             <Menu className="h-5 w-5" />
-            <span className="text-[10px] font-medium">More</span>
+            <span className="text-[11px] font-medium">More</span>
             {moreActive && <span className="absolute inset-x-6 top-0 h-0.5 rounded-full bg-lantern-400" />}
           </button>
         </div>

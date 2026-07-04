@@ -389,7 +389,7 @@ export default function ConnectorsPage() {
         description="OAuth or API-key integrations your agents can call. Secrets are encrypted per-tenant — agents get access via a ref, never the raw value."
         badge={
           installed > 0 ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[12px] font-medium text-emerald-400">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
               {installed} connected
             </span>
@@ -483,11 +483,11 @@ export default function ConnectorsPage() {
                     </button>
                   </div>
                   <h3 className="mt-2 text-sm font-medium text-zinc-200 truncate">{row.serverName}</h3>
-                  <p className="mt-0.5 text-[11px] text-zinc-500 truncate">{row.category} · {row.transport}</p>
-                  <p className="mt-1 text-[11px] text-zinc-600">Attached to <span className="text-zinc-300">{row.agentName}</span></p>
+                  <p className="mt-0.5 text-[12px] text-zinc-500 truncate">{row.category} · {row.transport}</p>
+                  <p className="mt-1 text-[12px] text-zinc-600">Attached to <span className="text-zinc-300">{row.agentName}</span></p>
                   <div className="mt-2 flex items-center gap-1.5">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                    <span className="text-[10px] text-emerald-400/70">Connected</span>
+                    <span className="text-[11px] text-emerald-400/70">Connected</span>
                   </div>
                 </div>
               ))}
@@ -507,7 +507,7 @@ export default function ConnectorsPage() {
             <button key={cat} onClick={() => setCategory(cat)}
               className={clsx("whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors inline-flex items-center gap-1.5",
                 category === cat ? "bg-surface-3 text-zinc-100" : "text-zinc-500 hover:bg-surface-2 hover:text-zinc-300")}>
-              {cat}<span className={clsx("rounded-full px-1.5 py-0.5 text-[10px] font-medium", category === cat ? "bg-lantern-500/20 text-lantern-400" : "bg-surface-3 text-zinc-600")}>{counts[cat] ?? 0}</span>
+              {cat}<span className={clsx("rounded-full px-1.5 py-0.5 text-[11px] font-medium", category === cat ? "bg-lantern-500/20 text-lantern-400" : "bg-surface-3 text-zinc-600")}>{counts[cat] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -528,10 +528,10 @@ export default function ConnectorsPage() {
                   {on && <span className="h-2 w-2 rounded-full bg-emerald-400" title="Connected" />}
                 </div>
                 <h3 className="mt-3 text-sm font-semibold text-zinc-100">{con.name}</h3>
-                <p className="mt-1 text-[11px] text-zinc-500 leading-relaxed line-clamp-2">{con.description}</p>
+                <p className="mt-1 text-[12px] text-zinc-500 leading-relaxed line-clamp-2">{con.description}</p>
                 {on && s?.connectedAccount && (
                   <div className="mt-1.5 flex items-center gap-1.5">
-                    <p className="truncate text-[11px] text-emerald-400/70">{s.connectedAccount}</p>
+                    <p className="truncate text-[12px] text-emerald-400/70">{s.connectedAccount}</p>
                     {s.authMethod && (
                       <span
                         className={clsx(
@@ -606,7 +606,7 @@ export default function ConnectorsPage() {
                   {catalog.map((s) => <option key={s.slug} value={s.slug}>{s.name} — {s.category}</option>)}
                 </select>
                 {mcpErrors.slug && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{mcpErrors.slug}</p>}
-                <p className="mt-1 text-[11px] text-zinc-600">From Lantern's curated MCP catalog — custom/self-hosted servers aren't supported yet.</p>
+                <p className="mt-1 text-[12px] text-zinc-600">From Lantern's curated MCP catalog — custom/self-hosted servers aren't supported yet.</p>
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-6 py-4">
@@ -654,7 +654,7 @@ export default function ConnectorsPage() {
                     <label className="mb-1.5 flex items-center gap-1 text-sm font-medium text-zinc-300">{f.label}{f.required && <span className="text-red-400">*</span>}</label>
                     <SecretInput value={creds[f.key] ?? ""} onChange={(v) => { setCreds((p) => ({ ...p, [f.key]: v })); setErrors((p) => { const n = { ...p }; delete n[f.key]; return n; }); }} placeholder={f.placeholder} isText={f.type === "text"} />
                     {errors[f.key] && <p className="mt-1 flex items-center gap-1 text-xs text-red-400"><AlertCircle className="h-3 w-3" />{errors[f.key]}</p>}
-                    {f.helpText && !errors[f.key] && <p className="mt-1 text-[11px] text-zinc-600">{f.helpUrl ? <a href={f.helpUrl} target="_blank" rel="noopener noreferrer" className="text-lantern-400/70 hover:text-lantern-400 underline underline-offset-2">{f.helpText}</a> : f.helpText}</p>}
+                    {f.helpText && !errors[f.key] && <p className="mt-1 text-[12px] text-zinc-600">{f.helpUrl ? <a href={f.helpUrl} target="_blank" rel="noopener noreferrer" className="text-lantern-400/70 hover:text-lantern-400 underline underline-offset-2">{f.helpText}</a> : f.helpText}</p>}
                   </div>
                 ))}
               </>)}
@@ -670,7 +670,7 @@ export default function ConnectorsPage() {
                     {states[mc.id]?.authMethod && (
                       <span
                         className={clsx(
-                          "ml-auto rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+                          "ml-auto rounded px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wider",
                           states[mc.id]!.authMethod === "oauth" && "border border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
                           states[mc.id]!.authMethod === "app-password" && "border border-amber-500/30 bg-amber-500/10 text-amber-300",
                           states[mc.id]!.authMethod === "api-key" && "border border-zinc-600 bg-zinc-700/40 text-zinc-300",
@@ -683,10 +683,10 @@ export default function ConnectorsPage() {
                   <p className="mt-1 text-xs text-zinc-500">Account: {states[mc.id]?.connectedAccount ?? "unknown"}</p>
                   {states[mc.id]?.installedAt && <p className="mt-0.5 text-xs text-zinc-600">Since {new Date(states[mc.id]!.installedAt!).toLocaleDateString()}</p>}
                   {states[mc.id]?.authMethod === "app-password" && (
-                    <p className="mt-2 text-[11px] text-amber-400/80">⚠ App Password does not auto-refresh. If Gmail/Calendar reads start failing, disconnect and reconnect via &quot;Sign in with Google&quot; for silent OAuth refresh.</p>
+                    <p className="mt-2 text-[12px] text-amber-400/80">⚠ App Password does not auto-refresh. If Gmail/Calendar reads start failing, disconnect and reconnect via &quot;Sign in with Google&quot; for silent OAuth refresh.</p>
                   )}
                   {states[mc.id]?.authMethod === "oauth" && (
-                    <p className="mt-2 text-[11px] text-emerald-400/70">✓ OAuth refreshes silently while GOOGLE_CLIENT_ID/SECRET are configured on the control-plane.</p>
+                    <p className="mt-2 text-[12px] text-emerald-400/70">✓ OAuth refreshes silently while GOOGLE_CLIENT_ID/SECRET are configured on the control-plane.</p>
                   )}
                 </div>
                 {msg && <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3"><div className="flex items-center gap-2"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /><p className="text-xs font-medium text-emerald-400">{msg}</p></div></div>}

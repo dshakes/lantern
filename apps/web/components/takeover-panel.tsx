@@ -88,7 +88,7 @@ export function TakeoverPanel({ runId }: { runId: string }) {
         <Hand className="h-3.5 w-3.5 text-amber-300" />
         <h3 className="text-[12px] font-semibold text-zinc-200">Human takeover</h3>
         {open.length > 0 && (
-          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-200">
+          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-200">
             {open.length} needs action
           </span>
         )}
@@ -185,7 +185,7 @@ function TakeoverRow({
             <span className="font-medium">Step {t.stepId || "—"}</span>
             <span
               className={clsx(
-                "ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                "ml-2 rounded-full px-1.5 py-0.5 text-[11px] font-medium",
                 t.status === "pending" && "bg-amber-500/10 text-amber-300",
                 t.status === "granted" && "bg-lantern-500/10 text-lantern-300",
                 t.status === "released" && "bg-emerald-500/10 text-emerald-300",
@@ -196,15 +196,15 @@ function TakeoverRow({
             </span>
           </p>
           {t.reason && (
-            <p className="mt-0.5 text-[11px] text-zinc-500">{t.reason}</p>
+            <p className="mt-0.5 text-[12px] text-zinc-500">{t.reason}</p>
           )}
           {t.notes && (
-            <p className="mt-0.5 text-[11px] text-zinc-400">
+            <p className="mt-0.5 text-[12px] text-zinc-400">
               note: <span className="text-zinc-300">{t.notes}</span>
             </p>
           )}
           {t.hasOffer && !t.hasAnswer && (
-            <p className="mt-0.5 text-[11px] text-amber-300">
+            <p className="mt-0.5 text-[12px] text-amber-300">
               WebRTC offer pending answer
             </p>
           )}
@@ -213,7 +213,7 @@ function TakeoverRow({
           <button
             onClick={onGrant}
             disabled={isActing}
-            className="shrink-0 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/15 disabled:opacity-50"
+            className="shrink-0 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[12px] font-medium text-emerald-300 transition-colors hover:bg-emerald-500/15 disabled:opacity-50"
           >
             {isActing ? <Loader2 className="h-3 w-3 animate-spin" /> : <><Play className="mr-1 inline h-3 w-3" />Grant</>}
           </button>
@@ -222,7 +222,7 @@ function TakeoverRow({
           <button
             onClick={onRelease}
             disabled={isActing}
-            className="shrink-0 rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] font-medium text-zinc-300 transition-colors hover:bg-surface-3 disabled:opacity-50"
+            className="shrink-0 rounded-md border border-zinc-700 px-2 py-0.5 text-[12px] font-medium text-zinc-300 transition-colors hover:bg-surface-3 disabled:opacity-50"
           >
             {isActing ? <Loader2 className="h-3 w-3 animate-spin" /> : "Release"}
           </button>

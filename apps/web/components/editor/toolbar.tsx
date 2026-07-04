@@ -65,7 +65,7 @@ export function Toolbar({
         </button>
         <div className="h-4 w-px bg-zinc-800" />
         <span className="text-sm font-medium text-zinc-300">{agentName}</span>
-        <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
+        <span className="rounded bg-surface-3 px-1.5 py-0.5 text-[11px] font-medium text-zinc-500">
           EDITOR
         </span>
 

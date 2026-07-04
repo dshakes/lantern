@@ -112,7 +112,7 @@ export function NodePalette() {
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {categories.map((cat) => (
           <div key={cat} className="mb-4">
-            <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-600">
+            <h3 className="mb-2 text-[12px] font-medium uppercase tracking-wider text-zinc-600">
               {cat}
             </h3>
             <div className="space-y-1.5">

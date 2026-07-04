@@ -52,7 +52,7 @@ export function Sparkline({
     return (
       <div
         style={{ width, height }}
-        className={clsx("text-[10px] text-zinc-600", className)}
+        className={clsx("text-[11px] text-zinc-600", className)}
       >
         no data
       </div>
@@ -122,7 +122,7 @@ export function Sparkline({
       </svg>
       {hover && (
         <div
-          className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-md border border-zinc-700 bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] text-zinc-100 shadow-lg"
+          className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-md border border-zinc-700 bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[11px] text-zinc-100 shadow-lg"
           style={{ left: hover.x, top: hover.y - 6 }}
         >
           {formatValue ? formatValue(hover.v) : hover.v.toFixed(2)}

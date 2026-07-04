@@ -41,8 +41,8 @@ export function initialsForAgent(name: string): string {
 type Size = "sm" | "md" | "lg";
 
 const SIZE_CLS: Record<Size, string> = {
-  sm: "h-7 w-7 text-[11px]",
-  md: "h-8 w-8 text-[11px]",
+  sm: "h-7 w-7 text-[12px]",
+  md: "h-8 w-8 text-[12px]",
   lg: "h-10 w-10 text-xs",
 };
 

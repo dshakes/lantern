@@ -288,7 +288,7 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <span
       className={clsx(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium",
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-medium",
         STATUS_COLORS[status] ?? "bg-zinc-700/30 text-zinc-400",
       )}
     >
@@ -477,13 +477,13 @@ function EventCard({
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
             <StatusBadge status={event.status} />
-            <span className="text-[11px] text-zinc-500">
+            <span className="text-[12px] text-zinc-500">
               {KIND_LABELS[event.kind] ?? event.kind}
             </span>
-            <span className="text-[11px] text-zinc-600">·</span>
-            <span className="text-[11px] text-zinc-500">{event.channel}</span>
-            <span className="text-[11px] text-zinc-600">·</span>
-            <span className="text-[11px] text-zinc-500">
+            <span className="text-[12px] text-zinc-600">·</span>
+            <span className="text-[12px] text-zinc-500">{event.channel}</span>
+            <span className="text-[12px] text-zinc-600">·</span>
+            <span className="text-[12px] text-zinc-500">
               {relativeTime(event.createdAt)}
             </span>
           </div>
@@ -848,7 +848,7 @@ export default function AutomationsPage() {
             )}
           </div>
 
-          <p className="mt-3 text-[11px] text-zinc-600">
+          <p className="mt-3 text-[12px] text-zinc-600">
             <strong className="text-zinc-500">Auto</strong> — bot acts immediately.{" "}
             <strong className="text-zinc-500">Ask</strong> — bot suggests, you approve.{" "}
             <strong className="text-zinc-500">Off</strong> — bot ignores this category.

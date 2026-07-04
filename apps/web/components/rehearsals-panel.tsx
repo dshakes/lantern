@@ -75,7 +75,7 @@ export function RehearsalsPanel({ agentName }: Props) {
 
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="block text-[11px] font-medium text-zinc-400">Window</label>
+          <label className="block text-[12px] font-medium text-zinc-400">Window</label>
           <select
             value={window}
             onChange={(e) => setWindow(e.target.value)}
@@ -87,7 +87,7 @@ export function RehearsalsPanel({ agentName }: Props) {
           </select>
         </div>
         <div>
-          <label className="block text-[11px] font-medium text-zinc-400">Max cases</label>
+          <label className="block text-[12px] font-medium text-zinc-400">Max cases</label>
           <input
             type="number"
             value={limit}
@@ -134,7 +134,7 @@ export function RehearsalsPanel({ agentName }: Props) {
               ))}
             </ul>
           )}
-          <p className="text-[11px] text-zinc-500">
+          <p className="text-[12px] text-zinc-500">
             To actually re-execute these cases, run{" "}
             <code className="rounded bg-surface-0 px-1 text-zinc-300">lantern test --rehearse --agent={agentName}</code>
             {" "}from your terminal. Results post back via{" "}
@@ -163,10 +163,10 @@ function RehearseRow({ c }: { c: RehearseCase }) {
           <Clock className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate font-mono text-[11px] text-zinc-300">
+          <p className="truncate font-mono text-[12px] text-zinc-300">
             {c.originalRunId}
           </p>
-          <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+          <p className="mt-0.5 truncate text-[12px] text-zinc-500">
             {c.originalStatus === "failed"
               ? "Failed in production"
               : isLowScore
@@ -178,7 +178,7 @@ function RehearseRow({ c }: { c: RehearseCase }) {
         </div>
         <span
           className={clsx(
-            "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums",
+            "shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
             c.originalStatus === "failed"
               ? "bg-red-500/10 text-red-300"
               : isLowScore
