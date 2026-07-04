@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { AlertTriangle, Plus, RefreshCw, Server } from "lucide-react";
+import { Activity, AlertTriangle, DollarSign, Plus, RefreshCw, Server } from "lucide-react";
 import clsx from "clsx";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/button";
@@ -155,54 +155,58 @@ export default function RuntimePage() {
 
   return (
     <div className="flex flex-col">
-      <PageHeader
-        title="Runtime Command Center"
-        description="Headless agents running in isolated microVMs."
-        action={
-          <div className="flex items-center gap-2">
-            <div
-              className="flex items-center rounded-lg bg-surface-2 p-0.5 text-xs"
-              role="group"
-              aria-label="Data source"
-            >
-              {(["demo", "live"] as const).map((m) => {
-                const active = (demoMode ? "demo" : "live") === m;
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setDemoMode(m === "demo")}
-                    aria-pressed={active}
-                    className={clsx(
-                      "rounded-md px-2.5 py-1 font-medium capitalize transition-colors",
-                      active ? "bg-surface-0 text-zinc-100 shadow-sm" : "text-zinc-500 hover:text-zinc-300",
-                    )}
-                  >
-                    {m}
-                  </button>
-                );
-              })}
+      <div className="relative overflow-hidden">
+        <div aria-hidden className="mc-aurora" />
+        <PageHeader
+          className="relative z-10 !bg-transparent"
+          title="Runtime Command Center"
+          description="Headless agents running in isolated microVMs."
+          action={
+            <div className="flex items-center gap-2">
+              <div
+                className="flex items-center rounded-lg bg-surface-2 p-0.5 text-xs"
+                role="group"
+                aria-label="Data source"
+              >
+                {(["demo", "live"] as const).map((m) => {
+                  const active = (demoMode ? "demo" : "live") === m;
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setDemoMode(m === "demo")}
+                      aria-pressed={active}
+                      className={clsx(
+                        "rounded-md px-2.5 py-1 font-medium capitalize transition-colors",
+                        active ? "bg-surface-0 text-zinc-100 shadow-sm" : "text-zinc-500 hover:text-zinc-300",
+                      )}
+                    >
+                      {m}
+                    </button>
+                  );
+                })}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<RefreshCw className={clsx("h-3.5 w-3.5", refreshing && "animate-spin")} />}
+                onClick={async () => {
+                  setRefreshing(true);
+                  await load();
+                  setRefreshing(false);
+                }}
+              >
+                Refresh
+              </Button>
+              <Button variant="primary" size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setScheduleOpen(true)}>
+                Schedule
+              </Button>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon={<RefreshCw className={clsx("h-3.5 w-3.5", refreshing && "animate-spin")} />}
-              onClick={async () => {
-                setRefreshing(true);
-                await load();
-                setRefreshing(false);
-              }}
-            >
-              Refresh
-            </Button>
-            <Button variant="primary" size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setScheduleOpen(true)}>
-              Schedule
-            </Button>
-          </div>
-        }
-      />
+          }
+        />
+      </div>
 
-      {/* Command strip — a quiet stat line, not a glowing toolbar */}
+      {/* Command strip — dense mission-control tiles for fleet-level stats */}
       <CommandStrip stats={stats} usingDemo={usingDemo} lastUpdated={lastUpdated} />
 
       <ScheduleModal open={scheduleOpen} onClose={() => setScheduleOpen(false)} onScheduled={load} />
@@ -249,9 +253,9 @@ export default function RuntimePage() {
 }
 
 // ---------------------------------------------------------------------------
-// Command strip — a quiet stat line. Neutral type, one calm live dot, no
-// glow. Separation from the header is a faint divider + whitespace, not a
-// heavy rule or a tinted toolbar.
+// Command strip — dense mission-control glass tiles for fleet-level stats,
+// matching the Agents page's Stat treatment. Real data only (the same
+// numbers the plain strip rendered before — just given the glass surface).
 // ---------------------------------------------------------------------------
 
 function CommandStrip({
@@ -277,60 +281,86 @@ function CommandStrip({
   const agoS = Math.max(0, Math.round((Date.now() - lastUpdated) / 1000));
 
   return (
-    <div className="flex flex-wrap items-center gap-x-12 gap-y-3 border-b border-zinc-800/40 px-8 py-4 md:px-10">
-      <div className="flex items-center gap-2">
-        <span className="relative inline-flex h-1.5 w-1.5">
-          <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-emerald-500/70" />
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500/80" />
-        </span>
-        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Live</span>
+    <div className="border-b border-zinc-800/40 px-8 py-5 md:px-10">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StripTile
+          icon={<Server className="h-3.5 w-3.5 text-zinc-400" />}
+          label="Workloads"
+          value={stats.total}
+          live
+        />
+        <StripTile
+          icon={<Activity className="h-3.5 w-3.5 text-sky-400" />}
+          iconBg="bg-sky-500/10"
+          label="Running"
+          value={stats.running}
+        />
+        <StripTile
+          icon={<AlertTriangle className="h-3.5 w-3.5 text-rose-400" />}
+          iconBg="bg-rose-500/10"
+          label="Failed"
+          value={stats.failed}
+          tone={stats.failed > 0 ? "danger" : undefined}
+        />
+        <StripTile
+          icon={<DollarSign className="h-3.5 w-3.5 text-emerald-400" />}
+          iconBg="bg-emerald-500/10"
+          label="Fleet $/hr"
+          value={`$${stats.costHr.toFixed(2)}`}
+        />
       </div>
 
-      <Metric label="Workloads" value={stats.total} />
-      <Metric label="Running" value={stats.running} />
-      <Metric label="Failed" value={stats.failed} tone={stats.failed > 0 ? "danger" : "neutral"} />
-
-      <div className="flex items-baseline gap-2.5">
-        <span className="text-[11px] uppercase tracking-wide text-zinc-500">Fleet</span>
-        <span className="font-mono text-[15px] font-medium tabular-nums text-zinc-200">
-          ${stats.costHr.toFixed(2)}
-          <span className="ml-0.5 text-[10px] font-normal text-zinc-500">/hr</span>
-        </span>
-      </div>
-
-      <div className="ml-auto flex items-center gap-3 text-[11px] text-zinc-500">
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-zinc-500">
         {usingDemo && (
           <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 font-medium text-zinc-400">
             <AlertTriangle className="h-3 w-3 text-zinc-500" />
             Demo fleet — no live workloads
           </span>
         )}
-        <span className="tabular-nums">updated {agoS}s ago</span>
+        <span className="ml-auto tabular-nums">updated {agoS}s ago</span>
       </div>
     </div>
   );
 }
 
-function Metric({
+function StripTile({
+  icon,
+  iconBg,
   label,
   value,
-  tone = "neutral",
+  tone,
+  live,
 }: {
+  icon: React.ReactNode;
+  iconBg?: string;
   label: string;
-  value: number;
-  tone?: "neutral" | "danger";
+  value: string | number;
+  tone?: "danger";
+  live?: boolean;
 }) {
+  const isDanger = tone === "danger";
   return (
-    <div className="flex items-baseline gap-2.5">
-      <span className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</span>
-      <span
-        className={clsx(
-          "font-mono text-[15px] font-medium tabular-nums",
-          tone === "danger" ? "text-red-400/90" : "text-zinc-200",
+    <div
+      className={clsx(
+        "group relative mc-glass overflow-hidden rounded-xl border p-4 backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5",
+        isDanger ? "border-red-500/25 bg-red-500/[0.03] hover:border-red-500/40" : "border-white/[0.07] bg-white/[0.024] hover:border-white/[0.12]",
+      )}
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <div className={clsx("flex h-7 w-7 items-center justify-center rounded-lg", isDanger ? "bg-red-500/10" : (iconBg ?? "bg-white/[0.05]"))}>
+          {icon}
+        </div>
+        {live && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-1.5 text-[11px] font-medium text-teal-300">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-400" />
+            live
+          </span>
         )}
-      >
+      </div>
+      <p className={clsx("text-2xl font-semibold leading-none tabular-nums", isDanger ? "text-red-300" : "text-zinc-100")}>
         {value}
-      </span>
+      </p>
+      <p className="mc-micro-label mt-1.5">{label}</p>
     </div>
   );
 }

@@ -101,7 +101,7 @@ export function CapacityMap({
                   <div
                     key={n.name}
                     className={clsx(
-                      "rounded-lg bg-surface-0 px-3.5 py-3",
+                      "group relative mc-glass rounded-lg border border-white/[0.06] bg-white/[0.02] px-3.5 py-3 backdrop-blur-xl transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.12]",
                       n.draining && "ring-1 ring-inset ring-zinc-700/60",
                       hot && !n.draining && "ring-1 ring-inset ring-red-500/15",
                     )}
