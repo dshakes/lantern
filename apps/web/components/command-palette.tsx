@@ -597,14 +597,14 @@ export function CommandPalette() {
       role="presentation"
     >
       <div
-        className="modal-content w-full max-w-xl overflow-hidden rounded-2xl border border-zinc-700/80 bg-surface-1 shadow-2xl ring-1 ring-black/20"
+        className="mc-glass modal-content w-full max-w-xl overflow-hidden rounded-2xl border border-white/[0.07] bg-surface-1/90 shadow-2xl ring-1 ring-black/20 backdrop-blur-xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
       >
         {/* Search input */}
-        <div className="flex items-center gap-3 border-b border-zinc-800 px-4 py-3.5">
+        <div className="flex items-center gap-3 border-b border-white/[0.07] px-4 py-3.5">
           <Search className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden />
           <input
             ref={inputRef}
@@ -676,8 +676,8 @@ export function CommandPalette() {
                   <span
                     className={
                       group.section === "Ask Lantern"
-                        ? "text-[11px] font-semibold uppercase tracking-wider text-lantern-300/90"
-                        : "text-[11px] font-medium uppercase tracking-wider text-zinc-600"
+                        ? "mc-micro-label !text-lantern-300/90"
+                        : "mc-micro-label"
                     }
                   >
                     {group.section}
@@ -697,12 +697,12 @@ export function CommandPalette() {
                       onClick={() => act(item)}
                       className={[
                         "group/item flex w-full items-center gap-3 px-3 py-2 text-sm transition-colors",
-                        "mx-1 rounded-lg",
+                        "mx-1 rounded-lg focus-visible:outline-none",
                         selected
                           ? item.agentic
                             ? "bg-lantern-500/10 text-zinc-100 ring-1 ring-inset ring-lantern-500/30"
-                            : "bg-surface-3 text-zinc-100"
-                          : "text-zinc-400 hover:bg-surface-2 hover:text-zinc-200",
+                            : "bg-teal-500/10 text-zinc-100 ring-1 ring-inset ring-teal-500/20"
+                          : "text-zinc-400 hover:bg-teal-500/[0.06] hover:text-zinc-200",
                       ].join(" ")}
                     >
                       <span
@@ -759,7 +759,7 @@ export function CommandPalette() {
         </div>
 
         {/* Footer hint */}
-        <div className="flex items-center gap-4 border-t border-zinc-800 px-4 py-2.5">
+        <div className="flex items-center gap-4 border-t border-white/[0.07] px-4 py-2.5">
           <span className="flex items-center gap-1.5 text-[11px] text-zinc-600">
             <kbd className="rounded border border-zinc-700 bg-surface-2 px-1 text-[10px]">
               &uarr;&darr;
