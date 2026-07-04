@@ -141,7 +141,7 @@ export function Sidebar() {
           </div>
           {!collapsed && (
             <div className="flex flex-col leading-tight">
-              <span className="font-[680] text-base tracking-[-0.02em] text-white">Lantern</span>
+              <span className="font-[680] text-base tracking-[-0.02em] text-zinc-50">Lantern</span>
               <span className="mc-micro-label">
                 {user?.name ? `${user.name.split(" ")[0]}'s workspace` : "workspace"}
               </span>
