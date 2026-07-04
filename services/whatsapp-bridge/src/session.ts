@@ -25,6 +25,7 @@ import { addReminder as addRecurringReminder } from "@lantern/bridge-core/recurr
 import { addToList, removeFromList, loadList, renderList } from "@lantern/bridge-core/shared-list";
 import { readWatchHistory, watchSummary, iphoneUsageBlock, isWatchQuery } from "@lantern/bridge-core/browser-history";
 import { computeCommuteSurface, computeEnergyNudge, computeHealthCoachNudge, computeWeeklyHealthSummary, computeFocusGuardian } from "@lantern/bridge-core/proactive-loops";
+import { detectLiveWatch, checkLiveWatch, composeWatchFollowUp, WatchStore } from "@lantern/bridge-core/live-watch";
 import { extractAutoFacts } from "@lantern/bridge-core/fact-extractor";
 import { CalendarLookup, needsCalendar } from "@lantern/bridge-core/calendar";
 import {
@@ -1538,6 +1539,18 @@ export class WhatsAppSession {
   //    DMs the owner each NEW nudge — deduped, quiet-hours-aware, killswitch-
   //    aware, capped. Gated by LANTERN_PROACTIVE_NUDGES (default on; =0 off).
   private nudgesTimer: ReturnType<typeof setInterval> | null = null;
+  // 2b) Live watches — proactive follow-up on live situations a contact
+  //     mentioned (a flight in the air, a game, an outage). Detected by an
+  //     LLM pass after each contact reply, re-checked via web_search on a
+  //     tick, and resolved with ONE short follow-up text to the contact
+  //     ("just saw the flight landed"). Gated by LANTERN_LIVE_WATCH
+  //     (default on; =0/off disables). Store survives restarts.
+  private watchStore: WatchStore | null = null;
+  private watchTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly LIVE_WATCH_ENABLED =
+    (process.env.LANTERN_LIVE_WATCH ?? "on").toLowerCase() !== "0" &&
+    (process.env.LANTERN_LIVE_WATCH ?? "on").toLowerCase() !== "off";
+  private static readonly WATCH_TICK_MS = 5 * 60_000; // due-check granularity
   private static readonly NUDGE_INTERVAL_MS = 45 * 60_000; // 45 min
   private static readonly NUDGE_QUIET_START_HOUR = 1; // 01:00 — defer nudges
   private static readonly NUDGE_QUIET_END_HOUR = 6; // …until 06:00
@@ -1777,6 +1790,13 @@ export class WhatsAppSession {
       // so sendSelf can land. Detached + caught + unref'd.
       const nudgeKick = setTimeout(() => void this.runNudgeTick(), 60_000);
       nudgeKick.unref?.();
+    }
+    // Live watches: re-check due watches every WATCH_TICK_MS (each watch has
+    // its own nextCheckTs, so the tick is cheap when nothing is due).
+    if (WhatsAppSession.LIVE_WATCH_ENABLED) {
+      this.watchStore = new WatchStore(stateDir);
+      this.watchTimer = setInterval(() => void this.runWatchTick(), WhatsAppSession.WATCH_TICK_MS);
+      this.watchTimer.unref?.();
     }
     // Concierge nudge poll (LANTERN_CONCIERGE=on only).
     if (WhatsAppSession.CONCIERGE_ENABLED) {
@@ -8695,6 +8715,11 @@ export class WhatsAppSession {
       });
     }
 
+    // Live-watch detection — does this exchange reference a live situation
+    // (flight in the air, game in progress) worth re-checking + following up
+    // on later? Fire-and-forget; one active watch per contact max.
+    if (!opts.isGroup) void this.maybeStartLiveWatch(from, text, draft, opts.senderName);
+
     // Unified cross-channel timeline — record this exchange against the
     // canonical person so it surfaces on every other channel (iMessage,
     // SMS, voice, email). Best-effort; never blocks the reply.
@@ -9022,6 +9047,91 @@ export class WhatsAppSession {
   // Anticipation nudges tick. Gathers signals, ranks them, and DMs the owner
   // each NEW nudge — deduped, quiet-hours-aware, killswitch-aware, capped.
   // Fully best-effort and try/caught; the scheduler calls it blind.
+  // ── Live watches — proactive follow-up on live situations ──────────────────
+
+  // After a contact reply: one LLM pass decides if the exchange references a
+  // live, publicly-checkable situation (flight in the air, game, outage). If
+  // so, register a watch; the tick below re-checks and follows up when it
+  // resolves. Fire-and-forget; never blocks or throws into the reply path.
+  private async maybeStartLiveWatch(jid: string, inbound: string, reply: string, senderName?: string): Promise<void> {
+    try {
+      if (!this.watchStore || this.killSwitch || this.muted) return;
+      if (this.watchStore.hasActive(jid)) return; // one live topic per contact
+      const watch = await detectLiveWatch({
+        jid,
+        contactName: senderName ?? this.contactNames.get(jid),
+        inbound,
+        reply,
+        // CRITICAL: purpose-scoped session key, never the contact's live jid
+        // (same JSON-leak class as the ::episode incident).
+        llmCall: async (p) => (await this.agent.respondTo(`${jid}::watchdetect`, p, "", { withTools: false })) || "",
+      });
+      if (!watch || !this.watchStore.add(watch)) return;
+      this.logger.info({ jid, topic: watch.topic, intervalMs: watch.intervalMs }, "live watch registered");
+      // Owner transparency ping (same culture as the MEDIUM-confidence audit).
+      try {
+        await this.sendSelf(`📡 watching: ${watch.topic} — I'll follow up with ${watch.contactName ?? jid.split("@")[0]} when it resolves`);
+      } catch { /* best-effort */ }
+    } catch (err) {
+      this.logger.debug({ err, jid }, "live watch detection failed (non-fatal)");
+    }
+  }
+
+  private async runWatchTick(): Promise<void> {
+    try {
+      if (!this.watchStore || this.killSwitch || this.muted) return;
+      if (!this.socket || !this.connected) return;
+      // Don't text contacts overnight — the watch stays due and the first
+      // morning tick delivers ("just saw he landed" at 6am is still human).
+      const hour = this.ownerLocalHour();
+      if (hour >= WhatsAppSession.NUDGE_QUIET_START_HOUR && hour < WhatsAppSession.NUDGE_QUIET_END_HOUR) return;
+
+      const due = this.watchStore.due();
+      for (const w of due.slice(0, 3)) {
+        try {
+          const result = await checkLiveWatch(w, async (p) =>
+            // web_search-grounded check on a purpose-scoped session key.
+            (await this.agent.respondTo(`${w.jid}::watchcheck`, p, "", { webSearch: true })) || "",
+          );
+          w.checks += 1;
+          w.lastSummary = result.summary || w.lastSummary;
+          if (result.state === "done") {
+            const followUp = await composeWatchFollowUp({
+              watch: w,
+              summary: result.summary,
+              ownerName: (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0],
+              llmCall: async (p) => (await this.agent.respondTo(`${w.jid}::watchfollowup`, p, "", { withTools: false })) || "",
+            });
+            const tell = followUp ? detectBotTells(followUp, w.topic) : { ok: false as const, reason: "empty follow-up" };
+            if (followUp && tell.ok) {
+              await this.sendMessage(w.jid, followUp);
+              w.status = "done";
+              this.logger.info({ jid: w.jid, topic: w.topic, followUp }, "live watch resolved — follow-up sent");
+              try {
+                await this.sendSelf(`📡 followed up with ${w.contactName ?? w.jid.split("@")[0]}: "${followUp}" (${result.summary || w.doneCondition})`);
+              } catch { /* best-effort */ }
+            } else {
+              // Resolved but no sendable text — close silently rather than
+              // risk a bot-tell reaching the contact. Owner still learns why.
+              w.status = "done";
+              this.logger.warn({ jid: w.jid, reason: tell.reason }, "live watch resolved but follow-up suppressed");
+            }
+          } else {
+            w.nextCheckTs = Date.now() + w.intervalMs;
+          }
+          this.watchStore.update(w);
+        } catch (err) {
+          this.logger.debug({ err, jid: w.jid }, "live watch check failed — retrying next interval");
+          w.checks += 1;
+          w.nextCheckTs = Date.now() + w.intervalMs;
+          this.watchStore.update(w);
+        }
+      }
+    } catch (err) {
+      this.logger.debug({ err }, "watch tick failed (non-fatal)");
+    }
+  }
+
   private async runNudgeTick(): Promise<void> {
     try {
       // Killswitch: when engaged the bridge is fully silent — no proactive DMs.
@@ -10626,6 +10736,10 @@ export class WhatsAppSession {
     if (this.nudgesTimer) {
       clearInterval(this.nudgesTimer);
       this.nudgesTimer = null;
+    }
+    if (this.watchTimer) {
+      clearInterval(this.watchTimer);
+      this.watchTimer = null;
     }
     if (this.conciergeTimer) {
       clearInterval(this.conciergeTimer);
