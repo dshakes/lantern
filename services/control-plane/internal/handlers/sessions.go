@@ -191,6 +191,13 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		// exposing a state-modifying connector action to a contact's message.
 		// Ignored when NoTools is true (no catalog at all).
 		ReadOnlyTools bool `json:"readOnlyTools,omitempty"`
+		// WebSearch, when true alongside NoTools, attaches ONLY the built-in
+		// web_search tool (no connector catalog). The bridges set this on the
+		// contact auto-reply path so replies can ground on live public facts
+		// (flight status, news, hours) without exposing connector reads to a
+		// contact's message. Redundant when the full catalog loads (web_search
+		// is already in it).
+		WebSearch bool `json:"webSearch,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -275,7 +282,7 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	// Kick off LLM response in background. The systemHint (if any) is passed
 	// through so it can override the agent's stored system prompt for this
 	// turn only — see processMessage.
-	go h.processMessage(sessionID, tenantID, agentName, messages, body.SystemHint, body.TurnHint, body.NoTools, body.ReadOnlyTools)
+	go h.processMessage(sessionID, tenantID, agentName, messages, body.SystemHint, body.TurnHint, body.NoTools, body.ReadOnlyTools, body.WebSearch)
 }
 
 // processMessage calls the LLM with the full message history and appends the
@@ -287,7 +294,7 @@ func (h *SessionHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 //
 // turnHint is the optional G1 complexity hint ("trivial"|"hard"|""). When
 // LANTERN_COMPLEXITY_ROUTING=1 this overrides the server-side classifier.
-func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage, systemHint, turnHint string, noTools, readOnlyTools bool) {
+func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, messages []sessionMessage, systemHint, turnHint string, noTools, readOnlyTools, webSearch bool) {
 	// P0: a panic in the tool-call loop (arbitrary user/LLM/tool input) must
 	// not crash the whole process and kill all tenants. Recover, log, and
 	// publish an error event so the session's SSE listeners know it stopped.
@@ -409,7 +416,7 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// the cheapest model that can handle this turn rather than always using
 	// the balanced default. noTools is forwarded so the classifier knows
 	// whether tool-use is in play (multi-step signal).
-	provider, model := h.llmProxy.resolveModelForTenantAuto(ctx, tenantID, promptMessages, !noTools, turnHint)
+	provider, model := h.llmProxy.resolveModelForTenantAuto(ctx, tenantID, promptMessages, !noTools || webSearch, turnHint)
 	apiKey, err := h.llmProxy.resolveProviderKey(ctx, tenantID, provider)
 	if err != nil {
 		altProvider := "anthropic"
@@ -445,7 +452,14 @@ func (h *SessionHandler) processMessage(sessionID, tenantID, agentName string, m
 	// on tenants with many connectors installed.
 	var tools []map[string]any
 	if noTools {
-		h.logger().Debug("session: noTools=true — skipping tool catalog")
+		if webSearch {
+			// Contact auto-reply path: no connector catalog, but the model can
+			// still ground on the live web (read-only public data).
+			tools = []map[string]any{webSearchTool()}
+			h.logger().Debug("session: noTools=true + webSearch=true — web_search only")
+		} else {
+			h.logger().Debug("session: noTools=true — skipping tool catalog")
+		}
 	} else {
 		var toolsErr error
 		// rls-exempt: shared connector-catalog helper takes a *Pool and

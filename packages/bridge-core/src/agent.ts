@@ -90,7 +90,7 @@ export class AgentClient {
   // and is wrong for personal-docs replies where the prompt is
   // already large with OCR context. The bridges' natural-chat path
   // sets this to true so the bot can actually use Gmail when asked.
-  async respondTo(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; turnHint?: string }): Promise<string | null> {
+  async respondTo(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; webSearch?: boolean; turnHint?: string }): Promise<string | null> {
     const r = await this.runQueuedTurn(jid, userText, systemHint, opts);
     return r ? r.text : null;
   }
@@ -98,18 +98,18 @@ export class AgentClient {
   // Same turn as respondTo, but also returns the raw doc text the control-plane
   // surfaced (id ground truth for humanizeWithOffer). Owner-only doc-query path.
   // respondTo stays the string|null contract for every other caller.
-  async respondToWithSources(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; turnHint?: string }): Promise<TurnResult | null> {
+  async respondToWithSources(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; webSearch?: boolean; turnHint?: string }): Promise<TurnResult | null> {
     return this.runQueuedTurn(jid, userText, systemHint, opts);
   }
 
-  private async runQueuedTurn(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; turnHint?: string }): Promise<TurnResult | null> {
+  private async runQueuedTurn(jid: string, userText: string, systemHint?: string, opts?: { withTools?: boolean; readOnlyTools?: boolean; webSearch?: boolean; turnHint?: string }): Promise<TurnResult | null> {
     if (!this.enabled()) return null;
     // readOnlyTools implies the catalog loads (withTools), but the control
     // plane filters it to read-only actions. Used on the contact reply path
     // for logistics inbound so a contact can't drive a connector write.
     const withTools = opts?.withTools === true || opts?.readOnlyTools === true;
     const prev = this.inflight.get(jid) ?? Promise.resolve<TurnResult | null>(null);
-    const next = prev.then(() => this.runTurn(jid, userText, systemHint, withTools, opts?.turnHint, opts?.readOnlyTools === true)).catch((err) => {
+    const next = prev.then(() => this.runTurn(jid, userText, systemHint, withTools, opts?.turnHint, opts?.readOnlyTools === true, opts?.webSearch === true)).catch((err) => {
       this.logger.error({ err, jid }, "turn errored");
       return null;
     });
@@ -119,7 +119,7 @@ export class AgentClient {
     return reply;
   }
 
-  private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false, turnHint?: string, readOnlyTools = false): Promise<TurnResult | null> {
+  private async runTurn(jid: string, userText: string, systemHint?: string, withTools = false, turnHint?: string, readOnlyTools = false, webSearch = false): Promise<TurnResult | null> {
     // Up to ONE retry on dead-session errors. A prior turn that got
     // SSE-aborted (timeout, network hiccup) leaves the control-plane
     // session in "ended" state — the next POST then 409s with
@@ -146,6 +146,10 @@ export class AgentClient {
       // Contact logistics path: load the catalog but ask the control plane to
       // keep only read-only actions (Calendar/Gmail reads) — never writes.
       if (readOnlyTools) postBody.readOnlyTools = true;
+      // Contact auto-reply path: no connector catalog, but attach the built-in
+      // web_search tool so replies ground on live public facts (flight status,
+      // news, hours) instead of deflecting with "keep me posted".
+      if (webSearch) postBody.webSearch = true;
       if (systemHint) postBody.systemHint = systemHint;
       // Optional complexity floor. The personal-chat reply path passes
       // "balanced" so the owner's outgoing texts are never drafted by the

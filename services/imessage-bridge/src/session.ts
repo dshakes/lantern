@@ -214,6 +214,7 @@ import { verifyClaims } from "@lantern/bridge-core/verifiable-claims";
 import { PresenceTracker } from "@lantern/bridge-core/presence";
 import { computeHoldFromSamples } from "@lantern/bridge-core/pacing";
 import { EpisodicMemory, formatEpisodesBlock, maybeRecordEpisode, rankEpisodesByRelevance } from "@lantern/bridge-core/episodic-memory";
+import { detectLiveWatch, checkLiveWatch, composeWatchFollowUp, WatchStore } from "@lantern/bridge-core/live-watch";
 import { SocialGraph, extractTopics, formatRelatedBlock } from "@lantern/bridge-core/social-graph";
 import { assembleRelevantRecall } from "@lantern/bridge-core/recall";
 import { classifyConfidence, tierBadge } from "@lantern/bridge-core/confidence-tier";
@@ -702,6 +703,17 @@ export class IMessageSession {
   private static readonly FLYWHEEL_INTERVAL_MS = 8 * 60 * 60 * 1000;
   // Nudge cadence: every 45 min.
   private static readonly NUDGE_INTERVAL_MS = 45 * 60 * 1000;
+  // Live watches — proactive follow-up on live situations a contact
+  // mentioned (a flight in the air, a game, an outage). LLM-detected after
+  // each contact reply, re-checked via web_search on a tick, resolved with
+  // ONE short follow-up text to the contact. Gated by LANTERN_LIVE_WATCH
+  // (default on; =0/off disables). Store survives restarts.
+  private watchStore: WatchStore | null = null;
+  private watchTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly LIVE_WATCH_ENABLED =
+    (process.env.LANTERN_LIVE_WATCH ?? "on").toLowerCase() !== "0" &&
+    (process.env.LANTERN_LIVE_WATCH ?? "on").toLowerCase() !== "off";
+  private static readonly WATCH_TICK_MS = 5 * 60_000; // due-check granularity
 
   // DRAFT-AND-CONFIRM (high-stakes) — held contact drafts awaiting a
   // one-tap "send" from the owner's self-chat. Keyed by the owner
@@ -975,6 +987,7 @@ export class IMessageSession {
     this.startQuietReplay();
     this.startLearningFlywheel();
     this.startAnticipationNudges();
+    this.startLiveWatches();
     this.startConcierge();
     this.startCommuteLoop();
     this.startNewsProactiveLoop();
@@ -1327,6 +1340,99 @@ export class IMessageSession {
     // First tick a couple minutes after boot (after voice-seeding settles).
     const kick = setTimeout(() => void this.runAnticipationTick(), 120_000);
     kick.unref?.();
+  }
+
+  // 2b) LIVE WATCHES. Re-check due watches every WATCH_TICK_MS; each watch
+  // carries its own nextCheckTs so the tick is cheap when nothing is due.
+  private startLiveWatches(): void {
+    if (this.watchTimer || !IMessageSession.LIVE_WATCH_ENABLED) return;
+    this.watchStore = new WatchStore(this.stateDir);
+    const t = setInterval(() => void this.runWatchTick(), IMessageSession.WATCH_TICK_MS);
+    t.unref?.();
+    this.watchTimer = t;
+  }
+
+  // After a contact reply: one LLM pass decides if the exchange references a
+  // live, publicly-checkable situation (flight in the air, game in progress).
+  // If so, register a watch. Fire-and-forget; never blocks the reply path.
+  private async maybeStartLiveWatch(handle: string, inbound: string, reply: string): Promise<void> {
+    try {
+      if (!this.watchStore || this.killSwitch || this.muted) return;
+      if (this.watchStore.hasActive(handle)) return; // one live topic per contact
+      const watch = await detectLiveWatch({
+        jid: handle,
+        contactName: this.contactNames.get(handle),
+        inbound,
+        reply,
+        // CRITICAL: purpose-scoped session key, never the contact's live
+        // handle (same JSON-leak class as the ::episode incident).
+        llmCall: async (p) => (await this.agent.respondTo(`${handle}::watchdetect`, p, "", { withTools: false })) || "",
+      });
+      if (!watch || !this.watchStore.add(watch)) return;
+      this.logger.info({ handle, topic: watch.topic, intervalMs: watch.intervalMs }, "live watch registered");
+      // Owner transparency ping (same culture as the MEDIUM-confidence audit).
+      const target = this.ownerSelfChatTarget();
+      if (target) {
+        void this.send(target, `📡 watching: ${watch.topic} — I'll follow up with ${watch.contactName ?? handle} when it resolves`).catch(() => {});
+      }
+    } catch (err) {
+      this.logger.debug({ err, handle }, "live watch detection failed (non-fatal)");
+    }
+  }
+
+  private async runWatchTick(): Promise<void> {
+    try {
+      if (!this.watchStore || this.killSwitch || this.muted) return;
+      if (this.state !== "ready") return;
+      // Don't text contacts overnight — the watch stays due and the first
+      // morning tick delivers ("just saw he landed" at 6am is still human).
+      if (this.proactivePaused()) return;
+
+      const due = this.watchStore.due();
+      for (const w of due.slice(0, 3)) {
+        try {
+          const result = await checkLiveWatch(w, async (p) =>
+            // web_search-grounded check on a purpose-scoped session key.
+            (await this.agent.respondTo(`${w.jid}::watchcheck`, p, "", { webSearch: true })) || "",
+          );
+          w.checks += 1;
+          w.lastSummary = result.summary || w.lastSummary;
+          if (result.state === "done") {
+            const followUp = await composeWatchFollowUp({
+              watch: w,
+              summary: result.summary,
+              ownerName: (process.env.LANTERN_OWNER_NAME || "Ada").split(/\s+/)[0],
+              llmCall: async (p) => (await this.agent.respondTo(`${w.jid}::watchfollowup`, p, "", { withTools: false })) || "",
+            });
+            const tell = followUp ? detectBotTells(followUp, w.topic) : { ok: false as const, reason: "empty follow-up" };
+            if (followUp && tell.ok) {
+              await this.send(w.jid, followUp);
+              w.status = "done";
+              this.logger.info({ handle: w.jid, topic: w.topic, followUp }, "live watch resolved — follow-up sent");
+              const target = this.ownerSelfChatTarget();
+              if (target) {
+                void this.send(target, `📡 followed up with ${w.contactName ?? w.jid}: "${followUp}" (${result.summary || w.doneCondition})`).catch(() => {});
+              }
+            } else {
+              // Resolved but no sendable text — close silently rather than
+              // risk a bot-tell reaching the contact. Owner still learns why.
+              w.status = "done";
+              this.logger.warn({ handle: w.jid, reason: tell.reason }, "live watch resolved but follow-up suppressed");
+            }
+          } else {
+            w.nextCheckTs = Date.now() + w.intervalMs;
+          }
+          this.watchStore.update(w);
+        } catch (err) {
+          this.logger.debug({ err, handle: w.jid }, "live watch check failed — retrying next interval");
+          w.checks += 1;
+          w.nextCheckTs = Date.now() + w.intervalMs;
+          this.watchStore.update(w);
+        }
+      }
+    } catch (err) {
+      this.logger.debug({ err }, "watch tick failed (non-fatal)");
+    }
   }
 
   private startConcierge(): void {
@@ -2372,6 +2478,10 @@ export class IMessageSession {
     if (this.nudgeTimer) {
       clearInterval(this.nudgeTimer);
       this.nudgeTimer = null;
+    }
+    if (this.watchTimer) {
+      clearInterval(this.watchTimer);
+      this.watchTimer = null;
     }
     if (this.conciergeTimer) {
       clearInterval(this.conciergeTimer);
@@ -5794,6 +5904,10 @@ export class IMessageSession {
       episodesBlock,
       relatedBlock,
       lowContext,
+      // The respondTo call below always attaches web_search — teach the
+      // persona to ground live facts (flight status, news) instead of
+      // deflecting with "keep me posted".
+      canWebSearch: true,
       // Unanswered-backlog hint — how many messages this contact sent in a
       // row without a reply (trailing "them:" run in the chronological chat.db
       // transcript). Tells the model to catch up on the whole backlog, not
@@ -5919,6 +6033,9 @@ export class IMessageSession {
     let draft = await this.agent.respondTo(row.handle, userText, systemHint, {
       turnHint: replyTier,
       readOnlyTools: logisticsRead,
+      // Always let contact replies ground on the live web (built-in
+      // web_search only — no connector catalog unless logisticsRead).
+      webSearch: true,
     });
     // ABSTAIN SENTINEL — the model emitted [[NO_REPLY]] to signal "no reply
     // warranted". Treat as a deliberate silence so decision-prose never
@@ -6331,6 +6448,11 @@ export class IMessageSession {
         },
       });
     }
+
+    // Live-watch detection — does this exchange reference a live situation
+    // (flight in the air, game in progress) worth re-checking + following up
+    // on later? Fire-and-forget; one active watch per contact max.
+    if (!isGroup) void this.maybeStartLiveWatch(row.handle, text, draft);
 
     // Unified cross-channel timeline — record this exchange against the
     // canonical person so it surfaces on every OTHER channel (WhatsApp,
