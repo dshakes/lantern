@@ -50,14 +50,46 @@ const statusConfig: Record<AgentDisplayStatus, { label: string; dot: string; bg:
   error:     { label: "Error",      dot: "bg-red-400",     bg: "bg-red-500/10",     text: "text-red-400"     },
 };
 
-// Catalog tone → left-border accent color. Hex matched to agent-loop.tsx COLORS.
-const toneHex: Record<string, string> = {
-  sky:     "#38bdf8",
-  emerald: "#34d399",
-  amber:   "#f59e0b",
-  violet:  "#a78bfa",
-  rose:    "#fb7185",
+// Catalog tone → subtle avatar ring (state now lives on the card's left
+// stripe; tone is demoted to a quiet accent on the avatar itself).
+const toneRingCls: Record<string, string> = {
+  sky:     "ring-sky-400/50",
+  emerald: "ring-emerald-400/50",
+  amber:   "ring-amber-400/50",
+  violet:  "ring-violet-400/50",
+  rose:    "ring-rose-400/50",
 };
+
+// Derived-status → left-border stripe. An information device: the stripe
+// IS the state, not decoration.
+const statusStripeCls: Record<AgentDisplayStatus, string> = {
+  active:    "border-l-4 border-l-emerald-400/70",
+  scheduled: "border-l-4 border-l-blue-400/70",
+  draft:     "border-l-4 border-l-zinc-700",
+  error:     "border-l-4 border-l-rose-400/70",
+};
+
+// Run status → activity-stream tick color + verb (real status only, no
+// fabricated confidence/activity).
+const activityDotCls: Record<Run["status"], string> = {
+  running:   "bg-teal-400",
+  succeeded: "bg-emerald-400",
+  failed:    "bg-rose-400",
+  paused:    "bg-amber-400",
+  queued:    "bg-amber-400",
+  cancelled: "bg-zinc-500",
+};
+
+function activityVerb(run: Run): string {
+  switch (run.status) {
+    case "running":   return "is running";
+    case "succeeded": return "completed a run";
+    case "failed":    return run.error?.code ? `failed — ${run.error.code}` : "failed";
+    case "paused":    return "paused";
+    case "queued":    return "queued";
+    case "cancelled": return "cancelled";
+  }
+}
 
 // Exec-model display helpers (mirrors detail page — ponytail: keep in sync if labels change)
 const execLabels: Record<string, string> = {
@@ -264,6 +296,8 @@ export default function AgentsPage() {
           />
         ) : (
           <>
+            <NowRunningStrip runs={runs} />
+
             {/* Stats strip — 4 tiles with icons, big numbers, subtle gradient sheen */}
             <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat
@@ -325,62 +359,76 @@ export default function AgentsPage() {
               </Button>
             </div>
 
-            {/* Personal suite section */}
-            {personalSuite.length > 0 && (
-              <section className="mb-8">
-                <SectionLabel>Personal suite</SectionLabel>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {personalSuite.map((agent) => (
-                    <AgentCard
-                      key={agent.id}
-                      agent={agent}
-                      runs={runs}
-                      openMenu={openMenu}
-                      setOpenMenu={setOpenMenu}
-                      deletingId={deletingId}
-                      onRun={handleQuickRun}
-                      onConfirmDelete={(a) => { setConfirmDelete(a); setOpenMenu(null); }}
-                      onNavigate={(n) => router.push(`/agents/${n}`)}
-                      onSchedule={(n) => { router.push(`/agents/${n}?tab=schedule`); setOpenMenu(null); }}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
+            {/* Fleet column | live-activity rail (xl+). Below xl, rail drops to a stacked section. */}
+            <div className="xl:flex xl:items-start xl:gap-6">
+              <div className="min-w-0 flex-1">
+                {/* Personal suite section */}
+                {personalSuite.length > 0 && (
+                  <section className="mb-8">
+                    <SectionLabel>Personal suite</SectionLabel>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {personalSuite.map((agent) => (
+                        <AgentCard
+                          key={agent.id}
+                          agent={agent}
+                          runs={runs}
+                          openMenu={openMenu}
+                          setOpenMenu={setOpenMenu}
+                          deletingId={deletingId}
+                          onRun={handleQuickRun}
+                          onConfirmDelete={(a) => { setConfirmDelete(a); setOpenMenu(null); }}
+                          onNavigate={(n) => router.push(`/agents/${n}`)}
+                          onSchedule={(n) => { router.push(`/agents/${n}?tab=schedule`); setOpenMenu(null); }}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
 
-            {/* Other agents section */}
-            {otherAgents.length > 0 && (
-              <section>
-                {personalSuite.length > 0 && <SectionLabel>Other agents</SectionLabel>}
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {otherAgents.map((agent) => (
-                    <AgentCard
-                      key={agent.id}
-                      agent={agent}
-                      runs={runs}
-                      openMenu={openMenu}
-                      setOpenMenu={setOpenMenu}
-                      deletingId={deletingId}
-                      onRun={handleQuickRun}
-                      onConfirmDelete={(a) => { setConfirmDelete(a); setOpenMenu(null); }}
-                      onNavigate={(n) => router.push(`/agents/${n}`)}
-                      onSchedule={(n) => { router.push(`/agents/${n}?tab=schedule`); setOpenMenu(null); }}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
+                {/* Other agents section */}
+                {otherAgents.length > 0 && (
+                  <section>
+                    {personalSuite.length > 0 && <SectionLabel>Other agents</SectionLabel>}
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {otherAgents.map((agent) => (
+                        <AgentCard
+                          key={agent.id}
+                          agent={agent}
+                          runs={runs}
+                          openMenu={openMenu}
+                          setOpenMenu={setOpenMenu}
+                          deletingId={deletingId}
+                          onRun={handleQuickRun}
+                          onConfirmDelete={(a) => { setConfirmDelete(a); setOpenMenu(null); }}
+                          onNavigate={(n) => router.push(`/agents/${n}`)}
+                          onSchedule={(n) => { router.push(`/agents/${n}?tab=schedule`); setOpenMenu(null); }}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
 
-            {/* No results */}
-            {filtered.length === 0 && agents.length > 0 && (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <Search className="mb-3 h-8 w-8 text-zinc-600" />
-                <p className="text-sm text-zinc-400">No agents match your search.</p>
-                <button onClick={() => setSearch("")} className="mt-2 text-xs text-lantern-400 transition-colors hover:text-lantern-300">
-                  Clear search
-                </button>
+                {/* No results */}
+                {filtered.length === 0 && agents.length > 0 && (
+                  <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <Search className="mb-3 h-8 w-8 text-zinc-600" />
+                    <p className="text-sm text-zinc-400">No agents match your search.</p>
+                    <button onClick={() => setSearch("")} className="mt-2 text-xs text-lantern-400 transition-colors hover:text-lantern-300">
+                      Clear search
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
+
+              <aside className="hidden xl:block xl:w-[300px] xl:shrink-0 xl:sticky xl:top-6">
+                <ActivityStream runs={runs} />
+              </aside>
+            </div>
+
+            {/* Below xl: activity stream drops to a stacked section under the grid. */}
+            <div className="mt-8 xl:hidden">
+              <ActivityStream runs={runs} />
+            </div>
           </>
         )}
       </div>
@@ -474,12 +522,13 @@ function AgentCard({
   const sc = statusConfig[displayStatus];
   const hasRuns = stats.runsCount > 0;
   const catalogEntry = AGENT_CATALOG[agent.name];
-  const accentColor = catalogEntry ? (toneHex[catalogEntry.tone] ?? "#38bdf8") : undefined;
 
   return (
     <div
-      className="group relative cursor-pointer rounded-xl border border-zinc-800 bg-surface-1 p-4 transition-all duration-200 hover:-translate-y-px hover:border-zinc-700 hover:bg-surface-2/60 hover:shadow-lg"
-      style={accentColor ? { borderLeftWidth: "3px", borderLeftColor: accentColor } : undefined}
+      className={clsx(
+        "group relative cursor-pointer rounded-xl border border-zinc-800 bg-surface-1 p-4 transition-all duration-200 hover:-translate-y-px hover:border-zinc-700 hover:bg-surface-2/60 hover:shadow-lg",
+        statusStripeCls[displayStatus],
+      )}
       onClick={() => onNavigate(agent.name)}
       role="button"
       tabIndex={0}
@@ -487,7 +536,12 @@ function AgentCard({
     >
       {/* Top row: avatar + name + status pill, health ring at rest (right) */}
       <div className="flex items-center gap-2.5">
-        <AgentAvatar name={agent.name} status={stats.lastRun?.status} size="md" />
+        <AgentAvatar
+          name={agent.name}
+          status={stats.lastRun?.status}
+          size="md"
+          className={catalogEntry ? clsx("rounded-lg ring-2 ring-offset-2 ring-offset-surface-1", toneRingCls[catalogEntry.tone]) : undefined}
+        />
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold text-zinc-100 group-hover:text-white">
             {agent.name}
@@ -675,6 +729,82 @@ function Stat({
         {/* Hint */}
         {hint && <p className="mt-0.5 text-[11px] text-zinc-600">{hint}</p>}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NowRunningStrip — real running/paused runs only. Renders nothing when idle.
+// ---------------------------------------------------------------------------
+
+function NowRunningStrip({ runs }: { runs: Run[] }) {
+  const liveAgentNames = useMemo(() => {
+    const live = runs.filter((r) => r.status === "running" || r.status === "paused");
+    return Array.from(new Set(live.map((r) => r.agentName)));
+  }, [runs]);
+
+  if (liveAgentNames.length === 0) return null;
+
+  const shown = liveAgentNames.slice(0, 3);
+  const extra = liveAgentNames.length - shown.length;
+
+  return (
+    <div className="mb-6 rounded-xl border border-teal-500/20 bg-gradient-to-r from-teal-500/10 via-surface-1 to-indigo-500/10 px-4 py-3">
+      <p className="flex items-center gap-1.5 text-xs text-zinc-300">
+        <span className="relative inline-flex h-1.5 w-1.5 shrink-0">
+          <span className="absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75 motion-safe:animate-ping" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-teal-400" />
+        </span>
+        <span className="font-medium text-zinc-100">
+          {liveAgentNames.length} agent{liveAgentNames.length === 1 ? "" : "s"} running
+        </span>
+        <span className="text-zinc-500">— {shown.join(", ")}{extra > 0 ? ` +${extra} more` : ""}</span>
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ActivityStream — the console's heartbeat. Most recent ~8 runs, real data only.
+// ---------------------------------------------------------------------------
+
+function ActivityStream({ runs }: { runs: Run[] }) {
+  const items = useMemo(() => {
+    return [...runs]
+      .sort((a, b) => new Date(b.startedAt ?? b.createdAt).getTime() - new Date(a.startedAt ?? a.createdAt).getTime())
+      .slice(0, 8);
+  }, [runs]);
+
+  const isLive = runs.some((r) => r.status === "running" || r.status === "paused");
+
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="relative inline-flex h-1.5 w-1.5 shrink-0">
+          {isLive && <span className="absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75 motion-safe:animate-ping" />}
+          <span className={clsx("relative inline-flex h-1.5 w-1.5 rounded-full", isLive ? "bg-teal-400" : "bg-zinc-600")} />
+        </span>
+        <h3 className="text-xs font-semibold text-zinc-300">Live activity</h3>
+      </div>
+      {items.length === 0 ? (
+        <p className="py-6 text-center text-[11px] text-zinc-600">No activity yet</p>
+      ) : (
+        <ul className="space-y-3">
+          {items.map((run) => (
+            <li key={run.id} className="flex items-start gap-2">
+              <span className={clsx("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", activityDotCls[run.status])} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[11px] leading-snug text-zinc-300">
+                  <span className="font-medium text-zinc-100">{run.agentName}</span> {activityVerb(run)}
+                </p>
+                <p className="text-[10px] text-zinc-600">
+                  {formatDistanceToNow(new Date(run.startedAt ?? run.createdAt), { addSuffix: true })}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
