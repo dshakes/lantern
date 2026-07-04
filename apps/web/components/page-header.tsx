@@ -75,7 +75,7 @@ export function CountBadge({ count }: { count: number }) {
 
 export function DemoBadge() {
   return (
-    <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400">
+    <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[12px] font-medium text-amber-400">
       Demo data
     </span>
   );

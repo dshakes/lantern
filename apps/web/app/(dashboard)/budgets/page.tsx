@@ -300,7 +300,7 @@ export default function BudgetsPage() {
                 />
                 <span className="flex items-center gap-1.5">
                   Hard-fail
-                  <span className="text-[10px] text-zinc-500">
+                  <span className="text-[11px] text-zinc-500">
                     (HTTP 402, block the run)
                   </span>
                 </span>
@@ -323,15 +323,15 @@ export default function BudgetsPage() {
                 <span className="text-xs text-zinc-500">%</span>
               </div>
             </div>
-            <div className="flex items-start gap-2 rounded-lg border border-zinc-800 bg-surface-2/30 px-3 py-2 text-[11px] leading-relaxed text-zinc-500">
+            <div className="flex items-start gap-2 rounded-lg border border-zinc-800 bg-surface-2/30 px-3 py-2 text-[12px] leading-relaxed text-zinc-500">
               <Info className="mt-0.5 h-3 w-3 shrink-0 text-zinc-600" />
               <span>
                 Forecast the cost of a run with{" "}
-                <code className="rounded bg-surface-3 px-1 py-0.5 text-[10px] text-zinc-300">
+                <code className="rounded bg-surface-3 px-1 py-0.5 text-[11px] text-zinc-300">
                   POST /v1/runs/forecast
                 </code>{" "}
                 — it returns{" "}
-                <code className="rounded bg-surface-3 px-1 py-0.5 text-[10px] text-zinc-300">
+                <code className="rounded bg-surface-3 px-1 py-0.5 text-[11px] text-zinc-300">
                   wouldExceedBudget
                 </code>{" "}
                 so you can reject before dispatch.
@@ -375,7 +375,7 @@ function BudgetRow({
               </p>
               <span
                 className={clsx(
-                  "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium",
+                  "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[12px] font-medium",
                   budget.hardFail
                     ? "bg-red-500/10 text-red-300"
                     : "bg-amber-500/10 text-amber-300",
@@ -389,7 +389,7 @@ function BudgetRow({
                 {budget.hardFail ? "hard" : "soft"}
               </span>
             </div>
-            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono text-zinc-400">
+            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px] font-mono text-zinc-400">
               {budget.maxCostUsdPerDay != null && (
                 <span className="inline-flex items-center gap-1">
                   <DollarSign className="h-3 w-3 text-zinc-600" />

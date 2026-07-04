@@ -142,7 +142,7 @@ export default function VIPPage() {
                     {v.displayName || prettyJid(v.jid)}
                   </div>
                   {v.displayName && (
-                    <div className="mt-0.5 truncate font-mono text-[10px] text-zinc-600">
+                    <div className="mt-0.5 truncate font-mono text-[11px] text-zinc-600">
                       {prettyJid(v.jid)}
                     </div>
                   )}
@@ -298,7 +298,7 @@ function HowItWorks() {
 function Step({ n, children }: { n: number; children: React.ReactNode }) {
   return (
     <li className="flex gap-3">
-      <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-700 text-[10px] text-zinc-400">
+      <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-zinc-700 text-[11px] text-zinc-400">
         {n}
       </span>
       <span>{children}</span>

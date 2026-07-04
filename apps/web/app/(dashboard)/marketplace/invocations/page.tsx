@@ -135,7 +135,7 @@ function RolePill({ active, onClick, label }: { active: boolean; onClick: () => 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-zinc-800 bg-surface-1 p-4">
-      <p className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</p>
+      <p className="text-[11px] uppercase tracking-wider text-zinc-500">{label}</p>
       <p className="mt-1 text-lg font-semibold text-zinc-100">{value}</p>
     </div>
   );
@@ -159,14 +159,14 @@ function InvocationRow({ inv, role }: { inv: Invocation; role: Role }) {
         <AlertTriangle className="h-4 w-4 text-red-400" />
       )}
       <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-2 text-[13px] text-zinc-100">
+        <p className="flex items-center gap-2 text-[14px] text-zinc-100">
           <Link href={`/marketplace/${inv.marketplaceSlug}`} className="font-semibold hover:text-lantern-300">
             {inv.marketplaceSlug}
           </Link>
           <span className="text-zinc-700">·</span>
-          <span className="font-mono text-[11px] text-zinc-400">{inv.agentName}</span>
+          <span className="font-mono text-[12px] text-zinc-400">{inv.agentName}</span>
         </p>
-        <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-zinc-500">
+        <p className="mt-0.5 flex items-center gap-1.5 text-[12px] text-zinc-500">
           {role === "buyer" ? "from" : "to"}{" "}
           <code className="rounded bg-surface-3 px-1 text-zinc-400">
             {role === "buyer" ? inv.sellerTenantId.slice(0, 8) : inv.buyerTenantId.slice(0, 8)}…
@@ -188,7 +188,7 @@ function InvocationRow({ inv, role }: { inv: Invocation; role: Role }) {
           href={verifyHref}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 transition-colors hover:bg-surface-3 hover:text-zinc-100"
+          className="inline-flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-0.5 text-[12px] text-zinc-300 transition-colors hover:bg-surface-3 hover:text-zinc-100"
           title="Verify the signed receipt"
         >
           <Check className="h-3 w-3 text-emerald-400" />
@@ -198,7 +198,7 @@ function InvocationRow({ inv, role }: { inv: Invocation; role: Role }) {
       )}
       <span
         className={clsx(
-          "rounded-full px-2 py-0.5 text-[10px] font-medium",
+          "rounded-full px-2 py-0.5 text-[11px] font-medium",
           ok ? "bg-emerald-500/10 text-emerald-300" : "bg-red-500/10 text-red-300"
         )}
       >

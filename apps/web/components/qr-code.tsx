@@ -147,7 +147,7 @@ export function QRCode({
       {onRefresh && !expired && !loading && (
         <button
           onClick={handleRefresh}
-          className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-zinc-500 transition-colors hover:text-zinc-300"
+          className="mt-1.5 inline-flex items-center gap-1 text-[12px] text-zinc-500 transition-colors hover:text-zinc-300"
         >
           <RefreshCw className="h-2.5 w-2.5" />
           Generate new code

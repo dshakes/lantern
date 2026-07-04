@@ -85,7 +85,7 @@ export default function ContactsPage() {
                   <div className="truncate font-mono text-xs text-zinc-200">
                     {prettyJid(jid)}
                   </div>
-                  <div className="mt-0.5 flex items-center gap-1 text-[10px] text-zinc-500">
+                  <div className="mt-0.5 flex items-center gap-1 text-[11px] text-zinc-500">
                     <Clock className="h-3 w-3" />
                     resumes in {timeUntil(until)}
                   </div>

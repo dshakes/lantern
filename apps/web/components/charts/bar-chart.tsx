@@ -81,7 +81,7 @@ export function BarChart({
                 />
                 <div
                   className={clsx(
-                    "pointer-events-none absolute inset-y-0 right-2 flex items-center font-mono text-[11px] tabular-nums",
+                    "pointer-events-none absolute inset-y-0 right-2 flex items-center font-mono text-[12px] tabular-nums",
                     active ? "text-zinc-50" : "text-zinc-400",
                   )}
                 >
@@ -116,7 +116,7 @@ export function BarChart({
               style={{ marginRight: i === data.length - 1 ? 0 : barGap }}
             >
               {active && (
-                <div className="pointer-events-none absolute -top-9 z-10 whitespace-nowrap rounded-md border border-zinc-700 bg-zinc-900/95 px-2 py-1 font-mono text-[10px] text-zinc-100 shadow-lg">
+                <div className="pointer-events-none absolute -top-9 z-10 whitespace-nowrap rounded-md border border-zinc-700 bg-zinc-900/95 px-2 py-1 font-mono text-[11px] text-zinc-100 shadow-lg">
                   <div className="font-sans text-zinc-400">{d.label}</div>
                   <div>{formatValue(d.value)}</div>
                 </div>
@@ -131,7 +131,7 @@ export function BarChart({
                 }}
               />
               {showLabels && (
-                <div className="mt-1 max-w-full truncate text-[10px] text-zinc-500">
+                <div className="mt-1 max-w-full truncate text-[11px] text-zinc-500">
                   {d.label}
                 </div>
               )}

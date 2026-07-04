@@ -235,7 +235,7 @@ function CommandStrip({
 
   return (
     <div className="px-6 pt-6 md:px-8">
-      <div className="mb-2 flex items-center justify-end text-[11px] text-zinc-500">
+      <div className="mb-2 flex items-center justify-end text-[12px] text-zinc-500">
         <span className="tabular-nums">{loading ? "loading…" : `updated ${agoS}s ago`}</span>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -306,7 +306,7 @@ function StatTile({
           </div>
         )}
         {live && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-1.5 text-[11px] font-medium text-teal-300">
+          <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-1.5 text-[12px] font-medium text-teal-300">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-teal-400" />
             live
           </span>
@@ -314,7 +314,7 @@ function StatTile({
       </div>
       <p className={clsx("text-2xl font-semibold leading-none tabular-nums", isDanger ? "text-red-300" : "text-zinc-100")}>{value}</p>
       <p className="mc-micro-label mt-1.5">{label}</p>
-      {hint && <p className="mt-0.5 text-[11px] text-zinc-600">{hint}</p>}
+      {hint && <p className="mt-0.5 text-[12px] text-zinc-600">{hint}</p>}
     </div>
   );
 }
@@ -371,7 +371,7 @@ function FleetHealth({
   return (
     <section>
       <div className="mb-3 flex items-center justify-between px-1">
-        <h2 className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+        <h2 className="text-[12px] font-medium uppercase tracking-wide text-zinc-500">
           Agent fleet
           <span className="ml-2 tabular-nums text-zinc-600">{fleet.length}</span>
         </h2>
@@ -460,7 +460,7 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-medium text-zinc-100">{health.agentName}</span>
             {health.hasLive && (
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-400">
+              <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-zinc-400">
                 <span className="relative inline-flex h-1.5 w-1.5">
                   <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-emerald-500/70" />
                   <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500/80" />
@@ -469,7 +469,7 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
               </span>
             )}
           </div>
-          <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+          <p className="mt-0.5 truncate text-[12px] text-zinc-500">
             {health.totalRuns} run{health.totalRuns === 1 ? "" : "s"}
             {health.lastActivityMs !== null ? ` · last ${formatRelative(health.lastActivityMs)}` : " · no activity yet"}
           </p>
@@ -497,14 +497,14 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
           {hasErrorSignal ? (
             <Sparkline data={errorData} color="rgba(248,113,113,0.7)" width={48} height={22} />
           ) : (
-            <span className="flex h-[22px] items-center font-mono text-[11px] text-zinc-600">—</span>
+            <span className="flex h-[22px] items-center font-mono text-[12px] text-zinc-600">—</span>
           )}
           <span className="text-[9px] uppercase tracking-wide text-zinc-600">errors</span>
         </div>
 
         {/* $/day */}
         <div className="shrink-0 text-right">
-          <div className="font-mono text-[13px] font-medium tabular-nums text-zinc-200">{usd(health.costTodayUsd)}</div>
+          <div className="font-mono text-[14px] font-medium tabular-nums text-zinc-200">{usd(health.costTodayUsd)}</div>
           <div className="text-[9px] uppercase tracking-wide text-zinc-600">today</div>
         </div>
       </button>
@@ -512,16 +512,16 @@ function AgentHealthRow({ health, runs }: { health: AgentHealth; runs: Run[] }) 
       {expanded && (
         <div className="bg-surface-0/40">
           <div className="flex items-center justify-between px-4 py-2">
-            <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">Recent runs</span>
+            <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Recent runs</span>
             <Link
               href={`/agents/${encodeURIComponent(health.agentName)}`}
-              className="text-[11px] font-medium text-lantern-400 transition-colors duration-150 hover:text-lantern-300"
+              className="text-[12px] font-medium text-lantern-400 transition-colors duration-150 hover:text-lantern-300"
             >
               Open agent →
             </Link>
           </div>
           {agentRuns.length === 0 ? (
-            <p className="px-4 pb-3 text-[11px] text-zinc-600">No runs.</p>
+            <p className="px-4 pb-3 text-[12px] text-zinc-600">No runs.</p>
           ) : (
             <ul className="space-y-1.5 px-3 pb-3">
               {agentRuns.map((run) => (
@@ -551,13 +551,13 @@ function AlertsPanel({ alerts, fleet, totalCostToday }: { alerts: Alert[]; fleet
     <div className="mc-glass rounded-xl border border-white/[0.07] bg-white/[0.024] backdrop-blur-xl">
       <div className="flex items-center gap-2 px-4 pb-2 pt-3.5">
         <AlertTriangle className={clsx("h-3.5 w-3.5", alerts.length > 0 ? "text-amber-400/90" : "text-zinc-500")} />
-        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Alerts</span>
-        <span className="ml-auto text-[11px] font-medium tabular-nums text-zinc-500">{alerts.length}</span>
+        <span className="text-[12px] font-medium uppercase tracking-wide text-zinc-500">Alerts</span>
+        <span className="ml-auto text-[12px] font-medium tabular-nums text-zinc-500">{alerts.length}</span>
       </div>
 
       <div className="px-4 pb-4">
         {alerts.length === 0 ? (
-          <p className="text-[11px] text-zinc-500">All clear — no agents breaching error-rate or cost thresholds.</p>
+          <p className="text-[12px] text-zinc-500">All clear — no agents breaching error-rate or cost thresholds.</p>
         ) : (
           <ul className="space-y-1.5">
             {alerts.map((a, i) => (
@@ -573,7 +573,7 @@ function AlertsPanel({ alerts, fleet, totalCostToday }: { alerts: Alert[]; fleet
                   )}
                   <div className="min-w-0">
                     <div className="truncate text-[12px] font-medium text-zinc-200">{a.agentName}</div>
-                    <div className="text-[11px] text-zinc-500">{a.detail}</div>
+                    <div className="text-[12px] text-zinc-500">{a.detail}</div>
                   </div>
                 </Link>
               </li>
@@ -583,7 +583,7 @@ function AlertsPanel({ alerts, fleet, totalCostToday }: { alerts: Alert[]; fleet
 
         {/* Budget rollup */}
         <div className="mt-4 pt-3">
-          <div className="mb-1.5 flex items-center justify-between text-[11px]">
+          <div className="mb-1.5 flex items-center justify-between text-[12px]">
             <span className="text-zinc-500">Spend vs soft budget</span>
             <span className="font-mono tabular-nums text-zinc-400">
               {usd(totalCostToday)} <span className="text-zinc-600">/ {usd(softBudget)}</span>
@@ -592,7 +592,7 @@ function AlertsPanel({ alerts, fleet, totalCostToday }: { alerts: Alert[]; fleet
           <div className="h-1 w-full overflow-hidden rounded-full bg-surface-3">
             <div className={clsx("h-full rounded-full transition-all duration-500", budgetTone)} style={{ width: `${budgetPct}%` }} />
           </div>
-          <p className="mt-1.5 text-[10px] text-zinc-600">
+          <p className="mt-1.5 text-[11px] text-zinc-600">
             Soft default ({usd(DEFAULT_DAILY_BUDGET_USD)}/agent) — set real budgets per agent in Budgets.
           </p>
         </div>
@@ -623,11 +623,11 @@ function ActionQueue({
     <div className="mc-glass rounded-xl border border-white/[0.07] bg-white/[0.024] backdrop-blur-xl">
       <div className="flex items-center gap-2 px-4 pb-2 pt-3.5">
         <span className={accent}>{icon}</span>
-        <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">{title}</span>
-        <span className="ml-auto text-[11px] font-medium tabular-nums text-zinc-500">{runs.length}</span>
+        <span className="text-[12px] font-medium uppercase tracking-wide text-zinc-500">{title}</span>
+        <span className="ml-auto text-[12px] font-medium tabular-nums text-zinc-500">{runs.length}</span>
       </div>
       {runs.length === 0 ? (
-        <p className="px-4 pb-3.5 text-[11px] text-zinc-500">{emptyHint}</p>
+        <p className="px-4 pb-3.5 text-[12px] text-zinc-500">{emptyHint}</p>
       ) : (
         <ul className="space-y-1.5 px-3 pb-3">
           {runs.slice(0, 6).map((run) => (
@@ -653,13 +653,13 @@ function CompactRunRow({ run, showAgent }: { run: Run; showAgent?: boolean }) {
           <div className="flex items-center gap-2">
             {showAgent && <span className="truncate text-[12px] font-medium text-zinc-200">{run.agentName}</span>}
             {summary ? (
-              <span className={clsx("truncate text-[11px]", showAgent ? "text-zinc-500" : "text-zinc-300")}>{summary}</span>
+              <span className={clsx("truncate text-[12px]", showAgent ? "text-zinc-500" : "text-zinc-300")}>{summary}</span>
             ) : (
-              !showAgent && <span className="text-[11px] text-zinc-600">run {run.id.slice(0, 8)}</span>
+              !showAgent && <span className="text-[12px] text-zinc-600">run {run.id.slice(0, 8)}</span>
             )}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-3 text-[11px] text-zinc-500">
+        <div className="flex shrink-0 items-center gap-3 text-[12px] text-zinc-500">
           {run.costUsd > 0 && <span className="tabular-nums">{usd(run.costUsd)}</span>}
           <span className="tabular-nums">{formatRelative(run.createdAt)}</span>
         </div>
@@ -692,7 +692,7 @@ function ActivityFeed({ runs }: { runs: Run[] }) {
         const sessions = groupRunsBySession(g.runs);
         return (
           <section key={g.key}>
-            <h3 className="mb-2 px-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+            <h3 className="mb-2 px-1 text-[12px] font-medium uppercase tracking-wide text-zinc-500">
               {g.label}
               <span className="ml-2 text-zinc-700">·</span>
               <span className="ml-2 tabular-nums text-zinc-600">{g.runs.length}</span>
@@ -743,11 +743,11 @@ function SessionEntry({ group, groupedWithPrev }: { group: SessionGroup; grouped
           <div className="flex items-center gap-2">
             <span className="truncate text-xs font-medium text-zinc-100">{agg.agentLabel}</span>
             <StatusDot />
-            <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] tabular-nums text-zinc-400">{agg.count} runs</span>
+            <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[12px] tabular-nums text-zinc-400">{agg.count} runs</span>
           </div>
-          <p className="mt-0.5 truncate text-[11px] text-zinc-500">Session · {agg.count} steps</p>
+          <p className="mt-0.5 truncate text-[12px] text-zinc-500">Session · {agg.count} steps</p>
         </div>
-        <div className="flex shrink-0 items-center gap-3 text-[11px] text-zinc-500">
+        <div className="flex shrink-0 items-center gap-3 text-[12px] text-zinc-500">
           {agg.totalCost > 0 && <span className="tabular-nums">${agg.totalCost.toFixed(4)}</span>}
           <span className="tabular-nums">{formatRelative(agg.latestAt)}</span>
         </div>
@@ -784,12 +784,12 @@ function RunRow({ run, groupedWithPrev, nested = false }: { run: Run; groupedWit
             <span className={clsx("truncate text-xs font-medium", groupedWithPrev ? "text-zinc-400" : "text-zinc-100")}>{run.agentName}</span>
             <StatusDot />
             {run.labels?.trigger && (
-              <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] uppercase tracking-wide text-zinc-500">{String(run.labels.trigger)}</span>
+              <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[12px] uppercase tracking-wide text-zinc-500">{String(run.labels.trigger)}</span>
             )}
           </div>
-          {summary ? <p className="mt-0.5 truncate text-[11px] text-zinc-500">{summary}</p> : null}
+          {summary ? <p className="mt-0.5 truncate text-[12px] text-zinc-500">{summary}</p> : null}
         </div>
-        <div className="flex shrink-0 items-center gap-3 text-[11px] text-zinc-500">
+        <div className="flex shrink-0 items-center gap-3 text-[12px] text-zinc-500">
           {run.costUsd > 0 && <span className="tabular-nums">${run.costUsd.toFixed(4)}</span>}
           <span className="tabular-nums">{formatRelative(run.createdAt)}</span>
         </div>
@@ -810,7 +810,7 @@ function statusDotFor(status: RunStatus) {
   };
   const v = map[status] ?? map.queued;
   return function StatusDot() {
-    return <span className={clsx("shrink-0 text-[11px]", v.cls)}>{v.label}</span>;
+    return <span className={clsx("shrink-0 text-[12px]", v.cls)}>{v.label}</span>;
   };
 }
 

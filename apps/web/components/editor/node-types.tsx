@@ -149,7 +149,7 @@ function NodeShell({
       {(preview || children) && (
         <div className="border-t border-zinc-700/50 px-3 py-2">
           {preview && (
-            <p className="truncate text-[11px] text-zinc-500">{preview}</p>
+            <p className="truncate text-[12px] text-zinc-500">{preview}</p>
           )}
           {children}
         </div>
@@ -212,10 +212,10 @@ function AiStepNodeComponent({ data, selected }: NodeProps) {
         preview={preview}
       >
         <div className="mt-1 flex items-center gap-2">
-          <span className="rounded bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-medium text-indigo-400">
+          <span className="rounded bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-medium text-indigo-400">
             {d.capability}
           </span>
-          <span className="text-[10px] text-zinc-600">
+          <span className="text-[11px] text-zinc-600">
             temp {d.temperature}
           </span>
         </div>
@@ -315,7 +315,7 @@ function LoopNodeComponent({ data, selected }: NodeProps) {
         selected={!!selected}
         preview={preview}
       >
-        <span className="text-[10px] text-zinc-600">
+        <span className="text-[11px] text-zinc-600">
           concurrency: {d.concurrency}
         </span>
       </NodeShell>
@@ -349,7 +349,7 @@ function ApprovalNodeComponent({ data, selected }: NodeProps) {
         selected={!!selected}
         preview={preview}
       >
-        <span className="text-[10px] text-zinc-600">
+        <span className="text-[11px] text-zinc-600">
           timeout: {d.timeoutMinutes}m
         </span>
       </NodeShell>

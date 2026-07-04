@@ -143,16 +143,16 @@ function ChannelTile({ card }: { card: ChannelCard }) {
           <Icon className={clsx("h-5 w-5", card.iconColor)} />
         </div>
         {card.status && (
-          <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-medium text-zinc-400">
+          <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[12px] font-medium text-zinc-400">
             {card.status}
           </span>
         )}
       </div>
       <h3 className="mb-1 text-sm font-semibold text-zinc-100">{card.name}</h3>
-      <p className="flex-1 text-[11px] leading-relaxed text-zinc-500">
+      <p className="flex-1 text-[12px] leading-relaxed text-zinc-500">
         {card.description}
       </p>
-      <div className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-medium text-lantern-400 transition-colors duration-150 group-hover:text-lantern-300">
+      <div className="mt-4 inline-flex items-center gap-1.5 text-[12px] font-medium text-lantern-400 transition-colors duration-150 group-hover:text-lantern-300">
         Configure
         <ArrowRight className="h-3 w-3 transition-transform duration-150 group-hover:translate-x-0.5" />
       </div>

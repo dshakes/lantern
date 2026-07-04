@@ -184,22 +184,22 @@ export default function EmbedPage() {
 
           <div>
             <h3 className="text-[12px] font-semibold text-zinc-200">Install</h3>
-            <p className="mt-1 text-[11px] text-zinc-500">
+            <p className="mt-1 text-[12px] text-zinc-500">
               Paste this snippet anywhere inside your site&apos;s <code className="rounded bg-surface-0 px-1 font-mono text-zinc-300">&lt;body&gt;</code>.
             </p>
             <div className="relative mt-2 overflow-hidden rounded-lg border border-zinc-800 bg-surface-0">
-              <pre className="overflow-x-auto p-3 font-mono text-[11px] leading-relaxed text-zinc-200">
+              <pre className="overflow-x-auto p-3 font-mono text-[12px] leading-relaxed text-zinc-200">
                 {snippet}
               </pre>
               <button
                 onClick={copy}
-                className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-surface-1 px-2 py-1 text-[10px] text-zinc-300 transition-colors hover:bg-surface-2"
+                className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-zinc-700 bg-surface-1 px-2 py-1 text-[11px] text-zinc-300 transition-colors hover:bg-surface-2"
               >
                 {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
                 {copied ? "Copied" : "Copy"}
               </button>
             </div>
-            <p className="mt-2 text-[11px] text-zinc-500">
+            <p className="mt-2 text-[12px] text-zinc-500">
               Embedding an API key makes it visible to anyone viewing your page source. Scope it tightly (sessions:create + messages:send only) and rate-limit it server-side.
             </p>
           </div>
@@ -223,9 +223,9 @@ function ConfigField({
 }) {
   return (
     <div>
-      <label className="mb-1 block text-[11px] font-medium text-zinc-400">{label}</label>
+      <label className="mb-1 block text-[12px] font-medium text-zinc-400">{label}</label>
       {children}
-      {hint && <p className="mt-1 text-[10px] text-zinc-600">{hint}</p>}
+      {hint && <p className="mt-1 text-[11px] text-zinc-600">{hint}</p>}
     </div>
   );
 }

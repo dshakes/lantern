@@ -115,11 +115,11 @@ function FeedRow({ event }: { event: ActivityEvent }) {
           <div className="truncate text-sm text-zinc-100">
             {event.summary}
           </div>
-          <time className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-zinc-600">
+          <time className="shrink-0 font-mono text-[11px] uppercase tracking-wide text-zinc-600">
             {hhmm(event.timestamp)}
           </time>
         </div>
-        <div className="mt-0.5 flex items-center gap-2 text-[10px] text-zinc-500">
+        <div className="mt-0.5 flex items-center gap-2 text-[11px] text-zinc-500">
           <span className="rounded bg-zinc-900 px-1.5 py-0.5 font-mono">
             {label}
           </span>

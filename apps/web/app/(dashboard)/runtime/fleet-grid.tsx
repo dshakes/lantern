@@ -189,7 +189,7 @@ export function FleetGrid({
                 key={s}
                 onClick={() => setStateFilter(s)}
                 className={clsx(
-                  "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors",
                   stateFilter === s
                     ? "bg-surface-2 text-zinc-100"
                     : "text-zinc-500 hover:bg-surface-1 hover:text-zinc-300",
@@ -210,12 +210,12 @@ export function FleetGrid({
             <span className="font-medium tabular-nums text-zinc-100">{selected.size}</span> selected
           </span>
           <div className="flex items-center gap-3">
-            <button onClick={() => setSelected(new Set())} className="text-[11px] text-zinc-400 hover:text-zinc-200">
+            <button onClick={() => setSelected(new Set())} className="text-[12px] text-zinc-400 hover:text-zinc-200">
               Clear
             </button>
             <button
               onClick={() => setConfirmBulkTerminate(true)}
-              className="inline-flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1 text-[11px] font-medium text-red-300/90 transition-colors hover:bg-red-500/15"
+              className="inline-flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1 text-[12px] font-medium text-red-300/90 transition-colors hover:bg-red-500/15"
             >
               <StopCircle className="h-3.5 w-3.5" />
               Terminate selected
@@ -229,7 +229,7 @@ export function FleetGrid({
       <div className="mc-glass hidden overflow-hidden rounded-xl border border-white/[0.07] bg-white/[0.024] backdrop-blur-xl md:block">
         <div className="max-h-[58vh] overflow-auto">
           <table className="w-full border-collapse text-sm">
-            <thead className="sticky top-0 z-10 bg-surface-1 text-[10px] uppercase tracking-wide text-zinc-500">
+            <thead className="sticky top-0 z-10 bg-surface-1 text-[11px] uppercase tracking-wide text-zinc-500">
               <tr className="border-b border-zinc-800/40">
                 <th className="w-8 px-4 py-3.5">
                   <input
@@ -279,7 +279,7 @@ export function FleetGrid({
                     </td>
                     <td className="px-4 py-4">
                       <div className="font-medium text-zinc-100">{v.name || "workload"}</div>
-                      <div className="font-mono text-[10px] text-zinc-600">{v.vmId}</div>
+                      <div className="font-mono text-[11px] text-zinc-600">{v.vmId}</div>
                     </td>
                     <td className="px-4 py-4">
                       <span className={clsx("inline-flex items-center gap-1.5 text-[12px] font-medium", ss.text)}>
@@ -299,35 +299,35 @@ export function FleetGrid({
                           <div className="flex items-center gap-2">
                             <span className="w-7 font-mono text-[9px] uppercase tracking-wide text-zinc-600">cpu</span>
                             <Sparkline data={s.cpu} color="var(--color-accent)" width={48} height={14} />
-                            <span className="w-8 font-mono text-[10px] tabular-nums text-zinc-400">
+                            <span className="w-8 font-mono text-[11px] tabular-nums text-zinc-400">
                               {cpuNow != null ? `${(cpuNow * 100).toFixed(0)}%` : "—"}
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="w-7 font-mono text-[9px] uppercase tracking-wide text-zinc-600">mem</span>
                             <Sparkline data={s.mem} color="rgba(161,161,170,0.7)" width={48} height={14} />
-                            <span className="w-8 font-mono text-[10px] tabular-nums text-zinc-400">
+                            <span className="w-8 font-mono text-[11px] tabular-nums text-zinc-400">
                               {memNow != null ? `${(memNow * 100).toFixed(0)}%` : "—"}
                             </span>
                           </div>
                         </div>
                       ) : (
-                        <span className="font-mono text-[11px] text-zinc-600">—</span>
+                        <span className="font-mono text-[12px] text-zinc-600">—</span>
                       )}
                     </td>
                     <td className="px-4 py-4 text-right font-mono text-[12px] tabular-nums text-zinc-300">
                       {v.costHr != null ? `$${v.costHr.toFixed(3)}` : "—"}
                     </td>
                     <td className="px-4 py-4">
-                      <div className="font-mono text-[11px] text-zinc-300">{v.node || "—"}</div>
-                      <div className="text-[10px] text-zinc-600">{v.region || ""}</div>
+                      <div className="font-mono text-[12px] text-zinc-300">{v.node || "—"}</div>
+                      <div className="text-[11px] text-zinc-600">{v.region || ""}</div>
                     </td>
                     {/* Age · HB merged */}
                     <td className="px-4 py-4">
-                      <div className="text-[11px] tabular-nums text-zinc-400">
+                      <div className="text-[12px] tabular-nums text-zinc-400">
                         {v.createdAt ? formatDistanceToNowStrict(new Date(v.createdAt)) : "—"}
                       </div>
-                      <span className="mt-0.5 inline-flex items-center gap-1.5 text-[10px] tabular-nums text-zinc-600">
+                      <span className="mt-0.5 inline-flex items-center gap-1.5 text-[11px] tabular-nums text-zinc-600">
                         <span className={clsx("h-1.5 w-1.5 rounded-full", hb.dot)} />
                         {hb.label}
                       </span>
@@ -380,7 +380,7 @@ export function FleetGrid({
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium text-zinc-100">{v.name || "workload"}</div>
-                      <div className="font-mono text-[10px] text-zinc-600">{v.vmId}</div>
+                      <div className="font-mono text-[11px] text-zinc-600">{v.vmId}</div>
                     </div>
                     <span className={clsx("inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium", ss.text)}>
                       <StateDot state={v.state} />
@@ -390,45 +390,45 @@ export function FleetGrid({
 
                   <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2.5">
                     <div>
-                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">Tier</p>
+                      <p className="text-[12px] uppercase tracking-wide text-zinc-500">Tier</p>
                       <IsolationBadge cls={v.isolationClass} dense />
                     </div>
                     <div>
-                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">$/hr</p>
+                      <p className="text-[12px] uppercase tracking-wide text-zinc-500">$/hr</p>
                       <p className="font-mono text-xs tabular-nums text-zinc-200">
                         {v.costHr != null ? `$${v.costHr.toFixed(3)}` : "—"}
                       </p>
                     </div>
                     <div>
-                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">Node</p>
+                      <p className="text-[12px] uppercase tracking-wide text-zinc-500">Node</p>
                       <p className="font-mono text-xs text-zinc-200">{v.node || "—"}</p>
-                      {v.region && <p className="text-[10px] text-zinc-600">{v.region}</p>}
+                      {v.region && <p className="text-[11px] text-zinc-600">{v.region}</p>}
                     </div>
                     <div>
-                      <p className="text-[11px] uppercase tracking-wide text-zinc-500">Age · HB</p>
+                      <p className="text-[12px] uppercase tracking-wide text-zinc-500">Age · HB</p>
                       <p className="text-xs tabular-nums text-zinc-200">
                         {v.createdAt ? formatDistanceToNowStrict(new Date(v.createdAt)) : "—"}
                       </p>
-                      <span className="mt-0.5 inline-flex items-center gap-1.5 text-[10px] tabular-nums text-zinc-600">
+                      <span className="mt-0.5 inline-flex items-center gap-1.5 text-[11px] tabular-nums text-zinc-600">
                         <span className={clsx("h-1.5 w-1.5 rounded-full", hb.dot)} />
                         {hb.label}
                       </span>
                     </div>
                     {isDemo && live && s && (
                       <div className="col-span-2">
-                        <p className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">Resources</p>
+                        <p className="mb-1 text-[12px] uppercase tracking-wide text-zinc-500">Resources</p>
                         <div className="flex items-center gap-4">
                           <div className="flex items-center gap-2">
                             <span className="w-7 font-mono text-[9px] uppercase tracking-wide text-zinc-600">cpu</span>
                             <Sparkline data={s.cpu} color="var(--color-accent)" width={48} height={14} />
-                            <span className="w-8 font-mono text-[10px] tabular-nums text-zinc-400">
+                            <span className="w-8 font-mono text-[11px] tabular-nums text-zinc-400">
                               {cpuNow != null ? `${(cpuNow * 100).toFixed(0)}%` : "—"}
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="w-7 font-mono text-[9px] uppercase tracking-wide text-zinc-600">mem</span>
                             <Sparkline data={s.mem} color="rgba(161,161,170,0.7)" width={48} height={14} />
-                            <span className="w-8 font-mono text-[10px] tabular-nums text-zinc-400">
+                            <span className="w-8 font-mono text-[11px] tabular-nums text-zinc-400">
                               {memNow != null ? `${(memNow * 100).toFixed(0)}%` : "—"}
                             </span>
                           </div>

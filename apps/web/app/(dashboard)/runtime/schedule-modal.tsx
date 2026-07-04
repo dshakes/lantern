@@ -187,12 +187,12 @@ export function ScheduleModal({ open, onClose, onScheduled }: ScheduleModalProps
       <div className="space-y-5">
         {/* Presets */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] uppercase text-zinc-500">Presets:</span>
+          <span className="text-[12px] uppercase text-zinc-500">Presets:</span>
           {PRESETS.map((p) => (
             <button
               key={p.label}
               onClick={() => applyPreset(p.spec)}
-              className="rounded-full border border-zinc-700 bg-surface-2 px-2.5 py-1 text-[11px] text-zinc-300 transition-colors hover:bg-surface-3 hover:text-zinc-100"
+              className="rounded-full border border-zinc-700 bg-surface-2 px-2.5 py-1 text-[12px] text-zinc-300 transition-colors hover:bg-surface-3 hover:text-zinc-100"
               type="button"
             >
               {p.label}
@@ -226,7 +226,7 @@ export function ScheduleModal({ open, onClose, onScheduled }: ScheduleModalProps
                 }`}
               >
                 <div className="font-medium">{opt.label}</div>
-                <div className="mt-0.5 text-[10px] text-zinc-500">{opt.hint}</div>
+                <div className="mt-0.5 text-[11px] text-zinc-500">{opt.hint}</div>
               </button>
             ))}
           </div>

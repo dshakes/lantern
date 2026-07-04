@@ -199,7 +199,7 @@ export default function RunDetailPage() {
           {events.length > 0 && (
             <div className="border-b border-zinc-800/40 p-4">
               <div className="mb-1.5 flex items-center gap-2">
-                <span className="font-mono text-[10px] text-zinc-500">{run.id}</span>
+                <span className="font-mono text-[11px] text-zinc-500">{run.id}</span>
                 <StatusBadge status={effectiveStatus} />
               </div>
               <FlightRecorder
@@ -224,7 +224,7 @@ export default function RunDetailPage() {
             </div>
           )}
           <div className="flex-shrink-0 border-b border-zinc-800/40 bg-surface-1/50 px-6 py-3">
-            <h2 className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Output</h2>
+            <h2 className="text-[12px] font-medium uppercase tracking-wide text-zinc-500">Output</h2>
           </div>
           <div className="flex-1 overflow-auto p-6">
             {run.status === "succeeded" && run.output ? (
@@ -271,7 +271,7 @@ export default function RunDetailPage() {
           <div className="space-y-7 p-6">
             {/* Run Info */}
             <section>
-              <h3 className="mb-3.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">Run Info</h3>
+              <h3 className="mb-3.5 text-[12px] font-medium uppercase tracking-wide text-zinc-500">Run Info</h3>
               <dl className="space-y-2.5 text-sm">
                 <InfoRow label="Status"><StatusBadge status={effectiveStatus} /></InfoRow>
                 <InfoRow label="Agent"><span className="text-zinc-300">{run.agentName}</span></InfoRow>
@@ -284,7 +284,7 @@ export default function RunDetailPage() {
 
             {/* Timing */}
             <section>
-              <h3 className="mb-3.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+              <h3 className="mb-3.5 flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-wide text-zinc-500">
                 <Clock className="h-3.5 w-3.5 text-zinc-600" /> Timing
               </h3>
               <dl className="space-y-2.5 text-sm">
@@ -311,7 +311,7 @@ export default function RunDetailPage() {
 
             {/* Cost */}
             <section>
-              <h3 className="mb-3.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+              <h3 className="mb-3.5 flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-wide text-zinc-500">
                 <Coins className="h-3.5 w-3.5 text-zinc-600" /> Cost
               </h3>
               <dl className="space-y-2.5 text-sm">
@@ -329,7 +329,7 @@ export default function RunDetailPage() {
             {/* Feedback (RLHF loop) — only after run reached a terminal state */}
             {(effectiveStatus === "succeeded" || effectiveStatus === "failed") && (
               <section>
-                <h3 className="mb-3.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                <h3 className="mb-3.5 text-[12px] font-medium uppercase tracking-wide text-zinc-500">
                   Feedback
                 </h3>
                 <FeedbackWidget runId={run.id} />
@@ -339,7 +339,7 @@ export default function RunDetailPage() {
             {/* Verifiable receipt — only for completed runs */}
             {(effectiveStatus === "succeeded" || effectiveStatus === "failed") && (
               <section>
-                <h3 className="mb-3.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                <h3 className="mb-3.5 text-[12px] font-medium uppercase tracking-wide text-zinc-500">
                   Verification
                 </h3>
                 <ReceiptCard runId={run.id} />
@@ -348,7 +348,7 @@ export default function RunDetailPage() {
 
             {/* Input / Output raw data */}
             <section>
-              <h3 className="mb-3.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+              <h3 className="mb-3.5 flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-wide text-zinc-500">
                 <Hash className="h-3.5 w-3.5 text-zinc-600" /> Data
               </h3>
               <div className="space-y-2">
@@ -379,8 +379,8 @@ function CompareTrace({ runId, onClose }: { runId: string; onClose: () => void }
       <div className="flex items-center justify-between border-b border-zinc-800/40 px-4 py-3">
         <div className="flex items-center gap-2">
           <GitCompare className="h-3.5 w-3.5 text-zinc-500" />
-          <span className="text-[11px] font-medium text-zinc-300">Compare</span>
-          <span className="font-mono text-[10px] text-zinc-500">{runId}</span>
+          <span className="text-[12px] font-medium text-zinc-300">Compare</span>
+          <span className="font-mono text-[11px] text-zinc-500">{runId}</span>
           {run && <StatusBadge status={run.status} />}
         </div>
         <button

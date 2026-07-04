@@ -151,7 +151,7 @@ export function LineChart({
                 y={y}
                 textAnchor="end"
                 dominantBaseline="middle"
-                className="fill-zinc-500 font-mono text-[10px]"
+                className="fill-zinc-500 font-mono text-[11px]"
               >
                 {formatY(t)}
               </text>
@@ -171,7 +171,7 @@ export function LineChart({
                 x={x}
                 y={height - 6}
                 textAnchor="middle"
-                className="fill-zinc-500 font-mono text-[10px]"
+                className="fill-zinc-500 font-mono text-[11px]"
               >
                 {l}
               </text>
@@ -228,7 +228,7 @@ export function LineChart({
           }}
         >
           {hoverLabel && (
-            <div className="mb-1.5 border-b border-zinc-800 pb-1.5 text-[10px] uppercase tracking-wide text-zinc-500">
+            <div className="mb-1.5 border-b border-zinc-800 pb-1.5 text-[11px] uppercase tracking-wide text-zinc-500">
               {hoverLabel}
             </div>
           )}

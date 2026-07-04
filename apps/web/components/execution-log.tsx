@@ -61,7 +61,7 @@ function ToolDetail({ step }: { step: Step }) {
       {step.toolName && (
         <div className="flex items-center gap-1.5">
           <ArrowRightLeft className="h-2.5 w-2.5 text-orange-400" />
-          <span className="text-[10px] font-medium text-orange-400">{step.toolName}</span>
+          <span className="text-[11px] font-medium text-orange-400">{step.toolName}</span>
           {step.durationMs != null && step.durationMs > 0 && (
             <span className="ml-auto text-[9px] text-zinc-600">{step.durationMs < 1000 ? `${step.durationMs}ms` : `${(step.durationMs / 1000).toFixed(1)}s`}</span>
           )}
@@ -70,13 +70,13 @@ function ToolDetail({ step }: { step: Step }) {
       {step.toolInput && (
         <div>
           <p className="text-[9px] font-medium uppercase tracking-wider text-zinc-600">Input</p>
-          <pre className="mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-surface-1 p-1.5 font-mono text-[10px] leading-relaxed text-zinc-400">{step.toolInput}</pre>
+          <pre className="mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-surface-1 p-1.5 font-mono text-[11px] leading-relaxed text-zinc-400">{step.toolInput}</pre>
         </div>
       )}
       {step.toolOutput && (
         <div>
           <p className="text-[9px] font-medium uppercase tracking-wider text-zinc-600">Output</p>
-          <pre className="mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-surface-1 p-1.5 font-mono text-[10px] leading-relaxed text-zinc-300">{step.toolOutput}</pre>
+          <pre className="mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-surface-1 p-1.5 font-mono text-[11px] leading-relaxed text-zinc-300">{step.toolOutput}</pre>
         </div>
       )}
     </div>
@@ -98,7 +98,7 @@ export function ExecutionLog({ steps, isRunDone, isRunning }: ExecutionLogProps)
 
   return (
     <div>
-      <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-600">Steps</p>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-zinc-600">Steps</p>
       {/* Compact horizontal-wrap layout */}
       <div className="flex flex-wrap gap-1.5">
         {steps.map((s, i) => {
@@ -115,7 +115,7 @@ export function ExecutionLog({ steps, isRunDone, isRunning }: ExecutionLogProps)
               <button
                 onClick={() => hasToolData ? setExpandedStep(isExpanded ? null : i) : undefined}
                 className={clsx(
-                  "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] transition-all",
+                  "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] transition-all",
                   done ? "border-zinc-800 bg-surface-0 text-zinc-300" :
                   running ? "border-lantern-500/30 bg-lantern-500/5 text-lantern-300" :
                   failed ? "border-red-500/30 bg-red-500/5 text-red-300" :

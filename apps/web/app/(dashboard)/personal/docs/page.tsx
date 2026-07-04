@@ -100,7 +100,7 @@ function HeroCard({ enabled, onToggle }: { enabled: boolean; onToggle: () => voi
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-medium text-zinc-50">Personal Docs Agent</h2>
-            <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+            <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide ${
               enabled
                 ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
                 : "border-zinc-700 bg-zinc-800/40 text-zinc-400"
@@ -132,9 +132,9 @@ function RootsCard({ roots }: { roots: RootInfo[] }) {
             <Folder className="h-4 w-4 text-zinc-500" />
             <div className="flex-1">
               <div className="text-sm text-zinc-100">{r.displayPath}</div>
-              <div className="mt-0.5 font-mono text-[10px] text-zinc-600">{r.path}</div>
+              <div className="mt-0.5 font-mono text-[11px] text-zinc-600">{r.path}</div>
             </div>
-            <span className={`text-[10px] uppercase tracking-wide ${r.exists ? "text-emerald-400" : "text-rose-400"}`}>
+            <span className={`text-[11px] uppercase tracking-wide ${r.exists ? "text-emerald-400" : "text-rose-400"}`}>
               {r.exists ? "exists" : "missing"}
             </span>
           </li>

@@ -257,7 +257,7 @@ export default function ExperimentsPage() {
                 }
                 className="w-full accent-lantern-500"
               />
-              <div className="mt-1 flex justify-between font-mono text-[10px] text-zinc-600">
+              <div className="mt-1 flex justify-between font-mono text-[11px] text-zinc-600">
                 <span>1%</span>
                 <span>25%</span>
                 <span>50%</span>
@@ -278,7 +278,7 @@ export default function ExperimentsPage() {
                 />
                 <span className="flex items-center gap-1.5">
                   Auto-promote
-                  <span className="text-[10px] text-zinc-500">(&gt;2% lift)</span>
+                  <span className="text-[11px] text-zinc-500">(&gt;2% lift)</span>
                 </span>
               </label>
               <div className="flex items-center gap-2">
@@ -352,7 +352,7 @@ function ExperimentCard({
               {exp.name}
             </p>
           </div>
-          <p className="mt-0.5 text-[11px] text-zinc-500">
+          <p className="mt-0.5 text-[12px] text-zinc-500">
             <span className="font-mono text-zinc-400">{exp.agentName}</span> ·{" "}
             traffic split{" "}
             <span className="font-mono">
@@ -362,7 +362,7 @@ function ExperimentCard({
         </div>
         <span
           className={clsx(
-            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize",
+            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium capitalize",
             statusChip,
           )}
         >
@@ -418,7 +418,7 @@ function ExperimentCard({
             · {exp.aRuns + exp.bRuns} runs total
           </span>
           {exp.autoPromote && (
-            <span className="ml-auto rounded-full border border-zinc-800 bg-surface-2 px-2 py-0.5 text-[10px] text-zinc-500">
+            <span className="ml-auto rounded-full border border-zinc-800 bg-surface-2 px-2 py-0.5 text-[11px] text-zinc-500">
               auto-promote @ {exp.minRunsToPromote} per arm
             </span>
           )}
@@ -474,12 +474,12 @@ function VariantCard({
       )}
     >
       <div className="flex items-baseline justify-between">
-        <p className="text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+        <p className="text-[11px] uppercase tracking-[0.15em] text-zinc-500">
           {label}
         </p>
         <span
           className={clsx(
-            "inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold",
+            "inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold",
             leading
               ? "bg-emerald-500/20 text-emerald-400"
               : "bg-surface-3 text-zinc-500",
@@ -495,7 +495,7 @@ function VariantCard({
         <span className="text-2xl font-semibold tabular-nums text-zinc-100">
           {score != null ? score.toFixed(3) : "—"}
         </span>
-        <span className="font-mono text-[10px] text-zinc-500">
+        <span className="font-mono text-[11px] text-zinc-500">
           {runs} run{runs !== 1 ? "s" : ""}
         </span>
       </div>
